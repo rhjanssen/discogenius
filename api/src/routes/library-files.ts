@@ -71,8 +71,9 @@ router.get("/rename/status", (req, res) => {
     const libraryRoot = req.query.libraryRoot as string | undefined;
     const fileTypes = parseFileTypes(req.query.fileTypes);
     const sampleLimit = parseInt(req.query.sampleLimit as string) || 10;
+    const scanLimit = parseInt(req.query.scanLimit as string) || 25;
 
-    const summary = RenameTrackFileService.getRenameStatus({ artistId, albumId, libraryRoot, fileTypes }, sampleLimit);
+    const summary = RenameTrackFileService.getRenameStatus({ artistId, albumId, libraryRoot, fileTypes, limit: scanLimit }, sampleLimit);
     res.json(summary);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

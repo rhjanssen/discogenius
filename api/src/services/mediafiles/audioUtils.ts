@@ -283,7 +283,7 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
     }
 
     // Compressed formats
-    if (['mp3', 'aac', 'ogg', 'opus', 'omm'].includes(extension) || (extension === 'm4a' && codecName !== 'alac')) {
+    if (['mp3', 'aac', 'ogg', 'opus', 'omm', 'wma', 'mp2'].includes(extension) || (extension === 'm4a' && codecName !== 'alac')) {
         if (bitrate && bitrate < 192000) {
             return 'LOW';
         }

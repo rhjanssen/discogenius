@@ -191,6 +191,8 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(topTracks[0].id, "track-mbid-1");
   assert.equal(topTracks[0].album?.id, "release-group-mbid-1");
   assert.equal(topTracks[0].album?.title, "Canonical Album");
+  assert.equal(topTracks[0].is_monitored, true);
+  assert.equal(topTracks[0].monitored_lock, true);
 
   assert.equal(videos.length, 1);
   assert.equal(videos[0].id, "501");

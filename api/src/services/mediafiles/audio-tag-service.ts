@@ -109,6 +109,8 @@ export type RetagPreviewItem = {
 export type RetagStatusSummary = {
   enabled: boolean;
   total: number;
+  scanned: number;
+  limited: boolean;
   retagNeeded: number;
   missing: number;
   sample: RetagPreviewItem[];
@@ -126,6 +128,10 @@ export type RetagScopeOptions = {
   albumId?: string;
   limit?: number;
   offset?: number;
+};
+
+type RetagEvaluationOptions = {
+  includeExternalMetadata?: boolean;
 };
 
 function buildFullTitle(title: string | null | undefined, version: string | null | undefined): string {
@@ -153,8 +159,11 @@ function buildProviderTrackUrl(row: RetagTrackRow): string {
 }
 
 function shouldSkipEmbeddedAudioTagWrite(row: RetagTrackRow): boolean {
-  void row;
-  return false;
+  // ffmpeg has no APE (Monkey's Audio) muxer/encoder in this build (decode-only,
+  // confirmed live: `ffmpeg -formats` lists "ape" with demuxer support only) —
+  // a stream-copy metadata rewrite has no container to write back into. APE
+  // files still import/play fine; they just can't carry Discogenius's tags.
+  return String(row.extension || "").toLowerCase() === ".ape";
 }
 
 function resolveTagPolicy(config: MetadataConfig): WriteAudioTagsPolicy {
@@ -1025,9 +1034,13 @@ export class AudioTagService {
     const output: Record<string, string> = {};
     const ext = String(extension || "").toLowerCase().trim();
 
-    const isFlac = ext === ".flac" || ext === ".ogg";
+    // .opus is Ogg-container Vorbis comments, same scheme as FLAC/OGG
+    // (matches Lidarr's Xiph tag-type handling, which covers Opus identically).
+    const isFlac = ext === ".flac" || ext === ".ogg" || ext === ".opus";
     const isMp3 = ext === ".mp3";
     const isM4a = ext === ".m4a" || ext === ".mp4";
+    const isWma = ext === ".wma";
+    const isApe = ext === ".ape";
 
     const flacMap: Record<string, string> = {
       lyrics: "LYRICS",
@@ -1119,6 +1132,48 @@ export class AudioTagService {
       release_type: "----:com.apple.iTunes:MusicBrainz Album Type",
     };
 
+    // ASF/WMA descriptor names, mirroring Lidarr's AudioTag.cs mapping:
+    // standard fields use the "WM/" namespace, MusicBrainz identifiers use
+    // the separate "MusicBrainz/" namespace Lidarr writes for ASF.
+    const wmaMap: Record<string, string> = {
+      lyrics: "WM/Lyrics",
+      title: "title",
+      artist: "artist",
+      album_artist: "WM/AlbumArtist",
+      album: "album",
+      track: "track",
+      track_number: "WM/TrackNumber",
+      track_count: "WM/TrackCount",
+      disc: "disc",
+      disc_number: "WM/PartOfSet",
+      disc_count: "WM/DiscCount",
+      date: "WM/Year",
+      isrc: "WM/ISRC",
+      copyright: "copyright",
+      barcode: "WM/Barcode",
+      provider_url: "WM/PROVIDER_URL",
+      musicbrainz_recordingid: "MusicBrainz/Track Id",
+      musicbrainz_albumid: "MusicBrainz/Album Id",
+      musicbrainz_artistid: "MusicBrainz/Artist Id",
+      musicbrainz_albumartistid: "MusicBrainz/Album Artist Id",
+      musicbrainz_releasegroupid: "MusicBrainz/Release Group Id",
+      musicbrainz_releasetrackid: "MusicBrainz/Release Track Id",
+      acoustid_id: "Acoustid/Id",
+      acoustid_fingerprint: "Acoustid/Fingerprint",
+      release_country: "MusicBrainz/Album Release Country",
+      release_status: "MusicBrainz/Album Status",
+      release_type: "MusicBrainz/Album Type",
+    };
+
+    // APE (Monkey's Audio) uses APEv2 tags, nearly identical field naming to
+    // Xiph/Vorbis in Lidarr's own mapping (same MUSICBRAINZ_* field names).
+    const apeMap: Record<string, string> = {
+      ...flacMap,
+      album_artist: "Album Artist",
+      copyright: "Copyright",
+      isrc: "ISRC",
+    };
+
     const getFormatKey = (tag: ManagedTag): string => {
       if (isFlac) {
         return flacMap[tag.key] || tag.ffmpegKey.toUpperCase();
@@ -1142,6 +1197,12 @@ export class AudioTagService {
           return tag.ffmpegKey;
         }
         return `----:com.apple.iTunes:${tag.ffmpegKey}`;
+      }
+      if (isWma) {
+        return wmaMap[tag.key] || `MusicBrainz/${tag.ffmpegKey}`;
+      }
+      if (isApe) {
+        return apeMap[tag.key] || tag.ffmpegKey.toUpperCase();
       }
       return tag.ffmpegKey;
     };
@@ -1838,7 +1899,11 @@ export class AudioTagService {
     return tags.filter((tag) => Boolean(normalizeComparableValue(tag.targetValue)));
   }
 
-  private static async evaluateRow(row: RetagTrackRow, config: MetadataConfig): Promise<RetagPreviewItem> {
+  private static async evaluateRow(
+    row: RetagTrackRow,
+    config: MetadataConfig,
+    options: RetagEvaluationOptions = {},
+  ): Promise<RetagPreviewItem> {
     const resolvedPath = resolveStoredLibraryPath({
       filePath: row.file_path,
       libraryRoot: row.library_root,
@@ -1860,7 +1925,7 @@ export class AudioTagService {
     const desiredTags = this.buildDesiredTags(row, config);
 
     const quality = getConfigSection("quality");
-    if (quality.embed_lyrics && row.file_provider_id) {
+    if (options.includeExternalMetadata !== false && quality.embed_lyrics && row.file_provider_id) {
       const lyrics = await getLyricsForProviderMedia(row.file_provider_id);
       if (lyrics) {
         const targetValue = selectEmbeddedLyricsText(lyrics);
@@ -1942,11 +2007,15 @@ export class AudioTagService {
     }
   }
 
-  private static async evaluateRows(rows: RetagTrackRow[], config: MetadataConfig): Promise<RetagPreviewItem[]> {
+  private static async evaluateRows(
+    rows: RetagTrackRow[],
+    config: MetadataConfig,
+    options: RetagEvaluationOptions = {},
+  ): Promise<RetagPreviewItem[]> {
     const results: RetagPreviewItem[] = [];
 
     for (const row of rows) {
-      results.push(await this.evaluateRow(row, config));
+      results.push(await this.evaluateRow(row, config, options));
     }
 
     return results;
@@ -1971,18 +2040,24 @@ export class AudioTagService {
       return {
         enabled: false,
         total,
+        scanned: 0,
+        limited: false,
         retagNeeded: 0,
         missing: 0,
         sample: [],
       };
     }
 
-    const items = await this.evaluateRows(this.getTrackRows(options, false), config);
+    const scanLimit = Math.max(1, Math.min(1000, options.limit ?? 25));
+    const rows = this.getTrackRows({ ...options, limit: scanLimit, offset: 0 }, true);
+    const items = await this.evaluateRows(rows, config, { includeExternalMetadata: false });
     const actionable = items.filter((item) => item.missing || item.changes.length > 0);
 
     return {
       enabled: true,
       total,
+      scanned: items.length,
+      limited: total > items.length,
       retagNeeded: actionable.filter((item) => !item.missing && item.changes.length > 0).length,
       missing: items.filter((item) => item.missing).length,
       sample: actionable.slice(0, Math.max(0, sampleLimit)),

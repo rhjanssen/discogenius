@@ -21,7 +21,6 @@ import {
     DialogBody,
     DialogTitle,
     DialogContent,
-    DialogActions,
     Link,
 } from "@fluentui/react-components";
 import {
@@ -53,6 +52,12 @@ import { api, type StreamingProviderStatus } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
 import { ErrorState } from "@/components/ui/ContentState";
+import {
+    RenamePreviewDialog,
+    RetagPreviewDialog,
+    type RenamePreviewItem,
+    type RetagPreviewItem,
+} from "@/components/mediafiles/FileMaintenanceDialogs";
 
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
@@ -707,18 +712,12 @@ const useStyles = makeStyles({
     },
 });
 
-interface NamingRenameSample {
-    id: number;
-    file_type: string;
-    file_path: string;
-    expected_path: string | null;
-    needs_rename: boolean;
-    missing: boolean;
-    conflict: boolean;
-}
+type NamingRenameSample = RenamePreviewItem;
 
 interface NamingRenameStatus {
     total: number;
+    scanned: number;
+    limited: boolean;
     renameNeeded: number;
     conflicts: number;
     missing: number;
@@ -729,23 +728,13 @@ interface NamingRenamePreviewResponse {
     items: NamingRenameSample[];
 }
 
-interface RetagSampleChange {
-    field: string;
-    oldValue: string | null;
-    newValue: string | null;
-}
-
-interface RetagStatusSample {
-    id: number;
-    path: string;
-    missing: boolean;
-    changes: RetagSampleChange[];
-    error?: string;
-}
+type RetagStatusSample = RetagPreviewItem;
 
 interface RetagStatus {
     enabled: boolean;
     total: number;
+    scanned: number;
+    limited: boolean;
     retagNeeded: number;
     missing: number;
     sample: RetagStatusSample[];
@@ -806,14 +795,12 @@ const SettingsPage = () => {
     const [renameStatusInitialized, setRenameStatusInitialized] = useState(false);
     const [renamePreviewOpen, setRenamePreviewOpen] = useState(false);
     const [renamePreviewItems, setRenamePreviewItems] = useState<NamingRenameSample[]>([]);
-    const [selectedRenameIds, setSelectedRenameIds] = useState<Set<number>>(new Set());
     const [retagStatus, setRetagStatus] = useState<RetagStatus | null>(null);
     const [retagStatusLoading, setRetagStatusLoading] = useState(false);
     const [retagApplying, setRetagApplying] = useState(false);
     const [retagStatusInitialized, setRetagStatusInitialized] = useState(false);
     const [retagPreviewOpen, setRetagPreviewOpen] = useState(false);
     const [retagPreviewItems, setRetagPreviewItems] = useState<RetagStatusSample[]>([]);
-    const [selectedRetagIds, setSelectedRetagIds] = useState<Set<number>>(new Set());
     const [namingPreviewResponse, setNamingPreviewResponse] = useState<NamingPreviewResponse | null>(null);
     const namingPreviewRequestRef = useRef(0);
     const namingInputRefs = useRef<Record<NamingFieldKey, HTMLInputElement | null>>({
@@ -899,7 +886,7 @@ const SettingsPage = () => {
         setRenameStatusLoading(true);
         try {
             await flushNamingSettings(getCurrentNamingSettings());
-            const status = await api.getLibraryRenameStatus({ sampleLimit: 4 });
+            const status = await api.getLibraryRenameStatus({ sampleLimit: 4, scanLimit: 25 });
             setRenameStatus(status as NamingRenameStatus);
         } catch (error: any) {
             toast({
@@ -931,7 +918,6 @@ const SettingsPage = () => {
             const response = await api.getLibraryRenamePreview({ limit: 1000 }) as NamingRenamePreviewResponse;
             const items = response.items.filter((item) => item.missing || item.conflict || item.needs_rename);
             setRenamePreviewItems(items);
-            setSelectedRenameIds(new Set(items.filter((item) => !item.missing && !item.conflict).map((item) => item.id)));
             setRenamePreviewOpen(true);
             await loadRenameStatus();
         } catch (error: any) {
@@ -983,7 +969,7 @@ const SettingsPage = () => {
     const loadRetagStatus = useCallback(async () => {
         setRetagStatusLoading(true);
         try {
-            const status = await api.getRetagStatus({ sampleLimit: 4 });
+            const status = await api.getRetagStatus({ sampleLimit: 4, scanLimit: 25 });
             setRetagStatus(status as RetagStatus);
             setRetagStatusInitialized(true);
         } catch (error: any) {
@@ -1002,7 +988,6 @@ const SettingsPage = () => {
         try {
             const response = await api.getRetagPreview({ limit: 1000 }) as RetagPreviewResponse;
             setRetagPreviewItems(response.items);
-            setSelectedRetagIds(new Set(response.items.filter((item) => !item.missing).map((item) => item.id)));
             setRetagPreviewOpen(true);
             await loadRetagStatus();
         } catch (error: any) {
@@ -1920,13 +1905,19 @@ const SettingsPage = () => {
                 <SettingsSection
                     id="metadata"
                     title="Metadata"
-                    description="Decide what metadata is embedded or saved alongside files."
+                    description="Choose which metadata Discogenius writes into files and which companion files it keeps next to your media."
                     className={styles.section}
                 >
                     <div className={styles.card}>
+                        <div className={styles.subsectionHeader}>
+                            <Text weight="semibold">Embedded Audio Tags</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                MusicBrainz identity and standard media fields written into audio files for Plex, Jellyfin, Picard, and other tag-aware clients.
+                            </Text>
+                        </div>
                         {renderToggleRow({
-                            title: "Embed Metadata Tags",
-                            description: "Write Lidarr-compatible MusicBrainz and standard media tags into audio files",
+                            title: "Write Audio Tags",
+                            description: "Embed Lidarr-compatible MusicBrainz IDs, titles, artists, release data, and standard audio tags.",
                             checked: writeAudioTagsPolicy !== "no",
                             onChange: (checked) => {
                                 updateMetadataSettings({
@@ -1940,9 +1931,9 @@ const SettingsPage = () => {
                         {writeAudioTagsPolicy !== "no" && (
                             <div className={styles.row}>
                                 <div className={styles.rowContent}>
-                                    <Text weight="semibold">Tag Write Policy</Text>
+                                    <Text weight="semibold">When To Write Tags</Text>
                                     <Text size={200} className={styles.mutedText}>
-                                        Mirrors Lidarr's write metadata setting. All files may alter existing imports.
+                                        New downloads is the normal Lidarr-style path. All files also updates manual imports and existing tracked files.
                                     </Text>
                                 </div>
                                 <Select
@@ -1963,8 +1954,8 @@ const SettingsPage = () => {
                         )}
 
                         {renderToggleRow({
-                            title: "Embed ReplayGain Tags",
-                            description: "Write ReplayGain gain and peak values when provider metadata includes them",
+                            title: "Write ReplayGain",
+                            description: "Add gain and peak tags when provider metadata includes ReplayGain values.",
                             checked: metadataSettings?.embed_replaygain !== false,
                             onChange: (checked) => {
                                 updateMetadataSettings({ embed_replaygain: checked });
@@ -1974,18 +1965,39 @@ const SettingsPage = () => {
                         })}
 
                         {renderToggleRow({
-                            title: "Mark Explicit",
-                            description: "Append 🅴 to explicit track titles",
+                            title: "Mark Explicit Tracks",
+                            description: "Add the explicit marker to track titles when the matched provider metadata marks a track as explicit.",
                             checked: metadataSettings?.mark_explicit ?? false,
                             onChange: (checked) => updateMetadataSettings({ mark_explicit: checked }),
                         })}
 
                         {renderToggleRow({
-                            title: "Embed Album Cover",
-                            description: "Write cover art into supported files",
+                            title: "Embed Cover Art",
+                            description: "Ask the downloader to embed album artwork in supported downloaded audio files.",
                             checked: qualitySettings?.embed_cover !== false,
                             onChange: (checked) => updateQualitySettings({ embed_cover: checked }),
                         })}
+
+                        {renderToggleRow({
+                            title: "Embed Lyrics",
+                            description: "Write lyrics into supported audio files. Synced lyrics are used when available.",
+                            checked: qualitySettings?.embed_lyrics === true,
+                            onChange: (checked) => updateQualitySettings({ embed_lyrics: checked }),
+                        })}
+
+                        {renderToggleRow({
+                            title: "Embed Album Review",
+                            description: "Write the album review into the comment tag of each track.",
+                            checked: metadataSettings?.embed_album_review === true,
+                            onChange: (checked) => updateMetadataSettings({ embed_album_review: checked }),
+                        })}
+
+                        <div className={styles.subsectionHeader}>
+                            <Text weight="semibold">Sidecar Files</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                Companion artwork, NFO, lyrics, and video-thumbnail files saved beside organized library files.
+                            </Text>
+                        </div>
 
                         {renderToggleRow({
                             title: "Save Album Covers",
@@ -2011,7 +2023,7 @@ const SettingsPage = () => {
                                     <div className={styles.rowContent}>
                                         <Text weight="semibold">Cover Resolution</Text>
                                         <Text size={200} className={styles.mutedText}>
-                                            Used for both saving and embedding
+                                            Controls cached UI/provider-fallback artwork size. Saved sidecars keep the original source image when available.
                                         </Text>
                                     </div>
                                     <Select
@@ -2031,24 +2043,10 @@ const SettingsPage = () => {
                         )}
 
                         {renderToggleRow({
-                            title: "Embed Album Review",
-                            description: "Write the album review into the comment tag of each track",
-                            checked: metadataSettings?.embed_album_review === true,
-                            onChange: (checked) => updateMetadataSettings({ embed_album_review: checked }),
-                        })}
-
-                        {renderToggleRow({
                             title: "Save Jellyfin / Kodi NFO Files",
                             description: "Save artist.nfo, album.nfo, and per-video NFO sidecars with MusicBrainz IDs. Plex music libraries ignore NFO files.",
                             checked: metadataSettings?.save_nfo === true,
                             onChange: (checked) => updateMetadataSettings({ save_nfo: checked }),
-                        })}
-
-                        {renderToggleRow({
-                            title: "Embed Lyrics",
-                            description: "Write lyrics into supported audio files. Synced lyrics are used when available.",
-                            checked: qualitySettings?.embed_lyrics === true,
-                            onChange: (checked) => updateQualitySettings({ embed_lyrics: checked }),
                         })}
 
                         {renderToggleRow({
@@ -2101,13 +2099,13 @@ const SettingsPage = () => {
 
                         {renderToggleRow({
                             title: "Save Music Video Thumbnails",
-                            description: "Save a JPG thumbnail next to each video",
+                            description: "Save a JPG thumbnail next to each video.",
                             checked: metadataSettings?.save_video_thumbnail === true,
                             onChange: (checked) => updateMetadataSettings({ save_video_thumbnail: checked }),
                         })}
                         {renderToggleRow({
-                            title: "Embed Music Video Thumbnails",
-                            description: "Embed thumbnail into each video file",
+                            title: "Embed Video Thumbnails",
+                            description: "Write a thumbnail into supported video files.",
                             checked: metadataSettings?.embed_video_thumbnail !== false,
                             onChange: (checked) => updateMetadataSettings({ embed_video_thumbnail: checked }),
                         })}
@@ -2131,6 +2129,12 @@ const SettingsPage = () => {
                             </div>
                         )}
 
+                        <div className={styles.subsectionHeader}>
+                            <Text weight="semibold">Advanced Import Verification</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                Optional checks for files that arrive without reliable MusicBrainz identity.
+                            </Text>
+                        </div>
                         {renderToggleRow({
                             title: "Audio Fingerprinting",
                             description: "Use fpcalc/AcoustID as an import-verification fallback for files without clean MusicBrainz provenance",
@@ -2146,23 +2150,30 @@ const SettingsPage = () => {
                             <div className={styles.rowContent}>
                                 <Text weight="semibold">Apply Current Audio Tag Rules To Library</Text>
                                 <Text size={200} className={styles.mutedText}>
-                                    Preview and apply the current audio-tag and ReplayGain rules to tracked music files already in the library.
+                                    Preview and queue updates for tracked audio files using the current tag-writing, ReplayGain, and fingerprinting settings.
                                 </Text>
                                 <div className={styles.namingBadgeRow}>
                                     <Badge appearance="outline" color="brand">
                                         {retagStatus?.total ?? 0} tracked
                                     </Badge>
+                                    {retagStatus?.limited ? (
+                                        <Badge appearance="outline" color="informative">
+                                            {retagStatus.scanned} scanned
+                                        </Badge>
+                                    ) : null}
                                     <Badge appearance="outline" color={(retagStatus?.retagNeeded ?? 0) > 0 ? "warning" : "success"}>
-                                        {retagStatus?.retagNeeded ?? 0} need retag
+                                        {retagStatus?.retagNeeded ?? 0}{retagStatus?.limited ? " in scan" : ""} need retag
                                     </Badge>
                                     <Badge appearance="outline" color={(retagStatus?.missing ?? 0) > 0 ? "warning" : "informative"}>
-                                        {retagStatus?.missing ?? 0} missing
+                                        {retagStatus?.missing ?? 0}{retagStatus?.limited ? " in scan" : ""} missing
                                     </Badge>
                                 </div>
                                 {retagStatus && !retagStatusLoading && audioRetaggingEnabled && (retagStatus.retagNeeded ?? 0) === 0 ? (
-                                    <Text size={200} className={styles.mutedText}>No retag work detected.</Text>
+                                    <Text size={200} className={styles.mutedText}>
+                                        {retagStatus.limited ? "No retag work detected in the fast scan." : "No retag work detected."}
+                                    </Text>
                                 ) : !audioRetaggingEnabled ? (
-                                    <Text size={200} className={styles.mutedText}>Enable fingerprinting, audio tag correction, or ReplayGain to generate a retag plan.</Text>
+                                    <Text size={200} className={styles.mutedText}>Enable tag writing, ReplayGain, or fingerprinting to generate a retag plan.</Text>
                                 ) : null}
                             </div>
                             <div className={styles.namingActionGroup}>
@@ -2431,18 +2442,27 @@ const SettingsPage = () => {
                                     <Badge appearance="outline" color="brand">
                                         {renameStatus?.total ?? 0} tracked
                                     </Badge>
+                                    {renameStatus?.limited ? (
+                                        <Badge appearance="outline" color="informative">
+                                            {renameStatus.scanned} scanned
+                                        </Badge>
+                                    ) : null}
                                     <Badge appearance="outline" color={(renameStatus?.renameNeeded ?? 0) > 0 ? "warning" : "success"}>
-                                        {renameStatus?.renameNeeded ?? 0} need rename
+                                        {renameStatus?.renameNeeded ?? 0}{renameStatus?.limited ? " in scan" : ""} need rename
                                     </Badge>
                                     <Badge appearance="outline" color={(renameStatus?.conflicts ?? 0) > 0 ? "warning" : "informative"}>
-                                        {renameStatus?.conflicts ?? 0} conflicts
+                                        {renameStatus?.conflicts ?? 0}{renameStatus?.limited ? " in scan" : ""} conflicts
                                     </Badge>
                                     <Badge appearance="outline" color={(renameStatus?.missing ?? 0) > 0 ? "warning" : "informative"}>
-                                        {renameStatus?.missing ?? 0} missing
+                                        {renameStatus?.missing ?? 0}{renameStatus?.limited ? " in scan" : ""} missing
                                     </Badge>
                                 </div>
                                 {renameStatus && !renameStatusLoading && (renameStatus.renameNeeded ?? 0) === 0 ? (
-                                    <Text size={200} className={styles.mutedText}>No rename work detected for the current naming templates.</Text>
+                                    <Text size={200} className={styles.mutedText}>
+                                        {renameStatus.limited
+                                            ? "No rename work detected in the fast scan."
+                                            : "No rename work detected for the current naming templates."}
+                                    </Text>
                                 ) : null}
                             </div>
                             <div className={styles.namingActionGroup}>
@@ -2604,157 +2624,20 @@ const SettingsPage = () => {
                     </div>
                 </SettingsSection>
 
-                <Dialog open={renamePreviewOpen} onOpenChange={(_, data) => setRenamePreviewOpen(data.open)}>
-                    <DialogSurface className={styles.maintenanceDialog}>
-                        <DialogBody>
-                            <DialogTitle
-                                action={
-                                    <Button
-                                        appearance="subtle"
-                                        aria-label="Close rename preview"
-                                        icon={<Dismiss24Regular />}
-                                        onClick={() => setRenamePreviewOpen(false)}
-                                    />
-                                }
-                            >
-                                Preview Rename
-                            </DialogTitle>
-                            <DialogContent>
-                                <div className={styles.maintenanceDialogSummary}>
-                                    <Badge appearance="outline" color="brand">{renamePreviewItems.length} changes</Badge>
-                                    <Badge appearance="outline" color="warning">{renamePreviewItems.filter((item) => item.conflict).length} conflicts</Badge>
-                                    <Badge appearance="outline" color="informative">{renamePreviewItems.filter((item) => item.missing).length} missing</Badge>
-                                </div>
-                                {renamePreviewItems.length > 0 ? (
-                                    <div className={styles.maintenanceDialogList}>
-                                        <Checkbox
-                                            label="Select all available changes"
-                                            checked={selectedRenameIds.size > 0 && selectedRenameIds.size === renamePreviewItems.filter((item) => !item.missing && !item.conflict).length}
-                                            onChange={(_, data) => setSelectedRenameIds(data.checked
-                                                ? new Set(renamePreviewItems.filter((item) => !item.missing && !item.conflict).map((item) => item.id))
-                                                : new Set())}
-                                        />
-                                        {renamePreviewItems.map((item) => (
-                                            <div key={item.id} className={styles.maintenanceDialogRow}>
-                                                <Checkbox
-                                                    aria-label={`Rename ${item.file_path}`}
-                                                    checked={selectedRenameIds.has(item.id)}
-                                                    disabled={item.missing || item.conflict}
-                                                    onChange={(_, data) => setSelectedRenameIds((current) => {
-                                                        const next = new Set(current);
-                                                        if (data.checked) next.add(item.id);
-                                                        else next.delete(item.id);
-                                                        return next;
-                                                    })}
-                                                />
-                                                <div className={styles.previewItem}>
-                                                    <span className={styles.previewFilename}>{item.file_type}</span>
-                                                    <span className={styles.previewOld}>- {item.file_path}</span>
-                                                    {item.missing ? (
-                                                        <span className={styles.previewConflict}>Missing on disk</span>
-                                                    ) : item.conflict ? (
-                                                        <span className={styles.previewConflict}>Conflict: {item.expected_path ?? "target path unavailable"}</span>
-                                                    ) : (
-                                                        <span className={styles.previewNew}>+ {item.expected_path ?? "target path unavailable"}</span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <Text>No files need renaming.</Text>
-                                )}
-                            </DialogContent>
-                            <DialogActions>
-                                <Button appearance="secondary" onClick={() => setRenamePreviewOpen(false)}>Cancel</Button>
-                                <Button
-                                    appearance="primary"
-                                    icon={renameApplying ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
-                                    disabled={renameApplying || selectedRenameIds.size === 0}
-                                    onClick={() => handleApplyLibraryNaming(Array.from(selectedRenameIds))}
-                                >
-                                    Rename selected files
-                                </Button>
-                            </DialogActions>
-                        </DialogBody>
-                    </DialogSurface>
-                </Dialog>
-
-                <Dialog open={retagPreviewOpen} onOpenChange={(_, data) => setRetagPreviewOpen(data.open)}>
-                    <DialogSurface className={styles.maintenanceDialog}>
-                        <DialogBody>
-                            <DialogTitle
-                                action={
-                                    <Button
-                                        appearance="subtle"
-                                        aria-label="Close retag preview"
-                                        icon={<Dismiss24Regular />}
-                                        onClick={() => setRetagPreviewOpen(false)}
-                                    />
-                                }
-                            >
-                                Write Metadata Tags
-                            </DialogTitle>
-                            <DialogContent>
-                                <div className={styles.previewList}>
-                                    <Text size={200} className={styles.mutedText}>
-                                        MusicBrainz identifiers are written alongside these changes. Compatible spatial files may be skipped when embedded tag rewriting is unsafe.
-                                    </Text>
-                                    {retagPreviewItems.length > 0 ? (
-                                        <div className={styles.maintenanceDialogList}>
-                                        <Checkbox
-                                            label="Select all available changes"
-                                            checked={selectedRetagIds.size > 0 && selectedRetagIds.size === retagPreviewItems.filter((item) => !item.missing).length}
-                                            onChange={(_, data) => setSelectedRetagIds(data.checked
-                                                ? new Set(retagPreviewItems.filter((item) => !item.missing).map((item) => item.id))
-                                                : new Set())}
-                                        />
-                                        {retagPreviewItems.map((item) => (
-                                            <div key={item.id} className={styles.maintenanceDialogRow}>
-                                                <Checkbox
-                                                    aria-label={`Retag ${item.path}`}
-                                                    checked={selectedRetagIds.has(item.id)}
-                                                    disabled={item.missing}
-                                                    onChange={(_, data) => setSelectedRetagIds((current) => {
-                                                        const next = new Set(current);
-                                                        if (data.checked) next.add(item.id);
-                                                        else next.delete(item.id);
-                                                        return next;
-                                                    })}
-                                                />
-                                                <div className={styles.previewItem}>
-                                                    <span className={styles.previewFilename}>{item.path}</span>
-                                                    {item.missing ? (
-                                                        <span className={styles.previewConflict}>Missing on disk</span>
-                                                    ) : item.changes.map((change) => (
-                                                        <React.Fragment key={change.field}>
-                                                            <span className={styles.previewOld}>- {change.field}: {change.oldValue ?? "(empty)"}</span>
-                                                            <span className={styles.previewNew}>+ {change.field}: {change.newValue ?? "(empty)"}</span>
-                                                        </React.Fragment>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        ))}
-                                        </div>
-                                    ) : (
-                                        <Text>No files need retagging.</Text>
-                                    )}
-                                </div>
-                            </DialogContent>
-                            <DialogActions>
-                                <Button appearance="secondary" onClick={() => setRetagPreviewOpen(false)}>Cancel</Button>
-                                <Button
-                                    appearance="primary"
-                                    icon={retagApplying ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
-                                    disabled={retagApplying || selectedRetagIds.size === 0}
-                                    onClick={() => handleApplyRetags(Array.from(selectedRetagIds))}
-                                >
-                                    Retag selected files
-                                </Button>
-                            </DialogActions>
-                        </DialogBody>
-                    </DialogSurface>
-                </Dialog>
+                <RenamePreviewDialog
+                    open={renamePreviewOpen}
+                    items={renamePreviewItems}
+                    applying={renameApplying}
+                    onOpenChange={setRenamePreviewOpen}
+                    onApply={handleApplyLibraryNaming}
+                />
+                <RetagPreviewDialog
+                    open={retagPreviewOpen}
+                    items={retagPreviewItems}
+                    applying={retagApplying}
+                    onOpenChange={setRetagPreviewOpen}
+                    onApply={handleApplyRetags}
+                />
                 <ImportArtistsModal
                     open={Boolean(importProviderId)}
                     onClose={() => setImportProviderId(null)}

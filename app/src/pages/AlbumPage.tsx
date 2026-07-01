@@ -17,6 +17,7 @@ import {
   MenuPopover,
   MenuList,
   MenuItem,
+  Spinner,
   makeStyles,
   tokens,
   Overflow,
@@ -34,6 +35,7 @@ import {
   MusicNote224Regular,
   ChevronDown16Regular,
   CheckmarkCircle16Filled,
+  FolderSync24Regular,
 } from "@fluentui/react-icons";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
@@ -68,6 +70,12 @@ import {
   standardDetailActionButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
+import {
+  RenamePreviewDialog,
+  RetagPreviewDialog,
+  type RenamePreviewItem,
+  type RetagPreviewItem,
+} from "@/components/mediafiles/FileMaintenanceDialogs";
 
 const useStyles = makeStyles({
   container: {
@@ -788,6 +796,12 @@ const AlbumPage = () => {
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
+  const [renamePreviewOpen, setRenamePreviewOpen] = useState(false);
+  const [renamePreviewItems, setRenamePreviewItems] = useState<RenamePreviewItem[]>([]);
+  const [renameApplying, setRenameApplying] = useState(false);
+  const [retagPreviewOpen, setRetagPreviewOpen] = useState(false);
+  const [retagPreviewItems, setRetagPreviewItems] = useState<RetagPreviewItem[]>([]);
+  const [retagApplying, setRetagApplying] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const handledTrackScrollKeyRef = useRef<string | null>(null);
 
@@ -1138,12 +1152,97 @@ const AlbumPage = () => {
     void handleDownloadAlbum('stereo');
   };
 
+  const openRenamePreview = async () => {
+    if (!albumId) return;
+    setRenameApplying(true);
+    try {
+      const response = await api.getLibraryRenamePreview({ albumId, limit: 1000 }) as { items: RenamePreviewItem[] };
+      const items = response.items.filter((item) => item.missing || item.conflict || item.needs_rename);
+      setRenamePreviewItems(items);
+      setRenamePreviewOpen(true);
+    } catch (error) {
+      toast({
+        title: "Rename preview failed",
+        description: error instanceof Error ? error.message : "Could not load the album rename preview.",
+        variant: "destructive",
+      });
+    } finally {
+      setRenameApplying(false);
+    }
+  };
+
+  const handleApplyRenames = async (ids: number[]) => {
+    if (!albumId) return;
+    setRenameApplying(true);
+    try {
+      const result: any = await api.applyLibraryRenames(ids.length > 0 ? { ids } : { applyAll: true, albumId });
+      toast({
+        title: "Rename queued",
+        description: result?.message || "Queued album file renaming.",
+      });
+      setRenamePreviewOpen(false);
+      dispatchActivityRefresh();
+      dispatchLibraryUpdated();
+    } catch (error) {
+      toast({
+        title: "Failed to queue rename",
+        description: error instanceof Error ? error.message : "Could not queue album file renaming.",
+        variant: "destructive",
+      });
+    } finally {
+      setRenameApplying(false);
+    }
+  };
+
+  const openRetagPreview = async () => {
+    if (!albumId) return;
+    setRetagApplying(true);
+    try {
+      const response = await api.getRetagPreview({ albumId, limit: 1000 }) as { items: RetagPreviewItem[] };
+      setRetagPreviewItems(response.items);
+      setRetagPreviewOpen(true);
+    } catch (error) {
+      toast({
+        title: "Retag preview failed",
+        description: error instanceof Error ? error.message : "Could not load the album retag preview.",
+        variant: "destructive",
+      });
+    } finally {
+      setRetagApplying(false);
+    }
+  };
+
+  const handleApplyRetags = async (ids: number[]) => {
+    if (!albumId) return;
+    setRetagApplying(true);
+    try {
+      const result: any = await api.applyRetags(ids.length > 0 ? { ids } : { applyAll: true, albumId });
+      toast({
+        title: "Retag queued",
+        description: result?.message || "Queued album metadata tag writing.",
+      });
+      setRetagPreviewOpen(false);
+      dispatchActivityRefresh();
+      dispatchLibraryUpdated();
+    } catch (error) {
+      toast({
+        title: "Failed to queue retag",
+        description: error instanceof Error ? error.message : "Could not queue album metadata tag writing.",
+        variant: "destructive",
+      });
+    } finally {
+      setRetagApplying(false);
+    }
+  };
+
   const albumActions: OverflowAction[] = [
     { key: 'monitor', label: isMonitored ? 'Unmonitor' : 'Monitor', disabled: isTogglingMonitor || isLocked, onClick: handleToggleMonitor },
     { key: 'lock', label: isLocked ? 'Unlock' : 'Lock', disabled: isTogglingLock, onClick: handleToggleLock },
     { key: 'download', label: downloadingAlbum ? 'Adding...' : 'Download selected', disabled: downloadingAlbum || !hasAnyProviderOffer, onClick: handleDownloadPrimary },
     ...(album?.stereo_provider_id ? [{ key: 'download-stereo', label: 'Download stereo', disabled: downloadingAlbum, onClick: () => handleDownloadAlbum('stereo') }] : []),
     ...(album?.spatial_provider_id ? [{ key: 'download-spatial', label: 'Download spatial', disabled: downloadingAlbum, onClick: () => handleDownloadAlbum('spatial') }] : []),
+    { key: 'rename-files', label: renameApplying ? 'Loading rename...' : 'Preview Rename', disabled: renameApplying, onClick: openRenamePreview },
+    { key: 'retag-files', label: retagApplying ? 'Loading tags...' : 'Write Tags', disabled: retagApplying, onClick: openRetagPreview },
   ];
 
   /** Open track info dialog */
@@ -1250,6 +1349,22 @@ const AlbumPage = () => {
   return (
     <DynamicBrandProvider keyColor={albumBrandColor}>
       <div className={styles.container}>
+        <RenamePreviewDialog
+          open={renamePreviewOpen}
+          items={renamePreviewItems}
+          applying={renameApplying}
+          title="Preview Album Rename"
+          onOpenChange={setRenamePreviewOpen}
+          onApply={handleApplyRenames}
+        />
+        <RetagPreviewDialog
+          open={retagPreviewOpen}
+          items={retagPreviewItems}
+          applying={retagApplying}
+          title="Write Album Tags"
+          onOpenChange={setRetagPreviewOpen}
+          onApply={handleApplyRetags}
+        />
         {/* Header Section */}
         <div className={styles.header}>
           <div className={styles.headerContent}>
@@ -1450,6 +1565,32 @@ const AlbumPage = () => {
                         {downloadingAlbum ? "Adding..." : "Download"}
                       </Button>
                     )}
+                  </OverflowItem>
+
+                  <OverflowItem id="rename-files" priority={0}>
+                    <Button
+                      appearance="subtle"
+                      icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24Regular />}
+                      onClick={openRenamePreview}
+                      disabled={renameApplying}
+                      title="Preview album file renames"
+                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                    >
+                      Rename
+                    </Button>
+                  </OverflowItem>
+
+                  <OverflowItem id="retag-files" priority={0}>
+                    <Button
+                      appearance="subtle"
+                      icon={retagApplying ? <Spinner size="tiny" /> : <Info24Regular />}
+                      onClick={openRetagPreview}
+                      disabled={retagApplying}
+                      title="Preview album metadata tag changes"
+                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                    >
+                      Tags
+                    </Button>
                   </OverflowItem>
 
                   <ActionOverflowMenu actions={albumActions} className={mergeClasses(styles.actionButton, styles.transparentButton)} />

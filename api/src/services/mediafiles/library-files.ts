@@ -206,6 +206,8 @@ export type RenameScopeOptions = {
 
 export type RenameStatusSummary = {
   total: number;
+  scanned: number;
+  limited: boolean;
   renameNeeded: number;
   conflicts: number;
   missing: number;

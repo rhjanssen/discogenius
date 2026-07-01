@@ -65,6 +65,12 @@ import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import {
+  RenamePreviewDialog,
+  RetagPreviewDialog,
+  type RenamePreviewItem,
+  type RetagPreviewItem,
+} from "@/components/mediafiles/FileMaintenanceDialogs";
+import {
   ACTIVITY_REFRESH_EVENT,
   MONITOR_STATE_CHANGED_EVENT,
   clearOptimisticMonitorState,
@@ -415,6 +421,12 @@ const ArtistPage = () => {
   // State
   const [syncing, setSyncing] = useState(false);
   const [curating, setCurating] = useState(false);
+  const [renamePreviewOpen, setRenamePreviewOpen] = useState(false);
+  const [renamePreviewItems, setRenamePreviewItems] = useState<RenamePreviewItem[]>([]);
+  const [renameApplying, setRenameApplying] = useState(false);
+  const [retagPreviewOpen, setRetagPreviewOpen] = useState(false);
+  const [retagPreviewItems, setRetagPreviewItems] = useState<RetagPreviewItem[]>([]);
+  const [retagApplying, setRetagApplying] = useState(false);
   const [bioExpanded, setBioExpanded] = useState(false);
   const [monitorOverride, setMonitorOverride] = useState<boolean | null>(() => (
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
@@ -660,6 +672,89 @@ const ArtistPage = () => {
       dispatchActivityRefresh();
     } catch (error) {
       console.error("Error starting downloads:", error);
+    }
+  };
+
+  const openRenamePreview = async () => {
+    if (!artistId) return;
+    setRenameApplying(true);
+    try {
+      const response = await api.getLibraryRenamePreview({ artistId, limit: 1000 }) as { items: RenamePreviewItem[] };
+      const items = response.items.filter((item) => item.missing || item.conflict || item.needs_rename);
+      setRenamePreviewItems(items);
+      setRenamePreviewOpen(true);
+    } catch (error) {
+      toast({
+        title: "Rename preview failed",
+        description: error instanceof Error ? error.message : "Could not load the artist rename preview.",
+        variant: "destructive",
+      });
+    } finally {
+      setRenameApplying(false);
+    }
+  };
+
+  const handleApplyRenames = async (ids: number[]) => {
+    if (!artistId) return;
+    setRenameApplying(true);
+    try {
+      const result: any = await api.applyLibraryRenames(ids.length > 0 ? { ids } : { applyAll: true, artistId });
+      toast({
+        title: "Rename queued",
+        description: result?.message || "Queued artist file renaming.",
+      });
+      setRenamePreviewOpen(false);
+      dispatchActivityRefresh();
+      dispatchLibraryUpdated();
+    } catch (error) {
+      toast({
+        title: "Failed to queue rename",
+        description: error instanceof Error ? error.message : "Could not queue artist file renaming.",
+        variant: "destructive",
+      });
+    } finally {
+      setRenameApplying(false);
+    }
+  };
+
+  const openRetagPreview = async () => {
+    if (!artistId) return;
+    setRetagApplying(true);
+    try {
+      const response = await api.getRetagPreview({ artistId, limit: 1000 }) as { items: RetagPreviewItem[] };
+      setRetagPreviewItems(response.items);
+      setRetagPreviewOpen(true);
+    } catch (error) {
+      toast({
+        title: "Retag preview failed",
+        description: error instanceof Error ? error.message : "Could not load the artist retag preview.",
+        variant: "destructive",
+      });
+    } finally {
+      setRetagApplying(false);
+    }
+  };
+
+  const handleApplyRetags = async (ids: number[]) => {
+    if (!artistId) return;
+    setRetagApplying(true);
+    try {
+      const result: any = await api.applyRetags(ids.length > 0 ? { ids } : { applyAll: true, artistId });
+      toast({
+        title: "Retag queued",
+        description: result?.message || "Queued artist metadata tag writing.",
+      });
+      setRetagPreviewOpen(false);
+      dispatchActivityRefresh();
+      dispatchLibraryUpdated();
+    } catch (error) {
+      toast({
+        title: "Failed to queue retag",
+        description: error instanceof Error ? error.message : "Could not queue artist metadata tag writing.",
+        variant: "destructive",
+      });
+    } finally {
+      setRetagApplying(false);
     }
   };
 
@@ -1352,6 +1447,8 @@ const ArtistPage = () => {
     { key: 'refresh-scan', label: isScanBusy ? 'Scanning...' : 'Refresh & Scan', disabled: isScanBusy, onClick: syncArtist },
     { key: 'curate', label: isCurateBusy ? 'Running...' : 'Curate', disabled: isCurateBusy || isScanBusy || !hasAlbums, onClick: curateArtist },
     { key: 'download-missing', label: 'Download Missing', disabled: downloadActionDisabled, onClick: startDownloads },
+    { key: 'rename-files', label: renameApplying ? 'Loading rename...' : 'Preview Rename', disabled: renameApplying, onClick: openRenamePreview },
+    { key: 'retag-files', label: retagApplying ? 'Loading tags...' : 'Write Tags', disabled: retagApplying, onClick: openRetagPreview },
   ];
 
   // Reset mobile filter/view tracking each render so it appears on the first visible section
@@ -1360,6 +1457,22 @@ const ArtistPage = () => {
   return (
     <DynamicBrandProvider keyColor={artistBrandColor}>
       <div className={styles.container}>
+        <RenamePreviewDialog
+          open={renamePreviewOpen}
+          items={renamePreviewItems}
+          applying={renameApplying}
+          title="Preview Artist Rename"
+          onOpenChange={setRenamePreviewOpen}
+          onApply={handleApplyRenames}
+        />
+        <RetagPreviewDialog
+          open={retagPreviewOpen}
+          items={retagPreviewItems}
+          applying={retagApplying}
+          title="Write Artist Tags"
+          onOpenChange={setRetagPreviewOpen}
+          onApply={handleApplyRetags}
+        />
         {/* Header */}
         <div className={styles.header}>
           <div className={styles.headerContent}>
@@ -1461,6 +1574,32 @@ const ArtistPage = () => {
                       className={mergeClasses(styles.actionButton, styles.transparentButton)}
                     >
                       Download Missing
+                    </Button>
+                  </OverflowItem>
+
+                  <OverflowItem id="rename-files" priority={0}>
+                    <Button
+                      appearance="subtle"
+                      icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24Regular />}
+                      onClick={openRenamePreview}
+                      disabled={renameApplying}
+                      title="Preview artist file renames"
+                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                    >
+                      Rename
+                    </Button>
+                  </OverflowItem>
+
+                  <OverflowItem id="retag-files" priority={0}>
+                    <Button
+                      appearance="subtle"
+                      icon={retagApplying ? <Spinner size="tiny" /> : <Info24Regular />}
+                      onClick={openRetagPreview}
+                      disabled={retagApplying}
+                      title="Preview artist metadata tag changes"
+                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                    >
+                      Tags
                     </Button>
                   </OverflowItem>
 

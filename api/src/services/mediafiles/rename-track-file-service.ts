@@ -94,20 +94,16 @@ function moveFileCrossDevice(sourcePath: string, destPath: string) {
   }
 }
 
-export class RenameTrackFileService {
-  private static getRenameRows(options: RenameScopeOptions = {}, includePaging = true): RenameLibraryFileRow[] {
-    const limit = options.limit ?? 200;
-    const offset = options.offset ?? 0;
+function buildRenameFilters(options: RenameScopeOptions = {}): { where: string[]; params: any[] } {
+  const where: string[] = [];
+  const params: any[] = [];
 
-    const where: string[] = [];
-    const params: any[] = [];
-
-    if (options.artistId) {
-      where.push("lf.artist_id = ?");
-      params.push(options.artistId);
-    }
-    if (options.albumId) {
-      where.push(`(
+  if (options.artistId) {
+    where.push("lf.artist_id = ?");
+    params.push(options.artistId);
+  }
+  if (options.albumId) {
+    where.push(`(
         lf.canonical_release_group_mbid = ?
         OR lf.canonical_release_mbid = ?
         OR EXISTS (
@@ -119,19 +115,28 @@ export class RenameTrackFileService {
             AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
         )
       )`);
-      params.push(options.albumId, options.albumId, options.albumId, options.albumId);
+    params.push(options.albumId, options.albumId, options.albumId, options.albumId);
+  }
+  if (options.libraryRoot) {
+    const rootValues = getLibraryRootFilterValues(options.libraryRoot);
+    if (rootValues.length > 0) {
+      where.push(`lf.library_root IN (${rootValues.map(() => "?").join(",")})`);
+      params.push(...rootValues);
     }
-    if (options.libraryRoot) {
-      const rootValues = getLibraryRootFilterValues(options.libraryRoot);
-      if (rootValues.length > 0) {
-        where.push(`lf.library_root IN (${rootValues.map(() => "?").join(",")})`);
-        params.push(...rootValues);
-      }
-    }
-    if (options.fileTypes && options.fileTypes.length > 0) {
-      where.push(`lf.file_type IN (${options.fileTypes.map(() => "?").join(",")})`);
-      params.push(...options.fileTypes);
-    }
+  }
+  if (options.fileTypes && options.fileTypes.length > 0) {
+    where.push(`lf.file_type IN (${options.fileTypes.map(() => "?").join(",")})`);
+    params.push(...options.fileTypes);
+  }
+
+  return { where, params };
+}
+
+export class RenameTrackFileService {
+  private static getRenameRows(options: RenameScopeOptions = {}, includePaging = true): RenameLibraryFileRow[] {
+    const limit = options.limit ?? 200;
+    const offset = options.offset ?? 0;
+    const { where, params } = buildRenameFilters(options);
 
     const sql = `
       SELECT id, artist_id, album_id, media_id,
@@ -184,6 +189,36 @@ export class RenameTrackFileService {
     }
 
     return db.prepare(sql).all(...params) as RenameLibraryFileRow[];
+  }
+
+  private static getRenameCandidateCount(options: RenameScopeOptions = {}): number {
+    const { where, params } = buildRenameFilters(options);
+    const sql = `
+      SELECT COUNT(*) AS count
+      FROM (
+        SELECT artist_id, canonical_release_group_mbid, canonical_release_mbid, provider_entity_type, provider_id, library_root, file_type
+        FROM TrackFiles
+
+        UNION ALL
+
+        SELECT artist_id, canonical_release_group_mbid, canonical_release_mbid, provider_entity_type, provider_id, library_root, file_type
+        FROM MetadataFiles
+
+        UNION ALL
+
+        SELECT artist_id, canonical_release_group_mbid, canonical_release_mbid, provider_entity_type, provider_id, library_root, file_type
+        FROM ExtraFiles
+
+        UNION ALL
+
+        SELECT artist_id, canonical_release_group_mbid, canonical_release_mbid, provider_entity_type, provider_id, library_root, 'lyrics' AS file_type
+        FROM LyricFiles
+      ) lf
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    `;
+
+    const row = db.prepare(sql).get(...params) as { count?: number } | undefined;
+    return Number(row?.count || 0);
   }
 
   private static evaluateRenameRows(rows: RenameLibraryFileRow[]): RenamePreviewItem[] {
@@ -291,11 +326,15 @@ export class RenameTrackFileService {
   }
 
   static getRenameStatus(options: RenameScopeOptions = {}, sampleLimit = 10): RenameStatusSummary {
-    const results = this.evaluateRenameRows(this.getRenameRows(options, false));
+    const total = this.getRenameCandidateCount(options);
+    const scanLimit = Math.max(1, Math.min(1000, options.limit ?? 25));
+    const results = this.evaluateRenameRows(this.getRenameRows({ ...options, limit: scanLimit, offset: 0 }, true));
     const actionable = results.filter((item) => item.needs_rename || item.conflict || item.missing);
 
     return {
-      total: results.length,
+      total,
+      scanned: results.length,
+      limited: total > results.length,
       renameNeeded: results.filter((item) => item.needs_rename).length,
       conflicts: results.filter((item) => item.conflict).length,
       missing: results.filter((item) => item.missing).length,

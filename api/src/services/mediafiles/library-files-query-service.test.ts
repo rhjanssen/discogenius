@@ -110,3 +110,45 @@ test("library file listing reads source quality from canonical ProviderItems wit
   assert.equal(result.items[0].qualityChangeWanted, false);
   assert.equal(result.items[0].qualityChangeDirection, "none");
 });
+
+test("library file listing resolves downloaded videos by canonical recording row id", () => {
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)")
+    .run("artist-local", "Canonical Artist", "artist-mbid", 1);
+  const artistMetadata = db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+    RETURNING id
+  `).get("artist-mbid", "Canonical Artist") as { id: number };
+  db.prepare(`
+    INSERT INTO Recordings (id, artist_metadata_id, artist_mbid, title, is_video)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(501, artistMetadata.id, "artist-mbid", "Canonical Video", 1);
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, recording_id, provider, provider_entity_type, provider_id,
+      library_slot, file_path, relative_path, library_root, filename, extension,
+      file_type, quality, codec
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-local",
+    501,
+    "tidal",
+    "video",
+    "provider-video-1",
+    "video",
+    "C:/Videos/Canonical Artist/Canonical Video.mp4",
+    "Canonical Artist/Canonical Video.mp4",
+    "C:/Videos",
+    "Canonical Video.mp4",
+    "mp4",
+    "video",
+    "FHD",
+    "h264",
+  );
+
+  const result = listLibraryFiles({ mediaId: "501" });
+
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].file_type, "video");
+  assert.equal(result.items[0].media_id, "provider-video-1");
+});

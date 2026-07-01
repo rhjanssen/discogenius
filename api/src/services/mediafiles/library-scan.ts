@@ -28,6 +28,7 @@ import { createCooperativeBatcher, yieldToEventLoop } from "../../utils/concurre
 
 const MEDIA_EXTENSIONS = new Set([
     '.flac', '.alac', '.wav', '.aiff', '.mp3', '.m4a', '.aac', '.ogg', '.opus', '.wma',
+    '.ape', '.mp2',
     '.mp4', '.m4v', '.mkv', '.mov', '.avi', '.ts', '.webm'
 ]);
 
@@ -1240,7 +1241,7 @@ export class DiskScanService {
         }
 
         // Audio files
-        const audioExtensions = new Set([".flac", ".m4a", ".mp3", ".aac", ".wav", ".ogg", ".opus", ".aif", ".aiff"]);
+        const audioExtensions = new Set([".flac", ".m4a", ".mp3", ".aac", ".wav", ".ogg", ".opus", ".aif", ".aiff", ".wma", ".ape", ".mp2"]);
         if (audioExtensions.has(ext)) {
             // Try to match by provider ID in filename
             const mediaId = this.findMediaIdByStem(stem, artistId);

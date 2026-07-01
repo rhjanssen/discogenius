@@ -876,6 +876,7 @@ class ApiClient {
     libraryRoot?: string;
     fileTypes?: string[];
     sampleLimit?: number;
+    scanLimit?: number;
   }) {
     const queryParams = new URLSearchParams();
     if (params?.artistId) queryParams.set('artistId', params.artistId);
@@ -883,6 +884,7 @@ class ApiClient {
     if (params?.libraryRoot) queryParams.set('libraryRoot', params.libraryRoot);
     if (params?.fileTypes?.length) queryParams.set('fileTypes', params.fileTypes.join(','));
     if (params?.sampleLimit) queryParams.set('sampleLimit', params.sampleLimit.toString());
+    if (params?.scanLimit) queryParams.set('scanLimit', params.scanLimit.toString());
     const query = queryParams.toString();
     return this.request(`/mediaFile/rename/status${query ? `?${query}` : ''}`);
   }
@@ -922,11 +924,13 @@ class ApiClient {
     artistId?: string;
     albumId?: string;
     sampleLimit?: number;
+    scanLimit?: number;
   }) {
     const queryParams = new URLSearchParams();
     if (params?.artistId) queryParams.set('artistId', params.artistId);
     if (params?.albumId) queryParams.set('albumId', params.albumId);
     if (params?.sampleLimit) queryParams.set('sampleLimit', params.sampleLimit.toString());
+    if (params?.scanLimit) queryParams.set('scanLimit', params.scanLimit.toString());
     const query = queryParams.toString();
     return this.request(`/retag/status${query ? `?${query}` : ''}`);
   }

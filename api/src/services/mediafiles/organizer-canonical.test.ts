@@ -10,14 +10,17 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let organizerModule: typeof import("./organizer.js");
+let configModule: typeof import("../config/config.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   organizerModule = await import("./organizer.js");
+  configModule = await import("../config/config.js");
 });
 
 beforeEach(() => {
+  dbModule.db.prepare("DELETE FROM MetadataFiles").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
@@ -25,6 +28,14 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
+
+  const config = configModule.readConfig();
+  config.metadata.save_album_cover = true;
+  config.metadata.save_artist_picture = true;
+  config.metadata.save_video_thumbnail = true;
+  config.metadata.save_nfo = true;
+  config.metadata.save_lyrics = true;
+  configModule.writeConfig(config);
 });
 
 after(() => {
@@ -91,4 +102,120 @@ test("organizer resolves exact provider track ids to their linked canonical trac
   assert.equal(row?.track_number, 2);
   assert.equal(row?.volume_number, 1);
   assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
+});
+
+test("metadata pruning removes artist pictures without legacy media_id column", async () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Canonical Artist");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-local", "Canonical Artist", "artist-mbid");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("release-group-1", "artist-mbid", "Canonical Album");
+
+  dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension,
+      type, file_type, provider_entity_type, canonical_artist_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-local",
+    "Canonical Artist/folder.jpg",
+    path.join(tempDir, "Canonical Artist", "folder.jpg"),
+    tempDir,
+    "jpg",
+    "cover",
+    "cover",
+    "artist",
+    "artist-mbid",
+  );
+  dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension,
+      type, file_type, canonical_artist_mbid, canonical_release_group_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-local",
+    "Canonical Artist/Canonical Album/cover.jpg",
+    path.join(tempDir, "Canonical Artist", "Canonical Album", "cover.jpg"),
+    tempDir,
+    "jpg",
+    "cover",
+    "cover",
+    "artist-mbid",
+    "release-group-1",
+  );
+
+  const config = configModule.readConfig();
+  config.metadata.save_artist_picture = false;
+  configModule.writeConfig(config);
+
+  await organizerModule.OrganizerService.pruneDisabledMetadata();
+
+  const remaining = dbModule.db.prepare(`
+    SELECT file_path
+    FROM MetadataFiles
+    ORDER BY file_path ASC
+  `).all() as Array<{ file_path: string }>;
+
+  assert.equal(remaining.length, 1);
+  assert.match(remaining[0].file_path, /cover\.jpg$/);
+});
+
+test("singleton sidecar relocation uses clean metadata identity columns", () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Canonical Artist");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-local", "Canonical Artist", "artist-mbid");
+
+  const oldDir = path.join(tempDir, "old");
+  const newDir = path.join(tempDir, "new");
+  fs.mkdirSync(oldDir, { recursive: true });
+  fs.mkdirSync(newDir, { recursive: true });
+  const oldPath = path.join(oldDir, "cover.jpg");
+  const newPath = path.join(newDir, "cover.jpg");
+  fs.writeFileSync(oldPath, "cover");
+
+  dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension,
+      type, file_type, provider, provider_entity_type, provider_id, library_slot
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "artist-local",
+    "old/cover.jpg",
+    oldPath,
+    tempDir,
+    "jpg",
+    "cover",
+    "cover",
+    "tidal",
+    "album",
+    "provider-album-1",
+    "stereo",
+  );
+
+  (organizerModule.OrganizerService as any).relocateSingletonSidecar({
+    artistId: "artist-local",
+    albumId: "provider-album-1",
+    expectedPath: newPath,
+    libraryRoot: tempDir,
+    fileType: "cover",
+  });
+
+  assert.equal(fs.existsSync(newPath), true);
+  assert.equal(fs.existsSync(oldPath), false);
+  const rows = dbModule.db.prepare(`
+    SELECT provider_id, canonical_release_group_mbid, canonical_release_mbid, file_path
+    FROM MetadataFiles
+    WHERE file_type = 'cover'
+  `).all() as Array<{
+    provider_id: string | null;
+    canonical_release_group_mbid: string | null;
+    canonical_release_mbid: string | null;
+    file_path: string;
+  }>;
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].provider_id, "provider-album-1");
+  assert.equal(rows[0].file_path, newPath);
 });

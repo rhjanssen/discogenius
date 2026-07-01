@@ -129,8 +129,8 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
       recording.cover_image_url AS cover_art_url,
       provider_item.provider_url AS url,
       NULL AS path,
-      CAST(COALESCE(recording.artist_metadata_id, artist.id) AS TEXT) AS artist_id,
-      artist.name AS artist_name,
+      CAST(COALESCE(managed_artist.id, artist.mbid, recording.artist_mbid, recording.artist_metadata_id, artist.id) AS TEXT) AS artist_id,
+      COALESCE(managed_artist.name, artist.name) AS artist_name,
       COALESCE(recording.monitored, 0) AS monitored,
       COALESCE(recording.monitored_lock, 0) AS monitored_lock,
       recording.updated_at AS created_at,
@@ -153,6 +153,9 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
     LEFT JOIN ArtistMetadata artist
       ON artist.id = recording.artist_metadata_id
       OR (recording.artist_mbid IS NOT NULL AND artist.mbid = recording.artist_mbid)
+    LEFT JOIN Artists managed_artist
+      ON recording.artist_mbid IS NOT NULL
+      AND managed_artist.mbid = recording.artist_mbid
     LEFT JOIN ProviderItems provider_item
       ON provider_item.rowid = (
         SELECT candidate.rowid

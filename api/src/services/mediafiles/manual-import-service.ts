@@ -11,6 +11,14 @@ import {
     resolveImportedLibraryFileId,
     type ImportedDirectoryMapping,
 } from "./import-finalize-service.js";
+import type { MetadataConfig } from "../config/config.js";
+
+// Manually-imported files are a user's own pre-existing library files, not a
+// fresh Discogenius download (Lidarr's "not a new download" case) — only
+// tag them when the policy explicitly asks for ALL files, not just new ones.
+export function shouldTagManuallyImportedFiles(config: MetadataConfig): boolean {
+    return config.write_audio_tags_policy === "all_files";
+}
 
 export class ManualImportService {
     async bulkImportUnmapped(items: { id: number, providerId: string }[]): Promise<void> {
@@ -501,6 +509,22 @@ export class ManualImportService {
                 dirMappings: videoDirMappings,
                 imageFileType: "video_thumbnail",
             });
+        }
+
+        // ── Phase 4: Tag rules for pre-existing files, if the policy asks
+        // for ALL files (not just Discogenius's own downloads). Video is
+        // excluded — AudioTagService only handles file_type = 'track' rows.
+        if (audioInsertedIds.length > 0) {
+            const { getConfigSection } = await import("../config/config.js");
+            const metadataConfig = getConfigSection("metadata");
+            if (shouldTagManuallyImportedFiles(metadataConfig)) {
+                try {
+                    const { AudioTagService } = await import("./audio-tag-service.js");
+                    await AudioTagService.apply(audioInsertedIds);
+                } catch (error) {
+                    console.warn("[ManualImport] Failed to apply audio tag rules:", error);
+                }
+            }
         }
     }
 }

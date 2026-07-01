@@ -21,6 +21,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
+  dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
@@ -35,6 +36,10 @@ test("video list and detail use canonical video recordings with provider offers"
     VALUES ('artist-mbid', 'Video Artist')
     RETURNING id
   `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name, picture, cover_image_url)
+    VALUES ('artist-mbid', 'artist-mbid', 'Video Artist', '/media-cover/artist-mbid/poster.jpg', '/media-cover/artist-mbid/fanart.jpg')
+  `).run();
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -65,6 +70,7 @@ test("video list and detail use canonical video recordings with provider offers"
   assert.equal(list.total, 1);
   assert.equal(list.items[0]?.id, String(recording.id));
   assert.equal(list.items[0]?.title, "Canonical Video");
+  assert.equal(list.items[0]?.artist_id, "artist-mbid");
   assert.equal(list.items[0]?.artist_name, "Video Artist");
   assert.equal(list.items[0]?.quality, "FHD");
   assert.equal(list.items[0]?.cover, "canonical-cover");
@@ -75,6 +81,7 @@ test("video list and detail use canonical video recordings with provider offers"
 
   assert.equal(detail?.id, String(recording.id));
   assert.equal(detail?.title, "Canonical Video");
+  assert.equal(detail?.artist_id, "artist-mbid");
   assert.equal(detail?.duration, 215);
   assert.equal(detail?.cover_art_url, `/media-cover/Videos/${recording.id}/cover.jpg`);
 });

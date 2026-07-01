@@ -191,3 +191,90 @@ test("buildAudioTagWriteMap maps tags correctly for M4A (.m4a)", () => {
     "----:com.apple.iTunes:MusicBrainz Album Release Country": "US",
   });
 });
+
+test("buildAudioTagWriteMap maps .opus like FLAC/Vorbis (Ogg-container Vorbis comments)", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "musicbrainz_recordingid",
+      label: "MusicBrainz Recording ID",
+      ffmpegKey: "musicbrainz_recordingid",
+      targetValue: "rec-id",
+    },
+    {
+      key: "release_type",
+      label: "Release Type",
+      ffmpegKey: "release_type",
+      targetValue: "album; compilation",
+    },
+    {
+      key: "release_country",
+      label: "Release Country",
+      ffmpegKey: "release_country",
+      targetValue: "US",
+    }
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".opus"), {
+    MUSICBRAINZ_TRACKID: "rec-id",
+    RELEASETYPE: "album; compilation",
+    RELEASECOUNTRY: "US",
+  });
+});
+
+test("buildAudioTagWriteMap maps tags correctly for WMA/ASF (.wma)", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "musicbrainz_recordingid",
+      label: "MusicBrainz Recording ID",
+      ffmpegKey: "musicbrainz_recordingid",
+      targetValue: "rec-id",
+    },
+    {
+      key: "release_type",
+      label: "Release Type",
+      ffmpegKey: "release_type",
+      targetValue: "album; compilation",
+    },
+    {
+      key: "release_country",
+      label: "Release Country",
+      ffmpegKey: "release_country",
+      targetValue: "US",
+    }
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".wma"), {
+    "MusicBrainz/Track Id": "rec-id",
+    "MusicBrainz/Album Type": "album; compilation",
+    "MusicBrainz/Album Release Country": "US",
+  });
+});
+
+test("buildAudioTagWriteMap maps tags correctly for APE (.ape)", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "musicbrainz_recordingid",
+      label: "MusicBrainz Recording ID",
+      ffmpegKey: "musicbrainz_recordingid",
+      targetValue: "rec-id",
+    },
+    {
+      key: "release_type",
+      label: "Release Type",
+      ffmpegKey: "release_type",
+      targetValue: "album; compilation",
+    },
+    {
+      key: "release_country",
+      label: "Release Country",
+      ffmpegKey: "release_country",
+      targetValue: "US",
+    }
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".ape"), {
+    MUSICBRAINZ_TRACKID: "rec-id",
+    RELEASETYPE: "album; compilation",
+    RELEASECOUNTRY: "US",
+  });
+});

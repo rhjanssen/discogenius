@@ -924,8 +924,8 @@ export class ArtistQueryService {
           FROM ReleaseGroupSlots monitored_slot
           WHERE monitored_slot.release_group_mbid = release_group.mbid
             AND monitored_slot.monitored = 1
-        ) THEN 1 ELSE 0 END AS monitor,
-        COALESCE(selected_slot.monitored_lock, 0) AS monitor_lock,
+        ) THEN 1 ELSE 0 END AS is_monitored,
+        COALESCE(selected_slot.monitored_lock, 0) AS monitored_lock,
         COALESCE(artist_metadata.popularity, 0) AS popularity,
         release_group.title AS album_title,
         provider_album.asset_id AS album_cover,

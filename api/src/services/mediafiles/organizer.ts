@@ -774,7 +774,18 @@ export class OrganizerService {
       metadataSelectors.push("file_type = 'video_cover'");
     }
     if (!config.save_artist_picture) {
-      metadataSelectors.push("file_type = 'cover' AND album_id IS NULL AND media_id IS NULL");
+      metadataSelectors.push(`
+        file_type = 'cover'
+        AND canonical_release_group_mbid IS NULL
+        AND canonical_release_mbid IS NULL
+        AND canonical_track_mbid IS NULL
+        AND canonical_recording_mbid IS NULL
+        AND track_file_id IS NULL
+        AND (
+          provider_entity_type IS NULL
+          OR provider_entity_type = 'artist'
+        )
+      `);
     }
     if (!config.save_nfo) metadataSelectors.push("file_type = 'nfo'");
     if (!config.save_video_thumbnail) metadataSelectors.push("file_type = 'video_thumbnail'");
@@ -1162,29 +1173,40 @@ export class OrganizerService {
     namingTemplate?: string | null;
   }): string {
     const normalizedExpectedPath = this.normalizeResolvedPath(params.expectedPath);
-    // Cover/video_cover/nfo singleton sidecars live in MetadataFiles (keyed by
-    // album_id/media_id), not TrackFiles — which only holds track/video media.
+    // Cover/video_cover/nfo singleton sidecars live in MetadataFiles. The clean
+    // schema keys them by canonical release ids or provider_id, never by the
+    // retired album_id/media_id shadow columns.
+    const slotValue = "stereo";
     const scopedRows = params.albumId
       ? db.prepare(`
         SELECT id, file_path, library_root
         FROM MetadataFiles
-        WHERE artist_id = ?
-          AND album_id = ?
-          AND media_id IS NULL
+        WHERE (
+            canonical_release_group_mbid = ?
+            OR canonical_release_mbid = ?
+            OR provider_id = ?
+          )
+          AND canonical_track_mbid IS NULL
+          AND canonical_recording_mbid IS NULL
+          AND library_slot = ?
           AND COALESCE(library_root, '') = COALESCE(?, '')
           AND file_type = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, last_updated DESC, id DESC
-      `).all(params.artistId, params.albumId, params.libraryRoot, params.fileType, params.expectedPath)
+      `).all(params.albumId, params.albumId, params.albumId, slotValue, params.libraryRoot, params.fileType, params.expectedPath)
       : db.prepare(`
         SELECT id, file_path, library_root
         FROM MetadataFiles
         WHERE artist_id = ?
-          AND album_id IS NULL
-          AND media_id IS NULL
+          AND canonical_release_group_mbid IS NULL
+          AND canonical_release_mbid IS NULL
+          AND canonical_track_mbid IS NULL
+          AND canonical_recording_mbid IS NULL
+          AND provider_id IS NULL
+          AND library_slot = ?
           AND COALESCE(library_root, '') = COALESCE(?, '')
           AND file_type = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, last_updated DESC, id DESC
-      `).all(params.artistId, params.libraryRoot, params.fileType, params.expectedPath);
+      `).all(params.artistId, slotValue, params.libraryRoot, params.fileType, params.expectedPath);
 
     let hasExpectedSidecar = fs.existsSync(params.expectedPath);
 
@@ -1238,23 +1260,32 @@ export class OrganizerService {
       if (params.albumId) {
         db.prepare(`
           DELETE FROM MetadataFiles
-          WHERE artist_id = ?
-            AND album_id = ?
-            AND media_id IS NULL
+          WHERE (
+              canonical_release_group_mbid = ?
+              OR canonical_release_mbid = ?
+              OR provider_id = ?
+            )
+            AND canonical_track_mbid IS NULL
+            AND canonical_recording_mbid IS NULL
+            AND library_slot = ?
             AND COALESCE(library_root, '') = COALESCE(?, '')
             AND file_type = ?
             AND file_path != ?
-        `).run(params.artistId, params.albumId, params.libraryRoot, params.fileType, params.expectedPath);
+        `).run(params.albumId, params.albumId, params.albumId, slotValue, params.libraryRoot, params.fileType, params.expectedPath);
       } else {
         db.prepare(`
           DELETE FROM MetadataFiles
           WHERE artist_id = ?
-            AND album_id IS NULL
-            AND media_id IS NULL
+            AND canonical_release_group_mbid IS NULL
+            AND canonical_release_mbid IS NULL
+            AND canonical_track_mbid IS NULL
+            AND canonical_recording_mbid IS NULL
+            AND provider_id IS NULL
+            AND library_slot = ?
             AND COALESCE(library_root, '') = COALESCE(?, '')
             AND file_type = ?
             AND file_path != ?
-        `).run(params.artistId, params.libraryRoot, params.fileType, params.expectedPath);
+        `).run(params.artistId, slotValue, params.libraryRoot, params.fileType, params.expectedPath);
       }
     }
 

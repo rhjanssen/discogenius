@@ -261,7 +261,8 @@ const VideoPage = () => {
         refetchOnWindowFocus: false,
     });
 
-    // We fetch artist data to get the profile picture since it might not be in the video response
+    // Keep the artist chip aligned with AlbumPage: resolve the artist image from
+    // the canonical artist payload, falling back from primary picture to cover.
     const { data: artistData } = useQuery<Artist | null>({
         queryKey: ["artist", video?.artist_id],
         queryFn: () => api.getArtist<Artist>(video!.artist_id!).catch(() => null),
@@ -362,7 +363,7 @@ const VideoPage = () => {
         ? api.getStreamUrl(videoFile.id)
         : (remoteStreamUrl || '');
 
-    const artistPicUrl = renderableArtworkUrl(artistData?.picture);
+    const artistPicUrl = renderableArtworkUrl(artistData?.picture || artistData?.cover_image_url);
 
     useEffect(() => {
         const videoElement = videoRef.current;

@@ -130,11 +130,29 @@ transitional/provider shadows where they no longer pay for themselves.
   - Added 5 tests to `naming.test.ts` (37 total, was 32): reserved-name
     sanitization (with/without extension, anchor-doesn't-over-match), and
     the three new tokens (present + empty-fallback cases).
-- pending: Port/review metadata tag writing against Lidarr's implementation
-  instead of growing a Discogenius-only tagging model. Keep MusicBrainz tags and
-  standard media tags Lidarr-compatible first; add Discogenius-only provider or
-  streaming-quality tags only as optional extensions that do not replace the
-  canonical MusicBrainz tag set.
+- done (2026-07-01): Port/review metadata tag writing against Lidarr's
+  implementation. Direct comparison with Lidarr's `AudioTagService` confirmed
+  Discogenius already writes the core Lidarr-compatible tag set: standard media
+  tags, MusicBrainz artist/release/track/recording ids, release metadata,
+  ReplayGain, no-op diff detection, and full-scrub rewrite behavior. Closed the
+  verified gaps instead of replacing the working path wholesale:
+  - Fixed `write_audio_tags_policy = "all_files"` for manual imports. Existing
+    provider downloads and explicit retag commands were already correctly
+    tagged; manually imported pre-existing files now get `AudioTagService.apply`
+    only under `all_files`, preserving Lidarr's `new_files` vs `all_files`
+    distinction.
+  - Extended format coverage for imported/downloaded files beyond the current
+    TIDAL happy path: `.opus` uses the Xiph/Vorbis-comment mapping, `.wma` uses
+    ASF-style field names, `.ape` is recognized but skipped for writes when
+    ffmpeg cannot mux it, and `.ape`/`.mp2` are accepted by library scanning so
+    old imported libraries are not silently ignored.
+  - Investigated Lidarr's `RemoveMusicBrainzTags`: no production caller or API
+    endpoint exists in Lidarr, only a unit test, so it remains intentionally out
+    of scope unless a real unmap/remap workflow needs it later.
+  - Kept the ffmpeg writer. Current retag work runs through background commands
+    and no measured bottleneck shows ffmpeg process startup as the limiting
+    factor; if future large-library measurements prove otherwise, revisit only
+    the tag-write backend as a targeted performance task.
 
 ## 2.1.0 - Settings, Provider UX, And General Artist Import
 
@@ -518,10 +536,11 @@ area.
   real. The UI should distinguish default provider, enabled providers, provider
   capability gaps, and per-library-type availability without duplicating raw
   provider config fields.
-- pending: Simplify metadata embedding settings to match Lidarr's mental model:
-  one main "Embed metadata tags" toggle backed by the tag-write policy, with
-  separate sidecar toggles for NFO, artwork, lyrics, video thumbnails, and
-  ReplayGain/fingerprinting only where they are genuinely independent.
+- done (2026-07-01): Simplified metadata embedding settings to match Lidarr's
+  mental model: one main audio-tag writing control backed by
+  `write_audio_tags_policy`, separate sidecar sections for artwork/NFO/lyrics/
+  video thumbnails, and ReplayGain/fingerprinting kept as independent advanced
+  behavior instead of being mixed into provider or sidecar settings.
   - DECIDED (Robert, 2026-06-25) — fold these into the embedding rework:
     - done (2026-07-01): Metadata tag writing now exposes the Lidarr-style
       policy directly in Settings: off, new downloads only, or all files. Fresh
@@ -589,10 +608,26 @@ area.
         is redundant for identity; only run it to CROSS-CHECK files that lack
         clean provenance (user's pre-existing library files), Lidarr-style —
         AcoustID's returned recording ids scored against our expected recording.
-- pending: Review metadata tag-writing UX alongside the Lidarr port so settings
-  describe consumer-facing behavior rather than exposing implementation detail;
-  advanced provider/provenance tag extensions should live behind disclosure or
-  diagnostics, not in the main happy path.
+- done (2026-07-01): Reviewed metadata tag-writing UX alongside the Lidarr port.
+  Settings now describes consumer-facing behavior ("Write Audio Tags", "When To
+  Write Tags", "Sidecar Files", "Advanced Import Verification") instead of
+  exposing implementation details as the primary model. The Retag preview/action
+  copy now frames the operation as applying current tag-writing, ReplayGain, and
+  fingerprinting settings to tracked audio files.
+- done (2026-07-01): Kept the Settings retag status card cheap. The automatic
+  `/api/v1/retag/status` request now performs a bounded local scan and skips
+  external lyric lookups; the UI labels partial results as a fast scan. Full
+  metadata diffing remains behind the explicit preview/apply actions instead of
+  blocking Settings page load.
+- done (2026-07-01): Kept the Settings rename status card cheap and exposed the
+  same maintenance flow at artist/album scope. The automatic
+  `/api/v1/mediaFile/rename/status` request now counts the scoped candidate set
+  cheaply and evaluates only a bounded scan for rename/conflict/missing samples,
+  so Settings no longer has to diff every tracked file on load. `SettingsPage`,
+  `ArtistPage`, and `AlbumPage` now share the same Fluent preview dialogs for
+  rename and retag actions; artist and album detail pages expose scoped Rename
+  and Tags buttons that preview/apply only that artist or album instead of
+  forcing users back to the all-library Settings controls.
 - done (2026-07-01): Reviewed naming settings UX alongside the parser-gap
   closing work above. `SettingsPage.tsx`'s `NAMING_HELP` copy (field
   titles/descriptions for Artist Folder, Single/Multi-volume Album Track

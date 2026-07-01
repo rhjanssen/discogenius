@@ -25,8 +25,9 @@ router.get("/status", async (req, res) => {
     const artistId = req.query.artistId as string | undefined;
     const albumId = req.query.albumId as string | undefined;
     const sampleLimit = parseInt(req.query.sampleLimit as string, 10) || 10;
+    const scanLimit = parseInt(req.query.scanLimit as string, 10) || 25;
 
-    const summary = await AudioTagService.getStatus({ artistId, albumId }, sampleLimit);
+    const summary = await AudioTagService.getStatus({ artistId, albumId, limit: scanLimit }, sampleLimit);
     res.json(summary);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
