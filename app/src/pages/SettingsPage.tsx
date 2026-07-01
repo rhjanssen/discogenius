@@ -1264,13 +1264,6 @@ const SettingsPage = () => {
     ];
 
     const namingHelpMeta = namingHelpField ? NAMING_HELP[namingHelpField] : null;
-    const normalizedVideoThumbnailResolution = metadataSettings?.video_thumbnail_resolution === "origin"
-        ? "1080x720"
-        : metadataSettings?.video_thumbnail_resolution === "640x360"
-            ? "480x320"
-            : metadataSettings?.video_thumbnail_resolution === "1280x720"
-                ? "1080x720"
-                : metadataSettings?.video_thumbnail_resolution || "1080x720";
     const isScanInProgress = checkingNow || monitoringStatus.checking || monitoringConfig?.checkInProgress;
 
     const setNamingInputRef = (field: NamingFieldKey) => (element: HTMLInputElement | null) => {
@@ -1906,67 +1899,29 @@ const SettingsPage = () => {
                     className={styles.section}
                 >
                     <div className={styles.card}>
-                        <div className={styles.subsectionHeader}>
-                            <Text weight="semibold">Embedded Audio Tags</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Details written into your audio files so music players and library apps recognise them correctly.
-                            </Text>
-                        </div>
-                        {renderToggleRow({
-                            title: "Write Audio Tags",
-                            description: "Write track, artist, album, and release details into each audio file.",
-                            checked: writeAudioTagsPolicy !== "no",
-                            onChange: (checked) => {
-                                updateMetadataSettings({
-                                    write_audio_tags_policy: checked ? "new_files" : "no",
-                                });
-                                setRetagStatus(null);
-                                setRetagStatusInitialized(false);
-                            },
-                        })}
-
-                        {writeAudioTagsPolicy !== "no" && (
-                            <div className={styles.row}>
-                                <div className={styles.rowContent}>
-                                    <Text weight="semibold">When To Write Tags</Text>
-                                    <Text size={200} className={styles.mutedText}>
-                                        Tag only newly downloaded files, or all files including ones you import and already have.
-                                    </Text>
-                                </div>
-                                <Select
-                                    value={writeAudioTagsPolicy}
-                                    onChange={(_, data) => {
-                                        updateMetadataSettings({
-                                            write_audio_tags_policy: data.value as "new_files" | "all_files",
-                                        });
-                                        setRetagStatus(null);
-                                        setRetagStatusInitialized(false);
-                                    }}
-                                    className={styles.controlMedium}
-                                >
-                                    <option value="new_files">New downloads only</option>
-                                    <option value="all_files">All files</option>
-                                </Select>
+                        <div className={styles.row}>
+                            <div className={styles.rowContent}>
+                                <Text weight="semibold">Write Audio Tags</Text>
+                                <Text size={200} className={styles.mutedText}>
+                                    Write track, artist, album, and release details into your audio files.
+                                </Text>
                             </div>
-                        )}
-
-                        {renderToggleRow({
-                            title: "Write ReplayGain",
-                            description: "Add gain and peak tags when provider metadata includes ReplayGain values.",
-                            checked: metadataSettings?.embed_replaygain !== false,
-                            onChange: (checked) => {
-                                updateMetadataSettings({ embed_replaygain: checked });
-                                setRetagStatus(null);
-                                setRetagStatusInitialized(false);
-                            },
-                        })}
-
-                        {renderToggleRow({
-                            title: "Mark Explicit Tracks",
-                            description: "Add the explicit marker to track titles when the matched provider metadata marks a track as explicit.",
-                            checked: metadataSettings?.mark_explicit ?? false,
-                            onChange: (checked) => updateMetadataSettings({ mark_explicit: checked }),
-                        })}
+                            <Select
+                                value={writeAudioTagsPolicy}
+                                onChange={(_, data) => {
+                                    updateMetadataSettings({
+                                        write_audio_tags_policy: data.value as "no" | "new_files" | "all_files",
+                                    });
+                                    setRetagStatus(null);
+                                    setRetagStatusInitialized(false);
+                                }}
+                                className={styles.controlMedium}
+                            >
+                                <option value="no">Off</option>
+                                <option value="new_files">New downloads only</option>
+                                <option value="all_files">All files</option>
+                            </Select>
+                        </div>
 
                         {renderToggleRow({
                             title: "Embed Cover Art",
@@ -1989,59 +1944,16 @@ const SettingsPage = () => {
                             onChange: (checked) => updateMetadataSettings({ embed_album_review: checked }),
                         })}
 
-                        <div className={styles.subsectionHeader}>
-                            <Text weight="semibold">Sidecar Files</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Artwork, lyrics, and info files saved next to your media.
-                            </Text>
-                        </div>
-
                         {renderToggleRow({
                             title: "Save Album Covers",
                             description: "Save cover art in the album folder. Animated covers are kept when available.",
                             checked: metadataSettings?.save_album_cover === true,
                             onChange: (checked) => updateMetadataSettings({ save_album_cover: checked }),
                         })}
-                        {(metadataSettings?.save_album_cover || qualitySettings?.embed_cover !== false) && (
-                            <>
-                                {metadataSettings?.save_album_cover && (
-                                    <div className={styles.row}>
-                                        <div className={styles.rowContent}>
-                                            <Text weight="semibold">Filename</Text>
-                                        </div>
-                                        <Input
-                                            value={metadataSettings?.album_cover_name || 'cover.jpg'}
-                                            onChange={(_, data) => updateMetadataSettings({ album_cover_name: data.value })}
-                                            className={styles.controlMedium}
-                                        />
-                                    </div>
-                                )}
-                                <div className={styles.row}>
-                                    <div className={styles.rowContent}>
-                                        <Text weight="semibold">Cover Resolution</Text>
-                                        <Text size={200} className={styles.mutedText}>
-                                            Size used for artwork shown in the app. Saved cover files always use the original full resolution.
-                                        </Text>
-                                    </div>
-                                    <Select
-                                        value={metadataSettings?.album_cover_resolution?.toString() || 'origin'}
-                                        onChange={(_, data) => updateMetadataSettings({
-                                            album_cover_resolution: (data.value === 'origin' ? 'origin' : Number(data.value)) as any
-                                        })}
-                                        className={styles.controlMedium}
-                                    >
-                                        <option value="origin">Original</option>
-                                        <option value="1200">1200x1200</option>
-                                        <option value="500">500x500</option>
-                                        <option value="250">250x250</option>
-                                    </Select>
-                                </div>
-                            </>
-                        )}
 
                         {renderToggleRow({
-                            title: "Save Jellyfin / Kodi NFO Files",
-                            description: "Save NFO files alongside your media. Jellyfin and Kodi read these; most other apps ignore them.",
+                            title: "Save NFO Files",
+                            description: "Save the info files Jellyfin and Kodi read for extra details.",
                             checked: metadataSettings?.save_nfo === true,
                             onChange: (checked) => updateMetadataSettings({ save_nfo: checked }),
                         })}
@@ -2055,48 +1967,14 @@ const SettingsPage = () => {
 
                         {renderToggleRow({
                             title: "Save Artist Pictures",
-                            description: "Save artist artwork in the artist folder",
+                            description: "Save artist artwork in the artist folder.",
                             checked: metadataSettings?.save_artist_picture === true,
                             onChange: (checked) => updateMetadataSettings({ save_artist_picture: checked }),
                         })}
-                        {metadataSettings?.save_artist_picture && (
-                            <>
-                                <div className={styles.row}>
-                                    <div className={styles.rowContent}>
-                                        <Text weight="semibold">Filename</Text>
-                                    </div>
-                                    <Input
-                                        value={metadataSettings?.artist_picture_name || 'folder.jpg'}
-                                        onChange={(_, data) => updateMetadataSettings({ artist_picture_name: data.value })}
-                                        className={styles.controlMedium}
-                                    />
-                                </div>
-                                <div className={styles.row}>
-                                    <div className={styles.rowContent}>
-                                        <Text weight="semibold">Resolution</Text>
-                                        <Text size={200} className={styles.mutedText}>
-                                            The highest available resolution is used when a smaller one isn't found.
-                                        </Text>
-                                    </div>
-                                    <Select
-                                        value={metadataSettings?.artist_picture_resolution?.toString() || 'origin'}
-                                        onChange={(_, data) => updateMetadataSettings({
-                                            artist_picture_resolution: (data.value === 'origin' ? 'origin' : Number(data.value)) as any
-                                        })}
-                                        className={styles.controlMedium}
-                                    >
-                                        <option value="origin">Original</option>
-                                        <option value="500">500x500</option>
-                                        <option value="250">250x250</option>
-                                        <option value="750">750x750</option>
-                                    </Select>
-                                </div>
-                            </>
-                        )}
 
                         {renderToggleRow({
                             title: "Save Music Video Thumbnails",
-                            description: "Save a JPG thumbnail next to each video.",
+                            description: "Save a thumbnail image next to each video.",
                             checked: metadataSettings?.save_video_thumbnail === true,
                             onChange: (checked) => updateMetadataSettings({ save_video_thumbnail: checked }),
                         })}
@@ -2106,35 +1984,10 @@ const SettingsPage = () => {
                             checked: metadataSettings?.embed_video_thumbnail !== false,
                             onChange: (checked) => updateMetadataSettings({ embed_video_thumbnail: checked }),
                         })}
-                        {metadataSettings?.save_video_thumbnail && (
-                            <div className={styles.row}>
-                                <div className={styles.rowContent}>
-                                    <Text weight="semibold">Resolution</Text>
-                                </div>
-                                <Select
-                                    value={normalizedVideoThumbnailResolution}
-                                    onChange={(_, data) => updateMetadataSettings({
-                                        video_thumbnail_resolution: data.value as any
-                                    })}
-                                    className={styles.controlMedium}
-                                >
-                                    <option value="160x107">160x107</option>
-                                    <option value="480x320">480x320</option>
-                                    <option value="750x500">750x500</option>
-                                    <option value="1080x720">1080x720</option>
-                                </Select>
-                            </div>
-                        )}
 
-                        <div className={styles.subsectionHeader}>
-                            <Text weight="semibold">Advanced Import Verification</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Optional checks for imported files that can't be identified from their existing tags.
-                            </Text>
-                        </div>
                         {renderToggleRow({
-                            title: "Audio Fingerprinting",
-                            description: "Identify imported files by their audio fingerprint when their existing tags can't be trusted.",
+                            title: "Fingerprint Imported Files",
+                            description: "When you import files you already have, check their audio fingerprint to confirm the right track before tagging.",
                             checked: metadataSettings?.enable_fingerprinting === true,
                             onChange: (checked) => {
                                 updateMetadataSettings({ enable_fingerprinting: checked });

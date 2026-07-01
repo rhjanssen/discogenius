@@ -374,7 +374,7 @@ const useStyles = makeStyles({
 });
 
 const COLLAPSED_TOP_TRACK_COUNT = 5;
-const EXPANDED_TOP_TRACK_COUNT = 50;
+const EXPANDED_TOP_TRACK_COUNT = 100;
 const ARTIST_FILTER_STORAGE_PREFIX = "discogenius_artist_filters:";
 
 type ArtistPageFilterPrefs = {
@@ -1367,7 +1367,10 @@ const ArtistPage = () => {
       });
     });
 
-    // Sort album-type sections into canonical order
+    // Sort album-type sections into canonical order. Top Tracks always sits
+    // after every release section and before Videos, regardless of which
+    // release types the artist has (a release type not in this map used to tie
+    // with Top Tracks/Videos at 50 and could push Top Tracks above it).
     const sectionOrder: Record<string, number> = {
       'albums': 1,
       'eps': 2, 'ep': 2,
@@ -1378,11 +1381,13 @@ const ArtistPage = () => {
       'demos': 7, 'demo': 7,
       'remixes': 8, 'remix': 8,
     };
-    mods.sort((a, b) => {
-      const orderA = sectionOrder[a.title?.toLowerCase()] ?? 50;
-      const orderB = sectionOrder[b.title?.toLowerCase()] ?? 50;
-      return orderA - orderB;
-    });
+    const orderOf = (mod: any) => {
+      if (mod.type === 'VIDEO_LIST') return 100;
+      if (mod.type === 'TRACK_LIST') return 90;
+      // Every release-group section (known or not) sorts before Top Tracks.
+      return sectionOrder[mod.title?.toLowerCase()] ?? 50;
+    };
+    mods.sort((a, b) => orderOf(a) - orderOf(b));
 
     return mods;
   }, [pageData]);

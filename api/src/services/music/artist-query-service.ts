@@ -1003,7 +1003,7 @@ export class ArtistQueryService {
       WHERE track.release_mbid IN (SELECT mbid FROM artist_releases)
       GROUP BY track.mbid
       ORDER BY popularity DESC, release_date DESC, track.mbid ASC
-      LIMIT 24
+      LIMIT 100
     `).all(String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[];
 
         const releaseGroupDownloadStats = getReleaseGroupDownloadStatsMap(musicBrainzReleaseGroups.map((album) => album.mbid));
