@@ -122,12 +122,10 @@ class LibraryMetadataBackfillService {
                 const picPath = path.join(artistDir, picName);
                 if (!fs.existsSync(picPath)) {
                     try {
-                        const rawResolution = metadataConfig.artist_picture_resolution;
-                        const parsedResolution = rawResolution === "origin" ? "origin" : Number(rawResolution);
-                        const safeRes = parsedResolution === "origin" || Number.isFinite(parsedResolution)
-                            ? parsedResolution
-                            : 500;
-                        await downloadArtistPicture(artistId, safeRes as number | "origin", picPath);
+                        // Saved sidecar artwork always uses the highest available
+                        // resolution, independent of metadata.artist_picture_resolution
+                        // (which only caps the UI's cached display thumbnail).
+                        await downloadArtistPicture(artistId, "origin", picPath);
                         if (fs.existsSync(picPath)) {
                             this.upsertLibraryFile({
                                 artistId,
@@ -304,9 +302,12 @@ class LibraryMetadataBackfillService {
                     const coverPath = path.join(albumDir, coverName);
                     if (!fs.existsSync(coverPath)) {
                         try {
+                            // Saved sidecar artwork always uses the highest available
+                            // resolution, independent of metadata.album_cover_resolution
+                            // (which only caps the UI's cached display thumbnail).
                             await downloadAlbumCover(
                                 String(album.id),
-                                metadataConfig.album_cover_resolution as any,
+                                "origin",
                                 coverPath,
                             );
                             if (fs.existsSync(coverPath)) {
@@ -354,9 +355,12 @@ class LibraryMetadataBackfillService {
                         const videoCoverPath = path.join(albumDir, videoCoverName);
                         if (!fs.existsSync(videoCoverPath)) {
                             try {
+                                // Saved sidecar artwork always uses the highest available
+                                // resolution, independent of metadata.album_cover_resolution
+                                // (which only caps the UI's cached display thumbnail).
                                 await downloadAlbumVideoCover(
                                     String(album.video_cover),
-                                    metadataConfig.album_cover_resolution as any,
+                                    "origin",
                                     videoCoverPath,
                                 );
                                 if (fs.existsSync(videoCoverPath)) {

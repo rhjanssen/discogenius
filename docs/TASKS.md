@@ -108,7 +108,7 @@ this release.)
 
 ### Fresh-session context (validation status — read before assuming "done")
 
-- Work for 2.1.0 lives on git branch `2.1.0` (3 commits past main; 2.0.10 is
+- Work for 2.1.0 lives on git branch `2.1.0` (47+ commits past main; 2.0.10 is
   released on main). Check out that branch.
 - Import feature: backend + enqueue + `import-sources` are live-validated against
   TIDAL. The modal was browser-tested end-to-end through the TIDAL playlist
@@ -116,13 +116,17 @@ this release.)
   in background under worker load, and the resulting `ImportProviderArtists`
   command completed successfully.
 - Responsiveness under refresh load IS validated (15/15 enqueues, 64ms health).
-  Refresh THROUGHPUT: the diff-reconcile skip-unchanged write path HAS landed
-  (`content_hash` change-key on ArtistMetadata + Albums; syncArtist/
-  syncReleaseGroup skip rewriting unchanged rows — Lidarr's UpdateMany-only-
-  changed). This eliminates the re-upsert-everything cost on re-refresh. NOT yet
-  done: shrinking the per-row `data` blob to curated columns (the row-size half
-  of the write cost) — see the blob-consumer map under the schema section.
-  Live scale re-measurement against the 2.3GB DB is still pending.
+  Refresh THROUGHPUT: BOTH scale levers have landed — the diff-reconcile
+  skip-unchanged write path (`content_hash` change-key on ArtistMetadata +
+  Albums; syncArtist/syncReleaseGroup skip rewriting unchanged rows) AND the
+  row-SIZE reduction (fresh schema 34 drops the raw catalog `data` blobs in
+  favor of curated columns — see the schema section below for the full
+  blob-consumer migration map). Live scale re-measurement against a large
+  (multi-thousand-artist) library is still pending and needs the user's real
+  library data — not reproducible from a fresh/reset dev DB.
+- The Library track-table UI is unified: `LibraryTrackList.tsx` was merged
+  into `TrackList.tsx` (2026-07-01) and deleted — Library/Album/Artist all
+  render tracks through the one shared DataGrid-backed component now.
 - Line numbers in plans below drift — grep, don't trust them.
 
 ### General artist import (folded from 2.0.11)
@@ -503,10 +507,27 @@ area.
       user-facing plain/synced selector and retired `embed_synced_lyrics`
       config field were removed; providers still fall back to plain text when
       synced lyrics are unavailable.
-    - Cover images: for EMBEDDING + saving, always use the HIGHEST resolution
-      available from either the Servarr metadata server or the provider (TIDAL
-      album art = `origin` size; artist art = the provider's max). The UI may
-      keep serving smaller cached sizes; only the embed/save path forces max-res.
+    - done (2026-07-01): Cover images — for SAVING (the `cover.jpg`/`folder.jpg`
+      sidecar files organizer/backfill write into the library folder), always
+      request `"origin"` resolution from `resolveAlbumArtwork`/
+      `resolveArtistArtwork`/`downloadAlbumVideoCover`, independent of the
+      configured `metadata.album_cover_resolution` /
+      `artist_picture_resolution`. Those config values now affect ONLY the
+      cached `/media-cover/...` image `media-cover-service.ts` serves to the
+      UI (`configuredAlbumCoverResolution`/`configuredArtistPictureResolution`,
+      used as the last-resort provider-fallback size when no local/Servarr/
+      Cover Art Archive image is available — the earlier resolution branches
+      already cache/serve the source image at full size unconstrained).
+      Fixed at all 6 call sites across `organizer.ts` (both the
+      whole-album and per-track reorganize paths) and
+      `library-metadata-backfill.ts`.
+      EMBEDDING is a separate, already-satisfied case, not something to
+      "fix": `audio-tag-service.ts` has no image-embedding code at all —
+      cover embedding for provider downloads is fully delegated to tiddl
+      (`tiddl.ts` `syncTiddlSettings` writes `[metadata] cover = <bool>`,
+      an on/off toggle only; tiddl decides its own fetch resolution, out of
+      our control and not resolution-configurable from our side). No action
+      needed unless we later add our own in-house tag-embedding path.
     - AcoustID (RESEARCHED 2026-06-25, authoritative — see sources in chat):
       - Plex does NOT read embedded `ACOUSTID_*` tags — its sonic/fingerprint
         analysis RE-COMPUTES its own fingerprint server-side. So embedding

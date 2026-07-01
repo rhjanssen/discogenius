@@ -1812,12 +1812,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture && !fs.existsSync(artistPicPath)) {
-        const rawResolution = metadataConfig.artist_picture_resolution;
-        const parsedResolution = rawResolution === "origin" ? "origin" : Number(rawResolution);
-        const safeRes = parsedResolution === "origin" || Number.isFinite(parsedResolution)
-          ? parsedResolution
-          : 500;
-        await downloadArtistPicture(artistId, safeRes, artistPicPath);
+        // Saved sidecar artwork always uses the highest available resolution,
+        // independent of metadata.artist_picture_resolution (which only caps
+        // the UI's cached display thumbnail — see media-cover-service.ts).
+        await downloadArtistPicture(artistId, "origin", artistPicPath);
         if (fs.existsSync(artistPicPath)) {
           this.upsertLibraryFile({
             artistId,
@@ -1844,7 +1842,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_album_cover && !fs.existsSync(albumCoverPath)) {
-        await downloadAlbumCover(albumIds[0], metadataConfig.album_cover_resolution as any, albumCoverPath);
+        // Saved sidecar artwork always uses the highest available resolution,
+        // independent of metadata.album_cover_resolution (which only caps the
+        // UI's cached display thumbnail — see media-cover-service.ts).
+        await downloadAlbumCover(albumIds[0], "origin", albumCoverPath);
         if (fs.existsSync(albumCoverPath)) {
           this.upsertLibraryFile({
             artistId,
@@ -1872,7 +1873,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_album_cover && album.video_cover && !fs.existsSync(albumVideoCoverPath)) {
-        await downloadAlbumVideoCover(String(album.video_cover), metadataConfig.album_cover_resolution as any, albumVideoCoverPath);
+        // Saved sidecar artwork always uses the highest available resolution,
+        // independent of metadata.album_cover_resolution (which only caps the
+        // UI's cached display thumbnail — see media-cover-service.ts).
+        await downloadAlbumVideoCover(String(album.video_cover), "origin", albumVideoCoverPath);
         if (fs.existsSync(albumVideoCoverPath)) {
           this.upsertLibraryFile({
             artistId,
@@ -2205,12 +2209,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture && !fs.existsSync(artistPicPath)) {
-        const rawResolution = metadataConfig.artist_picture_resolution;
-        const parsedResolution = rawResolution === "origin" ? "origin" : Number(rawResolution);
-        const safeRes = parsedResolution === "origin" || Number.isFinite(parsedResolution)
-          ? parsedResolution
-          : 500;
-        await downloadArtistPicture(artistId, safeRes, artistPicPath);
+        // Saved sidecar artwork always uses the highest available resolution,
+        // independent of metadata.artist_picture_resolution (which only caps
+        // the UI's cached display thumbnail — see media-cover-service.ts).
+        await downloadArtistPicture(artistId, "origin", artistPicPath);
         if (fs.existsSync(artistPicPath)) {
           this.upsertLibraryFile({
             artistId,
@@ -2241,7 +2243,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_album_cover && !fs.existsSync(albumCoverPath)) {
-        await downloadAlbumCover(albumId, metadataConfig.album_cover_resolution as any, albumCoverPath);
+        // Saved sidecar artwork always uses the highest available resolution,
+        // independent of metadata.album_cover_resolution (which only caps the
+        // UI's cached display thumbnail — see media-cover-service.ts).
+        await downloadAlbumCover(albumId, "origin", albumCoverPath);
         if (fs.existsSync(albumCoverPath)) {
           this.upsertLibraryFile({
             artistId,
@@ -2269,7 +2274,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_album_cover && album.video_cover && !fs.existsSync(albumVideoCoverPath)) {
-        await downloadAlbumVideoCover(String(album.video_cover), metadataConfig.album_cover_resolution as any, albumVideoCoverPath);
+        // Saved sidecar artwork always uses the highest available resolution,
+        // independent of metadata.album_cover_resolution (which only caps the
+        // UI's cached display thumbnail — see media-cover-service.ts).
+        await downloadAlbumVideoCover(String(album.video_cover), "origin", albumVideoCoverPath);
         if (fs.existsSync(albumVideoCoverPath)) {
           this.upsertLibraryFile({
             artistId,
