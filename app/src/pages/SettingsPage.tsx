@@ -85,6 +85,7 @@ const ARTIST_NAMING_TOKENS: NamingToken[] = [
     { section: "Artist", token: "{Artist NameFirstCharacter}", example: "D" },
     { section: "Artist", token: "{Artist MbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
     { section: "Artist", token: "{Artist Disambiguation}", example: "French electronic music duo" },
+    { section: "Artist", token: "{Artist Genre}", example: "Electronic" },
     { section: "Artist", token: "{mbid-{Artist MbId}}", example: "{mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}" },
     { section: "Artist", token: "{Artist Id}", example: "8847" },
 ];
@@ -95,6 +96,8 @@ const ALBUM_NAMING_TOKENS: NamingToken[] = [
     { section: "Album", token: "{Album TitleThe}", example: "Discovery" },
     { section: "Album", token: "{Album CleanTitleThe}", example: "Discovery" },
     { section: "Album", token: "{Album Type}", example: "Album" },
+    { section: "Album", token: "{Album Disambiguation}", example: "limited edition" },
+    { section: "Album", token: "{Album Genre}", example: "Electronic" },
     { section: "Album", token: "{Album MbId}", example: "0ca7fd24-dc0f-4d16-a5f0-550ad6dd6e53" },
     { section: "Album", token: "{Release Group MbId}", example: "1d5f10c6-4d7f-4f94-b76f-2f61fb5c42f8" },
     { section: "Album", token: "{Album FullTitle}", example: "Discovery (Deluxe)" },

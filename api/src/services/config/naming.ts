@@ -8,12 +8,15 @@ export type NamingContext = {
   artistName: string;
   artistMbId?: string | null;
   artistDisambiguation?: string | null;
+  artistGenre?: string | null;
 
   albumTitle?: string | null;
   albumVersion?: string | null;
   albumFullTitle?: string | null;
   albumType?: string | null;
   albumMbId?: string | null;
+  albumDisambiguation?: string | null;
+  albumGenre?: string | null;
   releaseGroupMbId?: string | null;
   releaseYear?: string | null;
   explicit?: boolean | null;
@@ -52,6 +55,11 @@ const ScenifyReplaceChars = /\//g;
 const ScenifyRemoveChars = /(?<=\s)([,<>/\\;:'"|`~!@$%^*_=\-?])(?=\s)|([':?,])(?=(?:[sm]\s)|\s|$)|([()[\]{}])/gi;
 const FileNameCleanupRegex = /([- ._])\1+/g;
 const TrimSeparatorsRegex = /[- ._]+$/;
+// Windows-reserved device names break the filesystem when followed by an
+// extension (e.g. "con.flac"). Matches Lidarr's FileNameBuilder behavior:
+// only fires when the reserved word is immediately followed by a dot, so it
+// never mangles unrelated names like "Console" or "Prince".
+const ReservedDeviceNameRegex = /^(?:aux|com[1-9]|con|lpt[1-9]|nul|prn)\./i;
 
 function removeDiacritics(input: string): string {
   return (input || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -101,7 +109,8 @@ export function cleanPathSegment(segment: string): string {
   let result = cleanFileName(segment);
   result = result.replace(FileNameCleanupRegex, (match) => match[0]);
   result = result.replace(TrimSeparatorsRegex, "");
-  return result.trimStart().replace(/^[. ]+/, "").trimEnd();
+  result = result.trimStart().replace(/^[. ]+/, "").trimEnd();
+  return result.replace(ReservedDeviceNameRegex, (match) => `${match.slice(0, -1)}_.`);
 }
 
 function toCleanText(input: string): string {
@@ -177,11 +186,14 @@ function buildDerived(context: NamingContext) {
   const artistId = context.artistId || "";
   const artistMbId = context.artistMbId || "";
   const artistDisambiguation = context.artistDisambiguation || "";
+  const artistGenre = context.artistGenre || "";
 
   const albumTitle = context.albumTitle || "Unknown Album";
   const albumId = context.albumId || "";
   const albumType = context.albumType || "";
   const albumMbId = context.albumMbId || "";
+  const albumDisambiguation = context.albumDisambiguation || "";
+  const albumGenre = context.albumGenre || "";
   const releaseGroupMbId = context.releaseGroupMbId || "";
   const albumVersion = context.albumVersion ?? "";
   const albumFullTitle =
@@ -221,11 +233,14 @@ function buildDerived(context: NamingContext) {
     artistName,
     artistMbId,
     artistDisambiguation,
+    artistGenre,
     artistId,
     albumTitle,
     albumId,
     albumType,
     albumMbId,
+    albumDisambiguation,
+    albumGenre,
     releaseGroupMbId,
     albumVersion,
     albumFullTitle,
@@ -296,6 +311,9 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
     case "artistdisambiguation":
       baseValue = derived.artistDisambiguation;
       break;
+    case "artistgenre":
+      baseValue = derived.artistGenre;
+      break;
     case "artistid":
       baseValue = derived.artistId;
       break;
@@ -340,6 +358,12 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
       break;
     case "albumtype":
       baseValue = derived.albumType;
+      break;
+    case "albumdisambiguation":
+      baseValue = derived.albumDisambiguation;
+      break;
+    case "albumgenre":
+      baseValue = derived.albumGenre;
       break;
     case "albummbid":
       baseValue = derived.albumMbId;
@@ -620,6 +644,7 @@ const KNOWN_TOKEN_NAMES = new Set([
   "artistcleannamethe",
   "artistmbid",
   "artistdisambiguation",
+  "artistgenre",
   "artistid",
   "artistnamefirstcharacter",
   "albumtitle",
@@ -627,6 +652,8 @@ const KNOWN_TOKEN_NAMES = new Set([
   "albumtitlethe",
   "albumcleantitlethe",
   "albumtype",
+  "albumdisambiguation",
+  "albumgenre",
   "albummbid",
   "releasegroupmbid",
   "albumid",
@@ -783,12 +810,15 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     artistId: "4031487",
     artistMbId: "7808accb-6395-4b25-858c-678bbb73896b",
     artistDisambiguation: "English pop rock band",
+    artistGenre: "Alternative Rock",
     albumTitle: "Bad Blood",
     albumVersion: "The Extended Cut",
     albumFullTitle: "Bad Blood (The Extended Cut)",
     albumType: "album",
     albumId: "26065586",
     albumMbId: "a1a8c886-df06-44ec-b851-f76156a086cf",
+    albumDisambiguation: "extended cut",
+    albumGenre: "Pop Rock",
     releaseGroupMbId: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb",
     releaseYear: "2013",
     trackTitle: "Pompeii",

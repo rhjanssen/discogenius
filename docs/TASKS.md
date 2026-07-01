@@ -89,10 +89,47 @@ transitional/provider shadows where they no longer pay for themselves.
   provider-era `TrackFiles.album_id`/`TrackFiles.media_id` rows; the fresh
   schema no longer creates those `TrackFiles` columns. The sidecar identity audit
   is complete above.
-- pending: Port Lidarr's naming token parser/formatter model instead of growing
-  a Discogenius-only parser. Keep Discogenius extensions additive only, such as
-  provider name/id variables for users who want streaming-service provenance in
-  folder or file names.
+- done (2026-07-01): Ported Lidarr's naming token parser/formatter model.
+  Direct source comparison (`.ref_lidarr/src/NzbDrone.Core/Organizer/
+  FileNameBuilder.cs` vs `api/src/services/config/naming.ts`) found the
+  "port" was already ~90% done — same regex-based `{token}` approach, same
+  illegal-character sanitization map, same "The"-prefix transform, same
+  case-transform convention (all-lowercase/all-uppercase token name forces
+  output case), most of the token vocabulary, and provider tokens already
+  additive as this item asked. Closed the three verified remaining gaps:
+  - Reserved Windows device names (`aux`/`com1-9`/`con`/`lpt1-9`/`nul`/`prn`
+    followed by a dot, e.g. `con.flac` → `con_.flac`) now sanitized in
+    `cleanPathSegment`, using Lidarr's exact anchored regex so it can't
+    over-match names like "Console" or "Prince".
+  - Added `{Artist Genre}` / `{Album Genre}` tokens (first genre, matching
+    Lidarr's `Genres?.FirstOrDefault()`), reading the existing
+    `ArtistMetadata.genres` / `Albums.genres` JSON columns. Wired through
+    all 3 naming-context construction sites in `organizer.ts`
+    (`resolveCanonicalArtistForAlbum` now also selects/returns
+    `artistGenre`).
+  - Added `{Album Disambiguation}` token, reading `Albums.disambiguation`
+    (now selected by `getCanonicalAlbumMetadata()`, which previously
+    dropped it).
+  - Deliberately NOT ported (Lidarr concepts that don't map to
+    Discogenius's provider-download model): the Custom Formats system
+    (indexer/torrent-release scoring), scene "Release Group" naming +
+    Proper/Repack suffix (`{Provider Name}` already covers the analogous
+    need; no scene releases), `{Medium Name}`/`{Medium Format}`
+    physical-media tokens (Discogenius is always a digital download, so
+    this would be a constant value), `{Original Title}`/`{Original
+    Filename}` (no scene-release filenames to preserve), configurable
+    colon-replacement modes (Lidarr has 5; Discogenius hardcodes the
+    equivalent of Lidarr's default "Smart Replace" behavior), and Lidarr's
+    title-truncation/ellipsis system for extreme path lengths (real but
+    non-trivial — logged as a possible future item, not done now).
+  - `{Artist Genre}` support in the `artist_folder` template specifically
+    was also deferred: track/video templates get it via `organizer.ts`,
+    but artist-folder templates would need `artistGenre` threaded through
+    `ArtistFolderSeed` in `api/src/services/music/artist-paths.ts` and its
+    own call sites — separate, smaller follow-up if wanted.
+  - Added 5 tests to `naming.test.ts` (37 total, was 32): reserved-name
+    sanitization (with/without extension, anchor-doesn't-over-match), and
+    the three new tokens (present + empty-fallback cases).
 - pending: Port/review metadata tag writing against Lidarr's implementation
   instead of growing a Discogenius-only tagging model. Keep MusicBrainz tags and
   standard media tags Lidarr-compatible first; add Discogenius-only provider or
@@ -556,9 +593,16 @@ area.
   describe consumer-facing behavior rather than exposing implementation detail;
   advanced provider/provenance tag extensions should live behind disclosure or
   diagnostics, not in the main happy path.
-- pending: Review naming settings UX alongside the parser port so file/folder
-  variables, previews, and examples match Lidarr terminology and behavior, with
-  clearly separated Discogenius provider-token additions.
+- done (2026-07-01): Reviewed naming settings UX alongside the parser-gap
+  closing work above. `SettingsPage.tsx`'s `NAMING_HELP` copy (field
+  titles/descriptions for Artist Folder, Single/Multi-volume Album Track
+  Path, Video File) was already clear and appropriately adapted for a
+  digital-only library (using "volume" instead of Lidarr's CD-era "disc"
+  terminology) — no rewrite needed. Added the three new tokens to
+  `ARTIST_NAMING_TOKENS`/`ALBUM_NAMING_TOKENS` with example values so the
+  token picker documents them; Discogenius's provider-token additions
+  (`{Provider Name}`, `{Provider ArtistId}`, etc.) were already clearly
+  separated into their own `PROVIDER_NAMING_TOKENS` section.
 - done (2026-07-01): Added a dedicated System/Status page (Lidarr-style
   System → Status/Health), route `/system/status`, nav icon in `Layout.tsx`.
   Backend: new `collectHealthDiagnosticsSnapshot()`-backed route at

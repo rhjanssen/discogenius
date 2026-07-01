@@ -12,6 +12,8 @@ export type CanonicalAlbumMetadata = {
   popularity: number | null;
   reviewText: string | null;
   copyright: string | null;
+  disambiguation: string | null;
+  genres: string | null;
 };
 
 export function getCanonicalAlbumMetadata(input: {
@@ -36,7 +38,9 @@ export function getCanonicalAlbumMetadata(input: {
       release_group.video_cover AS video_cover,
       release_group.popularity AS popularity,
       release_group.review_text AS review_text,
-      release.copyright AS copyright
+      release.copyright AS copyright,
+      release_group.disambiguation AS disambiguation,
+      release_group.genres AS genres
     FROM Albums release_group
     LEFT JOIN AlbumReleases release
       ON release.release_group_mbid = release_group.mbid
@@ -55,6 +59,8 @@ export function getCanonicalAlbumMetadata(input: {
     popularity: number | null;
     review_text: string | null;
     copyright: string | null;
+    disambiguation: string | null;
+    genres: string | null;
   } | undefined;
 
   if (!row?.title) {
@@ -73,5 +79,7 @@ export function getCanonicalAlbumMetadata(input: {
     popularity: row.popularity || null,
     reviewText: row.review_text || null,
     copyright: row.copyright || null,
+    disambiguation: row.disambiguation || null,
+    genres: row.genres || null,
   };
 }

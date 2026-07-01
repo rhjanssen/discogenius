@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { previewNamingConfig, renderFileStem, renderRelativePath, validateNamingConfig } from "./naming.js";
+import { cleanPathSegment, previewNamingConfig, renderFileStem, renderRelativePath, validateNamingConfig } from "./naming.js";
 
 test("existing Discogenius naming tokens continue to render", () => {
   const rendered = renderFileStem(
@@ -401,4 +401,62 @@ test("validateNamingConfig accepts provider-neutral tokens", () => {
 
   const validation = validateNamingConfig(config);
   assert.equal(Object.values(validation).every((result) => result.valid), true);
+});
+
+test("reserved Windows device names are sanitized when followed by an extension (Lidarr-aligned)", () => {
+  assert.equal(cleanPathSegment("con.flac"), "con_.flac");
+  assert.equal(cleanPathSegment("CON.flac"), "CON_.flac");
+  assert.equal(cleanPathSegment("aux.mp3"), "aux_.mp3");
+  assert.equal(cleanPathSegment("nul.m4a"), "nul_.m4a");
+  assert.equal(cleanPathSegment("prn.flac"), "prn_.flac");
+  assert.equal(cleanPathSegment("com1.flac"), "com1_.flac");
+  assert.equal(cleanPathSegment("lpt9.flac"), "lpt9_.flac");
+});
+
+test("reserved device name check is anchored and does not mangle unrelated names", () => {
+  // Reserved word without a following dot is left untouched.
+  assert.equal(cleanPathSegment("con"), "con");
+  // Names that merely contain a reserved word as a substring are untouched.
+  assert.equal(cleanPathSegment("Console.flac"), "Console.flac");
+  assert.equal(cleanPathSegment("Prince.flac"), "Prince.flac");
+  assert.equal(cleanPathSegment("Conan.flac"), "Conan.flac");
+});
+
+test("{Artist Genre} and {Album Genre} render the primary genre", () => {
+  const rendered = renderFileStem(
+    "{Artist Genre} - {Album Genre}",
+    {
+      artistName: "Daft Punk",
+      artistGenre: "Electronic",
+      albumTitle: "Discovery",
+      albumGenre: "House",
+    }
+  );
+
+  assert.equal(rendered, "Electronic - House");
+});
+
+test("{Artist Genre} and {Album Genre} render empty when no genre is known", () => {
+  const rendered = renderFileStem(
+    "{Artist Genre}{Album Genre}",
+    {
+      artistName: "Daft Punk",
+      albumTitle: "Discovery",
+    }
+  );
+
+  assert.equal(rendered, "");
+});
+
+test("{Album Disambiguation} renders the release-group disambiguation", () => {
+  const rendered = renderFileStem(
+    "{Album Title} ({Album Disambiguation})",
+    {
+      artistName: "Bastille",
+      albumTitle: "Bad Blood",
+      albumDisambiguation: "extended cut",
+    }
+  );
+
+  assert.equal(rendered, "Bad Blood (extended cut)");
 });

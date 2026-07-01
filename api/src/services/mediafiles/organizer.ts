@@ -89,6 +89,7 @@ type OrganizerArtistContext = {
   artistName: string;
   artistMbId: string;
   artistPath: string;
+  artistGenre: string | null;
 };
 
 type CanonicalAlbumImportContext = {
@@ -111,6 +112,19 @@ type CanonicalAlbumImportContext = {
 const getAlbumVideoCoverName = (albumCoverName: string) => {
   const parsedName = path.parse(albumCoverName);
   return `${parsedName.name}.mp4`;
+};
+
+// ArtistMetadata.genres / Albums.genres store a JSON array of strings.
+// Naming tokens use the primary (first) genre, matching Lidarr's
+// `Genres?.FirstOrDefault()` convention.
+const firstGenre = (genresJson: string | null | undefined): string | null => {
+  if (!genresJson) return null;
+  try {
+    const parsed = JSON.parse(genresJson);
+    return Array.isArray(parsed) && typeof parsed[0] === "string" && parsed[0].trim() ? parsed[0] : null;
+  } catch {
+    return null;
+  }
 };
 
 export class OrganizerService {
@@ -197,7 +211,8 @@ export class OrganizerService {
             a.name,
             a.mbid,
             a.path,
-            mba.disambiguation
+            mba.disambiguation,
+            mba.genres
           FROM Albums rg
           JOIN Artists a ON a.mbid = rg.artist_mbid
           LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
@@ -214,7 +229,8 @@ export class OrganizerService {
           a.name,
           a.mbid,
           a.path,
-          mba.disambiguation
+          mba.disambiguation,
+          mba.genres
         FROM Artists a
         LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
         WHERE a.id = ?
@@ -228,7 +244,8 @@ export class OrganizerService {
             a.name,
             a.mbid,
             a.path,
-            mba.disambiguation
+            mba.disambiguation,
+            mba.genres
           FROM Artists a
           LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
           WHERE a.mbid = ?
@@ -246,6 +263,7 @@ export class OrganizerService {
         artistName: "Unknown Artist",
         artistMbId: "",
         artistPath: "Unknown Artist",
+        artistGenre: null,
       };
     }
 
@@ -277,6 +295,7 @@ export class OrganizerService {
       artistName: String(artist.name || "Unknown Artist"),
       artistMbId,
       artistPath,
+      artistGenre: firstGenre(artist.genres),
     };
   }
 
@@ -1623,11 +1642,14 @@ export class OrganizerService {
           artistName: resolvedArtistName,
           artistId,
           artistMbId,
+          artistGenre: artistContext.artistGenre,
           albumTitle: canonicalAlbum?.title || album.title,
           albumId: String(trackRow.album_id || albumIds[0]),
           albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
           albumMbId: canonicalAlbum?.albumMbid || album.mbid || null,
           albumVersion: canonicalAlbum ? null : album.version || null,
+          albumDisambiguation: canonicalAlbum?.disambiguation || null,
+          albumGenre: firstGenre(canonicalAlbum?.genres),
           releaseYear: this.getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
           trackTitle,
           trackId,
@@ -2059,11 +2081,14 @@ export class OrganizerService {
         artistName: resolvedArtistName,
         artistId,
         artistMbId,
+        artistGenre: artistContext.artistGenre,
         albumTitle: canonicalAlbum?.title || album.title,
         albumId,
         albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
         albumMbId: canonicalAlbum?.albumMbid || album.mbid || null,
         albumVersion: canonicalAlbum ? null : album.version || null,
+        albumDisambiguation: canonicalAlbum?.disambiguation || null,
+        albumGenre: firstGenre(canonicalAlbum?.genres),
         releaseYear: this.getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
         trackTitle,
         trackId: providerId,
@@ -2410,7 +2435,12 @@ export class OrganizerService {
       });
 
       const artistId = String(video.artist_id);
-      const existingArtist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
+      const existingArtist = db.prepare(`
+        SELECT a.name, a.mbid, a.path, mba.genres
+        FROM Artists a
+        LEFT JOIN ArtistMetadata mba ON mba.mbid = a.mbid
+        WHERE a.id = ?
+      `).get(artistId) as any;
       let artistName = existingArtist?.name as string | undefined;
       const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
@@ -2446,6 +2476,7 @@ export class OrganizerService {
         artistName: resolvedArtistName,
         artistId,
         artistMbId,
+        artistGenre: firstGenre(existingArtist?.genres),
         trackId: providerId,
         videoId: providerId,
         videoTitle: video.title,
