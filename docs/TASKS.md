@@ -205,6 +205,17 @@ this release.)
   candidate window filled by one concurrency-capped type; per-type rank now
   keeps every queued type represented — Lidarr's whole-queue TryGet
   equivalent).
+- done (2026-07-03, branch 2.1.1): the unmatched list is now actionable
+  (Lidarr-style manual mapping). Each row has "Find match" (dialog with MB
+  candidates ranked by discography-overlap evidence — shared album titles
+  shown — plus name-match badges and a raw-MBID escape hatch; applying reuses
+  the import's `ensureMonitoredArtist` + identity store + intake queue) and
+  "Ignore" (`match_status='ignored'`, for karaoke/typo/pseudo-artists with
+  nothing to match). Same session: discography-overlap fallback in the
+  automatic resolver (resolved LU BACH, Laura Reed, Niemen, R. City, Ray
+  Charles Orchestra live — unmatched 35→14) and multi-identity hydration
+  (`resolveProviderArtistIds` unions release catalogs when a provider splits
+  one artist into several entries, e.g. TIDAL's two Concertgebouworkest ids).
 - done (2026-07-02): provider↔MusicBrainz matching now uses canonical provider
   URL relationships before falling back to names/titles. Artist import accepts
   exact MusicBrainz artist URLs and high-confidence alias-prefix matches (fixes
