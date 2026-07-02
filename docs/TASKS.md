@@ -182,6 +182,17 @@ this release.)
 - The Library track-table UI is unified: `LibraryTrackList.tsx` was merged
   into `TrackList.tsx` (2026-07-01) and deleted — Library/Album/Artist all
   render tracks through the one shared DataGrid-backed component now.
+- Stability under the 531-artist import stress test (2026-07-02): the
+  crash-restart loop (unhandled worker rejection on SQLITE_BUSY) and the
+  video-matcher write-lock livelock (156s-per-video candidate query inside the
+  write transaction) are both fixed — see commits b17d5fe/362ef82/cc577b6.
+  Import summaries now itemize monitored/already-monitored/unmatched/failed so
+  a 531→494 shortfall is visible in the task description (457dcde).
+- Follow-up (UI, small): surface provider-import artists that had no
+  MusicBrainz match (persisted as `ProviderItems` rows with
+  `match_status='provider_only'`, `match_method LIKE '%followed%'`) somewhere
+  actionable — Lidarr shows unmatched import-list items; today they're only
+  queryable via SQL. 29 such artists exist from the 2026-07-01 test import.
 - Line numbers in plans below drift — grep, don't trust them.
 
 ### General artist import (folded from 2.0.11)
