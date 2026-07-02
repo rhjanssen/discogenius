@@ -20,9 +20,12 @@ export interface FollowedArtistsImportSummary {
     success: boolean;
     providerId: string;
     providerName: string;
+    total: number;
     added: number;
     updated: number;
     skipped: number;
+    unmatched: number;
+    failed: number;
     queued: number;
     message: string;
 }
@@ -137,9 +140,12 @@ export class FollowedArtistsImportService {
                 success: true,
                 providerId: provider.id,
                 providerName: provider.name,
+                total: 0,
                 added: 0,
                 updated: 0,
                 skipped: 0,
+                unmatched: 0,
+                failed: 0,
                 queued: 0,
                 message: `No followed artists found on ${provider.name}`,
             };
@@ -150,6 +156,8 @@ export class FollowedArtistsImportService {
         let addedCount = 0;
         let updatedCount = 0;
         let skippedCount = 0;
+        let unmatchedCount = 0;
+        let failedCount = 0;
         let queuedCount = 0;
 
         for (let index = 0; index < followedArtists.length; index += 1) {
@@ -200,26 +208,31 @@ export class FollowedArtistsImportService {
                 }, result.localArtistId);
 
                 if (result.status === "skipped") {
-                    skippedCount += 1;
+                    const reason = result.reason || "already_monitored";
+                    if (reason.startsWith("musicbrainz_")) {
+                        unmatchedCount += 1;
+                    } else {
+                        skippedCount += 1;
+                    }
                     emit?.({
                         type: "artist-skipped",
                         name: artist.name,
                         progress,
                         total: followedArtists.length,
-                        skipped: skippedCount,
-                        reason: result.reason || "already_monitored",
+                        skipped: skippedCount + unmatchedCount,
+                        reason,
                     });
                     continue;
                 }
 
                 if (!result.localArtistId) {
-                    skippedCount += 1;
+                    unmatchedCount += 1;
                     emit?.({
                         type: "artist-skipped",
                         name: artist.name,
                         progress,
                         total: followedArtists.length,
-                        skipped: skippedCount,
+                        skipped: skippedCount + unmatchedCount,
                         reason: "musicbrainz_unmatched",
                     });
                     continue;
@@ -255,6 +268,7 @@ export class FollowedArtistsImportService {
                     });
                 }
             } catch (error) {
+                failedCount += 1;
                 console.error(`Failed to import followed artist ${artist.name}:`, error);
                 emit?.({
                     type: "error",
@@ -264,18 +278,33 @@ export class FollowedArtistsImportService {
             }
         }
 
+        // Every artist the provider returned must land in exactly one bucket —
+        // an import that quietly drops artists (e.g. "531 followed but only 494
+        // monitored, no explanation") is a support mystery, so the summary
+        // itemizes the non-monitored buckets instead of hiding them.
         const totalMonitored = addedCount + updatedCount;
+        const parts: string[] = [];
+        if (totalMonitored > 0) {
+            parts.push(`Monitored ${totalMonitored} of ${followedArtists.length} artists (${addedCount} new, ${updatedCount} existing)`);
+        } else {
+            parts.push(`Monitored 0 of ${followedArtists.length} artists`);
+        }
+        if (skippedCount > 0) parts.push(`${skippedCount} already monitored`);
+        if (unmatchedCount > 0) parts.push(`${unmatchedCount} without a MusicBrainz match`);
+        if (failedCount > 0) parts.push(`${failedCount} failed`);
+
         return {
             success: true,
             providerId: provider.id,
             providerName: provider.name,
+            total: followedArtists.length,
             added: addedCount,
             updated: updatedCount,
             skipped: skippedCount,
+            unmatched: unmatchedCount,
+            failed: failedCount,
             queued: queuedCount,
-            message: totalMonitored > 0
-                ? `Monitored ${totalMonitored} artists (${addedCount} new, ${updatedCount} existing). Scans queued for processing.`
-                : `All ${skippedCount} artists were already monitored.`,
+            message: `${parts.join(" · ")}.`,
         };
     }
 }
