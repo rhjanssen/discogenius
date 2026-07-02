@@ -450,21 +450,48 @@ ${buildExecutionOrderClause()}
      * Return the top-N pending jobs across all given types, sorted globally by priority.
      * Used by the Scheduler for CommandQueue selection:
      * the caller iterates the list and picks the first job that passes exclusivity checks.
+     *
+     * `perTypeLimit` caps how many candidates any single command type contributes
+     * to the window. Without it, a deep backlog of one type (e.g. hundreds of
+     * queued RefreshArtist during intake) fills the whole window; if that type is
+     * concurrency-capped, every other queued type is starved out of consideration
+     * and worker slots idle. Lidarr's CommandQueue.TryGet filters the ENTIRE
+     * in-memory queue so it can't have this problem — the per-type rank is the
+     * bounded-SQL equivalent.
      */
-    static getTopPendingJobsByTypes(types: readonly CommandName[], limit: number = 20): CommandModel[] {
+    static getTopPendingJobsByTypes(types: readonly CommandName[], limit: number = 20, perTypeLimit?: number): CommandModel[] {
         if (types.length === 0) return [];
 
         const placeholders = buildTypeInClause(types);
-        const rows = db.prepare(`
-            SELECT * FROM commands
-            WHERE status = 'queued' AND name IN (${placeholders})
-            ORDER BY
+        const rows = (perTypeLimit && perTypeLimit > 0
+            ? db.prepare(`
+                SELECT * FROM (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY name
+                        ORDER BY
 ${buildExecutionOrderClause()}
-            LIMIT ?
-        `).all(...types, limit) as any[];
+                    ) AS __type_rank
+                    FROM commands
+                    WHERE status = 'queued' AND name IN (${placeholders})
+                )
+                WHERE __type_rank <= ?
+                ORDER BY
+${buildExecutionOrderClause()}
+                LIMIT ?
+            `).all(...types, perTypeLimit, limit)
+            : db.prepare(`
+                SELECT * FROM commands
+                WHERE status = 'queued' AND name IN (${placeholders})
+                ORDER BY
+${buildExecutionOrderClause()}
+                LIMIT ?
+            `).all(...types, limit)) as any[];
 
         return rows
-            .map((row) => hydrateJobRow(row as { name: string; payload: unknown; id: number } & Record<string, unknown>))
+            .map((row) => {
+                delete row.__type_rank;
+                return hydrateJobRow(row as { name: string; payload: unknown; id: number } & Record<string, unknown>);
+            })
             .filter((job): job is CommandModel => job !== null);
     }
 

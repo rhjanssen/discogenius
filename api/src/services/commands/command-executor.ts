@@ -106,7 +106,15 @@ export class CommandExecutor {
                 // Try to fill all available slots
                 const slotsAvailable = SCHEDULER_THREAD_LIMIT - this.activeJobs.size;
                 if (slotsAvailable > 0) {
-                    const candidates = CommandQueueManager.getTopPendingJobsByTypes(NON_DOWNLOAD_COMMAND_NAMES, 20);
+                    // Per-type cap keeps the candidate window diverse: a deep
+                    // single-type backlog (intake queues hundreds of
+                    // RefreshArtist) would otherwise fill all 20 rows, and with
+                    // that type concurrency-capped the remaining slots idle
+                    // while eligible other-type commands sit just past the
+                    // window. THREAD_LIMIT + 2 leaves headroom for candidates
+                    // blocked by per-ref exclusivity.
+                    const candidates = CommandQueueManager.getTopPendingJobsByTypes(
+                        NON_DOWNLOAD_COMMAND_NAMES, 20, SCHEDULER_THREAD_LIMIT + 2);
                     let started = 0;
 
                     for (const candidate of candidates) {

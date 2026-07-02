@@ -200,6 +200,12 @@ const StatusPage = () => {
         refetchInterval: 30000,
     });
 
+    const { data: overview } = useQuery({
+        queryKey: ["status-overview", "status-page"],
+        queryFn: () => api.getStatusOverview(),
+        refetchInterval: 30000,
+    });
+
     const isLoading = statusLoading || providersLoading;
     const providers = (providersResponse?.providers ?? []).filter(
         (provider) => provider.authenticated || provider.management.canDisconnect,
@@ -307,12 +313,70 @@ const StatusPage = () => {
                                         key={provider.id}
                                         provider={provider}
                                         styles={styles}
-                                        last={index === providers.length - 1}
+                                        last={index === providers.length - 1 && !overview?.rateLimitMetrics}
                                     />
                                 ))
                             ) : (
                                 <div className={styles.emptyState}>
                                     <Caption1 className={styles.mutedText}>No provider connected.</Caption1>
+                                </div>
+                            )}
+                            {overview?.rateLimitMetrics ? (
+                                <div className={mergeClasses(styles.row, styles.rowLast)}>
+                                    <div className={styles.rowContent}>
+                                        <Text size={300}>Request pacing</Text>
+                                        <Caption1 className={styles.mutedText}>
+                                            {`One request every ${Math.round(overview.rateLimitMetrics.currentIntervalMs)} ms`}
+                                            {` · recent rate-limit responses: ${overview.rateLimitMetrics.recent429Rate}`}
+                                            {overview.rateLimitMetrics.rateLimitUntil
+                                                ? ` · throttled until ${new Date(overview.rateLimitMetrics.rateLimitUntil).toLocaleTimeString()}`
+                                                : ""}
+                                        </Caption1>
+                                    </div>
+                                </div>
+                            ) : null}
+                        </div>
+                    </SettingsSection>
+
+                    <SettingsSection
+                        id="import-unmatched"
+                        title="Import"
+                        description="Provider artists that could not be matched to a MusicBrainz artist. They were skipped during import and are not monitored — fix the name on the provider or add the artist manually by MusicBrainz search."
+                        actions={status && status.imports.unmatchedArtists.length > 0 ? (
+                            <Badge appearance="filled" color="warning">
+                                {`${status.imports.unmatchedArtists.length} not monitored`}
+                            </Badge>
+                        ) : undefined}
+                    >
+                        <div className={styles.card}>
+                            {status && status.imports.unmatchedArtists.length > 0 ? (
+                                status.imports.unmatchedArtists.map((artist, index) => (
+                                    <div
+                                        key={`${artist.provider}:${artist.providerId}`}
+                                        className={mergeClasses(
+                                            styles.row,
+                                            index === status.imports.unmatchedArtists.length - 1 ? styles.rowLast : undefined,
+                                        )}
+                                    >
+                                        <div className={styles.rowMain}>
+                                            <Warning16Regular className={styles.statusIconWarning} />
+                                            <div className={styles.rowContent}>
+                                                <Text size={300}>{artist.name}</Text>
+                                                <Caption1 className={styles.mutedText}>
+                                                    {artist.status === "ambiguous"
+                                                        ? "Several MusicBrainz artists match this name"
+                                                        : "No MusicBrainz artist found"}
+                                                    {` · ${artist.provider}`}
+                                                </Caption1>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className={styles.emptyState}>
+                                    <Caption1 className={styles.mutedText}>
+                                        Every imported provider artist has a MusicBrainz identity.
+                                    </Caption1>
                                 </div>
                             )}
                         </div>

@@ -184,4 +184,42 @@ export class ProviderArtistIdentityService {
       }),
     );
   }
+
+  /**
+   * Provider artists with no MusicBrainz identity — the ones a provider import
+   * saw but could not monitor (Lidarr surfaces the same set as unmatched
+   * import-list items). Read-only; used by the System Status page so a
+   * "531 followed, 494 monitored" gap is explainable in the UI.
+   */
+  static listUnmatched(): Array<{
+    provider: string;
+    providerId: string;
+    name: string;
+    status: string;
+    method: string;
+    updatedAt: string | null;
+  }> {
+    const rows = db.prepare(`
+      SELECT provider, provider_id, title, match_status, match_method, updated_at
+      FROM ProviderItems
+      WHERE entity_type = 'artist' AND artist_mbid IS NULL
+      ORDER BY title COLLATE NOCASE ASC
+    `).all() as Array<{
+      provider: string;
+      provider_id: string;
+      title?: string | null;
+      match_status?: string | null;
+      match_method?: string | null;
+      updated_at?: string | null;
+    }>;
+
+    return rows.map((row) => ({
+      provider: row.provider,
+      providerId: row.provider_id,
+      name: row.title || row.provider_id,
+      status: row.match_status || "provider_only",
+      method: row.match_method || "unknown",
+      updatedAt: row.updated_at ?? null,
+    }));
+  }
 }

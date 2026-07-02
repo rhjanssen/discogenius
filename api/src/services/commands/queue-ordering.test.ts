@@ -679,3 +679,58 @@ test("active import blocks duplicate download for the same content id", () => {
     assert.equal(duplicateDownloadId, importJobId);
     assert.equal(pendingDownloads.length, 0);
 });
+
+test("getTopPendingJobsByTypes perTypeLimit keeps a deep single-type backlog from starving other types", () => {
+    // Intake-shaped backlog: many queued RefreshArtist ahead of a single
+    // MatchArtistProviders. Without the per-type cap the 20-row window is all
+    // RefreshArtist; with RefreshArtist concurrency-capped at 1 that idled the
+    // other worker slots for the whole drain.
+    for (let i = 0; i < 25; i += 1) {
+        queueModule.CommandQueueManager.push(
+            queueModule.CommandNames.RefreshArtist,
+            {
+                artistId: `starve-artist-${i}`,
+                artistName: `Starve Artist ${i}`,
+                workflow: "monitoring-intake",
+                monitorArtist: true,
+                hydrateCatalog: true,
+                hydrateAlbumTracks: true,
+                scanLibrary: false,
+                forceDownloadQueue: false,
+                forceUpdate: false,
+            },
+            `starve-artist-${i}`,
+        );
+    }
+    queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.MatchArtistProviders,
+        {
+            artistId: "starve-match-artist",
+            artistName: "Starve Match Artist",
+            artistMbid: "starve-match-artist",
+            shouldHydrateCatalog: true,
+            workflow: "monitoring-intake",
+            scanLibrary: false,
+            forceDownloadQueue: false,
+            forceUpdate: false,
+        },
+        "starve-match-artist",
+    );
+
+    const types = [
+        queueModule.CommandNames.RefreshArtist,
+        queueModule.CommandNames.MatchArtistProviders,
+    ] as const;
+
+    // Documents the flat-window behavior the cap exists to fix.
+    const flatWindow = queueModule.CommandQueueManager.getTopPendingJobsByTypes(types, 20);
+    assert.equal(flatWindow.length, 20);
+    assert.ok(flatWindow.every((job) => job.name === queueModule.CommandNames.RefreshArtist));
+
+    const diverseWindow = queueModule.CommandQueueManager.getTopPendingJobsByTypes(types, 20, 5);
+    assert.equal(diverseWindow.filter((job) => job.name === queueModule.CommandNames.RefreshArtist).length, 5);
+    assert.equal(diverseWindow.filter((job) => job.name === queueModule.CommandNames.MatchArtistProviders).length, 1);
+    // Global execution order still applies within the capped window: the
+    // earlier-queued RefreshArtist rows come before the later MatchArtistProviders.
+    assert.equal(diverseWindow[0].name, queueModule.CommandNames.RefreshArtist);
+});

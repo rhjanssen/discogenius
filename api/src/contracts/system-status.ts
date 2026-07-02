@@ -28,6 +28,15 @@ export interface BackendCapabilitySnapshotContract {
   notes: string[];
 }
 
+export interface UnmatchedImportArtistContract {
+  provider: string;
+  providerId: string;
+  name: string;
+  status: string;
+  method: string;
+  updatedAt: string | null;
+}
+
 export interface SystemStatusContract {
   checkedAt: string;
   status: HealthOverallStatusContract;
@@ -52,4 +61,8 @@ export interface SystemStatusContract {
     tiddl: BackendCapabilitySnapshotContract;
   };
   issues: HealthCheckResultContract[];
+  /** Added by the /system/status route (not part of the /health probe snapshot). */
+  imports: {
+    unmatchedArtists: UnmatchedImportArtistContract[];
+  };
 }
