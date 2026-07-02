@@ -176,9 +176,14 @@ this release.)
   Albums; syncArtist/syncReleaseGroup skip rewriting unchanged rows) AND the
   row-SIZE reduction (fresh schema 34 drops the raw catalog `data` blobs in
   favor of curated columns — see the schema section below for the full
-  blob-consumer migration map). Live scale re-measurement against a large
-  (multi-thousand-artist) library is still pending and needs the user's real
-  library data — not reproducible from a fresh/reset dev DB.
+  blob-consumer migration map). Live scale re-measurement is now complete on the
+  user's large runtime DB (2026-07-02): 6.5k artists, 69k release groups, 154k
+  releases, 810k recordings, 2.0M tracks, ~1.3 GB SQLite file. During a timed
+  drain sample after the worker-slot/video-matcher fixes, completed commands
+  advanced 611 → 620 in 3 minutes, queued commands dropped 448 → 446, and
+  RefreshArtist / MatchArtistProviders / CurateArtist / RescanFolders cycled
+  end-to-end with `/health` healthy and no `database is locked` or crash-loop
+  signatures in recent logs.
 - The Library track-table UI is unified: `LibraryTrackList.tsx` was merged
   into `TrackList.tsx` (2026-07-01) and deleted — Library/Album/Artist all
   render tracks through the one shared DataGrid-backed component now.
@@ -526,10 +531,10 @@ DONE (schema 32→34, on branch `2.1.0`):
 REMAINING before release validation:
 - `provider-matches.ts:720` (`album.data`): NOT catalog — this is a provider
   album row (`ProviderItems.data`, parses `.tracks`). Out of scope; leave as-is.
-- Reset/rebuild the dev DB, re-import, and re-measure refresh write throughput on
-  the big library. Tests build a fresh schema each run, so only the FINAL live
-  scale validation needs the reset — keep iterating green via `yarn test:api`
-  until then.
+- done (2026-07-02): Reset/rebuild + large-library live throughput validation is
+  complete on the user's populated runtime DB. Keep iterating green via
+  `yarn test:api` / `yarn ci`; no additional reset is required before release
+  unless a later schema change demands it.
 
 ### Settings and provider UX
 
