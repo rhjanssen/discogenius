@@ -843,7 +843,7 @@ const SettingsPage = () => {
         if (localNaming[key] !== namingSettings[key] && !namingPreviewResponse) {
             toast({
                 title: "Naming not saved",
-                description: "Wait for the backend preview to finish before saving.",
+                description: "Wait for the preview to finish before saving.",
                 variant: "destructive",
             });
             return;
@@ -877,7 +877,7 @@ const SettingsPage = () => {
                 title: "Rename plan blocked",
                 description: namingPreviewResponse
                     ? "Fix the naming template errors before refreshing the rename plan."
-                    : "Wait for the backend naming preview before refreshing the rename plan.",
+                    : "Wait for the naming preview before refreshing the rename plan.",
                 variant: "destructive",
             });
             return;
@@ -906,7 +906,7 @@ const SettingsPage = () => {
                 title: "Rename preview blocked",
                 description: namingPreviewResponse
                     ? "Fix the naming template errors before previewing naming changes."
-                    : "Wait for the backend naming preview before previewing naming changes.",
+                    : "Wait for the naming preview before previewing naming changes.",
                 variant: "destructive",
             });
             return;
@@ -937,7 +937,7 @@ const SettingsPage = () => {
                 title: "Rename blocked",
                 description: namingPreviewResponse
                     ? "Fix the naming template errors before applying naming to the library."
-                    : "Wait for the backend naming preview before applying naming to the library.",
+                    : "Wait for the naming preview before applying naming to the library.",
                 variant: "destructive",
             });
             return;
@@ -1552,9 +1552,9 @@ const SettingsPage = () => {
                                             <Caption1 className={styles.mutedText}>
                                                 {provider.authenticated
                                                     ? publiclyAvailable
-                                                        ? "Public catalog features are available."
-                                                        : "Provider features are available."
-                                                    : "Connect this provider to enable provider-backed features."}
+                                                        ? "Ready to search and browse."
+                                                        : "Ready to search, browse, and download."
+                                                    : "Connect to search, browse, and download."}
                                             </Caption1>
                                         )}
                                     </div>
@@ -1614,7 +1614,7 @@ const SettingsPage = () => {
                                             ))}
                                         </div>
                                         <Text size={200} className={styles.mutedText}>
-                                            For provider connectivity, download-backend, and system health checks, see{" "}
+                                            For connection and download health, see{" "}
                                             <Link onClick={() => navigate("/system/status")}>System Status</Link>.
                                         </Text>
                                     </div>
@@ -1710,7 +1710,7 @@ const SettingsPage = () => {
                         <Divider className={styles.divider} />
                         {renderToggleRow({
                             title: "Spatial audio",
-                            description: "Download spatial or surround versions alongside stereo. Changes update wanted releases immediately.",
+                            description: "Also download spatial or surround versions alongside stereo.",
                             checked: curationConfig?.include_spatial === true,
                             onChange: (checked) => updateCuration({ include_spatial: checked }),
                         })}
@@ -1801,7 +1801,7 @@ const SettingsPage = () => {
                         })}
                         {renderToggleRow({
                             title: "Require Provider Match",
-                            description: "Only mark releases wanted if they are matched to a connected streaming provider",
+                            description: "Only download releases that a connected streaming service actually has.",
                             checked: curationConfig?.require_provider_availability === true,
                             onChange: (checked) => updateCuration({ require_provider_availability: checked }),
                         })}
@@ -1939,7 +1939,7 @@ const SettingsPage = () => {
 
                         {renderToggleRow({
                             title: "Save Lyrics",
-                            description: "Save lyrics as a sidecar next to the track. Synced lyrics are saved when available.",
+                            description: "Save lyrics as a text file next to the track. Synced lyrics are saved when available.",
                             checked: metadataSettings?.save_lyrics === true,
                             onChange: (checked) => updateMetadataSettings({ save_lyrics: checked }),
                         })}
@@ -2067,7 +2067,7 @@ const SettingsPage = () => {
                             <div className={styles.rowContent}>
                                 <Text weight="semibold">Video Folder Layout</Text>
                                 <Text size={200} className={styles.mutedText}>
-                                    Choose where music videos, thumbnails, and NFO files are stored. &quot;Inline&quot; places them next to audio tracks in the Music/Spatial Library (Plex-compatible). &quot;Separated&quot; stores them under the Video Library Path.
+                                    Keep videos in their own library, or store them alongside each artist's music.
                                 </Text>
                             </div>
                             <Select
@@ -2084,7 +2084,7 @@ const SettingsPage = () => {
                             <div className={styles.rowContent}>
                                 <Text weight="semibold">Create Empty Artist Folders</Text>
                                 <Text size={200} className={styles.mutedText}>
-                                    Create artist folders in each configured library root during library scans.
+                                    Create a folder for every monitored artist, even before anything is downloaded.
                                 </Text>
                             </div>
                             <Switch
