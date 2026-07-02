@@ -1,6 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     Badge,
+    Button,
     Caption1,
     Spinner,
     Text,
@@ -9,6 +11,10 @@ import {
     mergeClasses,
     tokens,
 } from "@fluentui/react-components";
+import {
+    UnmatchedArtistMatchDialog,
+    type UnmatchedArtistTarget,
+} from "@/components/settings/UnmatchedArtistMatchDialog";
 import {
     CheckmarkCircle16Regular,
     ErrorCircle16Regular,
@@ -91,6 +97,12 @@ const useStyles = makeStyles({
         flexWrap: "wrap",
         gap: tokens.spacingHorizontalXS,
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    },
+    rowActions: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalXS,
+        flexShrink: 0,
     },
     emptyState: {
         padding: tokens.spacingVerticalXL,
@@ -187,6 +199,16 @@ function ProviderRow({
 
 const StatusPage = () => {
     const styles = useStyles();
+    const queryClient = useQueryClient();
+    const [matchTarget, setMatchTarget] = useState<UnmatchedArtistTarget | null>(null);
+
+    const ignoreMutation = useMutation({
+        mutationFn: ({ provider, providerId }: { provider: string; providerId: string }) =>
+            api.ignoreUnmatchedArtist(provider, providerId),
+        onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+        },
+    });
 
     const { data: status, isLoading: statusLoading } = useQuery({
         queryKey: ["system-status"],
@@ -341,7 +363,7 @@ const StatusPage = () => {
                     <SettingsSection
                         id="import-unmatched"
                         title="Import"
-                        description="Provider artists that were not linked automatically. They were skipped during import and are not monitored."
+                        description="Provider artists that were not linked automatically. Pick the right MusicBrainz artist with Find match, or use Ignore for entries that have nothing to match (karaoke channels, misspelled duplicates)."
                         actions={status && status.imports.unmatchedArtists.length > 0 ? (
                             <Badge appearance="filled" color="warning">
                                 {`${status.imports.unmatchedArtists.length} not monitored`}
@@ -370,6 +392,27 @@ const StatusPage = () => {
                                                 </Caption1>
                                             </div>
                                         </div>
+                                        <div className={styles.rowActions}>
+                                            <Button
+                                                size="small"
+                                                appearance="secondary"
+                                                onClick={() => setMatchTarget({
+                                                    provider: artist.provider,
+                                                    providerId: artist.providerId,
+                                                    name: artist.name,
+                                                })}
+                                            >
+                                                Find match
+                                            </Button>
+                                            <Button
+                                                size="small"
+                                                appearance="subtle"
+                                                disabled={ignoreMutation.isPending}
+                                                onClick={() => ignoreMutation.mutate({ provider: artist.provider, providerId: artist.providerId })}
+                                            >
+                                                Ignore
+                                            </Button>
+                                        </div>
                                     </div>
                                 ))
                             ) : (
@@ -381,6 +424,11 @@ const StatusPage = () => {
                             )}
                         </div>
                     </SettingsSection>
+
+                    <UnmatchedArtistMatchDialog
+                        target={matchTarget}
+                        onClose={() => setMatchTarget(null)}
+                    />
                 </>
             )}
         </div>

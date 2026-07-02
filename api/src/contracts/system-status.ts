@@ -37,6 +37,32 @@ export interface UnmatchedImportArtistContract {
   updatedAt: string | null;
 }
 
+export interface ManualMatchCandidateContract {
+  mbid: string;
+  name: string;
+  disambiguation: string | null;
+  type: string | null;
+  releaseCount: number;
+  sharedAlbums: string[];
+  nameMatched: boolean;
+}
+
+export interface ManualMatchCandidatesContract {
+  provider: string;
+  providerId: string;
+  artistName: string;
+  providerAlbumTitles: string[];
+  candidates: ManualMatchCandidateContract[];
+}
+
+export interface ManualMatchResultContract {
+  localArtistId: string;
+  artistName: string;
+  mbid: string;
+  monitored: true;
+  intakeQueued: boolean;
+}
+
 export interface SystemStatusContract {
   checkedAt: string;
   status: HealthOverallStatusContract;

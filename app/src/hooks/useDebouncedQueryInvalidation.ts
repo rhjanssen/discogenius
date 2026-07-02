@@ -21,6 +21,13 @@ export function useDebouncedQueryInvalidation({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastGlobalEvent = useGlobalEvents(enabled ? (globalEvents ?? []) : []);
 
+  // Callers rebuild queryKeys every render; read them through a ref so
+  // scheduleInvalidation stays referentially stable. Otherwise the effects
+  // below re-run on every render and each refetch re-schedules the next one,
+  // producing an endless invalidate/refetch loop.
+  const queryKeysRef = useRef(queryKeys);
+  queryKeysRef.current = queryKeys;
+
   const scheduleInvalidation = useCallback(() => {
     if (!enabled) {
       return;
@@ -32,12 +39,13 @@ export function useDebouncedQueryInvalidation({
 
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
-      for (const queryKey of queryKeys) {
+      for (const queryKey of queryKeysRef.current) {
+        // invalidateQueries already refetches active queries; a follow-up
+        // refetchQueries would cancel that in-flight fetch and start another.
         void queryClient.invalidateQueries({ queryKey });
-        void queryClient.refetchQueries({ queryKey, type: "active" });
       }
     }, debounceMs);
-  }, [debounceMs, enabled, queryClient, queryKeys]);
+  }, [debounceMs, enabled, queryClient]);
 
   useEffect(() => {
     if (!lastGlobalEvent) {

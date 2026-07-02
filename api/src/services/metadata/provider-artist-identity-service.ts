@@ -220,36 +220,39 @@ function normalizeAlbumTitleForOverlap(title: string): string {
 }
 
 /**
- * How many of the provider artist's album titles appear in a MusicBrainz
- * candidate's release-group list. Name evidence can't separate same-named
- * artists (Eden, Japan, Ellis Hall …), but two different artists essentially
- * never share several album titles — so overlap is strong disambiguation
- * evidence. The MB side is free: Servarr artist-search results already embed
- * each candidate's release groups.
+ * The provider artist's album titles that appear in a MusicBrainz candidate's
+ * release-group list, deduped by normalized title. Name evidence can't
+ * separate same-named artists (Eden, Japan, Ellis Hall …), but two different
+ * artists essentially never share several album titles — so overlap is strong
+ * disambiguation evidence. The MB side is free: Servarr artist-search results
+ * already embed each candidate's release groups. Returns the matched
+ * candidate-side titles so callers can show the evidence to a human.
  */
-export function scoreDiscographyOverlap(providerAlbumTitles: string[], candidate: LidarrArtist): { matched: number; sampled: number } {
+export function intersectDiscographyTitles(providerAlbumTitles: string[], candidate: LidarrArtist): { matched: string[]; sampled: number } {
   const providerTitles = new Set(
     providerAlbumTitles
       .map(normalizeAlbumTitleForOverlap)
       .filter((title) => title.length > 2),
   );
   if (providerTitles.size === 0) {
-    return { matched: 0, sampled: 0 };
+    return { matched: [], sampled: 0 };
   }
 
-  const candidateTitles = new Set(
-    (candidate.Albums || [])
-      .map((album) => normalizeAlbumTitleForOverlap(album.Title || ""))
-      .filter((title) => title.length > 2),
-  );
-
-  let matched = 0;
-  for (const title of providerTitles) {
-    if (candidateTitles.has(title)) {
-      matched += 1;
+  const matched: string[] = [];
+  const seen = new Set<string>();
+  for (const album of candidate.Albums || []) {
+    const normalized = normalizeAlbumTitleForOverlap(album.Title || "");
+    if (normalized.length > 2 && providerTitles.has(normalized) && !seen.has(normalized)) {
+      seen.add(normalized);
+      matched.push(album.Title || "");
     }
   }
   return { matched, sampled: providerTitles.size };
+}
+
+export function scoreDiscographyOverlap(providerAlbumTitles: string[], candidate: LidarrArtist): { matched: number; sampled: number } {
+  const { matched, sampled } = intersectDiscographyTitles(providerAlbumTitles, candidate);
+  return { matched: matched.length, sampled };
 }
 
 /**
@@ -440,6 +443,7 @@ export class ProviderArtistIdentityService {
       SELECT provider, provider_id, title, match_status, match_method, updated_at
       FROM ProviderItems
       WHERE entity_type = 'artist' AND artist_mbid IS NULL
+        AND COALESCE(match_status, '') != 'ignored'
       ORDER BY title COLLATE NOCASE ASC
     `).all() as Array<{
       provider: string;

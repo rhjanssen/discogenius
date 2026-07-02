@@ -10,7 +10,14 @@ const pkg = JSON.parse(
 ) as { version?: string };
 
 const DEFAULT_BACKEND_PORT = 3737;
-const DEV_SERVER_PORT = 8080;
+const DEFAULT_DEV_SERVER_PORT = 8080;
+
+// Harnesses (e.g. Claude Code preview) export PORT to assign the dev server a
+// free port; honor it so multiple dev servers can run side by side.
+const DEV_SERVER_PORT = (() => {
+  const parsed = Number.parseInt(String(process.env.PORT || "").trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DEV_SERVER_PORT;
+})();
 
 function resolveBackendPort(rawPort: string | undefined): number {
   const parsed = Number.parseInt(String(rawPort || "").trim(), 10);

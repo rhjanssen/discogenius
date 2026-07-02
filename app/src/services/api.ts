@@ -66,7 +66,11 @@ import type {
   QueueStatusContract,
   StatusOverviewContract,
 } from '@contracts/status';
-import type { SystemStatusContract } from '@contracts/system-status';
+import type {
+  ManualMatchCandidatesContract,
+  ManualMatchResultContract,
+  SystemStatusContract,
+} from '@contracts/system-status';
 import {
   parseActivityListResponseContract,
   parseQueueDetailsResponseContract,
@@ -1189,6 +1193,24 @@ class ApiClient {
 
   async getSystemStatus(): Promise<SystemStatusContract> {
     return this.request('/v1/system/status');
+  }
+
+  async getUnmatchedArtistCandidates(provider: string, providerId: string): Promise<ManualMatchCandidatesContract> {
+    return this.request(`/v1/system/status/unmatched-artists/${encodeURIComponent(provider)}/${encodeURIComponent(providerId)}/candidates`);
+  }
+
+  async applyUnmatchedArtistMatch(provider: string, providerId: string, mbid: string): Promise<ManualMatchResultContract> {
+    return this.request(`/v1/system/status/unmatched-artists/${encodeURIComponent(provider)}/${encodeURIComponent(providerId)}/match`, {
+      method: 'POST',
+      body: JSON.stringify({ mbid }),
+    });
+  }
+
+  async ignoreUnmatchedArtist(provider: string, providerId: string): Promise<{ ignored: boolean }> {
+    return this.request(`/v1/system/status/unmatched-artists/${encodeURIComponent(provider)}/${encodeURIComponent(providerId)}/ignore`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
   }
 
   async updateSystemTask(id: string, updates: UpdateSystemTaskRequestContract): Promise<SystemTaskContract> {

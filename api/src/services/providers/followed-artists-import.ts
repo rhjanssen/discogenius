@@ -30,7 +30,7 @@ export interface FollowedArtistsImportSummary {
     message: string;
 }
 
-type FollowedArtistRow = {
+export type FollowedArtistRow = {
     provider_id: string;
     name: string;
     picture?: string | null;
@@ -66,7 +66,12 @@ function findExistingArtist(artist: FollowedArtistRow): { id: string | number; m
 
 type ExistingArtistRow = { id: string | number; monitored: number; path: string | null };
 
-async function ensureMonitoredArtist(
+/**
+ * Upsert + monitor the canonical artist behind a provider artist row. Shared
+ * by the provider import loop and the manual-match flow so both paths create
+ * identical artist rows (path resolution, picture, popularity, intake shape).
+ */
+export async function ensureMonitoredArtist(
     artist: FollowedArtistRow,
     existingArtist?: ExistingArtistRow | null,
 ): Promise<{ status: "added" | "updated" | "skipped"; localArtistId: string | null; reason?: string }> {

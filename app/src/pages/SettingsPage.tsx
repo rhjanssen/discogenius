@@ -1396,14 +1396,16 @@ const SettingsPage = () => {
         checked,
         onChange,
         noDivider = false,
+        rowKey,
     }: {
         title: string;
         description?: React.ReactNode;
         checked: boolean;
         onChange: (checked: boolean) => void;
         noDivider?: boolean;
+        rowKey?: string;
     }) => (
-        <div className={noDivider ? styles.rowNoDivider : styles.row}>
+        <div key={rowKey} className={noDivider ? styles.rowNoDivider : styles.row}>
             <Checkbox
                 checked={checked}
                 onChange={(_, data) => onChange(Boolean(data.checked))}
@@ -1768,6 +1770,7 @@ const SettingsPage = () => {
                             <Text weight="semibold">Primary release types</Text>
                         </div>
                         {primaryReleaseTypeRows.map((row) => renderCheckboxRow({
+                            rowKey: row.key,
                             title: row.title,
                             checked: curationConfig?.[row.key] !== false,
                             onChange: (checked) => updateCuration({ [row.key]: checked }),
@@ -1778,6 +1781,7 @@ const SettingsPage = () => {
                             <Text weight="semibold">Secondary release types</Text>
                         </div>
                         {secondaryReleaseTypeRows.map((row) => renderCheckboxRow({
+                            rowKey: row.key,
                             title: row.title,
                             checked: curationConfig?.[row.key] === true,
                             onChange: (checked) => updateCuration({ [row.key]: checked }),
