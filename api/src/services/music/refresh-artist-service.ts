@@ -1067,6 +1067,36 @@ export class RefreshArtistService {
         }
     }
 
+    /**
+     * ALL provider identities linked to this canonical artist, not just the
+     * most recent one. Providers sometimes split one real-world artist into
+     * several catalog entries (TIDAL has both "Concertgebouworkest" and "Royal
+     * Concertgebouw Orchestra" for the same MB artist); each identity carries
+     * its own releases, so hydration must union their catalogs or half the
+     * discography never shows up as offers.
+     */
+    private static async resolveProviderArtistIds(provider: StreamingProvider, artistId: string, artistMbid: string | null): Promise<string[]> {
+        const primary = await this.resolveProviderArtistId(provider, artistId, artistMbid);
+        if (!artistMbid) {
+            return primary ? [primary] : [];
+        }
+
+        const linked = db.prepare(`
+            SELECT DISTINCT provider_id
+            FROM ProviderItems
+            WHERE provider = ?
+              AND entity_type = 'artist'
+              AND artist_mbid = ?
+        `).all(provider.id, artistMbid) as Array<{ provider_id: string | number }>;
+
+        const ids = new Set<string>();
+        if (primary) ids.add(String(primary));
+        for (const row of linked) {
+            if (row.provider_id != null) ids.add(String(row.provider_id));
+        }
+        return [...ids];
+    }
+
     private static reapplyArtistPathAfterIdentity(artistId: string): void {
         const artist = db.prepare(`
             SELECT Artists.id, Artists.name, Artists.mbid, Artists.path, ArtistMetadata.disambiguation
@@ -1384,18 +1414,34 @@ export class RefreshArtistService {
         let totalAlbumsCount = 0;
 
         for (const provider of connectedProviders) {
-            const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
-            if (!providerArtistId) {
+            const providerArtistIds = await this.resolveProviderArtistIds(provider, artistId, artistMbid);
+            if (providerArtistIds.length === 0) {
                 console.log(`[RefreshArtistService] Skipping catalog hydration on ${provider.name} for ${artistId} (no provider artist match)`);
                 continue;
             }
 
-            await this.refreshProviderVideosForMatchedArtist(provider, providerArtistId, artistId, options);
+            await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
 
             try {
-                const providerAlbums = provider.listArtistReleaseOffers
-                    ? await provider.listArtistReleaseOffers(providerArtistId)
-                    : await provider.getArtistAlbums(providerArtistId);
+                // Union the release catalogs of every linked provider identity
+                // (a provider can split one artist into several entries, each
+                // holding part of the discography), deduped by provider album id.
+                const providerAlbums: ProviderAlbum[] = [];
+                const seenProviderAlbumIds = new Set<string>();
+                for (const providerArtistId of providerArtistIds) {
+                    const identityAlbums = provider.listArtistReleaseOffers
+                        ? await provider.listArtistReleaseOffers(providerArtistId)
+                        : await provider.getArtistAlbums(providerArtistId);
+                    for (const album of identityAlbums) {
+                        const key = String(album.providerId);
+                        if (seenProviderAlbumIds.has(key)) continue;
+                        seenProviderAlbumIds.add(key);
+                        providerAlbums.push(album);
+                    }
+                }
+                if (providerArtistIds.length > 1) {
+                    console.log(`[RefreshArtistService] Merged ${providerAlbums.length} releases from ${providerArtistIds.length} ${provider.name} identities for ${artistId}`);
+                }
                 const albums = providerAlbums.map((album) => ({
                     ...providerAlbumToOfferRow(album, artistId),
                     provider: provider.id,
