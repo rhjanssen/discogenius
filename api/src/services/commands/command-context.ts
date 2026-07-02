@@ -1,3 +1,4 @@
+import { runWithAsyncBusyRetry } from "../../database.js";
 import {CommandQueueManager, type CommandModel} from "./command-queue-manager.js";
 import { commandExecutors } from "./executors/registry.js";
 import type { CommandHandlerContext } from "./handlers/handler-context.js";
@@ -121,6 +122,7 @@ export function buildHandlerContext(): CommandHandlerContext {
  */
 export async function executeCommand(job: CommandModel): Promise<void> {
     console.log(`[Queue] Processing Command #${job.id}: ${job.name}`);
+    let handlerError: unknown = null;
     try {
         const executor = commandExecutors[job.name];
         if (executor) {
@@ -128,12 +130,33 @@ export async function executeCommand(job: CommandModel): Promise<void> {
         } else {
             console.warn(`CommandExecutor picked up unhandled command: ${job.name}`);
         }
-        CommandQueueManager.complete(job.id);
-        queueNextMonitoringPass(job);
-        console.log(`[Queue] Command #${job.id} completed`);
-    } catch (error: any) {
+    } catch (error) {
+        handlerError = error;
         console.error(`[Queue] Command #${job.id} failed:`, error);
-        CommandQueueManager.fail(job.id, error?.message || 'Unknown command error');
+    }
+
+    // Persist the outcome with an async busy-retry that yields this thread's
+    // loop between attempts. This must never throw past here: under heavy write
+    // load the complete/fail UPDATE itself can hit SQLITE_BUSY, and an escaped
+    // error here previously rode the worker bridge back to the main thread as an
+    // unhandled rejection and aborted the whole process. If the write still
+    // fails after retries, the row stays 'started' and is recovered as an
+    // interrupted job on the next executor start.
+    try {
+        if (handlerError) {
+            const message = handlerError instanceof Error ? handlerError.message : 'Unknown command error';
+            await runWithAsyncBusyRetry(() => CommandQueueManager.fail(job.id, message));
+        } else {
+            await runWithAsyncBusyRetry(() => CommandQueueManager.complete(job.id));
+            console.log(`[Queue] Command #${job.id} completed`);
+        }
+    } catch (persistError) {
+        console.error(`[Queue] Could not persist outcome for command #${job.id} (${job.name}):`, persistError);
+    }
+
+    try {
         queueNextMonitoringPass(job);
+    } catch (chainError) {
+        console.error(`[Queue] Failed to queue next monitoring pass after command #${job.id}:`, chainError);
     }
 }

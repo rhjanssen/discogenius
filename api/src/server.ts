@@ -391,3 +391,15 @@ process.on("SIGTERM", () => {
 process.on("SIGINT", () => {
   void shutdown("SIGINT");
 });
+
+// Last-resort guards (Lidarr's GlobalExceptionHandlers): a failure escaping a
+// background task must be logged, never abort the server. Node's default for an
+// unhandled rejection is process death — under heavy write load that turned one
+// SQLITE_BUSY into a crash-restart loop that lost hours of queued work.
+process.on("unhandledRejection", (reason) => {
+  console.error("[FATAL-GUARD] Unhandled promise rejection (continuing):", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[FATAL-GUARD] Uncaught exception (continuing):", error);
+});

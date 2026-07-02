@@ -541,7 +541,12 @@ export function updateScheduledTask(taskKey: ScheduledTaskKey, updates: { enable
 }
 
 export function getScheduledTaskSnapshots(): ScheduledTaskSnapshot[] {
-    syncScheduledTasks();
+    // Read path (GET /system/task): sync opportunistically but never fail the
+    // request over write-lock contention — the rows are already synced at boot
+    // and on every scheduler tick, and the INSERT/DELETE here runs on the
+    // fail-fast main thread, which used to 500 the task list exactly when the
+    // user most wants to see what's running.
+    trySyncScheduledTasks();
 
     return getScheduledTaskDefinitions().map((definition) => {
         const effective = getEffectiveScheduledTaskDefinition(definition);

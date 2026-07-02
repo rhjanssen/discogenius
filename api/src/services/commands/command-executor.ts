@@ -1,6 +1,7 @@
 import {CommandModel} from "./command-model.js";
 import {NON_DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES} from "./command-names.js";
 import {CommandQueueManager} from "./command-queue-manager.js";
+import { runWithAsyncBusyRetry } from "../../database.js";
 import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { executeCommand } from "./command-context.js";
@@ -146,9 +147,26 @@ export class CommandExecutor {
         if (!CommandQueueManager.markProcessing(job.id)) {
             return;
         }
-        const promise = this.processJob(job).finally(() => {
-            this.activeJobs.delete(job.id);
-        });
+        // Lidarr's CommandExecutor.ExecuteCommands catches every command failure,
+        // logs it, and moves on — a failed command must never take down the
+        // executor. Here that means the job promise must never reject unhandled
+        // (an escaped rejection aborts the whole Node process).
+        const promise = this.processJob(job)
+            .catch(async (error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                console.error(`[CommandExecutor] Command #${job.id} (${job.name}) failed:`, message);
+                try {
+                    await runWithAsyncBusyRetry(() => CommandQueueManager.fail(job.id, message));
+                } catch (persistError) {
+                    console.error(
+                        `[CommandExecutor] Could not persist failure for command #${job.id}; it stays 'started' and is re-queued as interrupted on restart:`,
+                        persistError,
+                    );
+                }
+            })
+            .finally(() => {
+                this.activeJobs.delete(job.id);
+            });
         this.activeJobs.set(job.id, promise);
     }
 
