@@ -49,6 +49,7 @@ function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId:
     }
 
     return {
+        provider: (providerAlbum as any).provider || (providerAlbum.raw as any)?.provider || null,
         provider_id: providerAlbum.providerId,
         artist_id: providerAlbum.artist?.providerId || fallbackArtistId,
         artist_name: providerAlbum.artist?.name || "Unknown Artist",
@@ -349,7 +350,9 @@ export class RefreshArtistService {
 
         return matchProviderAlbumsToReleaseGroups(
             albums.map((album) => ({
+                provider: String(album.provider || "tidal"),
                 providerId: String(album.provider_id),
+                providerUrl: album.url ?? null,
                 title: String(album.title || ""),
                 version: album.version ?? null,
                 releaseDate: album.release_date ?? null,
@@ -624,7 +627,9 @@ export class RefreshArtistService {
                     const albums = providerAlbums.map((album) => providerAlbumToOfferRow(album, artistMbid));
                     const targetMatches = matchProviderAlbumsToReleaseGroups(
                         albums.map((album) => ({
+                            provider: String(album.provider || provider.id),
                             providerId: String(album.provider_id),
+                            providerUrl: album.url ?? null,
                             title: String(album.title || ""),
                             version: album.version ?? null,
                             releaseDate: album.release_date ?? null,
@@ -1391,7 +1396,10 @@ export class RefreshArtistService {
                 const providerAlbums = provider.listArtistReleaseOffers
                     ? await provider.listArtistReleaseOffers(providerArtistId)
                     : await provider.getArtistAlbums(providerArtistId);
-                const albums = providerAlbums.map((album) => providerAlbumToOfferRow(album, artistId));
+                const albums = providerAlbums.map((album) => ({
+                    ...providerAlbumToOfferRow(album, artistId),
+                    provider: provider.id,
+                }));
 
                 // Fetch tracks for all provider albums to support track-level matching
                 for (const album of albums) {

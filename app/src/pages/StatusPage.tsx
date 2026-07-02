@@ -341,7 +341,7 @@ const StatusPage = () => {
                     <SettingsSection
                         id="import-unmatched"
                         title="Import"
-                        description="Provider artists that could not be matched to a MusicBrainz artist. They were skipped during import and are not monitored — fix the name on the provider or add the artist manually by MusicBrainz search."
+                        description="Provider artists that were not linked automatically. They were skipped during import and are not monitored."
                         actions={status && status.imports.unmatchedArtists.length > 0 ? (
                             <Badge appearance="filled" color="warning">
                                 {`${status.imports.unmatchedArtists.length} not monitored`}
@@ -365,7 +365,7 @@ const StatusPage = () => {
                                                 <Caption1 className={styles.mutedText}>
                                                     {artist.status === "ambiguous"
                                                         ? "Several MusicBrainz artists match this name"
-                                                        : "No MusicBrainz artist found"}
+                                                        : "No safe automatic match"}
                                                     {` · ${artist.provider}`}
                                                 </Caption1>
                                             </div>

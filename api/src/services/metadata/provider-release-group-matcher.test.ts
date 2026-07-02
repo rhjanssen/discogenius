@@ -279,6 +279,70 @@ test("does not treat unrelated numeric external URLs as provider release links",
     assert.equal(match.releaseMbid, "apple-linked-release");
 });
 
+test("uses Apple Music release URL relationships as provider identity evidence", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        provider: "apple-music",
+        providerId: "287367980",
+        providerUrl: "https://music.apple.com/us/album/example/287367980",
+        title: "Provider Title",
+        releaseDate: "2023-04-12",
+        type: "ALBUM",
+        trackCount: 10,
+        volumeCount: 1,
+    }, [
+        {
+            mbid: "apple-linked-rg",
+            title: "Different Canonical Title",
+            primaryType: "Album",
+            firstReleaseDate: "2023-04-12",
+            releases: [{
+                mbid: "apple-linked-release",
+                title: "Different Canonical Title",
+                externalUrls: ["https://music.apple.com/us/album/different-canonical-title/287367980"],
+                trackCount: 10,
+                mediaCount: 1,
+            }],
+        },
+    ]);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.method, "musicbrainz-release-url");
+    assert.equal(match.releaseMbid, "apple-linked-release");
+    assert.equal(match.evidence.providerUrlMatched, true);
+});
+
+test("uses Spotify release URL relationships as provider identity evidence", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        provider: "spotify",
+        providerId: "4aawyAB9vmqN3uQ7FjRGTy",
+        providerUrl: "https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy",
+        title: "Provider Title",
+        releaseDate: "2012-01-01",
+        type: "ALBUM",
+        trackCount: 12,
+        volumeCount: 1,
+    }, [
+        {
+            mbid: "spotify-linked-rg",
+            title: "Different Canonical Title",
+            primaryType: "Album",
+            firstReleaseDate: "2012-01-01",
+            releases: [{
+                mbid: "spotify-linked-release",
+                title: "Different Canonical Title",
+                externalUrls: ["https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy?si=ignored"],
+                trackCount: 12,
+                mediaCount: 1,
+            }],
+        },
+    ]);
+
+    assert.equal(match.status, "verified");
+    assert.equal(match.method, "musicbrainz-release-url");
+    assert.equal(match.releaseMbid, "spotify-linked-release");
+    assert.equal(match.evidence.providerUrlMatched, true);
+});
+
 test("uses MusicBrainz release titles when provider title differs from release group title", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "57231699",

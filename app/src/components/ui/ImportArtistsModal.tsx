@@ -38,7 +38,7 @@ interface ImportProgress {
     total: number;
     processed: number;
     added: number;
-    updated: number;
+    monitoredExisting: number;
     skipped: number;
     currentName?: string;
     message?: string;
@@ -89,7 +89,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
     const [loadingSources, setLoadingSources] = useState(false);
     const [sourcesError, setSourcesError] = useState<string | null>(null);
     const [activeSource, setActiveSource] = useState<ImportSource | null>(null);
-    const [progress, setProgress] = useState<ImportProgress>({ total: 0, processed: 0, added: 0, updated: 0, skipped: 0 });
+    const [progress, setProgress] = useState<ImportProgress>({ total: 0, processed: 0, added: 0, monitoredExisting: 0, skipped: 0 });
     const [runError, setRunError] = useState<string | null>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -107,7 +107,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
         setPhase("select-source");
         setActiveSource(null);
         setRunError(null);
-        setProgress({ total: 0, processed: 0, added: 0, updated: 0, skipped: 0 });
+        setProgress({ total: 0, processed: 0, added: 0, monitoredExisting: 0, skipped: 0 });
         setLoadingSources(true);
         setSourcesError(null);
         let cancelled = false;
@@ -122,7 +122,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
 
     const startImport = useCallback((source: ImportSource, list?: ImportSourceList) => {
         setRunError(null);
-        setProgress({ total: 0, processed: 0, added: 0, updated: 0, skipped: 0, message: "Starting…" });
+        setProgress({ total: 0, processed: 0, added: 0, monitoredExisting: 0, skipped: 0, message: "Starting…" });
         setPhase("running");
         closeStream();
         eventSourceRef.current = api.createImportStream(
@@ -142,7 +142,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
                         setProgress((p) => ({ ...p, added: Number(data.added) || p.added + 1 }));
                         break;
                     case "artist-updated":
-                        setProgress((p) => ({ ...p, updated: Number(data.updated) || p.updated + 1 }));
+                        setProgress((p) => ({ ...p, monitoredExisting: Number(data.updated) || p.monitoredExisting + 1 }));
                         break;
                     case "artist-skipped":
                         setProgress((p) => ({ ...p, skipped: Number(data.skipped) || p.skipped + 1 }));
@@ -232,7 +232,7 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
                 </div>
                 <div className={styles.counts}>
                     <div className={styles.countItem}><Text className={styles.countValue}>{progress.added}</Text><Text className={styles.countLabel}>Added</Text></div>
-                    <div className={styles.countItem}><Text className={styles.countValue}>{progress.updated}</Text><Text className={styles.countLabel}>Updated</Text></div>
+                    <div className={styles.countItem}><Text className={styles.countValue}>{progress.monitoredExisting}</Text><Text className={styles.countLabel}>Already in library</Text></div>
                     <div className={styles.countItem}><Text className={styles.countValue}>{progress.skipped}</Text><Text className={styles.countLabel}>Skipped</Text></div>
                 </div>
             </>

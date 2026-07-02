@@ -17,6 +17,9 @@ export interface LidarrArtist {
   id: string;
   artistname: string;
   sortname: string;
+  artistaliases?: string[];
+  artistAliases?: string[];
+  links?: Array<{ target?: string; url?: string; type?: string } | string>;
   disambiguation?: string;
   type?: string;
   images: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;

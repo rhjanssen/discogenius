@@ -1,6 +1,8 @@
 import { normalizeComparableText, stringSimilarity } from "../mediafiles/import-matching-utils.js";
+import { providerResourceKey } from "./provider-url-identity.js";
 
 export type ProviderAlbumForReleaseGroupMatching = {
+    provider?: string | null;
     providerId: string;
     title: string;
     providerUrl?: string | null;
@@ -91,25 +93,10 @@ function normalizeBarcode(value?: string | null): string {
     return String(value || "").replace(/\D+/g, "");
 }
 
-function normalizeProviderResourceId(value?: string | null): string {
-    const text = String(value || "").trim();
-    if (!text) {
-        return "";
-    }
-    const tidalMatch = text.match(/tidal\.com\/(?:browse\/)?album\/(\d+)/i);
-    if (tidalMatch?.[1]) {
-        return tidalMatch[1];
-    }
-    if (/^https?:\/\//i.test(text)) {
-        return "";
-    }
-    return text.replace(/\D+/g, "");
-}
-
 function providerAlbumResourceIds(album: ProviderAlbumForReleaseGroupMatching): Set<string> {
     const ids = new Set<string>();
     for (const value of [album.providerId, album.providerUrl, ...(album.providerUrls || [])]) {
-        const normalized = normalizeProviderResourceId(value);
+        const normalized = providerResourceKey(value, { provider: album.provider || "tidal", type: "album" });
         if (normalized) {
             ids.add(normalized);
         }
@@ -342,7 +329,7 @@ function scoreAlbumAgainstReleaseGroup(
     const matchedReleaseByUrl = providerResourceIds.size > 0
         ? releases.find((release) =>
             (release.externalUrls || []).some((url) => {
-                const normalized = normalizeProviderResourceId(url);
+                const normalized = providerResourceKey(url);
                 return normalized && providerResourceIds.has(normalized);
             }))
         : undefined;

@@ -200,6 +200,16 @@ this release.)
   candidate window filled by one concurrency-capped type; per-type rank now
   keeps every queued type represented — Lidarr's whole-queue TryGet
   equivalent).
+- done (2026-07-02): provider↔MusicBrainz matching now uses canonical provider
+  URL relationships before falling back to names/titles. Artist import accepts
+  exact MusicBrainz artist URLs and high-confidence alias-prefix matches (fixes
+  the Concertgebouworkest → Koninklijk Concertgebouworkest miss), while release
+  matching normalizes provider URLs across TIDAL, Apple Music, and Spotify
+  instead of treating URL evidence as TIDAL-only. ListenBrainz Labs and Odesli
+  were researched: Labs is a useful future track-level MBID→Spotify/Apple/
+  SoundCloud fallback; Odesli is useful for user-facing link discovery, but is
+  not canonical enough to outrank MusicBrainz URL relations, UPC, or ISRC
+  evidence in the download matcher.
 - Line numbers in plans below drift — grep, don't trust them.
 
 ### General artist import (folded from 2.0.11)
@@ -743,8 +753,11 @@ local MusicBrainz-docker instance.
   Servarr-specific convenience fields. Supplemental data must never override
   MusicBrainz identity, release grouping, track identity, UPC/ISRC evidence, or
   provider-resource evidence.
-- pending: Add the local-MusicBrainz external-link matching tier once MB-local
-  mode is wired into runtime.
+- done: Add the MusicBrainz external-link matching tier to runtime matching.
+  Release links now compare normalized provider resource identities across
+  TIDAL/Apple/Spotify, and artist import uses provider artist links when present.
+  Remaining local-MusicBrainz mode work is source selection/switching, not the
+  matching tier itself.
 - revisit: Unify edition-aware matching around one shared scoring path that uses
   recording MBID/ISRC, position, volume, duration, and title-distance evidence.
 - pending: Add multi-user support with users, roles, and auth.

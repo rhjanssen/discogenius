@@ -1,11 +1,15 @@
 import { db } from "../../database.js";
 import { servarrMetadata, type LidarrArtist } from "./servarr-metadata.js";
 import type { ProviderArtist } from "../providers/streaming-provider.js";
+import { providerResourceKey } from "./provider-url-identity.js";
 
 export type ProviderArtistIdentityInput = {
+  provider?: string | null;
   providerId: string;
   name: string;
   picture?: string | null;
+  providerUrl?: string | null;
+  providerUrls?: string[] | null;
   popularity?: number | null;
   mbid?: string | null;
   raw?: unknown;
@@ -25,6 +29,7 @@ export function normalizeProviderArtist(artist: ProviderArtist): ProviderArtistI
     providerId: artist.providerId,
     name: artist.name,
     picture: artist.picture || null,
+    providerUrl: artist.url || null,
     popularity: artist.popularity ?? null,
     mbid: typeof raw?.mbid === "string" ? raw.mbid : null,
     raw: artist.raw,
@@ -40,39 +45,157 @@ function normalizeSearchText(value: string): string {
     .trim();
 }
 
-function bestCanonicalArtistMatch(providerArtist: ProviderArtistIdentityInput, candidates: LidarrArtist[]): {
+function collectCandidateSearchNames(candidate: LidarrArtist): Array<{ value: string; source: "name" | "sort-name" | "alias" }> {
+  const rawAliases = [
+    ...((candidate.artistaliases || []) as string[]),
+    ...((candidate.artistAliases || []) as string[]),
+  ];
+  const seen = new Set<string>();
+  const names: Array<{ value: string; source: "name" | "sort-name" | "alias" }> = [
+    { value: candidate.artistname || "", source: "name" },
+    { value: candidate.sortname || "", source: "sort-name" },
+    ...rawAliases.map((value) => ({ value, source: "alias" as const })),
+  ];
+
+  return names
+    .map((entry) => ({ ...entry, value: normalizeSearchText(entry.value) }))
+    .filter((entry) => {
+      if (!entry.value || seen.has(entry.value)) {
+        return false;
+      }
+      seen.add(entry.value);
+      return true;
+    });
+}
+
+function scoreCandidateSearchName(normalizedProviderName: string, candidateName: string, source: "name" | "sort-name" | "alias"): number {
+  if (candidateName === normalizedProviderName) {
+    return source === "alias" ? 9_500 : 10_000;
+  }
+  if (candidateName.startsWith(`${normalizedProviderName} `)) {
+    return source === "alias" ? 7_500 : 5_000;
+  }
+  return 0;
+}
+
+function scoreCanonicalArtistCandidate(normalizedProviderName: string, candidate: LidarrArtist): {
+  score: number;
+  method: "musicbrainz-artist-name-exact" | "musicbrainz-artist-alias-exact" | "musicbrainz-artist-alias-prefix" | "musicbrainz-artist-name-prefix" | null;
+} {
+  let best = { score: 0, method: null as ReturnType<typeof scoreCanonicalArtistCandidate>["method"] };
+  for (const name of collectCandidateSearchNames(candidate)) {
+    const score = scoreCandidateSearchName(normalizedProviderName, name.value, name.source);
+    if (score <= best.score) {
+      continue;
+    }
+    const isExact = name.value === normalizedProviderName;
+    best = {
+      score,
+      method: isExact
+        ? (name.source === "alias" ? "musicbrainz-artist-alias-exact" : "musicbrainz-artist-name-exact")
+        : (name.source === "alias" ? "musicbrainz-artist-alias-prefix" : "musicbrainz-artist-name-prefix"),
+    };
+  }
+
+  return best;
+}
+
+function candidateLinkValues(candidate: LidarrArtist): string[] {
+  const links = Array.isArray(candidate.links) ? candidate.links : [];
+  return links
+    .flatMap((link) => {
+      if (typeof link === "string") return [link];
+      if (!link || typeof link !== "object") return [];
+      return Object.values(link as Record<string, unknown>)
+        .filter((value): value is string => typeof value === "string");
+    })
+    .filter(Boolean);
+}
+
+function providerArtistResourceKeys(provider: string | null | undefined, providerArtist: ProviderArtistIdentityInput): Set<string> {
+  const keys = new Set<string>();
+  const providerName = provider || providerArtist.provider || null;
+  for (const value of [providerArtist.providerId, providerArtist.providerUrl, ...(providerArtist.providerUrls || [])]) {
+    const key = providerResourceKey(value, { provider: providerName, type: "artist" });
+    if (key) {
+      keys.add(key);
+    }
+  }
+  return keys;
+}
+
+export function bestCanonicalArtistMatch(providerArtist: ProviderArtistIdentityInput, candidates: LidarrArtist[], provider?: string | null): {
   artist: LidarrArtist;
   status: "verified" | "probable";
   confidence: number;
   method: string;
 } | null {
   const normalizedName = normalizeSearchText(providerArtist.name);
-  const exactMatches = candidates
-    .filter((candidate) => normalizeSearchText(candidate.artistname || "") === normalizedName)
-    .sort((left, right) => (right.Albums?.length || 0) - (left.Albums?.length || 0));
+  const providerKeys = providerArtistResourceKeys(provider, providerArtist);
+  const scoredMatches = candidates
+    .map((candidate) => {
+      const base = scoreCanonicalArtistCandidate(normalizedName, candidate);
+      const albumCount = candidate.Albums?.length || 0;
+      const candidateKeys = candidateLinkValues(candidate)
+        .map((url) => providerResourceKey(url))
+        .filter(Boolean);
+      const linkMatched = providerKeys.size > 0 && candidateKeys.some((key) => providerKeys.has(key));
+      return {
+        artist: candidate,
+        score: (linkMatched ? 20_000 : base.score) + Math.min(albumCount, 500),
+        baseScore: linkMatched ? 20_000 : base.score,
+        albumCount,
+        method: linkMatched ? "musicbrainz-artist-url" as const : base.method,
+      };
+    })
+    .filter((candidate) => candidate.baseScore > 0 && candidate.method)
+    .sort((left, right) => right.score - left.score);
 
-  if (exactMatches.length === 0) {
+  if (scoredMatches.length === 0) {
     return null;
   }
 
-  if (exactMatches.length === 1) {
+  if (scoredMatches.length === 1) {
     return {
-      artist: exactMatches[0],
-      status: "verified",
-      confidence: 1,
-      method: "musicbrainz-artist-name-exact",
+      artist: scoredMatches[0].artist,
+      status: scoredMatches[0].baseScore >= 9_500 ? "verified" : "probable",
+      confidence: scoredMatches[0].baseScore >= 9_500 ? 1 : 0.82,
+      method: scoredMatches[0].method!,
     };
   }
 
-  const [best, second] = exactMatches;
-  const bestAlbumCount = best.Albums?.length || 0;
-  const secondAlbumCount = second.Albums?.length || 0;
-  const bestHasDisambiguation = String(best.disambiguation || "").trim().length > 0;
-  const secondHasDisambiguation = String(second.disambiguation || "").trim().length > 0;
-
-  if (bestAlbumCount >= secondAlbumCount + 5 && (!bestHasDisambiguation || secondHasDisambiguation)) {
+  const [best, second] = scoredMatches;
+  if (best.baseScore >= 9_500 && best.baseScore > second.baseScore) {
     return {
-      artist: best,
+      artist: best.artist,
+      status: "verified",
+      confidence: 1,
+      method: best.method!,
+    };
+  }
+
+  if (
+    best.baseScore >= 7_500
+    && best.score >= second.score + 250
+    && best.albumCount >= second.albumCount + 25
+  ) {
+    return {
+      artist: best.artist,
+      status: "probable",
+      confidence: 0.84,
+      method: best.method!,
+    };
+  }
+
+  const bestHasDisambiguation = String(best.artist.disambiguation || "").trim().length > 0;
+  const secondHasDisambiguation = String(second.artist.disambiguation || "").trim().length > 0;
+  if (
+    best.baseScore >= 10_000
+    && best.albumCount >= second.albumCount + 5
+    && (!bestHasDisambiguation || secondHasDisambiguation)
+  ) {
+    return {
+      artist: best.artist,
       status: "probable",
       confidence: 0.78,
       method: "musicbrainz-artist-name-discography-weight",
@@ -120,7 +243,7 @@ export class ProviderArtistIdentityService {
 
     try {
       const candidates = await servarrMetadata.searchForNewArtist(artist.name, 10);
-      const match = bestCanonicalArtistMatch(artist, candidates);
+      const match = bestCanonicalArtistMatch(artist, candidates, provider);
       const normalizedName = normalizeSearchText(artist.name);
       const exactCount = candidates.filter((candidate) => normalizeSearchText(candidate.artistname || "") === normalizedName).length;
 
@@ -180,6 +303,8 @@ export class ProviderArtistIdentityService {
       resolution.method,
       JSON.stringify({
         picture: artist.picture || null,
+        providerUrl: artist.providerUrl || null,
+        providerUrls: artist.providerUrls || null,
         popularity: artist.popularity ?? null,
       }),
     );

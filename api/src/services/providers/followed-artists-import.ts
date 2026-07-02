@@ -34,6 +34,7 @@ type FollowedArtistRow = {
     provider_id: string;
     name: string;
     picture?: string | null;
+    provider_url?: string | null;
     popularity?: number | null;
     mbid?: string | null;
     match_status?: "verified" | "probable" | "ambiguous" | "provider_only";
@@ -47,6 +48,7 @@ function normalizeProviderArtist(artist: ProviderArtist): FollowedArtistRow {
         provider_id: artist.providerId,
         name: artist.name,
         picture: artist.picture || null,
+        provider_url: artist.url || null,
         popularity: artist.popularity ?? null,
         raw: artist.raw,
     };
@@ -176,6 +178,7 @@ export class FollowedArtistsImportService {
                     providerId: artist.provider_id,
                     name: artist.name,
                     picture: artist.picture || null,
+                    providerUrl: artist.provider_url || null,
                     popularity: artist.popularity ?? null,
                     mbid: artist.mbid || null,
                     raw: artist.raw,
@@ -285,12 +288,12 @@ export class FollowedArtistsImportService {
         const totalMonitored = addedCount + updatedCount;
         const parts: string[] = [];
         if (totalMonitored > 0) {
-            parts.push(`Monitored ${totalMonitored} of ${followedArtists.length} artists (${addedCount} new, ${updatedCount} existing)`);
+            parts.push(`Monitored ${totalMonitored} of ${followedArtists.length} artists (${addedCount} new, ${updatedCount} already in library)`);
         } else {
             parts.push(`Monitored 0 of ${followedArtists.length} artists`);
         }
         if (skippedCount > 0) parts.push(`${skippedCount} already monitored`);
-        if (unmatchedCount > 0) parts.push(`${unmatchedCount} without a MusicBrainz match`);
+        if (unmatchedCount > 0) parts.push(`${unmatchedCount} not matched automatically`);
         if (failedCount > 0) parts.push(`${failedCount} failed`);
 
         return {
