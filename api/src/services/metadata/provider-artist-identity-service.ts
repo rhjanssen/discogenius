@@ -205,8 +205,100 @@ export function bestCanonicalArtistMatch(providerArtist: ProviderArtistIdentityI
   return null;
 }
 
+/**
+ * Album titles normalized for cross-catalog comparison: provider titles carry
+ * edition noise MusicBrainz release-group titles don't ("Deluxe Edition",
+ * "(Remastered)", "[Explicit]"), so strip bracketed segments before the usual
+ * search normalization.
+ */
+function normalizeAlbumTitleForOverlap(title: string): string {
+  return normalizeSearchText(
+    String(title || "")
+      .replace(/\((?:[^)]*)\)/g, " ")
+      .replace(/\[(?:[^\]]*)\]/g, " "),
+  );
+}
+
+/**
+ * How many of the provider artist's album titles appear in a MusicBrainz
+ * candidate's release-group list. Name evidence can't separate same-named
+ * artists (Eden, Japan, Ellis Hall …), but two different artists essentially
+ * never share several album titles — so overlap is strong disambiguation
+ * evidence. The MB side is free: Servarr artist-search results already embed
+ * each candidate's release groups.
+ */
+export function scoreDiscographyOverlap(providerAlbumTitles: string[], candidate: LidarrArtist): { matched: number; sampled: number } {
+  const providerTitles = new Set(
+    providerAlbumTitles
+      .map(normalizeAlbumTitleForOverlap)
+      .filter((title) => title.length > 2),
+  );
+  if (providerTitles.size === 0) {
+    return { matched: 0, sampled: 0 };
+  }
+
+  const candidateTitles = new Set(
+    (candidate.Albums || [])
+      .map((album) => normalizeAlbumTitleForOverlap(album.Title || ""))
+      .filter((title) => title.length > 2),
+  );
+
+  let matched = 0;
+  for (const title of providerTitles) {
+    if (candidateTitles.has(title)) {
+      matched += 1;
+    }
+  }
+  return { matched, sampled: providerTitles.size };
+}
+
+/**
+ * Pick a candidate by discography overlap when name/URL evidence was
+ * inconclusive. Conservative: the winner needs at least two shared album
+ * titles AND a clear margin over the runner-up, so shared compilations or a
+ * single coincidental title can't flip an identity.
+ */
+export function bestDiscographyOverlapMatch(providerAlbumTitles: string[], candidates: LidarrArtist[]): {
+  artist: LidarrArtist;
+  status: "probable";
+  confidence: number;
+  method: string;
+} | null {
+  if (providerAlbumTitles.length === 0 || candidates.length === 0) {
+    return null;
+  }
+
+  const scored = candidates
+    .map((candidate) => ({ candidate, ...scoreDiscographyOverlap(providerAlbumTitles, candidate) }))
+    .sort((left, right) => right.matched - left.matched);
+
+  const best = scored[0];
+  const runnerUp = scored[1];
+  const runnerUpMatched = runnerUp?.matched ?? 0;
+
+  if (best.matched >= 2 && best.matched >= runnerUpMatched + 2) {
+    return {
+      artist: best.candidate,
+      status: "probable",
+      confidence: best.matched >= 5 ? 0.9 : 0.8,
+      method: "provider-discography-overlap",
+    };
+  }
+
+  return null;
+}
+
+export interface ResolveProviderArtistOptions {
+  /**
+   * Lazily fetch the provider artist's album titles (one provider API call).
+   * Only invoked when name/alias/URL evidence could not settle the identity,
+   * so the common case pays nothing.
+   */
+  listProviderAlbumTitles?: () => Promise<string[]>;
+}
+
 export class ProviderArtistIdentityService {
-  static async resolve(provider: string, artist: ProviderArtistIdentityInput): Promise<ProviderArtistIdentityResolution> {
+  static async resolve(provider: string, artist: ProviderArtistIdentityInput, options?: ResolveProviderArtistOptions): Promise<ProviderArtistIdentityResolution> {
     const cached = db.prepare(`
       SELECT artist_mbid, match_status, match_confidence, match_method
       FROM ProviderItems
@@ -244,18 +336,6 @@ export class ProviderArtistIdentityService {
     try {
       const candidates = await servarrMetadata.searchForNewArtist(artist.name, 10);
       const match = bestCanonicalArtistMatch(artist, candidates, provider);
-      const normalizedName = normalizeSearchText(artist.name);
-      const exactCount = candidates.filter((candidate) => normalizeSearchText(candidate.artistname || "") === normalizedName).length;
-
-      if (!match && exactCount > 1) {
-        return {
-          mbid: null,
-          status: "ambiguous",
-          confidence: 0,
-          method: "musicbrainz-artist-name-ambiguous",
-          reason: "musicbrainz_ambiguous",
-        };
-      }
 
       if (match) {
         return {
@@ -263,6 +343,38 @@ export class ProviderArtistIdentityService {
           status: match.status,
           confidence: match.confidence,
           method: match.method,
+        };
+      }
+
+      // Name/alias/URL evidence was inconclusive. Before giving up, compare
+      // discographies: fetch the provider artist's album titles (one API call)
+      // and look for a candidate whose release groups clearly share them.
+      if (options?.listProviderAlbumTitles && candidates.length > 0) {
+        try {
+          const providerAlbumTitles = (await options.listProviderAlbumTitles()).slice(0, 50);
+          const overlapMatch = bestDiscographyOverlapMatch(providerAlbumTitles, candidates);
+          if (overlapMatch) {
+            return {
+              mbid: overlapMatch.artist.id,
+              status: overlapMatch.status,
+              confidence: overlapMatch.confidence,
+              method: overlapMatch.method,
+            };
+          }
+        } catch (error) {
+          console.warn(`[ProviderArtistIdentityService] Discography comparison for ${artist.name} failed:`, error);
+        }
+      }
+
+      const normalizedName = normalizeSearchText(artist.name);
+      const exactCount = candidates.filter((candidate) => normalizeSearchText(candidate.artistname || "") === normalizedName).length;
+      if (exactCount > 1) {
+        return {
+          mbid: null,
+          status: "ambiguous",
+          confidence: 0,
+          method: "musicbrainz-artist-name-ambiguous",
+          reason: "musicbrainz_ambiguous",
         };
       }
     } catch (error) {

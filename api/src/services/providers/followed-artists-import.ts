@@ -183,7 +183,14 @@ export class FollowedArtistsImportService {
                     mbid: artist.mbid || null,
                     raw: artist.raw,
                 };
-                const mbMatch = await ProviderArtistIdentityService.resolve(provider.id, identityInput);
+                const mbMatch = await ProviderArtistIdentityService.resolve(provider.id, identityInput, {
+                    // Only invoked when name/alias/URL evidence is inconclusive:
+                    // one provider call to compare discographies before giving up.
+                    listProviderAlbumTitles: async () => {
+                        const albums = await provider.getArtistAlbums(artist.provider_id);
+                        return albums.map((album) => String(album.title || "")).filter(Boolean);
+                    },
+                });
                 let existingArtistBeforeImport: ExistingArtistRow | null | undefined;
                 if (mbMatch?.mbid) {
                     artist.mbid = mbMatch.mbid;
