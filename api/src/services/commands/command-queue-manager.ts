@@ -750,19 +750,6 @@ ${buildExecutionOrderClause()}
         appEvents.emit(AppEvent.QUEUE_CLEARED);
     }
 
-    /**
-     * Boost a pending job to manual/high priority
-     */
-    static boostToManual(typePattern: string, refId: string, priority: number = 1): number {
-        const result = db.prepare(`
-            UPDATE commands
-            SET priority = ?, trigger = , updated_at = CURRENT_TIMESTAMP
-            WHERE status = 'queued' AND name LIKE ? AND ref_id = ?
-    `).run(priority, typePattern, refId);
-
-        return result.changes;
-    }
-
     static reorderPendingJobs(
         commandIds: number[],
         options: {

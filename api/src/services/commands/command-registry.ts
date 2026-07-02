@@ -260,7 +260,12 @@ export const COMMAND_DEFINITIONS = {
     name: "Housekeeping",
     requiresDiskAccess: true,
     isTypeExclusive: true,
-    isExclusive: false,
+    // Housekeeping VACUUMs the whole database — on a 1 GB library file that
+    // holds the write lock for minutes. Run it alone (Lidarr's housekeeping
+    // vacuums the main DB too, but never alongside catalog-scale writers):
+    // concurrent refresh workers would exhaust their busy-retry budgets and
+    // fail their commands en masse.
+    isExclusive: true,
     isLongRunning: true,
   },
   [CommandNames.CurateArtist]: {
