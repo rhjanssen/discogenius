@@ -188,11 +188,18 @@ this release.)
   write transaction) are both fixed — see commits b17d5fe/362ef82/cc577b6.
   Import summaries now itemize monitored/already-monitored/unmatched/failed so
   a 531→494 shortfall is visible in the task description (457dcde).
-- Follow-up (UI, small): surface provider-import artists that had no
-  MusicBrainz match (persisted as `ProviderItems` rows with
-  `match_status='provider_only'`, `match_method LIKE '%followed%'`) somewhere
-  actionable — Lidarr shows unmatched import-list items; today they're only
-  queryable via SQL. 29 such artists exist from the 2026-07-01 test import.
+- done (2026-07-02): unmatched provider-import artists are surfaced on
+  System Status → Import (name + reason: no MB match vs ambiguous), served by
+  `/system/status` via `ProviderArtistIdentityService.listUnmatched()`.
+  Same commit wires the default provider's live request-pacing/rate-limit
+  metrics (from `/v1/status`) into the Providers section — closing the
+  "pending, low effort" note under the Status-page item. Also fixed a
+  dashboard queue render loop (`useSelectableCollection` returned a
+  fresh-but-equal selection array every render → "Maximum update depth
+  exceeded" under queue SSE load) and executor slot starvation (top-20
+  candidate window filled by one concurrency-capped type; per-type rank now
+  keeps every queued type represented — Lidarr's whole-queue TryGet
+  equivalent).
 - Line numbers in plans below drift — grep, don't trust them.
 
 ### General artist import (folded from 2.0.11)
@@ -247,8 +254,12 @@ the provider abstraction so a second provider can declare its own sources.
   to curated columns (Lidarr stores columns, not raw JSON). Fresh schema 34 no
   longer creates raw catalog `data` columns on ArtistMetadata, Albums,
   AlbumReleases, Recordings, or Tracks; tests assert those blobs stay absent.
-- pending (lever 3): chunk the remaining `syncReleaseGroup` RG+releases
-  transaction if a measured write still holds the lock too long after lever 2.
+- closed by measurement (2026-07-02, lever 3): NOT needed. With write
+  profiling at 1s (`DISCOGENIUS_WRITE_PROFILE_MS=1000`) during a live
+  494-artist intake drain on the ~1 GB DB, zero write transactions exceeded
+  1s after the video-matcher livelock fix (commit cc577b6) — the earlier long
+  holds were that query, not `syncReleaseGroup`'s transaction size. Re-open
+  only if a future `[write-profile]` log implicates it.
   NOTE: the catalog FK triggers fire only on INSERT / UPDATE OF mbid — NOT on
   `ON CONFLICT DO UPDATE` re-syncs — so they're a new-row cost, not a re-refresh
   cost.
