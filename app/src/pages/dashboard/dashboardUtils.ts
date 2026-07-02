@@ -193,6 +193,7 @@ export function formatJobDescription(job: JobLike): string {
             return desc || "Imported files from a completed download";
         }
         case "RefreshArtist":
+        case "MatchArtistProviders":
         case "CurateArtist":
         case "RescanFolders": {
             if (type === "RescanFolders" && payload?.addNewArtists) {

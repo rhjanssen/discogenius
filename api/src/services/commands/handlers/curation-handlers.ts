@@ -97,6 +97,10 @@ export const handleDownloadMissing: CommandHandler<"DownloadMissing"> = async (j
 };
 
 export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, ctx) => {
+    ctx.updateCommandDescription(job, {
+        progress: 10,
+        description: "Tracked files - comparing against quality profile cutoffs",
+    });
     const result = await UpgraderService.checkUpgrades(true);
     ctx.updateCommandDescription(job, {
         progress: 100,
@@ -104,7 +108,11 @@ export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, 
     });
 };
 
-export const handleCurateArtist: CommandHandler<"CurateArtist"> = async (job) => {
+export const handleCurateArtist: CommandHandler<"CurateArtist"> = async (job, ctx) => {
+    ctx.updateCommandDescription(job, {
+        progress: 10,
+        description: ctx.formatArtistPhaseDescription(job, "applying release monitoring rules"),
+    });
     await CurationService.processAll(
         job.payload.artistId,
         {
@@ -112,5 +120,9 @@ export const handleCurateArtist: CommandHandler<"CurateArtist"> = async (job) =>
             forceDownloadQueue: false,
         }
     );
+    ctx.updateCommandDescription(job, {
+        progress: 90,
+        description: ctx.formatArtistPhaseDescription(job, "updating artist statistics"),
+    });
     ArtistStatisticsService.refresh([job.payload.artistId]);
 };

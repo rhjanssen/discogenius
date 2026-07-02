@@ -1426,6 +1426,8 @@ export class RefreshArtistService {
                     }
                 }
 
+                options.progress?.({ kind: "albums_total", total: albums.length });
+
                 const missingAlbums = albums.filter((album) => !album._provider_tracks);
                 if (missingAlbums.length > 0) {
                     console.log(`[RefreshArtistService] Fetching tracklists for ${missingAlbums.length} albums from ${provider.name}...`);
@@ -1443,6 +1445,16 @@ export class RefreshArtistService {
                                 }
                             })
                         );
+                        const fetched = Math.min(i + chunkSize, missingAlbums.length);
+                        const lastAlbum = chunk[chunk.length - 1];
+                        options.progress?.({
+                            kind: "album",
+                            index: fetched,
+                            total: missingAlbums.length,
+                            albumId: String(lastAlbum?.provider_id ?? ""),
+                            title: String(lastAlbum?.title ?? ""),
+                            created: false,
+                        });
                     }
                 }
 
@@ -1481,7 +1493,14 @@ export class RefreshArtistService {
             }
         }
 
-        options.progress?.({ kind: "albums_total", total: totalAlbumsCount });
+        // The per-provider loop above already reported fetch progress; from here
+        // the remaining work is release selection over the collected offers.
+        options.progress?.({
+            kind: "status",
+            message: totalAlbumsCount > 0
+                ? `matching ${totalAlbumsCount} releases to your library`
+                : "no provider releases found",
+        });
 
         const registeredProviderIds = new Set(providers.map((provider) => provider.id));
         const staleProviderIds = db

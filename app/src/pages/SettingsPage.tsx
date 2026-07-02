@@ -568,10 +568,8 @@ const useStyles = makeStyles({
     providerIconBox: {
         width: '48px',
         height: '48px',
-        borderRadius: tokens.borderRadiusMedium,
         display: 'grid',
         placeItems: 'center',
-        backgroundColor: tokens.colorNeutralBackground3,
         flexShrink: 0,
     },
     providerIcon: {
@@ -1483,7 +1481,9 @@ const SettingsPage = () => {
             <div className={styles.card}>
                 {(() => {
                     const allProviders = streamingProviders?.providers ?? [];
-                    const activeProviders = allProviders.filter(p => p.authenticated || p.management.canDisconnect);
+                    // Only connected services get a card; everything else is
+                    // reachable through the always-visible "Add Provider" flow.
+                    const activeProviders = allProviders.filter(p => p.authenticated);
 
                     if (activeProviders.length === 0 && !providersLoading) {
                         return (
@@ -1623,18 +1623,15 @@ const SettingsPage = () => {
                         </React.Fragment>
                     );
                 })}
-                {/*
-                  * "Add another provider" returns with the universal provider
-                  * onboarding flow in 2.1 (Apple Music, …). Until a second
-                  * provider exists, /auth just re-runs the TIDAL connect and
-                  * bounces back to the library, so we show a roadmap hint
-                  * instead of a control that leads nowhere.
-                  */}
                 {activeProviders.length > 0 && (
                     <div className={styles.profileRow} style={{ justifyContent: 'center' }}>
-                        <Caption1 className={styles.mutedText}>
-                            More providers (Apple Music, …) arrive in a future release.
-                        </Caption1>
+                        <Button
+                            appearance="outline"
+                            icon={<Open24Regular />}
+                            onClick={() => navigate("/auth")}
+                        >
+                            Add Provider
+                        </Button>
                     </div>
                 )}
                 </>

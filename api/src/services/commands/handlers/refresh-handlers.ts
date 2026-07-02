@@ -79,29 +79,41 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
             progress: (event) => {
                 if (event.kind === "albums_total") {
                     ctx.updateCommandDescription(job, {
-                        progress: event.total > 0 ? 15 : 90,
+                        progress: event.total > 0 ? 15 : 85,
                         description: event.total > 0
-                            ? ctx.formatArtistPhaseDescription(job, `indexing releases (0/${event.total})`)
+                            ? ctx.formatArtistPhaseDescription(job, `found ${event.total} provider releases`)
                             : ctx.formatArtistPhaseDescription(job, "no provider releases found"),
                     });
                     return;
                 }
 
+                // Tracklist fetching is the long network-bound phase; the service
+                // emits an "album" event per fetched chunk so this fraction
+                // actually moves (it used to sit at 0/N until the command ended).
                 if (event.kind === "album") {
                     const total = Math.max(event.total, 1);
-                    const progress = Math.min(55, 15 + Math.round((event.index / total) * 40));
+                    const progress = Math.min(75, 15 + Math.round((event.index / total) * 60));
                     ctx.updateCommandDescription(job, {
                         progress,
-                        description: ctx.formatArtistPhaseDescription(job, `indexing releases (${event.index}/${event.total})`),
+                        description: ctx.formatArtistPhaseDescription(job, `fetching tracklists (${event.index}/${event.total})`),
                     });
+                    return;
                 }
 
                 if (event.kind === "album_tracks") {
                     const total = Math.max(event.total, 1);
-                    const progress = Math.min(90, 55 + Math.round((event.index / total) * 35));
+                    const progress = Math.min(90, 75 + Math.round((event.index / total) * 15));
                     ctx.updateCommandDescription(job, {
                         progress,
                         description: ctx.formatArtistPhaseDescription(job, `scanning tracks (${event.index}/${event.total}: ${event.title})`),
+                    });
+                    return;
+                }
+
+                if (event.kind === "status") {
+                    ctx.updateCommandDescription(job, {
+                        progress: 85,
+                        description: ctx.formatArtistPhaseDescription(job, event.message),
                     });
                 }
             },
@@ -112,7 +124,7 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
     ArtistStatisticsService.refresh([job.payload.artistId]);
     ctx.updateCommandDescription(job, {
         progress: 95,
-        description: ctx.formatArtistPhaseDescription(job, "finalizing version groups"),
+        description: ctx.formatArtistPhaseDescription(job, "provider matching complete"),
     });
 
     // Emit event so decoupled listeners (like curation.listener) can chain the

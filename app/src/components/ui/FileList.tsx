@@ -354,9 +354,9 @@ function getQualityStyle(
         };
     }
 
-    // Hi-Res (24-bit) - Tidal Yellow
+    // Hi-Res (MAX tier) - Tidal Yellow
     if (q === "HIRES_LOSSLESS" || bitDepth === 24) {
-        let label = "24-bit";
+        let label = "MAX";
         if (bitDepth && sampleRate) {
             const formattedRate = sampleRate >= 1000
                 ? `${(sampleRate / 1000).toFixed(sampleRate % 1000 === 0 ? 0 : 1)}kHz`
@@ -371,9 +371,9 @@ function getQualityStyle(
         };
     }
 
-    // Lossless (16-bit) - Tidal Teal
+    // Lossless (HIGH tier) - Tidal Teal
     if (q === "LOSSLESS" || bitDepth === 16) {
-        let label = "16-bit";
+        let label = "HIGH";
         if (bitDepth && sampleRate) {
             const formattedRate = sampleRate >= 1000
                 ? `${(sampleRate / 1000).toFixed(sampleRate % 1000 === 0 ? 0 : 1)}kHz`

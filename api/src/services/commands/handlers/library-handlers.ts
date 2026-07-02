@@ -39,7 +39,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
 
         ctx.updateCommandDescription(job, {
             progress: 95,
-            description: `${baseLabel} - finalizing`,
+            description: `${baseLabel} - updating artist statistics`,
         });
         ArtistStatisticsService.refresh([artistId]);
 
@@ -76,7 +76,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
         });
         ctx.updateCommandDescription(job, {
             progress: 95,
-            description: "Scanning library root folders - finalizing",
+            description: "Scanning library root folders - updating artist statistics",
         });
         ArtistStatisticsService.refresh();
     }

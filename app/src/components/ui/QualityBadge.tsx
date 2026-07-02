@@ -133,11 +133,11 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
     } else if (normalizedQuality === "HIRES_LOSSLESS") {
         backgroundColor = palette.YellowBackground;
         color = palette.YellowText;
-        badgeText = "24-BIT";
+        badgeText = "MAX";
     } else if (normalizedQuality === "LOSSLESS") {
         backgroundColor = palette.TealBackground;
         color = palette.TealText;
-        badgeText = "16-BIT";
+        badgeText = "HIGH";
     } else if (normalizedQuality?.includes("HIGH")) {
         badgeText = "High";
     } else if (normalizedQuality?.startsWith("MP4_")) {
