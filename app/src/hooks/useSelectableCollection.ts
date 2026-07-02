@@ -13,7 +13,15 @@ export function useSelectableCollection<T>({ items, getItemId }: SelectableColle
   const selectedRowIdSet = useMemo(() => new Set(selectedRowIds), [selectedRowIds]);
 
   useEffect(() => {
-    setSelectedRowIds((current) => current.filter((rowId) => visibleRowIdSet.has(rowId)));
+    setSelectedRowIds((current) => {
+      const next = current.filter((rowId) => visibleRowIdSet.has(rowId));
+      // Preserve identity when nothing was pruned: returning a fresh array here
+      // re-renders, and since callers often pass an inline getItemId (new
+      // identity per render → new visibleRowIdSet → this effect refires), a
+      // fresh-but-equal array turns that into an infinite update loop
+      // ("Maximum update depth exceeded" on the dashboard queue).
+      return next.length === current.length ? current : next;
+    });
   }, [visibleRowIdSet]);
 
   const selectedItems = useMemo(() => {
