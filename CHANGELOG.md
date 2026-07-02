@@ -2,6 +2,75 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.1.0] - 2026-07-02
+
+### Added
+- Added a general provider artist import flow. TIDAL followed artists, playlist
+  sources, and explicit provider artist selections can now queue durable
+  background imports with streamed progress and clear monitored / already in
+  library / unmatched / failed counts.
+- Added System Status diagnostics for runtime health, paths, native tools,
+  download backend readiness, provider capabilities, request pacing, and
+  provider artists that were skipped because they could not be matched safely.
+- Added release and artist rename/retag command surfaces backed by the command
+  queue, plus canonical metadata sidecar, artwork, lyric, and tag regeneration
+  paths.
+
+### Changed
+- Refresh, provider matching, curation, rescans, and missing-download work now
+  follow the Lidarr-style command model more closely: typed executors, bounded
+  worker concurrency, durable queue ordering, exclusive housekeeping, and
+  process-level failure guards prevent worker failures from taking down the API.
+- Large-library refresh throughput was reworked around short SQLite writes and
+  indexed lookups. Unchanged catalog rows are skipped by content hash, raw
+  catalog JSON blobs were removed from the fresh schema, and the video matcher
+  now resolves audio candidates once per artist outside the write transaction.
+- Provider-to-MusicBrainz matching now uses canonical provider URL evidence
+  before falling back to names. TIDAL, Apple Music, Spotify, SoundCloud, and
+  YouTube-style resource URLs normalize through one provider-neutral identity
+  parser; aliases are used with ambiguity protection for artist import.
+- Cover art and video thumbnail resolution now go through the shared
+  canonical-first media-cover pipeline, with provider artwork used as a fallback
+  through provider interfaces rather than service-specific core logic.
+- Library, album, and artist track lists now share one polished table/list
+  component with consistent quality badge ordering, hover playback controls,
+  column sizing, mobile behavior, and downloaded-state display.
+- Settings were simplified around outcome-focused controls: metadata embedding
+  is always complete when tag writing is enabled, artwork filenames/resolution
+  controls were removed, and the page copy was trimmed to plain user-facing
+  language.
+- Naming and audio-tag writing were reviewed against Lidarr. The naming parser
+  now handles reserved Windows device names and additional genre/disambiguation
+  tokens; tag writing now covers manual-import policy correctly and accepts more
+  imported audio formats.
+
+### Fixed
+- Fixed crash loops and stale active tasks under heavy provider import load by
+  catching worker-pool rejections at the command executor and global process
+  layers.
+- Fixed SQLite write-lock livelock from video matching by replacing a
+  multi-minute per-video candidate query inside a transaction with an indexed
+  per-artist lookup measured at sub-second runtime on the user's large library.
+- Fixed command worker starvation where one concurrency-capped command type
+  filled the candidate window and prevented other queued work from starting.
+- Fixed `no such column` regressions from removed file/provider shadow columns
+  in history, queue, import, retag, sidecar, and library-file paths.
+- Fixed top-tracks placement and limits on artist pages. Top tracks now render
+  after all release sections and before videos, and can expand up to 100 tracks.
+- Fixed video curation, video thumbnail persistence, video-card spacing, video
+  page artist links/images, and playback routing for downloaded videos.
+- Fixed global library track cover loading, popularity sorting, and table
+  spacing regressions on the Library page.
+- Fixed the API test runner so the full API suite is executed reliably instead
+  of silently matching only a subset of files through a shell glob.
+
+### Removed
+- Removed backwards-compatibility migration/backfill code and legacy schema
+  shadows that only existed for old runtime data. Fresh schema version 34 is the
+  clean baseline for this release.
+- Removed the old followed-only import UI and duplicate/special-case library
+  track-list implementation.
+
 ## [2.0.10] - 2026-06-24
 
 ### Fixed
