@@ -195,6 +195,15 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: true,
   },
+  // Catalog hydration is the write-heaviest work in the app. Lidarr's bulk
+  // refresh is ONE RefreshArtistCommand carrying ArtistIds[] processed
+  // sequentially inside the command, so Lidarr never has several catalog
+  // writers racing on the SQLite write lock. Our intake fans out one command
+  // per artist instead, so cap each heavy type at 1 concurrent command to get
+  // the same effective serialization — three parallel hydrations starve each
+  // other (and every other writer) into 30s busy-timeouts, they don't finish
+  // faster. Different types still overlap (refresh + match + rescan), which
+  // keeps network-bound and disk-bound work flowing.
   [CommandNames.RefreshArtist]: {
     type: CommandNames.RefreshArtist,
     name: "Refresh Artist",
@@ -203,7 +212,7 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: true,
     isPerRefExclusive: true,
-    maxConcurrent: 3,
+    maxConcurrent: 1,
   },
   [CommandNames.MatchArtistProviders]: {
     type: CommandNames.MatchArtistProviders,
@@ -213,7 +222,7 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: true,
     isPerRefExclusive: true,
-    maxConcurrent: 3,
+    maxConcurrent: 1,
   },
   [CommandNames.RefreshAlbum]: {
     type: CommandNames.RefreshAlbum,

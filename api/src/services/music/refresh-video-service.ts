@@ -160,34 +160,61 @@ function parseIsrcValues(value: unknown): string[] {
     return [...values];
 }
 
-function findRelatedAudioRecordingForVideo(video: any, artistMbid: string | null): AudioRecordingVideoMatch | null {
-    const normalizedArtistMbid = nullableText(artistMbid);
+type AudioRecordingCandidateRow = {
+    id: number;
+    mbid?: string | null;
+    title?: string | null;
+    length_ms?: number | null;
+    isrcs?: string | null;
+};
+
+/**
+ * Load the artist's audio recordings once — the candidate set every one of the
+ * artist's videos is matched against. Recordings created from MusicBrainz
+ * tracklists don't carry artist_mbid, so also resolve recordings through the
+ * artist's release groups (Albums / ArtistReleaseGroups → releases → tracks).
+ *
+ * Written as a UNION of independently index-scoped legs on purpose: the old
+ * single query started FROM Recordings with LEFT JOINs and an OR across three
+ * artist columns, which SQLite cannot push down — it enumerated all ~650K
+ * recordings through a 5-way join PER VIDEO, pegging a worker thread for the
+ * better part of an hour per big artist (and, called inside the write
+ * transaction, holding the SQLite write lock the whole time).
+ */
+function loadAudioRecordingCandidatesForArtist(artistMbid: string): AudioRecordingCandidateRow[] {
+    return db.prepare(`
+        SELECT rec.id, rec.mbid, rec.title, rec.length_ms, rec.isrcs
+        FROM Recordings rec
+        WHERE rec.artist_mbid = ? AND COALESCE(rec.is_video, 0) = 0
+        UNION
+        SELECT rec.id, rec.mbid, rec.title, rec.length_ms, rec.isrcs
+        FROM Albums rg
+        JOIN AlbumReleases ar ON ar.release_group_mbid = rg.mbid
+        JOIN Tracks t ON t.release_mbid = ar.mbid
+        JOIN Recordings rec ON rec.mbid = t.recording_mbid
+        WHERE rg.artist_mbid = ? AND COALESCE(rec.is_video, 0) = 0
+        UNION
+        SELECT rec.id, rec.mbid, rec.title, rec.length_ms, rec.isrcs
+        FROM ArtistReleaseGroups scope
+        JOIN AlbumReleases ar ON ar.release_group_mbid = scope.release_group_mbid
+        JOIN Tracks t ON t.release_mbid = ar.mbid
+        JOIN Recordings rec ON rec.mbid = t.recording_mbid
+        WHERE scope.artist_mbid = ? AND COALESCE(rec.is_video, 0) = 0
+    `).all(artistMbid, artistMbid, artistMbid) as AudioRecordingCandidateRow[];
+}
+
+function findRelatedAudioRecordingForVideo(
+    video: any,
+    candidates: AudioRecordingCandidateRow[],
+): AudioRecordingVideoMatch | null {
     const videoTitle = normalizeVideoComparableTitle(video.title);
-    if (!normalizedArtistMbid || !videoTitle) {
+    if (!videoTitle || candidates.length === 0) {
         return null;
     }
 
     const videoDurationMs = durationMs(video.duration);
     const videoIsrcs = parseIsrcValues(video.isrc ?? video.isrcs);
-    // Recordings created from MusicBrainz tracklists don't carry artist_mbid,
-    // so resolve the artist's audio recordings through their release groups —
-    // matching against Recordings.artist_mbid alone returns nothing.
-    const rows = db.prepare(`
-        SELECT DISTINCT rec.id, rec.mbid, rec.title, rec.length_ms, rec.isrcs
-        FROM Recordings rec
-        LEFT JOIN Tracks t ON t.recording_mbid = rec.mbid
-        LEFT JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
-        LEFT JOIN Albums rg ON rg.mbid = ar.release_group_mbid
-        LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
-        WHERE COALESCE(rec.is_video, 0) = 0
-          AND (rec.artist_mbid = ? OR rg.artist_mbid = ? OR scope.artist_mbid = ?)
-    `).all(normalizedArtistMbid, normalizedArtistMbid, normalizedArtistMbid) as Array<{
-        id: number;
-        mbid?: string | null;
-        title?: string | null;
-        length_ms?: number | null;
-        isrcs?: string | null;
-    }>;
+    const rows = candidates;
 
     let best: AudioRecordingVideoMatch | null = null;
     for (const row of rows) {
@@ -418,13 +445,36 @@ export class RefreshVideoService {
                 updated_at = CURRENT_TIMESTAMP
         `);
 
+        // Resolve audio↔video matches BEFORE opening the write transaction: the
+        // candidate load + title/ISRC comparison is pure read/compute work, and
+        // doing it inside the transaction held the single SQLite write lock for
+        // the whole matching pass, starving every other writer in the app.
+        const candidatesByArtist = new Map<string, AudioRecordingCandidateRow[]>();
+        const candidatesFor = (mbid: string | null): AudioRecordingCandidateRow[] => {
+            const normalized = nullableText(mbid);
+            if (!normalized) return [];
+            let rows = candidatesByArtist.get(normalized);
+            if (!rows) {
+                rows = loadAudioRecordingCandidatesForArtist(normalized);
+                candidatesByArtist.set(normalized, rows);
+            }
+            return rows;
+        };
+        const preparedVideos = videos.map((video) => {
+            const artistMbid = String(video.artist_mbid || video.mb_artist_mbid || "").trim() || getArtistMusicBrainzId(artistId);
+            return {
+                video,
+                artistMbid,
+                audioMatch: findRelatedAudioRecordingForVideo(video, candidatesFor(artistMbid)),
+            };
+        });
+
         db.transaction(() => {
-            for (const video of videos) {
+            for (const { video, artistMbid, audioMatch } of preparedVideos) {
                 const provider = String(video.provider || video._provider || "tidal");
                 const existingProviderItem = selectProviderItem.get(provider, String(video.provider_id)) as { recording_id?: number | null } | undefined;
                 const identity = buildVideoIdentity(video);
                 const recordingMbid = String(video.mbid || video.recording_mbid || "").trim() || null;
-                const artistMbid = String(video.artist_mbid || video.mb_artist_mbid || "").trim() || getArtistMusicBrainzId(artistId);
                 const recordingId = ensureProviderVideoRecording({
                     video,
                     artistMbid,
@@ -433,7 +483,6 @@ export class RefreshVideoService {
 
                 const quality = video.quality || "MP4_1080P";
                 const cover = video.image_id || null;
-                const audioMatch = findRelatedAudioRecordingForVideo(video, artistMbid);
 
                 if (recordingId) {
                     updateRecordingState.run(
