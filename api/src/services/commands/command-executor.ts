@@ -5,7 +5,7 @@ import { runWithAsyncBusyRetry } from "../../database.js";
 import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { executeCommand } from "./command-context.js";
-import { CommandWorkerPool } from "./worker/command-worker-pool.js";
+import { CommandWorkerPool, isPoolShutdownError } from "./worker/command-worker-pool.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
 
@@ -161,6 +161,13 @@ export class CommandExecutor {
         // (an escaped rejection aborts the whole Node process).
         const promise = this.processJob(job)
             .catch(async (error: unknown) => {
+                if (isPoolShutdownError(error)) {
+                    // Deploy/restart interruption, not a failure: leave the row
+                    // 'started' so boot recovery re-queues it immediately
+                    // (Lidarr's OrphanStarted model).
+                    console.log(`[CommandExecutor] Command #${job.id} (${job.name}) interrupted by shutdown; will re-queue on next start`);
+                    return;
+                }
                 const message = error instanceof Error ? error.message : String(error);
                 console.error(`[CommandExecutor] Command #${job.id} (${job.name}) failed:`, message);
                 try {

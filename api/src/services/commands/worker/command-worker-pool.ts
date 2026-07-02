@@ -41,6 +41,18 @@ export interface JobRunOptions {
     onProgress?: (state: unknown) => void;
 }
 
+/**
+ * Marker for jobs interrupted by pool shutdown (deploy/restart), as opposed to
+ * jobs that genuinely failed. Callers use this to leave the command row in
+ * 'started' so boot recovery re-queues it immediately (Lidarr's OrphanStarted
+ * model) instead of persisting a failure that waits for the next due-check.
+ */
+export const POOL_SHUTDOWN_MESSAGE = "Job worker pool shutting down";
+
+export function isPoolShutdownError(error: unknown): boolean {
+    return error instanceof Error && error.message === POOL_SHUTDOWN_MESSAGE;
+}
+
 interface JobSettle {
     commandId: number;
     resolve: () => void;
@@ -114,9 +126,9 @@ export class CommandWorkerPool {
         if (!this.started) return;
         this.started = false;
 
-        // Fail anything still queued; in-flight jobs are rejected on worker exit.
+        // Reject anything still queued; in-flight jobs are rejected on worker exit.
         for (const queued of this.queue.splice(0)) {
-            queued.reject(new Error("Job worker pool shutting down"));
+            queued.reject(new Error(POOL_SHUTDOWN_MESSAGE));
         }
 
         const workers = this.workers.splice(0);
@@ -243,11 +255,14 @@ export class CommandWorkerPool {
 
     private static handleWorkerExit(entry: PoolWorker, error: Error): void {
         // Reject the in-flight job (if any) and replace the dead worker so the
-        // pool stays at full size.
+        // pool stays at full size. When the pool is stopping (deploy/restart),
+        // the worker exit is expected — report it as a shutdown interruption so
+        // the executor leaves the command 'started' for boot re-queue instead of
+        // marking it failed.
         const settle = entry.settle;
         entry.settle = undefined;
         if (settle) {
-            settle.reject(error);
+            settle.reject(this.started ? error : new Error(POOL_SHUTDOWN_MESSAGE));
         }
 
         const index = this.workers.indexOf(entry);
