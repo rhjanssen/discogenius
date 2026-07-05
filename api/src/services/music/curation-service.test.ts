@@ -369,6 +369,65 @@ test("CurationService queues spatial slot when only the stereo selected release 
   assert.equal(payload.releaseGroupMbid, "rg-mbid-1");
 });
 
+test("DownloadMissingService can queue monitored albums in bounded batches", async () => {
+  const { db } = dbModule;
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Bastille", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Bastille");
+
+  const insertReleaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  insertReleaseGroup.run("rg-mbid-1", "artist-mbid-1", "First Wanted Album", "album", "2024-01-01");
+  insertReleaseGroup.run("rg-mbid-2", "artist-mbid-1", "Second Wanted Album", "album", "2023-01-01");
+
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "First Wanted Album", 0, 1);
+  insertRelease.run("release-mbid-2", "rg-mbid-2", "artist-mbid-1", "Second Wanted Album", 0, 1);
+
+  const insertSlot = db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertSlot.run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "tidal-album-1", "release-mbid-1", "LOSSLESS", "verified");
+  insertSlot.run("artist-mbid-1", "rg-mbid-2", "stereo", 1, "tidal", "tidal-album-2", "release-mbid-2", "LOSSLESS", "verified");
+
+  const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1", { limit: 1 });
+
+  assert.equal(queued.albums, 1);
+  const jobs = db.prepare(`
+    SELECT ref_id AS refId, payload
+    FROM commands
+    WHERE name = ?
+    ORDER BY id ASC
+  `).all(queueModule.CommandNames.DownloadAlbum) as Array<{ refId: string; payload: string }>;
+
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0]?.refId, "rg-mbid-1:stereo");
+
+  const secondPass = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1", { limit: 1 });
+  assert.equal(secondPass.albums, 1);
+  const downloadCount = db.prepare("SELECT COUNT(*) AS count FROM commands WHERE name = ?")
+    .get(queueModule.CommandNames.DownloadAlbum) as { count: number };
+  assert.equal(
+    downloadCount.count,
+    2,
+  );
+});
+
 test("CurationService respects monitor_lock when synchronizing monitor status", async () => {
   const { db } = dbModule;
 

@@ -9,7 +9,8 @@ import {
 } from "@/providers/appAuthContext";
 
 export function AppAuthProvider({ children }: { children: React.ReactNode }) {
-  const [isAuthActive, setIsAuthActive] = useState<boolean>();
+  const [isAuthActive, setIsAuthActive] = useState<boolean>(false);
+  const [isBootstrapping, setIsBootstrapping] = useState<boolean>(true);
   const [authType, setAuthType] = useState<AppAuthType>(null);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(() => {
@@ -45,14 +46,16 @@ export function AppAuthProvider({ children }: { children: React.ReactNode }) {
 
       setIsAuthActive(active);
     } catch (error) {
+      // Load optimistically: a slow or briefly unreachable API must never
+      // hold the whole app hostage on the boot screen.
       setBootstrapError(error instanceof Error ? error.message : "Unable to verify app authentication status.");
-      setIsAuthActive(undefined);
-      throw error;
+      setIsAuthActive(false);
+    } finally {
+      setIsBootstrapping(false);
     }
   }, [token]);
 
   useEffect(() => {
-    setIsAuthActive(undefined);
     refresh().catch((error) => {
       console.warn("[AppAuth] Failed to check auth status:", error);
     });
@@ -83,7 +86,6 @@ export function AppAuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const isAccessGranted = useMemo(() => {
-    if (isAuthActive === undefined) return false;
     if (!isAuthActive) return true;
     return !!token;
   }, [isAuthActive, token]);
@@ -92,6 +94,7 @@ export function AppAuthProvider({ children }: { children: React.ReactNode }) {
     isAuthActive,
     authType,
     isAccessGranted,
+    isBootstrapping,
     token,
     bootstrapError,
     refresh,

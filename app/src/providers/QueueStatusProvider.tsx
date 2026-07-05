@@ -83,6 +83,80 @@ function shouldRefreshQueueStatusForGlobalEvent(event: GlobalEventPayload): bool
   return jobEventData.status !== undefined && STRUCTURAL_QUEUE_UPDATE_STATUSES.has(jobEventData.status);
 }
 
+type ProgressTrackRow = NonNullable<DownloadProgress["tracks"]>[number];
+
+/**
+ * Normalize a reported or catalog track title for matching. Keep in sync
+ * with the server-side copy in download-processor.ts.
+ */
+function normalizeTrackTitleForMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/^[^-]+\s-\s/, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Apply a live per-title status update to the cached tracklist so row
+ * indicators move with SSE events instead of waiting for the next poll.
+ * Reported titles are "<track title> <quality suffix>" (downloads) or
+ * file-derived names (imports); match normalized prefixes, prefer the
+ * longest catalog title, and never regress a completed row.
+ */
+function applyTrackStatusToRows(
+  tracks: ProgressTrackRow[] | undefined,
+  reportedTitle: string | undefined,
+  reportedStatus: string | undefined,
+  providerTrackId?: string | null,
+): ProgressTrackRow[] | undefined {
+  if (!tracks?.length || !reportedStatus) {
+    return tracks;
+  }
+
+  const providerKey = String(providerTrackId || "").trim();
+  if (providerKey) {
+    const matchedIndex = tracks.findIndex((track) => String(track.providerTrackId || "").trim() === providerKey);
+    if (matchedIndex >= 0) {
+      const current = tracks[matchedIndex];
+      if (current.status === reportedStatus || (current.status === "completed" && reportedStatus !== "completed")) {
+        return tracks;
+      }
+      return tracks.map((track, idx) => (
+        idx === matchedIndex ? { ...track, status: reportedStatus as ProgressTrackRow["status"] } : track
+      ));
+    }
+  }
+
+  if (!reportedTitle) {
+    return tracks;
+  }
+
+  const reported = normalizeTrackTitleForMatch(reportedTitle);
+  let bestIdx = -1;
+  let bestLen = 0;
+  tracks.forEach((track, idx) => {
+    const title = normalizeTrackTitleForMatch(String(track.title || ""));
+    if (title && reported && (reported.startsWith(title) || title.startsWith(reported)) && title.length > bestLen) {
+      bestIdx = idx;
+      bestLen = title.length;
+    }
+  });
+
+  if (bestIdx < 0) {
+    return tracks;
+  }
+
+  const current = tracks[bestIdx];
+  if (current.status === reportedStatus || (current.status === "completed" && reportedStatus !== "completed")) {
+    return tracks;
+  }
+
+  return tracks.map((track, idx) => (
+    idx === bestIdx ? { ...track, status: reportedStatus as ProgressTrackRow["status"] } : track
+  ));
+}
+
 function buildProgressSnapshot(
   data: QueueProgressEvent,
   existing?: DownloadProgress,
@@ -94,6 +168,13 @@ function buildProgressSnapshot(
   if (!Number.isFinite(jobId) || jobId <= 0 || !type || providerId.length === 0) {
     return null;
   }
+
+  const tracks = applyTrackStatusToRows(
+    data.tracks ?? existing?.tracks,
+    data.currentTrack,
+    data.trackStatus,
+    data.currentProviderTrackId,
+  );
 
   return {
     jobId,
@@ -109,11 +190,14 @@ function buildProgressSnapshot(
     totalFiles: data.totalFiles ?? existing?.totalFiles,
     currentFileNum: data.currentFileNum ?? existing?.currentFileNum,
     currentTrack: data.currentTrack ?? existing?.currentTrack,
+    currentProviderTrackId: data.currentProviderTrackId ?? existing?.currentProviderTrackId,
+    currentTrackNum: data.currentTrackNum ?? existing?.currentTrackNum,
+    currentVolumeNum: data.currentVolumeNum ?? existing?.currentVolumeNum,
     trackProgress: data.trackProgress ?? existing?.trackProgress,
     trackStatus: data.trackStatus ?? existing?.trackStatus,
     statusMessage: data.statusMessage ?? (typeof data.error === "string" ? data.error : existing?.statusMessage),
     state: data.state ?? existing?.state ?? "downloading",
-    tracks: data.tracks ?? existing?.tracks,
+    tracks,
     size: data.size ?? existing?.size,
     sizeleft: data.sizeleft ?? existing?.sizeleft,
   };
@@ -141,12 +225,11 @@ function useQueueStatusContextValue(): QueueStatusContextType {
   const progressStateRef = useRef<ProgressState>(createEmptyProgressState());
 
   const invalidateQueueQueries = useCallback(() => {
+    // invalidateQueries already refetches active queries; a follow-up
+    // refetchQueries would cancel that in-flight fetch and start a duplicate.
     void queryClient.invalidateQueries({ queryKey: ["queue"] });
     void queryClient.invalidateQueries({ queryKey: ["queueDetails"] });
     void queryClient.invalidateQueries({ queryKey: ["queueHistoryFeed"] });
-    void queryClient.refetchQueries({ queryKey: ["queue"] });
-    void queryClient.refetchQueries({ queryKey: ["queueDetails"] });
-    void queryClient.refetchQueries({ queryKey: ["queueHistoryFeed"] });
   }, [queryClient]);
 
   const updateProgressState = useCallback((updater: (previous: ProgressState) => ProgressState) => {
@@ -376,11 +459,6 @@ function useQueueStatusContextValue(): QueueStatusContextType {
       }
       scheduleStatusRefresh(0);
       invalidateQueueQueries();
-      await Promise.allSettled([
-        queryClient.refetchQueries({ queryKey: ["queue"] }),
-        queryClient.refetchQueries({ queryKey: ["queueDetails"] }),
-        queryClient.refetchQueries({ queryKey: ["queueHistoryFeed"] }),
-      ]);
       dispatchActivityRefresh();
     } catch (error: any) {
       console.error("Error adding to queue:", error);
@@ -391,7 +469,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
       });
       throw error;
     }
-  }, [invalidateQueueQueries, queryClient, scheduleStatusRefresh, updateProgressState]);
+  }, [invalidateQueueQueries, scheduleStatusRefresh, updateProgressState]);
 
   const processItem = useCallback(async (id: number) => {
     try {

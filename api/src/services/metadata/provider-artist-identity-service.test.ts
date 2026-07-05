@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import type { LidarrArtist } from "./servarr-metadata.js";
+import type { CatalogSearchResults } from "../catalog/catalog-provider.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-provider-artist-identity-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -11,11 +12,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let serviceModule: typeof import("./provider-artist-identity-service.js");
 let dbModule: typeof import("../../database.js");
+let catalogRegistry: typeof import("../catalog/index.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   serviceModule = await import("./provider-artist-identity-service.js");
+  catalogRegistry = await import("../catalog/index.js");
 });
 
 after(() => {
@@ -42,6 +45,67 @@ function albums(count: number): LidarrArtist["Albums"] {
     Id: `album-${index}`,
     Title: `Album ${index}`,
   }));
+}
+
+function patchCatalogSearch(search: (query: string) => Promise<CatalogSearchResults>) {
+  const active = catalogRegistry.catalogProviderRegistry.getActive();
+  const original = active.search;
+  active.search = ((query: string) => search(query)) as typeof active.search;
+  return () => {
+    active.search = original;
+  };
+}
+
+function albumSearchRow(input: {
+  rgId: string;
+  title: string;
+  artistId: string;
+  artistName: string;
+  artistDisambiguation?: string;
+  barcode?: string | null;
+  trackCount?: number;
+}) {
+  return {
+    score: 0,
+    artist: null,
+    album: {
+      id: input.rgId,
+      title: input.title,
+      type: "Single",
+      releasedate: "2021-01-26",
+      artistid: input.artistId,
+      artists: [
+        {
+          id: input.artistId,
+          artistname: input.artistName,
+          sortname: input.artistName,
+          disambiguation: input.artistDisambiguation || "",
+          type: "Person",
+          Albums: [],
+        },
+      ],
+      Releases: [
+        {
+          Id: `${input.rgId}-release`,
+          Title: input.title,
+          Barcode: input.barcode ?? null,
+          ReleaseDate: "2021-01-26",
+          TrackCount: input.trackCount ?? 1,
+          MediumCount: 1,
+          Tracks: [
+            {
+              Id: `${input.rgId}-track`,
+              RecordingId: `${input.rgId}-recording`,
+              TrackName: input.title,
+              TrackPosition: 1,
+              MediumNumber: 1,
+              DurationMs: 180000,
+            },
+          ],
+        },
+      ],
+    },
+  };
 }
 
 test("provider artist matching uses MusicBrainz aliases, not only canonical artist names", () => {
@@ -182,24 +246,24 @@ test("discography overlap refuses to pick when candidates tie or share too littl
 
 test("resolve falls back to discography overlap for ambiguous names", async () => {
   const { ProviderArtistIdentityService } = serviceModule;
-  const { servarrMetadata } = await import("./servarr-metadata.js");
-  const original = servarrMetadata.searchForNewArtist;
-  servarrMetadata.searchForNewArtist = async () => [
-    artist({
-      id: "band-japan",
-      artistname: "Japan",
-      Albums: [
-        { Id: "a", Title: "Tin Drum" },
-        { Id: "b", Title: "Gentlemen Take Polaroids" },
-        { Id: "c", Title: "Quiet Life" },
-      ],
-    }),
-    artist({
-      id: "other-japan",
-      artistname: "Japan",
-      Albums: [{ Id: "d", Title: "Unrelated" }],
-    }),
-  ];
+  const restoreSearch = patchCatalogSearch(async () => ({
+    artists: [
+      artist({
+        id: "band-japan",
+        artistname: "Japan",
+        Albums: [
+          { Id: "a", Title: "Tin Drum" },
+          { Id: "b", Title: "Gentlemen Take Polaroids" },
+          { Id: "c", Title: "Quiet Life" },
+        ],
+      }),
+      artist({
+        id: "other-japan",
+        artistname: "Japan",
+        Albums: [{ Id: "d", Title: "Unrelated" }],
+      }),
+    ],
+  }));
 
   try {
     const resolution = await ProviderArtistIdentityService.resolve(
@@ -213,6 +277,99 @@ test("resolve falls back to discography overlap for ambiguous names", async () =
     assert.equal(resolution.method, "provider-discography-overlap");
     assert.equal(resolution.status, "probable");
   } finally {
-    servarrMetadata.searchForNewArtist = original;
+    restoreSearch();
+  }
+});
+
+test("resolve expands candidates from provider release evidence when artist search misses the right MB artist", async () => {
+  const { ProviderArtistIdentityService } = serviceModule;
+  const { servarrMetadata } = await import("./servarr-metadata.js");
+  const originalSearchArtist = servarrMetadata.searchForNewArtist;
+  const originalSearchAll = servarrMetadata.searchAll;
+  servarrMetadata.searchForNewArtist = async () => [
+    artist({
+      id: "7c88f831-947b-48ce-b6c4-4376cf83a979",
+      artistname: "Eden",
+      disambiguation: "Australian indie rock band",
+      Albums: [
+        { Id: "a", Title: "Stone Cat" },
+        { Id: "b", Title: "Healingbow" },
+      ],
+    }),
+    artist({
+      id: "806c9da0-255c-43fb-932b-39c9a0aa621a",
+      artistname: "Eden",
+      disambiguation: "Swedish pop group",
+      Albums: [],
+    }),
+  ];
+  servarrMetadata.searchAll = async (query: string) => {
+    if (query.includes("Set Me Free")) {
+      return [albumSearchRow({
+        rgId: "b1201e96-6ae0-4922-a5dd-89e161cc15f3",
+        title: "Set Me Free",
+        artistId: "1be7cde4-8c97-4a83-8a85-5fd251da4be8",
+        artistName: "Eden Alene",
+        artistDisambiguation: "Israeli singer",
+      })];
+    }
+    if (query.includes("Feker Libi")) {
+      return [albumSearchRow({
+        rgId: "01790eb5-ea5f-4437-8544-b922ef58e783",
+        title: "Feker Libi",
+        artistId: "1be7cde4-8c97-4a83-8a85-5fd251da4be8",
+        artistName: "Eden Alene",
+        artistDisambiguation: "Israeli singer",
+      })];
+    }
+    return [];
+  };
+
+  try {
+    const resolution = await ProviderArtistIdentityService.resolve(
+      "tidal",
+      { providerId: "33469788", name: "Eden", providerUrl: "https://tidal.com/artist/33469788" },
+      {
+        listProviderAlbums: async () => [
+          { provider: "tidal", providerId: "1", title: "Set Me Free", trackCount: 1, volumeCount: 1 },
+          { provider: "tidal", providerId: "2", title: "Feker Libi", trackCount: 1, volumeCount: 1 },
+        ],
+      },
+    );
+    assert.equal(resolution.mbid, "1be7cde4-8c97-4a83-8a85-5fd251da4be8");
+    assert.equal(resolution.method, "provider-discography-release-search");
+    assert.equal(resolution.status, "probable");
+  } finally {
+    servarrMetadata.searchForNewArtist = originalSearchArtist;
+    servarrMetadata.searchAll = originalSearchAll;
+  }
+});
+
+test("release evidence treats unique UPC matches as verified artist evidence", async () => {
+  const restoreSearch = patchCatalogSearch(async () => ({
+    artists: [],
+    raw: [
+      albumSearchRow({
+        rgId: "rg-upc",
+        title: "Specific Single",
+        artistId: "artist-upc",
+        artistName: "Short Name Extended",
+        barcode: "123456789012",
+      }),
+    ],
+  }));
+
+  try {
+    const candidates = await serviceModule.findArtistCandidatesByProviderReleaseEvidence(
+      { providerId: "provider-short", name: "Short Name" },
+      [{ providerId: "album-upc", title: "Specific Single", upc: "123456789012", trackCount: 1, volumeCount: 1 }],
+      "tidal",
+    );
+    const match = serviceModule.bestProviderReleaseEvidenceArtistMatch(candidates);
+    assert.equal(match?.artist.id, "artist-upc");
+    assert.equal(match?.status, "verified");
+    assert.equal(match?.method, "provider-discography-upc");
+  } finally {
+    restoreSearch();
   }
 });

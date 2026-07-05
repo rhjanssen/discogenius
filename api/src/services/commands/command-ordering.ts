@@ -87,10 +87,15 @@ export function buildLiveActivityOrderClause(alias?: string): string {
     const trigger = buildColumnName("trigger", alias);
     const queueOrder = buildColumnName("queue_order", alias);
     const createdAt = buildColumnName("created_at", alias);
-    const startedAt = buildColumnName("started_at", alias);
-    const updatedAt = buildColumnName("updated_at", alias);
     const id = buildColumnName("id", alias);
 
+    // Active ('started') items are floated above queued ones, but WITHIN the
+    // active bucket they must keep a STABLE position — sorting them by
+    // updated_at/started_at made the list reshuffle every second, because the
+    // download processor bumps updated_at on each ~1s progress tick, so whichever
+    // item ticked last jumped to the top. Ordering active items by their durable
+    // queue order (queue_order, created_at, id) — the same key queued items use —
+    // keeps each card in place while it downloads/imports.
     return `
                 CASE
                     WHEN ${status} = 'started' THEN 0
@@ -98,11 +103,14 @@ export function buildLiveActivityOrderClause(alias?: string): string {
                     ELSE 2
                 END ASC,
                 CASE
-                    WHEN ${status} = 'started' THEN COALESCE(${updatedAt}, ${startedAt}, ${createdAt})
-                END DESC,
+                    WHEN ${status} = 'started' THEN COALESCE(${queueOrder}, 2147483647)
+                END ASC,
+                CASE
+                    WHEN ${status} = 'started' THEN ${createdAt}
+                END ASC,
                 CASE
                     WHEN ${status} = 'started' THEN ${id}
-                END DESC,
+                END ASC,
                 CASE
                     WHEN ${status} = 'queued' THEN ${priority}
                 END DESC,

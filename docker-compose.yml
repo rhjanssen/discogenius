@@ -35,3 +35,19 @@ services:
       # - /path/to/nas/spatial:/library/spatial-music
       # - /path/to/nas/videos:/library/music-videos
     restart: unless-stopped
+
+  # Optional Apple Music decryption wrapper. Enable only when testing Apple
+  # Music downloads:
+  #   docker compose --profile apple-music up -d apple-music-wrapper
+  # First-time wrapper login still needs to be performed with the wrapper image
+  # and your Apple Music account so ./config/providers/apple-music/wrapper-rootfs
+  # contains an authenticated rootfs.
+  apple-music-wrapper:
+    image: ghcr.io/itouakirai/wrapper:x86
+    profiles: ["apple-music"]
+    network_mode: "service:discogenius"
+    environment:
+      - args=-M 20020 -H 0.0.0.0
+    volumes:
+      - ./config/providers/apple-music/wrapper-rootfs/data:/app/rootfs/data
+    restart: unless-stopped

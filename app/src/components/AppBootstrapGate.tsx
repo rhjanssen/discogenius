@@ -1,32 +1,17 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { Button } from "@fluentui/react-components";
 import {
   LOCALSTORAGE_APP_AUTH_REDIRECT_KEY,
   useAppAuth,
 } from "@/providers/appAuthContext";
 import { BootLoadingPage } from "@/components/shell/BootLoadingPage";
-import { ErrorState } from "@/components/ui/ContentState";
 
 export default function AppBootstrapGate() {
-  const { isAuthActive, isAccessGranted, bootstrapError, refresh } = useAppAuth();
+  const { isAuthActive, isAccessGranted, isBootstrapping } = useAppAuth();
   const location = useLocation();
 
-  if (bootstrapError) {
-    return (
-      <ErrorState
-        title="Discogenius could not verify app access"
-        description={bootstrapError}
-        actions={(
-          <Button appearance="primary" onClick={() => { void refresh().catch(() => undefined); }}>
-            Retry
-          </Button>
-        )}
-        minHeight="100vh"
-      />
-    );
-  }
-
-  if (isAuthActive === undefined) {
+  // Branded boot screen only while the first (short, non-fatal) auth check is
+  // in flight — it never blocks the app on API failure.
+  if (isBootstrapping) {
     return <BootLoadingPage />;
   }
 

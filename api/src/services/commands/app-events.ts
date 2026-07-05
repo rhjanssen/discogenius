@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { forwardEventToMain, isCommandWorker } from './worker/command-worker-protocol.js';
+import { forwardEventToMain } from './worker/command-worker-protocol.js';
 import type { ArtistWorkflow } from '../music/artist-workflow.js';
 import type { MonitoringPassWorkflowValue } from './command-bodies.js';
 import type {AnyCommandBody, CommandStatus} from "./command-model.js";
@@ -115,7 +115,7 @@ class TypedAppEventEmitter extends EventEmitter {
         // the SSE stream and main-thread listeners (curation/download) see it.
         // The bridge is a no-op on the main thread. Only string event names are
         // bridgeable (all AppEvent values are strings); symbol events stay local.
-        if (typeof event === 'string' && isCommandWorker()) {
+        if (typeof event === 'string') {
             forwardEventToMain(event, payload);
         }
         return super.emit(event, payload);

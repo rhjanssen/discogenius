@@ -1,5 +1,4 @@
 import { Title3, makeStyles, tokens } from "@fluentui/react-components";
-import LoadingIndicator from "@/components/loading/LoadingIndicator";
 import LoadingMessage from "@/components/loading/LoadingMessage";
 
 const logo = "/assets/images/logo.png";
@@ -22,11 +21,58 @@ const useStyles = makeStyles({
     gap: tokens.spacingVerticalM,
     textAlign: "center",
   },
+  // The pulsing glow-backed logo IS the loading indicator on this page.
+  logoContainer: {
+    position: "relative",
+    width: "96px",
+    height: "96px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "visible",
+    animationName: {
+      "0%": { transform: "scale(1)" },
+      "50%": { transform: "scale(1.05)" },
+      "100%": { transform: "scale(1)" },
+    },
+    animationDuration: "2.4s",
+    animationIterationCount: "infinite",
+    animationTimingFunction: "ease-in-out",
+    "@media (prefers-reduced-motion: reduce)": {
+      animationName: "none",
+    },
+  },
+  logoGlow: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    width: "88%",
+    aspectRatio: "1",
+    transform: "translate(-50%, -50%)",
+    backgroundImage: `url(${logo})`,
+    backgroundSize: "contain",
+    backgroundRepeat: "no-repeat",
+    backgroundPosition: "center",
+    filter: "blur(22px) saturate(1.45)",
+    pointerEvents: "none",
+    animationName: {
+      "0%": { opacity: 0.35 },
+      "50%": { opacity: 0.95 },
+      "100%": { opacity: 0.35 },
+    },
+    animationDuration: "2.4s",
+    animationIterationCount: "infinite",
+    animationTimingFunction: "ease-in-out",
+    "@media (prefers-reduced-motion: reduce)": {
+      animationName: "none",
+      opacity: 0.6,
+    },
+  },
   logo: {
-    width: "48px",
-    height: "48px",
+    position: "relative",
+    width: "100%",
+    height: "100%",
     objectFit: "contain",
-    opacity: 0.8,
   },
 });
 
@@ -36,10 +82,12 @@ export function BootLoadingPage() {
   return (
     <div className={styles.root} role="status" aria-live="polite" aria-label="Loading Discogenius">
       <div className={styles.panel}>
-        <img src={logo} alt="" className={styles.logo} />
+        <div className={styles.logoContainer}>
+          <div className={styles.logoGlow} />
+          <img src={logo} alt="" className={styles.logo} />
+        </div>
         <Title3>Discogenius</Title3>
         <LoadingMessage />
-        <LoadingIndicator />
       </div>
     </div>
   );

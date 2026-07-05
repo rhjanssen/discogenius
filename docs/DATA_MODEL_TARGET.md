@@ -100,6 +100,10 @@ The provider layer should support multiple providers without schema changes:
 - A `DownloadBackend` per provider. TIDAL uses tiddl; Apple Music or other
   providers should bring their own backend.
 - Config-driven active/default provider selection.
+- Provider manifests describe the integration source, auth fields, download
+  backends, stable resource IDs, import-source categories, and diagnostics. The
+  current contract and provider research live in
+  `docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md`.
 
 TIDAL is the only fully working provider today. Finishing the Apple Music
 provider in `docs/TASKS.md` is the next real test of this abstraction.

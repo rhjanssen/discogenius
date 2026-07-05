@@ -38,7 +38,27 @@ test("registry resolves the active provider from config, not a hardcoded id", as
 
 test("registry exposes both built-in providers", async () => {
   const { streamingProviderManager } = await import("./index.js");
-  const ids = streamingProviderManager.getAllStreamingProviders().map((p) => p.id);
+  const providers = streamingProviderManager.getAllStreamingProviders();
+  const ids = providers.map((p) => p.id);
   assert.ok(ids.includes("tidal"));
   assert.ok(ids.includes("apple-music"));
+
+  for (const provider of providers) {
+    assert.ok(provider.manifest, `${provider.id} should expose a provider manifest`);
+    assert.equal(provider.manifest.id, provider.id);
+    assert.equal(provider.manifest.displayName, provider.name);
+    assert.match(provider.manifest.configRoot, /^providers\/[a-z0-9-]+$/);
+    assert.ok(["official-api", "web-api", "unofficial-api", "none"].includes(provider.manifest.integration.catalogSource));
+    assert.ok(["native-cli", "external-service", "none"].includes(provider.manifest.integration.downloadSource));
+    assert.ok(provider.manifest.integration.stableResourceIds.includes("album"));
+    assert.ok(provider.manifest.downloadBackends.length > 0);
+    assert.ok(provider.manifest.diagnostics?.length);
+    assert.equal(provider.manifest.catalog.search, provider.capabilities.catalogSearch);
+    assert.equal(provider.manifest.catalog.artistCatalog, provider.capabilities.artistCatalog);
+    assert.equal(provider.manifest.catalog.videos, provider.capabilities.musicVideos);
+    assert.equal(provider.manifest.qualityMapping.neutral, Boolean(provider.qualityMapping?.toNeutral));
+    assert.equal(provider.manifest.qualityMapping.stereo, Boolean(provider.qualityMapping?.fromNeutralAudio));
+    assert.equal(provider.manifest.qualityMapping.spatial, provider.capabilities.spatialAudio);
+    assert.equal(provider.manifest.qualityMapping.video, provider.capabilities.musicVideos);
+  }
 });

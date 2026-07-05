@@ -8,10 +8,6 @@
  * Servarr Metadata Server flow does — it only documents it as one `CatalogProvider`
  * implementation so the catalog source becomes swappable.
  *
- * NOTE (U3 scaffolding): not yet wired into the live request path. The live app
- * still calls `ServarrMetadataService` directly. This adapter exists so MB-local mode can
- * be slotted in later without touching call sites.
- *
  * Servarr Metadata Server capability gaps (these methods are intentionally absent / throwing):
  *  - no standalone recording endpoint  → `getRecording` omitted
  *  - no UPC index                       → `lookupByUPC` omitted
@@ -96,7 +92,19 @@ export class ServarrMetadataCatalogProvider implements CatalogProvider {
       this.service.searchForNewArtist(query, limit),
       Promise.resolve(this.service.searchAll(query, limit)).catch(() => [] as unknown[]),
     ]);
-    return { artists, raw };
+    const releaseGroups = (Array.isArray(raw) ? raw : [])
+      .map((item: any) => item?.album)
+      .filter((album: any) => album?.id && album?.title)
+      .map((album: any) => ({
+        mbid: String(album.id),
+        title: String(album.title),
+        artistName: album.artistname || album.artistName || album.ArtistName || album.artist?.artistname || null,
+        artistMbid: album.artistid || album.artistId || album.ArtistId || album.artist?.id || null,
+        releaseDate: album.releasedate || album.releaseDate || null,
+        disambiguation: album.disambiguation || album.Disambiguation || null,
+        images: album.Images || album.images || [],
+      }));
+    return { artists, releaseGroups, raw };
   }
 }
 

@@ -1,9 +1,13 @@
 import { db } from "../../database.js";
-import { servarrMetadata, type LidarrArtist } from "./servarr-metadata.js";
+import type { LidarrArtist } from "./servarr-metadata.js";
+import { catalogProviderRegistry } from "../catalog/index.js";
 import {
   ProviderArtistIdentityService,
   intersectDiscographyTitles,
   bestCanonicalArtistMatch,
+  findArtistCandidatesByProviderReleaseEvidence,
+  type ProviderArtistEvidenceAlbum,
+  type ProviderArtistReleaseEvidenceCandidate,
 } from "./provider-artist-identity-service.js";
 import { ensureMonitoredArtist } from "../providers/followed-artists-import.js";
 import { queueArtistMonitoringIntake } from "../music/artist-monitoring.js";
@@ -72,11 +76,23 @@ function parseStoredArtistData(row: ProviderArtistRow): { picture: string | null
   }
 }
 
-async function fetchProviderAlbumTitles(provider: string, providerId: string): Promise<string[]> {
+async function fetchProviderAlbums(provider: string, providerId: string): Promise<ProviderArtistEvidenceAlbum[]> {
   try {
     const streamingProvider = streamingProviderManager.getStreamingProvider(provider);
     const albums = await streamingProvider.getArtistAlbums(providerId);
-    return albums.map((album) => String(album.title || "")).filter(Boolean).slice(0, 50);
+    return albums
+      .filter((album) => String(album.title || "").trim())
+      .map((album) => ({
+        provider,
+        providerId: album.providerId,
+        title: album.title,
+        releaseDate: album.releaseDate ?? null,
+        type: album.type ?? null,
+        upc: album.upc ?? null,
+        trackCount: album.trackCount ?? null,
+        volumeCount: album.volumeCount ?? null,
+      }))
+      .slice(0, 50);
   } catch (error) {
     console.warn(`[ManualMatch] Could not fetch ${provider} albums for ${providerId}:`, error);
     return [];
@@ -88,24 +104,40 @@ function rankCandidates(
   providerId: string,
   providerAlbumTitles: string[],
   candidates: LidarrArtist[],
+  releaseEvidenceCandidates: ProviderArtistReleaseEvidenceCandidate[] = [],
 ): ManualMatchCandidate[] {
   const nameMatchedIds = new Set(
     candidates
       .filter((candidate) => bestCanonicalArtistMatch({ providerId, name: artistName }, [candidate]))
       .map((candidate) => candidate.id),
   );
+  const releaseEvidenceByArtistId = new Map(releaseEvidenceCandidates.map((candidate) => [candidate.artist.id, candidate]));
+  const candidateById = new Map<string, LidarrArtist>();
+  for (const candidate of candidates) {
+    candidateById.set(candidate.id, candidate);
+  }
+  for (const candidate of releaseEvidenceCandidates) {
+    if (!candidateById.has(candidate.artist.id)) {
+      candidateById.set(candidate.artist.id, candidate.artist);
+    }
+  }
 
-  return candidates
+  return Array.from(candidateById.values())
     .map((candidate) => {
       const overlap = intersectDiscographyTitles(providerAlbumTitles, candidate);
+      const releaseEvidence = releaseEvidenceByArtistId.get(candidate.id);
+      const sharedAlbums = Array.from(new Set([
+        ...overlap.matched,
+        ...(releaseEvidence?.matchedAlbumTitles || []),
+      ]));
       return {
         mbid: candidate.id,
         name: candidate.artistname,
         disambiguation: String(candidate.disambiguation || "").trim() || null,
         type: candidate.type || null,
         releaseCount: candidate.Albums?.length || 0,
-        sharedAlbums: overlap.matched.slice(0, 8),
-        nameMatched: nameMatchedIds.has(candidate.id),
+        sharedAlbums: sharedAlbums.slice(0, 8),
+        nameMatched: nameMatchedIds.has(candidate.id) || Boolean(releaseEvidence),
       };
     })
     .sort((left, right) =>
@@ -122,17 +154,23 @@ export async function listManualMatchCandidates(provider: string, providerId: st
   }
   const artistName = String(row.title || "").trim() || providerId;
 
-  const [providerAlbumTitles, candidates] = await Promise.all([
-    fetchProviderAlbumTitles(provider, providerId),
-    servarrMetadata.searchForNewArtist(artistName, 10),
+  const [providerAlbums, candidates] = await Promise.all([
+    fetchProviderAlbums(provider, providerId),
+    catalogProviderRegistry.getActive().search(artistName, { limit: 10 }).then((result) => result.artists),
   ]);
+  const providerAlbumTitles = providerAlbums.map((album) => album.title);
+  const releaseEvidenceCandidates = await findArtistCandidatesByProviderReleaseEvidence(
+    { provider, providerId, name: artistName },
+    providerAlbums,
+    provider,
+  );
 
   return {
     provider,
     providerId,
     artistName,
     providerAlbumTitles,
-    candidates: rankCandidates(artistName, providerId, providerAlbumTitles, candidates),
+    candidates: rankCandidates(artistName, providerId, providerAlbumTitles, candidates, releaseEvidenceCandidates),
   };
 }
 

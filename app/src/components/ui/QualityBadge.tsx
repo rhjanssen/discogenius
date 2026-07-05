@@ -1,6 +1,6 @@
 import React from "react";
-import { Badge, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
-import { tidalBadgeColor, tidalBadgeColorLight, badgeStrokeColor } from "@/theme/theme";
+import { Badge, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { tidalBadgeColor, tidalBadgeColorLight } from "@/theme/theme";
 import { useTheme } from "@/providers/themeContext";
 import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
 
@@ -22,28 +22,37 @@ const ATMOS_ASPECT = 110.7599945 / 15.6427517;
 const ATMOS_LOGO_HEIGHT: Record<BadgeSize, number> = { small: 10, medium: 12, large: 14 };
 const ATMOS_LOGO_OFFSET_Y: Record<BadgeSize, number> = { small: 0.75, medium: 1, large: 1 };
 
+function transparentHex(hex: string, alpha: number): string {
+    const normalized = hex.replace("#", "");
+    if (!/^[\da-f]{6}$/i.test(normalized)) {
+        return hex;
+    }
+    const value = Number.parseInt(normalized, 16);
+    const r = (value >> 16) & 255;
+    const g = (value >> 8) & 255;
+    const b = value & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 const useStyles = makeStyles({
     base: {
-        fontWeight: tokens.fontWeightBold,
+        fontWeight: tokens.fontWeightSemibold,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
         boxSizing: "border-box",
-        // Consistent thin stroke on every badge; the colour is applied inline so
-        // it can flip per theme (faint light stroke on dark, faint dark on light).
-        ...shorthands.borderStyle("solid"),
-        ...shorthands.borderWidth(tokens.strokeWidthThin),
         // Never let a flex parent squeeze the badge — that pushed the label
         // outside the rounded body. Hold the intrinsic width and clip cleanly.
         flexShrink: 0,
         whiteSpace: "nowrap",
+        minWidth: "max-content",
         "::after": {
             display: "none",
         },
     },
     label: {
         textTransform: "uppercase",
-        letterSpacing: "0.02em",
+        letterSpacing: "0",
     },
     textLabel: {
         display: "inline-flex",
@@ -92,7 +101,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
     const styles = useStyles();
     const { isDarkMode } = useTheme();
     const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
-    const borderColor = badgeStrokeColor(isDarkMode);
+    const badgeAlpha = isDarkMode ? 0.5 : 0.6;
 
     const normalizedQuality = normalizeQualityTag(quality);
     const sizeClass = size === "small" ? styles.small : size === "large" ? styles.large : styles.medium;
@@ -105,7 +114,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
                 appearance="tint"
                 size={size}
                 className={mergeClasses(styles.base, styles.atmos, sizeClass, className)}
-                style={{ backgroundColor: palette.SpatialBackground, borderColor }}
+                style={{ backgroundColor: transparentHex(palette.SpatialBackground, badgeAlpha) }}
                 aria-label="Dolby Atmos"
             >
                 <span
@@ -122,20 +131,20 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
         );
     }
 
-    let backgroundColor: string = tokens.colorNeutralBackground3;
+    let backgroundColor: string = `color-mix(in srgb, ${tokens.colorNeutralForeground3} 14%, transparent)`;
     let color: string = tokens.colorNeutralForeground3;
     let badgeText = quality;
 
     if (isSpatialAudioQuality(normalizedQuality)) {
-        backgroundColor = palette.SpatialBackground;
+        backgroundColor = transparentHex(palette.SpatialBackground, badgeAlpha);
         color = palette.SpatialText;
         badgeText = "Spatial";
     } else if (normalizedQuality === "HIRES_LOSSLESS") {
-        backgroundColor = palette.YellowBackground;
+        backgroundColor = transparentHex(palette.YellowBackground, badgeAlpha);
         color = palette.YellowText;
         badgeText = "MAX";
     } else if (normalizedQuality === "LOSSLESS") {
-        backgroundColor = palette.TealBackground;
+        backgroundColor = transparentHex(palette.TealBackground, badgeAlpha);
         color = palette.TealText;
         badgeText = "HIGH";
     } else if (normalizedQuality?.includes("HIGH")) {
@@ -150,7 +159,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
             appearance="tint"
             size={size}
             className={mergeClasses(styles.base, styles.label, sizeClass, className)}
-            style={{ backgroundColor, color, borderColor }}
+            style={{ backgroundColor, color }}
         >
             <span className={styles.textLabel}>{badgeText}</span>
         </Badge>

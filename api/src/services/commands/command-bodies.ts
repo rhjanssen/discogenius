@@ -26,6 +26,8 @@ export interface DownloadTrackStateEntry {
   title: string;
   trackNum?: number;
   status: DownloadTrackStatus;
+  /** Provider track id (staged file name); the hard link for per-track state. */
+  providerTrackId?: string;
 }
 
 export interface DownloadStatePayload {
@@ -33,6 +35,9 @@ export interface DownloadStatePayload {
   currentFileNum?: number;
   totalFiles?: number;
   currentTrack?: string;
+  currentProviderTrackId?: string;
+  currentTrackNum?: number;
+  currentVolumeNum?: number;
   trackProgress?: number;
   trackStatus?: DownloadTrackStatus;
   statusMessage?: string;
@@ -258,7 +263,7 @@ export type UpdateLibraryMetadataCommand = CommandBodyCommon;
 export interface ImportProviderArtistsCommand extends CommandBodyCommon {
   providerId?: string;
   /** Which provider import source to pull artists from. */
-  importCategory: "followed-artists" | "playlist" | "favorite-tracks" | "mix";
+  importCategory: "library-artists" | "followed-artists" | "playlist" | "favorite-tracks" | "mix";
   /** Specific list id for playlist/mix sources. */
   importListId?: string;
   /** Human-readable label for progress/history (e.g. the playlist name). */

@@ -4,8 +4,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import {
   Button,
+  Field,
+  Input,
   Spinner,
   Text,
+  Textarea,
   Title3,
   Body1,
   makeStyles,
@@ -171,10 +174,23 @@ const useStyles = makeStyles({
     padding: `${tokens.spacingVerticalL} 0`,
   },
   infoBox: {
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusMedium,
-    padding: tokens.spacingVerticalXL,
+    width: '100%',
+    maxWidth: '520px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: tokens.spacingVerticalL,
+    padding: `clamp(${tokens.spacingVerticalXL}, 4vw, 48px)`,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1) 75%, transparent)',
+    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, var(--colorNeutralStroke1) 50%, transparent)`,
+    boxShadow: tokens.shadow16,
+    backdropFilter: 'blur(28px)',
+    WebkitBackdropFilter: 'blur(28px)',
     textAlign: 'center',
+    '@media (max-width: 900px)': {
+      padding: tokens.spacingVerticalL,
+    },
   },
   stateHeader: {
     marginBottom: tokens.spacingVerticalL,
@@ -194,11 +210,12 @@ const useStyles = makeStyles({
     width: '100%',
   },
   codeDisplay: {
-    backgroundColor: tokens.colorNeutralBackground2,
-    border: `${tokens.strokeWidthThick} solid ${tokens.colorBrandBackground}`,
-    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1) 52%, transparent)',
+    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, var(--colorBrandBackground) 58%, transparent)`,
+    borderRadius: tokens.borderRadiusLarge,
     padding: tokens.spacingVerticalL,
     textAlign: 'center',
+    boxShadow: tokens.shadow4,
   },
   userCode: {
     fontSize: tokens.fontSizeHero800,
@@ -252,7 +269,7 @@ const useStyles = makeStyles({
   providerButtonContent: {
     display: 'flex',
     alignItems: 'center',
-    gap: tokens.spacingHorizontalL,
+    gap: tokens.spacingHorizontalXL,
     width: '100%',
   },
   providerButtonText: {
@@ -275,7 +292,7 @@ const useStyles = makeStyles({
   },
   providerIconPanel: {
     // No framed square behind the logo — the icon sits directly on the list item.
-    width: '32px',
+    width: '36px',
     height: '32px',
     display: 'grid',
     placeItems: 'center',
@@ -285,8 +302,9 @@ const useStyles = makeStyles({
     width: '100%',
     minHeight: '62px',
     justifyContent: 'flex-start',
-    paddingLeft: tokens.spacingHorizontalM,
-    paddingRight: tokens.spacingHorizontalM,
+    columnGap: tokens.spacingHorizontalL,
+    paddingLeft: tokens.spacingHorizontalL,
+    paddingRight: tokens.spacingHorizontalL,
   },
   providerButton: {
     backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1) 50%, transparent)',
@@ -305,6 +323,41 @@ const useStyles = makeStyles({
       color: tokens.colorNeutralForegroundDisabled,
       opacity: 1,
     },
+  },
+  credentialForm: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    width: '100%',
+    maxWidth: '560px',
+  },
+  manualTokenInstructions: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
+    padding: tokens.spacingVerticalM,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1) 52%, transparent)',
+    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, var(--colorNeutralStroke1) 42%, transparent)`,
+    color: tokens.colorNeutralForeground2,
+    backdropFilter: 'blur(12px)',
+  },
+  manualTokenList: {
+    margin: 0,
+    paddingLeft: tokens.spacingHorizontalXL,
+    display: 'grid',
+    gap: tokens.spacingVerticalXS,
+    fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200,
+  },
+  manualTokenNote: {
+    color: tokens.colorNeutralForeground3,
+  },
+  credentialActions: {
+    display: 'flex',
+    gap: tokens.spacingHorizontalS,
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
   },
   tidalButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
@@ -350,6 +403,11 @@ const Auth = () => {
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatusContract | null>(null);
+  const [manualProvider, setManualProvider] = useState<"apple-music" | null>(null);
+  const [appleDeveloperToken, setAppleDeveloperToken] = useState("");
+  const [appleMediaUserToken, setAppleMediaUserToken] = useState("");
+  const [appleStorefront, setAppleStorefront] = useState("us");
+  const [savingCredentials, setSavingCredentials] = useState(false);
   const refreshPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const devicePollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
@@ -572,7 +630,7 @@ const Auth = () => {
     setVerificationUrl(null);
     let authWindow = openAuthPopupWindow();
     try {
-      const loginData: any = await api.startDeviceLogin();
+      const loginData: any = await api.startDeviceLogin("tidal");
 
       if (!isMountedRef.current) {
         if (authWindow && !authWindow.closed) {
@@ -646,7 +704,7 @@ const Auth = () => {
         attempts++;
 
         try {
-          const authData: any = await api.checkDeviceLogin();
+          const authData: any = await api.checkDeviceLogin("tidal");
 
           if (!isMountedRef.current) {
             return;
@@ -708,6 +766,41 @@ const Auth = () => {
     }
   };
 
+  const saveAppleCredentials = async () => {
+    if (!appleMediaUserToken.trim()) {
+      toast({
+        title: "Apple Music token required",
+        description: "Paste the media-user-token from music.apple.com.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSavingCredentials(true);
+    try {
+      const result: any = await api.saveProviderCredentials("apple-music", {
+        developerToken: appleDeveloperToken.trim(),
+        mediaUserToken: appleMediaUserToken.trim(),
+        storefront: appleStorefront.trim().toLowerCase() || "us",
+      });
+      const status = result?.status || await api.getAuthStatus();
+      setAuthStatus(status);
+      refreshProviderAuthStatusCache(status);
+      toast({
+        title: "Apple Music connected",
+        description: "Catalog access and import sources are now available.",
+      });
+      navigateAfterAuth();
+    } catch (error: any) {
+      toast({
+        title: "Apple Music connection failed",
+        description: error?.message || "Could not save Apple Music credentials.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingCredentials(false);
+    }
+  };
+
   const providerButtons = [{
     key: "tidal",
     name: "TIDAL",
@@ -718,7 +811,8 @@ const Auth = () => {
     key: "apple",
     name: "Apple Music",
     className: styles.appleButton,
-    available: false,
+    available: true,
+    onClick: () => setManualProvider("apple-music"),
   }, {
     key: "amazon", name: "Amazon Music", className: styles.amazonButton, available: false,
   }, {
@@ -787,33 +881,98 @@ const Auth = () => {
 
               {!connecting && !userCode && !refreshing && (
                 <div className={styles.providerCard} data-test="dsp-button-list">
-                  <div className={styles.providerHeader}>
-                    <Text weight="semibold" className={styles.providerBadge}>Streaming service</Text>
-                  </div>
+                  {manualProvider === "apple-music" ? (
+                    <div className={styles.credentialForm}>
+                      <div className={styles.providerHeader}>
+                        <Text weight="semibold" className={styles.providerBadge}>Apple Music credentials</Text>
+                        <Body1 className={styles.stateBody}>
+                          Paste the media-user-token from music.apple.com. Discogenius stores it under the Apple Music provider config and syncs it into the downloader config.
+                        </Body1>
+                      </div>
+                      <div className={styles.manualTokenInstructions}>
+                        <Text weight="semibold">Manual media-user-token setup</Text>
+                        <ol className={styles.manualTokenList}>
+                          <li>Open music.apple.com and sign in with the Apple Music account.</li>
+                          <li>Open browser developer tools, then Application or Storage.</li>
+                          <li>Open Cookies for music.apple.com and copy the value named media-user-token.</li>
+                          <li>Paste that value below. Reconnect when Apple marks the token expired.</li>
+                        </ol>
+                        <Text size={200} className={styles.manualTokenNote}>
+                          Automatic Apple sign-in requires a MusicKit developer token/JWT. Until that is configured, the signed-in browser cookie is the supported user-token source.
+                        </Text>
+                        <Button
+                          appearance="outline"
+                          icon={<Open24Regular />}
+                          onClick={() => window.open("https://music.apple.com", "_blank", "noopener,noreferrer")}
+                          disabled={savingCredentials}
+                        >
+                          Open Apple Music
+                        </Button>
+                      </div>
+                      <Field label="Bearer/developer token" hint="Optional. Leave empty to let Discogenius resolve the Apple Music web bearer token like the downloader.">
+                        <Textarea
+                          value={appleDeveloperToken}
+                          onChange={(_, data) => setAppleDeveloperToken(data.value)}
+                          resize="vertical"
+                          disabled={savingCredentials}
+                        />
+                      </Field>
+                      <Field label="Media user token" required hint="Cookie value named media-user-token from music.apple.com.">
+                        <Textarea
+                          value={appleMediaUserToken}
+                          onChange={(_, data) => setAppleMediaUserToken(data.value)}
+                          resize="vertical"
+                          disabled={savingCredentials}
+                        />
+                      </Field>
+                      <Field label="Storefront" hint="Two-letter country code, for example us, gb, nl, or jp.">
+                        <Input
+                          value={appleStorefront}
+                          maxLength={2}
+                          onChange={(_, data) => setAppleStorefront(data.value)}
+                          disabled={savingCredentials}
+                        />
+                      </Field>
+                      <div className={styles.credentialActions}>
+                        <Button appearance="subtle" onClick={() => setManualProvider(null)} disabled={savingCredentials}>
+                          Back
+                        </Button>
+                        <Button appearance="primary" onClick={saveAppleCredentials} disabled={savingCredentials}>
+                          {savingCredentials ? "Connecting..." : "Connect Apple Music"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className={styles.providerHeader}>
+                        <Text weight="semibold" className={styles.providerBadge}>Streaming service</Text>
+                      </div>
 
-                  <div className={styles.providerButtonList}>
-                    {providerButtons.map((providerButton) => (
-                      <Button
-                        key={providerButton.key}
-                        appearance="outline"
-                        disabled={!providerButton.available}
-                        onClick={providerButton.available ? providerButton.onClick : undefined}
-                        className={mergeClasses(styles.providerButton, providerButton.className, styles.actionButton)}
-                        size="large"
-                        icon={
-                          <div className={styles.providerIconPanel}>
-                            <ProviderMark provider={providerButton.key} size={28} />
-                          </div>
-                        }
-                        iconPosition="before"
-                      >
-                        <div className={styles.providerButtonContent}>
-                          <span className={styles.providerButtonText}>{providerButton.name}</span>
-                          {providerButton.available ? <ArrowRight24Regular /> : <span className={styles.providerSoonTag}>Soon</span>}
-                        </div>
-                      </Button>
-                    ))}
-                  </div>
+                      <div className={styles.providerButtonList}>
+                        {providerButtons.map((providerButton) => (
+                          <Button
+                            key={providerButton.key}
+                            appearance="outline"
+                            disabled={!providerButton.available}
+                            onClick={providerButton.available ? providerButton.onClick : undefined}
+                            className={mergeClasses(styles.providerButton, providerButton.className, styles.actionButton)}
+                            size="large"
+                            icon={
+                              <div className={styles.providerIconPanel}>
+                                <ProviderMark provider={providerButton.key} size={28} />
+                              </div>
+                            }
+                            iconPosition="before"
+                          >
+                            <div className={styles.providerButtonContent}>
+                              <span className={styles.providerButtonText}>{providerButton.name}</span>
+                              {providerButton.available ? <ArrowRight24Regular /> : <span className={styles.providerSoonTag}>Soon</span>}
+                            </div>
+                          </Button>
+                        ))}
+                      </div>
+                    </>
+                  )}
 
                   <div className={styles.panelFooter}>
                     <Button

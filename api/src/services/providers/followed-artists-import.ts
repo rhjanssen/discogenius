@@ -191,9 +191,20 @@ export class FollowedArtistsImportService {
                 const mbMatch = await ProviderArtistIdentityService.resolve(provider.id, identityInput, {
                     // Only invoked when name/alias/URL evidence is inconclusive:
                     // one provider call to compare discographies before giving up.
-                    listProviderAlbumTitles: async () => {
+                    listProviderAlbums: async () => {
                         const albums = await provider.getArtistAlbums(artist.provider_id);
-                        return albums.map((album) => String(album.title || "")).filter(Boolean);
+                        return albums
+                            .filter((album) => String(album.title || "").trim())
+                            .map((album) => ({
+                                provider: provider.id,
+                                providerId: album.providerId,
+                                title: album.title,
+                                releaseDate: album.releaseDate ?? null,
+                                type: album.type ?? null,
+                                upc: album.upc ?? null,
+                                trackCount: album.trackCount ?? null,
+                                volumeCount: album.volumeCount ?? null,
+                            }));
                     },
                 });
                 let existingArtistBeforeImport: ExistingArtistRow | null | undefined;

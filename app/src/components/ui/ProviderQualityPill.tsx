@@ -3,7 +3,7 @@ import { Tooltip, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui
 import { QualityBadge } from "./QualityBadge";
 import { ProviderMark } from "./ProviderMark";
 import { providerKey, providerMarkFor } from "./providerMarks";
-import { tidalBadgeColor, tidalBadgeColorLight, badgeStrokeColor } from "@/theme/theme";
+import { tidalBadgeColor, tidalBadgeColorLight } from "@/theme/theme";
 import { useTheme } from "@/providers/themeContext";
 
 type SlotName = "stereo" | "spatial";
@@ -37,12 +37,22 @@ interface ProviderQualityRowProps {
     className?: string;
 }
 
-// Provider pill diameters match the quality-badge heights so the round source
-// token lines up with the badges beside it.
-// Diameters match the quality-badge heights (the pill is border-box) so the
-// round source token renders at the exact same height as the badges beside it.
-const PILL_DIAMETER: Record<BadgeSize, number> = { small: 20, medium: 24, large: 32 };
-const GLYPH_SIZE: Record<BadgeSize, number> = { small: 12, medium: 14, large: 18 };
+// Fluent Badge heights for small/medium/large, so provider tokens line up with
+// adjacent quality and type badges instead of sitting one size step larger.
+const PILL_DIAMETER: Record<BadgeSize, number> = { small: 16, medium: 20, large: 24 };
+const GLYPH_SIZE: Record<BadgeSize, number> = { small: 10, medium: 12, large: 14 };
+
+function transparentHex(hex: string, alpha: number): string {
+    const normalized = hex.replace("#", "");
+    if (!/^[\da-f]{6}$/i.test(normalized)) {
+        return hex;
+    }
+    const value = Number.parseInt(normalized, 16);
+    const r = (value >> 16) & 255;
+    const g = (value >> 8) & 255;
+    const b = value & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 const useStyles = makeStyles({
     row: {
@@ -67,8 +77,6 @@ const useStyles = makeStyles({
         // Theme-aware fill matching the Dolby Atmos chip — light chip + dark glyph
         // in light mode, dark chip + white glyph in dark mode (colours applied
         // inline from the badge palette).
-        ...shorthands.borderStyle("solid"),
-        ...shorthands.borderWidth(tokens.strokeWidthThin),
         fontSize: tokens.fontSizeBase200,
         fontWeight: tokens.fontWeightSemibold,
         cursor: "default",
@@ -180,9 +188,8 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     const { isDarkMode } = useTheme();
     const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
     const pillStyle = {
-        backgroundColor: palette.SpatialBackground,
+        backgroundColor: transparentHex(palette.SpatialBackground, isDarkMode ? 0.5 : 0.6),
         color: palette.SpatialText,
-        borderColor: badgeStrokeColor(isDarkMode),
     };
 
     const visibleRaw = (offers || []).filter((offer) => offer && offer.quality);

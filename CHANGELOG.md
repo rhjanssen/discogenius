@@ -2,6 +2,110 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.2.0] - 2026-07-05
+
+### Added
+- Added local MusicBrainz-docker catalog mode. Discogenius can now read the
+  MusicBrainz Postgres schema directly, use the co-located `/ws/2` search when
+  available, and route search, refresh, matching, artist lookup, manual match,
+  and credited-release discovery through the selected catalog provider.
+- Added the first streaming-provider plugin contract slice. Providers now expose
+  manifests for auth mode, integration/download source, resource-id kinds,
+  import capabilities, quality mapping, diagnostics, and setup notes; TIDAL and
+  Apple Music publish the same core contract.
+- Added Apple Music's offline integration slice: provider API mapping, library
+  artist and playlist import-source contracts, credential-save UI/API paths,
+  storefront validation, downloader invocation shaping, progress parsing, and
+  diagnostics. Live Apple download validation remains a 2.2.1 follow-up.
+- Added documentation for provider/plugin dependencies and Apple downloader
+  selection. Small direct-spawn provider tools are pinned and diagnosed; larger
+  stateful infrastructure such as MusicBrainz-docker remains user-managed.
+
+### Changed
+- MusicBrainz local settings now accept a host-oriented value and derive the
+  Postgres DSN plus optional search endpoint. Legacy `musicbrainz_url` and
+  `MB_LOCAL_WS_URL` compatibility paths were removed while configuration is
+  still pre-release and actively changing.
+- TIDAL/tiddl progress now carries provider track identity from native
+  downloader item context, so queue snapshots and SSE can prefer provider-id
+  track matching instead of title matching.
+- Authentication, provider status, and diagnostics UI were generalized beyond
+  TIDAL and aligned with the glassy Fluent styling used elsewhere in the app.
+- Badge styling, shared track lists, top tracks, album track rows, queue cards,
+  and history rows were tightened for consistent provider/type/quality display
+  and stable download/import state rendering.
+
+### Fixed
+- Fixed TIDAL download/import validation issues found in the live release pass:
+  new imports now persist measured file duration, artist statistics refresh
+  after targeted imports, completed download-state track rows finish as
+  completed, and retag status no longer immediately asks to rewrite freshly
+  imported TIDAL tracks.
+- Fixed queue artwork and video thumbnail regressions, search-result artwork in
+  local MusicBrainz mode, album/top-track quality duplication, and several
+  badge-order/opacity inconsistencies reported during browser QA.
+- Fixed container/library-root permission handling for fresh Docker runs.
+
+## [2.1.1] - 2026-07-03
+
+### Added
+- Added a provider-track evidence contract for future streaming plugins.
+  Provider album-track API results are now materialized as
+  `ProviderItems(entity_type='track')` rows keyed by provider track id and
+  linked to MusicBrainz tracks by selected-release medium/position. Album
+  provider rows no longer carry duplicated `data.tracks` blobs.
+- Added a tiddl progress wrapper that exposes per-track byte progress and
+  album item-count progress to Discogenius while preserving tiddl as the
+  downloader. Queue cards can now show active track progress, completed
+  download state, and import state without relying on tiddl's terminal-only
+  Rich progress display.
+
+### Changed
+- Download and import now run as one durable lifecycle row. Album, track, and
+  video download commands remain active through the import phase and then move
+  to history as a single completed or failed item.
+- Album imports now match staged files by provider track id only. tiddl stages
+  audio as `{album.id}/{item.id}` and videos as `{item.id}`, then the organizer
+  resolves the staged provider id through `ProviderItems` to the canonical
+  MusicBrainz track or recording. Title, ISRC, position, and album JSON overlay
+  fallbacks were removed from the download import path.
+- `DownloadMissing` is now a bounded coordinator instead of a backlog
+  materializer. It recomputes monitored missing media from canonical state and
+  keeps a small buffer of concrete download jobs instead of queuing tens of
+  thousands of commands at once.
+- Queue, history, status, and stats reads were reworked for large backlogs:
+  started-job progress snapshots avoid full backlog scans, queue pagination
+  sorts ids before loading payloads, queue positions use window functions, and
+  hot dashboard reads use short event-invalidated caches.
+- Queue cards were aligned across active and history rows. Desktop keeps title
+  and artist on the left with badges and progress/status indicators on the
+  right; mobile keeps the stacked layout. Track rows use a spinner for active
+  download/import, the Discogenius orange checkmark for downloaded, and the
+  Fluent color checkmark once download and import are both complete.
+
+### Fixed
+- Fixed dashboard and Library request fan-out loops caused by unstable query
+  invalidation identities and invalidate/refetch double-firing.
+- Fixed progress-stream startup under heavy queues; SSE snapshots now map only
+  active work and progress ticks carry the current track list so import rows
+  can show the active spinner immediately after the download-to-import handoff.
+- Fixed stale Active queue cards when browser-side live ticks are missed. The
+  dashboard now refreshes the active first page once per second with a bounded
+  timeout and replaces stale first-page rows instead of merging completed rows
+  back into Active.
+- Fixed stale or partial provider-track rows causing provider-id staged files
+  to miss during import. The organizer now refreshes provider track evidence
+  once when a numeric staged provider id is not present, then retries the exact
+  provider-id match before failing.
+- Fixed empty or missing download workspaces producing opaque import errors.
+  Imports now recover already-imported files when possible, otherwise they
+  emit a retryable re-download failure.
+- Fixed Docker/local runtime health for the validated container by ensuring the
+  configured library roots are writable by the application user.
+- Fixed boot/loading and error surfaces: route fallbacks use Fluent spinners,
+  the boot page uses the larger logo with the blur-glow pulse, and error pages
+  use the Fluent color error icon.
+
 ## [2.1.0] - 2026-07-02
 
 ### Added

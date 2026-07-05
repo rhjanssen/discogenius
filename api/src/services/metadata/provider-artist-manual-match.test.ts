@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import type { CatalogSearchResults } from "../catalog/catalog-provider.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-manual-match-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -11,12 +12,14 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let manualMatch: typeof import("./provider-artist-manual-match.js");
 let identityService: typeof import("./provider-artist-identity-service.js");
+let catalogRegistry: typeof import("../catalog/index.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   manualMatch = await import("./provider-artist-manual-match.js");
   identityService = await import("./provider-artist-identity-service.js");
+  catalogRegistry = await import("../catalog/index.js");
 });
 
 beforeEach(() => {
@@ -40,6 +43,15 @@ function storeUnmatchedArtist(providerId: string, name: string) {
     confidence: 0,
     method: "provider-artist-unmatched",
   });
+}
+
+function patchCatalogSearch(search: (query: string) => Promise<CatalogSearchResults>) {
+  const active = catalogRegistry.catalogProviderRegistry.getActive();
+  const original = active.search;
+  active.search = ((query: string) => search(query)) as typeof active.search;
+  return () => {
+    active.search = original;
+  };
 }
 
 test("ignoreProviderArtist hides the row from the unmatched list", () => {
@@ -87,31 +99,31 @@ test("applyManualArtistMatch validates the MBID and the provider artist row", as
 test("listManualMatchCandidates ranks discography overlap above bare name matches", async () => {
   storeUnmatchedArtist("eden-1", "Eden");
 
-  const { servarrMetadata } = await import("./servarr-metadata.js");
-  const originalSearch = servarrMetadata.searchForNewArtist;
-  servarrMetadata.searchForNewArtist = async () => [
-    {
-      id: "eden-big",
-      artistname: "Eden",
-      sortname: "Eden",
-      artistaliases: [],
-      links: [],
-      images: [],
-      Albums: [{ Id: "x", Title: "Unrelated Album" }],
-    },
-    {
-      id: "eden-overlap",
-      artistname: "EDEN",
-      sortname: "EDEN",
-      artistaliases: [],
-      links: [],
-      images: [],
-      Albums: [
-        { Id: "a", Title: "i think you think too much of me" },
-        { Id: "b", Title: "vertigo" },
-      ],
-    },
-  ];
+  const restoreSearch = patchCatalogSearch(async () => ({
+    artists: [
+      {
+        id: "eden-big",
+        artistname: "Eden",
+        sortname: "Eden",
+        artistaliases: [],
+        links: [],
+        images: [],
+        Albums: [{ Id: "x", Title: "Unrelated Album" }],
+      },
+      {
+        id: "eden-overlap",
+        artistname: "EDEN",
+        sortname: "EDEN",
+        artistaliases: [],
+        links: [],
+        images: [],
+        Albums: [
+          { Id: "a", Title: "i think you think too much of me" },
+          { Id: "b", Title: "vertigo" },
+        ],
+      },
+    ],
+  }));
 
   // No provider registered in tests → provider album fetch fails gracefully and
   // candidates still return, ranked by name/release data only.
@@ -133,6 +145,6 @@ test("listManualMatchCandidates ranks discography overlap above bare name matche
     );
     assert.equal(overlap.matched.length, 2);
   } finally {
-    servarrMetadata.searchForNewArtist = originalSearch;
+    restoreSearch();
   }
 });

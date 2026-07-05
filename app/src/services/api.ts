@@ -5,6 +5,7 @@ import type { AppReleaseInfoContract } from '@contracts/release';
 import { parseAppReleaseInfoContract } from '@contracts/release';
 import type {
   AccountConfigContract,
+  CatalogConfigContract,
   FilteringConfigContract,
   MetadataConfigContract,
   MonitoringConfigContract,
@@ -17,6 +18,7 @@ import type {
 } from '@contracts/config';
 import {
   parseAccountConfigContract,
+  parseCatalogConfigContract,
   parseFilteringConfigContract,
   parseMetadataConfigContract,
   parseMonitoringConfigUpdateResponseContract,
@@ -119,7 +121,7 @@ const API_BASE_URL = getApiBaseUrl();
 const API_PREFIX = '/api';
 const API_V1_PREFIX = '/api/v1';
 
-export type ImportSourceCategory = 'followed-artists' | 'playlist' | 'favorite-tracks' | 'mix';
+export type ImportSourceCategory = 'library-artists' | 'followed-artists' | 'playlist' | 'favorite-tracks' | 'mix';
 
 export interface ImportSourceList {
   id: string;
@@ -226,6 +228,49 @@ export type StreamingProviderStatus = {
   isDefault: boolean;
   authenticated: boolean;
   remoteCatalogAvailable: boolean;
+  manifest?: {
+    id: string;
+    displayName: string;
+    configRoot: string;
+    auth: {
+      kind: 'oauth-device' | 'developer-token' | 'external' | 'none';
+      managedByApp: boolean;
+      credentialFields?: Array<{
+        key: string;
+        label: string;
+        secret?: boolean;
+        required?: boolean;
+        helpText?: string;
+      }>;
+    };
+    integration: {
+      catalogSource: 'official-api' | 'web-api' | 'unofficial-api' | 'none';
+      downloadSource: 'native-cli' | 'external-service' | 'none';
+      stableResourceIds: Array<'artist' | 'album' | 'track' | 'video' | 'playlist'>;
+    };
+    downloadBackends: Array<{
+      id: string;
+      capabilities: Array<'stereo' | 'spatial' | 'video'>;
+      enabled: boolean;
+      setupNote?: string;
+    }>;
+    catalog: {
+      search: boolean;
+      artistCatalog: boolean;
+      releaseOffers: boolean;
+      videos: boolean;
+    };
+    imports: {
+      supported: ImportSourceCategory[];
+    };
+    qualityMapping: {
+      neutral: boolean;
+      stereo: boolean;
+      spatial: boolean;
+      video: boolean;
+    };
+    diagnostics?: Array<'auth' | 'catalog' | 'download-backend' | 'rate-limit'>;
+  };
   capabilities: {
     catalogSearch: boolean;
     artistCatalog: boolean;
@@ -257,6 +302,20 @@ export type StreamingProviderStatus = {
     canDownloadMusic: boolean;
     canDownloadVideos: boolean;
   };
+};
+
+export type ProviderDiagnosticResult = {
+  kind: 'auth' | 'catalog' | 'download-backend' | 'rate-limit';
+  status: 'ok' | 'warning' | 'error' | 'disabled' | 'unknown';
+  message: string;
+  checkedAt: string;
+  details?: Record<string, unknown>;
+};
+
+export type ProviderDiagnosticsResponse = {
+  providerId: string;
+  providerName: string;
+  diagnostics: ProviderDiagnosticResult[];
 };
 
 export type QueueDownloadRequest = {
@@ -393,13 +452,23 @@ class ApiClient {
   }
 
   // Auth endpoints
-  async startDeviceLogin() {
-    return this.request('/auth/device-login', { method: 'POST' });
+  async startDeviceLogin(provider?: string) {
+    const suffix = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    return this.request(`/auth/device-login${suffix}`, { method: 'POST' });
+  }
+
+  async saveProviderCredentials(provider: string, credentials: Record<string, unknown>) {
+    return this.request('/auth/credentials', {
+      method: 'POST',
+      body: JSON.stringify({ provider, credentials }),
+    });
   }
 
   // App authentication (optional ADMIN_PASSWORD protection)
   async isAppAuthActive(): Promise<AppAuthStatusContract> {
-    return this.request('/app-auth/is-auth-active', { timeoutMs: 10000 }, parseAppAuthStatusContract);
+    // Keep the boot check short: the app loads optimistically when this fails,
+    // so a stalled API should not hold the boot screen for long.
+    return this.request('/app-auth/is-auth-active', { timeoutMs: 4000 }, parseAppAuthStatusContract);
   }
 
   async verifyAppAuth() {
@@ -410,8 +479,9 @@ class ApiClient {
     return this.request('/app-auth', { method: 'POST', body: JSON.stringify({ password }) });
   }
 
-  async checkDeviceLogin() {
-    return this.request('/auth/check-login');
+  async checkDeviceLogin(provider?: string) {
+    const suffix = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    return this.request(`/auth/check-login${suffix}`);
   }
 
   async getAuthStatus(): Promise<AuthStatusContract> {
@@ -420,6 +490,10 @@ class ApiClient {
 
   async getStreamingProviders(): Promise<{ providers: StreamingProviderStatus[]; defaultProviderId: string }> {
     return this.request('/provider');
+  }
+
+  async getProviderDiagnostics(providerId: string): Promise<ProviderDiagnosticsResponse> {
+    return this.request(`/provider/${encodeURIComponent(providerId)}/diagnostics`);
   }
 
   async logoutProvider(providerId: string) {
@@ -435,6 +509,24 @@ class ApiClient {
     return this.request('/v1/config/quality', {
       method: 'POST',
       body: JSON.stringify(config),
+    });
+  }
+
+  async getCatalogConfig(): Promise<CatalogConfigContract> {
+    return this.request('/v1/config/catalog', {}, parseCatalogConfigContract);
+  }
+
+  async updateCatalogConfig(config: Partial<CatalogConfigContract>) {
+    return this.request('/v1/config/catalog', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async testCatalogConnection(musicbrainzHost?: string): Promise<{ ok: boolean; status?: number; message: string }> {
+    return this.request('/v1/config/catalog/test', {
+      method: 'POST',
+      body: JSON.stringify(musicbrainzHost ? { musicbrainz_host: musicbrainzHost } : {}),
     });
   }
 
@@ -1114,12 +1206,16 @@ class ApiClient {
   }
 
   // Download queue endpoints
-  async getQueue(params?: { limit?: number; offset?: number }): Promise<QueueListResponseContract> {
+  async getQueue(params?: { limit?: number; offset?: number; timeoutMs?: number | null }): Promise<QueueListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
     if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
     const query = queryParams.toString();
-    return this.request(`/v1/queue${query ? `?${query}` : ''}`, {}, parseQueueListResponseContract);
+    return this.request(
+      `/v1/queue${query ? `?${query}` : ''}`,
+      { timeoutMs: params?.timeoutMs ?? null },
+      parseQueueListResponseContract,
+    );
   }
 
   async getQueueDetails(params?: {

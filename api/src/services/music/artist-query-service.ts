@@ -21,6 +21,7 @@ import {
     videoCoverLocalUrl,
 } from "../metadata/media-cover-service.js";
 import { getConfigSection } from "../config/config.js";
+import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 
@@ -269,6 +270,81 @@ function parseJsonStringArray(value: unknown): string[] {
     } catch {
         return [];
     }
+}
+
+function normalizeTopTrackGroupKey(value: unknown): string {
+    return String(value || "")
+        .toLowerCase()
+        .replace(/\([^)]*\)/g, " ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function mergeQualityTags(...groups: Array<unknown>): string[] {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const group of groups) {
+        const values = Array.isArray(group) ? group : group ? [group] : [];
+        for (const value of values) {
+            const quality = String(value || "").trim();
+            const key = quality.toUpperCase();
+            if (!quality || seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            merged.push(quality);
+        }
+    }
+    return merged.sort((a, b) => Number(isSpatialAudioQuality(a)) - Number(isSpatialAudioQuality(b)));
+}
+
+function topTrackRepresentativeScore(track: any): number {
+    let score = 0;
+    if (track.is_downloaded || track.downloaded) score += 100;
+    if (track.preview_provider_track_id) score += 40;
+    if (Array.isArray(track.files) && track.files.length > 0) score += 20;
+    if (track.quality && !isSpatialAudioQuality(track.quality)) score += 10;
+    if (track.album?.cover_id || track.album_cover || track.cover_url) score += 2;
+    return score;
+}
+
+function mergeTopTrackRows(tracks: any[]): any[] {
+    const grouped = new Map<string, any>();
+    const order: string[] = [];
+
+    for (const track of tracks) {
+        const key = normalizeTopTrackGroupKey(track.title) || String(track.id);
+        const existing = grouped.get(key);
+        if (!existing) {
+            grouped.set(key, { ...track });
+            order.push(key);
+            continue;
+        }
+
+        const useIncoming = topTrackRepresentativeScore(track) > topTrackRepresentativeScore(existing);
+        const representative = useIncoming ? { ...track } : { ...existing };
+        const fallback = useIncoming ? existing : track;
+        const mergedQualityTags = mergeQualityTags(existing.qualityTags, existing.quality, track.qualityTags, track.quality);
+        const mergedFiles = [
+            ...(Array.isArray(existing.files) ? existing.files : []),
+            ...(Array.isArray(track.files) ? track.files : []),
+        ];
+
+        grouped.set(key, {
+            ...fallback,
+            ...representative,
+            quality: representative.quality || mergedQualityTags[0] || fallback.quality || null,
+            qualityTags: mergedQualityTags,
+            downloaded: Boolean(existing.downloaded || track.downloaded || existing.is_downloaded || track.is_downloaded),
+            is_downloaded: Boolean(existing.is_downloaded || track.is_downloaded || existing.downloaded || track.downloaded),
+            preview_provider: representative.preview_provider || fallback.preview_provider || null,
+            preview_provider_track_id: representative.preview_provider_track_id || fallback.preview_provider_track_id || null,
+            files: mergedFiles.length > 0 ? mergedFiles : representative.files,
+        });
+    }
+
+    return order.map((key) => grouped.get(key)).filter(Boolean);
 }
 
 function normalizeReleaseGroupPrimaryType(value: unknown): string {
@@ -905,7 +981,8 @@ export class ArtistQueryService {
         SELECT ar.mbid
         FROM AlbumReleases ar
         JOIN artist_rgs ON ar.release_group_mbid = artist_rgs.mbid
-      )
+      ),
+      ranked AS (
       SELECT
         track.mbid AS id,
         release_group.mbid AS album_id,
@@ -919,6 +996,28 @@ export class ArtistQueryService {
         track.medium_position AS volume_number,
         COALESCE(provider_track.explicit, 0) AS explicit,
         COALESCE(provider_track.quality, selected_slot.quality, primary_file.quality, '') AS quality,
+        (
+          SELECT GROUP_CONCAT(quality_value)
+          FROM (
+            SELECT slot_quality.quality AS quality_value
+            FROM ReleaseGroupSlots slot_quality
+            WHERE slot_quality.release_group_mbid = release_group.mbid
+              AND slot_quality.selected_release_mbid = track.release_mbid
+            UNION
+            SELECT provider_quality.quality AS quality_value
+            FROM ProviderItems provider_quality
+            WHERE provider_quality.entity_type = 'track'
+              AND (
+                provider_quality.track_mbid = track.mbid
+                OR provider_quality.recording_mbid = track.recording_mbid
+              )
+            UNION
+            SELECT file_quality.quality AS quality_value
+            FROM TrackFiles file_quality
+            WHERE file_quality.canonical_track_mbid = track.mbid
+          )
+          WHERE quality_value IS NOT NULL AND TRIM(quality_value) != ''
+        ) AS quality_tags,
         CASE WHEN EXISTS (
           SELECT 1
           FROM ReleaseGroupSlots monitored_slot
@@ -945,7 +1044,20 @@ export class ArtistQueryService {
           FROM TrackFiles downloaded_file
           WHERE downloaded_file.file_type = 'track'
             AND downloaded_file.canonical_track_mbid = track.mbid
-        ) THEN 1 ELSE 0 END AS is_downloaded
+        ) THEN 1 ELSE 0 END AS is_downloaded,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(track.recording_mbid, track.mbid)
+          ORDER BY
+            CASE WHEN EXISTS (
+              SELECT 1
+              FROM TrackFiles rep_file
+              WHERE rep_file.file_type = 'track'
+                AND rep_file.canonical_track_mbid = track.mbid
+            ) THEN 0 ELSE 1 END,
+            CASE WHEN provider_track.provider_id IS NOT NULL THEN 0 ELSE 1 END,
+            COALESCE(release.date, release_group.first_release_date) ASC,
+            track.mbid ASC
+        ) AS recording_rank
       FROM Tracks track
       JOIN AlbumReleases release ON release.mbid = track.release_mbid
       JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
@@ -1002,7 +1114,10 @@ export class ArtistQueryService {
        )
       WHERE track.release_mbid IN (SELECT mbid FROM artist_releases)
       GROUP BY track.mbid
-      ORDER BY popularity DESC, release_date DESC, track.mbid ASC
+      )
+      SELECT * FROM ranked
+      WHERE recording_rank = 1
+      ORDER BY popularity DESC, release_date DESC, id ASC
       LIMIT 100
     `).all(String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[];
 
@@ -1040,18 +1155,19 @@ export class ArtistQueryService {
             modules[bucket].push(releaseGroup);
         }
 
-        const hydratedTopTracks = hydrateTrackRows(topTracks).map((track, index) => {
+        const hydratedTopTracks = mergeTopTrackRows(hydrateTrackRows(topTracks).map((track, index) => {
             const sourceTrack = topTracks[index];
 
             return {
                 ...track,
+                qualityTags: mergeQualityTags(track.qualityTags, sourceTrack?.quality_tags, sourceTrack?.quality),
                 album: {
                     id: track.album_id == null ? null : String(track.album_id),
                     title: sourceTrack?.album_title || null,
                     cover_id: sourceTrack?.album_cover || null,
                 },
             };
-        });
+        }));
 
         const rows: any[] = [];
 

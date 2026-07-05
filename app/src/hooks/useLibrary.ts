@@ -7,12 +7,21 @@ import { useArtists, type Artist } from "@/hooks/useArtists";
 import { useAlbums, type Album } from "@/hooks/useAlbums";
 import type { LibraryStatsContract as LibraryStats } from "@contracts/catalog";
 import { LIBRARY_UPDATED_EVENT } from "@/utils/appEvents";
+import { defaultStatusFilters, type StatusFilters } from "@/utils/statusFilters";
 
 export type { Album, Artist, LibraryStats };
 
 type SortKey = "name" | "releaseDate" | "popularity" | "scannedAt";
 type SortDir = "asc" | "desc";
 type ActiveLibraryTab = "artists" | "albums" | "tracks" | "videos";
+type LibraryFilter = "all" | "stereo" | "spatial" | "video";
+type PersistedLibrarySettings = {
+  settingsVersion?: number;
+  statusFilters?: Partial<StatusFilters>;
+  libraryFilter?: LibraryFilter;
+  sortBy?: SortKey;
+  sortDirection?: SortDir;
+};
 
 // Shared so the Dashboard reuses the same cached /api/v1/stats result instead of
 // fetching the identical snapshot under its own key.
@@ -26,14 +35,39 @@ const LIBRARY_STATS_GLOBAL_EVENTS = [
   "file.upgraded",
 ] as const;
 
-const loadPersistedLibrarySettings = (): { sort: SortKey; dir: SortDir } | null => {
+const LIBRARY_SETTINGS_STORAGE_KEY = "discogenius_library_settings";
+const LIBRARY_SETTINGS_VERSION = 2;
+
+const coerceBooleanFilter = (
+  filters: Partial<StatusFilters> | undefined,
+  enabledKey: keyof StatusFilters,
+  disabledKey: keyof StatusFilters,
+): boolean | undefined => {
+  const enabled = Boolean(filters?.[enabledKey]);
+  const disabled = Boolean(filters?.[disabledKey]);
+  if (enabled && !disabled) return true;
+  if (!enabled && disabled) return false;
+  return undefined;
+};
+
+const normalizePersistedLibrarySettings = (value: unknown): PersistedLibrarySettings | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const parsed = value as PersistedLibrarySettings;
+  if (parsed.settingsVersion !== LIBRARY_SETTINGS_VERSION) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const loadPersistedLibrarySettings = (): PersistedLibrarySettings | null => {
   try {
-    const saved = localStorage.getItem("discogenius_library_settings");
+    const saved = localStorage.getItem(LIBRARY_SETTINGS_STORAGE_KEY);
     if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed.sortBy && parsed.sortDirection) {
-        return { sort: parsed.sortBy, dir: parsed.sortDirection };
-      }
+      return normalizePersistedLibrarySettings(JSON.parse(saved));
     }
   } catch (e) {
     console.warn("[useLibrary] Failed to load persisted settings:", e);
@@ -41,16 +75,38 @@ const loadPersistedLibrarySettings = (): { sort: SortKey; dir: SortDir } | null 
   return null;
 };
 
+const getInitialLibrarySettings = () => {
+  const persisted = loadPersistedLibrarySettings();
+  const statusFilters = {
+    ...defaultStatusFilters,
+    ...(persisted?.statusFilters ?? {}),
+  };
+  const libraryFilter = persisted?.libraryFilter ?? "all";
+
+  return {
+    artistMonitoredFilter: coerceBooleanFilter(statusFilters, "onlyMonitored", "onlyUnmonitored"),
+    albumMonitoredFilter: coerceBooleanFilter(statusFilters, "onlyMonitored", "onlyUnmonitored"),
+    albumDownloadedFilter: coerceBooleanFilter(statusFilters, "onlyDownloaded", "onlyNotDownloaded"),
+    albumLockedFilter: coerceBooleanFilter(statusFilters, "onlyLocked", "onlyUnlocked"),
+    albumLibraryFilter: libraryFilter,
+    sort: persisted?.sortBy && persisted?.sortDirection
+      ? { sort: persisted.sortBy, dir: persisted.sortDirection }
+      : { sort: "popularity" as SortKey, dir: "desc" as SortDir },
+  };
+};
+
 export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
-  const [artistMonitoredFilter, setArtistMonitoredFilter] = useState<boolean | undefined>(undefined);
-  const [albumMonitoredFilter, setAlbumMonitoredFilter] = useState<boolean | undefined>(undefined);
-  const [albumDownloadedFilter, setAlbumDownloadedFilter] = useState<boolean | undefined>(undefined);
-  const [albumLockedFilter, setAlbumLockedFilter] = useState<boolean | undefined>(undefined);
-  const [albumLibraryFilter, setAlbumLibraryFilter] = useState<"all" | "stereo" | "spatial" | "video">("all");
-  const [listSort, setListSort] = useState<{ sort: SortKey; dir: SortDir }>(() => {
-    const persisted = loadPersistedLibrarySettings();
-    return persisted ?? { sort: "popularity", dir: "desc" };
-  });
+  const initialSettingsRef = useRef<ReturnType<typeof getInitialLibrarySettings> | null>(null);
+  if (initialSettingsRef.current === null) {
+    initialSettingsRef.current = getInitialLibrarySettings();
+  }
+  const initialSettings = initialSettingsRef.current;
+  const [artistMonitoredFilter, setArtistMonitoredFilter] = useState<boolean | undefined>(initialSettings.artistMonitoredFilter);
+  const [albumMonitoredFilter, setAlbumMonitoredFilter] = useState<boolean | undefined>(initialSettings.albumMonitoredFilter);
+  const [albumDownloadedFilter, setAlbumDownloadedFilter] = useState<boolean | undefined>(initialSettings.albumDownloadedFilter);
+  const [albumLockedFilter, setAlbumLockedFilter] = useState<boolean | undefined>(initialSettings.albumLockedFilter);
+  const [albumLibraryFilter, setAlbumLibraryFilter] = useState<LibraryFilter>(initialSettings.albumLibraryFilter);
+  const [listSort, setListSort] = useState<{ sort: SortKey; dir: SortDir }>(initialSettings.sort);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const activeTab = options?.activeTab ?? "artists";
   const { toast } = useToast();

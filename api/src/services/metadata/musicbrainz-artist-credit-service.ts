@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
 import { requestMusicBrainzJson } from "../mediafiles/fingerprint.js";
+import type { CatalogArtistCreditReleaseGroup } from "../catalog/catalog-provider.js";
 
 export type CanonicalAlbumArtist = {
   artistId: string;
@@ -24,6 +25,66 @@ type MusicBrainzReleaseGroup = {
   disambiguation?: string;
   "artist-credit"?: unknown[];
 };
+
+function catalogReleaseGroupToMusicBrainzReleaseGroup(group: CatalogArtistCreditReleaseGroup): MusicBrainzReleaseGroup {
+  return {
+    id: group.id,
+    title: group.title,
+    "primary-type": group.primaryType || undefined,
+    "secondary-types": group.secondaryTypes || [],
+    "first-release-date": group.firstReleaseDate || undefined,
+    disambiguation: group.disambiguation || undefined,
+    "artist-credit": group.artistCredits.map((credit) => ({
+      name: credit.name,
+      joinphrase: credit.joinPhrase,
+      artist: {
+        id: credit.artistId,
+        name: credit.name,
+      },
+    })),
+  };
+}
+
+async function fetchCreditedReleaseGroupsFromMusicBrainzWeb(artistMbid: string): Promise<MusicBrainzReleaseGroup[]> {
+  const groups: MusicBrainzReleaseGroup[] = [];
+  let offset = 0;
+  let total = 0;
+
+  do {
+    const url = new URL("https://musicbrainz.org/ws/2/release-group");
+    url.searchParams.set("artist", artistMbid);
+    url.searchParams.set("release-group-status", "website-default");
+    url.searchParams.set("inc", "artist-credits");
+    url.searchParams.set("fmt", "json");
+    url.searchParams.set("limit", "100");
+    url.searchParams.set("offset", String(offset));
+
+    const page = await requestMusicBrainzJson<any>(url.toString());
+    const releaseGroups = Array.isArray(page?.["release-groups"])
+      ? page["release-groups"] as MusicBrainzReleaseGroup[]
+      : [];
+    total = Number(page?.["release-group-count"] || releaseGroups.length);
+    groups.push(...releaseGroups);
+
+    offset += releaseGroups.length;
+    if (releaseGroups.length === 0) {
+      break;
+    }
+  } while (offset < total);
+
+  return groups;
+}
+
+async function fetchCreditedReleaseGroups(artistMbid: string): Promise<MusicBrainzReleaseGroup[]> {
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const activeProvider = catalogProviderRegistry.getActive();
+  if (typeof activeProvider.getCreditedReleaseGroupsForArtist === "function") {
+    return (await activeProvider.getCreditedReleaseGroupsForArtist(artistMbid))
+      .map(catalogReleaseGroupToMusicBrainzReleaseGroup);
+  }
+
+  return fetchCreditedReleaseGroupsFromMusicBrainzWeb(artistMbid);
+}
 
 function parseArtistCredits(rawCredits: unknown, fallbackArtistMbid?: string): MusicBrainzArtistCredit[] {
   if (!Array.isArray(rawCredits)) {
@@ -121,83 +182,61 @@ export class MusicBrainzArtistCreditService {
     artists: number;
     artistMbids: string[];
   }> {
-    let offset = 0;
-    let total = 0;
     const seenArtists = new Set<string>();
+    const releaseGroups = await fetchCreditedReleaseGroups(artistMbid);
 
-    do {
-      const url = new URL("https://musicbrainz.org/ws/2/release-group");
-      url.searchParams.set("artist", artistMbid);
-      url.searchParams.set("release-group-status", "website-default");
-      url.searchParams.set("inc", "artist-credits");
-      url.searchParams.set("fmt", "json");
-      url.searchParams.set("limit", "100");
-      url.searchParams.set("offset", String(offset));
-
-      const page = await requestMusicBrainzJson<any>(url.toString());
-      const releaseGroups = Array.isArray(page?.["release-groups"])
-        ? page["release-groups"] as MusicBrainzReleaseGroup[]
-        : [];
-      total = Number(page?.["release-group-count"] || releaseGroups.length);
-
-      db.transaction(() => {
-        for (const releaseGroup of releaseGroups) {
-          const releaseGroupMbid = String(releaseGroup.id || "").trim();
-          if (!releaseGroupMbid) {
-            continue;
-          }
-
-          const credits = parseArtistCredits(releaseGroup["artist-credit"], artistMbid);
-          if (credits.length === 0) {
-            continue;
-          }
-
-          for (const credit of credits) {
-            ensureArtist(credit);
-            seenArtists.add(credit.artistId);
-          }
-
-          const owner = credits[0];
-          db.prepare(`
-            INSERT INTO Albums (
-              mbid, artist_mbid, title, primary_type, secondary_types,
-              first_release_date, disambiguation, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(mbid) DO UPDATE SET
-              artist_mbid = excluded.artist_mbid,
-              title = excluded.title,
-              primary_type = excluded.primary_type,
-              secondary_types = excluded.secondary_types,
-              first_release_date = excluded.first_release_date,
-              disambiguation = excluded.disambiguation,
-              updated_at = CURRENT_TIMESTAMP
-          `).run(
-            releaseGroupMbid,
-            owner.artistId,
-            String(releaseGroup.title || ""),
-            releaseGroup["primary-type"] || null,
-            JSON.stringify(releaseGroup["secondary-types"] || []),
-            releaseGroup["first-release-date"] || null,
-            releaseGroup.disambiguation || null,
-          );
-
-          replaceAlbumArtists(releaseGroupMbid, credits);
-          credits.forEach((credit, index) => {
-            upsertScope(credit.artistId, releaseGroupMbid, index === 0 ? "primary" : "album-credit");
-          });
-          upsertScope(artistMbid, releaseGroupMbid, "credited");
+    db.transaction(() => {
+      for (const releaseGroup of releaseGroups) {
+        const releaseGroupMbid = String(releaseGroup.id || "").trim();
+        if (!releaseGroupMbid) {
+          continue;
         }
-      })();
 
-      offset += releaseGroups.length;
-      if (releaseGroups.length === 0) {
-        break;
+        const credits = parseArtistCredits(releaseGroup["artist-credit"], artistMbid);
+        if (credits.length === 0) {
+          continue;
+        }
+
+        for (const credit of credits) {
+          ensureArtist(credit);
+          seenArtists.add(credit.artistId);
+        }
+
+        const owner = credits[0];
+        db.prepare(`
+          INSERT INTO Albums (
+            mbid, artist_mbid, title, primary_type, secondary_types,
+            first_release_date, disambiguation, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(mbid) DO UPDATE SET
+            artist_mbid = excluded.artist_mbid,
+            title = excluded.title,
+            primary_type = excluded.primary_type,
+            secondary_types = excluded.secondary_types,
+            first_release_date = excluded.first_release_date,
+            disambiguation = excluded.disambiguation,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          releaseGroupMbid,
+          owner.artistId,
+          String(releaseGroup.title || ""),
+          releaseGroup["primary-type"] || null,
+          JSON.stringify(releaseGroup["secondary-types"] || []),
+          releaseGroup["first-release-date"] || null,
+          releaseGroup.disambiguation || null,
+        );
+
+        replaceAlbumArtists(releaseGroupMbid, credits);
+        credits.forEach((credit, index) => {
+          upsertScope(credit.artistId, releaseGroupMbid, index === 0 ? "primary" : "album-credit");
+        });
+        upsertScope(artistMbid, releaseGroupMbid, "credited");
       }
-    } while (offset < total);
+    })();
 
     return {
-      releaseGroups: offset,
+      releaseGroups: releaseGroups.length,
       artists: seenArtists.size,
       artistMbids: Array.from(seenArtists),
     };

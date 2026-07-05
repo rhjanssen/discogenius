@@ -349,12 +349,19 @@ LIMIT ? OFFSET ?
                     : options.orderBy === 'queue_order'
                         ? buildDurableQueueOrderClause()
                         : 'created_at DESC, id DESC';
+        // Sort ids only, then fetch the page. Sorting full rows drags every
+        // multi-KB payload through the sorter, which costs seconds once the
+        // backlog reaches tens of thousands of commands.
         const jobs = db.prepare(`
             SELECT * FROM commands
-            WHERE name IN (${typePlaceholders})
-              AND status IN (${statusPlaceholders})
+            WHERE id IN (
+                SELECT id FROM commands
+                WHERE name IN (${typePlaceholders})
+                  AND status IN (${statusPlaceholders})
+                ORDER BY ${orderBy}
+                LIMIT ? OFFSET ?
+            )
             ORDER BY ${orderBy}
-            LIMIT ? OFFSET ?
         `).all(...types, ...statuses, limit, offset) as any[];
 
         return jobs
@@ -854,6 +861,12 @@ ${buildExecutionOrderClause()}
         });
 
         tx();
+        // A reorder changes queue membership order but no single command's status,
+        // so nothing else fires. Without this, the query service keeps serving its
+        // cached snapshot and the client never refetches — the drag appears to do
+        // nothing. QUEUE_CLEARED invalidates the server snapshot and reaches the
+        // client as `queue.cleared`, prompting an immediate refetch in the new order.
+        appEvents.emit(AppEvent.QUEUE_CLEARED);
         return reorderedJobs.length;
     }
 

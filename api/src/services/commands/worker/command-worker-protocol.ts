@@ -23,6 +23,7 @@ import type {CommandModel} from "../command-model.js";
 
 /** Marker placed in `workerData` when *we* spawn a command worker. */
 export const COMMAND_WORKER_MARKER = "discogeniusCommandWorker" as const;
+const DOWNLOAD_WORKER_MARKER = "discogeniusDownloadWorker" as const;
 
 /** download-state cache families the bridge can invalidate across threads. */
 export type CacheInvalidateTarget = "album" | "releaseGroup" | "artist" | "media" | "all";
@@ -50,9 +51,15 @@ export function isCommandWorker(): boolean {
     return !isMainThread && !!parentPort && (workerData as Record<string, unknown> | null)?.[COMMAND_WORKER_MARKER] === true;
 }
 
+function isBridgeWorker(): boolean {
+    if (isMainThread || !parentPort) return false;
+    const data = workerData as Record<string, unknown> | null;
+    return data?.[COMMAND_WORKER_MARKER] === true || data?.[DOWNLOAD_WORKER_MARKER] === true;
+}
+
 function postToMain(message: WorkerToMainMessage): void {
-    // Guarded by isCommandWorker() so this is a cheap no-op on the main thread.
-    if (!isCommandWorker() || !parentPort) return;
+    // Guarded by isBridgeWorker() so this is a cheap no-op on the main thread.
+    if (!isBridgeWorker() || !parentPort) return;
     parentPort.postMessage(message);
 }
 

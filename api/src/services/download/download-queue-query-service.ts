@@ -6,11 +6,14 @@ import type {
   QueueStatusContract,
 } from "../../contracts/status.js";
 import { downloadProcessor } from "./download-processor.js";
+import { downloadEvents } from "./download-events.js";
 import {DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
+import { appEvents, AppEvent } from "../commands/app-events.js";
 import {
   albumCoverLocalUrl,
   imageContainerFromImagesColumn,
+  videoCoverLocalUrl,
 } from "../metadata/media-cover-service.js";
 
 type QueueJobRow = {
@@ -47,6 +50,8 @@ type QueueMetadata = {
   albumTitle?: string | null;
   quality?: string | null;
 };
+
+type QueueTrackProgress = NonNullable<QueueItemContract["tracks"]>[number];
 
 const ACTIVE_QUEUE_STATUSES: Array<"queued" | "started" | "failed"> = ["queued", "started", "failed"];
 const QUEUE_HISTORY_STATUSES: Array<"completed" | "failed" | "cancelled"> = ["completed", "failed", "cancelled"];
@@ -226,6 +231,62 @@ function pickNestedString(record: Record<string, unknown>, key: string): string 
   return getOptionalString(record[key]);
 }
 
+function getOptionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeTrackStatus(value: unknown): QueueTrackProgress["status"] {
+  return value === "downloading"
+    || value === "completed"
+    || value === "error"
+    || value === "skipped"
+    ? value
+    : "queued";
+}
+
+function parseDownloadStateTracks(value: unknown): QueueItemContract["tracks"] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const tracks = value
+    .map((track): QueueTrackProgress | null => {
+      if (!track || typeof track !== "object") {
+        return null;
+      }
+      const record = track as Record<string, unknown>;
+      const title = getOptionalString(record.title);
+      if (!title) {
+        return null;
+      }
+      const trackNum = getOptionalNumber(record.trackNum);
+      const providerTrackId = getOptionalString(record.providerTrackId);
+      return {
+        title,
+        trackNum: trackNum ?? undefined,
+        status: normalizeTrackStatus(record.status),
+        ...(providerTrackId ? { providerTrackId } : {}),
+      };
+    })
+    .filter((track): track is QueueTrackProgress => track !== null);
+
+  return tracks.length > 0 ? tracks : undefined;
+}
+
+function resetTracksForImport(tracks?: QueueItemContract["tracks"]): QueueItemContract["tracks"] | undefined {
+  return tracks?.map((track) => ({
+    ...track,
+    status: track.status === "skipped" ? "skipped" : "queued",
+  }));
+}
+
 function resolveCanonicalAlbumMetadata(input: {
   releaseGroupMbid?: string | null;
   providerId?: string | null;
@@ -381,6 +442,7 @@ function resolveProviderItemMetadata(input: {
       release_group.title AS release_group_title,
       release_group.images AS release_group_images,
       COALESCE(artist.name, local_artist.name) AS artist_name,
+      recording.id AS recording_id,
       track.title AS track_title,
       recording.title AS recording_title
     FROM ProviderItems provider_item
@@ -408,6 +470,7 @@ function resolveProviderItemMetadata(input: {
     release_group_title?: string | null;
     release_group_images?: string | null;
     artist_name?: string | null;
+    recording_id?: string | number | null;
     track_title?: string | null;
     recording_title?: string | null;
   } | undefined;
@@ -431,7 +494,9 @@ function resolveProviderItemMetadata(input: {
         albumMbid: row.release_group_mbid,
         images: imageContainerFromImagesColumn(row.release_group_images),
       })
-    : null;
+    : input.contentType === "video"
+      ? videoCoverLocalUrl(row.recording_id)
+      : null;
 
   return {
     title: canonicalTitle ?? providerTitle ?? pickNestedString(data, "title"),
@@ -441,6 +506,87 @@ function resolveProviderItemMetadata(input: {
     albumTitle: row.release_group_title ?? null,
     quality: row.quality ?? pickNestedString(data, "quality"),
   };
+}
+
+function resolveCanonicalAlbumTracks(input: {
+  releaseGroupMbid?: string | null;
+  releaseMbid?: string | null;
+  slot?: string | null;
+}): QueueItemContract["tracks"] | undefined {
+  const releaseMbid = getOptionalString(input.releaseMbid);
+  const releaseGroupMbid = getOptionalString(input.releaseGroupMbid);
+  if (!releaseMbid && !releaseGroupMbid) {
+    return undefined;
+  }
+
+  const selectedReleaseRow = releaseGroupMbid
+    ? db.prepare(`
+        SELECT selected_release_mbid
+        FROM ReleaseGroupSlots
+        WHERE release_group_mbid = ?
+          AND (? IS NULL OR slot = ?)
+          AND selected_release_mbid IS NOT NULL
+        ORDER BY CASE WHEN slot = ? THEN 0 ELSE 1 END
+        LIMIT 1
+      `).get(releaseGroupMbid, input.slot ?? null, input.slot ?? null, input.slot ?? null) as { selected_release_mbid?: string | null } | undefined
+    : undefined;
+  const preferredReleaseMbid = releaseMbid ?? getOptionalString(selectedReleaseRow?.selected_release_mbid);
+
+  const rows = preferredReleaseMbid
+    ? db.prepare(`
+        SELECT title
+        FROM Tracks
+        WHERE release_mbid = ?
+        ORDER BY medium_position ASC, position ASC, id ASC
+      `).all(preferredReleaseMbid) as Array<{ title?: string | null }>
+    : db.prepare(`
+        SELECT t.title
+        FROM AlbumReleases ar
+        JOIN Tracks t ON t.release_mbid = ar.mbid
+        WHERE ar.release_group_mbid = ?
+        ORDER BY ar.date ASC, ar.mbid ASC, t.medium_position ASC, t.position ASC, t.id ASC
+      `).all(releaseGroupMbid) as Array<{ title?: string | null }>;
+
+  const tracks = rows
+    .map((row, index): QueueTrackProgress | null => {
+      const title = getOptionalString(row.title);
+      return title ? { title, trackNum: index + 1, status: "queued" } : null;
+    })
+    .filter((track): track is QueueTrackProgress => track !== null);
+
+  return tracks.length > 0 ? tracks : undefined;
+}
+
+function resolveQueueItemTracks(
+  job: QueueJobRow,
+  downloadState: Record<string, unknown>,
+  contentType: QueueItemContract["type"],
+  slot?: string | null,
+): QueueItemContract["tracks"] | undefined {
+  const directTracks = parseDownloadStateTracks(downloadState.tracks);
+  if (directTracks) {
+    return directTracks;
+  }
+
+  if (job.name === CommandNames.ImportDownload) {
+    const originalJobId = getOptionalNumber(job.payload?.originalJobId);
+    const originalJob = originalJobId ? CommandQueueManager.get(originalJobId) as unknown as QueueJobRow | null : null;
+    const originalDownloadState = (originalJob?.payload?.downloadState as Record<string, unknown> | undefined) ?? {};
+    const originalTracks = resetTracksForImport(parseDownloadStateTracks(originalDownloadState.tracks));
+    if (originalTracks?.length) {
+      return originalTracks;
+    }
+
+    if (contentType === "album") {
+      return resolveCanonicalAlbumTracks({
+        releaseGroupMbid: getOptionalString(job.payload?.releaseGroupMbid),
+        releaseMbid: getOptionalString(job.payload?.releaseMbid),
+        slot,
+      });
+    }
+  }
+
+  return undefined;
 }
 
 function normalizeQueueDetailsFilters(filters: QueueDetailsFilters): NormalizedQueueDetailsFilters {
@@ -474,17 +620,21 @@ function matchesQueueDetails(job: QueueJobRow, filters: NormalizedQueueDetailsFi
 }
 
 function buildQueuePositionById(): Map<number, number> {
-  const pendingDownloadJobs = CommandQueueManager.listJobsByTypesAndStatuses(
-    DOWNLOAD_COMMAND_NAMES,
-    ["queued"],
-    CommandQueueManager.countJobsByTypesAndStatuses(DOWNLOAD_COMMAND_NAMES, ["queued"]),
-    0,
-    { orderBy: "queue_order" },
-  ) as unknown as QueueJobRow[];
+  // Rank in SQL over ids only — materializing every queued job (payload JSON
+  // included) just to number them costs seconds with a large backlog.
+  const typePlaceholders = DOWNLOAD_COMMAND_NAMES.map(() => "?").join(",");
+  const rows = db.prepare(`
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        ORDER BY COALESCE(queue_order, 2147483647), created_at, id
+      ) AS queuePosition
+    FROM commands
+    WHERE status = 'queued'
+      AND name IN (${typePlaceholders})
+  `).all(...DOWNLOAD_COMMAND_NAMES) as Array<{ id: number; queuePosition: number }>;
 
-  return new Map<number, number>(
-    pendingDownloadJobs.map((job, index) => [job.id, index + 1]),
-  );
+  return new Map<number, number>(rows.map((row) => [Number(row.id), Number(row.queuePosition)]));
 }
 
 function getPendingDownloadQueuePositionsForIds(commandIds: readonly number[]): Map<number, number> {
@@ -495,30 +645,23 @@ function getPendingDownloadQueuePositionsForIds(commandIds: readonly number[]): 
 
   const typePlaceholders = DOWNLOAD_COMMAND_NAMES.map(() => "?").join(",");
   const idPlaceholders = commandIds.map(() => "?").join(",");
+  // One ranked pass over the pending queue. The previous correlated COUNT
+  // subquery re-scanned the whole queued set per requested row, which cost
+  // seconds per page once the backlog reached tens of thousands of commands.
   const rows = db.prepare(`
-    SELECT
-      target.id,
-      1 + (
-        SELECT COUNT(*)
-        FROM commands candidate
-        WHERE candidate.status = 'queued'
-          AND candidate.name IN (${typePlaceholders})
-          AND (
-            COALESCE(candidate.queue_order, 2147483647) < COALESCE(target.queue_order, 2147483647)
-            OR (
-              COALESCE(candidate.queue_order, 2147483647) = COALESCE(target.queue_order, 2147483647)
-              AND candidate.created_at < target.created_at
-            )
-            OR (
-              COALESCE(candidate.queue_order, 2147483647) = COALESCE(target.queue_order, 2147483647)
-              AND candidate.created_at = target.created_at
-              AND candidate.id < target.id
-            )
-          )
-      ) AS queuePosition
-    FROM commands target
-    WHERE target.status = 'queued'
-      AND target.id IN (${idPlaceholders})
+    WITH ranked AS (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (
+          ORDER BY COALESCE(queue_order, 2147483647), created_at, id
+        ) AS queuePosition
+      FROM commands
+      WHERE status = 'queued'
+        AND name IN (${typePlaceholders})
+    )
+    SELECT id, queuePosition
+    FROM ranked
+    WHERE id IN (${idPlaceholders})
   `).all(...DOWNLOAD_COMMAND_NAMES, ...commandIds) as Array<{ id: number; queuePosition: number }>;
 
   for (const row of rows) {
@@ -543,7 +686,6 @@ function buildLogicalHistoryQuery(): { whereSql: string; params: unknown[] } {
           SELECT 1
           FROM commands import_job
           WHERE import_job.name = ?
-            AND import_job.status IN (${statusSql})
             AND CAST(json_extract(import_job.payload, '$.originalJobId') AS INTEGER) = jq.id
         )
       )
@@ -553,7 +695,6 @@ function buildLogicalHistoryQuery(): { whereSql: string; params: unknown[] } {
       ...QUEUE_HISTORY_STATUSES,
       ...DOWNLOAD_COMMAND_NAMES,
       CommandNames.ImportDownload,
-      ...QUEUE_HISTORY_STATUSES,
     ],
   };
 }
@@ -574,6 +715,9 @@ function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressCo
     item.currentFileNum !== undefined ||
     item.totalFiles !== undefined ||
     item.currentTrack !== undefined ||
+    item.currentProviderTrackId !== undefined ||
+    item.currentTrackNum !== undefined ||
+    item.currentVolumeNum !== undefined ||
     item.trackProgress !== undefined ||
     item.trackStatus !== undefined ||
     item.statusMessage !== undefined ||
@@ -603,6 +747,9 @@ function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressCo
     totalFiles: item.totalFiles,
     currentFileNum: item.currentFileNum,
     currentTrack: item.currentTrack,
+    currentProviderTrackId: item.currentProviderTrackId,
+    currentTrackNum: item.currentTrackNum,
+    currentVolumeNum: item.currentVolumeNum,
     trackProgress: item.trackProgress,
     trackStatus: item.trackStatus,
     statusMessage: item.statusMessage ?? (item.stage === "import" && derivedState === "importPending" ? "Waiting to import" : undefined),
@@ -614,9 +761,66 @@ function buildProgressFromQueueItem(item: QueueItemContract): DownloadProgressCo
 }
 
 export class DownloadQueueQueryService {
+  // The dashboard polls queue/history/status every few seconds per client, and
+  // each rebuild parses command payloads and runs several queries. Serving a
+  // short-lived snapshot collapses concurrent pollers into at most one DB pass
+  // per TTL. Structural changes (add/terminal-status/delete/clear/pause) burst
+  // the cache; per-second progress ticks intentionally ride the TTL because
+  // the SSE progress stream already delivers those live.
+  private static readonly SNAPSHOT_TTL_MS = 1_500;
+  private static snapshotCache = new Map<string, { value: unknown; at: number }>();
+  private static snapshotEventsSubscribed = false;
+
+  static invalidateSnapshots(): void {
+    this.snapshotCache.clear();
+  }
+
+  private static getSnapshot<T>(key: string, build: () => T): T {
+    this.ensureSnapshotInvalidation();
+
+    const now = Date.now();
+    const hit = this.snapshotCache.get(key);
+    if (hit && now - hit.at < this.SNAPSHOT_TTL_MS) {
+      return hit.value as T;
+    }
+
+    const value = build();
+    if (this.snapshotCache.size > 32) {
+      // Pages are keyed by limit/offset; anything beyond a handful of keys is
+      // a scripted client. Reset rather than grow unbounded.
+      this.snapshotCache.clear();
+    }
+    this.snapshotCache.set(key, { value, at: now });
+    return value;
+  }
+
+  private static ensureSnapshotInvalidation(): void {
+    if (this.snapshotEventsSubscribed) {
+      return;
+    }
+    this.snapshotEventsSubscribed = true;
+
+    const invalidate = () => this.invalidateSnapshots();
+
+    appEvents.on(AppEvent.COMMAND_ADDED, invalidate);
+    appEvents.on(AppEvent.COMMAND_DELETED, invalidate);
+    appEvents.on(AppEvent.QUEUE_CLEARED, invalidate);
+    appEvents.on(AppEvent.COMMAND_UPDATED, (event) => {
+      // Progress ticks arrive as status "started" once per job per second;
+      // only genuine transitions need an immediate rebuild.
+      if (event.status !== 'started') {
+        invalidate();
+      }
+    });
+    downloadEvents.on('queue-status', invalidate);
+    downloadEvents.on('started', invalidate);
+  }
+
   static getQueueStatus(): QueueStatusContract {
     const status = downloadProcessor.getStatus();
-    const stats = CommandQueueManager.getStats() as QueueStatusContract["stats"];
+    const stats = this.getSnapshot('status-stats', () => (
+      CommandQueueManager.getStats() as QueueStatusContract["stats"]
+    ));
 
     return {
       ...status,
@@ -625,6 +829,10 @@ export class DownloadQueueQueryService {
   }
 
   static getQueue(params: { limit: number; offset: number }): QueueListResponseContract {
+    return this.getSnapshot(`queue:${params.limit}:${params.offset}`, () => this.buildQueue(params));
+  }
+
+  private static buildQueue(params: { limit: number; offset: number }): QueueListResponseContract {
     const total = CommandQueueManager.countJobsByTypesAndStatuses(
       DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
       ACTIVE_QUEUE_STATUSES,
@@ -654,6 +862,10 @@ export class DownloadQueueQueryService {
   }
 
   static getQueueHistory(params: { limit: number; offset: number }): QueueListResponseContract {
+    return this.getSnapshot(`history:${params.limit}:${params.offset}`, () => this.buildQueueHistory(params));
+  }
+
+  private static buildQueueHistory(params: { limit: number; offset: number }): QueueListResponseContract {
     const logicalHistory = buildLogicalHistoryQuery();
     const totalRow = db.prepare(`
       SELECT COUNT(*) AS count
@@ -689,34 +901,45 @@ export class DownloadQueueQueryService {
 
   static getQueueDetails(filters: QueueDetailsFilters): QueueItemContract[] {
     const normalizedFilters = normalizeQueueDetailsFilters(filters);
-    const queuePositionById = buildQueuePositionById();
-    const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
-      DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-      ACTIVE_QUEUE_STATUSES,
-      5000,
-      0,
-      { orderBy: "queue_order" },
-    ) as unknown as QueueJobRow[];
+    // With a few thousand queued albums the raw listing alone costs ~1.5s of
+    // synchronous payload parsing, so repeat polls must share one snapshot.
+    const cacheKey = `details:${normalizedFilters.artistId ?? ""}:${normalizedFilters.albumIds.join(",")}:${normalizedFilters.providerIds.join(",")}`;
+    return this.getSnapshot(cacheKey, () => {
+      const queuePositionById = buildQueuePositionById();
+      const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
+        DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+        ACTIVE_QUEUE_STATUSES,
+        5000,
+        0,
+        { orderBy: "queue_order" },
+      ) as unknown as QueueJobRow[];
 
-    return jobs
-      .filter((job) => matchesQueueDetails(job, normalizedFilters))
-      .map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
+      return jobs
+        .filter((job) => matchesQueueDetails(job, normalizedFilters))
+        .map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
+    });
   }
 
   static getActiveProgressSnapshots(): DownloadProgressContract[] {
-    const queuePositionById = buildQueuePositionById();
-    const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
-      DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-      ACTIVE_QUEUE_STATUSES,
-      5000,
-      0,
-      { orderBy: "queue_order" },
-    ) as unknown as QueueJobRow[];
+    // Initial payload for the SSE progress stream. Only jobs that are actually
+    // running belong here — the queue/history endpoints carry everything else.
+    // Mapping the whole backlog (mapDownloadQueueJob does per-row lookups) took
+    // ~30s of synchronous main-thread work per connection with a few thousand
+    // queued albums, which is what made the app unreachable under load.
+    return this.getSnapshot('active-progress', () => {
+      const jobs = CommandQueueManager.listJobsByTypesAndStatuses(
+        DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+        ["started"],
+        50,
+        0,
+        { orderBy: "queue_order" },
+      ) as unknown as QueueJobRow[];
 
-    return jobs
-      .map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)))
-      .map((item) => buildProgressFromQueueItem(item))
-      .filter((item): item is DownloadProgressContract => item !== null);
+      return jobs
+        .map((job) => this.mapDownloadQueueJob(job))
+        .map((item) => buildProgressFromQueueItem(item))
+        .filter((item): item is DownloadProgressContract => item !== null);
+    });
   }
 
   static mapDownloadQueueJob(job: QueueJobRow, queuePosition?: number): QueueItemContract {
@@ -747,6 +970,7 @@ export class DownloadQueueQueryService {
     const slot = getOptionalString(job.payload?.slot)
       ?? getOptionalString(job.payload?.librarySlot)
       ?? null;
+    const tracks = resolveQueueItemTracks(job, downloadState, contentType, slot);
 
     // The two resolvers below are heavy per-item joins. They only fill gaps, and
     // queued downloads already carry title/artist/cover in their payload (set at
@@ -760,10 +984,10 @@ export class DownloadQueueQueryService {
       providerId,
       slot,
     });
-    const providerItemMetadata = hasDisplayBasics ? null : resolveProviderItemMetadata({
+    const providerItemMetadata = (!hasDisplayBasics || !cover) ? resolveProviderItemMetadata({
       contentType,
       providerId,
-    });
+    }) : null;
     if (hasDisplayBasics && albumId && contentType === "album") {
       cover = albumCoverLocalUrl({ albumMbid: albumId }) ?? cover ?? null;
     }
@@ -782,7 +1006,14 @@ export class DownloadQueueQueryService {
       providerId,
       type: contentType,
       status: job.status as QueueItemContract["status"],
-      stage: job.name === CommandNames.ImportDownload ? "import" : "download",
+      // One command spans download → import; the phase comes from the persisted
+      // lifecycle state, not a separate ImportDownload row.
+      stage: (job.name === CommandNames.ImportDownload
+        || downloadState.state === "importPending"
+        || downloadState.state === "importing"
+        || downloadState.state === "importFailed")
+        ? "import"
+        : "download",
       progress: (typeof downloadState.progress === "number" && Number.isFinite(downloadState.progress))
         ? downloadState.progress
         : (typeof job.progress === "number" && Number.isFinite(job.progress) ? job.progress : 0),
@@ -802,6 +1033,9 @@ export class DownloadQueueQueryService {
       currentFileNum: typeof downloadState.currentFileNum === "number" ? downloadState.currentFileNum : undefined,
       totalFiles: typeof downloadState.totalFiles === "number" ? downloadState.totalFiles : undefined,
       currentTrack: getOptionalString(downloadState.currentTrack) ?? undefined,
+      currentProviderTrackId: getOptionalString(downloadState.currentProviderTrackId) ?? undefined,
+      currentTrackNum: typeof downloadState.currentTrackNum === "number" ? downloadState.currentTrackNum : undefined,
+      currentVolumeNum: typeof downloadState.currentVolumeNum === "number" ? downloadState.currentVolumeNum : undefined,
       trackProgress: typeof downloadState.trackProgress === "number" ? downloadState.trackProgress : undefined,
       trackStatus: getOptionalString(downloadState.trackStatus) as QueueItemContract["trackStatus"] | undefined,
       statusMessage: getOptionalString(downloadState.statusMessage) ?? undefined,
@@ -810,9 +1044,7 @@ export class DownloadQueueQueryService {
       eta: getOptionalString(downloadState.eta) ?? undefined,
       size: typeof downloadState.size === "number" ? downloadState.size : undefined,
       sizeleft: typeof downloadState.sizeleft === "number" ? downloadState.sizeleft : undefined,
-      tracks: Array.isArray(downloadState.tracks)
-        ? downloadState.tracks as QueueItemContract["tracks"]
-        : undefined,
+      tracks,
       queuePosition,
       slot,
     };

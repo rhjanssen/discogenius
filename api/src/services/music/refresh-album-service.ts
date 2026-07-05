@@ -54,7 +54,7 @@ function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
     };
 }
 
-function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): any {
+export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): any {
     const raw = providerTrack.raw;
     if (raw && typeof raw === "object" && "provider_id" in raw) {
         return raw;
@@ -697,9 +697,33 @@ export class RefreshAlbumService {
             })
         );
 
-        // Track identity is mapped by position onto the selected release's canonical
-        // Tracks/Recordings and stored as a ProviderItems track offer. The selected
-        // release comes from the album offer + its slot (no legacy ProviderAlbums).
+        // Materialize provider track offer rows (single source of truth for the
+        // provider tracklist; no data.tracks blob). Canonical identity is mapped by
+        // (volume, position) onto the album's selected release.
+        await RefreshAlbumService.storeProviderTrackOffers(providerId, albumId, tracks, album.artist_id);
+    }
+
+    /**
+     * Materialize provider track offer rows for an album from an already-fetched
+     * provider tracklist — the SINGLE materialization path for track-level
+     * ProviderItems. Rows are keyed by (provider, 'track', provider_id) with
+     * provider_album_id, and canonical identity mapped by (volume, position) off
+     * the album's selected release when known (`match_method
+     * 'selected-release-position'`), else stored pending (a later call upgrades
+     * it via COALESCE). Callers: refreshTracks (refresh/download/import) and
+     * artist-refresh disambiguation (persist what we fetch instead of re-calling
+     * the provider each cycle). `tracks` are providerTrackToTrackMetadataRow-shaped.
+     */
+    static async storeProviderTrackOffers(
+        providerId: string,
+        albumId: string,
+        tracks: any[],
+        fallbackArtistId?: string | null,
+    ): Promise<void> {
+        if (!Array.isArray(tracks) || tracks.length === 0) {
+            return;
+        }
+
         const selectedRelease = db.prepare(`
             SELECT
                 COALESCE(rgs.selected_release_mbid, pi.release_mbid) AS release_mbid,
@@ -779,7 +803,7 @@ export class RefreshAlbumService {
         const cooperateTrackStore = createCooperativeBatcher(25);
         const trackBatch: any[] = [];
         for (const track of tracks) {
-            const trackArtistId = track.artist_id || album.artist_id;
+            const trackArtistId = track.artist_id || fallbackArtistId;
             track.artist_id = trackArtistId;
             trackBatch.push(track);
 
@@ -839,11 +863,6 @@ export class RefreshAlbumService {
                 await cooperateTrackStore();
             }
         }
-
-        // Per-track canonical identity is established above by position-mapping each
-        // provider track onto the selected release's canonical Tracks/Recordings
-        // (written into ProviderItems). The old per-track MusicBrainz search resolver
-        // was retired with the legacy provider tables, so there is nothing more to do.
     }
 
     static async upsertArtistAlbum(

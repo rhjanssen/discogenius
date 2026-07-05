@@ -60,7 +60,7 @@ function initializeAuthEnvironment() {
     }
   }
 
-  if (!process.env.JWT_SECRET) {
+  if (process.env.ADMIN_PASSWORD && !process.env.JWT_SECRET) {
     const secretFilePath = path.join(CONFIG_DIR, "jwt_secret");
 
     try {
@@ -89,6 +89,8 @@ function initializeAuthEnvironment() {
 
   if (!process.env.ADMIN_PASSWORD) {
     console.log("[AUTH] No admin password configured; API auth is disabled.");
+  } else if (!process.env.JWT_SECRET) {
+    console.warn("[AUTH] ADMIN_PASSWORD is configured, but no JWT secret is available.");
   }
 }
 

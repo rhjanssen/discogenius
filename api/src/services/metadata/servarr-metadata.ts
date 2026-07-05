@@ -101,6 +101,8 @@ export interface LidarrTrack {
   TrackPosition: number;
   MediumNumber: number;
   DurationMs: number;
+  Isrcs?: string[];
+  isrcs?: string[];
 }
 
 export interface MediaCover {
@@ -432,7 +434,11 @@ export class ServarrMetadataService {
   }
 
   async syncArtist(mbid: string): Promise<LidarrArtist> {
-    const artist = await this.getArtistInfo(mbid);
+    // Fetch via the ACTIVE catalog source (Servarr or MB-local Postgres). Both
+    // return the same LidarrArtist DTO, so the write logic below is unchanged.
+    // Dynamic import avoids the servarr↔catalog module cycle at init time.
+    const { catalogProviderRegistry } = await import("../catalog/index.js");
+    const artist = await catalogProviderRegistry.getActive().getArtist(mbid);
 
     // Diff-reconcile: if the remote payload is byte-for-byte what we last stored,
     // the artist row and every release-group row it owns are already current —
@@ -446,9 +452,25 @@ export class ServarrMetadataService {
       return artist;
     }
 
-    const imagesList = mapServarrMetadataImages(artist.images);
-    const popularity = deriveServarrMetadataPopularity(artist.rating ?? artist.Rating);
-    const raw = artist as Record<string, any>;
+    // Supplemental Servarr artist metadata: MB serves no artist art / overview /
+    // popularity, so when the active source returned none, fetch Servarr purely as
+    // an image + overview + popularity source (it aggregates fanart.tv /
+    // TheAudioDB artist art). Never overrides MB identity (name/sort/type stay from
+    // `artist`); failure-tolerant. Skipped in Servarr mode since `artist` already
+    // carries images.
+    let enrich: LidarrArtist = artist;
+    if (!Array.isArray(artist.images) || artist.images.length === 0) {
+      try {
+        const supplemental = await this.getArtistInfo(mbid);
+        if (supplemental) enrich = supplemental;
+      } catch {
+        // supplemental only — proceed without it
+      }
+    }
+
+    const imagesList = mapServarrMetadataImages(enrich.images);
+    const popularity = deriveServarrMetadataPopularity(enrich.rating ?? enrich.Rating);
+    const raw = enrich as Record<string, any>;
 
     db.prepare(`
       INSERT INTO ArtistMetadata (
@@ -537,7 +559,7 @@ export class ServarrMetadataService {
 
     await MediaCoverService.resolveArtistArtwork({
       artistMbid: artist.id,
-      servarrMetadataData: artist,
+      servarrMetadataData: enrich,
       preferredCoverTypes: ["Poster", "Headshot"],
     });
 
@@ -545,7 +567,10 @@ export class ServarrMetadataService {
   }
 
   async syncReleaseGroup(releaseGroupMbid: string, artistMbid: string): Promise<void> {
-    const detail = await this.getAlbumInfo(releaseGroupMbid);
+    // Fetch via the active catalog source; MB-local returns the full tracklist in
+    // one query (no N+1). Same LidarrReleaseGroupDetail DTO → unchanged write path.
+    const { catalogProviderRegistry } = await import("../catalog/index.js");
+    const detail = await catalogProviderRegistry.getActive().getReleaseGroup(releaseGroupMbid);
     const ownerArtistMbid = String(detail.artistid || detail.artistId || artistMbid).trim();
 
     // Diff-reconcile: skip rewriting an unchanged release group's entire
@@ -612,11 +637,12 @@ export class ServarrMetadataService {
     `);
 
     const insertRecording = db.prepare(`
-      INSERT INTO Recordings (mbid, title, length_ms, updated_at)
-      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO Recordings (mbid, title, length_ms, isrcs, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         length_ms = excluded.length_ms,
+        isrcs = COALESCE(excluded.isrcs, Recordings.isrcs),
         updated_at = CURRENT_TIMESTAMP
     `);
 
@@ -691,7 +717,13 @@ export class ServarrMetadataService {
       }
     }
     runChunkedWrite(trackRows, ({ release, track }) => {
-      insertRecording.run(track.RecordingId, track.TrackName, track.DurationMs);
+      const isrcs = Array.isArray(track.Isrcs)
+        ? track.Isrcs
+        : Array.isArray(track.isrcs)
+          ? track.isrcs
+          : [];
+      const isrcJson = isrcs.length > 0 ? JSON.stringify(isrcs.map(String).filter(Boolean)) : null;
+      insertRecording.run(track.RecordingId, track.TrackName, track.DurationMs, isrcJson);
       insertTrack.run(
         track.Id,
         release.Id,

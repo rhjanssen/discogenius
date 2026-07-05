@@ -256,8 +256,8 @@ export const useDashboardStyles = makeStyles({
         opacity: 0.6,
     },
     downloadStatusLead: {
-        width: "16px",
-        minWidth: "16px",
+        width: "24px",
+        minWidth: "24px",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -279,26 +279,22 @@ export const useDashboardStyles = makeStyles({
         textOverflow: "ellipsis",
     },
     downloadStatusPendingIcon: {
-        width: "16px",
-        height: "16px",
+        fontSize: "24px",
         color: tokens.colorNeutralForeground3,
         flexShrink: 0,
     },
+    // Downloaded (import still pending) — brand orange per design.
     downloadStatusCompleteIcon: {
-        width: "16px",
-        height: "16px",
-        color: tokens.colorPaletteGreenForeground1,
+        fontSize: "24px",
+        color: tokens.colorBrandForeground1,
         flexShrink: 0,
     },
-    downloadStatusImportingIcon: {
-        width: "16px",
-        height: "16px",
-        color: tokens.colorPaletteBlueForeground2,
+    downloadStatusColorIcon: {
+        fontSize: "24px",
         flexShrink: 0,
     },
     downloadStatusErrorIcon: {
-        width: "16px",
-        height: "16px",
+        fontSize: "24px",
         color: tokens.colorPaletteRedForeground1,
         flexShrink: 0,
     },
@@ -364,7 +360,16 @@ export const useDashboardStyles = makeStyles({
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalXS,
+        flex: "1 1 auto",
         minWidth: 0,
+    },
+    // Desktop single-line header: title shrinks to content so the artist sits
+    // right after it; badges are pushed to the trailing edge.
+    downloadTitleRowInline: {
+        "@media (min-width: 700px)": {
+            flex: "0 1 auto",
+            maxWidth: "60%",
+        },
     },
     downloadTitle: {
         fontWeight: tokens.fontWeightSemibold,
@@ -389,6 +394,7 @@ export const useDashboardStyles = makeStyles({
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalXS,
+        flex: "0 1 auto",
         flexWrap: "wrap",
         minWidth: 0,
     },
@@ -396,18 +402,22 @@ export const useDashboardStyles = makeStyles({
         "@media (min-width: 700px)": {
             flexWrap: "nowrap",
             gap: tokens.spacingHorizontalM,
+            flex: "1 1 auto",
         },
     },
     downloadBadgeRow: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalXS,
+        flexShrink: 0,
         flexWrap: "wrap",
-        minWidth: 0,
+        minWidth: "max-content",
+        width: "max-content",
     },
     downloadBadgeRowInline: {
         "@media (min-width: 700px)": {
             flexWrap: "nowrap",
+            marginLeft: "auto",
         },
     },
     downloadProgress: {
@@ -442,6 +452,12 @@ export const useDashboardStyles = makeStyles({
     },
     queueHistoryItem: {
         outlineStyle: "none",
+        // Desktop history rows are a single line, so center cover, text,
+        // time, and status vertically; mobile keeps the stacked top-aligned
+        // layout from downloadItem.
+        "@media (min-width: 700px)": {
+            alignItems: "center",
+        },
     },
     queueHistoryItemClickable: {
         cursor: "pointer",
@@ -506,6 +522,7 @@ export const useDashboardStyles = makeStyles({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        gap: tokens.spacingHorizontalXS,
         flexShrink: 0,
     },
     downloadTrackNumber: {

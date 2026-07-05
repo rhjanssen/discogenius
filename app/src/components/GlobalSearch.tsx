@@ -564,7 +564,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
 
     const renderEmpty = () => (
         <div className={styles.noResults}>
-            {`No library results found for "${searchQuery}".`}
+            {`No results found for "${searchQuery}".`}
         </div>
     );
 
@@ -652,6 +652,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         const parts = item.subtitle?.split('·').map(s => s.trim()) || [];
         const artistName = parts[1] || "";
         const extraInfo = item.type === "artist" ? "" : parts[2] || ""; // Duration or Year
+        const imageUrl = renderableArtworkUrl(item.imageId);
 
         return (
             <div
@@ -660,11 +661,20 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 onClick={() => handleItemClick(item)}
             >
                 {/* Image */}
-                <img
-                    src={renderableArtworkUrl(item.imageId) || undefined}
-                    alt={item.name}
-                    className={isVideo ? styles.rowImageVideo : styles.rowImageSquare}
-                />
+                {imageUrl ? (
+                    <img
+                        src={imageUrl}
+                        alt={item.name}
+                        className={isVideo ? styles.rowImageVideo : styles.rowImageSquare}
+                    />
+                ) : (
+                    <Avatar
+                        name={item.name}
+                        shape="square"
+                        size={isVideo ? 48 : 40}
+                        className={isVideo ? styles.rowImageVideo : styles.rowImageSquare}
+                    />
+                )}
 
                 {/* Title + Artist (mobile shows both stacked) */}
                 <div className={styles.itemInfo}>

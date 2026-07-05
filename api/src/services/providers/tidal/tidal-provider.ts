@@ -15,6 +15,7 @@ import {
   ProviderDownloadOptions,
   ProviderImportSource,
   ProviderImportSelection,
+  ProviderManifest,
 } from "../streaming-provider.js";
 import { tidalQualityMapping } from "./tidal-quality.js";
 import * as tidal from "./tidal.js";
@@ -153,6 +154,43 @@ export function getTidalAlbumDownloadTrackInfo(providerIds: string[]): TidalAlbu
 export class TidalProvider implements StreamingProvider {
   readonly id = "tidal";
   readonly name = "TIDAL";
+  readonly manifest: ProviderManifest = {
+    id: this.id,
+    displayName: this.name,
+    configRoot: "providers/tidal",
+    auth: {
+      kind: "oauth-device",
+      managedByApp: true,
+    },
+    integration: {
+      catalogSource: "web-api",
+      downloadSource: "native-cli",
+      stableResourceIds: ["artist", "album", "track", "video", "playlist"],
+    },
+    downloadBackends: [
+      {
+        id: "tiddl",
+        capabilities: ["stereo", "spatial", "video"],
+        enabled: true,
+      },
+    ],
+    catalog: {
+      search: true,
+      artistCatalog: true,
+      releaseOffers: true,
+      videos: true,
+    },
+    imports: {
+      supported: ["followed-artists", "playlist", "favorite-tracks", "mix"],
+    },
+    qualityMapping: {
+      neutral: true,
+      stereo: true,
+      spatial: true,
+      video: true,
+    },
+    diagnostics: ["auth", "catalog", "download-backend", "rate-limit"],
+  };
   readonly capabilities = {
     catalogSearch: true,
     artistCatalog: true,

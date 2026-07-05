@@ -11,7 +11,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
-const { getExistingLibraryMediaIds } = await import("./download-recovery.js");
+const { getExistingLibraryMediaIds, shouldQueueRedownloadForFailedImport } = await import("./download-recovery.js");
 
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();
@@ -94,4 +94,23 @@ test("download recovery resolves existing album files through canonical provider
   assert.deepEqual(recovered, ["track-mbid"]);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
+});
+
+test("failed imports with re-download hint queue a fresh download even when workspace exists", () => {
+  const downloadPath = path.join(tempDir, "downloads", "albums", "provider-album", "job_1");
+  fs.mkdirSync(downloadPath, { recursive: true });
+
+  const shouldRedownload = shouldQueueRedownloadForFailedImport({
+    id: 1,
+    name: "ImportDownload",
+    status: "failed",
+    error: "Import files for album provider-album are no longer available. Re-download the item to retry import.",
+    payload: {
+      type: "album",
+      providerId: "provider-album",
+      path: downloadPath,
+    },
+  } as any);
+
+  assert.equal(shouldRedownload, true);
 });

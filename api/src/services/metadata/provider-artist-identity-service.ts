@@ -1,7 +1,13 @@
 import { db } from "../../database.js";
-import { servarrMetadata, type LidarrArtist } from "./servarr-metadata.js";
+import type { LidarrArtist } from "./servarr-metadata.js";
+import { catalogProviderRegistry } from "../catalog/index.js";
 import type { ProviderArtist } from "../providers/streaming-provider.js";
 import { providerResourceKey } from "./provider-url-identity.js";
+import {
+  matchProviderAlbumToReleaseGroup,
+  type MusicBrainzReleaseGroupForMatching,
+  type ProviderAlbumForReleaseGroupMatching,
+} from "./provider-release-group-matcher.js";
 
 export type ProviderArtistIdentityInput = {
   provider?: string | null;
@@ -21,6 +27,18 @@ export type ProviderArtistIdentityResolution = {
   confidence: number;
   method: string;
   reason?: string;
+};
+
+export type ProviderArtistEvidenceAlbum = {
+  provider?: string | null;
+  providerId?: string | null;
+  title: string;
+  releaseDate?: string | null;
+  type?: string | null;
+  upc?: string | null;
+  trackCount?: number | null;
+  volumeCount?: number | null;
+  isrcs?: string[] | null;
 };
 
 export function normalizeProviderArtist(artist: ProviderArtist): ProviderArtistIdentityInput {
@@ -291,6 +309,347 @@ export function bestDiscographyOverlapMatch(providerAlbumTitles: string[], candi
   return null;
 }
 
+type SearchAllAlbumRow = {
+  id?: string;
+  Id?: string;
+  title?: string;
+  Title?: string;
+  type?: string | null;
+  Type?: string | null;
+  secondarytypes?: string[];
+  SecondaryTypes?: string[];
+  releasedate?: string | null;
+  ReleaseDate?: string | null;
+  disambiguation?: string | null;
+  Disambiguation?: string | null;
+  artistid?: string | null;
+  artistId?: string | null;
+  artists?: unknown[];
+  Releases?: unknown[];
+  releases?: unknown[];
+};
+
+function uniqueByArtistId(candidates: LidarrArtist[]): LidarrArtist[] {
+  const byId = new Map<string, LidarrArtist>();
+  for (const candidate of candidates) {
+    if (candidate?.id && !byId.has(candidate.id)) {
+      byId.set(candidate.id, candidate);
+    }
+  }
+  return Array.from(byId.values());
+}
+
+function mapSearchArtist(value: unknown): LidarrArtist | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  const id = String(raw.id || "").trim();
+  const artistname = String(raw.artistname || raw.name || "").trim();
+  if (!id || !artistname) {
+    return null;
+  }
+  return {
+    id,
+    artistname,
+    sortname: String(raw.sortname || raw["sort-name"] || artistname),
+    artistaliases: Array.isArray(raw.artistaliases) ? raw.artistaliases.map(String) : [],
+    artistAliases: Array.isArray(raw.artistAliases) ? raw.artistAliases.map(String) : [],
+    links: Array.isArray(raw.links) ? raw.links as LidarrArtist["links"] : [],
+    disambiguation: typeof raw.disambiguation === "string" ? raw.disambiguation : undefined,
+    type: typeof raw.type === "string" ? raw.type : undefined,
+    images: Array.isArray(raw.images) ? raw.images as LidarrArtist["images"] : [],
+    Albums: Array.isArray(raw.Albums) ? raw.Albums as LidarrArtist["Albums"] : [],
+  };
+}
+
+function searchRowArtists(row: unknown): LidarrArtist[] {
+  if (!row || typeof row !== "object") {
+    return [];
+  }
+  const raw = row as Record<string, unknown>;
+  const artists: LidarrArtist[] = [];
+  const direct = mapSearchArtist(raw.artist);
+  if (direct) {
+    artists.push(direct);
+  }
+  const album = raw.album as SearchAllAlbumRow | undefined;
+  for (const artist of Array.isArray(album?.artists) ? album.artists : []) {
+    const mapped = mapSearchArtist(artist);
+    if (mapped) {
+      artists.push(mapped);
+    }
+  }
+  const albumArtistId = String(album?.artistid || album?.artistId || "").trim();
+  if (albumArtistId && artists.length === 0) {
+    artists.push({
+      id: albumArtistId,
+      artistname: "",
+      sortname: "",
+      images: [],
+      Albums: [],
+    });
+  }
+  return uniqueByArtistId(artists).filter((artist) => artist.artistname);
+}
+
+function searchRowReleaseGroup(row: unknown): MusicBrainzReleaseGroupForMatching | null {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+  const album = (row as Record<string, unknown>).album as SearchAllAlbumRow | undefined;
+  const id = String(album?.id || album?.Id || "").trim();
+  const title = String(album?.title || album?.Title || "").trim();
+  if (!album || !id || !title) {
+    return null;
+  }
+  const releases = (Array.isArray(album.Releases) ? album.Releases : Array.isArray(album.releases) ? album.releases : [])
+    .filter((release): release is Record<string, unknown> => Boolean(release && typeof release === "object"))
+    .map((release) => {
+      const rawTracks = Array.isArray(release.Tracks) ? release.Tracks : [];
+      const isrcs = rawTracks
+        .flatMap((track) => {
+          if (!track || typeof track !== "object") return [];
+          const raw = track as Record<string, unknown>;
+          const values = [raw.isrc, raw.ISRC, raw.Isrc, raw.isrcs, raw.ISRCs];
+          return values.flatMap((value) => Array.isArray(value) ? value : [value]);
+        })
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+      return {
+        mbid: String(release.Id || release.id || ""),
+        title: typeof release.Title === "string" ? release.Title : typeof release.title === "string" ? release.title : null,
+        disambiguation: typeof release.Disambiguation === "string" ? release.Disambiguation : typeof release.disambiguation === "string" ? release.disambiguation : null,
+        barcode: typeof release.Barcode === "string" ? release.Barcode : typeof release.barcode === "string" ? release.barcode : null,
+        date: typeof release.ReleaseDate === "string" ? release.ReleaseDate : typeof release.date === "string" ? release.date : null,
+        trackCount: Number(release.TrackCount ?? release.trackCount ?? rawTracks.length) || null,
+        mediaCount: Number(release.MediaCount ?? release.MediumCount ?? release.mediaCount ?? release.mediumCount) || null,
+        externalUrls: Array.isArray(release.ExternalUrls) ? release.ExternalUrls.map(String) : [],
+        isrcs,
+      };
+    })
+    .filter((release) => release.mbid);
+
+  return {
+    mbid: id,
+    title,
+    primaryType: album.type ?? album.Type ?? null,
+    secondaryTypes: Array.isArray(album.secondarytypes) ? album.secondarytypes : Array.isArray(album.SecondaryTypes) ? album.SecondaryTypes : [],
+    firstReleaseDate: album.releasedate ?? album.ReleaseDate ?? null,
+    disambiguation: album.disambiguation ?? album.Disambiguation ?? null,
+    releases,
+  };
+}
+
+function providerAlbumForReleaseMatcher(provider: string | null | undefined, album: ProviderArtistEvidenceAlbum): ProviderAlbumForReleaseGroupMatching {
+  return {
+    provider: provider ?? album.provider ?? null,
+    providerId: String(album.providerId || album.title),
+    title: album.title,
+    releaseDate: album.releaseDate ?? null,
+    type: album.type ?? null,
+    upc: album.upc ?? null,
+    isrcs: album.isrcs ?? null,
+    trackCount: album.trackCount ?? null,
+    volumeCount: album.volumeCount ?? null,
+  };
+}
+
+function releaseEvidenceSearchTitle(title: string): string {
+  return String(title || "")
+    .replace(/\((?:[^)]*)\)/g, " ")
+    .replace(/\[(?:[^\]]*)\]/g, " ")
+    .replace(/\s+(?:[-:–—])\s+(?:remix|radio edit|single version|deluxe|expanded|remastered).*$/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function releaseEvidenceSample(albums: ProviderArtistEvidenceAlbum[]): ProviderArtistEvidenceAlbum[] {
+  return albums
+    .map((album) => ({ ...album, title: String(album.title || "").trim() }))
+    .filter((album) => album.title.length > 0)
+    .sort((left, right) => {
+      const leftTitle = releaseEvidenceSearchTitle(left.title);
+      const rightTitle = releaseEvidenceSearchTitle(right.title);
+      const leftTooLong = leftTitle.length > 80 ? 1 : 0;
+      const rightTooLong = rightTitle.length > 80 ? 1 : 0;
+      return leftTooLong - rightTooLong
+        || leftTitle.length - rightTitle.length
+        || String(left.releaseDate || "").localeCompare(String(right.releaseDate || ""))
+        || left.title.localeCompare(right.title);
+    })
+    .slice(0, 6);
+}
+
+function sortReleaseEvidenceCandidates(candidates: Iterable<ProviderArtistReleaseEvidenceCandidate>): ProviderArtistReleaseEvidenceCandidate[] {
+  return Array.from(candidates)
+    .sort((left, right) =>
+      right.upcMatches - left.upcMatches
+      || right.isrcMatches - left.isrcMatches
+      || right.matchedAlbumTitles.length - left.matchedAlbumTitles.length
+      || right.score - left.score
+      || left.artist.id.localeCompare(right.artist.id));
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function artistNameCompatible(providerArtistName: string, candidateArtistName: string): boolean {
+  const providerName = normalizeSearchText(providerArtistName);
+  const candidateName = normalizeSearchText(candidateArtistName);
+  if (!providerName || !candidateName) {
+    return false;
+  }
+  return candidateName === providerName
+    || candidateName.startsWith(`${providerName} `)
+    || providerName.startsWith(`${candidateName} `);
+}
+
+export type ProviderArtistReleaseEvidenceCandidate = {
+  artist: LidarrArtist;
+  matchedAlbumTitles: string[];
+  upcMatches: number;
+  isrcMatches: number;
+  score: number;
+};
+
+export async function findArtistCandidatesByProviderReleaseEvidence(
+  providerArtist: ProviderArtistIdentityInput,
+  providerAlbums: ProviderArtistEvidenceAlbum[],
+  provider?: string | null,
+): Promise<ProviderArtistReleaseEvidenceCandidate[]> {
+  const scored = new Map<string, ProviderArtistReleaseEvidenceCandidate>();
+  const sample = releaseEvidenceSample(providerAlbums);
+
+  for (let index = 0; index < sample.length; index += 1) {
+    const album = sample[index];
+    if (index > 0) {
+      await delay(350);
+    }
+    let searchRows: Array<{ releaseGroup: MusicBrainzReleaseGroupForMatching; artists: LidarrArtist[] }> = [];
+    try {
+      const searchResults = await catalogProviderRegistry.getActive().search(
+        `${providerArtist.name} ${releaseEvidenceSearchTitle(album.title)}`,
+        { limit: 25 },
+      );
+      searchRows = [
+        ...(searchResults.releaseGroups || []).map((releaseGroup) => ({
+          releaseGroup: {
+            mbid: releaseGroup.mbid,
+            title: releaseGroup.title,
+            primaryType: null,
+            secondaryTypes: [],
+            firstReleaseDate: releaseGroup.releaseDate ?? null,
+            disambiguation: releaseGroup.disambiguation ?? null,
+            releases: [],
+          },
+          artists: releaseGroup.artistMbid
+            ? [{
+                id: releaseGroup.artistMbid,
+                artistname: releaseGroup.artistName || "",
+                sortname: releaseGroup.artistName || "",
+                images: [],
+                Albums: [],
+              }]
+            : searchResults.artists,
+        })),
+        ...(searchResults.raw || [])
+          .map((row) => {
+            const releaseGroup = searchRowReleaseGroup(row);
+            return releaseGroup ? { releaseGroup, artists: searchRowArtists(row) } : null;
+          })
+          .filter((row): row is { releaseGroup: MusicBrainzReleaseGroupForMatching; artists: LidarrArtist[] } => Boolean(row)),
+      ];
+    } catch (error) {
+      console.warn(`[ProviderArtistIdentityService] Release-evidence search failed for ${providerArtist.name} / ${album.title}:`, error);
+      continue;
+    }
+    const providerAlbum = providerAlbumForReleaseMatcher(provider, album);
+    for (const row of searchRows) {
+      const match = matchProviderAlbumToReleaseGroup(providerAlbum, [row.releaseGroup]);
+      if (match.status === "unmatched" || match.confidence < 0.78) {
+        continue;
+      }
+      for (const artist of row.artists) {
+        if (!artistNameCompatible(providerArtist.name, artist.artistname)) {
+          continue;
+        }
+        const current = scored.get(artist.id) || {
+          artist,
+          matchedAlbumTitles: [],
+          upcMatches: 0,
+          isrcMatches: 0,
+          score: 0,
+        };
+        if (!current.matchedAlbumTitles.some((title) => normalizeAlbumTitleForOverlap(title) === normalizeAlbumTitleForOverlap(album.title))) {
+          current.matchedAlbumTitles.push(album.title);
+        }
+        if (match.evidence.upcMatched) {
+          current.upcMatches += 1;
+        }
+        if ((match.evidence.isrcOverlap || 0) > 0) {
+          current.isrcMatches += match.evidence.isrcOverlap || 0;
+        }
+        current.score += (match.evidence.upcMatched ? 100 : 0)
+          + Math.min(50, (match.evidence.isrcOverlap || 0) * 12)
+          + Math.round(match.confidence * 20);
+        current.artist = current.artist.Albums?.length ? current.artist : artist;
+        scored.set(artist.id, current);
+      }
+    }
+    const earlyMatch = bestProviderReleaseEvidenceArtistMatch(sortReleaseEvidenceCandidates(scored.values()));
+    if (earlyMatch) {
+      break;
+    }
+  }
+
+  return sortReleaseEvidenceCandidates(scored.values());
+}
+
+export function bestProviderReleaseEvidenceArtistMatch(candidates: ProviderArtistReleaseEvidenceCandidate[]): {
+  artist: LidarrArtist;
+  status: "verified" | "probable";
+  confidence: number;
+  method: string;
+} | null {
+  const best = candidates[0];
+  if (!best) {
+    return null;
+  }
+  const runnerUp = candidates[1];
+  const runnerUpAlbums = runnerUp?.matchedAlbumTitles.length ?? 0;
+
+  if (best.upcMatches > 0 && best.upcMatches > (runnerUp?.upcMatches ?? 0)) {
+    return {
+      artist: best.artist,
+      status: "verified",
+      confidence: 0.995,
+      method: "provider-discography-upc",
+    };
+  }
+
+  if (best.isrcMatches >= 2 && best.isrcMatches >= (runnerUp?.isrcMatches ?? 0) + 2) {
+    return {
+      artist: best.artist,
+      status: "verified",
+      confidence: 0.96,
+      method: "provider-discography-isrc",
+    };
+  }
+
+  if (best.matchedAlbumTitles.length >= 2 && best.matchedAlbumTitles.length >= runnerUpAlbums + 2) {
+    return {
+      artist: best.artist,
+      status: "probable",
+      confidence: best.matchedAlbumTitles.length >= 4 ? 0.9 : 0.84,
+      method: "provider-discography-release-search",
+    };
+  }
+
+  return null;
+}
+
 export interface ResolveProviderArtistOptions {
   /**
    * Lazily fetch the provider artist's album titles (one provider API call).
@@ -298,6 +657,12 @@ export interface ResolveProviderArtistOptions {
    * so the common case pays nothing.
    */
   listProviderAlbumTitles?: () => Promise<string[]>;
+  /**
+   * Structured provider albums for artist-identity evidence. Title overlap is
+   * still useful in default Servarr Metadata Server mode; UPC/ISRC/shape become
+   * available here when the provider and catalog payloads expose them.
+   */
+  listProviderAlbums?: () => Promise<ProviderArtistEvidenceAlbum[]>;
 }
 
 export class ProviderArtistIdentityService {
@@ -337,7 +702,7 @@ export class ProviderArtistIdentityService {
     }
 
     try {
-      const candidates = await servarrMetadata.searchForNewArtist(artist.name, 10);
+      const candidates = (await catalogProviderRegistry.getActive().search(artist.name, { limit: 10 })).artists;
       const match = bestCanonicalArtistMatch(artist, candidates, provider);
 
       if (match) {
@@ -352,9 +717,12 @@ export class ProviderArtistIdentityService {
       // Name/alias/URL evidence was inconclusive. Before giving up, compare
       // discographies: fetch the provider artist's album titles (one API call)
       // and look for a candidate whose release groups clearly share them.
-      if (options?.listProviderAlbumTitles && candidates.length > 0) {
+      if (options?.listProviderAlbumTitles || options?.listProviderAlbums) {
         try {
-          const providerAlbumTitles = (await options.listProviderAlbumTitles()).slice(0, 50);
+          const providerAlbums = options.listProviderAlbums ? (await options.listProviderAlbums()).slice(0, 50) : [];
+          const providerAlbumTitles = providerAlbums.length > 0
+            ? providerAlbums.map((album) => album.title).filter(Boolean)
+            : (await options.listProviderAlbumTitles?.() ?? []).slice(0, 50);
           const overlapMatch = bestDiscographyOverlapMatch(providerAlbumTitles, candidates);
           if (overlapMatch) {
             return {
@@ -363,6 +731,18 @@ export class ProviderArtistIdentityService {
               confidence: overlapMatch.confidence,
               method: overlapMatch.method,
             };
+          }
+          if (providerAlbums.length > 0) {
+            const releaseEvidenceCandidates = await findArtistCandidatesByProviderReleaseEvidence(artist, providerAlbums, provider);
+            const releaseEvidenceMatch = bestProviderReleaseEvidenceArtistMatch(releaseEvidenceCandidates);
+            if (releaseEvidenceMatch) {
+              return {
+                mbid: releaseEvidenceMatch.artist.id,
+                status: releaseEvidenceMatch.status,
+                confidence: releaseEvidenceMatch.confidence,
+                method: releaseEvidenceMatch.method,
+              };
+            }
           }
         } catch (error) {
           console.warn(`[ProviderArtistIdentityService] Discography comparison for ${artist.name} failed:`, error);

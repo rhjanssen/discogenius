@@ -1,4 +1,4 @@
-import { db, runChunkedWrite } from "../../database.js";
+import { db } from "../../database.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
@@ -47,20 +47,41 @@ type ArtistCurationIdentity = {
 };
 
 export class DownloadMissingService {
+    static readonly DEFAULT_MAX_BUFFERED_DOWNLOADS = 50;
+
+    static countActiveDownloadCommands(): number {
+        const placeholders = [CommandNames.DownloadAlbum, CommandNames.DownloadTrack, CommandNames.DownloadVideo]
+            .map(() => "?")
+            .join(", ");
+        const row = db.prepare(`
+            SELECT COUNT(*) AS count
+            FROM commands
+            WHERE name IN (${placeholders})
+              AND status IN ('queued', 'started')
+        `).get(CommandNames.DownloadAlbum, CommandNames.DownloadTrack, CommandNames.DownloadVideo) as { count?: number } | undefined;
+
+        return Number(row?.count || 0);
+    }
 
     static async queueMonitoredItems(
-        artistId?: string
+        artistId?: string,
+        options: { limit?: number } = {},
     ): Promise<{ albums: number; tracks: number; videos: number }> {
         console.log(`[Queue] Queueing monitored items${artistId ? ` for artist ${artistId}` : ' app-wide'}...`);
 
         const filteringConfig = getConfigSection("filtering");
         const allowVideos = filteringConfig?.include_videos !== false;
+        const maxToQueue = Number.isInteger(options.limit) && Number(options.limit) > 0
+            ? Number(options.limit)
+            : Number.POSITIVE_INFINITY;
+        const queuedTotal = () => albumJobs + trackJobs + videoJobs;
+        const hasBatchCapacity = () => queuedTotal() < maxToQueue;
 
-        const hasActiveJob = (types: string[], refId: string) => {
+        const hasBufferedJob = (types: string[], refId: string) => {
             const placeholders = types.map(() => '?').join(', ');
             const existing = db.prepare(`
                 SELECT id FROM commands
-                WHERE name IN (${placeholders}) AND ref_id = ? AND status IN ('queued', 'started')
+                WHERE name IN (${placeholders}) AND ref_id = ? AND status IN ('queued', 'started', 'failed')
             `).get(...types, refId);
             return Boolean(existing);
         };
@@ -70,7 +91,7 @@ export class DownloadMissingService {
             if (albumIds.length === 0) return false;
 
             for (const id of albumIds) {
-                if (hasActiveJob([CommandNames.DownloadAlbum, CommandNames.ImportDownload], id)) {
+                if (hasBufferedJob([CommandNames.DownloadAlbum, CommandNames.ImportDownload], id)) {
                     return true;
                 }
             }
@@ -109,6 +130,9 @@ export class DownloadMissingService {
             releaseMbid?: string | null;
             slot?: string | null;
         }, artistNames: string[] = []): boolean => {
+            if (!hasBatchCapacity()) {
+                return false;
+            }
             const albumId = String(album.id);
             const slotName = String(album.slot || "album").toLowerCase();
             const releaseGroupMbid = album.releaseGroupMbid ? String(album.releaseGroupMbid) : null;
@@ -117,7 +141,7 @@ export class DownloadMissingService {
                 !albumId
                 || albumQueuedAsAlbum.has(queueRefId)
                 || hasActiveAlbumWork(albumId)
-                || hasActiveJob([CommandNames.DownloadAlbum, CommandNames.ImportDownload], queueRefId)
+                || hasBufferedJob([CommandNames.DownloadAlbum, CommandNames.ImportDownload], queueRefId)
             ) {
                 return false;
             }
@@ -153,8 +177,12 @@ export class DownloadMissingService {
             slotArtistWhere = "monitored_artist.id = ?";
             slotParams.push(artistId);
         }
+        const boundedAlbumFetch = Number.isFinite(maxToQueue);
+        const albumFetchLimit = boundedAlbumFetch
+            ? Math.max(Number(maxToQueue) * 5, Number(maxToQueue) + 100)
+            : null;
 
-        const selectedSlots = db.prepare(`
+        const selectedSlotsSql = `
             SELECT
                 rgs.id,
                 rgs.slot,
@@ -189,9 +217,17 @@ export class DownloadMissingService {
             GROUP BY rgs.id
             HAVING total_tracks = 0 OR downloaded_tracks < total_tracks
             ORDER BY rg.first_release_date DESC, rg.title ASC, rgs.slot ASC
-        `).all(...slotParams) as any[];
+            ${boundedAlbumFetch ? "LIMIT ?" : ""}
+        `;
+        const selectedSlots = db.prepare(selectedSlotsSql).all(
+            ...slotParams,
+            ...(boundedAlbumFetch ? [albumFetchLimit] : []),
+        ) as any[];
 
         for (const slot of selectedSlots) {
+            if (!hasBatchCapacity()) {
+                break;
+            }
             if (!shouldIncludeReleaseGroup(slot)) {
                 continue;
             }
@@ -268,7 +304,11 @@ export class DownloadMissingService {
                   COALESCE(pi.match_confidence, 0) DESC,
                   CASE COALESCE(pi.match_status, '') WHEN 'verified' THEN 0 WHEN 'matched' THEN 1 ELSE 2 END,
                   pi.updated_at DESC
+                ${Number.isFinite(maxToQueue) ? "LIMIT ?" : ""}
             `;
+            if (Number.isFinite(maxToQueue)) {
+                videoParams.push(Math.max(Number(maxToQueue) * 5, Number(maxToQueue) + 100));
+            }
 
             const videos = db.prepare(videosQuery).all(...videoParams) as any[];
 
@@ -320,12 +360,15 @@ export class DownloadMissingService {
             const queuedRecordings = new Set<string>();
             const queuedGroups = new Set<string>();
             for (const { video, groupKey } of rankedVideos) {
+                if (!hasBatchCapacity()) {
+                    break;
+                }
                 const recordingId = String(video.recording_id || "");
                 const providerId = String(video.provider_id || "");
                 const queueRefId = recordingId ? `recording:${recordingId}:video` : `provider:${providerId}:video`;
                 if (!recordingId || !providerId || queuedRecordings.has(recordingId)) continue;
                 if (queuedGroups.has(groupKey) || importedVideoGroups.has(groupKey)) continue;
-                if (hasActiveJob([CommandNames.DownloadVideo, CommandNames.ImportDownload], queueRefId)) {
+                if (hasBufferedJob([CommandNames.DownloadVideo, CommandNames.ImportDownload], queueRefId)) {
                     queuedGroups.add(groupKey);
                     continue;
                 }

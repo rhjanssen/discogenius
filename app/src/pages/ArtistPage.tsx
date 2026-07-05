@@ -1139,10 +1139,14 @@ const ArtistPage = () => {
 
   const filterTopTracks = useCallback((tracks: TrackListItem[]) => {
     return tracks.filter((track) => {
-      const quality = (track.quality || '').toString().toUpperCase();
+      const qualities = Array.isArray(track.qualityTags) && track.qualityTags.length > 0
+        ? track.qualityTags.map((quality) => String(quality || "").toUpperCase())
+        : [(track.quality || '').toString().toUpperCase()];
+      const hasSpatialQuality = qualities.some((quality) => isSpatialAudioQuality(quality));
+      const hasStereoQuality = qualities.some((quality) => quality && !isSpatialAudioQuality(quality));
 
-      if (libraryFilter === 'spatial' && !isSpatialAudioQuality(quality)) return false;
-      if (libraryFilter === 'stereo' && isSpatialAudioQuality(quality)) return false;
+      if (libraryFilter === 'spatial' && !hasSpatialQuality) return false;
+      if (libraryFilter === 'stereo' && !hasStereoQuality) return false;
 
       const isTrackMonitored = Boolean(track.is_monitored);
       const hasMonitoringFilter = statusFilters.onlyMonitored || statusFilters.onlyUnmonitored;
@@ -1240,6 +1244,7 @@ const ArtistPage = () => {
             tracks={visibleTracks}
             numbering="index"
             showAlbum
+            showQuality={false}
             contextArtistName={artistName}
             onDownloadTrack={handleDownloadTrack}
             isTrackDownloading={(track) => downloadingTracks.has(track.id)}

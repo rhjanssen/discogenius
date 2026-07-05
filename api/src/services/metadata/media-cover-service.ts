@@ -1064,6 +1064,41 @@ export async function resolveAlbumArtwork(options: {
   return null;
 }
 
+/**
+ * Provider artwork candidates for an artist, pulled from the DB so callers don't
+ * have to assemble them (mirrors how the video resolver self-serves). Sources the
+ * matched provider artist offer(s) (`ProviderItems entity_type='artist'`) and the
+ * `ArtistMetadata.picture` asset. This is what makes provider artist images the
+ * backup source once a match exists — including in MB mode, where MB serves no art.
+ */
+export function loadArtistProviderArtworkCandidates(artistMbid?: string | null): ProviderArtworkCandidate[] {
+  const mbid = textOrNull(artistMbid);
+  if (!mbid) return [];
+  try {
+    const rows = db.prepare(`
+      SELECT provider, provider_id, asset_id
+      FROM ProviderItems
+      WHERE entity_type = 'artist' AND artist_mbid = ?
+      ORDER BY COALESCE(match_confidence, 0) DESC, updated_at DESC
+      LIMIT 4
+    `).all(mbid) as Array<{ provider?: string | null; provider_id?: string | null; asset_id?: string | null }>;
+    const candidates: ProviderArtworkCandidate[] = rows
+      .filter((row) => row.asset_id || row.provider_id)
+      .map((row) => ({ provider: row.provider, entityId: row.provider_id, imageId: row.asset_id }));
+
+    // Fallback: the provider artist picture homed on ArtistMetadata (an asset id
+    // sufficient on its own to build the provider image URL).
+    const meta = db.prepare("SELECT picture FROM ArtistMetadata WHERE mbid = ?").get(mbid) as { picture?: string | null } | undefined;
+    const picture = textOrNull(meta?.picture);
+    if (picture && !candidates.some((candidate) => candidate.imageId === picture)) {
+      candidates.push({ provider: streamingProviderManager.getDefaultProviderId(), imageId: picture });
+    }
+    return candidates;
+  } catch {
+    return [];
+  }
+}
+
 export async function resolveArtistArtwork(options: {
   artistMbid?: string | null;
   servarrMetadataData?: ServarrMetadataImageContainer | null;
@@ -1132,7 +1167,7 @@ export async function resolveArtistArtwork(options: {
   }
 
   const providerUrl = await resolveProviderArtworkUrl(
-    options.providerCandidates || [],
+    [...(options.providerCandidates || []), ...loadArtistProviderArtworkCandidates(options.artistMbid)],
     "artist",
     options.size ?? configuredArtistPictureResolution(),
   );

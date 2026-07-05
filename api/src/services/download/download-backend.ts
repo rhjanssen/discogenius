@@ -11,6 +11,9 @@ export interface DownloadProgress {
     currentFileNum?: number;
     totalFiles?: number;
     currentTrack?: string;
+    currentProviderTrackId?: string;
+    currentTrackNum?: number;
+    currentVolumeNum?: number;
     trackProgress?: number;
     trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
     statusMessage?: string;
@@ -19,7 +22,7 @@ export interface DownloadProgress {
     eta?: string;
     size?: number;
     sizeleft?: number;
-    tracks?: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }>;
+    tracks?: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>;
 }
 
 export interface DownloadBackend {

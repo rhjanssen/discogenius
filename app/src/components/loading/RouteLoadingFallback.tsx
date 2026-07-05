@@ -1,5 +1,4 @@
-import { makeStyles, tokens } from "@fluentui/react-components";
-import LoadingIndicator from "./LoadingIndicator";
+import { Spinner, makeStyles, tokens } from "@fluentui/react-components";
 
 const useStyles = makeStyles({
   root: {
@@ -18,7 +17,7 @@ export default function RouteLoadingFallback() {
 
   return (
     <div className={styles.root} aria-hidden="true">
-      <LoadingIndicator size={40} />
+      <Spinner size="medium" />
     </div>
   );
 }

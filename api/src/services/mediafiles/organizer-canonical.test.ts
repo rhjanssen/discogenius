@@ -104,6 +104,93 @@ test("organizer resolves exact provider track ids to their linked canonical trac
   assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
 });
 
+test("organizer matches provider-id staging filenames to materialized provider track rows", async () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Canonical Artist");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-local", "Canonical Artist", "artist-mbid");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("release-group-1", "artist-mbid", "Canonical Album");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("release-1", "release-group-1", "artist-mbid", "Canonical Album", 1, 1);
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
+    .run("recording-1", "Feeling Good", "artist-mbid", 0);
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (id, mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(101, "track-1", "release-1", "recording-1", "Feeling Good", 1, 1);
+  // Materialized provider track offer row (the single source of truth). tiddl
+  // stages the file as {provider_id}.flac; the importer matches by provider id
+  // only — no title/metadata/position fuzzing, no album blob.
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid, release_group_mbid, release_mbid,
+      title, quality, track_mbid, recording_mbid, library_slot,
+      match_status, match_confidence, match_method, match_evidence
+    ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "tidal",
+    "provider-track-1",
+    "provider-album-1",
+    "artist-mbid",
+    "release-group-1",
+    "release-1",
+    "Feeling Good",
+    "LOSSLESS",
+    "track-1",
+    "recording-1",
+    "stereo",
+    "matched",
+    0.9,
+    "selected-release-position",
+    JSON.stringify({ albumProviderId: "provider-album-1", mediumPosition: 1, trackPosition: 1 }),
+  );
+
+  const stagedFile = path.join(tempDir, "provider-album-1", "provider-track-1.flac");
+  const matches = await (organizerModule.OrganizerService as any).matchAlbumFilesToTracks(
+    "provider-album-1",
+    [stagedFile],
+    {
+      provider: "tidal",
+      releaseGroupMbid: "release-group-1",
+      releaseMbid: "release-1",
+      artistMbid: "artist-mbid",
+      slot: "stereo",
+      quality: "LOSSLESS",
+    },
+  );
+  const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
+    provider: "tidal",
+    trackId: matches.get(stagedFile),
+    releaseMbid: "release-1",
+    fallbackAlbumId: "provider-album-1",
+    fallbackAlbumIds: ["provider-album-1"],
+    fallbackArtistId: "artist-local",
+    fallbackQuality: "LOSSLESS",
+  });
+
+  assert.equal(matches.get(stagedFile), "provider-track-1");
+  assert.equal(row?.id, "provider-track-1");
+  assert.equal(row?.album_id, "provider-album-1");
+  assert.equal(row?.canonical_track_mbid, "track-1");
+  assert.equal(row?.canonical_recording_mbid, "recording-1");
+});
+
+test("organizer returns no match when a staged provider id has no offer row", async () => {
+  // No materialized track row and no live provider in the unit env → the
+  // force-refresh path fails softly and matching returns empty (recoverable),
+  // never a title/position guess.
+  const stagedFile = path.join(tempDir, "provider-album-x", "unknown-track.flac");
+  const matches = await (organizerModule.OrganizerService as any).matchAlbumFilesToTracks(
+    "provider-album-x",
+    [stagedFile],
+    null,
+  );
+  assert.equal(matches.size, 0);
+});
+
 test("metadata pruning removes artist pictures without legacy media_id column", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");

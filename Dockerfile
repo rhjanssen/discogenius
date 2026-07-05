@@ -1,4 +1,5 @@
 # tiddl requires Python >= 3.13
+ARG APPLE_MUSIC_DOWNLOADER_IMAGE=ghcr.io/zhaarey/apple-music-downloader@sha256:e5f84e46ac4e7adc3c64ad462a0f328ac2f934ed7152d83840792bd21621aac1
 FROM python:3.13-slim-bookworm AS base
 
 # Install Node.js 20.x and system dependencies.
@@ -19,6 +20,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/tiddl-venv \
     && /opt/tiddl-venv/bin/pip install --no-cache-dir tiddl==3.4.3 \
     && ln -s /opt/tiddl-venv/bin/tiddl /usr/local/bin/tiddl
+
+# Upstream Apple Music downloader image is currently amd64-only and provides a
+# static Go binary at /usr/local/bin/apple-music-dl. Copying just that binary
+# avoids switching Discogenius' base image away from the Python runtime tiddl
+# depends on. MP4Box/wrapper provisioning remains separately diagnosed at
+# runtime because GPAC is not available in Debian Bookworm's default apt repo.
+FROM ${APPLE_MUSIC_DOWNLOADER_IMAGE} AS apple_music_downloader
 
 # ==================== Builder Stage ====================
 FROM base AS builder
@@ -74,6 +82,13 @@ RUN --mount=type=cache,target=/usr/local/share/.cache/yarn/v6,sharing=locked \
 COPY --from=builder --chown=node:node /app/api/dist ./api/dist
 COPY --from=builder --chown=node:node /app/app/dist ./app/dist
 
+# Copy the static Apple Music downloader binary from the upstream runtime image.
+# Keep both names on PATH: upstream uses apple-music-dl, older Discogenius
+# diagnostics allowed APPLE_MUSIC_DL_BIN=apple-music-downloader.
+COPY --from=apple_music_downloader /usr/local/bin/apple-music-dl /usr/local/bin/apple-music-dl
+RUN chmod +x /usr/local/bin/apple-music-dl \
+    && ln -sf /usr/local/bin/apple-music-dl /usr/local/bin/apple-music-downloader
+
 # Copy source files needed at runtime (for ES modules)
 COPY --chown=node:node api/src ./api/src
 
@@ -92,6 +107,7 @@ ENV DOCKER=true
 # TIDAL plugin files inside the config volume. Startup migrates a pre-2.0.2
 # /config/.tiddl into this location automatically.
 ENV TIDDL_PATH=/config/providers/tidal/.tiddl
+ENV APPLE_MUSIC_DL_BIN=apple-music-dl
 
 # Declare volumes for persistent data
 VOLUME ["/config", "/downloads", "/library"]

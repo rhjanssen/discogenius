@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import { execFileSync, execSync } from "child_process";
-import * as mm from "music-metadata";
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
 import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveLyricsFile, saveVideoNfoFile } from "./metadata-files.js";
@@ -38,6 +37,7 @@ type OrganizeRequest = {
     currentFileNum?: number;
     totalFiles?: number;
     currentTrack?: string;
+    trackStatus?: "downloading" | "completed" | "error" | "skipped";
     statusMessage?: string;
   }) => void;
 };
@@ -48,18 +48,6 @@ export type OrganizeResult = {
   processedTrackIds: string[];   // Track IDs that were successfully organized
   totalTracksInStaging: number;  // How many media files were found in the download workspace
   expectedTracks?: number;       // How many tracks the album should have (for albums)
-};
-
-type AlbumTrackRow = {
-  id: string | number;
-  provider_id?: string | null;
-  title: string;
-  version: string | null;
-  track_number: number | null;
-  volume_number: number | null;
-  isrc: string | null;
-  track_mbid?: string | null;
-  recording_mbid?: string | null;
 };
 
 type MatchedAlbumTrackRow = {
@@ -75,13 +63,6 @@ type MatchedAlbumTrackRow = {
   mbid: string | null;
   canonical_track_mbid: string | null;
   canonical_recording_mbid: string | null;
-};
-
-type StagedAudioMetadata = {
-  title?: string;
-  trackNumber?: number;
-  volumeNumber?: number;
-  isrc?: string;
 };
 
 type OrganizerArtistContext = {
@@ -303,15 +284,6 @@ export class OrganizerService {
     return (name || "Unknown").replace(/[<>:"/\\|?*]/g, "").trim();
   }
 
-  private static normalizeMatchText(value: string | null | undefined): string {
-    return (value || "")
-      .toLowerCase()
-      .replace(/\([^)]*\)/g, " ")
-      .replace(/[^a-z0-9]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
   private static parseJsonObject(value: unknown): Record<string, any> {
     if (!value) {
       return {};
@@ -325,117 +297,6 @@ export class OrganizerService {
     } catch {
       return {};
     }
-  }
-
-  private static buildTrackMatchTitles(track: AlbumTrackRow): string[] {
-    const titles = new Set<string>();
-    const baseTitle = this.normalizeMatchText(track.title);
-    if (baseTitle) {
-      titles.add(baseTitle);
-    }
-
-    if (track.version) {
-      const combined = this.normalizeMatchText(`${track.title} ${track.version}`);
-      if (combined) {
-        titles.add(combined);
-      }
-      const parenthesized = this.normalizeMatchText(`${track.title} (${track.version})`);
-      if (parenthesized) {
-        titles.add(parenthesized);
-      }
-    }
-
-    return Array.from(titles);
-  }
-
-  private static async readStagedAudioMetadata(filePath: string): Promise<StagedAudioMetadata> {
-    try {
-      const metadata = await mm.parseFile(filePath, { duration: false, skipCovers: true });
-      const common = metadata.common;
-      return {
-        title: common.title || undefined,
-        trackNumber: typeof common.track?.no === "number" ? common.track.no : undefined,
-        volumeNumber: typeof common.disk?.no === "number" ? common.disk.no : undefined,
-        isrc: Array.isArray(common.isrc) ? common.isrc[0] : common.isrc || undefined,
-      };
-    } catch {
-      return {};
-    }
-  }
-
-  private static parseNumericTrackPositionFromPath(filePath: string): {
-    trackNumber?: number;
-    volumeNumber?: number;
-  } {
-    const baseName = path.basename(filePath, path.extname(filePath));
-    if (!/^\d+$/.test(baseName)) {
-      return {};
-    }
-
-    const parentDir = path.basename(path.dirname(filePath));
-    const cdMatch = parentDir.match(/^CD\s+(\d+)$/i);
-    if (cdMatch) {
-      return {
-        trackNumber: Number(baseName),
-        volumeNumber: Number(cdMatch[1]),
-      };
-    }
-
-    return {
-      trackNumber: Number(baseName),
-      volumeNumber: 1,
-    };
-  }
-
-  private static findTrackMatchByMetadata(
-    metadata: StagedAudioMetadata,
-    unmatchedTracks: AlbumTrackRow[],
-  ): AlbumTrackRow | null {
-    const normalizedIsrc = metadata.isrc?.trim().toUpperCase();
-    if (normalizedIsrc) {
-      const isrcMatch = unmatchedTracks.find((track) => track.isrc?.trim().toUpperCase() === normalizedIsrc);
-      if (isrcMatch) {
-        return isrcMatch;
-      }
-    }
-
-    const normalizedTitle = this.normalizeMatchText(metadata.title);
-    const trackNumber = metadata.trackNumber;
-    const volumeNumber = metadata.volumeNumber ?? 1;
-
-    const positionedCandidates = typeof trackNumber === "number"
-      ? unmatchedTracks.filter((track) =>
-        Number(track.track_number || 0) === trackNumber
-        && Number(track.volume_number || 1) === volumeNumber,
-      )
-      : [];
-
-    if (positionedCandidates.length === 1) {
-      // A track that was also released as a standalone single carries an
-      // embedded trackNumber of 1. Trusting position alone would map it onto
-      // the album's real track 1 (e.g. an "Intro") and collide. Only accept the
-      // positional candidate when we have no title to check or the title agrees;
-      // otherwise fall through to title-based matching below.
-      if (!normalizedTitle || this.buildTrackMatchTitles(positionedCandidates[0]).includes(normalizedTitle)) {
-        return positionedCandidates[0];
-      }
-    }
-
-    if (positionedCandidates.length > 1 && normalizedTitle) {
-      const titledCandidate = positionedCandidates.find((track) => this.buildTrackMatchTitles(track).includes(normalizedTitle));
-      if (titledCandidate) {
-        return titledCandidate;
-      }
-    }
-
-    if (normalizedTitle) {
-      const titleCandidates = unmatchedTracks.filter((track) => this.buildTrackMatchTitles(track).includes(normalizedTitle));
-      if (titleCandidates.length === 1) {
-        return titleCandidates[0];
-      }
-    }
-
-    return null;
   }
 
   private static resolveCanonicalAlbumImportContext(raw: OrganizeRequest, providerAlbumId: string): CanonicalAlbumImportContext | null {
@@ -541,115 +402,80 @@ export class OrganizerService {
     };
   }
 
+  /**
+   * Match downloaded files to provider tracks by provider track id ONLY.
+   * tiddl stages files as `{provider_track_id}.ext`, and every downloadable
+   * track has a materialized ProviderItems track offer row keyed by
+   * `provider_id` (RefreshAlbumService.storeProviderTrackOffers, mapped to its
+   * canonical MB track by volume+position). No title/metadata/position fuzzing:
+   * the grabbed provider ids are the hard link. If rows are missing, force one
+   * tracklist refresh and retry.
+   */
   private static async matchAlbumFilesToTracks(
     albumId: string,
     files: string[],
-    context?: CanonicalAlbumImportContext | null,
+    _context?: CanonicalAlbumImportContext | null,
   ): Promise<Map<string, string>> {
     const albumIds = albumId.split(";").filter(Boolean);
     if (albumIds.length === 0) {
       return new Map();
     }
+
+    let providerTrackIds = this.loadProviderTrackIdSet(albumIds);
+    const refreshProviderTrackIds = async () => {
+      const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
+      for (const id of albumIds) {
+        try {
+          await RefreshAlbumService.refreshTracks(id);
+        } catch (error) {
+          console.warn(`[Organizer] Failed to materialize provider track offers for album ${id}:`, error);
+        }
+      }
+      providerTrackIds = this.loadProviderTrackIdSet(albumIds);
+    };
+
+    if (providerTrackIds.size === 0) {
+      await refreshProviderTrackIds();
+    }
+
+    const matchByProviderId = () => {
+      const matched = new Map<string, string>();
+      const missingProviderIds = new Set<string>();
+      for (const filePath of files) {
+        const baseName = path.basename(filePath, path.extname(filePath));
+        if (!baseName) {
+          continue;
+        }
+
+        if (providerTrackIds.has(baseName)) {
+          matched.set(filePath, baseName);
+        } else if (/^\d+$/.test(baseName)) {
+          missingProviderIds.add(baseName);
+        }
+      }
+      return { matched, missingProviderIds };
+    };
+
+    let result = matchByProviderId();
+    if (result.missingProviderIds.size > 0) {
+      await refreshProviderTrackIds();
+      result = matchByProviderId();
+    }
+    return result.matched;
+  }
+
+  /** Provider track ids that have a materialized offer row for the album(s). */
+  private static loadProviderTrackIdSet(albumIds: string[]): Set<string> {
+    if (albumIds.length === 0) {
+      return new Set();
+    }
     const placeholders = albumIds.map(() => '?').join(', ');
-    const trackRows = context?.releaseMbid
-      ? db.prepare(`
-          SELECT
-            COALESCE(pi.provider_id, CAST(t.id AS TEXT)) AS id,
-            pi.provider_id,
-            COALESCE(pi.title, t.title) AS title,
-            pi.version,
-            t.position AS track_number,
-            t.medium_position AS volume_number,
-            COALESCE(pi.isrc, json_extract(r.isrcs, '$[0]')) AS isrc,
-            t.mbid AS track_mbid,
-            t.recording_mbid
-          FROM Tracks t
-          LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-          LEFT JOIN ProviderItems pi
-            ON pi.provider = ?
-           AND pi.entity_type = 'track'
-           AND pi.release_mbid = t.release_mbid
-           AND pi.library_slot = ?
-           AND (
-              pi.track_mbid = t.mbid
-              OR (
-                pi.track_mbid IS NULL
-                AND pi.release_group_mbid = ?
-                AND json_extract(pi.match_evidence, '$.mediumPosition') = t.medium_position
-                AND json_extract(pi.match_evidence, '$.trackPosition') = t.position
-              )
-           )
-          WHERE t.release_mbid = ?
-            AND COALESCE(r.is_video, 0) = 0
-          ORDER BY t.medium_position, t.position, t.mbid
-        `).all(context.provider, context.slot || 'stereo', context.releaseGroupMbid, context.releaseMbid) as AlbumTrackRow[]
-      : db.prepare(`
-          SELECT
-            provider_id AS id,
-            title,
-            version,
-            CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number,
-            CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER) AS volume_number,
-            isrc
-          FROM ProviderItems
-          WHERE entity_type = 'track' AND provider_album_id IN (${placeholders})
-          ORDER BY volume_number, track_number, provider_id
-        `).all(...albumIds) as AlbumTrackRow[];
-
-    const remainingTracks = [...trackRows];
-    const matches = new Map<string, string>();
-
-    // 1. Match by provider ID if filename matches ID exactly
-    for (const filePath of files) {
-      const baseName = path.basename(filePath, path.extname(filePath));
-      if (!/^\d+$/.test(baseName)) {
-        continue;
-      }
-
-      const index = remainingTracks.findIndex((track) => String(track.id) === baseName);
-      if (index < 0) {
-        continue;
-      }
-
-      const [matchedTrack] = remainingTracks.splice(index, 1);
-      matches.set(filePath, String(matchedTrack.id));
-    }
-
-    // 2. Match by reading actual audio metadata from the files (ISRC, track/volume number, title)
-    for (const filePath of files) {
-      if (matches.has(filePath)) {
-        continue;
-      }
-
-      const metadata = await this.readStagedAudioMetadata(filePath);
-      const matchedTrack = this.findTrackMatchByMetadata(metadata, remainingTracks);
-      if (matchedTrack) {
-        const index = remainingTracks.findIndex((track) => track.id === matchedTrack.id);
-        if (index >= 0) {
-          remainingTracks.splice(index, 1);
-        }
-        matches.set(filePath, String(matchedTrack.id));
-      }
-    }
-
-    // 3. Fallback: Match by filename track position/number
-    for (const filePath of files) {
-      if (matches.has(filePath)) {
-        continue;
-      }
-
-      const numericPosition = this.parseNumericTrackPositionFromPath(filePath);
-      const numericTrackMatch = this.findTrackMatchByMetadata(numericPosition, remainingTracks);
-      if (numericTrackMatch) {
-        const index = remainingTracks.findIndex((track) => track.id === numericTrackMatch.id);
-        if (index >= 0) {
-          remainingTracks.splice(index, 1);
-        }
-        matches.set(filePath, String(numericTrackMatch.id));
-      }
-    }
-
-    return matches;
+    const rows = db.prepare(`
+      SELECT CAST(provider_id AS TEXT) AS provider_id
+      FROM ProviderItems
+      WHERE entity_type = 'track' AND provider_album_id IN (${placeholders})
+    `).all(...albumIds) as Array<{ provider_id: string }>;
+    return new Set(rows.map((row) => String(row.provider_id)));
   }
 
   private static resolveMatchedCanonicalAlbumTrackRow(params: {
@@ -657,6 +483,7 @@ export class OrganizerService {
     trackId: string;
     releaseMbid: string;
     fallbackAlbumId: string;
+    fallbackAlbumIds?: string[];
     fallbackArtistId: string;
     fallbackQuality: string | null;
   }): MatchedAlbumTrackRow | null {
@@ -727,6 +554,7 @@ export class OrganizerService {
       };
     }
 
+    // Last resort: treat trackId as a canonical MB track id on the release.
     const canonicalTrack = db.prepare(`
       SELECT
         CAST(t.id AS TEXT) AS id,
@@ -1422,6 +1250,7 @@ export class OrganizerService {
     bitrate?: number | null;
     codec?: string | null;
     channels?: number | null;
+    duration?: number | null;
     fingerprint?: string | null;
     provider?: string | null;
     providerEntityType?: string | null;
@@ -1540,20 +1369,15 @@ export class OrganizerService {
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         if (!trackId) return true;
         if (canonicalContext?.releaseMbid) {
-          const trackRow = db.prepare(`
-            SELECT 1
-            FROM ProviderItems pi
-            WHERE pi.provider = ?
-              AND pi.entity_type = 'track'
-              AND pi.provider_id = ?
-              AND pi.release_mbid = ?
-            UNION
-            SELECT 1
-            FROM Tracks t
-            WHERE CAST(t.id AS TEXT) = ?
-              AND t.release_mbid = ?
-            LIMIT 1
-          `).get(canonicalContext.provider, trackId, canonicalContext.releaseMbid, trackId, canonicalContext.releaseMbid) as any;
+          const trackRow = this.resolveMatchedCanonicalAlbumTrackRow({
+            provider: canonicalContext.provider,
+            trackId,
+            releaseMbid: canonicalContext.releaseMbid,
+            fallbackAlbumId: albumIds[0],
+            fallbackAlbumIds: albumIds,
+            fallbackArtistId: artistId,
+            fallbackQuality: canonicalContext.quality || album.quality || null,
+          });
           return !trackRow;
         } else {
           const placeholders = albumIds.map(() => '?').join(', ');
@@ -1617,6 +1441,7 @@ export class OrganizerService {
               trackId,
               releaseMbid: canonicalContext.releaseMbid,
               fallbackAlbumId: albumIds[0],
+              fallbackAlbumIds: albumIds,
               fallbackArtistId: artistId,
               fallbackQuality: canonicalContext.quality || album.quality || null,
             })
@@ -1719,6 +1544,15 @@ export class OrganizerService {
         }
 
         const destFile = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
+        onProgress?.({
+          phase: "importing",
+          currentFileNum: destFiles.length + 1,
+          totalFiles: totalImportableTracks,
+          currentTrack: trackTitle,
+          trackStatus: "downloading",
+          statusMessage: `Importing ${trackTitle}`,
+        });
+
         this.moveFileCrossDevice(srcFile, destFile);
 
         const srcLrcFile = srcFile.replace(new RegExp(`\\${ext}$`, "i"), ".lrc");
@@ -1751,6 +1585,7 @@ export class OrganizerService {
             bitrate: metrics.bitrate,
             codec: metrics.codec,
             channels: metrics.channels,
+            duration: metrics.duration,
             fingerprint: fileFingerprint,
             provider: canonicalIdentity.provider,
             providerEntityType: canonicalIdentity.providerEntityType,
@@ -1836,6 +1671,7 @@ export class OrganizerService {
           currentFileNum: destFiles.length,
           totalFiles: totalImportableTracks,
           currentTrack: trackTitle,
+          trackStatus: "completed",
           statusMessage: `Importing ${trackTitle}`,
         });
       }
@@ -2182,6 +2018,7 @@ export class OrganizerService {
           bitrate: metrics.bitrate,
           codec: metrics.codec,
           channels: metrics.channels,
+          duration: metrics.duration,
           fingerprint: fileFingerprint
         });
         importedTrackFileId = libraryFileId;

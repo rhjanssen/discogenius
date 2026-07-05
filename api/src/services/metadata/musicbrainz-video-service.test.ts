@@ -81,15 +81,25 @@ test("syncMusicBrainzVideosForArtist upserts relation artists before recording r
   });
 
   const relation = dbModule.db.prepare(`
-    SELECT source_foreign_recording_id, target_foreign_recording_id, relation_type
+    SELECT source_recording_id, target_recording_id, source_foreign_recording_id, target_foreign_recording_id, relation_type
     FROM RecordingRelations
     WHERE source_foreign_recording_id = ?
       AND target_foreign_recording_id = ?
   `).get("video-recording-mbid-1", "audio-recording-mbid-1") as
-    { source_foreign_recording_id: string; target_foreign_recording_id: string; relation_type: string } | undefined;
-  assert.deepEqual(relation, {
-    source_foreign_recording_id: "video-recording-mbid-1",
-    target_foreign_recording_id: "audio-recording-mbid-1",
-    relation_type: "music_video_for",
-  });
+    { source_recording_id: number | null; target_recording_id: number | null; source_foreign_recording_id: string; target_foreign_recording_id: string; relation_type: string } | undefined;
+  assert.ok(relation);
+  assert.equal(relation.source_foreign_recording_id, "video-recording-mbid-1");
+  assert.equal(relation.target_foreign_recording_id, "audio-recording-mbid-1");
+  assert.equal(relation.relation_type, "music_video_for");
+  assert.ok(relation.source_recording_id, "relation should link to the local video recording row");
+  assert.ok(relation.target_recording_id, "relation should link to the local audio recording row");
+
+  const videoRecording = dbModule.db.prepare(`
+    SELECT artist_mbid, artist_metadata_id
+    FROM Recordings
+    WHERE mbid = ?
+  `).get("video-recording-mbid-1") as { artist_mbid: string | null; artist_metadata_id: number | null } | undefined;
+  assert.ok(videoRecording);
+  assert.equal(videoRecording.artist_mbid, "artist-mbid-1");
+  assert.ok(videoRecording.artist_metadata_id, "video recording should link to local artist metadata");
 });

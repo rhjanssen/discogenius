@@ -1,5 +1,6 @@
 import type {
   AccountConfigContract,
+  CatalogConfigContract,
   FilteringConfigContract,
   MetadataConfigContract,
   MonitoringConfigContract,
@@ -10,6 +11,7 @@ import type {
 } from "./config.js";
 import {
   parseAccountConfigContract,
+  parseCatalogConfigContract,
   parseFilteringConfigContract,
   parseMetadataConfigContract,
   parseMonitoringConfigContract,
@@ -45,6 +47,11 @@ const QUALITY_UPDATE_KEYS = [
   "convert_video_mp4",
   "extract_flac",
 ] as const satisfies readonly (keyof QualityConfigContract)[];
+
+const CATALOG_UPDATE_KEYS = [
+  "source",
+  "musicbrainz_host",
+] as const satisfies readonly (keyof CatalogConfigContract)[];
 
 const METADATA_UPDATE_KEYS = [
   "save_album_cover",
@@ -202,6 +209,13 @@ export function parseMetadataConfigUpdate(
   current: MetadataConfigContract,
 ): Partial<MetadataConfigContract> {
   return parsePartialUpdate(value, current, METADATA_UPDATE_KEYS, parseMetadataConfigContract, "Metadata config update");
+}
+
+export function parseCatalogConfigUpdate(
+  value: unknown,
+  current: CatalogConfigContract,
+): Partial<CatalogConfigContract> {
+  return parsePartialUpdate(value, current, CATALOG_UPDATE_KEYS, parseCatalogConfigContract, "Catalog config update");
 }
 
 export function parsePathConfigUpdate(

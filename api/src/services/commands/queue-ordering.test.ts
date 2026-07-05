@@ -552,7 +552,7 @@ test("download queue history collapses completed download and import jobs into o
     assert.equal(history.items[0]?.type, "album");
 });
 
-test("download queue history keeps completed album visible during import handoff", () => {
+test("download queue history hides completed download while paired import is active", () => {
     const downloadJobId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
         {
@@ -565,6 +565,12 @@ test("download queue history keeps completed album visible during import handoff
             artist: "Queue Artist",
             cover: "album-cover",
             quality: "LOSSLESS",
+            downloadState: {
+                tracks: [
+                    { title: "Import Track 1", trackNum: 1, status: "completed" },
+                    { title: "Import Track 2", trackNum: 2, status: "completed" },
+                ],
+            },
         },
         "release-group-handoff:stereo",
     );
@@ -589,12 +595,17 @@ test("download queue history keeps completed album visible during import handoff
     );
     queueModule.CommandQueueManager.markProcessing(importJobId);
 
+    const activeDuringImport = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
     const historyDuringImport = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
 
-    assert.equal(historyDuringImport.total, 1);
-    assert.equal(historyDuringImport.items[0]?.id, downloadJobId);
-    assert.equal(historyDuringImport.items[0]?.stage, "download");
-    assert.equal(historyDuringImport.items[0]?.title, "Handoff Album");
+    assert.equal(activeDuringImport.total, 1);
+    assert.equal(activeDuringImport.items[0]?.id, importJobId);
+    assert.equal(activeDuringImport.items[0]?.stage, "import");
+    assert.deepEqual(activeDuringImport.items[0]?.tracks, [
+        { title: "Import Track 1", trackNum: 1, status: "queued" },
+        { title: "Import Track 2", trackNum: 2, status: "queued" },
+    ]);
+    assert.equal(historyDuringImport.total, 0);
 
     queueModule.CommandQueueManager.complete(importJobId);
 

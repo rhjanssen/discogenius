@@ -12,6 +12,7 @@ import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-eve
 import {CommandModelOf} from "../commands/command-model.js";
 import {CommandNames} from "../commands/command-names.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
+import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
@@ -40,6 +41,75 @@ type ImportHistoryContextRow = {
     media_id?: string | null;
     quality?: string | null;
 };
+
+const MEDIA_EXTENSIONS = new Set([
+    ".flac",
+    ".mp3",
+    ".m4a",
+    ".mp4",
+    ".aac",
+    ".ogg",
+    ".opus",
+    ".wav",
+    ".wma",
+    ".ape",
+    ".mp2",
+    ".mkv",
+    ".mov",
+    ".webm",
+    ".avi",
+]);
+
+function workspaceContainsMediaFiles(dir: string): boolean {
+    if (!fs.existsSync(dir)) {
+        return false;
+    }
+
+    const stack = [dir];
+    while (stack.length > 0) {
+        const current = stack.pop();
+        if (!current) {
+            continue;
+        }
+
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(current, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+
+        for (const entry of entries) {
+            const fullPath = `${current}/${entry.name}`;
+            if (entry.isDirectory()) {
+                stack.push(fullPath);
+                continue;
+            }
+
+            if (entry.isFile() && MEDIA_EXTENSIONS.has(entry.name.slice(entry.name.lastIndexOf(".")).toLowerCase())) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function recoverExistingLibraryImport(type: string, providerId: string): OrganizeResult | null {
+    const recoveredMediaIds = getExistingLibraryMediaIds(type as any, providerId);
+    if (recoveredMediaIds.length === 0) {
+        return null;
+    }
+
+    const expectedTracks = resolveExpectedRecoveredTracks(type, providerId, recoveredMediaIds.length);
+    return {
+        type,
+        providerId,
+        processedTrackIds: recoveredMediaIds,
+        totalTracksInStaging: recoveredMediaIds.length,
+        expectedTracks,
+    } as OrganizeResult;
+}
 
 function resolveImportHistoryContext(type: string, providerId: string): ImportHistoryContext {
     const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
@@ -187,32 +257,24 @@ export class DownloadedTracksImportService {
 
     try {
         let organizeResult: OrganizeResult;
-        if (!fs.existsSync(downloadPath)) {
-            const recoveredMediaIds = getExistingLibraryMediaIds(type, providerId);
-
-            if (recoveredMediaIds.length === 0) {
+        const workspaceHasMedia = workspaceContainsMediaFiles(downloadPath);
+        if (!workspaceHasMedia) {
+            const recovered = recoverExistingLibraryImport(type, providerId);
+            if (!recovered) {
                 throw new Error(`Import files for ${type} ${providerId} are no longer available. Re-download the item to retry import.`);
             }
 
-            const expectedTracks = resolveExpectedRecoveredTracks(type, providerId, recoveredMediaIds.length);
-
-            organizeResult = {
-                type,
-                providerId,
-                processedTrackIds: recoveredMediaIds,
-                totalTracksInStaging: recoveredMediaIds.length,
-                expectedTracks,
-            };
+            organizeResult = recovered;
 
             options.updateState({
                 progress: 70,
                 description: "ImportDownload: recovering existing library files",
-                currentFileNum: recoveredMediaIds.length,
-                totalFiles: expectedTracks,
+                currentFileNum: recovered.processedTrackIds.length,
+                totalFiles: recovered.expectedTracks,
                 statusMessage: "Recovering import from existing library files",
                 state: "importing",
             });
-            console.warn(`[ImportDownload] Download workspace missing for ${type} ${providerId}, but imported library file(s) already exist. Recovering import job.`);
+            console.warn(`[ImportDownload] Download workspace missing or empty for ${type} ${providerId}, but imported library file(s) already exist. Recovering import job.`);
         } else {
             options.updateState({
                 progress: 15,
@@ -243,7 +305,7 @@ export class DownloadedTracksImportService {
                         totalFiles: progress.totalFiles,
                         currentTrack: progress.currentTrack,
                         trackProgress: progress.totalFiles === 1 && progress.currentFileNum === 1 ? 100 : undefined,
-                        trackStatus: progress.phase === "finalizing" ? "completed" : progress.currentTrack ? "downloading" : undefined,
+                        trackStatus: progress.trackStatus ?? (progress.phase === "finalizing" ? "completed" : progress.currentTrack ? "downloading" : undefined),
                         statusMessage: progress.statusMessage,
                         state: "importing",
                     });
@@ -283,6 +345,7 @@ export class DownloadedTracksImportService {
             ).get(String(affectedArtistId)) as { count: number }).count;
 
             console.log(`[ImportDownload] Artist ${affectedArtistId}: ${trackedCount} library files tracked after import (skipped full disk scan)`);
+            ArtistStatisticsService.refresh([affectedArtistId]);
         }
 
         if ((type === "album" || type === "track") && organizeResult.processedTrackIds.length > 0) {

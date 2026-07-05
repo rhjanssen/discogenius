@@ -201,6 +201,70 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(videos.some((video: any) => video.title === "Stale provider Video"), false);
 });
 
+test("artist page top tracks collapse alternate quality rows into one provider-backed row", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+  const artistMetadata = db.prepare(`
+    SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid-1'
+  `).get() as { id: number };
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (
+      id, foreign_release_id, mbid, release_group_mbid, artist_mbid,
+      title, status, country, date, media_count, track_count
+    )
+    VALUES (
+      202, 'release-mbid-atmos', 'release-mbid-atmos', 'release-group-mbid-1', 'artist-mbid-1',
+      'Canonical Album', 'Official', 'XW', '2024-01-01', 1, 1
+    )
+  `).run();
+
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
+      title, length_ms, is_video, metadata_status
+    )
+    VALUES (
+      302, 'recording-mbid-atmos', 'recording-mbid-atmos', ?, 'artist-mbid-1',
+      'Canonical Track', 180000, 0, 'musicbrainz'
+    )
+  `).run(artistMetadata.id);
+
+  db.prepare(`
+    INSERT INTO Tracks (
+      id, foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid,
+      medium_position, position, number, title, length_ms
+    )
+    VALUES (
+      402, 'track-mbid-atmos', 'recording-mbid-atmos', 'track-mbid-atmos', 'release-mbid-atmos', 'recording-mbid-atmos',
+      1, 1, '1', 'Canonical Track', 180000
+    )
+  `).run();
+
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, title, quality, asset_id,
+      duration, library_slot, album_release_id, track_id, recording_id,
+      match_status, match_confidence
+    )
+    VALUES (
+      'tidal', 'track', 'provider-track-atmos', 'artist-mbid-1', 'release-group-mbid-1',
+      'release-mbid-atmos', 'track-mbid-atmos', 'recording-mbid-atmos', 'Canonical Track', 'DOLBY_ATMOS', '13bb32e2-e326-4ee5-be74-f3320ad3379c',
+      180, 'spatial', 202, 402, 302, 'verified', 0.99
+    )
+  `).run();
+
+  const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
+  const modules = (page?.rows || []).flatMap((row: any) => row.modules || []);
+  const topTracks = modules.find((module: any) => module.title === "Top Tracks")?.items || [];
+
+  assert.equal(topTracks.length, 1);
+  assert.equal(topTracks[0].title, "Canonical Track");
+  assert.equal(topTracks[0].preview_provider_track_id, "provider-track-1");
+  assert.deepEqual(topTracks[0].qualityTags, ["LOSSLESS", "DOLBY_ATMOS"]);
+});
+
 test("artist list and album helper count canonical release groups and tracks", () => {
   const { artistId } = seedCanonicalArtistPage();
 

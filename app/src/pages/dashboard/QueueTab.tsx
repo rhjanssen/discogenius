@@ -17,7 +17,7 @@ import {
 } from "@fluentui/react-components";
 import {
     CheckmarkCircle24Filled,
-    CheckmarkCircle24Regular,
+    CheckmarkCircle24Color,
     ErrorCircle24Filled,
     ArrowClockwise24Regular,
     Clock24Regular,
@@ -64,27 +64,55 @@ function matchesActiveTrack(trackTitle?: string | null, currentTrack?: string | 
     return left === right || left.includes(right) || right.includes(left);
 }
 
+function matchesProviderTrackId(trackProviderId?: string | null, currentProviderTrackId?: string | null): boolean {
+    const left = String(trackProviderId || "").trim();
+    const right = String(currentProviderTrackId || "").trim();
+    return Boolean(left && right && left === right);
+}
+
 function findProgressTrackState(
     trackTitle: string | null | undefined,
-    tracks?: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }>,
+    tracks?: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
+    providerTrackId?: string | null,
 ) {
-    if (!trackTitle || !tracks?.length) {
+    if (!tracks?.length) {
+        return undefined;
+    }
+
+    const byProviderId = tracks.find((track) => matchesProviderTrackId(track.providerTrackId, providerTrackId));
+    if (byProviderId) {
+        return byProviderId;
+    }
+
+    if (!trackTitle) {
         return undefined;
     }
 
     return tracks.find((track) => matchesActiveTrack(track.title, trackTitle) || matchesActiveTrack(trackTitle, track.title));
 }
 
+function isActiveAlbumProgressState(state?: string): boolean {
+    return state === 'downloading' || state === 'importing' || state === 'importPending' || state === 'failed';
+}
+
 function findActiveAlbumTrackIndex(
     progress: {
         currentFileNum?: number;
         currentTrack?: string | null;
+        currentProviderTrackId?: string | null;
         state?: string;
     } | undefined,
-    tracks?: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }>,
+    tracks?: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
 ): number {
     if (!tracks?.length) {
         return -1;
+    }
+
+    if (progress?.currentProviderTrackId) {
+        const matchedIndex = tracks.findIndex((track) => matchesProviderTrackId(track.providerTrackId, progress.currentProviderTrackId));
+        if (matchedIndex >= 0) {
+            return matchedIndex;
+        }
     }
 
     if (progress?.currentTrack) {
@@ -94,7 +122,7 @@ function findActiveAlbumTrackIndex(
         }
     }
 
-    if ((progress?.state === 'downloading' || progress?.state === 'failed') && typeof progress.currentFileNum === 'number' && progress.currentFileNum > 0) {
+    if (isActiveAlbumProgressState(progress?.state) && typeof progress?.currentFileNum === 'number' && progress.currentFileNum > 0) {
         return Math.min(tracks.length - 1, Math.max(0, progress.currentFileNum - 1));
     }
 
@@ -106,24 +134,65 @@ function inferAlbumTrackStatus(
     progress: {
         currentFileNum?: number;
         currentTrack?: string | null;
+        currentProviderTrackId?: string | null;
         trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
         state?: string;
+        progress?: number;
     } | undefined,
-    tracks: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }>,
+    tracks: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
     persistedStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped',
 ): 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' {
-    if (persistedStatus && persistedStatus !== 'queued') {
-        return persistedStatus;
-    }
-
     if (progress?.state === 'completed') {
         return 'completed';
     }
 
     const activeTrackIndex = findActiveAlbumTrackIndex(progress, tracks);
+    const isImportPhase = progress?.state === 'importing' || progress?.state === 'importPending';
+    const hasImportTrackProgress = isImportPhase
+        && progress?.state === 'importing'
+        && (
+            Boolean(progress.currentProviderTrackId)
+            || Boolean(progress.currentTrack)
+            || progress.trackStatus === 'downloading'
+            || progress.trackStatus === 'completed'
+        );
     const completedThreshold = typeof progress?.currentFileNum === 'number'
-        ? Math.max(0, progress.currentFileNum - 1)
+        ? Math.max(0, isImportPhase && !hasImportTrackProgress ? 0 : progress.currentFileNum - 1)
         : 0;
+
+    if (isImportPhase) {
+        if (persistedStatus === 'error' || persistedStatus === 'skipped') {
+            return persistedStatus;
+        }
+
+        if (trackIndex < completedThreshold) {
+            return 'completed';
+        }
+
+        if (trackIndex === activeTrackIndex) {
+            if (progress?.trackStatus === 'error') {
+                return 'error';
+            }
+
+            if (progress?.trackStatus === 'completed') {
+                if (isImportPhase && progress.state === 'importing' && (progress.progress ?? 100) < 100) {
+                    return 'downloading';
+                }
+
+                return 'completed';
+            }
+
+            if (progress?.trackStatus === 'downloading' || progress?.currentTrack || progress?.state === 'importing') {
+                return 'downloading';
+            }
+        }
+
+        return 'queued';
+    }
+
+    if (persistedStatus && persistedStatus !== 'queued') {
+        return persistedStatus;
+    }
 
     if (trackIndex < completedThreshold) {
         return 'completed';
@@ -138,7 +207,7 @@ function inferAlbumTrackStatus(
             return 'completed';
         }
 
-        if (progress?.state === 'downloading' || progress?.trackStatus === 'downloading' || progress?.currentTrack) {
+        if (isActiveAlbumProgressState(progress?.state) || progress?.trackStatus === 'downloading' || progress?.currentTrack) {
             return 'downloading';
         }
     }
@@ -150,31 +219,39 @@ function renderPendingIndicator(styles: ReturnType<typeof useDashboardStyles>) {
     return <Clock24Regular className={styles.downloadStatusPendingIcon} />;
 }
 
+/**
+ * Track-row indicator scheme:
+ * - actively downloading OR importing → spinner
+ * - downloaded, import still ahead    → brand-orange filled checkmark
+ * - download + import both complete   → multicolor checkmark
+ * During the import phase every track is already downloaded, so rows the
+ * importer hasn't reached yet show the orange checkmark instead of a clock.
+ */
 function renderTrackStatusIndicator(
     styles: ReturnType<typeof useDashboardStyles>,
     options: {
         isFailed?: boolean;
         isCompleted?: boolean;
-        isDownloading?: boolean;
-        isImporting?: boolean;
+        isActive?: boolean;
         isQueued?: boolean;
         isSkipped?: boolean;
+        phase?: 'download' | 'import';
     },
 ) {
     if (options.isFailed) {
         return <ErrorCircle24Filled className={styles.downloadStatusErrorIcon} />;
     }
 
+    if (options.isActive) {
+        return <Spinner size="extra-tiny" aria-label={options.phase === 'import' ? 'importing' : 'downloading'} />;
+    }
+
     if (options.isCompleted) {
-        return <CheckmarkCircle24Filled className={styles.downloadStatusCompleteIcon} />;
-    }
-
-    if (options.isImporting) {
-        return <CheckmarkCircle24Regular className={styles.downloadStatusImportingIcon} title="Importing" />;
-    }
-
-    if (options.isDownloading) {
-        return <Spinner size="extra-tiny" aria-label="downloading" />;
+        // Same 24-size glyph as the filled variant so both render with equal
+        // visual weight in the 16px slot.
+        return options.phase === 'import'
+            ? <CheckmarkCircle24Color className={styles.downloadStatusColorIcon} title="Downloaded and imported" />
+            : <CheckmarkCircle24Filled className={styles.downloadStatusCompleteIcon} title="Downloaded" />;
     }
 
     if (options.isSkipped) {
@@ -182,18 +259,21 @@ function renderTrackStatusIndicator(
     }
 
     if (options.isQueued) {
-        return renderPendingIndicator(styles);
+        return options.phase === 'import'
+            ? <CheckmarkCircle24Filled className={styles.downloadStatusCompleteIcon} title="Downloaded" />
+            : renderPendingIndicator(styles);
     }
 
     return null;
 }
 
 function getTrackStatusText(options: {
-    isImporting?: boolean;
+    isActive?: boolean;
     isSkipped?: boolean;
+    phase?: 'download' | 'import';
 }) {
-    if (options.isImporting) {
-        return 'importing';
+    if (options.isActive) {
+        return options.phase === 'import' ? 'importing' : 'downloading';
     }
 
     if (options.isSkipped) {
@@ -221,7 +301,8 @@ function renderHistoryStatusIndicator(
     }
 
     if (status === "completed") {
-        return <CheckmarkCircle24Filled className={styles.downloadStatusCompleteIcon} />;
+        // Fully done (downloaded + imported) uses the multicolor checkmark.
+        return <CheckmarkCircle24Color className={styles.downloadStatusColorIcon} title="Completed" />;
     }
 
     return <Clock24Regular className={styles.downloadStatusPendingIcon} />;
@@ -430,6 +511,9 @@ function mergeQueueItemsWithProgress(
             currentFileNum: progress.currentFileNum ?? item.currentFileNum,
             totalFiles: progress.totalFiles ?? item.totalFiles,
             currentTrack: progress.currentTrack ?? item.currentTrack,
+            currentProviderTrackId: progress.currentProviderTrackId ?? item.currentProviderTrackId,
+            currentTrackNum: progress.currentTrackNum ?? item.currentTrackNum,
+            currentVolumeNum: progress.currentVolumeNum ?? item.currentVolumeNum,
             trackProgress: progress.trackProgress ?? item.trackProgress,
             trackStatus: progress.trackStatus ?? item.trackStatus,
             statusMessage: progress.statusMessage ?? item.statusMessage,
@@ -479,6 +563,9 @@ function mergeQueueItemsWithProgress(
             currentFileNum: progress.currentFileNum,
             totalFiles: progress.totalFiles,
             currentTrack: progress.currentTrack,
+            currentProviderTrackId: progress.currentProviderTrackId,
+            currentTrackNum: progress.currentTrackNum,
+            currentVolumeNum: progress.currentVolumeNum,
             trackProgress: progress.trackProgress,
             trackStatus: progress.trackStatus,
             statusMessage: progress.statusMessage,
@@ -502,6 +589,9 @@ function getEmbeddedQueueItemProgress(item?: QueueItem): DownloadProgress | unde
     const hasInlineProgress = item.currentFileNum !== undefined
         || item.totalFiles !== undefined
         || item.currentTrack !== undefined
+        || item.currentProviderTrackId !== undefined
+        || item.currentTrackNum !== undefined
+        || item.currentVolumeNum !== undefined
         || item.trackProgress !== undefined
         || item.trackStatus !== undefined
         || item.statusMessage !== undefined
@@ -541,6 +631,9 @@ function getEmbeddedQueueItemProgress(item?: QueueItem): DownloadProgress | unde
         totalFiles: item.totalFiles,
         currentFileNum: item.currentFileNum,
         currentTrack: item.currentTrack,
+        currentProviderTrackId: item.currentProviderTrackId,
+        currentTrackNum: item.currentTrackNum,
+        currentVolumeNum: item.currentVolumeNum,
         trackProgress: item.trackProgress,
         trackStatus: item.trackStatus,
         statusMessage: item.statusMessage,
@@ -548,6 +641,68 @@ function getEmbeddedQueueItemProgress(item?: QueueItem): DownloadProgress | unde
         tracks: item.tracks,
         size: item.size,
         sizeleft: item.sizeleft,
+    };
+}
+
+function mergeProgressSnapshots(
+    embedded: DownloadProgress | undefined,
+    live: DownloadProgress | undefined,
+): DownloadProgress | undefined {
+    if (!embedded) {
+        return live;
+    }
+
+    if (!live) {
+        return embedded;
+    }
+
+    const phaseRank = (state?: string) => {
+        switch (state) {
+            case "queued":
+                return 0;
+            case "downloading":
+            case "paused":
+                return 1;
+            case "importPending":
+                return 2;
+            case "importing":
+                return 3;
+            case "completed":
+                return 4;
+            case "failed":
+            case "importFailed":
+                return 5;
+            default:
+                return -1;
+        }
+    };
+    const embeddedRank = phaseRank(embedded.state);
+    const liveRank = phaseRank(live.state);
+    const preferred = embeddedRank > liveRank ? embedded : live;
+    const fallback = preferred === live ? embedded : live;
+
+    return {
+        ...fallback,
+        ...preferred,
+        quality: preferred.quality ?? fallback.quality ?? null,
+        title: preferred.title ?? fallback.title,
+        artist: preferred.artist ?? fallback.artist,
+        cover: preferred.cover ?? fallback.cover ?? null,
+        speed: preferred.speed ?? fallback.speed,
+        eta: preferred.eta ?? fallback.eta,
+        totalFiles: preferred.totalFiles ?? fallback.totalFiles,
+        currentFileNum: preferred.currentFileNum ?? fallback.currentFileNum,
+        currentTrack: preferred.currentTrack ?? fallback.currentTrack,
+        currentProviderTrackId: preferred.currentProviderTrackId ?? fallback.currentProviderTrackId,
+        currentTrackNum: preferred.currentTrackNum ?? fallback.currentTrackNum,
+        currentVolumeNum: preferred.currentVolumeNum ?? fallback.currentVolumeNum,
+        trackProgress: preferred.trackProgress ?? fallback.trackProgress,
+        trackStatus: preferred.trackStatus ?? fallback.trackStatus,
+        statusMessage: preferred.statusMessage ?? fallback.statusMessage,
+        state: preferred.state ?? fallback.state,
+        tracks: preferred.tracks ?? fallback.tracks,
+        size: preferred.size ?? fallback.size,
+        sizeleft: preferred.sizeleft ?? fallback.sizeleft,
     };
 }
 
@@ -709,9 +864,11 @@ const QueueTab = () => {
     );
 
     const groupedDownloads = useMemo(() => {
-        const activeDownloads = liveQueueItems.filter(i => i.status === 'downloading' || i.status === 'started');
-        const pendingDownloads = liveQueueItems.filter(i => i.status === 'queued');
-        const filteredQueue = [...activeDownloads, ...pendingDownloads];
+        const filteredQueue = liveQueueItems.filter(i => (
+            i.status === 'downloading'
+            || i.status === 'started'
+            || i.status === 'queued'
+        ));
 
         const albumTrackCounts = new Map<string, number>();
 
@@ -774,20 +931,7 @@ const QueueTab = () => {
             groups[groupId].items.push(item);
         });
 
-        return Object.values(groups).sort((a, b) => {
-            const aActiveItem = a.items.find(i => i.status === 'downloading' || i.status === 'started');
-            const bActiveItem = b.items.find(i => i.status === 'downloading' || i.status === 'started');
-            const rankGroup = (group: QueueGroup, activeItem?: QueueItem) => {
-                if (group.status === 'downloading' && activeItem?.stage === 'import') return 0;
-                if (group.status === 'queued' && group.items[0]?.stage === 'import') return 1;
-                if (group.status === 'downloading') return 2;
-                if (group.status === 'queued') return 3;
-                return 4;
-            };
-            const rankDiff = rankGroup(a, aActiveItem) - rankGroup(b, bActiveItem);
-            if (rankDiff !== 0) return rankDiff;
-            return a.sortIndex - b.sortIndex;
-        });
+        return Object.values(groups).sort((a, b) => a.sortIndex - b.sortIndex);
     }, [liveQueueItems]);
 
     const ACTIVE_PAGE_SIZE = 25;
@@ -1244,9 +1388,9 @@ const QueueTab = () => {
                                 const activeItem = group.items.find(i => i.status === 'downloading' || i.status === 'started');
                                 const firstItem = group.items[0];
                                 const prog = activeItem
-                                    ? getProgress(activeItem.id) ?? getEmbeddedQueueItemProgress(activeItem)
+                                    ? mergeProgressSnapshots(getEmbeddedQueueItemProgress(activeItem), getProgress(activeItem.id))
                                     : firstItem
-                                        ? getProgress(firstItem.id) ?? getEmbeddedQueueItemProgress(firstItem)
+                                        ? mergeProgressSnapshots(getEmbeddedQueueItemProgress(firstItem), getProgress(firstItem.id))
                                         : undefined;
                                 const activeStage = activeItem?.stage || firstItem?.stage;
                                 const isImporting = isDownloading && (activeStage === 'import' || prog?.state === 'importing' || prog?.state === 'importPending');
@@ -1354,24 +1498,15 @@ const QueueTab = () => {
                                                 </div>
                                             )}
                                             <div className={styles.downloadInfo}>
-                                                <div className={mergeClasses(
-                                                    styles.downloadHeaderRow,
-                                                    (isDownloading || isImportPending) ? styles.downloadHeaderRowInline : '',
-                                                )}>
-                                                    <div className={styles.downloadTitleRow}>
+                                                <div className={mergeClasses(styles.downloadHeaderRow, styles.downloadHeaderRowInline)}>
+                                                    <div className={mergeClasses(styles.downloadTitleRow, styles.downloadTitleRowInline)}>
                                                         <Text className={styles.downloadTitle} truncate data-queue-group-title={group.title}>{group.title}</Text>
                                                     </div>
-                                                    <div className={mergeClasses(
-                                                        styles.downloadArtistMetaRow,
-                                                        (isDownloading || isImportPending) ? styles.downloadArtistMetaRowInline : '',
-                                                    )}>
+                                                    <div className={mergeClasses(styles.downloadArtistMetaRow, styles.downloadArtistMetaRowInline)}>
                                                         <Text className={styles.downloadArtist} truncate>{group.artist}</Text>
-                                                        <div className={mergeClasses(
-                                                            styles.downloadBadgeRow,
-                                                            (isDownloading || isImportPending) ? styles.downloadBadgeRowInline : '',
-                                                        )}>
-                                                            <MediaTypeBadge kind={group.type === 'video' ? 'video' : group.type === 'album' ? 'album' : 'track'} size="small" />
+                                                        <div className={mergeClasses(styles.downloadBadgeRow, styles.downloadBadgeRowInline)}>
                                                             {group.quality ? <QualityBadge quality={group.quality} size="small" /> : null}
+                                                            <MediaTypeBadge kind={group.type === 'video' ? 'video' : group.type === 'album' ? 'album' : 'track'} size="small" />
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1409,9 +1544,8 @@ const QueueTab = () => {
                                             {!isDownloading && !isFailed && (
                                                 isImportPending
                                                     ? (
-                                                        <div className={styles.downloadStateIndicator} style={{ gap: '6px' }}>
-                                                            <CheckmarkCircle24Regular className={styles.downloadStatusImportingIcon} title="Waiting to import" />
-                                                            <Text className={styles.downloadStatusText}>waiting to import</Text>
+                                                        <div className={styles.downloadStateIndicator} title="Waiting to import">
+                                                            {renderPendingIndicator(styles)}
                                                         </div>
                                                       )
                                                     : renderPendingIndicator(styles)
@@ -1419,14 +1553,15 @@ const QueueTab = () => {
                                             {isDownloading && (
                                                 isImporting
                                                     ? (
-                                                        <div className={styles.downloadStateIndicator} style={{ gap: '6px' }}>
-                                                            <CheckmarkCircle24Regular className={styles.downloadStatusImportingIcon} title="Importing" />
-                                                            <Text className={styles.downloadStatusText}>importing</Text>
+                                                        <div className={styles.downloadStateIndicator} title="Importing">
+                                                            <Spinner size="extra-tiny" aria-label="importing" />
+                                                            <Text className={styles.downloadStatusText}>Importing</Text>
                                                         </div>
                                                       )
                                                     : (
-                                                        <div className={styles.downloadStateIndicator}>
-                                                            <Spinner size="extra-tiny" />
+                                                        <div className={styles.downloadStateIndicator} title="Downloading">
+                                                            <Spinner size="extra-tiny" aria-label="downloading" />
+                                                            <Text className={styles.downloadStatusText}>Downloading</Text>
                                                         </div>
                                                      )
                                             )}
@@ -1511,10 +1646,12 @@ const QueueTab = () => {
                                         </div>
 
                                         {shouldRenderGroupedTrackRows && groupedTrackItems.map(item => {
-                                            const itemProg = getProgress(item.id) ?? getEmbeddedQueueItemProgress(item);
-                                            const matchedTrack = group.type === 'album' ? findProgressTrackState(item.title, prog?.tracks) : undefined;
+                                            const itemProg = mergeProgressSnapshots(getEmbeddedQueueItemProgress(item), getProgress(item.id));
+                                            const matchedTrack = group.type === 'album' ? findProgressTrackState(item.title, prog?.tracks, item.providerId) : undefined;
                                             const albumTrackIndex = group.type === 'album'
-                                                ? (prog?.tracks?.findIndex((track) => matchesActiveTrack(track.title, item.title)) ?? -1)
+                                                ? (prog?.tracks?.findIndex((track) =>
+                                                    matchesProviderTrackId(track.providerTrackId, item.providerId)
+                                                    || matchesActiveTrack(track.title, item.title)) ?? -1)
                                                 : -1;
                                             const inferredAlbumStatus = group.type === 'album' && prog?.tracks?.length
                                                 ? inferAlbumTrackStatus(albumTrackIndex, prog, prog.tracks, matchedTrack?.status)
@@ -1531,17 +1668,13 @@ const QueueTab = () => {
                                             const isItemDownloading = derivedStatus === 'downloading';
                                             const isItemFailed = derivedStatus === 'error';
                                             const isItemCompleted = derivedStatus === 'completed';
-                                            const isItemImporting = isItemDownloading && (item.stage === 'import' || itemProg?.state === 'importing' || itemProg?.state === 'importPending' || prog?.state === 'importing' || prog?.state === 'importPending');
-                                            const itemStatusText = getTrackStatusText({
-                                                isImporting: isItemImporting,
-                                            });
-                                            const isCurrentAlbumTrack = group.type === 'album'
-                                                && (matchesActiveTrack(item.title, prog?.currentTrack)
-                                                    || (prog?.tracks?.length ? findActiveAlbumTrackIndex(prog, prog.tracks) === albumTrackIndex : false));
-                                            const itemProgressValue = isCurrentAlbumTrack
-                                                ? prog?.trackProgress
-                                                : itemProg?.progress;
+                                            const isItemImportPhase = item.stage === 'import' || itemProg?.state === 'importing' || itemProg?.state === 'importPending' || prog?.state === 'importing' || prog?.state === 'importPending';
                                             const itemErrorMessage = item.error || (isItemFailed ? prog?.statusMessage : undefined);
+                                            const itemStatusText = getTrackStatusText({
+                                                isActive: isItemDownloading,
+                                                isSkipped: derivedStatus === 'skipped',
+                                                phase: isItemImportPhase ? 'import' : 'download',
+                                            });
                                             return (
                                                 <div key={item.id} className={styles.downloadSubItem} data-queue-subitem-row="true" onClick={(e) => {
                                                     if ((e.target as HTMLElement).closest('button')) return;
@@ -1553,9 +1686,9 @@ const QueueTab = () => {
                                                             {renderTrackStatusIndicator(styles, {
                                                                 isFailed: isItemFailed,
                                                                 isCompleted: isItemCompleted,
-                                                                isDownloading: isItemDownloading,
-                                                                isImporting: isItemImporting,
+                                                                isActive: isItemDownloading,
                                                                 isQueued: !isItemDownloading && !isItemFailed && !isItemCompleted,
+                                                                phase: isItemImportPhase ? 'import' : 'download',
                                                             })}
                                                         </div>
                                                     </div>
@@ -1566,20 +1699,6 @@ const QueueTab = () => {
                                                                 {itemStatusText}
                                                             </Text>
                                                         ) : null}
-                                                        {isItemDownloading && itemProgressValue !== undefined && (
-                                                            <div className={styles.downloadProgress}>
-                                                                <div className={styles.progressBarWrapper}>
-                                                                    <ProgressBar
-                                                                        thickness="medium"
-                                                                        color="brand"
-                                                                        value={itemProgressValue / 100}
-                                                                    />
-                                                                </div>
-                                                                <Text className={styles.progressText}>
-                                                                    {`${itemProgressValue}%`}
-                                                                </Text>
-                                                            </div>
-                                                        )}
                                                         {isItemFailed && itemErrorMessage && (
                                                             <Text className={styles.downloadMeta} style={{ color: tokens.colorPaletteRedForeground1 }}>
                                                                 {itemErrorMessage}
@@ -1605,11 +1724,10 @@ const QueueTab = () => {
                                                     const isTrackCompleted = visualStatus === 'completed';
                                                     const isTrackFailed = visualStatus === 'error';
                                                     const trackStatusText = getTrackStatusText({
+                                                        isActive: isTrackDownloading,
                                                         isSkipped: visualStatus === 'skipped',
+                                                        phase: isImporting ? 'import' : 'download',
                                                     });
-                                                    const shouldShowTrackProgress = isTrackDownloading
-                                                        && prog.trackProgress !== undefined
-                                                        && (matchesActiveTrack(t.title, prog.currentTrack) || findActiveAlbumTrackIndex(prog, tracks) === idx);
 
                                                     return (
                                                         <div key={idx} className={styles.downloadSubItem} onClick={() => { if (groupNavPath) navigate(groupNavPath); }}>
@@ -1618,9 +1736,10 @@ const QueueTab = () => {
                                                                     {renderTrackStatusIndicator(styles, {
                                                                         isFailed: isTrackFailed,
                                                                         isCompleted: isTrackCompleted,
-                                                                        isDownloading: isTrackDownloading,
+                                                                        isActive: isTrackDownloading,
                                                                         isQueued: visualStatus === 'queued',
                                                                         isSkipped: visualStatus === 'skipped',
+                                                                        phase: isImporting ? 'import' : 'download',
                                                                     })}
                                                                 </div>
                                                                 <Text className={styles.downloadTrackNumber}>
@@ -1634,20 +1753,6 @@ const QueueTab = () => {
                                                                         {trackStatusText}
                                                                     </Text>
                                                                 ) : null}
-                                                                {shouldShowTrackProgress && prog.trackProgress !== undefined && (
-                                                                    <div className={styles.downloadProgress}>
-                                                                        <div className={styles.progressBarWrapper}>
-                                                                            <ProgressBar
-                                                                                thickness="medium"
-                                                                                color="brand"
-                                                                                value={prog.trackProgress / 100}
-                                                                            />
-                                                                        </div>
-                                                                        <Text className={styles.progressText}>
-                                                                            {`${prog.trackProgress}%`}
-                                                                        </Text>
-                                                                    </div>
-                                                                )}
                                                             </div>
                                                         </div>
                                                     );
@@ -1766,19 +1871,19 @@ const QueueTab = () => {
                                             </div>
                                         )}
                                         <div className={styles.downloadInfo}>
-                                            <div className={styles.downloadHeaderRow}>
-                                                <div className={styles.downloadTitleRow}>
+                                            <div className={mergeClasses(styles.downloadHeaderRow, styles.downloadHeaderRowInline)}>
+                                                <div className={mergeClasses(styles.downloadTitleRow, styles.downloadTitleRowInline)}>
                                                     <Text className={styles.downloadTitle} truncate>{row.title}</Text>
                                                 </div>
-                                                <div className={styles.downloadArtistMetaRow}>
+                                                <div className={mergeClasses(styles.downloadArtistMetaRow, styles.downloadArtistMetaRowInline)}>
                                                     {row.subtitle ? (
                                                         <Text className={styles.downloadArtist} truncate>{row.subtitle}</Text>
                                                     ) : null}
-                                                    <div className={styles.downloadBadgeRow}>
+                                                    <div className={mergeClasses(styles.downloadBadgeRow, styles.downloadBadgeRowInline)}>
+                                                        {row.quality ? <QualityBadge quality={row.quality} size="small" /> : null}
                                                         {row.mediaBadge ? (
                                                             <MediaTypeBadge kind={row.mediaBadge.kind} label={row.mediaBadge.label} size="small" />
                                                         ) : null}
-                                                        {row.quality ? <QualityBadge quality={row.quality} size="small" /> : null}
                                                     </div>
                                                 </div>
                                             </div>

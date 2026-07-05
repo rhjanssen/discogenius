@@ -245,6 +245,7 @@ export type LibraryFileUpsertParams = {
   bitrate?: number | null;
   codec?: string | null;
   channels?: number | null;
+  duration?: number | null;
   fingerprint?: string | null;
   removeFromUnmapped?: boolean;
   canonicalArtistMbid?: string | null;
@@ -1391,6 +1392,7 @@ export class LibraryFilesService {
               bitrate = COALESCE(?, bitrate),
               codec = COALESCE(?, codec),
               channels = COALESCE(?, channels),
+              duration = COALESCE(?, duration),
               fingerprint = COALESCE(?, fingerprint)
           WHERE id = ?
         `).run(
@@ -1423,6 +1425,7 @@ export class LibraryFilesService {
           params.bitrate || null,
           params.codec || null,
           params.channels || null,
+          params.duration || null,
           params.fingerprint || null,
           rowToUpdate.id,
         );
@@ -1536,6 +1539,7 @@ export class LibraryFilesService {
               bitrate = COALESCE(?, bitrate),
               codec = COALESCE(?, codec),
               channels = COALESCE(?, channels),
+              duration = COALESCE(?, duration),
               fingerprint = COALESCE(?, fingerprint)
           WHERE id = ?
         `).run(
@@ -1568,6 +1572,7 @@ export class LibraryFilesService {
           params.bitrate || null,
           params.codec || null,
           params.channels || null,
+          params.duration || null,
           params.fingerprint || null,
           rowToUpdate.id,
         );
@@ -1627,7 +1632,7 @@ export class LibraryFilesService {
         naming_template, expected_path, needs_rename,
         modified_at, verified_at,
         bit_depth, sample_rate, bitrate, codec, channels,
-        fingerprint
+        duration, fingerprint
       ) VALUES (
         ?,
         ?, ?,
@@ -1638,7 +1643,7 @@ export class LibraryFilesService {
         ?, ?,
         ?, ?, 0,
         ?, CURRENT_TIMESTAMP,
-        ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT(file_path) DO UPDATE SET
         artist_id = excluded.artist_id,
@@ -1668,6 +1673,7 @@ export class LibraryFilesService {
         bitrate = COALESCE(excluded.bitrate, TrackFiles.bitrate),
         codec = COALESCE(excluded.codec, TrackFiles.codec),
         channels = COALESCE(excluded.channels, TrackFiles.channels),
+        duration = COALESCE(excluded.duration, TrackFiles.duration),
         fingerprint = COALESCE(excluded.fingerprint, TrackFiles.fingerprint)
     `);
 
@@ -1698,6 +1704,7 @@ export class LibraryFilesService {
       params.bitrate || null,
       params.codec || null,
       params.channels || null,
+      params.duration || null,
       params.fingerprint || null,
     );
 

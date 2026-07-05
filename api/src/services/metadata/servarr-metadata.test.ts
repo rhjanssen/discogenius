@@ -193,6 +193,28 @@ test("syncReleaseGroup re-hydrates missing releases even when the hash matches",
   assert.equal(releaseCount.count, 1, "missing release should be re-hydrated despite a matching hash");
 });
 
+test("syncReleaseGroup persists recording ISRCs when the catalog source supplies them", async () => {
+  const { db } = dbModule;
+  resetCatalog();
+  fetchReturning({
+    ...DOOM_DAYS_PAYLOAD,
+    title: "Doom Days (ISRC)",
+    Releases: [{
+      ...DOOM_DAYS_PAYLOAD.Releases[0],
+      Tracks: [{
+        ...DOOM_DAYS_PAYLOAD.Releases[0].Tracks[0],
+        Isrcs: ["GBUM71902200"],
+      }],
+    }],
+  });
+
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+
+  const recording = db.prepare("SELECT isrcs FROM Recordings WHERE mbid = ?")
+    .get("rec-1") as { isrcs: string | null };
+  assert.equal(recording.isrcs, JSON.stringify(["GBUM71902200"]));
+});
+
 test("syncArtist skips rewriting an unchanged artist (diff-reconcile)", async () => {
   const { db } = dbModule;
   resetCatalog();

@@ -120,18 +120,32 @@ export function useTrackPlayback() {
     return canBrowserPlaySpatialPreview() ? track.quality ?? null : null;
   }, []);
 
+  const looksLikeMusicBrainzMbid = useCallback((value: string | null | undefined) => (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim())
+  ), []);
+
   const getPreviewTrackId = useCallback((track: PlayableTrack) => {
     const providerTrackId = String(track.preview_provider_track_id || "").trim();
-    return providerTrackId.length > 0 ? providerTrackId : null;
-  }, []);
+    if (providerTrackId.length > 0) {
+      return providerTrackId;
+    }
+
+    if (!looksLikeMusicBrainzMbid(track.album_id)) {
+      return null;
+    }
+
+    const canonicalTrackId = String(track.musicbrainz_track_id || "").trim();
+    if (looksLikeMusicBrainzMbid(canonicalTrackId)) {
+      return canonicalTrackId;
+    }
+
+    const trackId = String(track.id || "").trim();
+    return looksLikeMusicBrainzMbid(trackId) ? trackId : null;
+  }, [looksLikeMusicBrainzMbid]);
 
   const getPreviewProviderId = useCallback((track: PlayableTrack) => {
     return track.preview_provider || undefined;
   }, []);
-
-  const looksLikeMusicBrainzMbid = useCallback((value: string | null | undefined) => (
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim())
-  ), []);
 
   const getPlaybackSrc = useCallback((track: PlayableTrack) => {
     const audioFile = getTrackAudioFile(track);

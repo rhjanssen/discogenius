@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Card, Text, Title3, Body1, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
-import { ErrorCircle48Regular } from "@fluentui/react-icons";
+import { ErrorCircle48Color } from "@fluentui/react-icons";
 
 interface ContentStateProps {
   children?: ReactNode;
@@ -65,8 +65,8 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground2,
     flexShrink: 0,
   },
+  // The Color icon variant carries its own palette; just drop the neutral chip.
   iconShellError: {
-    color: tokens.colorPaletteRedForeground1,
     backgroundColor: "transparent",
   },
   title: {
@@ -224,7 +224,7 @@ export const ErrorState = ({
       ariaLive="assertive"
       title={title}
       description={resolvedDescription}
-      icon={<ErrorCircle48Regular />}
+      icon={<ErrorCircle48Color />}
       actions={actions}
     />
   );

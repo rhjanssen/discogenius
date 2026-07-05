@@ -71,12 +71,21 @@ configure_ids() {
 }
 
 prepare_writable_dirs() {
-  ensure_dir /config
-  ensure_dir /downloads
-  ensure_dir /library
-  ensure_dir /library/stereo-music
-  ensure_dir /library/spatial-music
-  ensure_dir /library/music-videos
+  local want_uid want_gid
+  want_uid="$(id -u "$TARGET_USER")"
+  want_gid="$(getent group "$TARGET_GROUP" | cut -d: -f3)"
+
+  # Known managed dirs are (re)created here as root. mkdir leaves them root-owned,
+  # so each must be shallow-chowned to the runtime user — otherwise the app (running
+  # as TARGET_USER) cannot mkdir the per-artist subdirs inside them (EACCES). This
+  # is O(1) and independent of the deep-recursion decision below.
+  local managed_dir
+  for managed_dir in /config /downloads /library \
+      /library/stereo-music /library/spatial-music /library/music-videos; do
+    ensure_dir "$managed_dir"
+    chown "$TARGET_USER:$TARGET_GROUP" "$managed_dir" 2>/dev/null || true
+    chmod u+rwX,g+rwX "$managed_dir" 2>/dev/null || true
+  done
 
   # Clean up stale runtime dirs from pre-2.0 installations (Orpheus/tidal-dl-ng era)
   for stale in /config/runtime /config/orpheusdl /config/tidal_dl_ng-dev; do
@@ -90,11 +99,8 @@ prepare_writable_dirs() {
   # Desktop bind mounts), blocking startup every boot. The app writes its own
   # files as TARGET_USER, so a full recursive pass is only needed on first run or
   # after a PUID/PGID change. Detect that by the top-level dir's owner and only
-  # recurse when it differs; otherwise just ensure the mount root itself is
-  # writable (cheap, non-recursive).
-  local want_uid want_gid
-  want_uid="$(id -u "$TARGET_USER")"
-  want_gid="$(getent group "$TARGET_GROUP" | cut -d: -f3)"
+  # recurse when it differs; otherwise the shallow chown above already keeps the
+  # mount root + managed subdirs writable.
 
   normalize_tree() {
     local dir="$1"

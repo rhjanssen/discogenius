@@ -1,10 +1,19 @@
+import { Worker, isMainThread, workerData } from 'node:worker_threads';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { db } from '../../database.js';
 import {CommandModelOf} from "../commands/command-model.js";
 import {DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { Config } from '../config/config.js';
 import { downloadEvents } from './download-events.js';
-import { updateAlbumDownloadStatus } from './download-state.js';
+import {
+    invalidateAlbumDownloadStatus,
+    invalidateAllDownloadState,
+    invalidateArtistDownloadStatus,
+    invalidateMediaDownloadState,
+    invalidateReleaseGroupDownloadStatus,
+    updateAlbumDownloadStatus,
+} from './download-state.js';
 import { downloadBackendRegistry } from './download-backend.js';
 import { readIntEnv } from '../../utils/env.js';
 import fs from 'fs';
@@ -20,6 +29,8 @@ import { streamingProviderManager } from '../providers/index.js';
 import type {
     DownloadAlbumCommand,
     DownloadMediaType,
+    DownloadStatePayload,
+    DownloadTrackStateEntry,
     ImportDownloadCommand,
     DownloadTrackCommand,
     DownloadVideoCommand,
@@ -28,10 +39,22 @@ import type {
 import { DownloadedTracksImportService } from '../mediafiles/downloaded-tracks-import-service.js';
 import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-events.js';
 import { CommandWorkerPool } from '../commands/worker/command-worker-pool.js';
+import type { CacheInvalidateTarget } from '../commands/worker/command-worker-protocol.js';
 
 type DownloadCommand = DownloadTrackCommand | DownloadVideoCommand | DownloadAlbumCommand;
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
 type DownloadOrImportCommand = DownloadCommand | ImportDownloadCommand;
+
+function resetTracksForImportState(tracks?: DownloadTrackStateEntry[]): DownloadTrackStateEntry[] | undefined {
+    if (!tracks?.length) {
+        return undefined;
+    }
+
+    return tracks.map((track) => ({
+        ...track,
+        status: track.status === 'skipped' ? 'skipped' : 'queued',
+    }));
+}
 
 type CanonicalProviderOffer = {
     provider?: string | null;
@@ -63,6 +86,7 @@ const BUSY_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_BUSY_LOG_THROTTLE_
 const STUCK_JOB_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_JOB_MS', 15 * 60 * 1000, 0); // 0 = disabled
 const STUCK_CLEANUP_INTERVAL_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_CLEANUP_INTERVAL_MS', 60_000, 1);
 const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 2, 1);
+export const DOWNLOAD_WORKER_MARKER = "discogeniusDownloadWorker" as const;
 
 // Docker: tiddl/ffmpeg installed globally via Dockerfile. Local dev resolves them from PATH (TIDDL_BIN override supported).
 
@@ -78,6 +102,107 @@ const IMMEDIATE_FLUSH_STATES = new Set<string>([
 
 /** Minimum interval between DB writes for a single job's progress (ms). */
 const PROGRESS_WRITE_INTERVAL_MS = 1_000;
+
+function isSqliteBusyError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+        return false;
+    }
+    const code = (error as { code?: string }).code;
+    if (code === 'SQLITE_BUSY' || code === 'SQLITE_BUSY_SNAPSHOT' || code === 'SQLITE_LOCKED') {
+        return true;
+    }
+    const message = (error as { message?: string }).message;
+    return typeof message === 'string' && /database( table)? is locked/i.test(message);
+}
+
+type QueueTrackRow = { title: string; trackNum?: number; status: string; providerTrackId?: string };
+
+function applyTrackStatusByProviderId<T extends QueueTrackRow>(
+    tracks: T[],
+    statusByProviderTrackId: Record<string, string>,
+): T[] | null {
+    const updates = new Map<string, string>();
+    for (const [providerTrackId, status] of Object.entries(statusByProviderTrackId)) {
+        const key = String(providerTrackId || "").trim();
+        if (key) {
+            updates.set(key, status);
+        }
+    }
+
+    if (updates.size === 0) {
+        return null;
+    }
+
+    let changed = false;
+    const next = tracks.map((track) => {
+        const key = String(track.providerTrackId || "").trim();
+        const status = key ? updates.get(key) : undefined;
+        if (!status || track.status === status || (track.status === 'completed' && status !== 'completed')) {
+            return track;
+        }
+        changed = true;
+        return { ...track, status };
+    });
+
+    return changed ? next : null;
+}
+
+/**
+ * Normalize a reported or catalog track title for matching: drop a leading
+ * "Artist - " prefix (import filenames), lowercase, and reduce punctuation
+ * to spaces so "Save My Love - Acoustic Version" matches
+ * "Save My Love (Acoustic Version)". Keep in sync with the client-side copy
+ * in QueueStatusProvider.
+ */
+function normalizeTrackTitleForMatch(value: string): string {
+    return value
+        .toLowerCase()
+        .replace(/^[^-]+\s-\s/, "")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+}
+
+/**
+ * Apply provider-reported per-title statuses to catalog track rows. Reported
+ * titles are "<track title> <quality suffix>" (downloads) or file-derived
+ * names (imports); match normalized prefixes and prefer the longest (most
+ * specific) catalog title. Returns null when nothing matched so the caller
+ * can fall back to index-based inference.
+ */
+function applyTrackStatusByTitle<T extends QueueTrackRow>(
+    tracks: T[],
+    statusByTitle: Record<string, string>,
+): T[] | null {
+    const updates = new Map<number, string>();
+    for (const [reportedTitle, status] of Object.entries(statusByTitle)) {
+        const reported = normalizeTrackTitleForMatch(reportedTitle);
+        if (!reported) continue;
+        let bestIdx = -1;
+        let bestLen = 0;
+        tracks.forEach((track, idx) => {
+            const title = normalizeTrackTitleForMatch(String(track.title || ""));
+            if (title && (reported.startsWith(title) || title.startsWith(reported)) && title.length > bestLen) {
+                bestIdx = idx;
+                bestLen = title.length;
+            }
+        });
+        if (bestIdx >= 0) {
+            updates.set(bestIdx, status);
+        }
+    }
+
+    if (updates.size === 0) {
+        return null;
+    }
+
+    return tracks.map((track, idx) => {
+        const status = updates.get(idx);
+        if (!status) return track;
+        // Never regress a row that already finished.
+        if (track.status === 'completed' && status !== 'completed') return track;
+        return { ...track, status };
+    });
+}
 
 function formatQueueTimestamp(value: unknown): string {
     if (!value) return "unknown";
@@ -100,8 +225,21 @@ export class DownloadProcessor {
     private lastStuckCleanupAt: number = 0;
     private queueEventsSubscribed: boolean = false;
 
-    /** Tracks the active import job (runs in its own slot alongside downloads, Tidarr-style). */
+    /** Tracks the active import phase per command (runs in its own slot alongside downloads, Tidarr-style). */
     private activeImports = new Map<number, { providerId: string; type: string; promise: Promise<void> }>();
+
+    // Download commands whose download phase finished and are waiting for an
+    // import slot. The command stays 'started' throughout (one queue entity
+    // spanning download → import, Lidarr TrackedDownload-style); it only leaves
+    // the active queue for History when the import completes/fails. Rebuilt from
+    // scratch on restart — interrupted commands are re-queued by crash recovery.
+    private pendingImports: Array<{
+        commandId: number;
+        providerId: string;
+        type: DownloadJobType;
+        importPayload: ImportDownloadCommand;
+        resolved: { title: string; artist: string; cover: string | null };
+    }> = [];
 
     // ── Progress write coalescing ───────────────────────────────────
     // Buffers the latest in-flight progress state per job and flushes
@@ -110,6 +248,7 @@ export class DownloadProcessor {
     // Terminal states (completed/failed/…) always flush immediately.
     private progressBuffer = new Map<number, Parameters<DownloadProcessor['writeDownloadState']>[1]>();
     private progressFlushTimer?: NodeJS.Timeout;
+    private lastProgressBusyLogAt: number = 0;
 
     private scheduleNext(): void {
         setImmediate(() => {
@@ -123,49 +262,61 @@ export class DownloadProcessor {
      * Fire-and-forget an import job. Runs in a dedicated import slot alongside
      * the download slot (Lidarr/Tidarr-style: 1 download + 1 import in parallel).
      */
-    private dispatchImportJob(job: ReturnType<typeof CommandQueueManager.getNextJobByTypes> & {}): void {
-        const importPayload = job.payload as ImportDownloadCommand;
-        const providerId = String(importPayload?.providerId || job.ref_id || '');
-        const rawType = String(importPayload?.type || 'track');
-        const type: DownloadJobType = rawType === 'album' || rawType === 'video' ? rawType : 'track';
+    private dispatchImportPhase(entry: {
+        commandId: number;
+        providerId: string;
+        type: DownloadJobType;
+        importPayload: ImportDownloadCommand;
+        resolved: { title: string; artist: string; cover: string | null };
+    }): void {
+        const { commandId, providerId, type, importPayload, resolved } = entry;
 
-        if (!providerId || providerId === 'undefined' || providerId === 'null') {
-            console.warn(`[DOWNLOAD-PROCESSOR] Skipping import job #${job.id} with invalid providerId: ${providerId}`);
-            CommandQueueManager.fail(job.id, 'Invalid providerId - cannot import');
+        const command = CommandQueueManager.get(commandId);
+        if (!command || command.status !== 'started') {
+            // Cancelled/deleted while waiting for a slot — nothing to import.
+            this.scheduleNext();
             return;
         }
 
-        const resolved = {
-            title: importPayload?.resolved?.title || (job.payload as any)?.title || 'Unknown',
-            artist: importPayload?.resolved?.artist || (job.payload as any)?.artist || 'Unknown',
-            cover: importPayload?.resolved?.cover ?? (job.payload as any)?.cover ?? null,
-        };
-
-        if (!CommandQueueManager.markProcessing(job.id)) {
-            console.log(`[DOWNLOAD-PROCESSOR] Import job #${job.id} is no longer pending; skipping dispatch.`);
-            return;
-        }
-        console.log(`[DOWNLOAD-PROCESSOR] Dispatching import job #${job.id}: ${type} ${providerId} (${this.activeImports.size + 1}/${MAX_CONCURRENT_IMPORTS} slots)`);
+        console.log(`[DOWNLOAD-PROCESSOR] Importing command #${commandId}: ${type} ${providerId} (${this.activeImports.size + 1}/${MAX_CONCURRENT_IMPORTS} slots)`);
 
         const emitImportProgress = (state: Parameters<typeof this.persistDownloadState>[1]) => {
-            this.persistDownloadState(job.id, state);
-            downloadEvents.emitProgress(job.id, {
+            this.persistDownloadState(commandId, state);
+            const currentJob = CommandQueueManager.get(commandId);
+            const currentDownloadState = (currentJob?.payload?.downloadState as DownloadStatePayload | undefined) ?? {};
+            const tracks = state.tracks ?? currentDownloadState.tracks;
+            downloadEvents.emitProgress(commandId, {
                 providerId,
                 type,
                 quality: importPayload?.quality ?? null,
                 title: resolved.title,
                 artist: resolved.artist,
                 cover: resolved.cover,
-                progress: state.progress ?? job.progress ?? 0,
+                progress: state.progress ?? currentJob?.progress ?? 0,
                 currentFileNum: state.currentFileNum,
                 totalFiles: state.totalFiles,
                 currentTrack: state.currentTrack,
+                currentProviderTrackId: state.currentProviderTrackId,
+                currentTrackNum: state.currentTrackNum,
+                currentVolumeNum: state.currentVolumeNum,
                 trackProgress: state.trackProgress,
                 trackStatus: state.trackStatus,
                 statusMessage: state.statusMessage,
                 state: state.state,
+                tracks,
             });
         };
+
+        // The import runs the ImportDownload handler on the same command id.
+        // We pass a transient job whose NAME selects the import handler on the
+        // worker (or the inline import service), while the persisted command row
+        // stays the DownloadAlbum/Track/Video command in its import phase — so
+        // there is exactly one queue entity for the whole lifecycle.
+        const importJob = {
+            ...command,
+            name: CommandNames.ImportDownload,
+            payload: importPayload,
+        } as CommandModelOf<typeof CommandNames.ImportDownload>;
 
         const importPromise = (async () => {
             try {
@@ -174,17 +325,18 @@ export class DownloadProcessor {
                     // sync DB writes) on a worker thread so it never blocks the
                     // main thread's HTTP/SSE loop. Progress streams back via the
                     // bridge to the same emitImportProgress sink used inline.
-                    await CommandWorkerPool.run(job, {
+                    await CommandWorkerPool.run(importJob, {
                         onProgress: (state: any) => emitImportProgress(state as Parameters<typeof emitImportProgress>[0]),
                     });
                 } else {
-                    await DownloadedTracksImportService.process(job as CommandModelOf<typeof CommandNames.ImportDownload>, {
+                    await DownloadedTracksImportService.process(importJob, {
                         updateState: emitImportProgress,
                     });
                 }
 
-                CommandQueueManager.complete(job.id);
-                downloadEvents.emitCompleted(job.id, {
+                CommandQueueManager.complete(commandId);
+                this.activeImports.delete(commandId);
+                downloadEvents.emitCompleted(commandId, {
                     providerId,
                     type,
                     quality: importPayload?.quality ?? null,
@@ -192,17 +344,18 @@ export class DownloadProcessor {
                     artist: resolved.artist,
                     cover: resolved.cover,
                 });
-                console.log(`[DOWNLOAD-PROCESSOR] Successfully imported ${type} ${providerId}`);
+                console.log(`[DOWNLOAD-PROCESSOR] Completed download+import for ${type} ${providerId} (command #${commandId})`);
             } catch (error: any) {
-                console.error(`[DOWNLOAD-PROCESSOR] Failed to import job #${job.id}:`, error);
-                this.persistDownloadState(job.id, {
-                    progress: job.progress,
-                    description: `ImportDownload: ${error?.message || 'Import failed'}`,
+                console.error(`[DOWNLOAD-PROCESSOR] Failed to import command #${commandId}:`, error);
+                this.persistDownloadState(commandId, {
+                    progress: command.progress,
+                    description: `Import: ${error?.message || 'Import failed'}`,
                     statusMessage: error?.message || 'Import failed',
                     state: 'importFailed',
                 });
-                CommandQueueManager.fail(job.id, error?.message || 'Unknown import error');
-                downloadEvents.emitFailed(job.id, {
+                CommandQueueManager.fail(commandId, error?.message || 'Unknown import error');
+                this.activeImports.delete(commandId);
+                downloadEvents.emitFailed(commandId, {
                     providerId,
                     type,
                     quality: importPayload?.quality ?? null,
@@ -213,13 +366,14 @@ export class DownloadProcessor {
                     state: 'importFailed',
                 });
             } finally {
-                this.activeImports.delete(job.id);
+                this.activeImports.delete(commandId);
+                downloadEvents.emitQueueStatus(this.isPaused);
                 // An import slot freed up — check for more pending imports/downloads.
                 this.scheduleNext();
             }
         })();
 
-        this.activeImports.set(job.id, { providerId, type, promise: importPromise });
+        this.activeImports.set(commandId, { providerId, type, promise: importPromise });
     }
 
     private logBusy(): void {
@@ -691,28 +845,104 @@ export class DownloadProcessor {
         currentFileNum?: number;
         totalFiles?: number;
         currentTrack?: string;
+        currentProviderTrackId?: string;
+        currentTrackNum?: number;
+        currentVolumeNum?: number;
         trackProgress?: number;
         trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
+        trackStatusByProviderTrackId?: Record<string, 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'>;
+        trackStatusByTitle?: Record<string, 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'>;
         statusMessage?: string;
         state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
         speed?: string;
         eta?: string;
         size?: number;
         sizeleft?: number;
-        tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
+        tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }[];
     }) {
+        // Merge into any buffered snapshot instead of replacing it: progress
+        // events are partial (a per-track update carries no statusMessage; a
+        // status line carries no trackProgress), and only the state present at
+        // the flush tick gets written. Replacement would let a later generic
+        // line wipe the per-track fields before they ever persist.
+        const buffered = this.progressBuffer.get(commandId);
+        const merged: Record<string, unknown> = buffered ? { ...buffered } : {};
+        // A new current track invalidates the previous track's progress; don't
+        // let the old percent bleed onto the next track.
+        if (
+            (state.currentProviderTrackId !== undefined && state.currentProviderTrackId !== merged.currentProviderTrackId)
+            || (state.currentProviderTrackId === undefined && state.currentTrack !== undefined && state.currentTrack !== merged.currentTrack)
+        ) {
+            delete merged.trackProgress;
+            delete merged.trackStatus;
+        }
+        for (const [key, value] of Object.entries(state)) {
+            if (value !== undefined) {
+                merged[key] = value;
+            }
+        }
+        // Accumulate per-title statuses across the buffer window: tiddl runs
+        // parallel downloads, so several tracks can change state between two
+        // flushes and only the latest scalar snapshot would survive otherwise.
+        if (state.currentProviderTrackId && state.trackStatus) {
+            const bufferedById = (buffered as { trackStatusByProviderTrackId?: Record<string, string> } | undefined)?.trackStatusByProviderTrackId;
+            merged.trackStatusByProviderTrackId = {
+                ...bufferedById,
+                [state.currentProviderTrackId]: state.trackStatus,
+            };
+        }
+        if (state.currentTrack && state.trackStatus) {
+            const bufferedByTitle = (buffered as { trackStatusByTitle?: Record<string, string> } | undefined)?.trackStatusByTitle;
+            merged.trackStatusByTitle = {
+                ...bufferedByTitle,
+                [state.currentTrack]: state.trackStatus,
+            };
+        }
+        const snapshot = merged as typeof state;
+
         // Terminal / transition states bypass the buffer and write immediately.
         if (state.state && IMMEDIATE_FLUSH_STATES.has(state.state)) {
             // Flush any pending buffered state for this job first so the
             // immediate write always represents the latest snapshot.
             this.progressBuffer.delete(commandId);
-            this.writeDownloadState(commandId, state);
+            if (!this.tryWriteDownloadState(commandId, snapshot)) {
+                this.progressBuffer.set(commandId, snapshot);
+                this.ensureProgressFlushTimer();
+            }
             return;
         }
 
         // Buffer the latest in-flight progress for this job.
-        this.progressBuffer.set(commandId, state);
+        this.progressBuffer.set(commandId, snapshot);
         this.ensureProgressFlushTimer();
+    }
+
+    private getProgressTracksForEvent(commandId: number, stateTracks?: {
+        title: string;
+        trackNum?: number;
+        status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
+        providerTrackId?: string;
+    }[]): {
+        title: string;
+        trackNum?: number;
+        status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
+        providerTrackId?: string;
+    }[] | undefined {
+        if (stateTracks?.length) {
+            return stateTracks;
+        }
+
+        const bufferedTracks = this.progressBuffer.get(commandId)?.tracks;
+        if (Array.isArray(bufferedTracks) && bufferedTracks.length > 0) {
+            return bufferedTracks;
+        }
+
+        const currentJob = CommandQueueManager.get(commandId);
+        const currentDownloadState = (currentJob?.payload?.downloadState as Record<string, unknown> | undefined) || {};
+        const storedTracks = currentDownloadState.tracks;
+        return Array.isArray(storedTracks) && storedTracks.length > 0
+            ? storedTracks as ReturnType<DownloadProcessor['getProgressTracksForEvent']>
+            : undefined;
     }
 
     /** Unconditionally write download state to the database. */
@@ -722,30 +952,65 @@ export class DownloadProcessor {
         currentFileNum?: number;
         totalFiles?: number;
         currentTrack?: string;
+        currentProviderTrackId?: string;
+        currentTrackNum?: number;
+        currentVolumeNum?: number;
         trackProgress?: number;
         trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
+        trackStatusByProviderTrackId?: Record<string, 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'>;
+        trackStatusByTitle?: Record<string, 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'>;
         statusMessage?: string;
         state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
         speed?: string;
         eta?: string;
         size?: number;
         sizeleft?: number;
-        tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
+        tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }[];
     }) {
         const currentJob = CommandQueueManager.get(commandId);
         const currentDownloadState = (currentJob?.payload?.downloadState as Record<string, unknown> | undefined) || {};
 
         let mergedTracks = state.tracks ?? currentDownloadState.tracks as any[];
-        
-        // Dynamically update track status based on currentFileNum
-        if (mergedTracks && typeof state.currentFileNum === 'number') {
+
+        // Prefer provider-id updates from the tiddl wrapper. Title-level
+        // updates remain as a fallback for legacy/partial progress events
+        // because tiddl downloads tracks in parallel, so
+        // "rows before currentFileNum are complete" mismarks in-flight rows).
+        // Fall back to currentFileNum index inference only when neither exact
+        // identity nor titles match the catalog tracklist.
+        const providerAdjustedTracks = mergedTracks && state.trackStatusByProviderTrackId
+            ? applyTrackStatusByProviderId(mergedTracks, state.trackStatusByProviderTrackId)
+            : null;
+        const titleAdjustedTracks = !providerAdjustedTracks && mergedTracks && state.trackStatusByTitle
+            ? applyTrackStatusByTitle(mergedTracks, state.trackStatusByTitle)
+            : null;
+
+        if (mergedTracks && state.state === 'completed') {
+            mergedTracks = mergedTracks.map((track: any) => ({
+                ...track,
+                status: track.status === 'error' || track.status === 'skipped' ? track.status : 'completed',
+            }));
+        } else if (providerAdjustedTracks) {
+            mergedTracks = providerAdjustedTracks;
+        } else if (titleAdjustedTracks) {
+            mergedTracks = titleAdjustedTracks;
+        } else if (mergedTracks && typeof state.currentFileNum === 'number') {
             const currentNum = state.currentFileNum;
             const statusState = state.state;
             mergedTracks = mergedTracks.map((t: any, idx: number) => {
                 const trackIdx = idx + 1;
                 let newStatus = t.status;
                 if (trackIdx < currentNum) newStatus = 'completed';
-                else if (trackIdx === currentNum && statusState === 'downloading') newStatus = 'downloading';
+                else if (trackIdx === currentNum && state.trackStatus === 'completed') newStatus = 'completed';
+                else if (
+                    trackIdx === currentNum
+                    && (
+                        statusState === 'downloading'
+                        || statusState === 'importing'
+                        || statusState === 'importPending'
+                        || state.trackStatus === 'downloading'
+                    )
+                ) newStatus = 'downloading';
                 return { ...t, status: newStatus };
             });
         }
@@ -757,6 +1022,9 @@ export class DownloadProcessor {
                 currentFileNum: state.currentFileNum ?? currentDownloadState.currentFileNum,
                 totalFiles: state.totalFiles ?? currentDownloadState.totalFiles,
                 currentTrack: state.currentTrack ?? currentDownloadState.currentTrack,
+                currentProviderTrackId: state.currentProviderTrackId ?? currentDownloadState.currentProviderTrackId,
+                currentTrackNum: state.currentTrackNum ?? currentDownloadState.currentTrackNum,
+                currentVolumeNum: state.currentVolumeNum ?? currentDownloadState.currentVolumeNum,
                 trackProgress: state.trackProgress ?? currentDownloadState.trackProgress,
                 trackStatus: state.trackStatus ?? currentDownloadState.trackStatus,
                 statusMessage: state.statusMessage ?? currentDownloadState.statusMessage,
@@ -779,6 +1047,24 @@ export class DownloadProcessor {
         });
     }
 
+    private tryWriteDownloadState(commandId: number, state: Parameters<DownloadProcessor['writeDownloadState']>[1]): boolean {
+        try {
+            this.writeDownloadState(commandId, state);
+            return true;
+        } catch (error) {
+            if (!isSqliteBusyError(error)) {
+                throw error;
+            }
+
+            const now = Date.now();
+            if (now - this.lastProgressBusyLogAt > 10_000) {
+                this.lastProgressBusyLogAt = now;
+                console.warn('[DOWNLOAD-PROCESSOR] Progress state write deferred because SQLite is busy');
+            }
+            return false;
+        }
+    }
+
     /** Start the periodic flush timer if not already running. */
     private ensureProgressFlushTimer(): void {
         if (this.progressFlushTimer) return;
@@ -799,10 +1085,16 @@ export class DownloadProcessor {
             return;
         }
 
-        for (const [commandId, state] of this.progressBuffer) {
-            this.writeDownloadState(commandId, state);
+        for (const [commandId, state] of Array.from(this.progressBuffer)) {
+            if (this.tryWriteDownloadState(commandId, state)) {
+                this.progressBuffer.delete(commandId);
+            }
         }
-        this.progressBuffer.clear();
+
+        if (this.progressBuffer.size === 0 && this.progressFlushTimer) {
+            clearInterval(this.progressFlushTimer);
+            this.progressFlushTimer = undefined;
+        }
     }
 
     async initialize() {
@@ -875,20 +1167,16 @@ export class DownloadProcessor {
 
         this.maybeCleanupStuckJobs();
 
-        // ── Import slot: 1 import runs alongside downloads (Lidarr/Tidarr pattern) ──
-        // Downloads and imports use separate slots so importing never blocks
-        // the next download from starting.
-        while (this.activeImports.size < MAX_CONCURRENT_IMPORTS) {
-            const importJob = CommandQueueManager.getNextJobByTypes([CommandNames.ImportDownload]);
-            if (!importJob) break;
-
-            if (importJob.attempts >= MAX_RETRY_ATTEMPTS) {
-                console.warn(`[DOWNLOAD-PROCESSOR] Import job #${importJob.id} exceeded max retries (${importJob.attempts}/${MAX_RETRY_ATTEMPTS}), marking as permanently failed`);
-                CommandQueueManager.fail(importJob.id, `Exceeded maximum retry attempts (${MAX_RETRY_ATTEMPTS})`);
-                continue;
-            }
-
-            this.dispatchImportJob(importJob);
+        // ── Import slot: imports run alongside downloads (Lidarr/Tidarr pattern) ──
+        // Downloads and imports use separate slots so importing never blocks the
+        // next download from starting. Import phases belong to download commands
+        // that finished downloading (this.pendingImports) — there is no separate
+        // ImportDownload queue row.
+        while (this.activeImports.size < MAX_CONCURRENT_IMPORTS && this.pendingImports.length > 0) {
+            const entry = this.pendingImports.shift();
+            if (!entry) break;
+            if (this.activeImports.has(entry.commandId)) continue;
+            this.dispatchImportPhase(entry);
         }
 
         // ── Download slot: only one download at a time ──
@@ -1002,18 +1290,44 @@ export class DownloadProcessor {
                 cover: resolved.cover,
             });
 
-            // Initialize tracks for UI tracklist indicators
-            let initialTracks: { title: string; trackNum?: number; status: 'queued' }[] | undefined;
+            // Initialize the tracklist for UI indicators. Prefer the materialized
+            // provider track offer rows (they carry the provider track id — the
+            // hard link that names the staged {providerTrackId}.ext files — and
+            // reflect exactly what will download), falling back to the canonical
+            // MB tracklist only when provider rows aren't materialized yet.
+            let initialTracks: { title: string; trackNum?: number; status: 'queued'; providerTrackId?: string }[] | undefined;
             try {
                 if (type === 'track' || type === 'video') {
-                    initialTracks = [{ title: resolved.title, status: 'queued' }];
-                } else if (type === 'album' && payload.releaseGroupMbid) {
-                    const albumTracks = await AlbumQueryService.getAlbumTracks(payload.releaseGroupMbid);
-                    initialTracks = albumTracks.map(t => ({
-                        title: t.title,
-                        trackNum: t.track_number,
-                        status: 'queued'
-                    }));
+                    initialTracks = [{ title: resolved.title, status: 'queued', providerTrackId: providerId }];
+                } else if (type === 'album') {
+                    const providerRows = db.prepare(`
+                        SELECT
+                            CAST(provider_id AS TEXT) AS provider_id,
+                            title,
+                            CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number
+                        FROM ProviderItems
+                        WHERE entity_type = 'track' AND provider_album_id = ?
+                        ORDER BY
+                            CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER),
+                            CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER),
+                            provider_id
+                    `).all(providerId) as Array<{ provider_id: string; title: string | null; track_number: number | null }>;
+
+                    if (providerRows.length > 0) {
+                        initialTracks = providerRows.map((row) => ({
+                            title: row.title || 'Unknown Track',
+                            trackNum: row.track_number ?? undefined,
+                            status: 'queued',
+                            providerTrackId: row.provider_id,
+                        }));
+                    } else if (payload.releaseGroupMbid) {
+                        const albumTracks = await AlbumQueryService.getAlbumTracks(payload.releaseGroupMbid);
+                        initialTracks = albumTracks.map(t => ({
+                            title: t.title,
+                            trackNum: t.track_number,
+                            status: 'queued',
+                        }));
+                    }
                 }
             } catch (error) {
                 console.warn(`[DOWNLOAD-PROCESSOR] Failed to fetch initial tracks for job #${job.id}:`, error);
@@ -1088,8 +1402,16 @@ export class DownloadProcessor {
                 );
             }
 
-            // Organize into library (dispatched to the import/finalization queue)
-            CommandQueueManager.push(CommandNames.ImportDownload, {
+            const completedDownloadState = (CommandQueueManager.get(job.id)?.payload?.downloadState as DownloadStatePayload | undefined) ?? {};
+            const importTracks = resetTracksForImportState(completedDownloadState.tracks ?? initialTracks);
+
+            // Download finished — transition THIS command into its import phase.
+            // The command stays 'started' (one queue entity spans download →
+            // import, Lidarr TrackedDownload-style); it moves to History only when
+            // the import completes/fails. No separate ImportDownload row, so the UI
+            // shows one row advancing by state instead of a download row vanishing
+            // and an import row appearing.
+            const importPayload: ImportDownloadCommand = {
                 provider: payload.provider,
                 providerId: payload.providerId ?? providerId,
                 releaseGroupMbid: payload.releaseGroupMbid,
@@ -1113,25 +1435,29 @@ export class DownloadProcessor {
                 cover: payload.cover,
                 url: payload.url,
                 resolved,
-                originalJobId: job.id
-            }, providerId, Math.max(job.priority, 100), job.trigger, job.queue_order);
+            } as ImportDownloadCommand;
 
-            CommandQueueManager.complete(job.id);
-
-            downloadEvents.emitCompleted(job.id, {
-                providerId,
-                type,
-                quality: payload.quality ?? null,
-                title: resolved.title,
-                artist: resolved.artist,
-                cover: resolved.cover,
-                silent: true,
+            this.persistDownloadState(job.id, {
+                state: 'importPending',
+                statusMessage: 'Waiting to import',
+                tracks: importTracks,
+                totalFiles: completedDownloadState.totalFiles,
             });
 
-            // The ImportDownload job will clean up the item workspace after import.
+            this.pendingImports.push({
+                commandId: job.id,
+                providerId,
+                type,
+                importPayload,
+                resolved,
+            });
+
+            // Ownership of the workspace passes to the import phase, which cleans
+            // it up after import. Clear the download-slot pointer so the next
+            // download can start without deleting this command's files.
             this.currentDownloadPath = undefined;
 
-            console.log(`[DOWNLOAD-PROCESSOR] Successfully downloaded ${type} ${providerId} - dispatched to import queue`);
+            console.log(`[DOWNLOAD-PROCESSOR] Downloaded ${type} ${providerId} — queued import phase for command #${job.id}`);
         } catch (error: any) {
             if (this.cancelCurrentDownload && this.isPaused) {
                 const current = CommandQueueManager.get(job.id);
@@ -1214,6 +1540,9 @@ export class DownloadProcessor {
                 currentFileNum: state.currentFileNum,
                 totalFiles: state.totalFiles,
                 currentTrack: state.currentTrack,
+                currentProviderTrackId: state.currentProviderTrackId,
+                currentTrackNum: state.currentTrackNum,
+                currentVolumeNum: state.currentVolumeNum,
                 trackProgress: state.trackProgress,
                 trackStatus: state.trackStatus,
                 statusMessage: state.statusMessage,
@@ -1222,7 +1551,7 @@ export class DownloadProcessor {
                 eta: state.eta,
                 size: state.size,
                 sizeleft: state.sizeleft,
-                tracks: state.tracks,
+                tracks: this.getProgressTracksForEvent(commandId, state.tracks),
             });
         };
 
@@ -1298,6 +1627,7 @@ export class DownloadProcessor {
         currentProviderId?: string;
         currentType?: string;
         activeImports: number;
+        activeImportIds: number[];
     } {
         return {
             isPaused: this.isPaused,
@@ -1306,6 +1636,7 @@ export class DownloadProcessor {
             currentProviderId: this.currentProviderId,
             currentType: this.currentType,
             activeImports: this.activeImports.size,
+            activeImportIds: Array.from(this.activeImports.keys()),
         };
     }
 
@@ -1314,4 +1645,253 @@ export class DownloadProcessor {
     }
 }
 
-export const downloadProcessor = new DownloadProcessor();
+type DownloadProcessorStatus = ReturnType<DownloadProcessor['getStatus']>;
+
+type DownloadWorkerRequestKind = 'initialize' | 'processQueue' | 'pause' | 'resume';
+
+type DownloadWorkerToMainMessage =
+    | { kind: 'ready' }
+    | { kind: 'status'; status: DownloadProcessorStatus }
+    | { kind: 'downloadEvent'; event: string; payload: unknown }
+    | { kind: 'event'; event: string; payload: unknown }
+    | { kind: 'cacheInvalidate'; target: CacheInvalidateTarget; key?: string }
+    | { kind: 'response'; requestId: number; ok: true }
+    | { kind: 'response'; requestId: number; ok: false; error: string };
+
+type DownloadWorkerRequest = {
+    kind: DownloadWorkerRequestKind;
+    requestId: number;
+};
+
+function resolveDownloadWorkerSpawn(): { entry: string; workerData: Record<string, unknown> } {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const isCompiled = here.includes(`${path.sep}dist${path.sep}`) || here.endsWith(`${path.sep}dist`);
+    const workerData: Record<string, unknown> = { [DOWNLOAD_WORKER_MARKER]: true };
+
+    if (isCompiled) {
+        return {
+            entry: path.join(here, 'download-processor-worker-entry.js'),
+            workerData,
+        };
+    }
+
+    return {
+        entry: path.join(here, '..', 'commands', 'worker', 'command-worker-bootstrap.mjs'),
+        workerData: {
+            ...workerData,
+            __entry: pathToFileURL(path.join(here, 'download-processor-worker-entry.ts')).href,
+        },
+    };
+}
+
+class DownloadProcessorWorkerProxy {
+    private worker?: Worker;
+    private nextRequestId = 1;
+    private pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
+    private initialized = false;
+    private stopping = false;
+    private status: DownloadProcessorStatus = {
+        isPaused: process.env.DISCOGENIUS_START_PAUSED === '1',
+        processing: false,
+        activeImports: 0,
+        activeImportIds: [],
+    };
+
+    async initialize(): Promise<void> {
+        this.initialized = true;
+        this.subscribeToQueueEvents();
+        await this.request('initialize');
+    }
+
+    // The worker's own COMMAND_ADDED listener only hears events emitted inside
+    // that thread. Enqueues from the main thread (routes) and from command
+    // workers (upgrader, monitoring) surface on the main appEvents emitter, so
+    // the proxy must relay them into the download worker as a queue kick.
+    private queueEventsSubscribed = false;
+
+    private subscribeToQueueEvents(): void {
+        if (this.queueEventsSubscribed) return;
+        this.queueEventsSubscribed = true;
+        appEvents.on(AppEvent.COMMAND_ADDED, (event: CommandEventPayload) => {
+            if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
+            if (!DOWNLOAD_OR_IMPORT_COMMAND_NAMES.includes(event.type as (typeof DOWNLOAD_OR_IMPORT_COMMAND_NAMES)[number])) return;
+            void this.processQueue().catch((error) => {
+                console.error('[DOWNLOAD-PROCESSOR] Failed to relay queue kick to download worker:', error);
+            });
+        });
+    }
+
+    async processQueue(): Promise<void> {
+        await this.request('processQueue');
+    }
+
+    async pause(): Promise<void> {
+        await this.request('pause');
+    }
+
+    async resume(): Promise<void> {
+        await this.request('resume');
+    }
+
+    isActivelyProcessingJob(commandId: number): boolean {
+        return this.status.currentJobId === commandId || this.status.activeImportIds.includes(commandId);
+    }
+
+    getStatus(): DownloadProcessorStatus {
+        return { ...this.status, activeImportIds: [...this.status.activeImportIds] };
+    }
+
+    isActivelyImporting(commandId: number): boolean {
+        return this.status.activeImportIds.includes(commandId);
+    }
+
+    private request(kind: DownloadWorkerRequestKind): Promise<void> {
+        // Only initialize() may spawn the worker. Control calls before boot
+        // (tests exercising the upgrader, shutdown with downloads disabled)
+        // must not start a download thread — a live worker also keeps the
+        // process alive, which hangs the node test runner.
+        if (kind !== 'initialize' && !this.initialized) {
+            return Promise.resolve();
+        }
+
+        const worker = this.ensureWorker();
+        const requestId = this.nextRequestId++;
+        return new Promise<void>((resolve, reject) => {
+            this.pending.set(requestId, { resolve, reject });
+            worker.postMessage({ kind, requestId } satisfies DownloadWorkerRequest);
+        });
+    }
+
+    private ensureWorker(): Worker {
+        if (this.worker) {
+            return this.worker;
+        }
+
+        const { entry, workerData } = resolveDownloadWorkerSpawn();
+        const worker = new Worker(entry, { workerData });
+        // The API server's HTTP listener keeps the process alive; the worker
+        // must never be the thing pinning it (shutdown calls process.exit).
+        worker.unref();
+        this.worker = worker;
+        this.stopping = false;
+
+        worker.on('message', (message: DownloadWorkerToMainMessage) => this.handleMessage(message));
+        worker.on('error', (error) => {
+            console.error('[DOWNLOAD-PROCESSOR] Worker error:', error);
+        });
+        worker.on('exit', (code) => {
+            this.worker = undefined;
+            const error = new Error(`Download processor worker exited with code ${code}`);
+            for (const pending of this.pending.values()) {
+                pending.reject(error);
+            }
+            this.pending.clear();
+
+            if (!this.stopping && this.initialized) {
+                console.error('[DOWNLOAD-PROCESSOR] Worker exited unexpectedly; restarting download worker');
+                void this.initialize().catch((restartError) => {
+                    console.error('[DOWNLOAD-PROCESSOR] Failed to restart download worker:', restartError);
+                });
+            }
+        });
+
+        return worker;
+    }
+
+    private handleMessage(message: DownloadWorkerToMainMessage): void {
+        switch (message.kind) {
+            case 'ready':
+                break;
+            case 'status':
+                this.status = {
+                    ...message.status,
+                    activeImportIds: message.status.activeImportIds ?? [],
+                };
+                break;
+            case 'downloadEvent':
+                downloadEvents.emit(message.event, message.payload);
+                break;
+            case 'event':
+                appEvents.emit(message.event as AppEvent, message.payload as never);
+                break;
+            case 'cacheInvalidate':
+                this.applyCacheInvalidate(message.target, message.key);
+                break;
+            case 'response': {
+                const pending = this.pending.get(message.requestId);
+                if (!pending) return;
+                this.pending.delete(message.requestId);
+                if (message.ok) {
+                    pending.resolve();
+                } else {
+                    pending.reject(new Error(message.error));
+                }
+                break;
+            }
+        }
+    }
+
+    private applyCacheInvalidate(target: CacheInvalidateTarget, key?: string): void {
+        switch (target) {
+            case 'album':
+                if (key) invalidateAlbumDownloadStatus(key);
+                break;
+            case 'releaseGroup':
+                if (key) invalidateReleaseGroupDownloadStatus(key);
+                break;
+            case 'artist':
+                if (key) invalidateArtistDownloadStatus(key);
+                break;
+            case 'media':
+                if (key) invalidateMediaDownloadState(key);
+                break;
+            case 'all':
+                invalidateAllDownloadState();
+                break;
+        }
+    }
+}
+
+// Command workers must not run their own download loop: an enqueue there
+// already bridges COMMAND_ADDED to the main thread, whose proxy kicks the
+// dedicated download worker. This stub keeps accidental processQueue() calls
+// (e.g. the upgrader) from claiming jobs inside a command worker.
+class DownloadProcessorCommandWorkerStub {
+    async initialize(): Promise<void> {}
+
+    async processQueue(): Promise<void> {}
+
+    async pause(): Promise<void> {
+        throw new Error('Download processor controls are unavailable inside command workers');
+    }
+
+    async resume(): Promise<void> {
+        throw new Error('Download processor controls are unavailable inside command workers');
+    }
+
+    isActivelyProcessingJob(_commandId: number): boolean {
+        return false;
+    }
+
+    isActivelyImporting(_commandId: number): boolean {
+        return false;
+    }
+
+    getStatus(): DownloadProcessorStatus {
+        return {
+            isPaused: false,
+            processing: false,
+            activeImports: 0,
+            activeImportIds: [],
+        };
+    }
+}
+
+const isDownloadWorkerThread = !isMainThread
+    && (workerData as Record<string, unknown> | null)?.[DOWNLOAD_WORKER_MARKER] === true;
+
+export const downloadProcessor = isMainThread
+    ? new DownloadProcessorWorkerProxy()
+    : isDownloadWorkerThread
+        ? new DownloadProcessor()
+        : new DownloadProcessorCommandWorkerStub();

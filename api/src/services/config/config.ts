@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import * as TOML from "@iarna/toml";
 import { fileURLToPath } from "url";
+import { normalizeMbHost } from "../catalog/mb-connection.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -178,6 +179,20 @@ export interface StreamingConfig {
   default_provider?: string;
 }
 
+/**
+ * Canonical catalog source selection (see docs/MB_LOCAL_MODE.md). `servarr` =
+ * Servarr Metadata Server / Skyhook (default, replicate-and-refresh); `musicbrainz`
+ * = a local MusicBrainz-docker read directly from Postgres. `musicbrainz_host` is
+ * just the host/IP (optionally `host:postgresPort` for advanced setups); the
+ * Postgres DSN and co-located `/ws/2`+Solr URL are derived centrally.
+ * The env vars `DISCOGENIUS_CATALOG_SOURCE` (`servarr-metadata`|`musicbrainz-local`)
+ * and `DISCOGENIUS_MUSICBRAINZ_HOST` / `MB_LOCAL_HOST` override the stored values.
+ */
+export interface CatalogConfig {
+  source: "servarr" | "musicbrainz";
+  musicbrainz_host: string;
+}
+
 export interface DiscoGeniusConfig {
   app: AppConfig;
   monitoring: MonitoringConfig;
@@ -187,6 +202,7 @@ export interface DiscoGeniusConfig {
   metadata: MetadataConfig;
   quality: QualityConfig;
   streaming: StreamingConfig;
+  catalog: CatalogConfig;
   account?: AccountConfig;
 }
 
@@ -263,6 +279,10 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   },
   streaming: {
     default_provider: "tidal",
+  },
+  catalog: {
+    source: "servarr",
+    musicbrainz_host: "localhost",
   },
   account: {}
 };
@@ -347,6 +367,36 @@ function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig 
   };
 }
 
+function normalizeCatalogConfig(raw?: Partial<CatalogConfig>): CatalogConfig {
+  // Env wins over stored config so a compose/TrueNAS deployment can force the
+  // source without the UI (mirrors the DISCOGENIUS_CATALOG_SOURCE / MB_LOCAL_HOST
+  // vars from docker-compose.mb-local.example.yml). Env uses the catalog-provider
+  // ids; config uses the short UI values.
+  const envSourceRaw = (process.env.DISCOGENIUS_CATALOG_SOURCE || "").trim();
+  const envSource = envSourceRaw === "musicbrainz-local" || envSourceRaw === "musicbrainz"
+    ? "musicbrainz"
+    : envSourceRaw === "servarr-metadata" || envSourceRaw === "servarr"
+      ? "servarr"
+      : undefined;
+  const rawSource = raw?.source === "musicbrainz" || raw?.source === "servarr" ? raw.source : undefined;
+
+  const envHost = (
+    process.env.DISCOGENIUS_MUSICBRAINZ_HOST ||
+    process.env.MB_LOCAL_HOST ||
+    ""
+  ).trim();
+  const rawHost = typeof raw?.musicbrainz_host === "string"
+    ? raw.musicbrainz_host.trim()
+    : "";
+  const normalizedHost = normalizeMbHost(envHost || rawHost || DEFAULT_CONFIG.catalog.musicbrainz_host)
+    || DEFAULT_CONFIG.catalog.musicbrainz_host;
+
+  return {
+    source: envSource ?? rawSource ?? DEFAULT_CONFIG.catalog.source,
+    musicbrainz_host: normalizedHost,
+  };
+}
+
 function normalizeQualityConfig(raw?: Partial<QualityConfig>): QualityConfig {
   const audioQuality = raw?.audio_quality;
   const videoQuality = raw?.video_quality;
@@ -376,6 +426,7 @@ function normalizeConfig(config: Partial<DiscoGeniusConfig>): DiscoGeniusConfig 
     metadata: normalizeMetadataConfig(config.metadata),
     quality: normalizeQualityConfig(config.quality),
     streaming: { ...DEFAULT_CONFIG.streaming, ...(config.streaming || {}) },
+    catalog: normalizeCatalogConfig(config.catalog),
     account: { ...DEFAULT_CONFIG.account, ...(config.account || {}) },
   };
 }

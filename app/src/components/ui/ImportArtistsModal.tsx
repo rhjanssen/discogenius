@@ -45,6 +45,7 @@ interface ImportProgress {
 }
 
 const CATEGORY_ICONS: Record<string, React.ReactElement> = {
+    "library-artists": <PeopleTeam24Regular />,
     "followed-artists": <PeopleTeam24Regular />,
     "favorite-tracks": <Heart24Regular />,
     playlist: <AppsList24Regular />,

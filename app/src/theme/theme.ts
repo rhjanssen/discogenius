@@ -210,11 +210,6 @@ export const tidalBadgeColorLight = {
     SpatialBackground: "#ededed",
 } as const;
 
-/** Consistent faint stroke applied to every quality/provider pill, per theme. */
-export function badgeStrokeColor(isDarkMode: boolean): string {
-    return isDarkMode ? "rgba(255, 255, 255, 0.14)" : "rgba(0, 0, 0, 0.12)";
-}
-
 export function createDiscogeniusTheme(brand: BrandVariants, mode: "light" | "dark"): Theme {
     const baseTheme = mode === "dark" ? createDarkTheme(brand) : createLightTheme(brand);
 

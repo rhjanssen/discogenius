@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { streamingProviderManager } from "../services/providers/index.js";
+import { getProviderDiagnostics } from "../services/providers/provider-diagnostics.js";
 
 const router = Router();
 
@@ -12,9 +13,10 @@ function serializeProvider(provider: ReturnType<typeof streamingProviderManager.
     isDefault,
     authenticated,
     remoteCatalogAvailable: authenticated,
+    manifest: provider.manifest,
     capabilities: provider.capabilities,
     management: {
-      canAuthenticate: provider.capabilities.providerIds && provider.id === "tidal",
+      canAuthenticate: Boolean(provider.manifest?.auth.managedByApp && provider.startDeviceLogin),
       canDisconnect: Boolean(provider.logout),
       canImportArtists: Boolean(provider.listImportSources && provider.getArtistsForImportSource),
       canPreviewTracks: provider.capabilities.audioPreviews && Boolean(provider.getPlaybackInfo),
@@ -32,6 +34,16 @@ router.get("/", (_, res) => {
     .map((provider) => serializeProvider(provider, provider.id === defaultProvider.id));
 
   res.json({ providers, defaultProviderId: defaultProvider.id });
+});
+
+router.get("/:providerId/diagnostics", async (req, res) => {
+  try {
+    const provider = streamingProviderManager.getStreamingProvider(req.params.providerId);
+    const diagnostics = await getProviderDiagnostics(provider);
+    res.json({ providerId: provider.id, providerName: provider.name, diagnostics });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
 });
 
 router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {

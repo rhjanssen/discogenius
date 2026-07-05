@@ -1,5 +1,5 @@
 import { api } from "@/services/api";
-import { useDashboardInfiniteFeed } from "@/hooks/useDashboardInfiniteFeed";
+import { ignoreProgressTickEvents, useDashboardInfiniteFeed } from "@/hooks/useDashboardInfiniteFeed";
 import type { QueueItemContract } from "@contracts/status";
 
 export const queueHistoryFeedQueryKey = ["queueHistoryFeed"] as const;
@@ -19,8 +19,11 @@ export function useQueueHistoryFeed({ enabled = true }: UseQueueHistoryFeedOptio
         refreshErrorFallbackMessage: "Failed to refresh queue history.",
         fetchPage: ({ limit, offset, timeoutMs }) => api.getQueueHistory({ limit, offset, timeoutMs }),
         getItemId: (item) => item.id,
-        refetchIntervalMs: 5_000,
+        // History only changes on terminal transitions, which arrive as SSE
+        // events; the interval is a fallback for missed events.
+        refetchIntervalMs: 15_000,
         refetchOnMount: "always",
+        globalEventFilter: ignoreProgressTickEvents,
         enabled,
     });
 

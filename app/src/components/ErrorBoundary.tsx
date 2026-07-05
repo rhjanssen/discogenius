@@ -7,7 +7,7 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { ErrorCircle48Regular, ArrowClockwise24Regular } from "@fluentui/react-icons";
+import { ErrorCircle48Color, ArrowClockwise24Regular } from "@fluentui/react-icons";
 
 const useStyles = makeStyles({
   container: {
@@ -25,6 +25,7 @@ const useStyles = makeStyles({
     textAlign: "center",
     padding: tokens.spacingHorizontalXXL,
   },
+  // The Color icon variant carries its own palette.
   icon: {
     width: "48px",
     height: "48px",
@@ -83,7 +84,7 @@ const ErrorDisplay = ({
   return (
     <div className={styles.container}>
       <Card className={styles.card}>
-        <ErrorCircle48Regular className={styles.icon} />
+        <ErrorCircle48Color className={styles.icon} />
         <Title1 className={styles.title}>Something went wrong</Title1>
         <Body1 className={styles.message}>
           An unexpected error occurred. Please try refreshing the page.

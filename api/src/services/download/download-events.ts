@@ -176,6 +176,15 @@ export interface DownloadProgressData {
     /** Current track name being downloaded */
     currentTrack?: string;
 
+    /** Provider track id for the current item when the backend can emit it */
+    currentProviderTrackId?: string;
+
+    /** Provider-reported track number for the current item */
+    currentTrackNum?: number;
+
+    /** Provider-reported volume/disc number for the current item */
+    currentVolumeNum?: number;
+
     /** Progress of current track 0-100 */
     trackProgress?: number;
 
@@ -189,7 +198,12 @@ export interface DownloadProgressData {
     state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
 
     /** Track list for album downloads with per-track status */
-    tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
+    tracks?: {
+        title: string;
+        trackNum?: number;
+        status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
+        providerTrackId?: string;
+    }[];
 
     /** Size information */
     size?: number;  // Total size in bytes (if known)

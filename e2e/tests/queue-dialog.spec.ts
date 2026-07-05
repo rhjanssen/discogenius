@@ -1446,7 +1446,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(liveGroups.nth(2)).toContainText('Next download');
   });
 
-  test('queue tab renders import status text cleanly inside subitems instead of clipping it into the status gutter', async ({ page }) => {
+  test('queue tab marks the actively importing subitem with a spinner instead of a status label', async ({ page }) => {
     await stubDashboardApis(page, createImportSubitemFixture());
     await page.goto(`${baseURL}/dashboard`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
@@ -1455,20 +1455,11 @@ test.describe('Dashboard queue and activity tabs', () => {
       .locator('section[aria-label="Active"] [data-queue-subitem-row="true"]')
       .filter({ hasText: 'Import track alpha' })
       .first();
-    const importStatus = importTrackRow.locator('[data-queue-track-status="importing"]');
 
     await expect(importTrackRow).toBeVisible();
-    await expect(importStatus).toBeVisible();
-
-    const [rowBox, statusBox] = await Promise.all([
-      importTrackRow.boundingBox(),
-      importStatus.boundingBox(),
-    ]);
-
-    expect(rowBox).not.toBeNull();
-    expect(statusBox).not.toBeNull();
-    expect(statusBox!.width).toBeGreaterThan(20);
-    expect(statusBox!.x).toBeGreaterThan(rowBox!.x + 24);
-    expect(statusBox!.x + statusBox!.width).toBeLessThan(rowBox!.x + rowBox!.width - 16);
+    // The spinner is the active indicator; the per-row "importing" label was
+    // removed so rows stay a single line tall.
+    await expect(importTrackRow.locator('[aria-label="importing"]')).toBeVisible();
+    await expect(importTrackRow.locator('[data-queue-track-status="importing"]')).toHaveCount(0);
   });
 });

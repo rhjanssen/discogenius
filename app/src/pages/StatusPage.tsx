@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     Badge,
     Button,
@@ -27,7 +27,7 @@ import type {
     HealthCheckStatusContract,
     HealthOverallStatusContract,
 } from "@contracts/system-status";
-import type { StreamingProviderStatus } from "@/services/api";
+import type { ProviderDiagnosticResult, ProviderDiagnosticsResponse, StreamingProviderStatus } from "@/services/api";
 
 const useStyles = makeStyles({
     container: {
@@ -98,6 +98,24 @@ const useStyles = makeStyles({
         gap: tokens.spacingHorizontalXS,
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     },
+    diagnosticList: {
+        display: "grid",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gap: tokens.spacingHorizontalS,
+        padding: `0 ${tokens.spacingHorizontalM} ${tokens.spacingVerticalS}`,
+        "@media (max-width: 700px)": {
+            gridTemplateColumns: "1fr",
+        },
+    },
+    diagnosticItem: {
+        display: "flex",
+        alignItems: "flex-start",
+        gap: tokens.spacingHorizontalXS,
+        minWidth: 0,
+        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+        borderRadius: tokens.borderRadiusMedium,
+        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground2} 70%, transparent)`,
+    },
     rowActions: {
         display: "flex",
         alignItems: "center",
@@ -120,6 +138,16 @@ function statusIcon(status: HealthCheckStatusContract, styles: ReturnType<typeof
         return <CheckmarkCircle16Regular className={styles.statusIconOk} />;
     }
     if (status === "warning") {
+        return <Warning16Regular className={styles.statusIconWarning} />;
+    }
+    return <ErrorCircle16Regular className={styles.statusIconError} />;
+}
+
+function diagnosticIcon(status: ProviderDiagnosticResult["status"], styles: ReturnType<typeof useStyles>) {
+    if (status === "ok") {
+        return <CheckmarkCircle16Regular className={styles.statusIconOk} />;
+    }
+    if (status === "warning" || status === "disabled" || status === "unknown") {
         return <Warning16Regular className={styles.statusIconWarning} />;
     }
     return <ErrorCircle16Regular className={styles.statusIconError} />;
@@ -155,10 +183,14 @@ function CheckRow({
 
 function ProviderRow({
     provider,
+    diagnostics,
+    diagnosticsLoading,
     styles,
     last,
 }: {
     provider: StreamingProviderStatus;
+    diagnostics?: ProviderDiagnosticsResponse;
+    diagnosticsLoading?: boolean;
     styles: ReturnType<typeof useStyles>;
     last?: boolean;
 }) {
@@ -170,12 +202,20 @@ function ProviderRow({
         { label: "Previews", value: caps.audioPreviews },
     ].filter((chip) => chip.value);
 
+    const diagnosticRows = diagnostics?.diagnostics ?? [];
+    const hasDiagnosticError = diagnosticRows.some((diagnostic) => diagnostic.status === "error");
+    const hasDiagnosticWarning = diagnosticRows.some((diagnostic) =>
+        diagnostic.status === "warning" || diagnostic.status === "disabled" || diagnostic.status === "unknown",
+    );
+
     return (
         <div className={mergeClasses(styles.row, last ? styles.rowLast : undefined)}
             style={{ flexDirection: "column", alignItems: "stretch", gap: tokens.spacingVerticalXS }}
         >
             <div className={styles.rowMain}>
-                {provider.authenticated
+                {hasDiagnosticError
+                    ? <ErrorCircle16Regular className={styles.statusIconError} />
+                    : provider.authenticated && !hasDiagnosticWarning
                     ? <CheckmarkCircle16Regular className={styles.statusIconOk} />
                     : <Warning16Regular className={styles.statusIconWarning} />}
                 <div className={styles.rowContent}>
@@ -190,6 +230,23 @@ function ProviderRow({
                 <div className={styles.capabilityRow}>
                     {chips.map((chip) => (
                         <Badge key={chip.label} appearance="tint" color="informative">{chip.label}</Badge>
+                    ))}
+                </div>
+            ) : null}
+            {diagnosticsLoading ? (
+                <div className={styles.capabilityRow}>
+                    <Spinner size="tiny" label={`Checking ${provider.name}`} />
+                </div>
+            ) : diagnosticRows.length > 0 ? (
+                <div className={styles.diagnosticList}>
+                    {diagnosticRows.map((diagnostic) => (
+                        <div key={diagnostic.kind} className={styles.diagnosticItem}>
+                            {diagnosticIcon(diagnostic.status, styles)}
+                            <div className={styles.rowContent}>
+                                <Text size={200}>{diagnostic.message}</Text>
+                                <Caption1 className={styles.mutedText}>{diagnostic.kind}</Caption1>
+                            </div>
+                        </div>
                     ))}
                 </div>
             ) : null}
@@ -221,6 +278,14 @@ const StatusPage = () => {
         queryFn: () => api.getStreamingProviders(),
         refetchInterval: 30000,
     });
+    const providerDiagnosticsQueries = useQueries({
+        queries: (providersResponse?.providers ?? []).map((provider) => ({
+            queryKey: ["provider-diagnostics", provider.id],
+            queryFn: () => api.getProviderDiagnostics(provider.id),
+            refetchInterval: 30000,
+            staleTime: 30000,
+        })),
+    });
 
     const { data: overview } = useQuery({
         queryKey: ["status-overview", "status-page"],
@@ -229,9 +294,18 @@ const StatusPage = () => {
     });
 
     const isLoading = statusLoading || providersLoading;
-    const providers = (providersResponse?.providers ?? []).filter(
-        (provider) => provider.authenticated || provider.management.canDisconnect,
-    );
+    const providers = providersResponse?.providers ?? [];
+    const diagnosticsByProvider = new Map<string, {
+        data?: ProviderDiagnosticsResponse;
+        isLoading: boolean;
+    }>();
+    providers.forEach((provider, index) => {
+        const query = providerDiagnosticsQueries[index];
+        diagnosticsByProvider.set(provider.id, {
+            data: query?.data,
+            isLoading: Boolean(query?.isLoading),
+        });
+    });
 
     const pathChecks = status
         ? [
@@ -334,6 +408,8 @@ const StatusPage = () => {
                                     <ProviderRow
                                         key={provider.id}
                                         provider={provider}
+                                        diagnostics={diagnosticsByProvider.get(provider.id)?.data}
+                                        diagnosticsLoading={diagnosticsByProvider.get(provider.id)?.isLoading}
                                         styles={styles}
                                         last={index === providers.length - 1 && !overview?.rateLimitMetrics}
                                     />

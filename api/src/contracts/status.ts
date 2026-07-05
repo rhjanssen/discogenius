@@ -28,6 +28,13 @@ export interface DownloadTrackProgressContract {
   title: string;
   trackNum?: number;
   status: DownloadTrackStatusContract;
+  /**
+   * Provider track id (tiddl stages files as `{providerTrackId}.ext`). The
+   * hard link for per-track state. The tiddl wrapper emits this for native
+   * progress events; title matching is only a fallback for legacy/partial
+   * events.
+   */
+  providerTrackId?: string;
 }
 
 export interface QueueItemContract {
@@ -55,6 +62,9 @@ export interface QueueItemContract {
   currentFileNum?: number;
   totalFiles?: number;
   currentTrack?: string;
+  currentProviderTrackId?: string;
+  currentTrackNum?: number;
+  currentVolumeNum?: number;
   trackProgress?: number;
   trackStatus?: DownloadTrackStatusContract;
   statusMessage?: string;
@@ -106,6 +116,9 @@ export interface DownloadProgressContract {
   totalFiles?: number;
   currentFileNum?: number;
   currentTrack?: string;
+  currentProviderTrackId?: string;
+  currentTrackNum?: number;
+  currentVolumeNum?: number;
   trackProgress?: number;
   trackStatus?: DownloadTrackStatusContract;
   statusMessage?: string;
@@ -208,6 +221,7 @@ function parseDownloadTrackProgressContract(value: unknown, index: number, label
     title: expectString(record.title, `${label}[${index}].title`),
     trackNum: expectOptionalNumber(record.trackNum, `${label}[${index}].trackNum`),
     status: status as DownloadTrackStatusContract,
+    providerTrackId: expectOptionalString(record.providerTrackId, `${label}[${index}].providerTrackId`),
   };
 }
 
@@ -256,6 +270,9 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
     currentFileNum: expectOptionalNumber(record.currentFileNum, `${label}.currentFileNum`),
     totalFiles: expectOptionalNumber(record.totalFiles, `${label}.totalFiles`),
     currentTrack: expectOptionalString(record.currentTrack, `${label}.currentTrack`),
+    currentProviderTrackId: expectOptionalString(record.currentProviderTrackId, `${label}.currentProviderTrackId`),
+    currentTrackNum: expectOptionalNumber(record.currentTrackNum, `${label}.currentTrackNum`),
+    currentVolumeNum: expectOptionalNumber(record.currentVolumeNum, `${label}.currentVolumeNum`),
     trackProgress: expectOptionalNumber(record.trackProgress, `${label}.trackProgress`),
     trackStatus: trackStatus as DownloadTrackStatusContract | undefined,
     statusMessage: expectOptionalString(record.statusMessage, `${label}.statusMessage`),
@@ -409,6 +426,9 @@ export function parseDownloadProgressContract(value: unknown): DownloadProgressC
     totalFiles: expectOptionalNumber(record.totalFiles, "downloadProgress.totalFiles"),
     currentFileNum: expectOptionalNumber(record.currentFileNum, "downloadProgress.currentFileNum"),
     currentTrack: expectOptionalString(record.currentTrack, "downloadProgress.currentTrack"),
+    currentProviderTrackId: expectOptionalString(record.currentProviderTrackId, "downloadProgress.currentProviderTrackId"),
+    currentTrackNum: expectOptionalNumber(record.currentTrackNum, "downloadProgress.currentTrackNum"),
+    currentVolumeNum: expectOptionalNumber(record.currentVolumeNum, "downloadProgress.currentVolumeNum"),
     trackProgress: expectOptionalNumber(record.trackProgress, "downloadProgress.trackProgress"),
     trackStatus: trackStatus as DownloadTrackStatusContract | undefined,
     statusMessage: expectOptionalString(record.statusMessage, "downloadProgress.statusMessage"),

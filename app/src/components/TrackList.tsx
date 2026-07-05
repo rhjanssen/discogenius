@@ -38,6 +38,7 @@ interface TrackListProps<T extends TrackListItem = TrackListItem> {
   showArtist?: boolean;
   showAlbum?: boolean;
   showQuality?: boolean;
+  showFileQualityDifferences?: boolean;
   showVolumeHeaders?: boolean;
   showDownloadedColumn?: boolean;
   /** Disable the sticky table header — set false for a virtualized full-page scroll container (e.g. Library). */
@@ -228,6 +229,25 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalXXS,
     minWidth: 0,
   },
+  qualityStack: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: tokens.spacingVerticalXXS,
+    minWidth: 0,
+  },
+  fileQualityRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
+    minWidth: 0,
+  },
+  fileQualityLabel: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
+    lineHeight: tokens.lineHeightBase100,
+  },
   durationText: {
     color: tokens.colorNeutralForeground3,
     fontVariantNumeric: "tabular-nums",
@@ -279,7 +299,32 @@ const getAlbumArtworkUrl = (track: TrackListItem) =>
 const getDisplayTitle = (track: TrackListItem) =>
   track.version ? `${track.title} (${track.version})` : track.title;
 const getQualityTags = (track: TrackListItem): string[] => orderedQualityTags(track);
+const getFileQualityTags = (files: TrackFiles): string[] => orderedQualityTags({
+  qualityTags: files
+    .filter((file) => String(file.file_type || "track") === "track")
+    .map((file) => file.quality),
+});
+const qualityTagsDiffer = (left: string[], right: string[]) => {
+  const normalize = (values: string[]) => values.map((value) => value.toUpperCase()).sort();
+  const leftValues = normalize(left);
+  const rightValues = normalize(right);
+  return leftValues.length !== rightValues.length || leftValues.some((value, index) => value !== rightValues[index]);
+};
 const isDownloadedTrack = (track: TrackListItem) => Boolean(track.is_downloaded ?? track.downloaded);
+const looksLikeMusicBrainzMbid = (value: string | null | undefined) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+const canResolveProviderTrack = (track: TrackListItem) => {
+  if (track.preview_provider_track_id) {
+    return true;
+  }
+
+  const releaseGroupMbid = track.album_id ?? track.album?.id ?? null;
+  const canonicalTrackMbid = track.musicbrainz_track_id ?? (looksLikeMusicBrainzMbid(track.id) ? track.id : null);
+  return Boolean(
+    looksLikeMusicBrainzMbid(releaseGroupMbid)
+    && (looksLikeMusicBrainzMbid(canonicalTrackMbid) || looksLikeMusicBrainzMbid(track.musicbrainz_recording_id)),
+  );
+};
 
 const getDisplayNumber = (track: TrackListItem, index: number, numbering: TrackNumbering) => {
   if (numbering === "index") {
@@ -309,6 +354,7 @@ const TrackList = <T extends TrackListItem>({
   showArtist = false,
   showAlbum = false,
   showQuality = true,
+  showFileQualityDifferences = false,
   showVolumeHeaders = false,
   showDownloadedColumn = false,
   disableStickyHeader = true,
@@ -532,7 +578,7 @@ const TrackList = <T extends TrackListItem>({
   const renderCover = useCallback((track: T) => {
     const isPlaying = playingTrackId === track.id;
     const audioFile = getTrackAudioFile(track);
-    const canPlay = Boolean(isDownloadedTrack(track) || audioFile || track.preview_provider_track_id);
+    const canPlay = Boolean(isDownloadedTrack(track) || audioFile || canResolveProviderTrack(track));
     const coverUrl = getAlbumArtworkUrl(track);
     const renderableCoverUrl = coverUrl && !failedCoverUrls.has(coverUrl)
       ? renderableArtworkUrl(coverUrl)
@@ -604,7 +650,7 @@ const TrackList = <T extends TrackListItem>({
           render: (track, index) => {
             const isPlaying = playingTrackId === track.id;
             const audioFile = getTrackAudioFile(track);
-            const canPlay = Boolean(isDownloadedTrack(track) || audioFile || track.preview_provider_track_id);
+            const canPlay = Boolean(isDownloadedTrack(track) || audioFile || canResolveProviderTrack(track));
 
             return (
               <button
@@ -689,14 +735,30 @@ const TrackList = <T extends TrackListItem>({
       trackColumns.push({
         key: "quality",
         header: "Quality",
-        width: hasMultipleQuality ? "146px" : "92px",
-        render: (track) => (
-          <div className={styles.qualityContent}>
-            {getQualityTags(track).map((quality) => (
-              <QualityBadge key={quality} quality={quality} size="small" />
-            ))}
-          </div>
-        ),
+        width: showFileQualityDifferences ? "170px" : hasMultipleQuality ? "146px" : "92px",
+        render: (track) => {
+          const providerQualityTags = getQualityTags(track);
+          const fileQualityTags = showFileQualityDifferences ? getFileQualityTags(getTrackFiles(track)) : [];
+          const showFileQuality = fileQualityTags.length > 0 && qualityTagsDiffer(providerQualityTags, fileQualityTags);
+
+          return (
+            <div className={styles.qualityStack}>
+              <div className={styles.qualityContent}>
+                {providerQualityTags.map((quality) => (
+                  <QualityBadge key={quality} quality={quality} size="small" />
+                ))}
+              </div>
+              {showFileQuality ? (
+                <div className={styles.fileQualityRow}>
+                  <Text as="span" className={styles.fileQualityLabel}>File</Text>
+                  {fileQualityTags.map((quality) => (
+                    <QualityBadge key={`file-${quality}`} quality={quality} size="small" />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        },
       });
     }
 
@@ -737,7 +799,7 @@ const TrackList = <T extends TrackListItem>({
       align: "right",
       render: (track) => {
         const isDownloaded = isDownloadedTrack(track);
-        const canDownload = Boolean(onDownloadTrack && track.preview_provider_track_id);
+        const canDownload = Boolean(onDownloadTrack && canResolveProviderTrack(track));
         const canShowInfo = isDownloaded || getTrackFiles(track).length > 0;
 
         return (
@@ -792,11 +854,14 @@ const TrackList = <T extends TrackListItem>({
     showArtist,
     showCover,
     showDownloadedColumn,
+    showFileQualityDifferences,
     showQuality,
     styles.actionCellContent,
     styles.checkIcon,
     styles.durationText,
     styles.emptyCheck,
+    styles.fileQualityLabel,
+    styles.fileQualityRow,
     styles.linkText,
     styles.numberButton,
     styles.numberText,
@@ -804,6 +869,7 @@ const TrackList = <T extends TrackListItem>({
     styles.playOverlay,
     styles.playOverlayActive,
     styles.qualityContent,
+    styles.qualityStack,
     toggleTrackPlayback,
   ]);
 

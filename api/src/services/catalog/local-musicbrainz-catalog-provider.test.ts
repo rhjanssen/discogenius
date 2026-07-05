@@ -144,6 +144,7 @@ test("mapMbReleaseToLidarr flattens media/tracks/recording", () => {
   assert.equal(track.TrackPosition, 1);
   assert.equal(track.MediumNumber, 1);
   assert.equal(track.DurationMs, 363000);
+  assert.deepEqual(track.Isrcs, ["USSM18200001"]);
 });
 
 test("mapMbRecordingToCatalog carries isrcs + flattened credit", () => {

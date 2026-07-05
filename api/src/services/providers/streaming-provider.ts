@@ -32,9 +32,65 @@ export interface ProviderCapabilities {
   videoQuality?: string;
 }
 
+export type ProviderAuthKind = "oauth-device" | "developer-token" | "external" | "none";
+export type ProviderDiagnosticKind = "auth" | "catalog" | "download-backend" | "rate-limit";
+export type ProviderDiagnosticStatus = "ok" | "warning" | "error" | "disabled" | "unknown";
+
+export interface ProviderManifest {
+  /** Stable plugin/provider id used in config, provider evidence, and download routing. */
+  id: string;
+  displayName: string;
+  /** Directory under config/providers/ where provider-owned auth/config artifacts live. */
+  configRoot: string;
+  auth: {
+    kind: ProviderAuthKind;
+    /** True when the provider can start/complete auth from Discogenius UI routes. */
+    managedByApp: boolean;
+    credentialFields?: Array<{
+      key: string;
+      label: string;
+      secret?: boolean;
+      required?: boolean;
+      helpText?: string;
+    }>;
+  };
+  integration: {
+    /** Official, web-emulated, or external source used by the provider adapter for catalog/resource metadata. */
+    catalogSource: "official-api" | "web-api" | "unofficial-api" | "none";
+    /** How downloads are acquired. Kept descriptive so core code never branches on tool-specific setup. */
+    downloadSource: "native-cli" | "external-service" | "none";
+    /** Provider resource kinds whose providerId values are stable enough to persist in ProviderItems. */
+    stableResourceIds: Array<"artist" | "album" | "track" | "video" | "playlist">;
+  };
+  downloadBackends: Array<{
+    id: string;
+    capabilities: Array<"stereo" | "spatial" | "video">;
+    enabled: boolean;
+    /** Human-facing setup note for diagnostics/settings; never consumed by core workflow logic. */
+    setupNote?: string;
+  }>;
+  catalog: {
+    search: boolean;
+    artistCatalog: boolean;
+    releaseOffers: boolean;
+    videos: boolean;
+  };
+  imports: {
+    supported: ProviderImportSourceCategory[];
+  };
+  qualityMapping: {
+    neutral: boolean;
+    stereo: boolean;
+    spatial: boolean;
+    video: boolean;
+  };
+  diagnostics?: ProviderDiagnosticKind[];
+}
+
 export interface StreamingProvider {
   readonly id: string;
   readonly name: string;
+  readonly manifest?: ProviderManifest;
   readonly capabilities: ProviderCapabilities;
   /** Neutral <-> provider quality translation (omit only if the provider has no audio). */
   readonly qualityMapping?: ProviderQualityMapping;
@@ -68,6 +124,7 @@ export interface StreamingProvider {
   getLyrics?(trackId: string | number): Promise<ProviderLyrics | null>;
   
   logout?(): void | Promise<void>;
+  saveCredentials?(credentials: Record<string, unknown>): Promise<void> | void;
   loadToken?(): any;
   refreshProviderToken?(): Promise<void>;
   shouldRefreshToken?(): boolean;
@@ -77,6 +134,7 @@ export interface StreamingProvider {
   apiRequest?<T = any>(endpoint: string, options?: any): Promise<T>;
 
   getAuthStatus(): Promise<ProviderAuthStatus>;
+  getDiagnostics?(): Promise<ProviderDiagnosticResult[]>;
   startDeviceLogin?(): Promise<ProviderDeviceLoginResult>;
   pollDeviceLogin?(): Promise<ProviderDeviceLoginPollResult>;
   getMediaUrl?(type: string, providerId: string): string;
@@ -133,7 +191,20 @@ export interface ProviderDownloadProgress {
   eta?: string;
   size?: number;
   sizeleft?: number;
-  tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' }[];
+  tracks?: {
+    title: string;
+    trackNum?: number;
+    providerTrackId?: string;
+    status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
+  }[];
+}
+
+export interface ProviderDiagnosticResult {
+  kind: ProviderDiagnosticKind;
+  status: ProviderDiagnosticStatus;
+  message: string;
+  checkedAt: string;
+  details?: Record<string, unknown>;
 }
 
 export interface ProviderDownloadOptions {
@@ -167,13 +238,14 @@ export interface ProviderSearchOptions {
 }
 
 /**
- * Artist-import list categories. `followed-artists` and `favorite-tracks` are
- * single fixed lists (the category itself is the selection). `playlist` and `mix`
- * enumerate concrete lists the user picks from (their playlists, the home-screen
- * mixes/featured playlists). Defined on the provider abstraction so each provider
- * declares what it supports; TIDAL implements all four today.
+ * Artist-import list categories. `library-artists`, `followed-artists`, and
+ * `favorite-tracks` are single fixed lists (the category itself is the
+ * selection). `playlist` and `mix` enumerate concrete lists the user picks from
+ * (their playlists, the home-screen mixes/featured playlists). Defined on the
+ * provider abstraction so each provider declares what it supports.
  */
 export type ProviderImportSourceCategory =
+  | "library-artists"
   | "followed-artists"
   | "playlist"
   | "favorite-tracks"

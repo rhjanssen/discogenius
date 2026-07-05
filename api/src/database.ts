@@ -1330,6 +1330,11 @@ export function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_commands_status_name_started ON commands(status, name, started_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_commands_status_name_completed ON commands(status, name, completed_at DESC, id DESC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_commands_poll ON commands(status, priority DESC, trigger DESC, queue_order ASC, created_at ASC)`);
+  // Covering index for the queue-view id sort: filter + every live_activity /
+  // queue_order sort key. Without it the sorter walks each row's payload
+  // overflow pages, which costs seconds once the backlog reaches tens of
+  // thousands of commands.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_commands_queue_view ON commands(name, status, priority, trigger, queue_order, created_at, started_at, updated_at, id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled ON scheduled_tasks(enabled)`);
 
   // Library file indexes

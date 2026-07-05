@@ -14,6 +14,9 @@ import {
 export const AUDIO_QUALITY_VALUES = ["low", "normal", "high", "max"] as const;
 export type AudioQualityValue = (typeof AUDIO_QUALITY_VALUES)[number];
 
+export const CATALOG_SOURCE_VALUES = ["servarr", "musicbrainz"] as const;
+export type CatalogSourceValue = (typeof CATALOG_SOURCE_VALUES)[number];
+
 export const VIDEO_QUALITY_VALUES = ["sd", "hd", "fhd"] as const;
 export type VideoQualityValue = (typeof VIDEO_QUALITY_VALUES)[number];
 
@@ -81,6 +84,11 @@ export interface MetadataConfigContract {
   upc_target: UpcTargetValue;
   write_audio_tags_policy?: WriteAudioTagsPolicyValue;
   embed_replaygain?: boolean;
+}
+
+export interface CatalogConfigContract {
+  source: CatalogSourceValue;
+  musicbrainz_host: string;
 }
 
 export interface PathConfigContract {
@@ -213,6 +221,14 @@ export function parseMetadataConfigContract(value: unknown): MetadataConfigContr
     upc_target: expectOneOf(record.upc_target, UPC_TARGET_VALUES, "metadata.upc_target"),
     write_audio_tags_policy: expectOptionalOneOf(record.write_audio_tags_policy, WRITE_AUDIO_TAGS_POLICY_VALUES, "metadata.write_audio_tags_policy"),
     embed_replaygain: expectOptionalBoolean(record.embed_replaygain, "metadata.embed_replaygain"),
+  };
+}
+
+export function parseCatalogConfigContract(value: unknown): CatalogConfigContract {
+  const record = expectRecord(value, "Catalog config");
+  return {
+    source: expectOneOf(record.source, CATALOG_SOURCE_VALUES, "catalog.source"),
+    musicbrainz_host: expectString(record.musicbrainz_host, "catalog.musicbrainz_host"),
   };
 }
 

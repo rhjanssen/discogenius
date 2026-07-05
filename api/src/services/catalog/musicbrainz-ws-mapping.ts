@@ -169,6 +169,7 @@ export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): Lidarr
     TrackPosition: Number(track.position ?? 0),
     MediumNumber: mediumNumber,
     DurationMs: Number(lengthMs || 0),
+    Isrcs: Array.isArray(recording?.isrcs) ? recording.isrcs.filter(Boolean) : [],
   };
 }
 

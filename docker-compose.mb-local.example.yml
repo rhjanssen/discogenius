@@ -1,11 +1,13 @@
 # Dev compose snippet: stand up the MusicBrainz mirror alongside Discogenius so
-# MB-local mode (docs/DATA_MODEL_TARGET.md §3, docs/MB_LOCAL_MODE.md) can be
-# exercised later. NOT for production and NOT wired into the live app yet.
+# MB-local mode (docs/MB_LOCAL_MODE.md) can be exercised against a local
+# MusicBrainz-docker mirror. NOT for production.
 #
 # This file ONLY adds the Discogenius side of the wiring (a shared network + the
 # MB connection env vars). The MusicBrainz services themselves live in
-# `.ref_musicbrainz-docker/` — bring those up first per its README, then run
-# Discogenius on the same Docker network.
+# `.ref_musicbrainz-docker/` for local development/reference — bring those up
+# first per its README, then run Discogenius on the same Docker network. This is
+# deliberate: MusicBrainz-docker is stateful external infrastructure, not a
+# provider dependency bundled into the Discogenius image.
 #
 # Usage (two compose projects, one shared external network):
 #
@@ -26,9 +28,10 @@
 #          -f docker-compose.mb-local.example.yml \
 #          up -d
 #
-# Inside the shared network, Discogenius reaches:
-#   - the MB web-service mirror at  http://musicbrainz:5000/ws/2   (:5000 path — ships first)
-#   - the MB Postgres DB at         postgres://musicbrainz:musicbrainz@db:5432/musicbrainz_db   (perf follow-up)
+# Inside the shared network, Discogenius reads the canonical catalog from:
+#   - the MB Postgres DB at         postgres://musicbrainz:musicbrainz@db:5432/musicbrainz_db
+# and, when the full stack is available, uses:
+#   - the MB web-service mirror at  http://musicbrainz:5000/ws/2   (Solr-ranked search)
 #
 # (Service names `musicbrainz` and `db` come from .ref_musicbrainz-docker/docker-compose.yml.
 #  From the host instead of inside the network, use http://localhost:5000/ws/2.)
@@ -36,13 +39,11 @@
 services:
   discogenius:
     environment:
-      # --- MB-local mode (read by future LocalMusicBrainzCatalogProvider wiring) ---
-      # The :5000 web-service mirror — same JSON shape as musicbrainz.org/ws/2,
-      # but on your own instance with no 1-req/s rate limit.
+      # --- MB-local mode ---
+      # Host-only MusicBrainz-docker target. Discogenius derives Postgres
+      # :5432/musicbrainz_db and, when present, web/Solr :5000/ws/2 from this.
       - DISCOGENIUS_CATALOG_SOURCE=${DISCOGENIUS_CATALOG_SOURCE:-servarr-metadata} # servarr-metadata (default) | musicbrainz-local
-      - MB_LOCAL_WS_URL=${MB_LOCAL_WS_URL:-http://musicbrainz:5000/ws/2}
-      # Direct Postgres path (performance follow-up; leave unset until enabled):
-      - MB_LOCAL_PG_URL=${MB_LOCAL_PG_URL:-}
+      - MB_LOCAL_HOST=${MB_LOCAL_HOST:-db}
     networks:
       - musicbrainz
 

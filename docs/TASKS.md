@@ -216,6 +216,19 @@ this release.)
   Charles Orchestra live — unmatched 35→14) and multi-identity hydration
   (`resolveProviderArtistIds` unions release catalogs when a provider splits
   one artist into several entries, e.g. TIDAL's two Concertgebouworkest ids).
+- done (2026-07-03, branch 2.1.1): provider-artist identity fallback now uses
+  structured provider album evidence instead of title strings only. When
+  name/alias/URL evidence is inconclusive, the resolver samples provider albums
+  (title, UPC, date, type, track/volume count), expands the MusicBrainz
+  candidate set via bounded Servarr `type=all` release searches, and scores
+  artist candidates with the existing release matcher evidence tiers (UPC/ISRC
+  when exposed, then release-title/year/type/track-shape). The sampler strips
+  remix/version noise, searches short titles first, paces metadata calls, and
+  exits once a candidate clears the ambiguity guard. Live validation:
+  TIDAL `33469788` "Eden" resolves to MusicBrainz
+  `1be7cde4-8c97-4a83-8a85-5fd251da4be8` (Eden Alene) via
+  `provider-discography-release-search` from shared release evidence, despite
+  the provider catalog also containing unrelated homonymous "Eden" releases.
 - done (2026-07-02): provider↔MusicBrainz matching now uses canonical provider
   URL relationships before falling back to names/titles. Artist import accepts
   exact MusicBrainz artist URLs and high-confidence alias-prefix matches (fixes
@@ -707,25 +720,304 @@ area.
   (available via `/api/v1/status`'s `rateLimitMetrics` but not yet wired
   into the new page — pending, low effort to add later).
 
+## 2.1.1 - Queue Robustness And Load Responsiveness
+
+Scope: keep the app usable while tens of thousands of downloads are queued —
+download coordination off the main thread, real per-track download progress,
+cheap queue/stats reads, and the queue-card/boot UX polish from the 2.1.1 arc.
+
+- done (2026-07-02): Download coordinator moved into a dedicated worker thread
+  (`DownloadProcessorWorkerProxy` + `download-processor-worker-entry.ts`).
+  The proxy relays main-thread `COMMAND_ADDED` events into the worker (route
+  and command-worker enqueues now wake it), command workers get an inert stub
+  so the upgrader cannot start a competing download loop, and worker status
+  posts before request acks so pause/resume status is never stale. Smoke test
+  under WSL passed (initialize/pause/resume round-trips + event bridging).
+  2026-07-03 hardening: only `initialize()` may spawn the worker (control
+  calls pre-init no-op) and the worker is unref()'d — otherwise any api test
+  touching the upgrader spawned a worker thread that kept the node test
+  runner alive forever (upgrader-canonical hang). Full suite 431/431 after.
+- done (2026-07-02): True numeric per-track download progress via a provider-
+  side tiddl wrapper (`tiddl-progress-wrapper.py`) that monkey-patches
+  `RichOutput.download_start/advance/finish` + `aiohttp.ClientSession._request`
+  and emits `DISCOGENIUS_TIDDL_PROGRESS` JSONL on stderr (bytesTotal from
+  Content-Length → percent). Emission is throttled (percent change or 250ms),
+  writes are single-syscall atomic (ffmpeg shares the stderr pipe and split a
+  JSON line mid-write), and the backend ignores fragment lines defensively.
+  Verified live: percent flows wrapper → backend → worker → SSE → QueueTab.
+- done (2026-07-02): Fixed progress state loss: `persistDownloadState` now
+  merges partial progress events into the buffered snapshot instead of
+  replacing it (a generic status line used to wipe per-track fields before the
+  1s flush), and resets per-track fields when the current track changes.
+- done (2026-07-02): Fixed the under-load collapse. Root cause: the SSE
+  progress-stream handler called `getActiveProgressSnapshots()`, which mapped
+  the ENTIRE backlog (5000-row cap, ~33s of synchronous main-thread work at
+  ~28k queued commands) per connection — reconnecting EventSources piled up
+  and livelocked the API. It now maps only `started` jobs (~15ms). Also:
+  id-first sorted pagination in `listJobsByTypesAndStatuses` (payload blobs no
+  longer dragged through the sorter), `ROW_NUMBER()` queue positions instead
+  of a correlated COUNT per row, a covering index
+  (`idx_commands_queue_view`), a 1.5s event-invalidated snapshot cache for
+  queue/history/details/status reads, and stale-while-revalidate `/stats`.
+  Measured: `getQueue(50)` 3.1s → 0.9s cold / 0ms cached; snapshots 33s →
+  14ms; event-loop p95 ~20ms with 28k queued commands during active
+  downloads + imports.
+- done (2026-07-02): Frontend request fan-out: dashboard feeds ignore
+  per-second `command.updated` progress ticks (SSE carries live progress) and
+  poll only as fallback (queue 5s, history/activity 15s);
+  `QueueStatusProvider` no longer double-fires invalidate+refetch pairs.
+- done (2026-07-03): Removed the remaining avoidable Library mount fetch. The
+  `useLibrary` hook now initializes artist/album server-side filters, sort, and
+  album library/download/lock filters from the same persisted settings that the
+  Library page renders, instead of mounting under broad default query keys and
+  immediately replacing them from a later effect. Browser CDP verification on a
+  dev build showed the first `/api/v1/artist` request already included
+  `monitored=true` and no aborted artist requests were emitted during the
+  capture.
+- done (2026-07-02): UI polish per feedback: error pages use the Fluent
+  `ErrorCircle48Color` icon (general icons stay monochrome regular); the
+  Lidarr-style pulsing-circles indicator is gone (Fluent `Spinner` for route
+  fallbacks); the boot page shows a larger Discogenius logo with the Auth-page
+  blur-glow behind it, pulsing as the loading indicator (funny lines kept).
+  Boot is a short bounded phase again: 4s auth-status check, then the app
+  loads optimistically even if the API is slow (no fatal access-gate page).
+- done (2026-07-03): Album-level download progress now derives from item
+  counts, like imports. tiddl's "Total Progress" panel is a Rich Live table
+  that never prints on a piped stdout (why cards sat at 0% then jumped to
+  done). The wrapper hooks `RichOutput.total_increment` (queue_total) and
+  `show_item_result` (queue_progress — fires for downloaded, overwritten AND
+  already-existing items, so skips don't stall the bar); the backend converts
+  completed/total into progress + currentFileNum/totalFiles. Validated live:
+  33-item album climbing 27%→30%→38% with 10/33→14/33 file counts.
+- done (2026-07-03): Track rows now update live and correctly under tiddl's
+  parallel downloads: per-title statuses accumulate across the progress
+  buffer window (`trackStatusByTitle`) and are applied to catalog rows by
+  longest-prefix title match, with index inference kept as the import-path
+  fallback; the SSE client applies the same per-title updates between polls.
+  Fixed OSC-8 hyperlink escapes (Rich file links) leaking into
+  statusMessages — stripAnsi now removes OSC sequences.
+- done (2026-07-03): Queue card indicator scheme per design feedback: active
+  download/import rows show a spinner; downloaded rows show a brand-orange
+  filled checkmark; download+import complete uses the multicolor
+  CheckmarkCircle Color variant (also for history completed); the group chip
+  shows spinner + "importing" (checkmark removed). Active and history cards
+  share one desktop layout (title + artist left on one line, badges +
+  progress/indicator right); mobile keeps the stacked layout.
+- done (2026-07-03): Import progress rows now preserve the album tracklist
+  across the download -> import handoff, import progress SSE includes the
+  active track list, and the organizer emits per-track import progress before
+  it starts moving/tagging the file (then completion after the file record is
+  written). Queue rows merge live SSE progress with persisted queue rows so
+  active import rows show a spinner instead of stale downloaded/completed
+  state. Removed visible "importing" row/header text; the spinner/checkmark
+  icons carry the state. Desktop and mobile dev-preview checks passed.
+- done (2026-07-03): Hardened the import progress handoff after live feedback:
+  every download/import progress event now carries the current stored track
+  list when the tick itself is partial, so the browser can render the active
+  import spinner immediately instead of waiting for the next queue poll.
+- done (2026-07-03): Hardened the dashboard queue fallback refresh. The active
+  queue feed now polls the first page once per second with a short timeout and
+  replaces the previously loaded first page instead of merging stale completed
+  rows back into Active; additional loaded pages remain preserved for manual
+  pagination.
+- done (2026-07-03): Provider track evidence is now materialized instead of
+  buried in album JSON. Whenever the TIDAL album-track API is fetched for
+  disambiguation or album refresh, Discogenius persists real
+  `ProviderItems(entity_type='track')` rows keyed by provider track id and maps
+  them to MusicBrainz tracks by selected-release medium/position. Album
+  provider rows no longer store `data.tracks`; the provider-track table shape is
+  the locked contract for future streaming plugins and local-MusicBrainz mode.
+- done (2026-07-03): TIDAL/tiddl staging filenames now use provider identity
+  (`{album.id}/{item.id}` for audio and `{item.id}` for videos) instead of
+  track number + title. This is deliberately download-workspace-only: final
+  managed library filenames still come from Discogenius naming profiles and
+  canonical MusicBrainz metadata. The album importer now matches staged files
+  through the materialized provider track id -> MusicBrainz map only, with the
+  old title/ISRC/track-number/blob-overlay fallbacks removed. Focused WSL
+  coverage was retargeted in `organizer-canonical.test.ts`.
+- done (2026-07-03): Provider-id import matching now tolerates stale/partial
+  materialization. If any staged numeric provider-id filename is not present in
+  the album's `ProviderItems(entity_type='track')` rows, the organizer forces
+  one provider track refresh and retries the exact-id match before reporting
+  an unmatched file.
+- done (2026-07-03): Download and import now use one persisted lifecycle row.
+  `DownloadAlbum`/`DownloadTrack`/`DownloadVideo` stay `started` through the
+  import phase and transition their `downloadState` from downloading to
+  import-pending/importing/completed; the import worker runs as a transient
+  internal phase on the same command id. The queue/history UI no longer needs a
+  separate `ImportDownload` row to represent the same logical download.
+- done (2026-07-03): `DownloadMissing` no longer bulk-enqueues the entire
+  wanted backlog as tens of thousands of concrete download rows. It runs as a
+  bounded coordinator that recomputes monitored missing media from canonical
+  library state, keeps at most 50 concrete download commands buffered, treats
+  failed rows as represented until retry/clear, and refills as the queue drains.
+  Focused WSL coverage asserts monitored albums can be queued in bounded
+  batches.
+- done (2026-07-03): Empty or missing download workspaces no longer fail as
+  opaque "No media files found" imports. The import service now detects whether
+  the staged workspace actually contains supported media files; if not, it
+  recovers already-imported library files when possible and otherwise emits a
+  retryable "Re-download the item to retry import" failure so download recovery
+  queues a fresh download even when the stale workspace directory still exists.
+  Focused WSL coverage was added in `download-recovery-canonical.test.ts`.
+- done (2026-07-03): Schema-contract audit added for the provider-plugin/local
+  MusicBrainz boundary. Fresh-schema tests now assert that catalog rows keep
+  integer catalog FKs, have no raw `data` blobs, and do not store provider
+  resource evidence (`provider`, `provider_id`, provider URLs/assets, UPC, or
+  ISRC). `ProviderItems` and `ProviderItemMatches` are asserted to remain
+  provider-agnostic evidence/match-edge tables with MusicBrainz IDs as targets.
+  `AlbumReleases.barcode` is intentionally retained for canonical MusicBrainz
+  release barcodes; provider UPC stays in `ProviderItems.upc`.
+- revisit: A full Lidarr-style in-memory queue projection is still useful if
+  the bounded concrete queue ever becomes insufficient, but the 28k-row backlog
+  is no longer materialized into the active download queue by `DownloadMissing`.
+
 ## 2.2 - Streaming Provider Expansion
 
-Scope: make additional streaming-service integrations real without changing the
-database model for each provider. TIDAL is the only fully working provider
-today; Apple Music is planned but not yet functional end to end.
+Scope: 2.2.0 currently focuses on local MusicBrainz catalog mode and the
+download/import simplification that it unlocks. Additional streaming providers
+remain planned, but are no longer the first 2.2 cut.
 
-- pending: Finish the Apple Music provider and bring it to TIDAL parity:
-  auth/token handling, catalog and artist search, followed/favorite import,
-  lossless/spatial/video downloads, lyrics, artwork, download backend binding,
-  provider capability reporting, diagnostics, and provider evidence capture.
-- pending: Harden the provider abstraction so adding a provider is a plugin-level
-  integration, not a schema change. Providers remain availability/download
-  resources only.
-- pending: Define the provider-plugin contract: provider manifest, capability
-  descriptors, auth lifecycle, catalog/offers API, download backend binding,
-  lyrics/artwork hooks, quality mapping, and diagnostics.
-- pending: Add at least one more provider candidate after Apple Music as a proof
+- done (2026-07-04): Local MusicBrainz-docker mode now has a runtime
+  `PostgresMusicBrainzCatalogProvider` that reads the MusicBrainz Postgres
+  schema directly and optionally uses the co-located `/ws/2` Solr search when
+  reachable. The provider registry switches from config, sync paths fetch
+  through the active provider, global search and artist lookup/manual-match
+  candidate search use the active provider, MB recording ISRCs persist to the
+  curated `Recordings.isrcs` column, and MB mode was smoke-tested live against
+  `192.168.1.100` (`Bakermat`, `Strandfeest`).
+- done (2026-07-04): MusicBrainz settings are host-only. Users enter
+  `192.168.1.100`, `musicbrainz.mydomain.com`, `db`, or `host:postgresPort`;
+  Discogenius derives the Postgres DSN and optional `/ws/2` probe. Old
+  `musicbrainz_url` / `MB_LOCAL_WS_URL` compatibility paths were deliberately
+  removed while the schema/config surface is still in active development.
+  Focused coverage now asserts host normalization and DSN/search-URL derivation.
+- done (2026-07-04): MB mode artwork now keeps Servarr/fanart as the preferred
+  artist-image supplement and provider artist pictures as backup; album art
+  remains Servarr/CAA/provider.
+- done (2026-07-04): MB-local Solr search now hydrates artist hits from
+  Postgres before returning them, so global search, artist lookup, manual match,
+  and import-identity flows get full release-group/discography evidence instead
+  of Solr-only artist shells.
+- done (2026-07-04): Credited-release discovery now uses the active catalog
+  source. In MB-local mode it queries MusicBrainz Postgres for release groups
+  plus full artist-credit rows instead of calling public `musicbrainz.org/ws/2`;
+  Servarr mode keeps the previous web fallback.
+- done (2026-07-04): TIDAL/tiddl progress now carries provider track identity
+  from the native downloader item context. The wrapper patches
+  `Downloader.download` as well as Rich progress hooks, emits
+  `providerTrackId`, provider track number, and volume number on item progress,
+  and suppresses duplicate completion events when tiddl reports both download
+  finish and item result. Backend queue snapshots/SSE and the frontend progress
+  cache now prefer provider-id row matching, with title matching kept only as a
+  legacy/partial-event fallback.
+- done (2026-07-05): Added the first provider-plugin manifest contract slice.
+  `StreamingProvider` now exposes an optional manifest describing provider id,
+  config root, auth mode, download backends, catalog/import capabilities,
+  quality mapping coverage, and a typed diagnostics vocabulary. TIDAL and
+  Apple Music publish manifests, `/api/v1/provider` returns them, frontend
+  provider status types understand them, and the provider registry test asserts
+  built-in manifest consistency. Route management flags no longer hardcode
+  TIDAL authentication.
+- done (2026-07-05): Provider diagnostics now execute from the manifest contract
+  instead of being only descriptive strings. `getProviderDiagnostics` produces
+  typed auth/catalog/download-backend/rate-limit rows from cheap local checks,
+  verifies declared download backends against the registered backend map, and is
+  exposed at `/api/v1/provider/:providerId/diagnostics` with frontend response
+  types. The System Status provider card now renders these diagnostic rows for
+  each provider, including disconnected providers such as Apple Music. Focused
+  provider diagnostics and registry tests cover the contract; the UI was
+  browser-verified through the Vite dev server against the local API.
+- done (2026-07-05): Auth lifecycle routes no longer assume TIDAL as the
+  implicit provider. Device login, login polling, and logout now default to the
+  configured streaming provider, and aggregate auth status derives
+  `canAuthenticate` from providers that actually declare app-managed auth plus
+  a device-login handler.
+- done (2026-07-05): Provider contract hardened beyond the first manifest
+  slice. Manifests now declare integration source (`official-api`, `web-api`,
+  `unofficial-api`), download source (`native-cli`, external service, none),
+  stable provider resource-id kinds, optional credential fields, download-backend
+  setup notes, and import-source categories. The shared import category set now
+  includes `library-artists` for Apple/YouTube-style library imports, and
+  `docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md` documents the TIDAL/Apple/YouTube
+  common denominator.
+- done (2026-07-05): Apple Music provider buildout advanced through the offline
+  contract slice. Apple now exposes `library-artists` and `playlist` import
+  sources through the same import command/modal contract as TIDAL, maps Apple
+  library resources back to catalog artist/track evidence when available, and
+  has a generic credential-save route/UI path for the required media-user-token,
+  optional bearer/developer-token override, and storefront credentials. The Apple
+  auth path now mirrors the downloader by auto-resolving the Apple Music web
+  bearer token when no override is supplied. The Apple downloader wrapper
+  now matches `zhaarey/apple-music-downloader`'s actual runtime shape: managed
+  `config.yaml`, job-specific save folders, provider-id file/folder templates,
+  cwd-based invocation, and album/track/video URL construction. Focused provider
+  tests cover Apple import sources, manifest consistency, diagnostics, and
+  downloader args.
+- done (2026-07-05): Apple Music pre-live downloader diagnostics and progress
+  parsing are wired. The provider now reports Apple-specific provisioning facts
+  (download enable flag, downloader binary, MP4Box, mp4decrypt, wrapper ports,
+  managed config presence) through System Status diagnostics, and the downloader
+  backend parses native output (`Track x of y`, provider-id filename lines,
+  downloaded/decrypted/existing/error status) into Discogenius progress events
+  keyed by Apple provider ids. Focused provider tests cover the parser and
+  readiness snapshot.
+- done (2026-07-05): Apple Music credential save now performs a real user-token
+  validation probe before persisting credentials. The provider calls Apple's
+  `/v1/me/storefront` endpoint with the supplied `media-user-token` plus the
+  auto-resolved or overridden bearer token, then stores the detected storefront
+  when the user leaves storefront blank. Fixture-backed tests cover the
+  validation mapper; live success still needs Robert's Apple Music token.
+- done (2026-07-05): Apple Music downloader provisioning advanced one step in
+  the Docker runtime. The production image now copies the upstream static
+  `apple-music-dl` binary from a digest-pinned
+  `ghcr.io/zhaarey/apple-music-downloader` image, keeps an
+  `apple-music-downloader` compatibility symlink, and defaults
+  `APPLE_MUSIC_DL_BIN=apple-music-dl`. Compose files include a disabled Apple
+  wrapper sidecar profile that shares Discogenius's network namespace so the
+  downloader can reach wrapper ports on `127.0.0.1`. MP4Box and the wrapper's
+  authenticated rootfs are intentionally reported by diagnostics as separate
+  live-download prerequisites, without adding another global enable/disable env
+  flag.
+- done (2026-07-05): External dependency policy documented in
+  `docs/EXTERNAL_DEPENDENCIES.md`. Provider direct-spawn tools are bundled or
+  mounted through pinned artifacts and diagnostics; provider sidecars are
+  optional Compose profiles; stateful catalog infrastructure such as
+  MusicBrainz-docker remains external/user-managed and is joined over the
+  network instead of being cloned or built into the Discogenius image.
+- done (2026-07-05): Release validation for the 2.2.0 TIDAL path passed on a
+  fresh runtime DB. Live flow: searched and added Bakermat, refreshed and
+  provider-matched against TIDAL, curated monitored slots/videos, downloaded
+  three TIDAL tracks, imported them into the managed stereo library, verified
+  artwork on search/artist/album/dashboard queue-history surfaces, verified new
+  `TrackFiles.duration` persistence and refreshed artist statistics, and
+  confirmed retag status reported no immediate retag work for freshly imported
+  TIDAL files. Full WSL `yarn ci` passed afterward: lint, API build, app
+  typecheck, 456 API tests, and production builds.
+
+- pending (2.2.1): Finish the Apple Music provider and bring it to TIDAL parity:
+  live Apple credentials validation using Robert's account, catalog/search smoke
+  tests against the real API, import-source smoke tests, MP4Box/wrapper runtime
+  provisioning around the packaged `zhaarey/apple-music-downloader` CLI, real
+  lossless/spatial/video download validation, live progress parser confirmation,
+  lyrics/artwork sidecar behavior, and provider evidence capture during live
+  refresh/import.
+- pending (2.2.1): Complete the remaining provider-plugin contract beyond the offline
+  Apple slice: catalog/offers edge cases, download progress event semantics,
+  lyrics/artwork hooks, and quality mapping semantics validated against a live
+  second provider.
+- pending (2.2.1+): Add at least one more provider candidate after Apple Music as a proof
   of the plugin contract. Candidate selection should be based on available
-  download backend viability, not catalog-only browsing.
+  download backend viability, not catalog-only browsing. Current research points
+  to YouTube Music via `ytmusicapi` for catalog/user-library reads and `yubal`
+  / `yt-dlp` as the downloader reference because it exercises lossy audio and
+  higher-resolution video without new schema.
+- pending (2.2.1): Audit and trim the API test suite. The release gate now runs
+  456 API tests and is still useful for schema/provider/download regressions,
+  but too many tests duplicate broad behavior or lock in transitional details.
+  Categorize tests into release-contract, focused regression, and low-value
+  implementation-detail coverage; keep the first two, delete or collapse the
+  last category, and preserve focused live-flow checks for TIDAL.
 - pending: Add import sources for provider playlists, external chart lists, and
   the existing followed-artist set.
 - pending: Add import-list exclusions so removed items are not re-added.
@@ -748,22 +1040,23 @@ Scope: full metadata-provider/backend-mode implementation in backend and
 frontend. Users should be able to choose the hosted Servarr Metadata Server or a
 local MusicBrainz-docker instance.
 
-- pending: Wire `CatalogProvider` into the live runtime so artist search,
+- done (2026-07-04): Wire `CatalogProvider` into the live runtime so artist search,
   artist refresh, release-group refresh, matching, artwork hydration, and import
   identity all go through the selected catalog source instead of directly
   importing `ServarrMetadataService`.
-- pending: Add backend config and persistence for catalog source mode:
-  `servarr-metadata` and `musicbrainz-local`, plus the local `/ws/2` base URL,
-  health status, last successful check, and user-facing validation errors.
-- pending: Add frontend settings for catalog source selection: Servarr Metadata
+- done (2026-07-04): Add backend config and persistence for catalog source mode:
+  `servarr-metadata` and `musicbrainz-local`, plus the local MusicBrainz host,
+  connection test, and user-facing validation errors. Health history/last-successful
+  timestamps can be added once the status page is wired to catalog health.
+- done (2026-07-04): Add frontend settings for catalog source selection: Servarr Metadata
   Server as the hosted default, Local MusicBrainz as the advanced/self-hosted
-  mode, with connection test, clear warnings about setup cost, and links to
+  mode, with host-only connection test, clear warnings about setup cost, and links to
   `docs/MB_LOCAL_MODE.md`.
 - pending: Implement safe mode switching. Switching from MB-local to Servarr
   Metadata Server must build the local canonical cache for monitored artists;
   switching from Servarr Metadata Server to MB-local must avoid destructive cache
   churn and should lazily refresh records through MBIDs.
-- pending: Define and implement supplemental Servarr Metadata Server lookups for
+- done (2026-07-04): Define and implement supplemental Servarr Metadata Server lookups for
   fields a local MusicBrainz mirror does not serve well or at all. Examples:
   cached/normalized artwork URLs, metadata-server ratings/popularity, and any
   Servarr-specific convenience fields. Supplemental data must never override

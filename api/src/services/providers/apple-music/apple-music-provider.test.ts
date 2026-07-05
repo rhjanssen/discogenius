@@ -9,7 +9,9 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 
 import type { FetchLike } from "./apple-music-api.js";
+import { validateAppleMusicCredentials } from "./apple-music-api.js";
 import type { AppleMusicAuthToken } from "./apple-music-auth.js";
+import { buildAppleMusicApiHeaders } from "./apple-music-auth.js";
 import {
   getAppleAlbum,
   getAppleAlbumTracks,
@@ -20,7 +22,15 @@ import {
   renderAppleArtwork,
   searchApple,
 } from "./apple-music-catalog.js";
+import {
+  AppleMusicBackend,
+  describeAppleDownloaderMissingPrerequisites,
+  getAppleMusicDownloaderCapabilitySnapshot,
+  getAppleMusicDownloaderBinary,
+  parseAppleDownloaderProgressLine,
+} from "./apple-music-backend.js";
 import { fixtureFor } from "./apple-music-fixtures.js";
+import { getAppleArtistsForImportSource, getAppleImportSources } from "./apple-music-library.js";
 import { appleMusicQualityMapping } from "./apple-music-quality.js";
 
 const TEST_TOKEN: AppleMusicAuthToken = {
@@ -39,6 +49,10 @@ const fixtureFetch: FetchLike = async (url) => ({
 
 function opts() {
   return { fetchImpl: fixtureFetch, token: TEST_TOKEN };
+}
+
+function base64UrlJson(value: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(value), "utf-8").toString("base64url");
 }
 
 test("maps Apple artist into ProviderArtist with rendered artwork", async () => {
@@ -130,11 +144,183 @@ test("provider exposes core capability descriptor and conforms to interface", as
   assert.equal(provider.capabilities.catalogSearch, true);
   assert.equal(provider.capabilities.spatialAudio, true);
   assert.equal(provider.capabilities.followedArtists, false);
+  assert.deepEqual(provider.manifest.imports.supported, ["library-artists", "playlist"]);
+  assert.equal(provider.manifest.integration.catalogSource, "official-api");
+  assert.equal(provider.manifest.integration.downloadSource, "native-cli");
 
   // Quality mapping is wired through the provider.
   const neutral = provider.qualityMapping!.toNeutral(["atmos", "lossless"]);
   assert.equal(neutral.audio, "lossless");
   assert.deepEqual(neutral.spatial, ["atmos"]);
+});
+
+test("Apple import sources expose library artists and playlists through the common contract", async () => {
+  const sources = await getAppleImportSources(opts());
+  assert.deepEqual(sources.map((source) => source.category), ["library-artists", "playlist"]);
+  const playlist = sources.find((source) => source.category === "playlist");
+  assert.equal(playlist?.lists?.[0]?.id, "p.test");
+  assert.equal(playlist?.lists?.[0]?.title, "Apple Test Playlist");
+
+  const libraryArtists = await getAppleArtistsForImportSource({ category: "library-artists" }, opts());
+  assert.equal(libraryArtists.length, 1);
+  assert.equal(libraryArtists[0].providerId, "1419227");
+  assert.equal(libraryArtists[0].name, "Bastille");
+
+  const playlistArtists = await getAppleArtistsForImportSource({ category: "playlist", listId: "p.test" }, opts());
+  assert.equal(playlistArtists.length, 1);
+  assert.equal(playlistArtists[0].name, "Bastille");
+});
+
+test("Apple credential validation probes the user's storefront", async () => {
+  const validation = await validateAppleMusicCredentials(TEST_TOKEN, { fetchImpl: fixtureFetch });
+  assert.equal(validation.storefront, "us");
+});
+
+test("Apple web bearer token auto-resolution is cached across API header builds", async () => {
+  const originalFetch = globalThis.fetch;
+  const fakeBearer = [
+    base64UrlJson({ typ: "JWT" }),
+    base64UrlJson({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+    "signature",
+  ].join(".");
+  const requestedUrls: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    requestedUrls.push(String(url));
+    if (String(url) === "https://music.apple.com") {
+      return new Response('<script src="/assets/index~test.js"></script>', { status: 200 });
+    }
+    return new Response(`window.token="${fakeBearer}";`, { status: 200 });
+  }) as typeof fetch;
+  try {
+    const token = { media_user_token: "user-token", storefront: "us" };
+    const first = await buildAppleMusicApiHeaders(token);
+    const second = await buildAppleMusicApiHeaders(token);
+    assert.equal(first.Authorization, `Bearer ${fakeBearer}`);
+    assert.equal(second.Authorization, `Bearer ${fakeBearer}`);
+    assert.deepEqual(requestedUrls, ["https://music.apple.com", "https://music.apple.com/assets/index~test.js"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Apple downloader backend builds provider-id based tool invocations", () => {
+  const previousStorefront = process.env.APPLE_MUSIC_STOREFRONT;
+  process.env.APPLE_MUSIC_STOREFRONT = "us";
+  try {
+    const backend = new AppleMusicBackend();
+    assert.deepEqual(
+      backend.buildArgs("1440904699", {
+        provider: "apple-music",
+        entityType: "album",
+        providerId: "1440904699",
+        downloadPath: "/downloads/job",
+        quality: "hi-res-lossless",
+      }),
+      ["--alac-max", "192000", "https://music.apple.com/us/album/1440904699"],
+    );
+    assert.deepEqual(
+      backend.buildArgs("1440904918", {
+        provider: "apple-music",
+        entityType: "track",
+        providerId: "1440904918",
+        downloadPath: "/downloads/job",
+      }),
+      ["--song", "https://music.apple.com/us/song/1440904918"],
+    );
+    assert.deepEqual(
+      backend.buildArgs("1452310551", {
+        provider: "apple-music",
+        entityType: "video",
+        providerId: "1452310551",
+        downloadPath: "/downloads/job",
+      }),
+      ["--mv-audio-type", "atmos", "https://music.apple.com/us/music-video/1452310551"],
+    );
+  } finally {
+    if (previousStorefront == null) {
+      delete process.env.APPLE_MUSIC_STOREFRONT;
+    } else {
+      process.env.APPLE_MUSIC_STOREFRONT = previousStorefront;
+    }
+  }
+});
+
+test("Apple downloader progress parser extracts track counts and provider ids from native output", () => {
+  const trackLine = parseAppleDownloaderProgressLine("Track 2 of 13: songs");
+  assert.deepEqual(trackLine, {
+    currentFileNum: 2,
+    totalFiles: 13,
+    statusMessage: "Track 2 of 13: songs",
+    trackStatus: "downloading",
+  });
+
+  const idLine = parseAppleDownloaderProgressLine("1440904918", {
+    currentFileNum: 2,
+    totalFiles: 13,
+  });
+  assert.equal(idLine?.currentProviderTrackId, "1440904918");
+  assert.equal(idLine?.trackStatus, "downloading");
+
+  const doneLine = parseAppleDownloaderProgressLine("Decrypted", {
+    currentFileNum: 2,
+    totalFiles: 13,
+    providerTrackId: "1440904918",
+  });
+  assert.equal(doneLine?.currentProviderTrackId, "1440904918");
+  assert.equal(doneLine?.trackStatus, "completed");
+
+  const errorLine = parseAppleDownloaderProgressLine("Invalid media-user-token", {
+    currentFileNum: 2,
+    totalFiles: 13,
+    providerTrackId: "1440904918",
+  });
+  assert.equal(errorLine?.trackStatus, "error");
+  assert.equal(errorLine?.isError, true);
+});
+
+test("Apple downloader readiness snapshot exposes provisioning facts", async () => {
+  const snapshot = await getAppleMusicDownloaderCapabilitySnapshot();
+  assert.equal(typeof snapshot.downloaderBinary, "string");
+  assert.equal(typeof snapshot.downloaderBinaryAvailable, "boolean");
+  assert.equal(typeof snapshot.mp4BoxAvailable, "boolean");
+  assert.equal(typeof snapshot.wrapperDecryptPortOpen, "boolean");
+  assert.equal(typeof snapshot.wrapperM3u8PortOpen, "boolean");
+});
+
+test("Apple downloader binary default follows the upstream CLI name", () => {
+  const previousBin = process.env.APPLE_MUSIC_DL_BIN;
+  delete process.env.APPLE_MUSIC_DL_BIN;
+  try {
+    assert.equal(getAppleMusicDownloaderBinary(), "apple-music-dl");
+    process.env.APPLE_MUSIC_DL_BIN = "custom-amdl";
+    assert.equal(getAppleMusicDownloaderBinary(), "custom-amdl");
+  } finally {
+    if (previousBin == null) {
+      delete process.env.APPLE_MUSIC_DL_BIN;
+    } else {
+      process.env.APPLE_MUSIC_DL_BIN = previousBin;
+    }
+  }
+});
+
+test("Apple downloader prerequisite summary names every missing live dependency", () => {
+  const missing = describeAppleDownloaderMissingPrerequisites({
+    authenticated: true,
+    downloaderBinary: "apple-music-dl",
+    downloaderBinaryAvailable: false,
+    mp4BoxAvailable: false,
+    mp4DecryptAvailable: false,
+    wrapperDecryptPortOpen: false,
+    wrapperM3u8PortOpen: false,
+    downloaderConfigExists: true,
+    downloaderWorkingDirectory: "/config/providers/apple-music/.amdl",
+  });
+  assert.deepEqual(missing, [
+    "downloader binary (apple-music-dl)",
+    "MP4Box",
+    "decryption wrapper port 10020",
+    "decryption wrapper port 20020",
+  ]);
 });
 
 test("parseMediaUrl / getMediaUrl round-trip Apple URLs", async () => {

@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { Config, CONFIG_DIR } from "../../config/config.js";
 import { resolveTidalAuthClientConfig } from "../../config/provider-client-config.js";
 import {
@@ -23,6 +24,31 @@ export type TiddlVideoQuality = "sd" | "hd" | "fhd";
 
 export function getTiddlBinary(): string {
     return process.env.TIDDL_BIN || "tiddl";
+}
+
+export function getTiddlPythonBinary(): string {
+    if (process.env.TIDDL_PYTHON_BIN) {
+        return process.env.TIDDL_PYTHON_BIN;
+    }
+
+    const dockerVenvPython = "/opt/tiddl-venv/bin/python";
+    return fs.existsSync(dockerVenvPython) ? dockerVenvPython : "python3";
+}
+
+export function getTiddlProgressWrapperScript(): string | null {
+    if (process.env.DISCOGENIUS_TIDDL_PROGRESS_WRAPPER === "0") {
+        return null;
+    }
+
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const candidates = [
+        path.join(process.cwd(), "api", "src", "services", "providers", "tidal", "tiddl-progress-wrapper.py"),
+        path.join(process.cwd(), "src", "services", "providers", "tidal", "tiddl-progress-wrapper.py"),
+        path.join(currentDir, "tiddl-progress-wrapper.py"),
+        path.resolve(currentDir, "../../../../../src/services/providers/tidal/tiddl-progress-wrapper.py"),
+    ];
+
+    return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 }
 
 export function buildTiddlEnv(): NodeJS.ProcessEnv {
@@ -239,8 +265,11 @@ export function syncTiddlSettings(): void {
         "album_review = false",
         "",
         "[templates]",
-        "default = \"{album.artist}/{album.title}/{item.number:02d}. {item.title_version}\"",
-        "video = \"{item.artist} - {item.title}\"",
+        // Staging names are provider identities, not user-facing library names.
+        // The organizer applies the Discogenius/MusicBrainz naming profile when
+        // importing into the managed library.
+        "default = \"{album.id}/{item.id}\"",
+        "video = \"{item.id}\"",
         "",
         "[m3u]",
         "save = false",

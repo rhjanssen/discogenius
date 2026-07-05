@@ -8,6 +8,7 @@ import {
     resolveMediaCoverProxyUrl,
     videoCoverLocalUrl,
 } from "../services/metadata/media-cover-service.js";
+import { catalogProviderRegistry } from "../services/catalog/index.js";
 import { servarrMetadata } from "../services/metadata/servarr-metadata.js";
 import type {
     SearchResponseContract,
@@ -71,6 +72,30 @@ function formatSearchResult(item: any, type: 'artist' | 'album' | 'track' | 'vid
     return result;
 }
 
+async function getSupplementalArtistImageUrl(
+    artistMbid: string | null | undefined,
+    cache: Map<string, string | null>,
+): Promise<string | null> {
+    const mbid = String(artistMbid || "").trim();
+    if (!mbid) {
+        return null;
+    }
+    if (cache.has(mbid)) {
+        return cache.get(mbid) ?? null;
+    }
+
+    try {
+        const supplemental = await servarrMetadata.getArtistInfo(mbid);
+        const imageUrl = servarrMetadata.getArtistImageUrl(supplemental);
+        const proxied = registerMediaCoverProxyUrl(imageUrl) || imageUrl || null;
+        cache.set(mbid, proxied);
+        return proxied;
+    } catch {
+        cache.set(mbid, null);
+        return null;
+    }
+}
+
 router.get("/", async (req, res) => {
     try {
         const query = String(req.query.query ?? "").trim();
@@ -93,6 +118,7 @@ router.get("/", async (req, res) => {
         const addedArtistMbids = new Set<string>();
         const addedArtistIds = new Set<string>();
         const addedAlbumMbids = new Set<string>();
+        const supplementalArtistImageCache = new Map<string, string | null>();
 
         // 1. Local library search
         {
@@ -376,12 +402,12 @@ router.get("/", async (req, res) => {
             }
         }
 
-        // 2. Remote MusicBrainz (Servarr Metadata Server) search
+        // 2. Remote catalog search (Servarr Metadata Server or local MusicBrainz)
         if (query.length >= 2 && (requestedTypeSet.has("artists") || requestedTypeSet.has("albums"))) {
-            const remoteItems = await servarrMetadata.searchAll(query, limit);
-            for (const item of remoteItems) {
-                if (item.artist && requestedTypeSet.has("artists")) {
-                    const mbid = item.artist.id;
+            const remoteItems = await catalogProviderRegistry.getActive().search(query, { limit });
+            for (const artist of remoteItems.artists || []) {
+                if (requestedTypeSet.has("artists")) {
+                    const mbid = artist.id;
                     if (mbid && !addedArtistMbids.has(mbid)) {
                         // Check if exists in local library
                         const localArtist = db.prepare("SELECT id, monitored AS monitor, picture, cover_image_url FROM Artists WHERE mbid = ? LIMIT 1").get(mbid) as any;
@@ -392,7 +418,7 @@ router.get("/", async (req, res) => {
                             const imageId = [
                                 localArtist.picture,
                                 localArtist.cover_image_url,
-                                servarrMetadata.getArtistImageUrl(item.artist),
+                                servarrMetadata.getArtistImageUrl(artist),
                             ].map((val) => {
                                 const text = val == null ? "" : String(val).trim();
                                 if (!text) return null;
@@ -401,26 +427,31 @@ router.get("/", async (req, res) => {
                                 return /^\/media-cover-proxy\//i.test(text) ? null : text;
                             }).find(Boolean);
 
+                            const supplementalImage = imageId
+                                ? null
+                                : await getSupplementalArtistImageUrl(mbid, supplementalArtistImageCache);
+
                             results.artists.push(formatSearchResult({
                                 id: localArtist.id,
-                                name: item.artist.artistname,
-                                picture: registerMediaCoverProxyUrl(imageId) || imageId || null,
+                                name: artist.artistname,
+                                picture: registerMediaCoverProxyUrl(imageId) || imageId || supplementalImage || null,
                                 monitored: !!localArtist.monitor,
                                 in_library: true,
                             }, 'artist'));
                             addedArtistIds.add(localArtist.id.toString());
                         } else {
-                            const imageId = servarrMetadata.getArtistImageUrl(item.artist);
-                            const releaseGroupCount = Array.isArray(item.artist.Albums) ? item.artist.Albums.length : 0;
-                            const disambiguation = String(item.artist.disambiguation || "").trim();
+                            const imageId = servarrMetadata.getArtistImageUrl(artist)
+                                || await getSupplementalArtistImageUrl(mbid, supplementalArtistImageCache);
+                            const releaseGroupCount = Array.isArray(artist.Albums) ? artist.Albums.length : 0;
+                            const disambiguation = String(artist.disambiguation || "").trim();
                             const details = [
-                                disambiguation || String(item.artist.type || "").trim(),
+                                disambiguation || String(artist.type || "").trim(),
                                 releaseGroupCount > 0 ? `${releaseGroupCount} release groups` : null,
                             ].filter(Boolean).join(" · ");
 
                             results.artists.push(formatSearchResult({
                                 id: mbid,
-                                name: item.artist.artistname,
+                                name: artist.artistname,
                                 picture: registerMediaCoverProxyUrl(imageId) || imageId || null,
                                 monitored: false,
                                 in_library: false,
@@ -429,8 +460,11 @@ router.get("/", async (req, res) => {
                         }
                         addedArtistMbids.add(mbid);
                     }
-                } else if (item.album && requestedTypeSet.has("albums")) {
-                    const mbid = item.album.id;
+                }
+            }
+            for (const releaseGroup of remoteItems.releaseGroups || []) {
+                if (requestedTypeSet.has("albums")) {
+                    const mbid = releaseGroup.mbid;
                     if (mbid && !addedAlbumMbids.has(mbid)) {
                         const localAlbum = db.prepare(`
                             SELECT rg.mbid, CASE WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1 ELSE 0 END AS monitored
@@ -441,26 +475,32 @@ router.get("/", async (req, res) => {
                             LIMIT 1
                         `).get(mbid) as any;
 
-                        const artistName = item.album.artistname || item.album.artistName || item.album.ArtistName || item.album.artist?.artistname || null;
-                        const imageId = servarrMetadata.getAlbumImageUrl(item.album);
+                        const artistName = releaseGroup.artistName || null;
+                        const imageId = servarrMetadata.getAlbumImageUrl({
+                            Id: releaseGroup.mbid,
+                            Title: releaseGroup.title,
+                            ReleaseDate: releaseGroup.releaseDate || undefined,
+                            Disambiguation: releaseGroup.disambiguation || undefined,
+                            Images: releaseGroup.images || [],
+                        });
 
                         if (localAlbum) {
                             results.albums.push(formatSearchResult({
                                 id: mbid,
-                                name: item.album.title,
+                                name: releaseGroup.title,
                                 cover_id: registerMediaCoverProxyUrl(imageId) || imageId || null,
                                 artist_name: artistName,
-                                release_date: item.album.releasedate || item.album.releaseDate || null,
+                                release_date: releaseGroup.releaseDate || null,
                                 monitored: !!localAlbum.monitored,
                                 in_library: true,
                             }, 'album'));
                         } else {
                             results.albums.push(formatSearchResult({
                                 id: mbid,
-                                name: item.album.title,
+                                name: releaseGroup.title,
                                 cover_id: registerMediaCoverProxyUrl(imageId) || imageId || null,
                                 artist_name: artistName,
-                                release_date: item.album.releasedate || item.album.releaseDate || null,
+                                release_date: releaseGroup.releaseDate || null,
                                 monitored: false,
                                 in_library: false,
                             }, 'album'));

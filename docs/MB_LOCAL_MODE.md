@@ -1,15 +1,16 @@
 <!-- markdownlint-disable MD013 -->
 # MB-local mode — catalog provider notes
 
-Status: **scaffolding, not wired into runtime.** This documents the
-`CatalogProvider` abstraction and the plan for serving the canonical
-catalog directly from a local MusicBrainz-docker instance instead of the
-Servarr Metadata Server/Lidarr replica. It is the implementation companion to
-`docs/DATA_MODEL_TARGET.md` §3.
+Status: **runtime-wired for 2.2.0.** Discogenius can use either the hosted
+Servarr Metadata Server or a local MusicBrainz-docker mirror as the selected
+catalog source. Local MusicBrainz mode reads Postgres directly for catalog
+identity, release/track shape, UPC/barcode, and ISRC evidence; it uses the
+co-located `/ws/2` service only when available for Solr-ranked search.
 
-No live behavior changed: the app still uses the Servarr Metadata Server flow
-(`api/src/services/metadata/servarr-metadata.ts`) exactly as before. Everything here
-is additive and behind interfaces/stubs.
+MusicBrainz-docker is intentionally treated as external infrastructure, not a
+provider-plugin dependency. See `docs/EXTERNAL_DEPENDENCIES.md` for the
+packaging policy: Discogenius joins the MB network and derives connection
+settings, but does not clone or build the MusicBrainz stack inside its image.
 
 ## The abstraction
 
@@ -18,10 +19,12 @@ is additive and behind interfaces/stubs.
 | File | Role |
 | --- | --- |
 | `catalog-provider.ts` | The `CatalogProvider` interface (symmetric to `StreamingProvider`). DTOs are the existing Servarr Metadata Server/Lidarr shapes (`LidarrArtist`, `LidarrReleaseGroupDetail`, `LidarrRelease`, `LidarrTrack`) — no parallel DTO hierarchy. |
-| `servarr-metadata-catalog-provider.ts` | `ServarrMetadataCatalogProvider` — thin adapter over today's `ServarrMetadataService`. Documents current behavior as one implementation; changes nothing. |
-| `local-musicbrainz-catalog-provider.ts` | `LocalMusicBrainzCatalogProvider` — **stub**, reads the MB-docker `:5000` web-service mirror. Not registered as active. |
+| `servarr-metadata-catalog-provider.ts` | `ServarrMetadataCatalogProvider` — thin adapter over today's `ServarrMetadataService`. |
+| `postgres-musicbrainz-catalog-provider.ts` | `PostgresMusicBrainzCatalogProvider` — primary local-MB runtime implementation. Reads MusicBrainz Postgres directly and optionally uses `/ws/2` for Solr search. |
+| `local-musicbrainz-catalog-provider.ts` | Legacy `/ws/2` fixture provider retained for tests/reference. |
 | `musicbrainz-ws-mapping.ts` | Pure mappers: MB `/ws/2` JSON → Servarr Metadata Server/Lidarr DTOs. Network-free, fixture-tested. |
-| `index.ts` | Barrel + a `catalogProviderRegistry` mirroring `streamingProviderManager`. Active source id = `servarr-metadata`. |
+| `mb-connection.ts` | Host-only MusicBrainz-docker connection derivation (`host` → Postgres DSN + optional `/ws/2` URL). |
+| `index.ts` | Barrel + a `catalogProviderRegistry` mirroring `streamingProviderManager`. Active source resolves from config. |
 
 ### Methods
 
@@ -31,7 +34,7 @@ is additive and behind interfaces/stubs.
 The last three are optional because **Servarr Metadata Server can't serve them** (no standalone
 recording endpoint, no UPC index, no ISRC index). Per §3, until MB-local is
 connected, matching falls back to title / track-count / date / duration /
-position and accepts slightly weaker matches. The MB-local provider implements
+position and accepts slightly weaker matches. The Postgres MB provider implements
 all of them.
 
 ## Supplemental Servarr metadata in local mode
@@ -54,27 +57,16 @@ Those supplemental reads must be optional, failure-tolerant, and visibly
 separate from the selected catalog source health. A Servarr outage in MB-local
 mode must not block artist search, release refresh, matching, or imports.
 
-## Backend: `:5000` web-service mirror (ships first)
+## Backend: direct Postgres plus optional `/ws/2` search
 
-The MB-docker `musicbrainz` service exposes the same `/ws/2` JSON as
-musicbrainz.org — which existing MB-shaped code already consumes (see
-`musicbrainz-video-service.ts`) — but **without the 1-req/s public limit** on
-your own instance. So `LocalMusicBrainzCatalogProvider` simply fetches `/ws/2`
-endpoints and runs them through `musicbrainz-ws-mapping.ts`.
+The primary local-MB provider reads the MusicBrainz Postgres schema directly.
+This avoids the `/ws/2` release-group N+1 fan-out because one SQL query can
+return release group → releases → media → tracks → recordings → ISRCs. Search
+uses the MusicBrainz web/Solr endpoint at `host:5000/ws/2` when it is reachable;
+otherwise it falls back to Postgres `pg_trgm`/`ILIKE`.
 
-Endpoints used:
-
-- `GET /ws/2/artist/{gid}?inc=release-groups&fmt=json`
-- `GET /ws/2/release-group/{gid}?inc=releases+artist-credits&fmt=json`
-- `GET /ws/2/release/{gid}?inc=recordings+artist-credits+isrcs+labels&fmt=json`
-- `GET /ws/2/recording/{gid}?inc=artist-credits+isrcs&fmt=json`
-- `GET /ws/2/release?query=barcode:{upc}&fmt=json` (UPC lookup)
-- `GET /ws/2/isrc/{isrc}?inc=artist-credits&fmt=json` (ISRC lookup)
-- `GET /ws/2/artist?query={q}&limit={n}&fmt=json` (search)
-
-> Direct-Postgres access (`:5432`) against the MB schema is a possible future
-> performance optimization for high-volume matching, but it is deferred and not
-> implemented yet. The `:5000` mirror is the path that ships first.
+The legacy `/ws/2` provider remains useful as a mapping fixture/reference, but
+it is not the runtime path.
 
 ## Dev environment wiring
 
@@ -88,13 +80,19 @@ snippet and steps; in short:
    `musicbrainz-docker_default`).
 2. Start Discogenius with the overlay:
    `docker compose -f docker-compose.yml -f docker-compose.mb-local.example.yml up -d`.
-3. Inside the shared network Discogenius reaches the mirror at
-   `http://musicbrainz:5000/ws/2`. From the host, `http://localhost:5000/ws/2`.
+3. Inside the shared network Discogenius reaches Postgres at `db:5432`. If a
+   full MusicBrainz web/search service is also reachable at the configured host
+   on `:5000`, Discogenius uses it for Solr-backed search; otherwise it falls
+   back to Postgres search.
 
-The overlay sets (read by the future wiring unit, ignored today):
+The overlay sets:
 
 - `DISCOGENIUS_CATALOG_SOURCE` — `servarr-metadata` (default) | `musicbrainz-local`
-- `MB_LOCAL_WS_URL` — default `http://musicbrainz:5000/ws/2`
+- `MB_LOCAL_HOST` — MusicBrainz-docker host or service name, default `db`
+
+The Settings page uses the same host-only value. Enter `192.168.1.100`,
+`musicbrainz.mydomain.com`, `db`, or `host:postgresPort` for non-standard
+Postgres ports; Discogenius derives the Postgres DSN and `/ws/2` probe URL.
 
 ## Mode switching (per §3)
 
@@ -115,6 +113,8 @@ seam.
   tests against recorded `/ws/2` responses with an injected fetcher (no live
   network).
 - `ServarrMetadataCatalogProvider`: delegating-adapter tests with a spy service.
+- `mb-connection`: host-only normalization plus derived Postgres DSN and
+  co-located `/ws/2` search URL tests.
 - **Live container e2e is skipped** — no MB-docker container is provisioned in
   CI; the behavior is covered by the fixture unit tests above.
 

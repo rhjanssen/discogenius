@@ -132,8 +132,83 @@ export const SEARCH_RESPONSE = {
   },
 };
 
+export const LIBRARY_ARTISTS_RESPONSE = {
+  data: [
+    {
+      id: "r.library-bastille",
+      type: "library-artists",
+      attributes: {
+        name: "Bastille",
+        artwork: { url: "https://is1-ssl.mzstatic.com/image/thumb/la/{w}x{h}bb.{f}" },
+      },
+      relationships: {
+        catalog: { data: ARTIST_RESPONSE.data },
+      },
+    },
+  ],
+};
+
+export const LIBRARY_PLAYLISTS_RESPONSE = {
+  data: [
+    {
+      id: "p.test",
+      type: "library-playlists",
+      attributes: {
+        name: "Apple Test Playlist",
+        description: { standard: "Fixture playlist" },
+        trackCount: 2,
+        artwork: { url: "https://is1-ssl.mzstatic.com/image/thumb/pl/{w}x{h}bb.{f}" },
+      },
+    },
+  ],
+};
+
+export const LIBRARY_PLAYLIST_TRACKS_RESPONSE = {
+  data: [
+    {
+      id: "i.library-song-1",
+      type: "library-songs",
+      attributes: {
+        name: "Pompeii",
+        artistName: "Bastille",
+      },
+      relationships: {
+        catalog: { data: [ALBUM_TRACKS_RESPONSE.data[0]] },
+      },
+    },
+    {
+      id: "i.library-song-2",
+      type: "library-songs",
+      attributes: {
+        name: "Things We Lost in the Fire",
+        artistName: "Bastille",
+      },
+      relationships: {
+        catalog: { data: [ALBUM_TRACKS_RESPONSE.data[1]] },
+      },
+    },
+  ],
+};
+
+export const USER_STOREFRONT_RESPONSE = {
+  data: [
+    {
+      id: "us",
+      type: "storefronts",
+      attributes: {
+        defaultLanguageTag: "en-US",
+        name: "United States",
+      },
+    },
+  ],
+};
+
 /** Map an Apple Music API endpoint path to its fixture response. */
 export function fixtureFor(url: string): unknown {
+  if (url.includes("/v1/me/storefront")) return USER_STOREFRONT_RESPONSE;
+  if (url.includes("/v1/me/library/playlists/p.test/tracks")) return LIBRARY_PLAYLIST_TRACKS_RESPONSE;
+  if (url.includes("/v1/me/library/playlists")) return LIBRARY_PLAYLISTS_RESPONSE;
+  if (url.includes("/v1/me/library/artists")) return LIBRARY_ARTISTS_RESPONSE;
   if (url.includes("/search?")) return SEARCH_RESPONSE;
   if (/\/artists\/\d+\/albums/.test(url)) return ARTIST_ALBUMS_RESPONSE;
   if (/\/artists\/\d+\/music-videos/.test(url)) return { data: VIDEO_RESPONSE.data };

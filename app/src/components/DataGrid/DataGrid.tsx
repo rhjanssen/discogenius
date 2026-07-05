@@ -66,7 +66,7 @@ const useStyles = makeStyles({
         width: "100%",
         minWidth: "100%",
         boxSizing: "border-box",
-        backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+        backgroundColor: "transparent",
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         fontWeight: tokens.fontWeightSemibold,
         fontSize: tokens.fontSizeBase200,
@@ -74,7 +74,6 @@ const useStyles = makeStyles({
         position: "sticky",
         top: 0,
         zIndex: 10,
-        backdropFilter: "blur(10px)",
         "@media (min-width: 768px)": {
             gap: tokens.spacingHorizontalS,
             padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,

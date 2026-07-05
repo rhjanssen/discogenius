@@ -1,6 +1,7 @@
 import { useInfiniteQuery, type QueryKey } from "@tanstack/react-query";
 import { ACTIVITY_REFRESH_EVENT } from "@/utils/appEvents";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
+import type { GlobalEventPayload } from "@/hooks/useGlobalEvents";
 
 type FeedPage<TItem> = {
     items: TItem[];
@@ -19,7 +20,21 @@ type UseDashboardInfiniteFeedOptions<TItem> = {
     enabled?: boolean;
     refetchIntervalMs?: number | false;
     refetchOnMount?: boolean | "always";
+    globalEventFilter?: (event: GlobalEventPayload) => boolean;
 };
+
+/**
+ * Shared filter: per-second download progress ticks arrive as command.updated
+ * with status "started" and cannot change list membership — the SSE progress
+ * stream keeps visible progress live. Everything else invalidates.
+ */
+export function ignoreProgressTickEvents(event: GlobalEventPayload): boolean {
+    if (event.type !== "command.updated") {
+        return true;
+    }
+    const status = (event.data as { status?: string } | null)?.status;
+    return status !== "started";
+}
 
 const DASHBOARD_FEED_GLOBAL_EVENTS = [
     "command.added",
@@ -43,6 +58,7 @@ export function useDashboardInfiniteFeed<TItem>({
     enabled = true,
     refetchIntervalMs = false,
     refetchOnMount,
+    globalEventFilter,
 }: UseDashboardInfiniteFeedOptions<TItem>) {
     useDebouncedQueryInvalidation({
         queryKeys: [queryKey],
@@ -50,6 +66,7 @@ export function useDashboardInfiniteFeed<TItem>({
         windowEvents: [ACTIVITY_REFRESH_EVENT],
         debounceMs: 500,
         enabled,
+        globalEventFilter,
     });
 
     const query = useInfiniteQuery({
@@ -69,6 +86,7 @@ export function useDashboardInfiniteFeed<TItem>({
         refetchOnMount,
         refetchOnWindowFocus: false,
         refetchInterval: refetchIntervalMs,
+        refetchIntervalInBackground: Boolean(refetchIntervalMs),
         retry: 1,
         placeholderData: (previousData) => previousData,
         enabled,

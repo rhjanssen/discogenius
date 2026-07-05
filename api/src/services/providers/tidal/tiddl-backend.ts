@@ -4,6 +4,8 @@ import {
     buildTiddlEnv,
     capTiddlTrackQuality,
     getTiddlBinary,
+    getTiddlProgressWrapperScript,
+    getTiddlPythonBinary,
     mapAudioQualityToTiddl,
     syncTiddlSettings,
 } from "./tiddl.js";
@@ -12,8 +14,125 @@ import { isSpatialAudioQuality } from "../../../utils/spatial-audio.js";
 export { TIDDL_CONFIG_DIR, TIDDL_AUTH_FILE, getTiddlCapabilitySnapshot } from "./tiddl.js";
 
 function stripAnsi(text: string): string {
-    // eslint-disable-next-line no-control-regex
-    return text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+    return text
+        // OSC sequences (Rich emits OSC-8 hyperlinks around file paths),
+        // terminated by BEL or ST.
+        // eslint-disable-next-line no-control-regex
+        .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+        // CSI and other escape sequences.
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+}
+
+const TIDDL_PROGRESS_PREFIX = "DISCOGENIUS_TIDDL_PROGRESS ";
+
+export type TiddlProgressEvent = {
+    event?: string;
+    title?: string;
+    providerTrackId?: string | number | null;
+    trackNumber?: number | null;
+    volumeNumber?: number | null;
+    trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' | null;
+    bytesDownloaded?: number | null;
+    bytesTotal?: number | null;
+    bytesPerSecond?: number | null;
+    percent?: number | null;
+    total?: number | null;
+    completed?: number | null;
+};
+
+export function parseTiddlProgressEvent(line: string): TiddlProgressEvent | null {
+    // ffmpeg/tiddl share the wrapper's stderr, so \r-redraw noise can end up
+    // glued in front of a progress line — locate the prefix anywhere.
+    const prefixIndex = line.indexOf(TIDDL_PROGRESS_PREFIX);
+    if (prefixIndex < 0) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(line.slice(prefixIndex + TIDDL_PROGRESS_PREFIX.length));
+        return parsed && typeof parsed === "object" ? parsed as TiddlProgressEvent : null;
+    } catch {
+        return null;
+    }
+}
+
+/** A progress line that got split mid-JSON: never surface it as status text. */
+function looksLikeProgressFragment(line: string): boolean {
+    return line.includes(TIDDL_PROGRESS_PREFIX)
+        || line.includes('"bytesDownloaded"')
+        || line.includes('"bytesTotal"');
+}
+
+function clampPercent(value: unknown): number | undefined {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        return undefined;
+    }
+    return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function formatByteRate(bytesPerSecond: number): string {
+    const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+    let value = bytesPerSecond;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+    const precision = value >= 10 || unitIndex === 0 ? 0 : 1;
+    return `${value.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+export function tiddlProgressEventToDownloadProgress(
+    event: TiddlProgressEvent,
+    lastPercent: number,
+): DownloadProgress | null {
+    const title = typeof event.title === "string" && event.title.trim() ? event.title.trim() : undefined;
+    if (!title) {
+        return null;
+    }
+
+    const percent = clampPercent(event.percent);
+    const bytesTotal = typeof event.bytesTotal === "number" && Number.isFinite(event.bytesTotal) && event.bytesTotal > 0
+        ? Math.round(event.bytesTotal)
+        : undefined;
+    const bytesDownloaded = typeof event.bytesDownloaded === "number" && Number.isFinite(event.bytesDownloaded) && event.bytesDownloaded >= 0
+        ? Math.round(event.bytesDownloaded)
+        : undefined;
+    const bytesLeft = bytesTotal !== undefined && bytesDownloaded !== undefined
+        ? Math.max(0, bytesTotal - bytesDownloaded)
+        : undefined;
+    const speed = typeof event.bytesPerSecond === "number" && Number.isFinite(event.bytesPerSecond) && event.bytesPerSecond >= 0
+        ? formatByteRate(event.bytesPerSecond)
+        : undefined;
+    const eventStatus = event.trackStatus === "skipped" || event.trackStatus === "completed" || event.trackStatus === "error"
+        ? event.trackStatus
+        : undefined;
+    const trackStatus = eventStatus ?? (event.event === "track_done" ? "completed" : "downloading");
+    const providerTrackId = event.providerTrackId == null ? undefined : String(event.providerTrackId).trim() || undefined;
+    const currentTrackNum = typeof event.trackNumber === "number" && Number.isFinite(event.trackNumber)
+        ? Math.round(event.trackNumber)
+        : undefined;
+    const currentVolumeNum = typeof event.volumeNumber === "number" && Number.isFinite(event.volumeNumber)
+        ? Math.round(event.volumeNumber)
+        : undefined;
+
+    return {
+        progress: lastPercent,
+        currentTrack: title,
+        currentProviderTrackId: providerTrackId,
+        currentTrackNum,
+        currentVolumeNum,
+        trackProgress: event.event === "track_start" ? undefined : percent,
+        trackStatus,
+        statusMessage: event.event === "track_done"
+            ? `${trackStatus === "skipped" ? "Skipped" : "Downloaded"} ${title}`
+            : `Downloading ${title}`,
+        state: "downloading",
+        speed,
+        size: bytesTotal,
+        sizeleft: bytesLeft,
+    };
 }
 
 export class TiddlBackend implements DownloadBackend {
@@ -79,7 +198,10 @@ export class TiddlBackend implements DownloadBackend {
 
         args.push("url", url);
 
-        const cp = spawn(getTiddlBinary(), args, { env: buildTiddlEnv() });
+        const wrapperScript = getTiddlProgressWrapperScript();
+        const command = wrapperScript ? getTiddlPythonBinary() : getTiddlBinary();
+        const commandArgs = wrapperScript ? [wrapperScript, ...args] : args;
+        const cp = spawn(command, commandArgs, { env: buildTiddlEnv() });
 
         if (options.signal) {
             if (options.signal.aborted) {
@@ -100,57 +222,122 @@ export class TiddlBackend implements DownloadBackend {
             let lastPercent = toOverallPercent(0);
             let hasProcessingError = false;
             let errorDetail = "";
+            let stdoutBuffer = "";
+            let stderrBuffer = "";
+            // Item counts from wrapper queue_total/queue_progress events drive
+            // the album-level percent, mirroring how imports report progress.
+            // tiddl's own "Total Progress" panel is a Rich Live table that
+            // never prints to a piped stdout.
+            let queueTotal = 0;
+            let queueCompleted = 0;
 
-            cp.stdout?.on("data", (data: Buffer) => {
-                const lines = data.toString().split(/\r?\n|\r/g);
-                for (const line of lines) {
-                    const cleanLine = stripAnsi(line).trim();
-                    if (!cleanLine) continue;
+            const handleLine = (line: string, source: "stdout" | "stderr") => {
+                const cleanLine = stripAnsi(line).trim();
+                if (!cleanLine) return;
 
-                    // "not a MP4 file" is a tiddl-handled fallback; "no longer
-                    // available" tracks are skipped rather than fatal.
-                    if (
-                        cleanLine.includes("Error:")
-                        && !cleanLine.includes("not a MP4 file")
-                        && !cleanLine.includes("no longer available")
-                    ) {
-                        hasProcessingError = true;
-                        errorDetail = errorDetail || cleanLine;
-                    }
-
-                    if (cleanLine.includes("Total Progress")) {
-                        const match = cleanLine.match(/(\d+)\/(\d+)/);
-                        if (match) {
-                            const current = parseInt(match[1], 10);
-                            const total = parseInt(match[2], 10);
-                            lastPercent = toOverallPercent(total > 0 ? current / total : 0);
+                const progressEvent = parseTiddlProgressEvent(cleanLine);
+                if (progressEvent) {
+                    if (progressEvent.event === "queue_total" || progressEvent.event === "queue_progress") {
+                        if (typeof progressEvent.total === "number" && progressEvent.total > 0) {
+                            queueTotal = Math.round(progressEvent.total);
+                        }
+                        if (typeof progressEvent.completed === "number" && progressEvent.completed >= 0) {
+                            queueCompleted = Math.round(progressEvent.completed);
+                        }
+                        if (queueTotal > 0) {
+                            lastPercent = toOverallPercent(Math.min(queueCompleted, queueTotal) / queueTotal);
                             options.onProgress({
                                 progress: lastPercent,
-                                currentFileNum: current,
-                                totalFiles: total,
+                                currentFileNum: Math.min(queueCompleted + 1, queueTotal),
+                                totalFiles: queueTotal,
                                 state: "downloading",
-                                statusMessage: cleanLine,
                             });
                         }
-                    } else if (cleanLine.includes("Exists") || cleanLine.includes("Downloaded") || cleanLine.includes("Total downloads")) {
+                        return;
+                    }
+
+                    const progress = tiddlProgressEventToDownloadProgress(progressEvent, lastPercent);
+                    if (progress) {
+                        options.onProgress(progress);
+                    }
+                    return;
+                }
+
+                if (looksLikeProgressFragment(cleanLine)) {
+                    return;
+                }
+
+                // "not a MP4 file" is a tiddl-handled fallback; "no longer
+                // available" tracks are skipped rather than fatal.
+                if (
+                    cleanLine.includes("Error:")
+                    && !cleanLine.includes("not a MP4 file")
+                    && !cleanLine.includes("no longer available")
+                ) {
+                    hasProcessingError = true;
+                    errorDetail = errorDetail || cleanLine;
+                }
+
+                if (cleanLine.includes("Total Progress")) {
+                    const match = cleanLine.match(/(\d+)\/(\d+)/);
+                    if (match) {
+                        const current = parseInt(match[1], 10);
+                        const total = parseInt(match[2], 10);
+                        lastPercent = toOverallPercent(total > 0 ? current / total : 0);
                         options.onProgress({
                             progress: lastPercent,
-                            statusMessage: cleanLine,
+                            currentFileNum: current,
+                            totalFiles: total,
                             state: "downloading",
+                            statusMessage: cleanLine,
                         });
                     }
+                } else if (cleanLine.includes("Exists") || cleanLine.includes("Downloaded") || cleanLine.includes("Total downloads")) {
+                    options.onProgress({
+                        progress: lastPercent,
+                        statusMessage: cleanLine,
+                        state: "downloading",
+                    });
+                } else if (
+                    source === "stderr"
+                    && (cleanLine.includes("Exception:") || cleanLine.includes("Traceback"))
+                ) {
+                    hasProcessingError = true;
+                    errorDetail = errorDetail || cleanLine;
                 }
+            };
+
+            const consumeLines = (chunk: Buffer, source: "stdout" | "stderr") => {
+                const raw = (source === "stdout" ? stdoutBuffer : stderrBuffer) + chunk.toString();
+                const lines = raw.split(/\r?\n|\r/g);
+                const remainder = lines.pop() ?? "";
+                if (source === "stdout") {
+                    stdoutBuffer = remainder;
+                } else {
+                    stderrBuffer = remainder;
+                }
+
+                for (const line of lines) {
+                    handleLine(line, source);
+                }
+            };
+
+            cp.stdout?.on("data", (data: Buffer) => {
+                consumeLines(data, "stdout");
             });
 
             cp.stderr?.on("data", (data: Buffer) => {
-                const str = stripAnsi(data.toString());
-                if (str.includes("Error:") || str.includes("Exception:") || str.includes("Traceback")) {
-                    hasProcessingError = true;
-                    errorDetail = errorDetail || str.trim().split(/\r?\n/)[0];
-                }
+                consumeLines(data, "stderr");
             });
 
             cp.on("close", (code: number | null) => {
+                if (stdoutBuffer) {
+                    handleLine(stdoutBuffer, "stdout");
+                }
+                if (stderrBuffer) {
+                    handleLine(stderrBuffer, "stderr");
+                }
+
                 if (code === 0 && !hasProcessingError) {
                     options.onProgress({
                         progress: toOverallPercent(1),

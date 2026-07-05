@@ -387,6 +387,7 @@ export class RefreshArtistService {
     private static slotTrack(track: ProviderTrack) {
         return {
             mbid: null,
+            provider_id: track.providerId || null,
             isrc: this.normalizeIsrc(track.isrc) || null,
             title: track.title || null,
             track_number: track.trackNumber || null,
@@ -436,7 +437,21 @@ export class RefreshArtistService {
                     return album._provider_tracks;
                 }
 
-                const tracks = (await provider.getAlbumTracks(albumId)).map((track) => this.slotTrack(track));
+                const rawTracks = await provider.getAlbumTracks(albumId);
+                // Persist what we fetch: materialize provider track offer rows once
+                // (single source of truth) instead of discarding the tracklist into a
+                // dead blob and re-calling the provider each refresh cycle.
+                try {
+                    const { RefreshAlbumService, providerTrackToTrackMetadataRow } = await import("./refresh-album-service.js");
+                    await RefreshAlbumService.storeProviderTrackOffers(
+                        provider.id,
+                        albumId,
+                        rawTracks.map(providerTrackToTrackMetadataRow),
+                    );
+                } catch (error) {
+                    console.warn(`[RefreshArtistService] Failed to persist provider track offers for album ${albumId}:`, error);
+                }
+                const tracks = rawTracks.map((track) => this.slotTrack(track));
                 hydratedTracks.set(albumId, tracks);
                 if (album) {
                     album._provider_tracks = tracks;
@@ -739,12 +754,14 @@ export class RefreshArtistService {
                     match?.confidence ?? null,
                     match?.method || null,
                     match ? JSON.stringify(match.evidence) : null,
+                    // Album-level provider extras only. The tracklist is NOT stored
+                    // here (no redundant blob) — provider track offers are materialized
+                    // as ProviderItems track rows via RefreshAlbumService.storeProviderTrackOffers.
                     JSON.stringify({
                         cover: album.cover || null,
                         explicit: album.explicit == null ? null : Boolean(album.explicit),
                         quality: album.quality || null,
                         discoveredFromArtistMbid: artistMbid,
-                        tracks: album._provider_tracks || null,
                     }),
                 );
 
@@ -1447,28 +1464,50 @@ export class RefreshArtistService {
                     provider: provider.id,
                 }));
 
-                // Fetch tracks for all provider albums to support track-level matching
+                // Reuse already-materialized provider track offer rows for track-level
+                // matching instead of re-fetching the tracklist every refresh. Track
+                // offers are persisted below (storeProviderTrackOffers) once fetched, so
+                // subsequent refreshes read them here and skip the provider call. The
+                // slotTrack shape is reconstructed from the row + its (volume, position)
+                // evidence.
+                const loadMaterializedTracks = db.prepare(`
+                    SELECT
+                        provider_id,
+                        title,
+                        isrc,
+                        duration,
+                        CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number,
+                        CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER) AS volume_number
+                    FROM ProviderItems
+                    WHERE provider = ? AND entity_type = 'track' AND provider_album_id = ?
+                    ORDER BY volume_number, track_number
+                `);
                 for (const album of albums) {
-                    let loadedTracks: any[] | null = null;
-                    const cachedItem = db.prepare(`
-                        SELECT data
-                        FROM ProviderItems
-                        WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
-                    `).get(provider.id, String(album.provider_id)) as { data?: string | null } | undefined;
-
-                    if (cachedItem?.data) {
-                        try {
-                            const parsed = JSON.parse(cachedItem.data);
-                            if (Array.isArray(parsed.tracks) && parsed.tracks.length === Number(album.num_tracks)) {
-                                loadedTracks = parsed.tracks;
-                            }
-                        } catch {
-                            // Ignore JSON parse errors
-                        }
+                    const numTracks = Number(album.num_tracks);
+                    if (!Number.isFinite(numTracks) || numTracks <= 0) {
+                        continue;
                     }
-
-                    if (loadedTracks) {
-                        album._provider_tracks = loadedTracks;
+                    const materialized = loadMaterializedTracks.all(
+                        provider.id,
+                        String(album.provider_id),
+                    ) as Array<{
+                        provider_id: string;
+                        title: string | null;
+                        isrc: string | null;
+                        duration: number | null;
+                        track_number: number | null;
+                        volume_number: number | null;
+                    }>;
+                    if (materialized.length === numTracks) {
+                        album._provider_tracks = materialized.map((row) => ({
+                            mbid: null,
+                            provider_id: row.provider_id || null,
+                            isrc: this.normalizeIsrc(row.isrc) || null,
+                            title: row.title || null,
+                            track_number: row.track_number || null,
+                            volume_number: row.volume_number || 1,
+                            duration: row.duration || null,
+                        }));
                     }
                 }
 
@@ -1485,6 +1524,9 @@ export class RefreshArtistService {
                                 try {
                                     const rawTracks = await provider.getAlbumTracks(album.provider_id);
                                     album._provider_tracks = rawTracks.map((t) => this.slotTrack(t));
+                                    // Keep the raw provider tracks so we can persist them as
+                                    // track offer rows once the album offers exist (below).
+                                    album._provider_raw_tracks = rawTracks;
                                 } catch (error) {
                                     console.warn(`[RefreshArtistService] Failed to fetch tracks for album ${album.provider_id}:`, error);
                                     album._provider_tracks = [];
@@ -1511,6 +1553,31 @@ export class RefreshArtistService {
 
                 await this.storeProviderAlbumOffers(provider.id, artistMbid, albums, providerReleaseGroupMatches);
                 refreshedProviders.add(provider.id);
+
+                // Persist the freshly-fetched tracklists as provider track offer rows.
+                // The album offers now exist, so storeProviderTrackOffers can map each
+                // provider track to its canonical MB track by (volume, position). This
+                // is the single materialization path and avoids re-fetching next refresh
+                // (see loadMaterializedTracks above). No extra API calls — these tracks
+                // were already fetched for release-group matching.
+                const { RefreshAlbumService: RefreshAlbumSvc, providerTrackToTrackMetadataRow: toTrackRow } =
+                    await import("./refresh-album-service.js");
+                for (const album of albums) {
+                    const rawTracks = album._provider_raw_tracks;
+                    if (!Array.isArray(rawTracks) || rawTracks.length === 0) {
+                        continue;
+                    }
+                    try {
+                        await RefreshAlbumSvc.storeProviderTrackOffers(
+                            provider.id,
+                            String(album.provider_id),
+                            rawTracks.map(toTrackRow),
+                            artistMbid,
+                        );
+                    } catch (error) {
+                        console.warn(`[RefreshArtistService] Failed to persist track offers for album ${album.provider_id}:`, error);
+                    }
+                }
 
                 for (const album of albums) {
                     const providerAlbumId = String(album.provider_id);

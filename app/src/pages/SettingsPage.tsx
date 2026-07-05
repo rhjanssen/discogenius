@@ -1,6 +1,7 @@
 import {
     Button,
     Badge,
+    Field,
     Input,
     Select,
     Switch,
@@ -61,6 +62,7 @@ import {
 
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
+    CatalogConfigContract,
     FilteringConfigContract,
     MonitoringConfigContract,
     MonitoringStatusResponseContract,
@@ -781,6 +783,8 @@ const SettingsPage = () => {
         checking: false,
     });
     const [curationConfig, setCurationConfig] = useState<FilteringConfigContract | null>(null);
+    const [catalogConfig, setCatalogConfig] = useState<CatalogConfigContract | null>(null);
+    const [catalogTest, setCatalogTest] = useState<{ status: "idle" | "testing" | "ok" | "error"; message?: string }>({ status: "idle" });
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
     const [importProviderId, setImportProviderId] = useState<string | null>(null);
@@ -1099,9 +1103,10 @@ const SettingsPage = () => {
 
     const fetchConfigs = async () => {
         try {
-            const [monStatus, curation] = await Promise.all([
+            const [monStatus, curation, catalog] = await Promise.all([
                 api.getMonitoringStatus(),
-                api.getCurationConfig()
+                api.getCurationConfig(),
+                api.getCatalogConfig(),
             ]);
             setMonitoringConfig(monStatus.config);
             setMonitoringStatus({
@@ -1109,6 +1114,7 @@ const SettingsPage = () => {
                 checking: monStatus.checking,
             });
             setCurationConfig(curation);
+            setCatalogConfig(catalog);
         } catch (error) {
             console.error('Error fetching configs:', error);
             // Set defaults on error
@@ -1174,6 +1180,34 @@ const SettingsPage = () => {
                 description: "Failed to update curation configuration.",
                 variant: "destructive"
             });
+        }
+    };
+
+    const updateCatalog = async (updates: Partial<CatalogConfigContract>) => {
+        const previous = catalogConfig;
+        setCatalogConfig((current) => (current ? { ...current, ...updates } : current));
+        setCatalogTest({ status: "idle" });
+        try {
+            await api.updateCatalogConfig(updates);
+        } catch (error) {
+            console.error('Error updating catalog config:', error);
+            setCatalogConfig(previous);
+            toast({
+                title: "Error",
+                description: "Failed to update metadata source.",
+                variant: "destructive"
+            });
+        }
+    };
+
+    const testCatalogConnection = async () => {
+        if (!catalogConfig) return;
+        setCatalogTest({ status: "testing" });
+        try {
+            const result = await api.testCatalogConnection(catalogConfig.musicbrainz_host);
+            setCatalogTest({ status: result.ok ? "ok" : "error", message: result.message });
+        } catch (error) {
+            setCatalogTest({ status: "error", message: error instanceof Error ? error.message : "Connection test failed" });
         }
     };
 
@@ -1472,6 +1506,77 @@ const SettingsPage = () => {
             { label: "Music video", value: video },
         ];
     };
+
+    const metadataSource = catalogConfig?.source ?? "servarr";
+    const metadataSourceSection = (
+        <SettingsSection
+            id="metadata-source"
+            title="Metadata source"
+            description="Where Discogenius sources its music catalog (artists, releases, tracks). Servarr is the hosted default; MusicBrainz Docker reads a local mirror for complete releases and ISRC/UPC matching."
+            className={styles.section}
+        >
+            <div className={styles.card}>
+                <RadioGroup
+                    value={metadataSource}
+                    onChange={(_, data) => updateCatalog({ source: data.value as "servarr" | "musicbrainz" })}
+                >
+                    <label className={styles.qualityOption} htmlFor="metadata-source-servarr">
+                        <Radio value="servarr" id="metadata-source-servarr" />
+                        <div className={styles.qualityContent}>
+                            <Text weight="semibold">Servarr Metadata</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                Hosted Servarr / Skyhook server. No setup, but omits some releases and strips ISRC/UPC.
+                            </Text>
+                        </div>
+                    </label>
+                    <label className={styles.qualityOption} htmlFor="metadata-source-musicbrainz">
+                        <Radio value="musicbrainz" id="metadata-source-musicbrainz" />
+                        <div className={styles.qualityContent}>
+                            <Text weight="semibold">MusicBrainz Docker</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                A local MusicBrainz mirror, read directly from Postgres. Complete releases + ISRC/UPC matching, no rate limit.
+                            </Text>
+                        </div>
+                    </label>
+                </RadioGroup>
+                {metadataSource === "musicbrainz" ? (
+                    <>
+                        <Divider className={styles.divider} />
+                        <Field
+                            label="MusicBrainz host"
+                            hint="Enter only the IP address or hostname. Discogenius derives Postgres :5432 and MusicBrainz web/Solr :5000 automatically."
+                            validationState={
+                                catalogTest.status === "ok" ? "success"
+                                    : catalogTest.status === "error" ? "error"
+                                        : "none"
+                            }
+                            validationMessage={
+                                catalogTest.status === "ok" || catalogTest.status === "error"
+                                    ? catalogTest.message
+                                    : undefined
+                            }
+                        >
+                            <Input
+                                value={catalogConfig?.musicbrainz_host ?? ""}
+                                placeholder="192.168.1.100 or musicbrainz.mydomain.com"
+                                onChange={(_, data) => setCatalogConfig((current) => (current ? { ...current, musicbrainz_host: data.value } : current))}
+                                onBlur={() => { if (catalogConfig) { void updateCatalog({ musicbrainz_host: catalogConfig.musicbrainz_host }); } }}
+                            />
+                        </Field>
+                        <Button
+                            appearance="secondary"
+                            style={{ marginTop: tokens.spacingVerticalS, alignSelf: "flex-start" }}
+                            disabled={catalogTest.status === "testing" || !catalogConfig?.musicbrainz_host}
+                            icon={catalogTest.status === "testing" ? <Spinner size="tiny" /> : undefined}
+                            onClick={() => { void testCatalogConnection(); }}
+                        >
+                            Test connection
+                        </Button>
+                    </>
+                ) : null}
+            </div>
+        </SettingsSection>
+    );
 
     const streamingProvidersSection = (
         <SettingsSection
@@ -2391,6 +2496,8 @@ const SettingsPage = () => {
                         </RadioGroup>
                     </div>
                 </SettingsSection>
+
+                {metadataSourceSection}
 
                 {streamingProvidersSection}
 

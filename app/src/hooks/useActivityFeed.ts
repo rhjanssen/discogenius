@@ -1,5 +1,5 @@
 import { api } from "@/services/api";
-import { useDashboardInfiniteFeed } from "@/hooks/useDashboardInfiniteFeed";
+import { ignoreProgressTickEvents, useDashboardInfiniteFeed } from "@/hooks/useDashboardInfiniteFeed";
 import type { ActivityJobContract } from "@contracts/status";
 
 export const activityFeedQueryKey = ["activityFeed"] as const;
@@ -26,7 +26,10 @@ export function useActivityFeed({ enabled = true }: UseActivityFeedOptions = {})
         }),
         getItemId: (item) => item.id,
         enabled,
-        refetchIntervalMs: 5_000,
+        // Activity lists terminal jobs only; transitions arrive as SSE events
+        // and the interval is a fallback for missed events.
+        refetchIntervalMs: 15_000,
+        globalEventFilter: ignoreProgressTickEvents,
     });
 
     return {

@@ -3,9 +3,9 @@
  *
  * Symmetric to `StreamingProvider`: it makes the *canonical catalog* source
  * (MusicBrainz) pluggable. Today the only live implementation is
- * `ServarrMetadataCatalogProvider`, which delegates to the existing Servarr Metadata Server / MB web
- * API replica flow. A future `LocalMusicBrainzCatalogProvider` reads a local
- * MusicBrainz-docker instance instead.
+ * `ServarrMetadataCatalogProvider`, which delegates to the existing Servarr
+ * Metadata Server flow, and `PostgresMusicBrainzCatalogProvider`, which reads a
+ * local MusicBrainz-docker Postgres mirror directly.
  *
  * **DTOs are deliberately the Servarr Metadata Server/Lidarr shapes already produced by
  * `ServarrMetadataService`** (`LidarrArtist`, `LidarrReleaseGroupDetail`, `LidarrRelease`,
@@ -16,10 +16,8 @@
  * any `CatalogProvider` implementation is a drop-in for the Servarr Metadata Server flow without
  * forking a parallel DTO hierarchy.
  *
- * NOTE (U3 scaffolding): this interface is *additive*. It is not yet fully wired
- * into the live request path. The live app still calls the shared
- * `servarrMetadata` service in places; the adapters here document today's
- * behavior and prepare for MB-local mode.
+ * The registry is live-wired for read paths and the persisted refresh path uses
+ * the active provider internally before writing to the local canonical cache.
  */
 import type {
   LidarrArtist,
@@ -73,15 +71,60 @@ export interface CatalogIsrcLookupResult {
   recordings: CatalogRecording[];
 }
 
+export interface CatalogArtistCredit {
+  artistId: string;
+  name: string;
+  joinPhrase: string;
+}
+
+export interface CatalogArtistCreditReleaseGroup {
+  id: string;
+  title: string;
+  primaryType?: string | null;
+  secondaryTypes?: string[];
+  firstReleaseDate?: string | null;
+  disambiguation?: string | null;
+  artistCredits: CatalogArtistCredit[];
+}
+
+export interface CatalogReleaseGroupSearchResult {
+  mbid: string;
+  title: string;
+  artistName?: string | null;
+  artistMbid?: string | null;
+  releaseDate?: string | null;
+  disambiguation?: string | null;
+  images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
+}
+
 /** A unified search hit. `entityType` disambiguates the populated payload. */
 export interface CatalogSearchResults {
   artists: LidarrArtist[];
+  releaseGroups?: CatalogReleaseGroupSearchResult[];
   /** Raw Servarr Metadata Server `searchAll` rows (artist/album mixed) — opaque to callers that only need artists. */
   raw?: unknown[];
 }
 
 export interface CatalogSearchOptions {
   limit?: number;
+}
+
+/**
+ * A MusicBrainz video recording for an artist, in the `/ws/2` recording shape the
+ * video sync consumes (id/title/length/artist-credit/isrcs + optional music-video
+ * relations to the underlying audio recording). Videos are a Discogenius-owned
+ * canonical entity (MB video coverage is sparse); this only supplies the MB ids /
+ * enrichment for videos MB happens to have. MB-local serves it from Postgres —
+ * only `recording.video = true`, far cheaper than browsing every recording.
+ */
+export interface CatalogVideoRecording {
+  id?: string;
+  title?: string;
+  length?: number | null;
+  video?: boolean | string | null;
+  isrcs?: string[] | null;
+  "artist-credit"?: Array<{ name?: string; joinphrase?: string; artist?: { id?: string; name?: string } }>;
+  relations?: Array<{ type?: string; "type-id"?: string; direction?: string; recording?: CatalogVideoRecording }>;
 }
 
 /**
@@ -118,6 +161,22 @@ export interface CatalogProvider {
 
   /** Recordings carrying a given ISRC. Optional: Servarr Metadata Server exposes no ISRC index. */
   lookupByISRC?(isrc: string): Promise<CatalogIsrcLookupResult>;
+
+  /**
+   * Release groups where the artist appears in the MusicBrainz artist-credit,
+   * including the full credited-artist list for each group. Optional because the
+   * hosted Servarr Metadata Server path has no direct endpoint; MB-local serves
+   * this from Postgres.
+   */
+  getCreditedReleaseGroupsForArtist?(artistMbid: string): Promise<CatalogArtistCreditReleaseGroup[]>;
+
+  /**
+   * MusicBrainz video recordings credited to an artist (the ones MB has). Optional
+   * because videos are a Discogenius-owned canonical entity, not MB-authoritative;
+   * this only pulls MB ids/enrichment. MB-local serves it from Postgres. When a
+   * provider does not implement it, the video sync falls back to the public MB browse.
+   */
+  getArtistVideoRecordings?(artistMbid: string): Promise<CatalogVideoRecording[]>;
 
   /** Free-text search (artists by default). */
   search(query: string, options?: CatalogSearchOptions): Promise<CatalogSearchResults>;

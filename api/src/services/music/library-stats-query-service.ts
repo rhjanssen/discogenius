@@ -8,17 +8,49 @@ import type { LibraryStatsContract } from "../../contracts/catalog.js";
 export class LibraryStatsQueryService {
     private static readonly SNAPSHOT_TTL_MS = 10_000;
     private static cachedSnapshot: { value: LibraryStatsContract; createdAtMs: number } | null = null;
+    private static refreshScheduled = false;
 
     static clearCache(): void {
         this.cachedSnapshot = null;
     }
 
+    /**
+     * Stale-while-revalidate: an expired snapshot is served immediately and
+     * refreshed off the request path. Under load the refresh cost is paid at
+     * most once per TTL instead of by every waiting request, and /stats
+     * latency stays flat. Only a cold cache computes synchronously.
+     */
     static getSnapshot(): LibraryStatsContract {
         const cached = this.cachedSnapshot;
         if (cached && Date.now() - cached.createdAtMs < this.SNAPSHOT_TTL_MS) {
             return cached.value;
         }
 
+        if (cached) {
+            this.scheduleRefresh();
+            return cached.value;
+        }
+
+        return this.computeSnapshot();
+    }
+
+    private static scheduleRefresh(): void {
+        if (this.refreshScheduled) {
+            return;
+        }
+        this.refreshScheduled = true;
+        setImmediate(() => {
+            try {
+                this.computeSnapshot();
+            } catch (error) {
+                console.warn('[STATS] Background stats refresh failed:', error);
+            } finally {
+                this.refreshScheduled = false;
+            }
+        });
+    }
+
+    private static computeSnapshot(): LibraryStatsContract {
         const artistCount = (db.prepare("SELECT COUNT(*) as count FROM Artists").get() as { count: number }).count;
 
         // Read precomputed statistics only — the heavy whole-library aggregation

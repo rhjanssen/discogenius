@@ -13,12 +13,18 @@ import {
   ProviderAuthStatus,
   ProviderDownloadOptions,
   ProviderCapabilities,
+  ProviderDiagnosticResult,
+  ProviderManifest,
+  ProviderImportSelection,
+  ProviderImportSource,
 } from "../streaming-provider.js";
 import { appleMusicQualityMapping } from "./apple-music-quality.js";
 import {
   AppleMusicAuthToken,
   clearStoredAppleMusicToken,
   loadStoredAppleMusicToken,
+  resolveAppleStorefront,
+  saveStoredAppleMusicToken,
   syncTokenToDownloader,
 } from "./apple-music-auth.js";
 import {
@@ -32,21 +38,84 @@ import {
   renderAppleArtwork,
   searchApple,
 } from "./apple-music-catalog.js";
-import { AppleMusicApiOptions } from "./apple-music-api.js";
+import { AppleMusicApiOptions, validateAppleMusicCredentials } from "./apple-music-api.js";
 import { downloadBackendRegistry } from "../../download/download-backend.js";
-import { AppleMusicBackend, APPLE_MUSIC_DOWNLOAD_ENABLED } from "./apple-music-backend.js";
+import {
+  AppleMusicBackend,
+  describeAppleDownloaderMissingPrerequisites,
+  getAppleMusicDownloaderCapabilitySnapshot,
+} from "./apple-music-backend.js";
 
 export class AppleMusicProvider implements StreamingProvider {
   readonly id = "apple-music";
   readonly name = "Apple Music";
+  readonly manifest: ProviderManifest = {
+    id: this.id,
+    displayName: this.name,
+    configRoot: "providers/apple-music",
+    auth: {
+      kind: "developer-token",
+      managedByApp: false,
+      credentialFields: [
+        {
+          key: "developerToken",
+          label: "Bearer/developer token",
+          secret: true,
+          required: false,
+          helpText: "Optional Authorization bearer override. If omitted, Discogenius resolves the Apple Music web token like the downloader.",
+        },
+        {
+          key: "mediaUserToken",
+          label: "Media user token",
+          secret: true,
+          required: true,
+          helpText: "Apple Music web cookie named media-user-token.",
+        },
+        {
+          key: "storefront",
+          label: "Storefront",
+          required: false,
+          helpText: "Two-letter storefront such as us, gb, nl, or jp.",
+        },
+      ],
+    },
+    integration: {
+      catalogSource: "official-api",
+      downloadSource: "native-cli",
+      stableResourceIds: ["artist", "album", "track", "video", "playlist"],
+    },
+    downloadBackends: [
+      {
+        id: "apple-music-downloader",
+        capabilities: ["stereo", "spatial", "video"],
+        enabled: true,
+        setupNote: "Requires zhaarey/apple-music-downloader plus its decryption wrapper and Apple Music user tokens.",
+      },
+    ],
+    catalog: {
+      search: true,
+      artistCatalog: true,
+      releaseOffers: true,
+      videos: true,
+    },
+    imports: {
+      supported: ["library-artists", "playlist"],
+    },
+    qualityMapping: {
+      neutral: true,
+      stereo: true,
+      spatial: true,
+      video: true,
+    },
+    diagnostics: ["auth", "catalog", "download-backend"],
+  };
   readonly capabilities: ProviderCapabilities = {
     catalogSearch: true,
     artistCatalog: true,
     // Apple's public catalog API has no followed-artists endpoint for our token.
     followedArtists: false,
     audioPreviews: true,
-    // Gated behind the live binary path (see apple-music-backend).
-    audioDownloads: APPLE_MUSIC_DOWNLOAD_ENABLED,
+    audioDownloads: true,
     lossyStereo: true,
     losslessStereo: true,
     hiResStereo: true,
@@ -55,7 +124,7 @@ export class AppleMusicProvider implements StreamingProvider {
     lyrics: false,
     musicVideos: true,
     videoPreviews: true,
-    videoDownloads: APPLE_MUSIC_DOWNLOAD_ENABLED,
+    videoDownloads: true,
     artwork: true,
     editorialMetadata: true,
     providerIds: true,
@@ -87,6 +156,16 @@ export class AppleMusicProvider implements StreamingProvider {
 
   async getArtistVideos(id: string | number): Promise<ProviderVideo[]> {
     return getAppleArtistVideos(String(id), this.apiOptions());
+  }
+
+  async listImportSources(): Promise<ProviderImportSource[]> {
+    const { getAppleImportSources } = await import("./apple-music-library.js");
+    return getAppleImportSources(this.apiOptions());
+  }
+
+  async getArtistsForImportSource(selection: ProviderImportSelection): Promise<ProviderArtist[]> {
+    const { getAppleArtistsForImportSource } = await import("./apple-music-library.js");
+    return getAppleArtistsForImportSource(selection, this.apiOptions());
   }
 
   async listArtistReleaseOffers(id: string | number): Promise<ProviderAlbum[]> {
@@ -122,6 +201,11 @@ export class AppleMusicProvider implements StreamingProvider {
     return getAppleVideo(String(id), this.apiOptions());
   }
 
+  async apiRequest<T = any>(endpoint: string, options?: AppleMusicApiOptions): Promise<T> {
+    const { appleMusicApiRequest } = await import("./apple-music-api.js");
+    return appleMusicApiRequest<T>(endpoint, options ?? this.apiOptions());
+  }
+
   async getArtworkUrl(request: ProviderArtworkRequest): Promise<string | null> {
     const size = typeof request.size === "number" ? request.size : Number(request.size) || 640;
     if (request.entityType === "album" && request.providerId != null) {
@@ -145,6 +229,28 @@ export class AppleMusicProvider implements StreamingProvider {
 
   loadToken(): AppleMusicAuthToken | null {
     return loadStoredAppleMusicToken();
+  }
+
+  async saveCredentials(credentials: Record<string, unknown>): Promise<void> {
+    const developerToken = String(credentials.developerToken || credentials.developer_token || "").trim();
+    const mediaUserToken = String(credentials.mediaUserToken || credentials.media_user_token || "").trim();
+    const storefront = String(credentials.storefront || "").trim().toLowerCase();
+    if (!mediaUserToken) {
+      throw new Error("Apple Music media user token is required.");
+    }
+    if (storefront && !/^[a-z]{2}$/.test(storefront)) {
+      throw new Error("Apple Music storefront must be a two-letter country code.");
+    }
+    const token: AppleMusicAuthToken = {
+      developer_token: developerToken || undefined,
+      media_user_token: mediaUserToken,
+      storefront: storefront || resolveAppleStorefront(),
+    };
+    const validation = await validateAppleMusicCredentials(token);
+    saveStoredAppleMusicToken({
+      ...token,
+      storefront: storefront || validation.storefront || token.storefront,
+    });
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatus> {
@@ -177,9 +283,71 @@ export class AppleMusicProvider implements StreamingProvider {
       canAuthenticate: true,
       user: token.user?.username ? { username: token.user.username } : null,
       message: tokenExpired
-        ? "Your Apple Music developer token has expired. Reconnect to access remote catalog features."
+        ? "Your configured Apple Music bearer token has expired. Remove it or reconnect to use the auto-resolved web token."
         : undefined,
     };
+  }
+
+  async getDiagnostics(): Promise<ProviderDiagnosticResult[]> {
+    const checkedAt = new Date().toISOString();
+    const authStatus = await this.getAuthStatus();
+    const snapshot = await getAppleMusicDownloaderCapabilitySnapshot();
+    const missingPrerequisites = describeAppleDownloaderMissingPrerequisites(snapshot);
+    const requiredReady = missingPrerequisites.length === 0;
+    const videoReady = Boolean(snapshot.mp4DecryptAvailable);
+    const downloadStatus: ProviderDiagnosticResult["status"] = requiredReady && videoReady
+      ? "ok"
+      : requiredReady
+        ? "warning"
+        : "error";
+
+    return [
+      {
+        kind: "auth",
+        status: authStatus.tokenExpired || authStatus.refreshTokenExpired
+          ? "error"
+          : authStatus.connected
+            ? "ok"
+            : "warning",
+        message: authStatus.message || (authStatus.connected
+          ? "Apple Music media-user-token is configured."
+          : "Apple Music is not connected."),
+        checkedAt,
+        details: {
+          authKind: this.manifest.auth.kind,
+          managedByApp: this.manifest.auth.managedByApp,
+          connected: authStatus.connected,
+          tokenExpired: authStatus.tokenExpired,
+          remoteCatalogAvailable: authStatus.remoteCatalogAvailable,
+        },
+      },
+      {
+        kind: "catalog",
+        status: authStatus.remoteCatalogAvailable ? "ok" : "warning",
+        message: authStatus.remoteCatalogAvailable
+          ? "Apple Music catalog access is available."
+          : "Apple Music catalog access needs a media-user-token.",
+        checkedAt,
+        details: {
+          search: this.manifest.catalog.search,
+          artistCatalog: this.manifest.catalog.artistCatalog,
+          releaseOffers: this.manifest.catalog.releaseOffers,
+          videos: this.manifest.catalog.videos,
+          remoteCatalogAvailable: authStatus.remoteCatalogAvailable,
+        },
+      },
+      {
+        kind: "download-backend",
+        status: downloadStatus,
+        message: requiredReady && videoReady
+          ? "Apple Music downloader, MP4Box, mp4decrypt, and wrapper ports are ready."
+          : requiredReady
+            ? "Apple Music audio downloads are ready, but mp4decrypt is missing for music videos."
+            : `Apple Music downloader provisioning is incomplete: missing ${missingPrerequisites.join(", ")}.`,
+        checkedAt,
+        details: { ...snapshot, missingPrerequisites },
+      },
+    ];
   }
 
   getMediaUrl(type: string, providerId: string): string {

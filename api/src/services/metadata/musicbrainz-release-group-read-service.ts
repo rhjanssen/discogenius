@@ -3,6 +3,7 @@ import type { AlbumContract } from "../../contracts/catalog.js";
 import type { AlbumPageContract } from "../../contracts/pages.js";
 import type { AlbumTrackContract, AlbumVersionContract } from "../../contracts/media.js";
 import { servarrMetadata } from "./servarr-metadata.js";
+import { catalogProviderRegistry } from "../catalog/index.js";
 import { scoreTrackMatch as sharedScoreTrackMatch } from "../music/provider-track-matcher.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderTrack } from "../providers/streaming-provider.js";
@@ -834,7 +835,8 @@ async function attachProviderPreviewTracks(
             if (!stereoBest && !spatialBest && !selectedBest) {
                 return {
                     ...track,
-                    qualityTags: mergeQualityTags([...(track.qualityTags || []), track.quality]),
+                    quality: "",
+                    qualityTags: [],
                 };
             }
 
@@ -849,8 +851,6 @@ async function attachProviderPreviewTracks(
                 providerTrackQuality(spatialBest?.providerTrack),
                 providerTrackQuality(stereoBest?.providerTrack),
                 providerTrackQuality(selectedBest?.providerTrack),
-                ...(track.qualityTags || []),
-                track.quality,
             ]);
             const primaryQuality = providerTrackQuality(stereoBest?.providerTrack)
                 || providerTrackQuality(selectedBest?.providerTrack)
@@ -901,7 +901,7 @@ export class MusicBrainzReleaseGroupReadService {
         let releaseGroup = queryReleaseGroup(releaseGroupMbid);
         if (!releaseGroup) {
             try {
-                const detail = await servarrMetadata.getAlbumInfo(releaseGroupMbid);
+                const detail = await catalogProviderRegistry.getActive().getReleaseGroup(releaseGroupMbid);
                 if (detail) {
                     const artistMbid = (detail as any).artistid || (detail as any).artistId || (detail as any).ArtistId || (detail as any).Artist?.Id || (detail as any).Artist?.id || (detail as any).artists?.[0]?.id || (detail as any).artists?.[0]?.Id;
                     if (artistMbid) {

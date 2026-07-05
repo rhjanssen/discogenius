@@ -47,11 +47,23 @@ export async function appleMusicApiRequest<T = unknown>(
   }
   const doFetch = resolveFetch(options.fetchImpl);
   const url = endpoint.startsWith("http") ? endpoint : `${APPLE_MUSIC_API_BASE}${endpoint}`;
-  const response = await doFetch(url, { headers: buildAppleMusicApiHeaders(token) });
+  const response = await doFetch(url, { headers: await buildAppleMusicApiHeaders(token) });
   if (!response.ok) {
     throw new AppleMusicApiError(response.status, `Apple Music API request failed (${response.status}) for ${endpoint}`);
   }
   return (await response.json()) as T;
+}
+
+export async function validateAppleMusicCredentials(
+  token: AppleMusicAuthToken,
+  options: Omit<AppleMusicApiOptions, "token"> = {},
+): Promise<{ storefront?: string }> {
+  const response = await appleMusicApiRequest<{ data?: Array<{ id?: string }> }>(
+    "/v1/me/storefront",
+    { ...options, token },
+  );
+  const storefront = response.data?.[0]?.id;
+  return { storefront };
 }
 
 /** Resolve the storefront for catalog endpoints (token-scoped, else env default). */

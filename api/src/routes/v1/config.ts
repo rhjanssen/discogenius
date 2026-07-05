@@ -6,6 +6,7 @@ import { UpgraderService } from "../../services/mediafiles/upgrader.js";
 import { getAppReleaseInfo } from "../../services/config/app-release.js";
 import {
   parseAccountConfigUpdate,
+  parseCatalogConfigUpdate,
   parseFilteringConfigUpdate,
   parseMetadataConfigUpdate,
   parseNamingConfigUpdate,
@@ -13,13 +14,18 @@ import {
   parsePublicAppConfigUpdate,
   parseQualityConfigUpdate,
 } from "../../contracts/config-updates.js";
+import { catalogProviderRegistry } from "../../services/catalog/index.js";
+import { buildMbPostgresDsn, buildMbSearchWebUrl, normalizeMbHost } from "../../services/catalog/mb-connection.js";
 import {
   getObjectBody,
   getRequiredString,
   isRequestValidationError,
 } from "../../utils/request-validation.js";
 import * as TOML from "@iarna/toml";
+import pg from "pg";
 import fs from "fs";
+
+const { Client: PgClient } = pg;
 import type { PublicAppConfigContract } from "../../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../../services/config/naming.js";
 import { queueCurationPass } from "../../services/commands/scheduler.js";
@@ -116,6 +122,73 @@ router.post("/quality", async (req, res) => {
       return res.status(400).json({ detail: error.message });
     }
     res.status(500).json({ detail: error.message });
+  }
+});
+
+router.get("/catalog", (_, res) => {
+  try {
+    res.json(getConfigSection("catalog"));
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.post("/catalog", (req, res) => {
+  try {
+    const updates = parseCatalogConfigUpdate(getObjectBody(req.body), getConfigSection("catalog"));
+    updateConfig("catalog", updates);
+    // Re-resolve the active catalog source so the change takes effect immediately.
+    catalogProviderRegistry.refreshFromConfig();
+    res.json({ success: true, activeSource: catalogProviderRegistry.getActiveId() });
+  } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+/**
+ * Probe the MusicBrainz-docker Postgres connection: connect and resolve a
+ * universally-present MBID (The Beatles) so it validates both reachability and
+ * that the catalog schema/data is loaded. Also reports whether a co-located
+ * Solr web server (full-stack mirror) is reachable for search.
+ */
+router.post("/catalog/test", async (req, res) => {
+  const body = getObjectBody(req.body);
+  const requestedHost = typeof body.musicbrainz_host === "string" ? body.musicbrainz_host.trim() : "";
+  const host = normalizeMbHost(requestedHost || getConfigSection("catalog").musicbrainz_host);
+  const dsn = buildMbPostgresDsn(host);
+  const searchWebUrl = buildMbSearchWebUrl(host);
+
+  const client = new PgClient({ connectionString: dsn, statement_timeout: 8000, query_timeout: 8000 });
+  try {
+    await client.connect();
+    const result = await client.query(
+      "SELECT name FROM musicbrainz.artist WHERE gid = $1",
+      ["b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d"],
+    );
+    const name = result.rows[0]?.name as string | undefined;
+    let searchNote = "";
+    try {
+      if (!searchWebUrl) {
+        throw new Error("No MusicBrainz web URL");
+      }
+      const solr = await fetch(`${searchWebUrl}/artist?query=test&limit=1&fmt=json`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      searchNote = solr.ok ? " · Solr search available" : " · Postgres search (no Solr)";
+    } catch {
+      searchNote = " · Postgres search (no Solr)";
+    }
+    return res.json({
+      ok: Boolean(name),
+      message: name ? `Connected — resolved "${name}"${searchNote}` : "Connected, but catalog data not loaded",
+    });
+  } catch (error: any) {
+    return res.json({ ok: false, message: error?.message || "Connection failed" });
+  } finally {
+    await client.end().catch(() => { /* ignore */ });
   }
 });
 

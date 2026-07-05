@@ -91,6 +91,79 @@ test("catalog tables do not retain raw metadata data blobs", () => {
   }
 });
 
+test("canonical catalog tables do not store provider resource evidence", () => {
+  const providerEvidenceColumns = [
+    "provider",
+    "provider_id",
+    "provider_url",
+    "provider_data",
+    "asset_id",
+    "upc",
+    "isrc",
+  ];
+
+  for (const tableName of ["ArtistMetadata", "Albums", "AlbumReleases", "Recordings", "Tracks"]) {
+    const columns = tableColumns(tableName);
+    for (const columnName of providerEvidenceColumns) {
+      assert.equal(
+        columns.includes(columnName),
+        false,
+        `Expected ${tableName}.${columnName} to stay out of the canonical catalog`,
+      );
+    }
+  }
+
+  assert.ok(
+    tableColumns("AlbumReleases").includes("barcode"),
+    "Expected AlbumReleases.barcode to remain available for canonical MusicBrainz release barcodes",
+  );
+});
+
+test("provider evidence schema is provider-agnostic and match edges target MusicBrainz ids", () => {
+  const providerItemColumns = tableColumns("ProviderItems");
+  const providerMatchColumns = tableColumns("ProviderItemMatches");
+
+  for (const columnName of [
+    "provider",
+    "entity_type",
+    "provider_id",
+    "artist_mbid",
+    "release_group_mbid",
+    "release_mbid",
+    "track_mbid",
+    "recording_mbid",
+    "upc",
+    "isrc",
+    "provider_album_id",
+    "provider_url",
+    "asset_id",
+    "match_evidence",
+    "data",
+  ]) {
+    assert.ok(providerItemColumns.includes(columnName), `Expected ProviderItems.${columnName}`);
+  }
+
+  for (const columnName of [
+    "provider",
+    "provider_item_type",
+    "provider_item_id",
+    "provider_album_id",
+    "musicbrainz_artist_mbid",
+    "musicbrainz_release_mbid",
+    "musicbrainz_track_mbid",
+    "musicbrainz_recording_mbid",
+    "evidence",
+  ]) {
+    assert.ok(providerMatchColumns.includes(columnName), `Expected ProviderItemMatches.${columnName}`);
+  }
+
+  for (const tableName of ["ProviderItems", "ProviderItemMatches"]) {
+    for (const columnName of tableColumns(tableName)) {
+      assert.equal(/^tidal_|^apple_|^spotify_/i.test(columnName), false, `Expected ${tableName}.${columnName} to be provider-agnostic`);
+    }
+  }
+});
+
 test("sidecar tables do not retain legacy album or media identity shadows", () => {
   for (const tableName of ["MetadataFiles", "LyricFiles", "ExtraFiles"]) {
     const columns = tableColumns(tableName);

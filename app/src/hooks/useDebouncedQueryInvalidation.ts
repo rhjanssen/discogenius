@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { type QueryKey, useQueryClient } from "@tanstack/react-query";
-import { useGlobalEvents } from "@/hooks/useGlobalEvents";
+import { useGlobalEvents, type GlobalEventPayload } from "@/hooks/useGlobalEvents";
 
 interface UseDebouncedQueryInvalidationOptions {
   queryKeys: QueryKey[];
@@ -8,6 +8,12 @@ interface UseDebouncedQueryInvalidationOptions {
   windowEvents?: string[];
   debounceMs?: number;
   enabled?: boolean;
+  /**
+   * Optional predicate applied to global events before scheduling an
+   * invalidation. Lets feeds ignore high-frequency events that cannot change
+   * their data (e.g. per-second progress ticks).
+   */
+  globalEventFilter?: (event: GlobalEventPayload) => boolean;
 }
 
 export function useDebouncedQueryInvalidation({
@@ -16,6 +22,7 @@ export function useDebouncedQueryInvalidation({
   windowEvents,
   debounceMs = 300,
   enabled = true,
+  globalEventFilter,
 }: UseDebouncedQueryInvalidationOptions) {
   const queryClient = useQueryClient();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -27,6 +34,10 @@ export function useDebouncedQueryInvalidation({
   // producing an endless invalidate/refetch loop.
   const queryKeysRef = useRef(queryKeys);
   queryKeysRef.current = queryKeys;
+
+  // Same identity trap as queryKeys: callers pass inline filter functions.
+  const globalEventFilterRef = useRef(globalEventFilter);
+  globalEventFilterRef.current = globalEventFilter;
 
   const scheduleInvalidation = useCallback(() => {
     if (!enabled) {
@@ -49,6 +60,11 @@ export function useDebouncedQueryInvalidation({
 
   useEffect(() => {
     if (!lastGlobalEvent) {
+      return;
+    }
+
+    const filter = globalEventFilterRef.current;
+    if (filter && !filter(lastGlobalEvent)) {
       return;
     }
 

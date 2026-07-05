@@ -19,6 +19,7 @@ import { appEvents, AppEvent, type ImportArtistsProgressEventPayload, type Comma
 import type { ImportProviderArtistsCommand } from "../../services/commands/command-bodies.js";
 import type { ProviderImportSelection } from "../../services/providers/streaming-provider.js";
 import { servarrMetadata, type LidarrArtist } from "../../services/metadata/servarr-metadata.js";
+import { catalogProviderRegistry } from "../../services/catalog/index.js";
 import { registerMediaCoverProxyUrl, resolveMediaCoverProxyUrl } from "../../services/metadata/media-cover-service.js";
 import { RefreshArtistService } from "../../services/music/refresh-artist-service.js";
 import {
@@ -131,7 +132,7 @@ router.get("/lookup", async (req, res) => {
       return res.status(400).json({ detail: "Search term must be at least 2 characters" });
     }
 
-    const metadataArtists = await servarrMetadata.searchForNewArtist(term, limit);
+    const metadataArtists = (await catalogProviderRegistry.getActive().search(term, { limit })).artists;
     const seen = new Set<string>();
     const artists = metadataArtists
       .map(formatArtistLookupResult)
@@ -243,7 +244,7 @@ async function streamArtistImport(req: any, res: any, selection: ProviderImportS
   req.on('close', cleanup);
 }
 
-const IMPORT_CATEGORIES = new Set(["followed-artists", "playlist", "favorite-tracks", "mix"]);
+const IMPORT_CATEGORIES = new Set(["library-artists", "followed-artists", "playlist", "favorite-tracks", "mix"]);
 const MANUAL_IMPORT_PRIORITY = 1000;
 
 function enqueueProviderArtistImport(payload: ImportProviderArtistsCommand): Promise<number> {

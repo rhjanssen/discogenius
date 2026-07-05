@@ -72,9 +72,9 @@ function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artis
     FROM ArtistMetadata
     WHERE foreign_artist_id = ? OR mbid = ?
     LIMIT 1
-  `).get(normalizedArtistMbid, normalizedArtistMbid) as { Id?: number | null } | undefined;
-  if (existing?.Id != null) {
-    return Number(existing.Id);
+  `).get(normalizedArtistMbid, normalizedArtistMbid) as { id?: number | null } | undefined;
+  if (existing?.id != null) {
+    return Number(existing.id);
   }
 
   const matchingCredit = (recording["artist-credit"] || [])
@@ -102,9 +102,9 @@ function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artis
     FROM ArtistMetadata
     WHERE foreign_artist_id = ? OR mbid = ?
     LIMIT 1
-  `).get(normalizedArtistMbid, normalizedArtistMbid) as { Id?: number | null } | undefined;
+  `).get(normalizedArtistMbid, normalizedArtistMbid) as { id?: number | null } | undefined;
 
-  return row?.Id == null ? null : Number(row.Id);
+  return row?.id == null ? null : Number(row.id);
 }
 
 async function fetchMusicBrainzJson<T>(path: string): Promise<T> {
@@ -200,9 +200,9 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     FROM Recordings
     WHERE foreign_recording_id = ? OR mbid = ?
     LIMIT 1
-  `).get(recordingMbid, recordingMbid) as { Id?: number | null } | undefined;
+  `).get(recordingMbid, recordingMbid) as { id?: number | null } | undefined;
 
-  return row?.Id == null ? null : Number(row.Id);
+  return row?.id == null ? null : Number(row.id);
 }
 
 function upsertMusicVideoRelations(video: MusicBrainzRecording, sourceRecordingId: number | null): void {
@@ -255,6 +255,28 @@ export async function syncMusicBrainzVideosForArtist(
 
   if (!options.force && Number(existing?.count || 0) > 0) {
     return 0;
+  }
+
+  // Prefer the active catalog source when it can serve MB video recordings
+  // directly (MB-local reads them straight from Postgres — no public-MB browse,
+  // no 1req/s limit). Falls back to the public MB browse below when unavailable.
+  try {
+    const { catalogProviderRegistry } = await import("../../services/catalog/index.js");
+    const active = catalogProviderRegistry.getActive();
+    if (typeof active.getArtistVideoRecordings === "function") {
+      const recordings = await active.getArtistVideoRecordings(artistMbid);
+      let synced = 0;
+      db.transaction(() => {
+        for (const recording of recordings.filter(isVideoRecording)) {
+          const recordingId = upsertRecording(recording, { artistMbid, isVideo: true });
+          upsertMusicVideoRelations(recording, recordingId);
+          synced++;
+        }
+      })();
+      return synced;
+    }
+  } catch (error) {
+    console.warn(`[MusicBrainzVideoService] Active-source video fetch failed for ${artistMbid}; falling back to public MB:`, error);
   }
 
   let offset = 0;
