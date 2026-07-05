@@ -13,8 +13,6 @@ interface MediaTypeBadgeProps {
 
 const useStyles = makeStyles({
     base: {
-        color: tokens.colorNeutralForeground1,
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralForeground3} 50%, transparent)`,
         fontWeight: tokens.fontWeightSemibold,
         paddingLeft: tokens.spacingHorizontalS,
         paddingRight: tokens.spacingHorizontalS,
@@ -24,15 +22,6 @@ const useStyles = makeStyles({
         "::after": {
             display: "none",
         },
-    },
-    album: {
-        color: 'var(--dg-accent-albums)',
-    },
-    track: {
-        color: 'var(--dg-accent-tracks)',
-    },
-    video: {
-        color: 'var(--dg-accent-videos)',
     },
 });
 
@@ -64,19 +53,17 @@ export const MediaTypeBadge: React.FC<MediaTypeBadgeProps> = ({
 }) => {
     const styles = useStyles();
     const { isDarkMode } = useTheme();
-    const tint = isDarkMode ? 50 : 60;
-    const variantClass = kind === 'album' || kind === 'album-group'
-        ? styles.album
-        : kind === 'video'
-            ? styles.video
-            : styles.track;
+    const accent = getAccentColor(kind);
+    const backgroundColor = isDarkMode
+        ? `color-mix(in srgb, color-mix(in srgb, ${accent} 36%, black) 72%, transparent)`
+        : `color-mix(in srgb, color-mix(in srgb, ${accent} 24%, white) 78%, transparent)`;
 
     return (
         <Badge
             appearance="tint"
             size={size}
-            className={mergeClasses(styles.base, variantClass, className)}
-            style={{ backgroundColor: `color-mix(in srgb, ${getAccentColor(kind)} ${tint}%, transparent)` }}
+            className={mergeClasses(styles.base, className)}
+            style={{ backgroundColor, color: accent }}
         >
             {label || getDefaultLabel(kind)}
         </Badge>

@@ -854,6 +854,8 @@ export class RefreshAlbumService {
                                 albumProviderId: albumId,
                                 copyright: currentTrack.copyright || null,
                                 popularity: currentTrack.popularity || null,
+                                replay_gain: finiteNumberOrNull(currentTrack.replay_gain),
+                                peak: finiteNumberOrNull(currentTrack.peak),
                             }),
                         );
                         this.storeCanonicalTrackSupplements(canonicalTrack?.recording_id || null, currentTrack);

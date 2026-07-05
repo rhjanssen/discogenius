@@ -178,6 +178,57 @@ test("CurationService monitors canonical videos when video curation is enabled a
   ]);
 });
 
+test("CurationService requires provider availability before monitoring canonical videos when configured", async () => {
+  const { db } = dbModule;
+
+  writeTestConfig({
+    filtering: {
+      include_videos: true,
+      require_provider_availability: true,
+    },
+  });
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Queen", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Queen");
+
+  db.prepare(`
+    INSERT INTO Recordings (id, mbid, artist_mbid, title, is_video, monitored, monitored_lock)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(211, "video-rec-provider", "artist-mbid-1", "Provider Video", 1, 0, 0);
+
+  db.prepare(`
+    INSERT INTO Recordings (id, mbid, artist_mbid, title, is_video, monitored, monitored_lock)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(212, "video-rec-mb-only", "artist-mbid-1", "MusicBrainz Only Video", 1, 1, 0);
+
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid, title, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("tidal", "video", "video-provider-1", "artist-mbid-1", "video-rec-provider", "Provider Video", "matched");
+
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  const rows = db.prepare(`
+    SELECT id, monitored
+    FROM Recordings
+    WHERE id IN (211, 212)
+    ORDER BY id
+  `).all() as Array<{ id: number; monitored: number }>;
+
+  assert.deepEqual(rows, [
+    { id: 211, monitored: 1 },
+    { id: 212, monitored: 0 },
+  ]);
+});
+
 test("CurationService unmonitors release-group slot without mutating provider album or track rows", async () => {
   const { db } = dbModule;
 

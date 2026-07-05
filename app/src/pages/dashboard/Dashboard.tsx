@@ -513,15 +513,7 @@ const Dashboard = () => {
         <div className={styles.container}>
             {/* Header */}
             <div className={styles.header}>
-                <div className={styles.desktopOnly}>
-                    <Title1>Dashboard</Title1>
-                </div>
-                <div className={styles.mobileOnly}>
-                    <div className={styles.brandHeader}>
-                        <img src="/assets/images/logo.png" alt="" className={styles.brandLogo} />
-                        <Title1 className={styles.brandTitle}>Discogenius</Title1>
-                    </div>
-                </div>
+                <Title1>Dashboard</Title1>
                 <div className={styles.desktopActions}>
                     <div className={styles.headerActionRow}>
                         {desktopVisibleActions.map((action) => (

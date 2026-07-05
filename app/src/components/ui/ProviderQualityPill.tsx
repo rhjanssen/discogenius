@@ -187,8 +187,9 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     const styles = useStyles();
     const { isDarkMode } = useTheme();
     const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
+    const badgeAlpha = isDarkMode ? 0.64 : 0.72;
     const pillStyle = {
-        backgroundColor: transparentHex(palette.SpatialBackground, isDarkMode ? 0.5 : 0.6),
+        backgroundColor: transparentHex(palette.SpatialBackground, badgeAlpha),
         color: palette.SpatialText,
     };
 

@@ -68,5 +68,5 @@ export async function validateAppleMusicCredentials(
 
 /** Resolve the storefront for catalog endpoints (token-scoped, else env default). */
 export function storefrontFor(token?: AppleMusicAuthToken | null): string {
-  return token?.storefront || resolveAppleStorefront();
+  return token?.storefront || loadStoredAppleMusicToken()?.storefront || resolveAppleStorefront();
 }

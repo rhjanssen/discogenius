@@ -231,6 +231,7 @@ const useStyles = makeStyles({
       alignItems: "center",
       gap: tokens.spacingHorizontalM,
       marginTop: tokens.spacingVerticalM,
+      flexWrap: "wrap",
       overflow: "visible",
     },
   },
@@ -245,9 +246,11 @@ const useStyles = makeStyles({
   actionButton: {
     ...compactDetailActionButtonStyles,
     minWidth: "76px",
+    flexShrink: 0,
     "@media (min-width: 768px)": {
       ...compactDetailActionButtonStyles["@media (min-width: 768px)"],
       minWidth: "auto",
+      flexShrink: 1,
     },
   },
   filterViewDesktop: {

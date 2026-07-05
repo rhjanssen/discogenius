@@ -203,6 +203,47 @@ test("Apple web bearer token auto-resolution is cached across API header builds"
   }
 });
 
+test("Apple catalog calls use the configured storefront when no explicit test token is supplied", async () => {
+  const previousDevToken = process.env.APPLE_MUSIC_DEVELOPER_TOKEN;
+  const previousUserToken = process.env.APPLE_MUSIC_USER_TOKEN;
+  const previousStorefront = process.env.APPLE_MUSIC_STOREFRONT;
+  const requestedUrls: string[] = [];
+  process.env.APPLE_MUSIC_DEVELOPER_TOKEN = "dev-token";
+  process.env.APPLE_MUSIC_USER_TOKEN = "user-token";
+  process.env.APPLE_MUSIC_STOREFRONT = "nl";
+  const fetchImpl: FetchLike = async (url) => {
+    requestedUrls.push(String(url));
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return fixtureFor(url);
+      },
+    };
+  };
+
+  try {
+    await searchApple("bastille", ["artists"], 10, { fetchImpl });
+    assert.match(requestedUrls[0], /\/v1\/catalog\/nl\/search\?/);
+  } finally {
+    if (previousDevToken == null) {
+      delete process.env.APPLE_MUSIC_DEVELOPER_TOKEN;
+    } else {
+      process.env.APPLE_MUSIC_DEVELOPER_TOKEN = previousDevToken;
+    }
+    if (previousUserToken == null) {
+      delete process.env.APPLE_MUSIC_USER_TOKEN;
+    } else {
+      process.env.APPLE_MUSIC_USER_TOKEN = previousUserToken;
+    }
+    if (previousStorefront == null) {
+      delete process.env.APPLE_MUSIC_STOREFRONT;
+    } else {
+      process.env.APPLE_MUSIC_STOREFRONT = previousStorefront;
+    }
+  }
+});
+
 test("Apple downloader backend builds provider-id based tool invocations", () => {
   const previousStorefront = process.env.APPLE_MUSIC_STOREFRONT;
   process.env.APPLE_MUSIC_STOREFRONT = "us";
@@ -237,6 +278,43 @@ test("Apple downloader backend builds provider-id based tool invocations", () =>
       ["--mv-audio-type", "atmos", "https://music.apple.com/us/music-video/1452310551"],
     );
   } finally {
+    if (previousStorefront == null) {
+      delete process.env.APPLE_MUSIC_STOREFRONT;
+    } else {
+      process.env.APPLE_MUSIC_STOREFRONT = previousStorefront;
+    }
+  }
+});
+
+test("Apple downloader URLs use the configured storefront", () => {
+  const previousDevToken = process.env.APPLE_MUSIC_DEVELOPER_TOKEN;
+  const previousUserToken = process.env.APPLE_MUSIC_USER_TOKEN;
+  const previousStorefront = process.env.APPLE_MUSIC_STOREFRONT;
+  process.env.APPLE_MUSIC_DEVELOPER_TOKEN = "dev-token";
+  process.env.APPLE_MUSIC_USER_TOKEN = "user-token";
+  process.env.APPLE_MUSIC_STOREFRONT = "gb";
+  try {
+    const backend = new AppleMusicBackend();
+    assert.deepEqual(
+      backend.buildArgs("1440904918", {
+        provider: "apple-music",
+        entityType: "track",
+        providerId: "1440904918",
+        downloadPath: "/downloads/job",
+      }),
+      ["--song", "https://music.apple.com/gb/song/1440904918"],
+    );
+  } finally {
+    if (previousDevToken == null) {
+      delete process.env.APPLE_MUSIC_DEVELOPER_TOKEN;
+    } else {
+      process.env.APPLE_MUSIC_DEVELOPER_TOKEN = previousDevToken;
+    }
+    if (previousUserToken == null) {
+      delete process.env.APPLE_MUSIC_USER_TOKEN;
+    } else {
+      process.env.APPLE_MUSIC_USER_TOKEN = previousUserToken;
+    }
     if (previousStorefront == null) {
       delete process.env.APPLE_MUSIC_STOREFRONT;
     } else {
@@ -337,7 +415,7 @@ test("parseMediaUrl / getMediaUrl round-trip Apple URLs", async () => {
 
   assert.equal(
     appleMusicStreamingProvider.getMediaUrl!("track", "1440904918"),
-    "https://music.apple.com/song/1440904918",
+    "https://music.apple.com/us/song/1440904918",
   );
 
   // A URL built by getMediaUrl (slug-less) must parse back to the same id/type.

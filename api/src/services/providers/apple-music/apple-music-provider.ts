@@ -44,6 +44,7 @@ import {
   AppleMusicBackend,
   describeAppleDownloaderMissingPrerequisites,
   getAppleMusicDownloaderCapabilitySnapshot,
+  resolveAppleMusicProviderStorefront,
 } from "./apple-music-backend.js";
 
 export class AppleMusicProvider implements StreamingProvider {
@@ -352,13 +353,13 @@ export class AppleMusicProvider implements StreamingProvider {
 
   getMediaUrl(type: string, providerId: string): string {
     const segment = type === "track" ? "song" : type === "video" ? "music-video" : type;
-    return `https://music.apple.com/${segment}/${providerId}`;
+    return `https://music.apple.com/${resolveAppleMusicProviderStorefront()}/${segment}/${providerId}`;
   }
 
   parseMediaUrl(url: string): { type: string; providerId: string } | null {
     // Canonical Apple URLs carry a slug segment (".../song/<slug>/<id>"); our own
-    // getMediaUrl() emits the slug-less form (".../song/<id>"). Accept both so a
-    // URL built here round-trips back through the parser.
+    // getMediaUrl() emits the slug-less form (".../<storefront>/song/<id>").
+    // Accept both so a URL built here round-trips back through the parser.
     const match = url.match(
       /^https?:\/\/music\.apple\.com\/(?:[a-z]{2}\/)?(album|song|music-video|artist)\/(?:[^/]+\/)?(\d+)/i,
     );

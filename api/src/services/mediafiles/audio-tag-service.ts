@@ -840,8 +840,22 @@ export class AudioTagService {
           provider_recording.copyright,
           CASE WHEN json_valid(provider_track.data) THEN provider_track.copyright END
         ) AS media_copyright,
-        canonical_recording.replay_gain AS media_replay_gain,
-        canonical_recording.peak AS media_peak,
+        COALESCE(
+          canonical_recording.replay_gain,
+          CASE
+            WHEN json_valid(provider_track.data)
+            THEN CAST(json_extract(provider_track.data, '$.replay_gain') AS REAL)
+          END,
+          provider_recording.replay_gain
+        ) AS media_replay_gain,
+        COALESCE(
+          canonical_recording.peak,
+          CASE
+            WHEN json_valid(provider_track.data)
+            THEN CAST(json_extract(provider_track.data, '$.peak') AS REAL)
+          END,
+          provider_recording.peak
+        ) AS media_peak,
         COALESCE(canonical_group.title, canonical_release.title, alb.title, provider_album.title) AS album_title,
         CASE WHEN COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid, provider_track.release_group_mbid) IS NOT NULL THEN NULL ELSE provider_album.version END AS album_version,
         COALESCE(canonical_release.date, ar.date, provider_album.release_date) AS album_release_date,
@@ -2187,16 +2201,21 @@ export class AudioTagService {
       };
     }
 
-    // Imported track files are matched by their provider track id. (TrackFiles no
-    // longer carries a media_id column — the processed ids are provider ids.)
+    // Imported track files are usually matched by provider track id. Keep this
+    // tolerant because organizer results from older/local import paths may carry
+    // canonical track or recording MBIDs instead, and provider_entity_type can be
+    // absent on rows created before the current provider-id-only pipeline.
     const placeholders = uniqueMediaIds.map(() => "?").join(",");
     const libraryFileIds = db.prepare(`
       SELECT id
       FROM TrackFiles
       WHERE file_type = 'track'
-        AND provider_entity_type = 'track'
-        AND provider_id IN (${placeholders})
-    `).all(...uniqueMediaIds) as Array<{ id: number }>;
+        AND (
+          provider_id IN (${placeholders})
+          OR canonical_track_mbid IN (${placeholders})
+          OR canonical_recording_mbid IN (${placeholders})
+        )
+    `).all(...uniqueMediaIds, ...uniqueMediaIds, ...uniqueMediaIds) as Array<{ id: number }>;
 
     return this.apply(libraryFileIds.map((row) => row.id));
   }

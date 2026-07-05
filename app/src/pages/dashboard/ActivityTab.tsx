@@ -361,9 +361,9 @@ const ActivityTab = ({
                         ) : (
                             <EmptyState
                                 title="No active jobs"
-                                description="Running scans, imports, downloads, and maintenance tasks appear here."
                                 icon={<Clock24Regular />}
                                 minHeight="220px"
+                                compactMobile
                             />
                         )}
                     </div>
@@ -392,9 +392,9 @@ const ActivityTab = ({
                         ) : (
                             <EmptyState
                                 title="No job history yet"
-                                description="Completed and failed jobs appear here after Discogenius starts doing work."
                                 icon={<Clock24Regular />}
                                 minHeight="220px"
+                                compactMobile
                             />
                         )}
                     </div>

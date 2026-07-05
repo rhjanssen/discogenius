@@ -321,6 +321,7 @@ function hasActiveMonitoringCycleDownloadPass(): boolean {
 }
 
 function markMonitoringCycleCompleted() {
+    trySyncScheduledTasks();
     markScheduledTaskQueued("monitoring-cycle");
     stampMonitoringCompleted();
 }
@@ -330,9 +331,16 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
     if (!monitoringCycle) {
         return;
     }
+    const expectedArtists = typeof job.payload?.expectedArtists === "number"
+        ? job.payload.expectedArtists
+        : undefined;
 
     switch (job.name) {
         case CommandNames.RefreshMetadata:
+            if (expectedArtists === 0) {
+                markMonitoringCycleCompleted();
+                return;
+            }
             // Per-artist curation/matching is handled by the event-driven pipeline
             // (ARTIST_REFRESH_COMPLETE → MatchArtistProviders → RescanFolders →
             // ARTIST_SCANNED → CurateArtist). On a full cycle we STILL queue the
@@ -353,6 +361,10 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
         case CommandNames.RescanFolders:
             break;
         case CommandNames.ApplyCuration:
+            if (expectedArtists === 0) {
+                markMonitoringCycleCompleted();
+                return;
+            }
             // Monitoring-cycle curation explicitly chains to the terminal download pass.
             queueDownloadMissingPass({
                 trigger: job.trigger ?? CommandTrigger.Unspecified,

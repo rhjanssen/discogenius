@@ -267,22 +267,6 @@ function renderTrackStatusIndicator(
     return null;
 }
 
-function getTrackStatusText(options: {
-    isActive?: boolean;
-    isSkipped?: boolean;
-    phase?: 'download' | 'import';
-}) {
-    if (options.isActive) {
-        return options.phase === 'import' ? 'importing' : 'downloading';
-    }
-
-    if (options.isSkipped) {
-        return 'skipped';
-    }
-
-    return null;
-}
-
 function getMovablePendingJobIds(
     items: Array<{ id: number; status: string; stage?: string }>,
 ): number[] {
@@ -926,6 +910,10 @@ const QueueTab = () => {
 
             if (!groups[groupId].quality && item.quality) {
                 groups[groupId].quality = item.quality;
+            }
+
+            if (!groups[groupId].cover && item.cover) {
+                groups[groupId].cover = item.cover;
             }
 
             groups[groupId].items.push(item);
@@ -1670,11 +1658,6 @@ const QueueTab = () => {
                                             const isItemCompleted = derivedStatus === 'completed';
                                             const isItemImportPhase = item.stage === 'import' || itemProg?.state === 'importing' || itemProg?.state === 'importPending' || prog?.state === 'importing' || prog?.state === 'importPending';
                                             const itemErrorMessage = item.error || (isItemFailed ? prog?.statusMessage : undefined);
-                                            const itemStatusText = getTrackStatusText({
-                                                isActive: isItemDownloading,
-                                                isSkipped: derivedStatus === 'skipped',
-                                                phase: isItemImportPhase ? 'import' : 'download',
-                                            });
                                             return (
                                                 <div key={item.id} className={styles.downloadSubItem} data-queue-subitem-row="true" onClick={(e) => {
                                                     if ((e.target as HTMLElement).closest('button')) return;
@@ -1694,11 +1677,6 @@ const QueueTab = () => {
                                                     </div>
                                                     <div className={styles.downloadInfo}>
                                                         <Text className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText)} truncate>{item.title || "Unknown Track"}</Text>
-                                                        {itemStatusText ? (
-                                                            <Text className={styles.downloadSubItemStatusText} data-queue-track-status={itemStatusText}>
-                                                                {itemStatusText}
-                                                            </Text>
-                                                        ) : null}
                                                         {isItemFailed && itemErrorMessage && (
                                                             <Text className={styles.downloadMeta} style={{ color: tokens.colorPaletteRedForeground1 }}>
                                                                 {itemErrorMessage}
@@ -1723,11 +1701,6 @@ const QueueTab = () => {
                                                     const isTrackDownloading = visualStatus === 'downloading';
                                                     const isTrackCompleted = visualStatus === 'completed';
                                                     const isTrackFailed = visualStatus === 'error';
-                                                    const trackStatusText = getTrackStatusText({
-                                                        isActive: isTrackDownloading,
-                                                        isSkipped: visualStatus === 'skipped',
-                                                        phase: isImporting ? 'import' : 'download',
-                                                    });
 
                                                     return (
                                                         <div key={idx} className={styles.downloadSubItem} onClick={() => { if (groupNavPath) navigate(groupNavPath); }}>
@@ -1748,11 +1721,6 @@ const QueueTab = () => {
                                                             </div>
                                                             <div className={styles.downloadInfo}>
                                                                 <Text className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText)} truncate>{t.title || "Unknown Track"}</Text>
-                                                                {trackStatusText ? (
-                                                                    <Text className={styles.downloadSubItemStatusText} data-queue-track-status={trackStatusText}>
-                                                                        {trackStatusText}
-                                                                    </Text>
-                                                                ) : null}
                                                             </div>
                                                         </div>
                                                     );
@@ -1809,8 +1777,8 @@ const QueueTab = () => {
                         ) : (
                             <EmptyState
                                 title="No items in queue"
-                                description="Browse your library and download albums, or enable monitoring to automate downloads."
                                 icon={<ArrowDownload24Regular />}
+                                compactMobile
                             />
                         )}
                     </section>
@@ -1944,9 +1912,9 @@ const QueueTab = () => {
                         </div>
                         <EmptyState
                             title="No history yet"
-                            description="Recently completed downloads will appear here."
                             icon={<ArrowClockwise24Regular />}
                             minHeight="220px"
+                            compactMobile
                         />
                     </section>
                 )}

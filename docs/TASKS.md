@@ -995,25 +995,59 @@ remain planned, but are no longer the first 2.2 cut.
   TIDAL files. Full WSL `yarn ci` passed afterward: lint, API build, app
   typecheck, 456 API tests, and production builds.
 
-- pending (2.2.1): Finish the Apple Music provider and bring it to TIDAL parity:
+- pending (2.2.2): Finish the Apple Music provider and bring it to TIDAL parity:
   live Apple credentials validation using Robert's account, catalog/search smoke
   tests against the real API, import-source smoke tests, MP4Box/wrapper runtime
   provisioning around the packaged `zhaarey/apple-music-downloader` CLI, real
   lossless/spatial/video download validation, live progress parser confirmation,
   lyrics/artwork sidecar behavior, and provider evidence capture during live
   refresh/import.
-- pending (2.2.1): Complete the remaining provider-plugin contract beyond the offline
+- pending (2.2.2): Complete the remaining provider-plugin contract beyond the offline
   Apple slice: catalog/offers edge cases, download progress event semantics,
   lyrics/artwork hooks, and quality mapping semantics validated against a live
   second provider.
+- done (2026-07-05): Stabilized the persistent-deployment TIDAL path for the
+  2.2.1 release. Queue live progress now accepts the
+  backend's `commandId` events as `jobId` and the backend emits both names;
+  the Dashboard queue removed its competing one-second first-page poll/full
+  refetch loop so SSE owns live progress and structural events own refetches;
+  failed download rows can be retried/deleted unless the exact command is still
+  truly processing; scheduled monitoring cycles with zero due artists now stop
+  without chaining no-op root scans/download-missing passes; Download Missing
+  activity text reads as a wanted-media check; canonical videos honor
+  `require_provider_availability`; import retag finalization resolves freshly
+  imported tracks by provider id, canonical track MBID, or recording MBID; and
+  provider/type/quality badges regained readable theme-aware glass tints, queue
+  child rows no longer duplicate parent download/import text, queue grouped
+  cover art is backfilled from later rows, and artist/album/mobile detail
+  actions use Fluent overflow before labels clip. Local Docker validation added
+  Bakermat from MusicBrainz, confirmed Refresh & Scan did not auto-queue
+  downloads, downloaded/imported a one-track TIDAL album, verified dashboard
+  queue-history cover art, and confirmed fresh import rename/retag status stayed
+  clean (`renameNeeded=0`, `retagNeeded=0`). Full WSL `yarn ci` passed: lint,
+  typecheck, 460 API tests, and production builds.
+- pending (2.2.2): Validate the stabilization release on the persistent test
+  deployment (`192.168.1.50:3737` / public hostname) after upgrading it: confirm
+  long-running queue rows update by SSE without reload, active rows remain
+  stable while downloading/importing, failed provider-missing videos can be
+  cleared, and no MusicBrainz-only video becomes monitored when provider
+  availability is required.
+- schema outlook (2.2.1): No database schema change is expected for this
+  stabilization slice. The current schema already has the provider-neutral
+  surfaces needed for additional streaming services (`ProviderItems`,
+  `ProviderItemMatches`, `ReleaseGroupSlots`, provider provenance on file
+  tables, and sidecar file tables). Local-MusicBrainz live-query work should
+  not need new provider tables; the likely future DB changes, if any, are
+  narrow indexes/materialized read helpers found by measurement, not new
+  provider-shadow catalog columns.
 - pending (2.2.1+): Add at least one more provider candidate after Apple Music as a proof
   of the plugin contract. Candidate selection should be based on available
   download backend viability, not catalog-only browsing. Current research points
   to YouTube Music via `ytmusicapi` for catalog/user-library reads and `yubal`
   / `yt-dlp` as the downloader reference because it exercises lossy audio and
   higher-resolution video without new schema.
-- pending (2.2.1): Audit and trim the API test suite. The release gate now runs
-  456 API tests and is still useful for schema/provider/download regressions,
+- pending (2.2.2): Audit and trim the API test suite. The release gate now runs
+  460 API tests and is still useful for schema/provider/download regressions,
   but too many tests duplicate broad behavior or lock in transitional details.
   Categorize tests into release-contract, focused regression, and low-value
   implementation-detail coverage; keep the first two, delete or collapse the

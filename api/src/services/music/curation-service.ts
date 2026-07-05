@@ -455,16 +455,35 @@ export class CurationService {
         artistMbid: string,
         curationConfig: FilteringConfig,
     ): number {
-        const videoMonitored = curationConfig.include_videos !== false ? 1 : 0;
+        const includeVideos = curationConfig.include_videos !== false;
+        const requireProvider = curationConfig.require_provider_availability === true;
+        const providerAvailableExpression = `EXISTS (
+            SELECT 1
+            FROM ProviderItems provider_item
+            WHERE provider_item.entity_type = 'video'
+              AND provider_item.artist_mbid = Recordings.artist_mbid
+              AND (
+                (Recordings.mbid IS NOT NULL AND provider_item.recording_mbid = Recordings.mbid)
+                OR (Recordings.id IS NOT NULL AND provider_item.recording_id = Recordings.id)
+              )
+        )`;
+        const targetMonitoredExpression = !includeVideos
+            ? "0"
+            : requireProvider
+                ? `CASE WHEN ${providerAvailableExpression} THEN 1 ELSE 0 END`
+                : "1";
         return db.prepare(`
             UPDATE Recordings
-            SET monitored = ?,
-                monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
+            SET monitored = ${targetMonitoredExpression},
+                monitored_at = CASE
+                  WHEN ${targetMonitoredExpression} = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
+                  ELSE monitored_at
+                END
             WHERE is_video = 1
               AND artist_mbid = ?
               AND (monitored_lock = 0 OR monitored_lock IS NULL)
-              AND COALESCE(monitored, 0) != ?
-        `).run(videoMonitored, videoMonitored, artistMbid, videoMonitored).changes;
+              AND COALESCE(monitored, 0) != ${targetMonitoredExpression}
+        `).run(artistMbid).changes;
     }
 
     private static ensureReleaseGroupSlotRows(

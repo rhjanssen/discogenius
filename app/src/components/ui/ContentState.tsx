@@ -12,6 +12,7 @@ interface ContentStateProps {
   panelClassName?: string;
   minHeight?: string | number;
   align?: "center" | "left";
+  compactMobile?: boolean;
   role?: "status" | "alert";
   ariaLive?: "polite" | "assertive";
 }
@@ -113,6 +114,40 @@ const useStyles = makeStyles({
     maxWidth: "640px",
     textAlign: "center",
   },
+  emptyStateCompactMobileRoot: {
+    "@media (max-width: 639px)": {
+      minHeight: "auto",
+      paddingTop: tokens.spacingVerticalM,
+      paddingBottom: tokens.spacingVerticalM,
+      paddingLeft: 0,
+      paddingRight: 0,
+      justifyContent: "flex-start",
+    },
+  },
+  emptyStateCompactMobileContainer: {
+    "@media (max-width: 639px)": {
+      width: "100%",
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "flex-start",
+      textAlign: "left",
+      gap: tokens.spacingHorizontalM,
+    },
+  },
+  emptyStateCompactMobileIcon: {
+    "@media (max-width: 639px)": {
+      marginBottom: 0,
+      "& svg": {
+        width: "32px",
+        height: "32px",
+      },
+    },
+  },
+  emptyStateCompactMobileSubtitle: {
+    "@media (max-width: 639px)": {
+      display: "none",
+    },
+  },
 });
 
 function StateFrame({
@@ -170,25 +205,33 @@ export const EmptyState = ({
   className,
   minHeight = "200px",
   align = "center",
+  compactMobile = false,
 }: EmptyStateProps) => {
   const styles = useStyles();
+  const rootStyle = compactMobile
+    ? undefined
+    : (minHeight !== undefined ? { minHeight, padding: tokens.spacingVerticalXXXL } : { padding: tokens.spacingVerticalXXXL });
 
   return (
     <div
-      className={mergeClasses(styles.root, className)}
-      style={minHeight !== undefined ? { minHeight, padding: tokens.spacingVerticalXXXL } : { padding: tokens.spacingVerticalXXXL }}
+      className={mergeClasses(styles.root, compactMobile ? styles.emptyStateCompactMobileRoot : undefined, className)}
+      style={rootStyle}
       role="status"
       aria-live="polite"
     >
-      <div className={mergeClasses(styles.emptyStateContainer, align === "left" && styles.panelLeft)}>
+      <div className={mergeClasses(
+        styles.emptyStateContainer,
+        align === "left" && styles.panelLeft,
+        compactMobile ? styles.emptyStateCompactMobileContainer : undefined,
+      )}>
         {icon ? (
-          <div className={styles.emptyStateIcon}>
+          <div className={mergeClasses(styles.emptyStateIcon, compactMobile ? styles.emptyStateCompactMobileIcon : undefined)}>
             {icon}
           </div>
         ) : null}
         {title ? <Text className={styles.emptyStateTitle} size={500} weight="semibold">{title}</Text> : null}
         {description ? (
-          <Text className={styles.emptyStateSubtitle} size={300}>
+          <Text className={mergeClasses(styles.emptyStateSubtitle, compactMobile ? styles.emptyStateCompactMobileSubtitle : undefined)} size={300}>
             {description}
           </Text>
         ) : null}

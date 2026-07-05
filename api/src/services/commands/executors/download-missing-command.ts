@@ -58,7 +58,7 @@ export class DownloadMissingCommand implements IExecuteCommand<"DownloadMissing"
 
             ctx.updateCommandDescription(job, {
                 progress: 10,
-                description: `Download Missing - ${buffered} active/queued download(s), checking wanted media`,
+                description: `${buffered} active/queued download(s); checking wanted media`,
             });
 
             const queued = refillLimit > 0
@@ -74,7 +74,7 @@ export class DownloadMissingCommand implements IExecuteCommand<"DownloadMissing"
                 const total = totalAlbums + totalTracks + totalVideos;
                 ctx.updateCommandDescription(job, {
                     progress: 50,
-                    description: `Download Missing - queued ${total} download(s); keeping up to ${DownloadMissingService.DEFAULT_MAX_BUFFERED_DOWNLOADS} buffered`,
+                    description: `Queued ${total} wanted download(s); keeping up to ${DownloadMissingService.DEFAULT_MAX_BUFFERED_DOWNLOADS} buffered`,
                 });
             } else {
                 const activeAfter = DownloadMissingService.countActiveDownloadCommands();
@@ -91,8 +91,8 @@ export class DownloadMissingCommand implements IExecuteCommand<"DownloadMissing"
                 ctx.updateCommandDescription(job, {
                     progress: 75,
                     description: activeAfter > 0
-                        ? `Download Missing - waiting for ${activeAfter} active/queued download(s) before the next wanted check`
-                        : "Download Missing - confirming no wanted media remains",
+                        ? `Waiting for ${activeAfter} active/queued download(s) before the next wanted check`
+                        : "Confirming no wanted media remains",
                 });
             }
 
@@ -102,7 +102,9 @@ export class DownloadMissingCommand implements IExecuteCommand<"DownloadMissing"
         const total = totalAlbums + totalTracks + totalVideos;
         ctx.updateCommandDescription(job, {
             progress: 100,
-            description: `Download Missing complete: queued ${total} download(s) (${totalAlbums} albums, ${totalTracks} tracks, ${totalVideos} videos)`,
+            description: total > 0
+                ? `Wanted check complete: queued ${total} download(s) (${totalAlbums} albums, ${totalTracks} tracks, ${totalVideos} videos)`
+                : "Wanted check complete: no monitored missing media found",
         });
     }
 }

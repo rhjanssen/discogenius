@@ -28,6 +28,7 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM scheduled_tasks").run();
     dbModule.db.prepare("DELETE FROM monitoring_runtime_state").run();
+    dbModule.db.prepare("DELETE FROM Artists").run();
 });
 
 after(() => {
@@ -39,6 +40,13 @@ test("monitoring cycle waits for downstream work before queueing downloads and s
     const initialSnapshot = taskSchedulerModule.getScheduledTaskSnapshots().find((task) => task.key === "monitoring-cycle");
     assert.ok(initialSnapshot);
     assert.equal(initialSnapshot.lastQueuedAt, null);
+
+    dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)").run(
+        "artist-1",
+        "Artist One",
+        "artist-mbid-1",
+        1,
+    );
 
     const refreshJobId = taskSchedulerModule.queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
     assert.ok(refreshJobId > 0);
@@ -86,6 +94,29 @@ test("monitoring cycle waits for downstream work before queueing downloads and s
     const downloadJob = pendingDownloads[0];
     queueModule.CommandQueueManager.complete(downloadJob.id);
     taskSchedulerModule.queueNextMonitoringPass(downloadJob);
+
+    const finalSnapshot = taskSchedulerModule.getScheduledTaskSnapshots().find((task) => task.key === "monitoring-cycle");
+    assert.ok(finalSnapshot);
+    assert.notEqual(finalSnapshot.lastQueuedAt, null);
+    assert.equal(taskStateModule.hasActiveMonitoringCycleWorkflow(), false);
+});
+
+test("scheduled monitoring cycle with no due artists stops without no-op rescan or download passes", () => {
+    const refreshJobId = taskSchedulerModule.queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
+    assert.ok(refreshJobId > 0);
+
+    const refreshJob = queueModule.CommandQueueManager.get(refreshJobId);
+    assert.ok(refreshJob);
+    assert.equal((refreshJob.payload as Record<string, unknown>).expectedArtists, 0);
+    queueModule.CommandQueueManager.complete(refreshJobId);
+    taskSchedulerModule.queueNextMonitoringPass(refreshJob);
+
+    const pendingRootScans = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.RescanFolders],
+        10,
+    );
+    assert.equal(pendingRootScans.length, 0);
+    assert.equal(pendingDownloadMissing().length, 0);
 
     const finalSnapshot = taskSchedulerModule.getScheduledTaskSnapshots().find((task) => task.key === "monitoring-cycle");
     assert.ok(finalSnapshot);

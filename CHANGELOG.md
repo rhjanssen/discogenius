@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.2.1] - 2026-07-05
+
+### Changed
+- Simplified queue live-refresh ownership: SSE progress is now the primary live
+  signal, with slower query refetches left as a structural fallback instead of a
+  competing one-second full refresh.
+- Tightened queue, activity, artist, and album UI behavior for the
+  persistent-deployment path: mobile empty states are more compact, detail-page
+  action rows overflow before labels clip, queue child rows no longer repeat the
+  parent download/import label, and badge colors use the provider/type/quality
+  accent palette with theme-aware glass tints.
+
+### Fixed
+- Fixed queue progress events that carried `commandId` but not `jobId`, which
+  caused dashboard progress to appear stale until a manual reload.
+- Fixed retry/delete guards for failed queue rows so stale failed downloads can
+  be cleared or retried unless that exact command is still actively processing.
+- Fixed scheduled monitoring cycles with no due artists so they stop cleanly
+  instead of chaining repeated no-op refresh, rescan, and Download Missing
+  commands.
+- Fixed canonical video curation when provider availability is required; videos
+  without a provider offer are now unmonitored instead of remaining queued.
+- Fixed immediate post-import retag prompts by resolving freshly imported files
+  through provider/canonical identities and falling back to matched provider
+  ReplayGain/peak metadata when canonical recording supplements are not yet
+  populated.
+- Fixed active queue cover art fallback for grouped items and kept track version
+  disambiguation in seeded album queue rows.
+
 ## [2.2.0] - 2026-07-05
 
 ### Added

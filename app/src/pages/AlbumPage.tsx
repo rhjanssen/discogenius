@@ -290,11 +290,14 @@ const useStyles = makeStyles({
     width: "100%",
     marginTop: tokens.spacingVerticalS,
     alignItems: "stretch",
+    overflow: "hidden",
     "@media (min-width: 768px)": {
       justifyContent: "flex-start",
       alignItems: "center",
       gap: tokens.spacingHorizontalM,
       marginTop: tokens.spacingVerticalM,
+      flexWrap: "wrap",
+      overflow: "visible",
     },
   },
   // Transparent button base style
@@ -307,22 +310,12 @@ const useStyles = makeStyles({
   },
   actionButton: {
     ...standardDetailActionButtonStyles,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: tokens.spacingHorizontalXS,
-    "& .fui-Button__content": {
-      fontSize: tokens.fontSizeBase200,
-      lineHeight: tokens.lineHeightBase200,
-      marginLeft: "0 !important",
-      whiteSpace: "nowrap",
-    },
-    "& .fui-Button__icon": {
-      marginRight: 0,
-      flexShrink: 0,
-    },
+    minWidth: "76px",
+    flexShrink: 0,
     "@media (min-width: 768px)": {
       ...standardDetailActionButtonStyles["@media (min-width: 768px)"],
+      minWidth: "auto",
+      flexShrink: 1,
     },
   },
   // Two adjacent Buttons sharing one rounded frame. The wrapper (not the halves)

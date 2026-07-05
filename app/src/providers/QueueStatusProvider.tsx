@@ -33,6 +33,7 @@ type QueueGlobalJobEventData = {
 
 type QueueProgressEvent = Partial<DownloadProgress> & {
   jobId?: number;
+  commandId?: number;
   providerId?: string;
   type?: DownloadProgress["type"];
   state?: DownloadProgress["state"];
@@ -161,7 +162,7 @@ function buildProgressSnapshot(
   data: QueueProgressEvent,
   existing?: DownloadProgress,
 ): DownloadProgress | null {
-  const jobId = Number(data.jobId ?? existing?.jobId);
+  const jobId = Number(data.jobId ?? data.commandId ?? existing?.jobId);
   const providerId = String(data.providerId ?? existing?.providerId ?? "").trim();
   const type = data.type ?? existing?.type;
 
@@ -205,6 +206,10 @@ function buildProgressSnapshot(
 
 function removeTrackedProgress(state: ProgressState, jobId: number, providerId?: string | null): ProgressState {
   return removeProgressSnapshot(state, jobId, providerId);
+}
+
+function getProgressEventJobId(data: QueueProgressEvent | null | undefined): number {
+  return Number(data?.jobId ?? data?.commandId);
 }
 
 function useQueueStatusContextValue(): QueueStatusContextType {
@@ -349,7 +354,7 @@ function useQueueStatusContextValue(): QueueStatusContextType {
           }
 
           if (event === "completed") {
-            updateProgressState((previous) => removeTrackedProgress(previous, Number(data?.jobId), data?.providerId));
+            updateProgressState((previous) => removeTrackedProgress(previous, getProgressEventJobId(data), data?.providerId));
             scheduleStatusRefresh(0);
             invalidateQueueQueries();
             if (!data?.silent) {
@@ -363,10 +368,11 @@ function useQueueStatusContextValue(): QueueStatusContextType {
           }
 
           if (event === "failed") {
+            const jobId = getProgressEventJobId(data);
             const snapshot = buildProgressSnapshot({
               ...data,
               state: data?.state ?? "failed",
-            }, progressStateRef.current.byJobId.get(Number(data?.jobId)));
+            }, progressStateRef.current.byJobId.get(jobId));
 
             if (snapshot) {
               updateProgressState((previous) => upsertProgressSnapshots(previous, [snapshot]));

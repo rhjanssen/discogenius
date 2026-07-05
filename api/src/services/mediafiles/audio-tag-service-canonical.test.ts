@@ -104,8 +104,8 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      track_mbid, recording_mbid, album_id, title, explicit, quality, isrc, duration, library_slot
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      track_mbid, recording_mbid, album_id, title, explicit, quality, isrc, duration, library_slot, data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "tidal",
     "track",
@@ -122,6 +122,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     "TESTISRC1234",
     181,
     "stereo",
+    JSON.stringify({ replay_gain: -7.31, peak: 0.967717 }),
   );
 
   const inserted = dbModule.db.prepare(`
@@ -150,7 +151,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
 
   const tags = audioTagServiceModule.AudioTagService.buildDesiredTagsForTrackFileIdsForTest(
     [Number(inserted.lastInsertRowid)],
-    { write_tidal_url: true, embed_album_review: true },
+    { write_tidal_url: true, embed_album_review: true, embed_replaygain: true },
   );
   const byKey = new Map(tags.map((tag) => [tag.key, tag.targetValue]));
 
@@ -173,6 +174,8 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   assert.equal(byKey.get("release_status"), "official");
   assert.equal(byKey.get("release_type"), "album; compilation");
   assert.equal(byKey.get("itunesadvisory"), "1");
+  assert.equal(byKey.get("replaygain_track_gain"), "-7.31 dB");
+  assert.equal(byKey.get("replaygain_track_peak"), "0.967717");
 
   assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
   assert.equal(dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);

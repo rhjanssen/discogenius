@@ -25,6 +25,10 @@ function isLikelyProviderId(value: string): boolean {
   return /^\d{5,}$/.test(value.trim()) || /^pl\.[\w-]+$/.test(value.trim());
 }
 
+export function resolveAppleMusicProviderStorefront(): string {
+  return loadStoredAppleMusicToken()?.storefront || resolveAppleStorefront();
+}
+
 function commandExists(command: string): boolean {
   if (command.includes("/") || command.includes("\\") || command.includes(":")) {
     return fs.existsSync(command);
@@ -244,7 +248,7 @@ export class AppleMusicBackend implements DownloadBackend {
    * argument construction is unit-testable independent of process spawning.
    */
   buildArgs(providerId: string, request: DownloadRequest): string[] {
-    const storefront = resolveAppleStorefront();
+    const storefront = resolveAppleMusicProviderStorefront();
     const typeSegment = request.entityType === "track"
       ? "song"
       : request.entityType === "video"

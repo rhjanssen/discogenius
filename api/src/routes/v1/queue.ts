@@ -312,7 +312,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status === 'started' || downloadProcessor.isActivelyProcessingJob(commandId)) {
+    if (job.status === 'started' && downloadProcessor.isActivelyProcessingJob(commandId)) {
       return res.status(409).json({
         error: 'Job is processing',
         message: 'Pause or cancel the active download before deleting this queue item',
@@ -345,7 +345,7 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status === 'started' || downloadProcessor.isActivelyProcessingJob(commandId)) {
+    if (job.status === 'started' && downloadProcessor.isActivelyProcessingJob(commandId)) {
       return res.status(409).json({
         error: 'Job is processing',
         message: 'Wait for the active download to finish or cancel it before retrying',

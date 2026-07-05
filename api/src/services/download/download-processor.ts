@@ -1297,6 +1297,15 @@ export class DownloadProcessor {
             // MB tracklist only when provider rows aren't materialized yet.
             let initialTracks: { title: string; trackNum?: number; status: 'queued'; providerTrackId?: string }[] | undefined;
             try {
+                const formatTrackDisplayTitle = (title: string | null | undefined, version?: string | null) => {
+                    const baseTitle = String(title || '').trim() || 'Unknown Track';
+                    const normalizedVersion = String(version || '').trim();
+                    if (!normalizedVersion || baseTitle.toLowerCase().includes(normalizedVersion.toLowerCase())) {
+                        return baseTitle;
+                    }
+                    return `${baseTitle} (${normalizedVersion})`;
+                };
+
                 if (type === 'track' || type === 'video') {
                     initialTracks = [{ title: resolved.title, status: 'queued', providerTrackId: providerId }];
                 } else if (type === 'album') {
@@ -1304,6 +1313,7 @@ export class DownloadProcessor {
                         SELECT
                             CAST(provider_id AS TEXT) AS provider_id,
                             title,
+                            version,
                             CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number
                         FROM ProviderItems
                         WHERE entity_type = 'track' AND provider_album_id = ?
@@ -1311,11 +1321,11 @@ export class DownloadProcessor {
                             CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER),
                             CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER),
                             provider_id
-                    `).all(providerId) as Array<{ provider_id: string; title: string | null; track_number: number | null }>;
+                    `).all(providerId) as Array<{ provider_id: string; title: string | null; version: string | null; track_number: number | null }>;
 
                     if (providerRows.length > 0) {
                         initialTracks = providerRows.map((row) => ({
-                            title: row.title || 'Unknown Track',
+                            title: formatTrackDisplayTitle(row.title, row.version),
                             trackNum: row.track_number ?? undefined,
                             status: 'queued',
                             providerTrackId: row.provider_id,

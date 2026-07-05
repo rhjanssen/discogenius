@@ -269,15 +269,6 @@ export const useDashboardStyles = makeStyles({
         whiteSpace: "nowrap",
         textTransform: "lowercase",
     },
-    downloadSubItemStatusText: {
-        fontSize: tokens.fontSizeBase100,
-        lineHeight: tokens.lineHeightBase100,
-        color: tokens.colorNeutralForeground2,
-        whiteSpace: "nowrap",
-        textTransform: "lowercase",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-    },
     downloadStatusPendingIcon: {
         fontSize: "24px",
         color: tokens.colorNeutralForeground3,
