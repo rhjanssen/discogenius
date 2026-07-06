@@ -126,10 +126,10 @@ const useStyles = makeStyles({
   },
   emptyStateCompactMobileContainer: {
     "@media (max-width: 639px)": {
-      width: "100%",
+      width: "auto",
       flexDirection: "row",
       alignItems: "center",
-      justifyContent: "flex-start",
+      justifyContent: "center",
       textAlign: "left",
       gap: tokens.spacingHorizontalM,
     },

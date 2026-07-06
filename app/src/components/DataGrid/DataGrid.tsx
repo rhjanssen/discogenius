@@ -33,6 +33,8 @@ export interface DataGridProps<T = any> {
     disableStickyHeader?: boolean;
     compact?: boolean;
     disableResponsiveColumnHiding?: boolean;
+    resizableColumns?: boolean;
+    columnResizeStorageKey?: string;
     selection?: {
         selectedRowIds: Array<string | number>;
         onSelectionChange: (selectedRowIds: Array<string | number>) => void;
@@ -124,6 +126,30 @@ const useStyles = makeStyles({
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
+        position: "relative",
+        minWidth: 0,
+    },
+    columnResizeHandle: {
+        position: "absolute",
+        top: 0,
+        right: "-4px",
+        width: "8px",
+        height: "100%",
+        cursor: "col-resize",
+        touchAction: "none",
+        zIndex: 2,
+        "::after": {
+            content: '""',
+            position: "absolute",
+            top: "20%",
+            bottom: "20%",
+            left: "3px",
+            width: tokens.strokeWidthThin,
+            backgroundColor: "transparent",
+        },
+        ":hover::after": {
+            backgroundColor: tokens.colorNeutralStroke1,
+        },
     },
     selectionHeaderCell: {
         display: "flex",
@@ -205,6 +231,8 @@ function DataGridInner<T>(
         disableStickyHeader,
         compact,
         disableResponsiveColumnHiding,
+        resizableColumns,
+        columnResizeStorageKey,
         selection,
         getRowClassName,
         renderRowDetail,
@@ -214,6 +242,26 @@ function DataGridInner<T>(
 ) {
     const styles = useStyles();
     const isMobile = useMediaQuery("(max-width: 767px)");
+    const [columnWidths, setColumnWidths] = React.useState<Record<string, string>>(() => {
+        if (!columnResizeStorageKey || typeof window === "undefined") {
+            return {};
+        }
+        try {
+            const parsed = JSON.parse(window.localStorage.getItem(columnResizeStorageKey) || "{}");
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? parsed as Record<string, string>
+                : {};
+        } catch {
+            return {};
+        }
+    });
+
+    React.useEffect(() => {
+        if (!columnResizeStorageKey || typeof window === "undefined") {
+            return;
+        }
+        window.localStorage.setItem(columnResizeStorageKey, JSON.stringify(columnWidths));
+    }, [columnResizeStorageKey, columnWidths]);
 
     const visibleColumns = useMemo(
         () => disableResponsiveColumnHiding
@@ -254,8 +302,8 @@ function DataGridInner<T>(
         && selectableRowIds.some((rowId) => selectedRowIdSet.has(rowId));
 
     const gridTemplate = useMemo(
-        () => [selection ? "44px" : null, ...visibleColumns.map((column) => column.width)].filter(Boolean).join(" "),
-        [selection, visibleColumns]
+        () => [selection ? "44px" : null, ...visibleColumns.map((column) => columnWidths[column.key] ?? column.width)].filter(Boolean).join(" "),
+        [columnWidths, selection, visibleColumns]
     );
 
     const gridStyle: React.CSSProperties = {
@@ -284,6 +332,35 @@ function DataGridInner<T>(
             : selectedRowIds.filter((currentRowId) => currentRowId !== rowId);
         selection.onSelectionChange(nextSelection);
     }, [selectedRowIds, selection]);
+
+    const beginColumnResize = useCallback((event: React.PointerEvent<HTMLSpanElement>, column: DataGridColumn<T>) => {
+        if (!resizableColumns || isMobile) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const headerCell = event.currentTarget.parentElement;
+        const startX = event.clientX;
+        const startWidth = headerCell?.getBoundingClientRect().width ?? column.minWidth ?? 120;
+        const minWidth = Math.max(column.minWidth ?? 80, 56);
+
+        const handleMove = (moveEvent: PointerEvent) => {
+            const nextWidth = Math.max(minWidth, Math.round(startWidth + moveEvent.clientX - startX));
+            setColumnWidths((current) => ({ ...current, [column.key]: `${nextWidth}px` }));
+        };
+
+        const handleUp = () => {
+            window.removeEventListener("pointermove", handleMove);
+            window.removeEventListener("pointerup", handleUp);
+            window.removeEventListener("pointercancel", handleUp);
+        };
+
+        window.addEventListener("pointermove", handleMove);
+        window.addEventListener("pointerup", handleUp);
+        window.addEventListener("pointercancel", handleUp);
+    }, [isMobile, resizableColumns]);
 
     if (loading) {
         return (
@@ -344,6 +421,15 @@ function DataGridInner<T>(
                         data-dg-min={column.minWidth}
                     >
                         {column.header}
+                        {resizableColumns && !isMobile ? (
+                            <span
+                                className={styles.columnResizeHandle}
+                                role="separator"
+                                aria-orientation="vertical"
+                                aria-label={`Resize ${typeof column.header === "string" ? column.header : column.key} column`}
+                                onPointerDown={(event) => beginColumnResize(event, column)}
+                            />
+                        ) : null}
                     </div>
                 ))}
             </div>

@@ -880,7 +880,7 @@ const Library = () => {
 
   const importableFollowedProviders = useMemo(
     () => (streamingProviders?.providers ?? []).filter((provider: StreamingProviderStatus) => (
-      provider.authenticated && provider.capabilities.followedArtists
+      provider.authenticated && (provider.management?.canImportArtists || provider.capabilities.followedArtists)
     )),
     [streamingProviders],
   );
@@ -1197,7 +1197,7 @@ const Library = () => {
     {
       key: "quality",
       header: "Quality",
-      width: "120px",
+      width: "max-content",
       align: "left",
       render: (album: any) => {
         const hasStereoOffer = Boolean(album.stereo_provider_id);

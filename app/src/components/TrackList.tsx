@@ -224,7 +224,7 @@ const useStyles = makeStyles({
   },
   qualityContent: {
     display: "flex",
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     alignItems: "center",
     gap: tokens.spacingHorizontalXXS,
     minWidth: 0,
@@ -238,7 +238,7 @@ const useStyles = makeStyles({
   },
   fileQualityRow: {
     display: "flex",
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     alignItems: "center",
     gap: tokens.spacingHorizontalXXS,
     minWidth: 0,
@@ -388,11 +388,6 @@ const TrackList = <T extends TrackListItem>({
     () => tracks.some((track) => (track.volume_number || 1) !== (tracks[0]?.volume_number || 1)),
     [tracks]
   );
-  const hasMultipleQuality = useMemo(
-    () => tracks.some((track) => getQualityTags(track).length > 1),
-    [tracks]
-  );
-
   const getTrackFiles = useCallback((track: T): TrackFiles => {
     if (Array.isArray(track.files) && track.files.length > 0) {
       return track.files;
@@ -687,7 +682,7 @@ const TrackList = <T extends TrackListItem>({
     trackColumns.push({
       key: "title",
       header: "Title",
-      width: showArtist || showAlbum ? "minmax(180px, 1.35fr)" : "minmax(220px, 1fr)",
+      width: showArtist || showAlbum ? "minmax(0, 1.35fr)" : "minmax(0, 1fr)",
       render: (track) => renderTitle(track),
     });
 
@@ -735,7 +730,7 @@ const TrackList = <T extends TrackListItem>({
       trackColumns.push({
         key: "quality",
         header: "Quality",
-        width: showFileQualityDifferences ? "170px" : hasMultipleQuality ? "146px" : "92px",
+        width: "max-content",
         render: (track) => {
           const providerQualityTags = getQualityTags(track);
           const fileQualityTags = showFileQualityDifferences ? getFileQualityTags(getTrackFiles(track)) : [];
@@ -839,7 +834,6 @@ const TrackList = <T extends TrackListItem>({
     getTrackAudioFile,
     getTrackFiles,
     handleAlbumClick,
-    hasMultipleQuality,
     isTrackDownloading,
     numbering,
     onDownloadTrack,

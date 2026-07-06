@@ -58,6 +58,8 @@ function resetTracksForImportState(tracks?: DownloadTrackStateEntry[]): Download
 
 type CanonicalProviderOffer = {
     provider?: string | null;
+    slot_cover?: string | null;
+    provider_cover?: string | null;
     provider_id?: string | null;
     entity_type?: string | null;
     artist_mbid?: string | null;
@@ -546,6 +548,7 @@ export class DownloadProcessor {
                         rgs.release_group_mbid,
                         rgs.selected_release_mbid AS release_mbid,
                         rgs.provider_data AS slot_provider_data,
+                        rgs.cover AS slot_cover,
                         rgs.quality AS slot_quality,
                         rgs.selected_release_mbid,
                         rg.title AS canonical_album_title,
@@ -577,6 +580,7 @@ export class DownloadProcessor {
                 pi.title AS provider_title,
                 pi.quality AS provider_quality,
                 pi.asset_id,
+                pi.cover AS provider_cover,
                 pi.data AS provider_data,
                 rg.title AS canonical_album_title,
                 t.title AS canonical_track_title,
@@ -694,6 +698,8 @@ export class DownloadProcessor {
                         ? canonicalOffer.canonical_recording_title
                         : canonicalOffer.canonical_track_title || canonicalOffer.canonical_recording_title;
                 const cover = fallbackCover
+                    ?? canonicalOffer.slot_cover
+                    ?? canonicalOffer.provider_cover
                     ?? this.pickNestedString(slotProviderData, 'cover')
                     ?? canonicalOffer.asset_id
                     ?? this.pickNestedString(providerData, 'cover')
@@ -1290,11 +1296,9 @@ export class DownloadProcessor {
                 cover: resolved.cover,
             });
 
-            // Initialize the tracklist for UI indicators. Prefer the materialized
-            // provider track offer rows (they carry the provider track id — the
-            // hard link that names the staged {providerTrackId}.ext files — and
-            // reflect exactly what will download), falling back to the canonical
-            // MB tracklist only when provider rows aren't materialized yet.
+            // Initialize the tracklist for UI indicators from the canonical
+            // MusicBrainz release. Provider rows are still used for the hard
+            // provider track id, but display text must stay catalog-native.
             let initialTracks: { title: string; trackNum?: number; status: 'queued'; providerTrackId?: string }[] | undefined;
             try {
                 const formatTrackDisplayTitle = (title: string | null | undefined, version?: string | null) => {
@@ -1309,33 +1313,36 @@ export class DownloadProcessor {
                 if (type === 'track' || type === 'video') {
                     initialTracks = [{ title: resolved.title, status: 'queued', providerTrackId: providerId }];
                 } else if (type === 'album') {
-                    const providerRows = db.prepare(`
-                        SELECT
-                            CAST(provider_id AS TEXT) AS provider_id,
-                            title,
-                            version,
-                            CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number
-                        FROM ProviderItems
-                        WHERE entity_type = 'track' AND provider_album_id = ?
-                        ORDER BY
-                            CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER),
-                            CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER),
-                            provider_id
-                    `).all(providerId) as Array<{ provider_id: string; title: string | null; version: string | null; track_number: number | null }>;
+                    if (payload.releaseGroupMbid) {
+                        const albumTracks = await AlbumQueryService.getAlbumTracks(payload.releaseGroupMbid);
+                        initialTracks = albumTracks.map(t => ({
+                            title: formatTrackDisplayTitle(t.title, t.version),
+                            trackNum: t.track_number,
+                            status: 'queued',
+                            providerTrackId: t.preview_provider_track_id ?? undefined,
+                        }));
+                    }
 
-                    if (providerRows.length > 0) {
+                    if (!initialTracks?.length) {
+                        const providerRows = db.prepare(`
+                            SELECT
+                                CAST(provider_id AS TEXT) AS provider_id,
+                                title,
+                                version,
+                                CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number
+                            FROM ProviderItems
+                            WHERE entity_type = 'track' AND provider_album_id = ?
+                            ORDER BY
+                                CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER),
+                                CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER),
+                                provider_id
+                        `).all(providerId) as Array<{ provider_id: string; title: string | null; version: string | null; track_number: number | null }>;
+
                         initialTracks = providerRows.map((row) => ({
                             title: formatTrackDisplayTitle(row.title, row.version),
                             trackNum: row.track_number ?? undefined,
                             status: 'queued',
                             providerTrackId: row.provider_id,
-                        }));
-                    } else if (payload.releaseGroupMbid) {
-                        const albumTracks = await AlbumQueryService.getAlbumTracks(payload.releaseGroupMbid);
-                        initialTracks = albumTracks.map(t => ({
-                            title: t.title,
-                            trackNum: t.track_number,
-                            status: 'queued',
                         }));
                     }
                 }

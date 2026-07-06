@@ -18,7 +18,7 @@ import {
 import {
     CheckmarkCircle24Filled,
     CheckmarkCircle24Color,
-    ErrorCircle24Filled,
+    DismissCircle24Color,
     ArrowClockwise24Regular,
     Clock24Regular,
     Delete24Regular,
@@ -239,7 +239,7 @@ function renderTrackStatusIndicator(
     },
 ) {
     if (options.isFailed) {
-        return <ErrorCircle24Filled className={styles.downloadStatusErrorIcon} />;
+        return <DismissCircle24Color className={styles.downloadStatusErrorIcon} />;
     }
 
     if (options.isActive) {
@@ -281,7 +281,7 @@ function renderHistoryStatusIndicator(
     error?: string | null,
 ) {
     if (error || status === "failed") {
-        return <ErrorCircle24Filled className={styles.downloadStatusErrorIcon} />;
+        return <DismissCircle24Color className={styles.downloadStatusErrorIcon} />;
     }
 
     if (status === "completed") {

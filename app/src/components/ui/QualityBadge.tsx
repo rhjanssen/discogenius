@@ -101,7 +101,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
     const styles = useStyles();
     const { isDarkMode } = useTheme();
     const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
-    const badgeAlpha = isDarkMode ? 0.64 : 0.72;
+    const badgeAlpha = isDarkMode ? 0.72 : 0.82;
 
     const normalizedQuality = normalizeQualityTag(quality);
     const sizeClass = size === "small" ? styles.small : size === "large" ? styles.large : styles.medium;

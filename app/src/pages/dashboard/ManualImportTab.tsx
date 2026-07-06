@@ -366,7 +366,7 @@ function formatRejectionReason(reason: string) {
     const normalized = reason.trim().replace(/\s+/g, ' ');
     const lower = normalized.toLowerCase();
 
-    if (lower === 'no matching tidal track found') return 'No matching TIDAL track';
+    if (lower === 'no matching tidal track found' || lower === 'no matching provider item found') return 'No matching provider item';
     if (lower === 'duplicate of an existing imported library file') return 'Already imported in library';
     if (lower === 'locked file, try again later') return 'File is locked';
     if (lower === 'unable to process file') return 'Unable to process file';
@@ -827,7 +827,7 @@ const ManualImportTab = () => {
                     {getSortLabel('filename', 'Filename / Path')}
                 </button>
             ),
-            width: 'minmax(120px, 1.5fr)',
+            width: 'minmax(180px, 1.2fr)',
             className: styles.wrappingCell,
             render: (row) => (
                 <div className={styles.titleStack}>
@@ -849,7 +849,7 @@ const ManualImportTab = () => {
                     {getSortLabel('detected_artist', 'Identified')}
                 </button>
             ),
-            width: 'minmax(100px, 1fr)',
+            width: 'minmax(150px, 0.9fr)',
             className: styles.wrappingCell,
             render: (row) => (
                 <div className={styles.identifiedInfo}>
@@ -876,7 +876,7 @@ const ManualImportTab = () => {
                     {getSortLabel('audio_quality', 'Properties')}
                 </button>
             ),
-            width: 'minmax(80px, 0.8fr)',
+            width: 'minmax(112px, 0.55fr)',
             className: styles.wrappingCell,
             render: (row) => (
                 <div className={styles.qualityInfo}>
@@ -903,7 +903,7 @@ const ManualImportTab = () => {
                     {getSortLabel('reason', 'Reason')}
                 </button>
             ),
-            width: 'minmax(80px, 0.8fr)',
+            width: 'minmax(160px, 0.75fr)',
             className: styles.wrappingCell,
             render: (row) => (
                 <Text className={mergeClasses(styles.reasonText, row.decisionState !== 'blocked' ? styles.reasonTextMuted : undefined)}>
@@ -915,7 +915,7 @@ const ManualImportTab = () => {
         {
             key: 'actions',
             header: 'Actions',
-            width: '80px',
+            width: '72px',
             align: 'right',
             className: mergeClasses(styles.wrappingCell, styles.actionCell),
             render: (row) => renderActionButtons(row),
@@ -953,7 +953,7 @@ const ManualImportTab = () => {
                 <DataGridSkeleton
                   rows={8}
                   columns={5}
-                  columnTemplate="minmax(120px, 1.5fr) minmax(100px, 1fr) minmax(80px, 0.8fr) minmax(80px, 0.8fr) 80px"
+                  columnTemplate="minmax(180px, 1.2fr) minmax(150px, 0.9fr) minmax(112px, 0.55fr) minmax(160px, 0.75fr) 72px"
                   compact
                   actionColumns={[4]}
                 />
@@ -1045,6 +1045,8 @@ const ManualImportTab = () => {
                             items={sortedRows}
                             className={styles.tableGrid}
                             disableResponsiveColumnHiding
+                            resizableColumns
+                            columnResizeStorageKey="discogenius-unmapped-files-column-widths"
                             getRowKey={(row) => row.id}
                             getRowClassName={(row) => row.ignored ? styles.rowIgnored : undefined}
                             selection={{

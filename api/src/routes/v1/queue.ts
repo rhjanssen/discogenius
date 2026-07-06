@@ -36,6 +36,11 @@ const router: Router = express.Router();
 router.use(authMiddleware);
 
 // --- HELPER FUNCTIONS ---
+function hasFailedDownloadState(job: { payload?: unknown } | null | undefined): boolean {
+  const payload = job?.payload as { downloadState?: { state?: unknown } } | undefined;
+  return payload?.downloadState?.state === 'failed';
+}
+
 function buildRetryResponse(jobType: string, message?: string) {
   return {
     action: jobType === CommandNames.ImportDownload ? 'retry-import' : 'retry-download',
@@ -312,7 +317,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status === 'started' && downloadProcessor.isActivelyProcessingJob(commandId)) {
+    if (job.status === 'started' && !hasFailedDownloadState(job) && downloadProcessor.isActivelyProcessingJob(commandId)) {
       return res.status(409).json({
         error: 'Job is processing',
         message: 'Pause or cancel the active download before deleting this queue item',
@@ -345,7 +350,7 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status === 'started' && downloadProcessor.isActivelyProcessingJob(commandId)) {
+    if (job.status === 'started' && !hasFailedDownloadState(job) && downloadProcessor.isActivelyProcessingJob(commandId)) {
       return res.status(409).json({
         error: 'Job is processing',
         message: 'Wait for the active download to finish or cancel it before retrying',

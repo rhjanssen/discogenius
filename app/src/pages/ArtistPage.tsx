@@ -231,8 +231,8 @@ const useStyles = makeStyles({
       alignItems: "center",
       gap: tokens.spacingHorizontalM,
       marginTop: tokens.spacingVerticalM,
-      flexWrap: "wrap",
-      overflow: "visible",
+      flexWrap: "nowrap",
+      overflow: "hidden",
     },
   },
   // Transparent button base style
@@ -250,7 +250,7 @@ const useStyles = makeStyles({
     "@media (min-width: 768px)": {
       ...compactDetailActionButtonStyles["@media (min-width: 768px)"],
       minWidth: "auto",
-      flexShrink: 1,
+      flexShrink: 0,
     },
   },
   filterViewDesktop: {
@@ -260,6 +260,7 @@ const useStyles = makeStyles({
       gap: tokens.spacingHorizontalS,
       alignItems: "center",
       marginLeft: "auto",
+      flexShrink: 0,
     },
   },
   filterViewMobile: {

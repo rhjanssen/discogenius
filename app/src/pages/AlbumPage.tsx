@@ -296,8 +296,8 @@ const useStyles = makeStyles({
       alignItems: "center",
       gap: tokens.spacingHorizontalM,
       marginTop: tokens.spacingVerticalM,
-      flexWrap: "wrap",
-      overflow: "visible",
+      flexWrap: "nowrap",
+      overflow: "hidden",
     },
   },
   // Transparent button base style
@@ -315,7 +315,7 @@ const useStyles = makeStyles({
     "@media (min-width: 768px)": {
       ...standardDetailActionButtonStyles["@media (min-width: 768px)"],
       minWidth: "auto",
-      flexShrink: 1,
+      flexShrink: 0,
     },
   },
   // Two adjacent Buttons sharing one rounded frame. The wrapper (not the halves)
@@ -327,7 +327,7 @@ const useStyles = makeStyles({
     alignItems: "stretch",
     position: "relative",
     borderRadius: tokens.borderRadiusXLarge,
-    flex: "1 1 0",
+    flex: "0 0 auto",
     minWidth: 0,
     transitionProperty: "box-shadow, transform",
     transitionDuration: tokens.durationFast,

@@ -235,6 +235,7 @@ const buildInitialSearchQuery = (file: UnmappedFile, isVideoImport: boolean) => 
 };
 
 const getResultId = (result: any) => String(result.id || '');
+const getResultProvider = (result: any) => String(result.provider || result.providerId || result.source || 'tidal');
 
 const getResultTitle = (result: any) => result.name || result.title || 'Unknown Release';
 
@@ -363,7 +364,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
         setIsLoadingTracks(true);
 
         try {
-            const tracks = await api.getProviderAlbumTracks('tidal', getResultId(result)) as any[];
+            const tracks = await api.getProviderAlbumTracks(getResultProvider(result), getResultId(result)) as any[];
             setAlbumTracks(tracks);
 
             if (targetFiles.length === 0 || tracks.length === 0) {
@@ -410,8 +411,8 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
             toast({
                 title: 'No Files Chosen',
                 description: isVideoImport
-                    ? 'Select a matching TIDAL video for this file.'
-                    : 'Select at least one file and assign a TIDAL track to it.',
+                    ? 'Select a matching provider video for this file.'
+                    : 'Select at least one file and assign a provider track to it.',
                 variant: 'destructive',
             });
             return;
@@ -435,14 +436,14 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                             <>
                                 <Text style={{ display: 'block' }}>
                                     {isVideoImport
-                                        ? <>Match this local video to a TIDAL video release.</>
+                                        ? <>Match this local video to a provider video release.</>
                                         : <>Found <strong>{targetFiles.length}</strong> files ready for manual import in <Badge appearance="outline">{initialFile ? getDirname(initialFile.relative_path) : ''}</Badge></>}
                                 </Text>
 
                                 <div className={styles.searchContainer}>
                                     <Input
                                         className={styles.searchInput}
-                                        placeholder={isVideoImport ? 'Search TIDAL for the correct video...' : 'Search TIDAL for the correct release...'}
+                                        placeholder={isVideoImport ? 'Search for the correct provider video...' : 'Search for the correct provider release...'}
                                         value={searchQuery}
                                         onChange={(_, data) => setSearchQuery(data.value)}
                                         onKeyDown={(event) => {
@@ -485,7 +486,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                 {isSearching ? (
                                     <div className={styles.emptyState}>
                                         <Spinner size="large" />
-                                        <Text>Searching TIDAL...</Text>
+                                        <Text>Searching provider catalog...</Text>
                                     </div>
                                 ) : hasSearched && searchResults.length === 0 ? (
                                     <div className={styles.emptyState}>
@@ -587,7 +588,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                                         />
                                                     </TableHeaderCell>
                                                     <TableHeaderCell style={{ width: '50%' }}>Local File</TableHeaderCell>
-                                                    <TableHeaderCell>TIDAL Track Assignment</TableHeaderCell>
+                                                    <TableHeaderCell>Provider Track Assignment</TableHeaderCell>
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>

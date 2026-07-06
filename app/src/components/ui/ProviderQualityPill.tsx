@@ -60,7 +60,8 @@ const useStyles = makeStyles({
         alignItems: "center",
         columnGap: tokens.spacingHorizontalXS,
         rowGap: tokens.spacingVerticalXS,
-        flexWrap: "wrap",
+        flexWrap: "nowrap",
+        whiteSpace: "nowrap",
     },
     // A little extra breathing room before a second provider group so its icon
     // visibly "owns" the badges to its right.
@@ -187,7 +188,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     const styles = useStyles();
     const { isDarkMode } = useTheme();
     const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
-    const badgeAlpha = isDarkMode ? 0.64 : 0.72;
+    const badgeAlpha = isDarkMode ? 0.72 : 0.82;
     const pillStyle = {
         backgroundColor: transparentHex(palette.SpatialBackground, badgeAlpha),
         color: palette.SpatialText,

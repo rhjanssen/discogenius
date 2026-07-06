@@ -31,6 +31,12 @@ function getAccentColor(kind: MediaTypeBadgeKind): string {
     return 'var(--dg-accent-tracks)';
 }
 
+function getAccentBackground(kind: MediaTypeBadgeKind): string {
+    if (kind === 'album' || kind === 'album-group') return 'var(--dg-accent-albums-background)';
+    if (kind === 'video') return 'var(--dg-accent-videos-background)';
+    return 'var(--dg-accent-tracks-background)';
+}
+
 function getDefaultLabel(kind: MediaTypeBadgeKind): string {
     switch (kind) {
         case 'album-group':
@@ -54,9 +60,9 @@ export const MediaTypeBadge: React.FC<MediaTypeBadgeProps> = ({
     const styles = useStyles();
     const { isDarkMode } = useTheme();
     const accent = getAccentColor(kind);
-    const backgroundColor = isDarkMode
-        ? `color-mix(in srgb, color-mix(in srgb, ${accent} 36%, black) 72%, transparent)`
-        : `color-mix(in srgb, color-mix(in srgb, ${accent} 24%, white) 78%, transparent)`;
+    const accentBackground = getAccentBackground(kind);
+    const badgeOpacity = isDarkMode ? 72 : 82;
+    const backgroundColor = `color-mix(in srgb, ${accentBackground} ${badgeOpacity}%, transparent)`;
 
     return (
         <Badge
