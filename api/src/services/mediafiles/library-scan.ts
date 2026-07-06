@@ -822,12 +822,29 @@ export class DiskScanService {
                         // Try to guess artist/album from folder structure
                         const relative = path.relative(rootPath, resolved);
                         const segments = relative.split(path.sep);
-                        const detectedArtist = segments.length >= 1 ? segments[0] : artist.name;
-                        const detectedAlbum = segments.length >= 2 ? segments[1] : null;
-                        const detectedTrack = null;
-                        const metrics = getUnmappedMediaMetrics(undefined, ext);
+                        let detectedArtist = segments.length >= 1 ? segments[0] : artist.name;
+                        let detectedAlbum = segments.length >= 2 ? segments[1] : null;
+                        let detectedTrack: string | null = null;
+                        let metrics = getUnmappedMediaMetrics(undefined, ext);
 
-                        // Routine rescans should stay lightweight and avoid deep media parsing.
+                        try {
+                            const mm = await import("music-metadata");
+                            const metadata = await mm.parseFile(resolved, { duration: true, skipCovers: true });
+                            if (metadata.common.artist) detectedArtist = metadata.common.artist;
+                            if (metadata.common.album) detectedAlbum = metadata.common.album;
+                            if (metadata.common.title) detectedTrack = metadata.common.title;
+                            
+                            metrics = getUnmappedMediaMetrics(metadata.format, ext);
+                            
+                            if (!metrics.duration) {
+                                const { probeMediaDuration } = await import("./audioUtils.js");
+                                const durationFfprobe = await probeMediaDuration(resolved);
+                                if (durationFfprobe) metrics.duration = Math.round(durationFfprobe);
+                            }
+                        } catch (err) {
+                            // Ignore parsing errors and fall back to guessed metadata
+                        }
+
                         // Explicit import discovery performs richer metadata extraction when needed.
                         db.prepare(`
                             INSERT INTO UnmappedFiles (
@@ -839,7 +856,7 @@ export class DiskScanService {
                                 relative_path = excluded.relative_path,
                                 library_root = excluded.library_root,
                                 file_size = excluded.file_size,
-                                duration = excluded.duration,
+                                duration = COALESCE(excluded.duration, duration),
                                 bitrate = COALESCE(excluded.bitrate, bitrate),
                                 sample_rate = COALESCE(excluded.sample_rate, sample_rate),
                                 bit_depth = COALESCE(excluded.bit_depth, bit_depth),
@@ -867,7 +884,7 @@ export class DiskScanService {
                             detectedAlbum,
                             detectedTrack,
                             metrics.audioQuality,
-                            "No matching TIDAL track found"
+                            "No matching provider item found"
                         );
                     } catch (e) {
                         console.error(`[DiskScan] Failed to track unmapped file ${resolved}:`, e);

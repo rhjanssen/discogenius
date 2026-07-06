@@ -35,7 +35,7 @@ export function persistRootReviewCandidates(candidates: ImportCandidate[]) {
             filename = excluded.filename,
             extension = excluded.extension,
             file_size = excluded.file_size,
-            duration = excluded.duration,
+            duration = COALESCE(excluded.duration, duration),
             bitrate = COALESCE(excluded.bitrate, bitrate),
             sample_rate = COALESCE(excluded.sample_rate, sample_rate),
             bit_depth = COALESCE(excluded.bit_depth, bit_depth),

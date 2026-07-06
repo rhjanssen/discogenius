@@ -161,10 +161,14 @@ export function mapMbArtistToLidarr(artist: MbArtist): LidarrArtist {
 export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): LidarrTrack {
   const recording = track.recording;
   const lengthMs = track.length ?? recording?.length ?? 0;
+  const trackTitle = track.title ?? "";
+  const recTitle = recording?.title ?? "";
+  const bestTitle = recTitle.length > trackTitle.length ? recTitle : trackTitle;
+
   return {
     Id: String(track.id ?? ""),
     RecordingId: String(recording?.id ?? ""),
-    TrackName: track.title ?? recording?.title ?? "",
+    TrackName: bestTitle,
     TrackNumber: String(track.number ?? track.position ?? ""),
     TrackPosition: Number(track.position ?? 0),
     MediumNumber: mediumNumber,

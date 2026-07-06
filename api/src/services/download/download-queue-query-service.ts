@@ -989,13 +989,13 @@ export class DownloadQueueQueryService {
       providerId,
     }) : null;
     if (hasDisplayBasics && albumId && contentType === "album") {
-      cover = albumCoverLocalUrl({ albumMbid: albumId }) ?? cover ?? null;
+      cover ||= albumCoverLocalUrl({ albumMbid: albumId }) ?? null;
     }
     const offerMetadata = canonicalMetadata ?? providerItemMetadata;
     if (offerMetadata) {
       title ||= offerMetadata.title ?? undefined;
       artist ||= offerMetadata.artist ?? undefined;
-      cover = offerMetadata.cover ?? cover ?? null;
+      cover ||= offerMetadata.cover ?? null;
       albumId ||= offerMetadata.albumId ?? null;
       albumTitle ||= offerMetadata.albumTitle ?? null;
       quality ||= offerMetadata.quality ?? null;

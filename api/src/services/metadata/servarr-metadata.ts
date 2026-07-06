@@ -69,6 +69,7 @@ export interface LidarrReleaseGroupDetail {
   type?: string;
   secondarytypes?: string[];
   releasedate?: string;
+  ReleaseDate?: string;
   disambiguation?: string;
   Images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
   images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
@@ -673,7 +674,7 @@ export class ServarrMetadataService {
         detail.title || "",
         detail.type || null,
         JSON.stringify(detail.secondarytypes || []),
-        detail.releasedate || null,
+        detail.releasedate || rawDetail.ReleaseDate || null,
         detail.disambiguation || null,
         rawDetail.overview ?? null,
         JSON.stringify(albumImages),
