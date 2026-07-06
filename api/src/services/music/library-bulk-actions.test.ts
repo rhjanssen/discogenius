@@ -129,9 +129,9 @@ dbModule.db.prepare(`
     dbModule.db.prepare(`
         INSERT INTO ReleaseGroupSlots (
             artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id,
-            selected_release_mbid, quality, match_status, match_confidence, match_method, provider_data
+            selected_release_mbid, quality, match_status, match_confidence, match_method
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "artist-mbid-1",
         "release-group-mbid-1",
@@ -143,8 +143,7 @@ dbModule.db.prepare(`
         "LOSSLESS",
         "verified",
         1,
-        "test-provider-slot",
-        JSON.stringify({ title: "Album One", cover: null, artist: { name: "Artist One" }, quality: "LOSSLESS" }),
+        "test-provider-slot"
     );
 
     return {

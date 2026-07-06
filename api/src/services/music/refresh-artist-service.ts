@@ -207,31 +207,24 @@ export class RefreshArtistService {
         const artistData = await servarrMetadata.syncArtist(artistMbid);
         const artistName = artistData.artistname || "Unknown Artist";
         const providerArtworkRows = db.prepare(`
-            SELECT provider, provider_id, data
+            SELECT provider, provider_id, cover, popularity
             FROM ProviderItems
             WHERE entity_type = 'artist'
               AND artist_mbid = ?
             ORDER BY updated_at DESC
-        `).all(artistMbid) as Array<{ provider: string; provider_id: string; data?: string | null }>;
+        `).all(artistMbid) as Array<{ provider: string; provider_id: string; cover?: string | null; popularity?: number | null }>;
 
         let maxPopularity = 0;
         for (const row of providerArtworkRows) {
-            if (row.data) {
-                try {
-                    const parsed = JSON.parse(row.data);
-                    if (typeof parsed.popularity === "number" && parsed.popularity > maxPopularity) {
-                        maxPopularity = parsed.popularity;
-                    }
-                } catch {
-                    // Ignore JSON parsing errors
-                }
+            if (typeof row.popularity === "number" && row.popularity > maxPopularity) {
+                maxPopularity = row.popularity;
             }
         }
 
         const providerCandidates: ProviderArtworkCandidate[] = providerArtworkRows.map((row) => ({
             provider: row.provider,
             entityId: row.provider_id,
-            data: row.data,
+            imageId: row.cover,
         }));
         const posterUrl = await resolveArtistArtwork({
             artistMbid,
@@ -698,7 +691,7 @@ export class RefreshArtistService {
             INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, title, version, explicit, quality,
                 upc, duration, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
-                match_status, match_confidence, match_method, match_evidence, data, updated_at
+                match_status, match_confidence, match_method, match_evidence, cover, updated_at
             ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
@@ -716,7 +709,7 @@ export class RefreshArtistService {
                 match_confidence = excluded.match_confidence,
                 match_method = excluded.match_method,
                 match_evidence = excluded.match_evidence,
-                data = excluded.data,
+                cover = COALESCE(excluded.cover, ProviderItems.cover),
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -754,15 +747,7 @@ export class RefreshArtistService {
                     match?.confidence ?? null,
                     match?.method || null,
                     match ? JSON.stringify(match.evidence) : null,
-                    // Album-level provider extras only. The tracklist is NOT stored
-                    // here (no redundant blob) — provider track offers are materialized
-                    // as ProviderItems track rows via RefreshAlbumService.storeProviderTrackOffers.
-                    JSON.stringify({
-                        cover: album.cover || null,
-                        explicit: album.explicit == null ? null : Boolean(album.explicit),
-                        quality: album.quality || null,
-                        discoveredFromArtistMbid: artistMbid,
-                    }),
+                    album.cover || null,
                 );
 
                 if (matchedReleaseMbid && match && match.status !== "unmatched") {
@@ -836,7 +821,7 @@ export class RefreshArtistService {
                 pi.match_confidence,
                 pi.match_method,
                 pi.match_evidence,
-                pi.data,
+                pi.provider_artist_name,
                 rg.title AS release_group_title,
                 rg.primary_type,
                 rg.secondary_types,
@@ -870,7 +855,7 @@ export class RefreshArtistService {
             match_confidence: number | null;
             match_method: string | null;
             match_evidence: string | null;
-            data: string | null;
+            provider_artist_name: string | null;
             release_group_title: string;
             primary_type: string | null;
             secondary_types: string | null;
@@ -880,7 +865,6 @@ export class RefreshArtistService {
 
         return rows.map((row) => {
             const evidence = parseJsonObject(row.match_evidence);
-            const data = parseJsonObject(row.data);
             let secondaryTypes: string[] = [];
             try {
                 const parsed = JSON.parse(String(row.secondary_types || "[]"));
@@ -890,8 +874,8 @@ export class RefreshArtistService {
             }
 
             const providerId = String(row.provider_id);
-            const providerTrackCount = Number(evidence.providerTrackCount || data.trackCount || data.num_tracks || 0);
-            const providerVolumeCount = Number(evidence.providerVolumeCount || data.volumeCount || data.num_volumes || 0);
+            const providerTrackCount = Number(evidence.providerTrackCount || 0);
+            const providerVolumeCount = Number(evidence.providerVolumeCount || 0);
             const evidencePayload: Record<string, any> & { providerTitle: string } = {
                 providerTitle: row.title || "",
                 ...evidence,
@@ -901,6 +885,7 @@ export class RefreshArtistService {
                 provider: row.provider,
                 album: {
                     providerId,
+                    providerArtistName: row.provider_artist_name || null,
                     title: row.title || "",
                     version: row.version || null,
                     releaseDate: row.release_date || null,
@@ -908,8 +893,6 @@ export class RefreshArtistService {
                     explicit: row.explicit,
                     trackCount: providerTrackCount > 0 ? providerTrackCount : null,
                     volumeCount: providerVolumeCount > 0 ? providerVolumeCount : null,
-                    tracks: Array.isArray(data.tracks) ? data.tracks : undefined,
-                    raw: data,
                 },
                 match: {
                     providerId,
@@ -987,16 +970,17 @@ export class RefreshArtistService {
         db.prepare(`
             INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, artist_mbid,
-                title, match_status, match_confidence, match_method, data, updated_at
+                title, match_status, match_confidence, match_method, cover, popularity, updated_at
             )
-            VALUES (?, 'artist', ?, ?, ?, ?, ?, 'artist-name-search', ?, CURRENT_TIMESTAMP)
+            VALUES (?, 'artist', ?, ?, ?, ?, ?, 'artist-name-search', ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
                 title = excluded.title,
                 match_status = excluded.match_status,
                 match_confidence = excluded.match_confidence,
                 match_method = excluded.match_method,
-                data = excluded.data,
+                cover = excluded.cover,
+                popularity = excluded.popularity,
                 updated_at = CURRENT_TIMESTAMP
         `).run(
             provider.id,
@@ -1005,7 +989,8 @@ export class RefreshArtistService {
             artist.name || null,
             status,
             status === "verified" ? 1 : 0.75,
-            providerArtistArtworkSnapshot(artist),
+            artist.picture || null,
+            artist.popularity || 0,
         );
 
         const updatePopularity = artist.popularity ?? 0;
@@ -1437,7 +1422,11 @@ export class RefreshArtistService {
                 continue;
             }
 
-            await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
+            try {
+                await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
+            } catch (err) {
+                console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
+            }
 
             try {
                 // Union the release catalogs of every linked provider identity
@@ -1656,7 +1645,11 @@ export class RefreshArtistService {
             if (!providerArtistId) {
                 continue;
             }
-            await this.refreshProviderVideosForMatchedArtist(provider, providerArtistId, artistId, options);
+            try {
+                await this.refreshProviderVideosForMatchedArtist(provider, providerArtistId, artistId, options);
+            } catch (err) {
+                console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
+            }
         }
     }
 

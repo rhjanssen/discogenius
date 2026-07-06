@@ -773,8 +773,8 @@ export class RefreshAlbumService {
                 provider, entity_type, provider_id, provider_album_id, title, version, explicit, quality,
                 isrc, duration, release_date, artist_mbid, release_group_mbid, release_mbid,
                 track_mbid, recording_mbid, library_slot, track_id, recording_id,
-                match_status, match_confidence, match_method, match_evidence, data, updated_at
-            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                match_status, match_confidence, match_method, match_evidence, provider_artist_name, cover, updated_at
+            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 title = excluded.title,
@@ -796,7 +796,8 @@ export class RefreshAlbumService {
                 match_confidence = excluded.match_confidence,
                 match_method = excluded.match_method,
                 match_evidence = excluded.match_evidence,
-                data = excluded.data,
+                provider_artist_name = excluded.provider_artist_name,
+                cover = COALESCE(excluded.cover, ProviderItems.cover),
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -850,13 +851,8 @@ export class RefreshAlbumService {
                                 mediumPosition: Number(currentTrack.volume_number || 1),
                                 trackPosition: Number(currentTrack.track_number || 0),
                             }),
-                            JSON.stringify({
-                                albumProviderId: albumId,
-                                copyright: currentTrack.copyright || null,
-                                popularity: currentTrack.popularity || null,
-                                replay_gain: finiteNumberOrNull(currentTrack.replay_gain),
-                                peak: finiteNumberOrNull(currentTrack.peak),
-                            }),
+                            currentTrack.artist?.name || null,
+                            null,
                         );
                         this.storeCanonicalTrackSupplements(canonicalTrack?.recording_id || null, currentTrack);
                     }
@@ -908,7 +904,7 @@ export class RefreshAlbumService {
             INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, title, version, explicit, quality,
                 upc, duration, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
-                match_status, match_confidence, match_method, match_evidence, data, updated_at
+                match_status, match_confidence, match_method, match_evidence, cover, updated_at
             ) VALUES ('tidal', 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
@@ -926,7 +922,7 @@ export class RefreshAlbumService {
                 match_confidence = excluded.match_confidence,
                 match_method = excluded.match_method,
                 match_evidence = excluded.match_evidence,
-                data = excluded.data,
+                cover = excluded.cover,
                 updated_at = CURRENT_TIMESTAMP
         `).run(
             String(album.provider_id),
@@ -1032,3 +1028,7 @@ export class RefreshAlbumService {
         return null;
     }
 }
+
+
+
+

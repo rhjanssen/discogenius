@@ -307,16 +307,14 @@ function resolveCanonicalAlbumMetadata(input: {
       slot.selected_provider AS selected_provider,
       slot.selected_provider_id AS selected_provider_id,
       slot.quality AS slot_quality,
-      slot.selected_provider AS stereo_provider,
-      slot.selected_provider_id AS stereo_provider_id,
-      slot.provider_data AS slot_provider_data,
-      slot.provider_data AS stereo_provider_data,
+      slot.provider_artist_name AS slot_provider_artist_name,
+      slot.provider_title AS slot_provider_title,
+      slot.cover AS slot_cover,
+      provider_item.provider_artist_name AS provider_artist_name,
       provider_item.title AS provider_title,
       provider_item.quality AS provider_quality,
-      provider_item.provider AS provider,
-      provider_item.provider_id AS provider_id,
-      provider_item.asset_id AS provider_asset_id,
-      provider_item.data AS provider_data
+      provider_item.cover AS provider_cover,
+      provider_item.asset_id AS provider_asset_id
     FROM Albums rg
     LEFT JOIN ArtistMetadata artist ON artist.mbid = rg.artist_mbid
     LEFT JOIN Artists local_artist ON local_artist.mbid = rg.artist_mbid
@@ -376,45 +374,32 @@ function resolveCanonicalAlbumMetadata(input: {
     selected_provider?: string | null;
     selected_provider_id?: string | null;
     slot_quality?: string | null;
-    stereo_provider?: string | null;
-    stereo_provider_id?: string | null;
-    slot_provider_data?: string | null;
-    stereo_provider_data?: string | null;
+    slot_provider_artist_name?: string | null;
+    slot_provider_title?: string | null;
+    slot_cover?: string | null;
     provider_title?: string | null;
     provider_quality?: string | null;
-    provider?: string | null;
-    provider_id?: string | null;
+    provider_cover?: string | null;
+    provider_artist_name?: string | null;
     provider_asset_id?: string | null;
-    provider_data?: string | null;
   } | undefined;
 
   if (!row) {
     return null;
   }
 
-  const slotData = parseProviderData(row.slot_provider_data);
-  const providerData = parseProviderData(row.provider_data);
-  const slotArtist = parseProviderData(slotData.artist);
-  const providerArtist = parseProviderData(providerData.artist);
   const cover = albumCoverLocalUrl({
     albumMbid: row.release_group_mbid,
     images: imageContainerFromImagesColumn(row.release_group_images),
   });
 
   return {
-    title: row.release_group_title ?? row.provider_title ?? pickNestedString(slotData, "title"),
-    artist: row.artist_name
-      ?? pickNestedString(slotArtist, "name")
-      ?? pickNestedString(providerArtist, "name"),
-    cover: cover
-      ?? row.provider_asset_id
-      ?? pickNestedString(slotData, "cover")
-      ?? pickNestedString(providerData, "cover")
-      ?? pickNestedString(providerData, "image_id")
-      ?? pickNestedString(providerData, "imageId"),
+    title: row.release_group_title ?? row.slot_provider_title ?? row.provider_title,
+    artist: row.artist_name ?? row.slot_provider_artist_name ?? row.provider_artist_name,
+    cover: cover ?? row.slot_cover ?? row.provider_cover ?? row.provider_asset_id,
     albumId: row.release_group_mbid ?? null,
     albumTitle: row.release_group_title ?? null,
-    quality: row.slot_quality ?? row.provider_quality ?? pickNestedString(slotData, "quality") ?? pickNestedString(providerData, "quality"),
+    quality: row.slot_quality ?? row.provider_quality,
   };
 }
 
@@ -433,10 +418,10 @@ function resolveProviderItemMetadata(input: {
       provider_item.entity_type,
       provider_item.provider,
       provider_item.title,
-      provider_item.version,
+      provider_item.provider_artist_name,
       provider_item.quality,
       provider_item.asset_id,
-      provider_item.data,
+      provider_item.cover,
       provider_item.release_group_mbid,
       provider_item.release_mbid,
       release_group.title AS release_group_title,
@@ -461,10 +446,10 @@ function resolveProviderItemMetadata(input: {
     entity_type?: string | null;
     provider?: string | null;
     title?: string | null;
-    version?: string | null;
+    provider_artist_name?: string | null;
     quality?: string | null;
     asset_id?: string | null;
-    data?: string | null;
+    cover?: string | null;
     release_group_mbid?: string | null;
     release_mbid?: string | null;
     release_group_title?: string | null;
@@ -479,16 +464,9 @@ function resolveProviderItemMetadata(input: {
     return null;
   }
 
-  const data = parseProviderData(row.data);
-  const dataArtist = parseProviderData(data.artist);
   const canonicalTitle = input.contentType === "album"
     ? row.release_group_title
     : row.track_title ?? row.recording_title;
-  const providerTitle = row.title
-    ? row.version && !row.title.toLowerCase().includes(row.version.toLowerCase())
-      ? `${row.title} (${row.version})`
-      : row.title
-    : null;
   const cover = row.release_group_mbid
     ? albumCoverLocalUrl({
         albumMbid: row.release_group_mbid,
@@ -499,12 +477,12 @@ function resolveProviderItemMetadata(input: {
       : null;
 
   return {
-    title: canonicalTitle ?? providerTitle ?? pickNestedString(data, "title"),
-    artist: row.artist_name ?? pickNestedString(dataArtist, "name") ?? pickNestedString(data, "artist_name"),
-    cover: cover ?? row.asset_id ?? pickNestedString(data, "cover") ?? pickNestedString(data, "image_id") ?? pickNestedString(data, "imageId"),
+    title: canonicalTitle ?? row.title,
+    artist: row.artist_name ?? row.provider_artist_name,
+    cover: cover ?? row.cover ?? row.asset_id,
     albumId: row.release_group_mbid ?? row.release_mbid ?? null,
     albumTitle: row.release_group_title ?? null,
-    quality: row.quality ?? pickNestedString(data, "quality"),
+    quality: row.quality,
   };
 }
 

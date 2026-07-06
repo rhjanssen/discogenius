@@ -50,12 +50,13 @@ type ProviderArtistRow = {
   title: string | null;
   artist_mbid: string | null;
   match_status: string | null;
-  data: string | null;
+  cover: string | null;
+  popularity: number | null;
 };
 
 function getProviderArtistRow(provider: string, providerId: string): ProviderArtistRow | null {
   const row = db.prepare(`
-    SELECT provider, provider_id, title, artist_mbid, match_status, data
+    SELECT provider, provider_id, title, artist_mbid, match_status, cover, popularity
     FROM ProviderItems
     WHERE provider = ? AND entity_type = 'artist' AND provider_id = ?
     LIMIT 1
@@ -64,16 +65,11 @@ function getProviderArtistRow(provider: string, providerId: string): ProviderArt
 }
 
 function parseStoredArtistData(row: ProviderArtistRow): { picture: string | null; providerUrl: string | null; popularity: number | null } {
-  try {
-    const parsed = JSON.parse(row.data || "{}") as Record<string, unknown>;
-    return {
-      picture: typeof parsed.picture === "string" ? parsed.picture : null,
-      providerUrl: typeof parsed.providerUrl === "string" ? parsed.providerUrl : null,
-      popularity: typeof parsed.popularity === "number" ? parsed.popularity : null,
-    };
-  } catch {
-    return { picture: null, providerUrl: null, popularity: null };
-  }
+  return {
+    picture: row.cover,
+    providerUrl: null, // we no longer store providerUrl explicitly here, could be built from provider ID if needed
+    popularity: row.popularity,
+  };
 }
 
 async function fetchProviderAlbums(provider: string, providerId: string): Promise<ProviderArtistEvidenceAlbum[]> {
@@ -257,3 +253,4 @@ export function ignoreProviderArtist(provider: string, providerId: string): { ig
   }
   return { ignored: true };
 }
+

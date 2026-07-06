@@ -96,7 +96,7 @@ test("canonical catalog tables do not store provider resource evidence", () => {
     "provider",
     "provider_id",
     "provider_url",
-    "provider_data",
+
     "asset_id",
     "upc",
     "isrc",
@@ -137,8 +137,7 @@ test("provider evidence schema is provider-agnostic and match edges target Music
     "provider_album_id",
     "provider_url",
     "asset_id",
-    "match_evidence",
-    "data",
+    "match_evidence"
   ]) {
     assert.ok(providerItemColumns.includes(columnName), `Expected ProviderItems.${columnName}`);
   }

@@ -182,12 +182,12 @@ function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpre
         stereo.selected_provider_id AS stereo_provider_id,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
-        stereo.provider_data AS stereo_provider_data,
+        stereo.cover AS stereo_cover,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
-        spatial.provider_data AS spatial_provider_data,
+        spatial.cover AS spatial_cover,
         ${releaseGroupPopularityExpression} AS popularity
       FROM ArtistReleaseGroupCuration context
       JOIN Artists managed_artist

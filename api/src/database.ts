@@ -848,7 +848,7 @@ function ensureMusicBrainzProviderSchema(): void {
       match_confidence REAL,
       match_method TEXT,
       match_evidence TEXT,
-      data TEXT,
+      provider_artist_name TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY(provider, entity_type, provider_id)
     );
@@ -889,7 +889,8 @@ function ensureMusicBrainzProviderSchema(): void {
       match_confidence REAL,
       match_method TEXT,
       match_evidence TEXT,
-      provider_data TEXT,
+      provider_artist_name TEXT,
+      provider_title TEXT,
       cover TEXT,
       popularity INTEGER,
       monitored_lock BOOLEAN NOT NULL DEFAULT 0,

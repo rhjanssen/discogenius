@@ -838,22 +838,14 @@ export class AudioTagService {
         COALESCE(
           canonical_recording.copyright,
           provider_recording.copyright,
-          CASE WHEN json_valid(provider_track.data) THEN provider_track.copyright END
+          provider_track.copyright
         ) AS media_copyright,
         COALESCE(
           canonical_recording.replay_gain,
-          CASE
-            WHEN json_valid(provider_track.data)
-            THEN CAST(json_extract(provider_track.data, '$.replay_gain') AS REAL)
-          END,
           provider_recording.replay_gain
         ) AS media_replay_gain,
         COALESCE(
           canonical_recording.peak,
-          CASE
-            WHEN json_valid(provider_track.data)
-            THEN CAST(json_extract(provider_track.data, '$.peak') AS REAL)
-          END,
           provider_recording.peak
         ) AS media_peak,
         COALESCE(canonical_group.title, canonical_release.title, alb.title, provider_album.title) AS album_title,
@@ -863,9 +855,7 @@ export class AudioTagService {
         COALESCE(canonical_release.barcode, provider_album.upc) AS album_upc,
         COALESCE(
           canonical_group.review_text,
-          alb.review_text,
-          CASE WHEN json_valid(provider_album.data) THEN provider_album.review_text END,
-          CASE WHEN json_valid(provider_album.data) THEN provider_album.review_text END
+          alb.review_text
         ) AS album_review_text,
         COALESCE(canonical_recording.credits, provider_recording.credits) AS media_credits,
         COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, provider_canonical_track.recording_mbid, provider_track.recording_mbid, provider_recording.mbid) AS media_mbid,
@@ -2234,3 +2224,6 @@ export class AudioTagService {
     return this.apply(ids);
   }
 }
+
+
+

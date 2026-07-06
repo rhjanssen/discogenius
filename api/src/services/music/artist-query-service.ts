@@ -374,15 +374,6 @@ function releaseGroupBucket(row: any): keyof typeof RELEASE_GROUP_BUCKETS {
     return "ALBUM";
 }
 
-function parseSelectedProviderData(row: Record<string, any>): { cover?: string | null; explicit?: boolean | number | null } | null {
-    const raw = row.stereo_provider_data || row.spatial_provider_data;
-    if (!raw) return null;
-    try {
-        return (typeof raw === "string" ? JSON.parse(raw) : raw) as { cover?: string | null; explicit?: boolean | number | null };
-    } catch {
-        return null;
-    }
-}
 
 function mapReleaseGroupCard(row: Record<string, any>, options: {
     artistId: string;
@@ -392,10 +383,9 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
 }): any {
     const bucketKey = releaseGroupBucket(row);
     const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
-    const selectedProviderData = parseSelectedProviderData(row);
     const providerCandidates = albumProviderArtworkCandidatesFromRow(row);
     const providerCover = providerArtworkIdFromCandidates(providerCandidates, "album")
-        || selectedProviderData?.cover
+        || row.stereo_cover || row.spatial_cover
         || null;
     const coverUrl = albumCoverLocalUrl({
         albumMbid: row.mbid,
@@ -416,7 +406,7 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
         type: primaryType,
         album_type: primaryType,
         group_type: primaryType === "EP" || primaryType === "SINGLE" ? "EPSANDSINGLES" : "ALBUMS",
-        explicit: Boolean(selectedProviderData?.explicit),
+        explicit: Boolean(row.explicit),
         quality: row.selected_quality || null,
         selected_provider_id: row.selected_provider_id || null,
         stereo_provider_id: row.stereo_provider_id || null,
@@ -648,7 +638,7 @@ export class ArtistQueryService {
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
         stereo.match_method AS stereo_match_method,
-        stereo.provider_data AS stereo_provider_data,
+        stereo.cover AS stereo_cover,
         stereo.monitored_lock AS stereo_monitor_lock,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
@@ -656,7 +646,7 @@ export class ArtistQueryService {
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
         spatial.match_method AS spatial_match_method,
-        spatial.provider_data AS spatial_provider_data,
+        spatial.cover AS spatial_cover,
         spatial.monitored_lock AS spatial_monitor_lock,
         CASE
           WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
@@ -926,7 +916,7 @@ export class ArtistQueryService {
            stereo.quality AS stereo_quality,
            stereo.match_status AS stereo_match_status,
            stereo.match_method AS stereo_match_method,
-           stereo.provider_data AS stereo_provider_data,
+           stereo.cover AS stereo_cover,
            stereo.monitored_lock AS stereo_monitor_lock,
            spatial.selected_provider AS spatial_provider,
            spatial.selected_provider_id AS spatial_provider_id,
@@ -934,7 +924,7 @@ export class ArtistQueryService {
            spatial.quality AS spatial_quality,
            spatial.match_status AS spatial_match_status,
            spatial.match_method AS spatial_match_method,
-           spatial.provider_data AS spatial_provider_data,
+           spatial.cover AS spatial_cover,
            spatial.monitored_lock AS spatial_monitor_lock,
            CASE
              WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0

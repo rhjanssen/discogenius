@@ -219,44 +219,36 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
       .run(track, recording, title, position, length);
   }
 
-  const albumData = (tracks: Array<{ title: string; isrc: string; duration: number }>) => JSON.stringify({
-    quality: "HIRES_LOSSLESS",
-    tracks: tracks.map((track, index) => ({
-      ...track,
-      track_number: index + 1,
-      volume_number: 1,
-    })),
-  });
+  const insertProviderTrack = (providerAlbumId: string, id: string, title: string, isrc: string, duration: number) => {
+    db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, provider_album_id, title, isrc, duration)
+                VALUES ('tidal', 'track', ?, ?, ?, ?, ?)`).run(id, providerAlbumId, title, isrc, duration);
+  };
 
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
-              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS', ?)`)
-    .run("290132977", "Killing Me Softly With His Song (MTV Unplugged / Edit)", albumData([
-      { title: "Killing Me Softly With His Song", isrc: "GBUM72302334", duration: 299 },
-    ]));
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
-              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'LOSSLESS', ?)`)
-    .run("290132975", "Killing Me Softly With His Song (MTV Unplugged / Edit)", albumData([
-      { title: "Killing Me Softly With His Song", isrc: "GBUM72302334", duration: 299 },
-    ]));
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
-              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS', ?)`)
-    .run("287367980", "Pompeii / Come As You Are (MTV Unplugged)", albumData([
-      { title: "Pompeii", isrc: "GBUM72302279", duration: 269 },
-      { title: "Come As You Are", isrc: "GBUM72302277", duration: 231 },
-    ]));
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
-              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'LOSSLESS', ?)`)
-    .run("287367976", "Pompeii / Come As You Are (MTV Unplugged)", albumData([
-      { title: "Pompeii", isrc: "GBUM72302279", duration: 269 },
-      { title: "Come As You Are", isrc: "GBUM72302277", duration: 231 },
-    ]));
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
-              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS', ?)`)
-    .run("extra-provider-album", "Pompeii / Come As You Are / Extra", albumData([
-      { title: "Pompeii", isrc: "GBUM72302279", duration: 269 },
-      { title: "Come As You Are", isrc: "GBUM72302277", duration: 231 },
-      { title: "Extra Track", isrc: "GBUM70000000", duration: 180 },
-    ]));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS')`)
+    .run("290132977", "Killing Me Softly With His Song (MTV Unplugged / Edit)");
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'LOSSLESS')`)
+    .run("290132975", "Killing Me Softly With His Song (MTV Unplugged / Edit)");
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS')`)
+    .run("287367980", "Pompeii / Come As You Are (MTV Unplugged)");
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'LOSSLESS')`)
+    .run("287367976", "Pompeii / Come As You Are (MTV Unplugged)");
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality)
+              VALUES ('tidal', 'album', ?, 'artist-bastille', ?, 'HIRES_LOSSLESS')`)
+    .run("extra-provider-album", "Pompeii / Come As You Are / Extra");
+
+  insertProviderTrack("290132977", "trk-1", "Killing Me Softly With His Song", "GBUM72302334", 299);
+  insertProviderTrack("290132975", "trk-2", "Killing Me Softly With His Song", "GBUM72302334", 299);
+  insertProviderTrack("287367980", "trk-3", "Pompeii", "GBUM72302279", 269);
+  insertProviderTrack("287367980", "trk-4", "Come As You Are", "GBUM72302277", 231);
+  insertProviderTrack("287367976", "trk-5", "Pompeii", "GBUM72302279", 269);
+  insertProviderTrack("287367976", "trk-6", "Come As You Are", "GBUM72302277", 231);
+  insertProviderTrack("extra-provider-album", "trk-7", "Pompeii", "GBUM72302279", 269);
+  insertProviderTrack("extra-provider-album", "trk-8", "Come As You Are", "GBUM72302277", 231);
+  insertProviderTrack("extra-provider-album", "trk-9", "Extra Track", "GBUM70000000", 180);
 
   providerMatches.persistCompositeReleaseMatches("rg-unplugged");
   const result = providerMatches.getReleaseGroupAvailability("rg-unplugged");
@@ -309,15 +301,20 @@ test("composite coverage matches provider tracks by ISRC even when titles differ
                 VALUES (?, 'rel-isrc', ?, ?, ?, 1, 200000)`).run(trk, rec, title, pos);
   }
 
-  const albumData = (track: { title: string; isrc: string }) =>
-    JSON.stringify({ quality: "LOSSLESS", tracks: [{ ...track, track_number: 1, volume_number: 1, duration: 200 }] });
+  const insertProviderTrack = (providerAlbumId: string, id: string, title: string, isrc: string, duration: number) => {
+    db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, provider_album_id, title, isrc, duration)
+                VALUES ('tidal', 'track', ?, ?, ?, ?, ?)`).run(id, providerAlbumId, title, isrc, duration);
+  };
   // Provider titles deliberately do NOT match the MB titles — only the ISRC links them.
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
-              VALUES ('tidal','album',?, 'artist-isrc', 'Totally Different A', 'LOSSLESS', ?)`)
-    .run("prov-a", albumData({ title: "Totally Different A", isrc: "AAAA12345678" }));
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, data)
-              VALUES ('tidal','album',?, 'artist-isrc', 'Totally Different B', 'LOSSLESS', ?)`)
-    .run("prov-b", albumData({ title: "Totally Different B", isrc: "BBBB12345678" }));
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality)
+              VALUES ('tidal','album',?, 'artist-isrc', 'Totally Different A', 'LOSSLESS')`)
+    .run("prov-a");
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality)
+              VALUES ('tidal','album',?, 'artist-isrc', 'Totally Different B', 'LOSSLESS')`)
+    .run("prov-b");
+
+  insertProviderTrack("prov-a", "trk-a", "Totally Different A", "AAAA12345678", 200);
+  insertProviderTrack("prov-b", "trk-b", "Totally Different B", "BBBB12345678", 200);
 
   providerMatches.persistCompositeReleaseMatches("rg-isrc");
   const result = providerMatches.getReleaseGroupAvailability("rg-isrc");
@@ -373,3 +370,4 @@ test("setSlotSelection rejects an unknown slot and a release outside the group",
   assert.throws(() => providerMatches.setSlotSelection({ releaseGroupMbid: "rg-1", slot: "bogus", releaseMbid: "rel-stereo" }), /unknown slot/);
   assert.throws(() => providerMatches.setSlotSelection({ releaseGroupMbid: "rg-1", slot: "stereo", releaseMbid: "rel-not-in-group" }), /not in release group/);
 });
+

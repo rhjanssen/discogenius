@@ -676,9 +676,9 @@ dbModule.db.prepare(`
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("tidal", "album", "provider-album-1", "artist-local", "SAVE MY SOUL", "stereo");
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, library_slot, quality, data)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("tidal", "track", "provider-track-1", "artist-local", "SAVE MY SOUL", "stereo", "LOSSLESS", JSON.stringify({ albumProviderId: "provider-album-1" }));
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, library_slot, quality)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("tidal", "track", "provider-track-1", "artist-local", "SAVE MY SOUL", "stereo", "LOSSLESS");
 
   const root = configModule.Config.getMusicPath();
   const albumDir = path.join(root, "Bastille {mbid-artist-mbid-1}", "SAVE MY SOUL (2025)");
@@ -1195,3 +1195,7 @@ dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
     path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video {TIDAL-video-inline-unlinked}.mp4"),
   );
 });
+
+
+
+

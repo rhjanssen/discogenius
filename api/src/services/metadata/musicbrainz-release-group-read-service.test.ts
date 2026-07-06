@@ -100,11 +100,11 @@ test("album versions expose provider offers for all compatible MusicBrainz relea
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, quality, release_date,
       artist_mbid, release_group_mbid, release_mbid, library_slot,
-      match_status, match_confidence, match_method, match_evidence, data
+      match_status, match_confidence, match_method, match_evidence
     ) VALUES
-      ('tidal', 'album', ?, ?, 'HIRES_LOSSLESS', '2022-02-04', ?, ?, NULL, 'stereo', 'verified', 1, 'musicbrainz-release-group-title-year-type-track-count', ?, '{}'),
-      ('tidal', 'album', ?, ?, 'HIRES_LOSSLESS', '2022-02-07', ?, ?, NULL, 'stereo', 'probable', 1, 'musicbrainz-release-group-title-year-type-track-count', ?, '{}'),
-      ('tidal', 'album', ?, ?, 'HIRES_LOSSLESS', '2022-08-26', ?, ?, NULL, 'stereo', 'verified', 1, 'musicbrainz-release-group-title-year-type-track-count', ?, '{}')
+      ('tidal', 'album', ?, ?, 'HIRES_LOSSLESS', '2022-02-04', ?, ?, NULL, 'stereo', 'verified', 1, 'musicbrainz-release-group-title-year-type-track-count', ?),
+      ('tidal', 'album', ?, ?, 'HIRES_LOSSLESS', '2022-02-07', ?, ?, NULL, 'stereo', 'probable', 1, 'musicbrainz-release-group-title-year-type-track-count', ?),
+      ('tidal', 'album', ?, ?, 'HIRES_LOSSLESS', '2022-08-26', ?, ?, NULL, 'stereo', 'verified', 1, 'musicbrainz-release-group-title-year-type-track-count', ?)
   `).run(
     "tidal-standard",
     "Give Me The Future",
@@ -130,3 +130,4 @@ test("album versions expose provider offers for all compatible MusicBrainz relea
   assert.equal(providersByRelease.get(deluxeReleaseMbid), "tidal-deluxe");
   assert.equal(providersByRelease.get(expandedReleaseMbid), "tidal-expanded");
 });
+

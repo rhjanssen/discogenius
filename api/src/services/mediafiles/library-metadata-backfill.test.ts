@@ -184,8 +184,8 @@ function seedCanonicalLibraryFiles() {
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
           provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-          album_id, title, quality, library_slot, data
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          album_id, title, quality, library_slot
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "tidal",
         "album",
@@ -196,8 +196,7 @@ function seedCanonicalLibraryFiles() {
         "200",
         "Provider Album",
         "LOSSLESS",
-        "stereo",
-        JSON.stringify({ video_cover: "album-video-cover-id" }),
+        "stereo"
     );
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
@@ -216,7 +215,7 @@ function seedCanonicalLibraryFiles() {
         "200",
         "Provider Track",
         "LOSSLESS",
-        "stereo",
+        "stereo"
     );
     dbModule.db.prepare(`
         INSERT INTO ReleaseGroupSlots(
@@ -275,8 +274,8 @@ function seedCanonicalLibraryFiles() {
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
           provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-          recording_mbid, recording_id, album_id, title, quality, library_slot, data
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          recording_mbid, recording_id, album_id, title, quality, library_slot
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "tidal",
         "video",
@@ -289,8 +288,7 @@ function seedCanonicalLibraryFiles() {
         "200",
         "Provider Video",
         "MP4_1080P",
-        "video",
-        JSON.stringify({ copyright: "Provider copyright" }),
+        "video"
     );
 
     const videoRoot = configModule.Config.getVideoPath();
@@ -395,8 +393,7 @@ test("metadata backfill discovers album and video sidecars from canonical Provid
 
 test("metadata backfill records existing artist, album, and lyric sidecars", async () => {
     seedCanonicalLibraryFiles();
-    dbModule.db.prepare("UPDATE ProviderItems SET data = ? WHERE entity_type = 'album' AND provider_id = '200'")
-        .run(JSON.stringify({}));
+
     configModule.updateConfig("metadata", {
         save_album_cover: true,
         save_artist_picture: true,
@@ -490,3 +487,6 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
 
     assert.equal(path.relative(musicRoot, artistPicPath).startsWith("The Example Artist"), true);
 });
+
+
+

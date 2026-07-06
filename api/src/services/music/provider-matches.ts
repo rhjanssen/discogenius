@@ -145,7 +145,7 @@ interface ProviderReleaseOfferRow {
   confidence: number | null;
   method: string | null;
   evidence: string | null;
-  data: string | null;
+  evidence: string | null;
 }
 
 interface TargetTrackRow {
@@ -205,7 +205,7 @@ interface ProviderAlbumRow {
   provider_item_id: string;
   quality: string | null;
   library_slot: string | null;
-  data: string | null;
+  library_slot: string | null;
 }
 
 /**
@@ -257,7 +257,6 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
         providerAlbumIds,
         coverageSummary: composite.coverageSummary,
       }),
-      data: null,
     };
   } else if (provider && providerAlbumId) {
     offer = db.prepare(`
@@ -268,8 +267,7 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
         pm.status,
         pm.confidence,
         pm.method,
-        pm.evidence,
-        pi.data
+        pm.evidence
       FROM ProviderItemMatches pm
       LEFT JOIN ProviderItems pi
         ON pi.provider = pm.provider
@@ -294,8 +292,7 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
         pm.status,
         pm.confidence,
         pm.method,
-        pm.evidence,
-        pi.data
+        pm.evidence
       FROM ProviderItemMatches pm
       LEFT JOIN ProviderItems pi
         ON pi.provider = pm.provider
@@ -321,7 +318,6 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
         match_confidence = ?,
         match_method = ?,
         match_evidence = ?,
-        provider_data = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE release_group_mbid = ? AND slot = ?
   `).run(
@@ -333,7 +329,6 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
     offer?.confidence ?? null,
     offer?.method ?? null,
     offer?.evidence ?? null,
-    offer?.data ?? null,
     input.releaseGroupMbid,
     input.slot,
   );
@@ -348,8 +343,8 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
       INSERT INTO ReleaseGroupSlots (
         artist_mbid, release_group_mbid, slot, monitored,
         selected_release_mbid, selected_provider, selected_provider_id,
-        quality, match_status, match_confidence, match_method, match_evidence, provider_data
-      ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        quality, match_status, match_confidence, match_method, match_evidence
+      ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       artist.artist_mbid,
       input.releaseGroupMbid,
@@ -362,7 +357,6 @@ export function setSlotSelection(input: SetSlotSelectionInput): ReleaseGroupAvai
       offer?.confidence ?? null,
       offer?.method ?? null,
       offer?.evidence ?? null,
-      offer?.data ?? null,
     );
   }
 
@@ -630,11 +624,10 @@ export function persistCompositeReleaseMatches(releaseGroupMbid: string): void {
   if (!groupArtist?.artist_mbid) return;
 
   const providerAlbums = db.prepare(`
-    SELECT provider, provider_id AS provider_item_id, quality, library_slot, data
+    SELECT provider, provider_id AS provider_item_id, quality, library_slot
     FROM ProviderItems
     WHERE entity_type = 'album'
       AND artist_mbid = ?
-      AND data IS NOT NULL
       AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
   `).all(groupArtist.artist_mbid) as ProviderAlbumRow[];
 
@@ -668,8 +661,27 @@ export function persistCompositeReleaseMatches(releaseGroupMbid: string): void {
 
     if (targetTracks.length < 2) continue;
 
+    const providerAlbumIds = providerAlbums.map(a => String(a.provider_item_id));
+    const trackRows = db.prepare(`
+      SELECT provider_album_id, title, isrc, duration
+      FROM ProviderItems
+      WHERE entity_type = 'track'
+        AND provider_album_id IN (${providerAlbumIds.map(() => "?").join(",")})
+    `).all(...providerAlbumIds) as Array<{ provider_album_id: string, title: string | null, isrc: string | null, duration: number | null }>;
+
+    const tracksByAlbumId = new Map<string, ProviderTrackLike[]>();
+    for (const track of trackRows) {
+      if (!track.provider_album_id) continue;
+      let list = tracksByAlbumId.get(String(track.provider_album_id));
+      if (!list) {
+        list = [];
+        tracksByAlbumId.set(String(track.provider_album_id), list);
+      }
+      list.push({ title: track.title, isrc: track.isrc, duration: track.duration });
+    }
+
     const candidates = providerAlbums
-      .map((album) => buildProviderAlbumCoverageCandidate(album, targetTracks))
+      .map((album) => buildProviderAlbumCoverageCandidate(album, tracksByAlbumId.get(String(album.provider_item_id)) || [], targetTracks))
       .filter((candidate): candidate is ProviderAlbumCoverageCandidate => Boolean(candidate));
 
     for (const selected of chooseStrictComposites(candidates, targetTracks)) {
@@ -713,17 +725,9 @@ function orderCompositeByTargetTrack(
 
 function buildProviderAlbumCoverageCandidate(
   album: ProviderAlbumRow,
+  providerTracks: ProviderTrackLike[],
   targetTracks: TargetTrackRow[],
 ): ProviderAlbumCoverageCandidate | null {
-  let parsed: unknown;
-  try {
-    parsed = album.data ? JSON.parse(album.data) : null;
-  } catch {
-    return null;
-  }
-  const providerTracks = Array.isArray((parsed as { tracks?: unknown } | null)?.tracks)
-    ? ((parsed as { tracks: unknown[] }).tracks as ProviderTrackLike[])
-    : [];
   if (providerTracks.length === 0 || providerTracks.length > targetTracks.length) return null;
 
   const coveredTrackMbids = new Set<string>();

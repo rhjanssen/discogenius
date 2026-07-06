@@ -70,8 +70,9 @@ type CanonicalProviderOffer = {
     provider_title?: string | null;
     provider_quality?: string | null;
     asset_id?: string | null;
-    provider_data?: string | null;
-    slot_provider_data?: string | null;
+    provider_artist_name?: string | null;
+    slot_provider_artist_name?: string | null;
+    slot_provider_title?: string | null;
     slot_quality?: string | null;
     selected_release_mbid?: string | null;
     canonical_album_title?: string | null;
@@ -513,8 +514,10 @@ export class DownloadProcessor {
                     pi.title AS provider_title,
                     pi.quality AS provider_quality,
                     pi.asset_id,
-                    pi.data AS provider_data,
-                    rgs.provider_data AS slot_provider_data,
+                    pi.provider_artist_name AS provider_artist_name,
+                    rgs.provider_artist_name AS slot_provider_artist_name,
+                    rgs.provider_title AS slot_provider_title,
+                    rgs.cover AS slot_cover,
                     rgs.quality AS slot_quality,
                     rgs.selected_release_mbid,
                     rg.title AS canonical_album_title,
@@ -547,7 +550,8 @@ export class DownloadProcessor {
                         rgs.artist_mbid,
                         rgs.release_group_mbid,
                         rgs.selected_release_mbid AS release_mbid,
-                        rgs.provider_data AS slot_provider_data,
+                        rgs.provider_artist_name AS slot_provider_artist_name,
+                        rgs.provider_title AS slot_provider_title,
                         rgs.cover AS slot_cover,
                         rgs.quality AS slot_quality,
                         rgs.selected_release_mbid,
@@ -581,7 +585,7 @@ export class DownloadProcessor {
                 pi.quality AS provider_quality,
                 pi.asset_id,
                 pi.cover AS provider_cover,
-                pi.data AS provider_data,
+                pi.provider_artist_name AS provider_artist_name,
                 rg.title AS canonical_album_title,
                 t.title AS canonical_track_title,
                 r.title AS canonical_recording_title,
@@ -688,10 +692,6 @@ export class DownloadProcessor {
         try {
             const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, type, payload);
             if (canonicalOffer) {
-                const providerData = this.parseProviderData(canonicalOffer.provider_data);
-                const slotProviderData = this.parseProviderData(canonicalOffer.slot_provider_data);
-                const providerArtist = this.parseProviderData(providerData.artist);
-                const slotArtist = this.parseProviderData(slotProviderData.artist);
                 const title = type === 'album'
                     ? canonicalOffer.canonical_album_title
                     : type === 'video'
@@ -700,19 +700,15 @@ export class DownloadProcessor {
                 const cover = fallbackCover
                     ?? canonicalOffer.slot_cover
                     ?? canonicalOffer.provider_cover
-                    ?? this.pickNestedString(slotProviderData, 'cover')
                     ?? canonicalOffer.asset_id
-                    ?? this.pickNestedString(providerData, 'cover')
                     ?? null;
 
                 return {
-                    title: fallbackTitle || title || canonicalOffer.provider_title || 'Unknown',
+                    title: fallbackTitle || title || canonicalOffer.slot_provider_title || canonicalOffer.provider_title || 'Unknown',
                     artist: fallbackArtist
                         || canonicalOffer.artist_name
-                        || this.pickNestedString(slotArtist, 'name')
-                        || this.pickNestedString(providerArtist, 'name')
-                        || this.pickNestedString(slotProviderData, 'artist')
-                        || this.pickNestedString(providerData, 'artist')
+                        || canonicalOffer.slot_provider_artist_name
+                        || canonicalOffer.provider_artist_name
                         || 'Unknown',
                     cover,
                 };

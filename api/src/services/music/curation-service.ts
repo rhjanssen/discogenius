@@ -25,7 +25,7 @@ type ReleaseGroupSlotRow = {
     selected_provider?: string | null;
     selected_provider_id?: string | null;
     selected_release_mbid?: string | null;
-    provider_data?: string | null;
+
     monitored_lock?: number | null;
 };
 
@@ -313,7 +313,7 @@ export class CurationService {
 
         const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
         const slotRows = db.prepare(`
-            SELECT id, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, selected_release_mbid, provider_data, monitored_lock
+            SELECT id, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, selected_release_mbid, monitored_lock
             FROM ReleaseGroupSlots
             WHERE release_group_mbid IN (${releaseGroupMbids.map(() => "?").join(",")})
         `).all(...releaseGroupMbids) as ReleaseGroupSlotRow[];

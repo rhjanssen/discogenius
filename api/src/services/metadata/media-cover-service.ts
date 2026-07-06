@@ -34,7 +34,6 @@ export type ProviderArtworkCandidate = {
   provider?: string | null;
   entityId?: string | number | null;
   imageId?: string | null;
-  data?: unknown;
 };
 
 type MediaCoverProxyEntry = {
@@ -748,44 +747,27 @@ function nestedRecord(value: unknown): Record<string, any> {
   return value && typeof value === "object" ? value as Record<string, any> : {};
 }
 
-export function extractProviderArtworkId(value: unknown, entityType: ProviderArtworkEntityType): string | null {
-  const data = parseJsonObject(value);
-  if (!data) {
-    return null;
-  }
-
-  const raw = nestedRecord(data.raw);
-  const keys = entityType === "artist"
-    ? [data.picture, data.image, data.image_id, data.imageId, raw.picture, raw.image, raw.image_id, raw.imageId]
-    : [data.cover, data.image, data.image_id, data.imageId, raw.cover, raw.image, raw.image_id, raw.imageId];
-
-  return textOrNull(...keys);
-}
-
 export function albumProviderArtworkCandidatesFromRow(row: Record<string, any>): ProviderArtworkCandidate[] {
   const selectedProvider = textOrNull(row.selected_provider);
   const candidates: ProviderArtworkCandidate[] = [
     {
       provider: textOrNull(row.stereo_provider, selectedProvider),
       entityId: textOrNull(row.stereo_provider_id, row.selected_provider_id),
-      imageId: extractProviderArtworkId(row.stereo_provider_data, "album"),
-      data: row.stereo_provider_data,
+      imageId: textOrNull(row.stereo_cover),
     },
     {
       provider: textOrNull(row.spatial_provider, selectedProvider),
       entityId: textOrNull(row.spatial_provider_id, row.selected_provider_id),
-      imageId: extractProviderArtworkId(row.spatial_provider_data, "album"),
-      data: row.spatial_provider_data,
+      imageId: textOrNull(row.spatial_cover),
     },
     {
       provider: selectedProvider,
       entityId: textOrNull(row.selected_provider_id, row.provider_id),
-      imageId: textOrNull(row.provider_asset_id, extractProviderArtworkId(row.provider_data, "album")),
-      data: row.provider_data,
+      imageId: textOrNull(row.provider_asset_id, row.provider_cover, row.cover),
     },
   ];
 
-  return candidates.filter((candidate) => candidate.provider || candidate.imageId || candidate.data || candidate.entityId);
+  return candidates.filter((candidate) => candidate.provider || candidate.imageId || candidate.entityId);
 }
 
 export function providerArtworkIdFromCandidates(
@@ -793,7 +775,7 @@ export function providerArtworkIdFromCandidates(
   entityType: ProviderArtworkEntityType,
 ): string | null {
   for (const candidate of candidates) {
-    const imageId = textOrNull(candidate.imageId, extractProviderArtworkId(candidate.data, entityType));
+    const imageId = textOrNull(candidate.imageId);
     if (imageId) {
       return imageId;
     }
@@ -803,13 +785,11 @@ export function providerArtworkIdFromCandidates(
 
 export function videoProviderArtworkCandidatesFromRow(row: Record<string, any>): ProviderArtworkCandidate[] {
   const provider = textOrNull(row.provider, row.selected_provider);
-  const data = row.provider_data ?? row.data;
   return [{
     provider,
     entityId: textOrNull(row.provider_id, row.selected_provider_id),
-    imageId: textOrNull(row.provider_asset_id, row.asset_id, row.cover, row.cover_image_id, extractProviderArtworkId(data, "video")),
-    data,
-  }].filter((candidate) => candidate.provider || candidate.imageId || candidate.data || candidate.entityId);
+    imageId: textOrNull(row.provider_asset_id, row.asset_id, row.cover, row.cover_image_id),
+  }].filter((candidate) => candidate.provider || candidate.imageId || candidate.entityId);
 }
 
 export function videoCoverLocalUrl(videoId: string | number | null | undefined): string | null {
@@ -831,7 +811,7 @@ export function videoCoverLocalUrl(videoId: string | number | null | undefined):
         provider_item.provider,
         provider_item.provider_id,
         provider_item.asset_id AS provider_asset_id,
-        provider_item.data AS provider_data
+        provider_item.cover AS provider_cover
       FROM Recordings recording
       LEFT JOIN ProviderItems provider_item
         ON provider_item.rowid = (
@@ -854,7 +834,7 @@ export function videoCoverLocalUrl(videoId: string | number | null | undefined):
       provider?: string | null;
       provider_id?: string | null;
       provider_asset_id?: string | null;
-      provider_data?: string | null;
+      provider_cover?: string | null;
     } | undefined;
     const source = textOrNull(row?.cover_image_url, row?.cover_image_id, row?.provider_asset_id);
     if (!source) {
@@ -944,7 +924,7 @@ export async function resolveProviderArtworkUrl(
   for (const candidate of candidates) {
     const providerId = textOrNull(candidate.provider);
     const entityId = textOrNull(candidate.entityId);
-    const imageId = textOrNull(candidate.imageId, extractProviderArtworkId(candidate.data, entityType));
+    const imageId = textOrNull(candidate.imageId);
 
     if (providerId && (entityId || imageId)) {
       try {
@@ -964,7 +944,7 @@ export async function resolveProviderArtworkUrl(
       }
     }
 
-    const directUrl = normalizeArtworkUrl(imageId || extractProviderArtworkId(candidate.data, entityType));
+    const directUrl = normalizeArtworkUrl(imageId);
     if (directUrl) {
       return directUrl;
     }
@@ -1207,7 +1187,7 @@ export async function resolveVideoArtwork(options: {
           provider_item.provider,
           provider_item.provider_id,
           provider_item.asset_id AS provider_asset_id,
-          provider_item.data AS provider_data
+          provider_item.cover AS provider_cover
         FROM Recordings recording
         LEFT JOIN ProviderItems provider_item
           ON provider_item.rowid = (

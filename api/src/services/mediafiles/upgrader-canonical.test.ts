@@ -118,8 +118,8 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
   seedArtistAndRelease();
   db.prepare(`INSERT INTO ProviderItems (
     provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    title, quality, library_slot, data
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title, quality, library_slot
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     "tidal",
     "album",
     "album-provider-1",
@@ -128,13 +128,12 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
     "release-1",
     "Canonical Album",
     "HIRES_LOSSLESS",
-    "stereo",
-    JSON.stringify({ quality: "HIRES_LOSSLESS" }),
+    "stereo"
   );
   db.prepare(`INSERT INTO ProviderItems (
     provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    track_mbid, recording_mbid, title, quality, library_slot, match_evidence, data
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    track_mbid, recording_mbid, title, quality, library_slot, match_evidence
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     "tidal",
     "track",
     "track-provider-1",
@@ -146,8 +145,7 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
     "Track One",
     "HIRES_LOSSLESS",
     "stereo",
-    JSON.stringify({ albumProviderId: "album-provider-1" }),
-    JSON.stringify({ albumProviderId: "album-provider-1", quality: "HIRES_LOSSLESS" }),
+    JSON.stringify({ albumProviderId: "album-provider-1" })
   );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
@@ -230,8 +228,8 @@ test("checkUpgrades does not immediately requeue a recent completed no-improveme
   seedArtistAndRelease();
   db.prepare(`INSERT INTO ProviderItems (
     provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    title, quality, library_slot, data
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title, quality, library_slot
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     "tidal",
     "album",
     "album-provider-1",
@@ -240,13 +238,12 @@ test("checkUpgrades does not immediately requeue a recent completed no-improveme
     "release-1",
     "Canonical Album",
     "HIRES_LOSSLESS",
-    "stereo",
-    JSON.stringify({ quality: "HIRES_LOSSLESS" }),
+    "stereo"
   );
   db.prepare(`INSERT INTO ProviderItems (
     provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    track_mbid, recording_mbid, title, quality, library_slot, match_evidence, data
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    track_mbid, recording_mbid, title, quality, library_slot, match_evidence
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     "tidal",
     "track",
     "track-provider-1",
@@ -258,8 +255,7 @@ test("checkUpgrades does not immediately requeue a recent completed no-improveme
     "Track One",
     "HIRES_LOSSLESS",
     "stereo",
-    JSON.stringify({ albumProviderId: "album-provider-1" }),
-    JSON.stringify({ albumProviderId: "album-provider-1", quality: "HIRES_LOSSLESS" }),
+    JSON.stringify({ albumProviderId: "album-provider-1" })
   );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
@@ -287,3 +283,8 @@ test("checkUpgrades does not immediately requeue a recent completed no-improveme
   assert.equal(result.albums, 0);
   assert.deepEqual(listDownloadJobs(), []);
 });
+
+
+
+
+

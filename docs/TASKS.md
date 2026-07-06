@@ -1032,6 +1032,68 @@ remain planned, but are no longer the first 2.2 cut.
   stable while downloading/importing, failed provider-missing videos can be
   cleared, and no MusicBrainz-only video becomes monitored when provider
   availability is required.
+- pending (2.2.2): Fix the active queue artwork regression specifically for
+  active downloading/importing rows. Queued and history rows already carry cover
+  art; the active projection must preserve the same artwork source instead of
+  showing the video/album placeholder while the command is running.
+- pending (2.2.2): Use the MusicBrainz full display title in queue album
+  tracklists, including disambiguation/version text where MB exposes it. Do not
+  substitute provider title/version unless the catalog identity is genuinely
+  missing.
+- pending (2.2.2 schema): Remove remaining provider JSON blobs from durable
+  provider rows. Promote queried/provider evidence fields such as ReplayGain,
+  peak, storefront/resource URLs, explicitness, quality, provider artwork ids,
+  duration, media number, and track number to typed columns or documented
+  side tables; keep JSON only if a field is explicitly non-durable/non-queried,
+  and prefer no JSON at all for fresh schema if practical.
+- pending (2.2.2): Polish Dashboard empty states: on mobile the combined
+  icon+heading cluster should be centered as a unit, with optional secondary
+  text omitted for compact queue/activity states.
+- pending (2.2.2): Repair Unmapped Files detection and UI. Clearly named files
+  should show title and duration when probeable; unmatched text must be
+  provider-neutral ("No provider match" / "No streaming-provider match"), not
+  TIDAL-specific; desktop columns should fit by default and support user
+  resizing for long title/path values.
+- pending (2.2.2): Fix album/mobile tracklists and quality-column sizing.
+  Mobile album track rows must still expose duration plus download/info actions.
+  Quality columns in album and library tracklists should size to badge content
+  with token padding and avoid wrapping three badges to a second row on desktop.
+- pending (2.2.2): Rework detail-page action overflow. Artist/album pages should
+  keep filters/view controls on the primary row and move secondary actions
+  (tags, rename, etc.) into overflow earlier based on the total available width,
+  instead of pushing filters/view onto a second row at intermediate widths.
+- pending (2.2.2): Diagnose missing release year for Bakermat's "The Spirit" in
+  both Servarr Metadata Server mode and local MusicBrainz (`192.168.1.100`) and
+  fix the catalog mapping or UI fallback so known release years render.
+- pending (2.2.2): Debug Bakermat video downloads such as
+  `/video/193` "Living (feat. Alex Clare) (Official Video)": a playable preview
+  and thumbnail are not sufficient; download availability must be based on a
+  real provider item, and failures should report actionable provider-neutral
+  status.
+- pending (2.2.2): Fix the Library empty-state import button so it opens the
+  same import modal as the Library toolbar and Settings page. Extend TIDAL import
+  sources to include "My Mix" style mixes/playlists from the TIDAL API with
+  working artwork in the picker.
+- pending (2.2.2): Use Fluent colored failure icons matching the current colored
+  success icon family (for example `DismissCircle*Color`) for failed downloads
+  and review other useful Fluent colored icons without overusing them.
+- pending (2.2.2): Investigate incorrect provider-version matching for album
+  `9aad95d9-0674-433b-ab50-2229c93d32b2`, where preview playback appears to
+  select a remix instead of the original/radio edit. Fix release/provider offer
+  selection evidence if the wrong offer is persisted.
+- pending (2.2.2): Align artist and album sidecar paths with the configured
+  naming templates. Artist images/NFOs must be written under the same
+  `{artistName} {mbid-{artistMbId}}` folder used for managed music files, and
+  album sidecars should follow the album folder template as well. Validate
+  against local test roots and the persistent SMB shares when available.
+- pending (2.2.2/2.3.0): Research YouTube Music downloader/catalog options and
+  implement the provider if a viable downloader path is found. The provider must
+  speak the shared core plugin contract without schema-specific exceptions.
+- pending (2.2.2/2.3.0): Research Amazon Music, Spotify, and Deezer provider
+  feasibility. Implement only if the catalog API + downloader path is simple and
+  robust enough for this release; otherwise document the intended downloader,
+  catalog/import APIs, auth requirements, and plugin-contract implications for
+  a later provider release.
 - schema outlook (2.2.1): No database schema change is expected for this
   stabilization slice. The current schema already has the provider-neutral
   surfaces needed for additional streaming services (`ProviderItems`,

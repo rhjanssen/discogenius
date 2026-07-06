@@ -386,8 +386,8 @@ test("download queue query resolves canonical release-group provider offers with
         INSERT INTO ReleaseGroupSlots (
             artist_mbid, release_group_mbid, slot, monitored,
             selected_provider, selected_provider_id, selected_release_mbid, quality,
-            match_status, match_confidence, provider_data
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            match_status, match_confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "artist-bastille",
         "rg-gmtf",
@@ -399,12 +399,6 @@ test("download queue query resolves canonical release-group provider offers with
         "HIRES_LOSSLESS",
         "probable",
         0.9,
-        JSON.stringify({
-            title: "Give Me The Future + Dreams Of The Past",
-            cover: "provider-cover",
-            quality: "HIRES_LOSSLESS",
-            artist: { name: "Bastille" },
-        }),
     );
 
     const commandId = queueModule.CommandQueueManager.push(
@@ -415,7 +409,6 @@ test("download queue query resolves canonical release-group provider offers with
             providerId: "tidal-gmtf-expanded",
             releaseGroupMbid: "rg-gmtf",
             slot: "stereo",
-            cover: "provider-cover",
         },
         "rg-gmtf:stereo",
     );
@@ -745,3 +738,4 @@ test("getTopPendingJobsByTypes perTypeLimit keeps a deep single-type backlog fro
     // earlier-queued RefreshArtist rows come before the later MatchArtistProviders.
     assert.equal(diverseWindow[0].name, queueModule.CommandNames.RefreshArtist);
 });
+

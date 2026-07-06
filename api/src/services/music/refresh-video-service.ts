@@ -422,8 +422,8 @@ export class RefreshVideoService {
                 provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_mbid,
                 title, quality, duration, release_date, availability,
                 library_slot, recording_id, provider_url, asset_id,
-                match_status, match_confidence, match_method, match_evidence, data, updated_at
-            ) VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                match_status, match_confidence, match_method, match_evidence, updated_at
+            ) VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'video', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
@@ -441,7 +441,6 @@ export class RefreshVideoService {
                 match_confidence = excluded.match_confidence,
                 match_method = excluded.match_method,
                 match_evidence = excluded.match_evidence,
-                data = excluded.data,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -515,10 +514,11 @@ export class RefreshVideoService {
                     identity.confidence >= 0.9 ? "verified" : "probable",
                     identity.confidence,
                     identity.method,
-                    JSON.stringify(identity.evidence),
-                    null,
+                    JSON.stringify(identity.evidence)
                 );
             }
         })();
     }
 }
+
+

@@ -25,6 +25,7 @@ export type ProviderAlbumSlotCandidate = {
     volumeCount?: number | null;
     tracks?: ProviderTrackDetail[];
     raw?: unknown;
+    providerArtistName?: string | null;
 };
 
 export type ReleaseGroupSlotSelection = {
@@ -778,7 +779,10 @@ export class ReleaseGroupSlotService {
                 match_confidence = NULL,
                 match_method = NULL,
                 match_evidence = NULL,
-                provider_data = NULL,
+                provider_artist_name = NULL,
+                provider_title = NULL,
+                cover = NULL,
+                popularity = NULL,
                 checked_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
@@ -797,9 +801,9 @@ export class ReleaseGroupSlotService {
                 artist_mbid, release_group_mbid, slot, monitored,
                 selected_provider, selected_provider_id, selected_release_mbid, quality,
                 match_status, match_confidence, match_method, match_evidence,
-                provider_data, checked_at, updated_at
+                provider_artist_name, provider_title, checked_at, updated_at
             )
-            VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
                 selected_provider = excluded.selected_provider,
                 selected_provider_id = excluded.selected_provider_id,
@@ -809,7 +813,8 @@ export class ReleaseGroupSlotService {
                 match_confidence = excluded.match_confidence,
                 match_method = excluded.match_method,
                 match_evidence = excluded.match_evidence,
-                provider_data = excluded.provider_data,
+                provider_artist_name = excluded.provider_artist_name,
+                provider_title = excluded.provider_title,
                 checked_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
         `);
@@ -841,7 +846,8 @@ export class ReleaseGroupSlotService {
                     selection.match.confidence,
                     selection.match.method,
                     JSON.stringify({ ...selection.match.evidence, score: selection.score }),
-                    JSON.stringify(buildProviderOfferSnapshot(selection.album)),
+                    selection.album.providerArtistName || (selection.album.raw as any)?.artist_name || null,
+                    selection.album.title || null,
                 );
                 if (selection.match.releaseMbid) {
                     upsertProviderReleaseMatch({

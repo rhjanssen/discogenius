@@ -11,7 +11,9 @@ type AlbumSlotSelection = {
     selected_provider_id: string;
     selected_release_mbid?: string | null;
     quality?: string | null;
-    provider_data?: string | null;
+    provider_cover?: string | null;
+    provider_title?: string | null;
+    provider_artist_name?: string | null;
     title?: string | null;
     artist_name?: string | null;
 };
@@ -93,13 +95,16 @@ export class AlbumCommandService {
               rgs.selected_provider_id,
               rgs.selected_release_mbid,
               rgs.quality,
-              rgs.provider_data,
+              pi.cover AS provider_cover,
+              pi.title AS provider_title,
+              pi.provider_artist_name AS provider_artist_name,
               rg.title,
               a.name AS artist_name
             FROM ReleaseGroupSlots
             rgs
             JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
             LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+            LEFT JOIN ProviderItems pi ON pi.provider_id = rgs.selected_provider_id AND pi.entity_type = 'album'
             WHERE rgs.release_group_mbid = ?
               AND rgs.monitored = 1
               AND rgs.selected_provider IS NOT NULL
@@ -244,19 +249,11 @@ export class AlbumCommandService {
                     : "No provider offer is selected for this release group yet. Connect a provider and refresh the artist before downloading.",
             };
         }
-
         const commandIds: number[] = [];
         if (shouldDownload) {
             for (const selection of selections) {
-                let providerData: any = null;
-                try {
-                    providerData = selection.provider_data ? JSON.parse(selection.provider_data) : null;
-                } catch {
-                    providerData = null;
-                }
-
                 const providerAlbumId = selection.selected_provider_id;
-                const artistName = selection.artist_name || providerData?.artist?.name || 'Unknown Artist';
+                const artistName = selection.artist_name || selection.provider_artist_name || 'Unknown Artist';
                 const provider = selection.selected_provider || "tidal";
                 const commandId = CommandQueueManager.push(CommandNames.DownloadAlbum, {
                     url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
@@ -268,12 +265,12 @@ export class AlbumCommandService {
                     albumId,
                     libraryRoot: selection.slot === "spatial" ? "spatial" : "music",
                     slot: selection.slot,
-                    title: selection.title || providerData?.title || 'Unknown Album',
+                    title: selection.title || selection.provider_title || 'Unknown Album',
                     artist: artistName,
                     artists: [artistName].filter(Boolean),
-                    cover: providerData?.cover || null,
-                    quality: selection.quality || providerData?.quality || null,
-                    description: `${selection.title || providerData?.title || 'Unknown Album'} by ${artistName} (${selection.slot})`,
+                    cover: selection.provider_cover || null,
+                    quality: selection.quality || null,
+                    description: `${selection.title || selection.provider_title || 'Unknown Album'} by ${artistName} (${selection.slot})`,
                 }, `${albumId}:${selection.slot}`, 0, 1);
                 commandIds.push(commandId);
             }
@@ -301,3 +298,5 @@ export class AlbumCommandService {
     }
 
 }
+
+

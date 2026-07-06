@@ -50,9 +50,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         spatial.selected_provider_id AS spatial_provider_id,
         spatial.selected_release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
-        spatial.match_status AS spatial_match_status,
-        stereo.provider_data AS stereo_provider_data,
-        spatial.provider_data AS spatial_provider_data
+        spatial.match_status AS spatial_match_status
       FROM Albums rg
       LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
       LEFT JOIN ReleaseGroupSlots stereo
@@ -88,16 +86,7 @@ function selectPreferredRelease(releaseGroupMbid: string): any | null {
         : null;
 }
 
-function parseProviderData(value: unknown): any | null {
-    if (!value) {
-        return null;
-    }
-    try {
-        return typeof value === "string" ? JSON.parse(value) : value;
-    } catch {
-        return null;
-    }
-}
+
 
 function splitProviderAlbumIds(value: unknown): string[] {
     return String(value || "")
@@ -1001,3 +990,4 @@ export class MusicBrainzReleaseGroupReadService {
         return listMusicBrainzReleaseVersions(releaseGroup, await resolveReleaseGroupArtwork(releaseGroup));
     }
 }
+

@@ -172,10 +172,8 @@ router.get("/", async (req, res) => {
               COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
               stereo.selected_provider AS stereo_provider,
               stereo.selected_provider_id AS stereo_provider_id,
-              stereo.provider_data AS stereo_provider_data,
               spatial.selected_provider AS spatial_provider,
               spatial.selected_provider_id AS spatial_provider_id,
-              spatial.provider_data AS spatial_provider_data,
               COALESCE(stereo.quality, spatial.quality) AS quality,
               CASE WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1 ELSE 0 END AS monitored
             FROM Albums rg
@@ -230,7 +228,6 @@ router.get("/", async (req, res) => {
               rg.mbid AS release_group_mbid,
               rg.images AS rg_images,
               COALESCE(selected_slot.selected_provider, provider_album.provider, provider_track.provider) AS cover_provider,
-              COALESCE(selected_slot.provider_data, provider_album.data, provider_track.data) AS cover_provider_data,
               CASE WHEN EXISTS (
                 SELECT 1
                 FROM ReleaseGroupSlots monitored_slot

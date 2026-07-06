@@ -18,14 +18,7 @@ import { LibraryFilesService } from "./library-files.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 
-function parseProviderData(raw: string | null | undefined): Record<string, any> {
-    try {
-        const parsed = raw ? JSON.parse(raw) : {};
-        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, any> : {};
-    } catch {
-        return {};
-    }
-}
+
 
 function firstProviderIdFromSlot(value: string | null | undefined): string | null {
     return String(value || "")
@@ -219,7 +212,7 @@ class LibraryMetadataBackfillService {
             // in ProviderItems.data), not ProviderAlbums.
             const albumProviderItem = selectedProviderAlbumId
                 ? db.prepare(`
-                    SELECT provider, provider_id, release_mbid, quality, data
+                    SELECT provider, provider_id, release_mbid, quality
                     FROM ProviderItems
                     WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
                     ORDER BY updated_at DESC
@@ -229,10 +222,9 @@ class LibraryMetadataBackfillService {
                     provider_id?: string | null;
                     release_mbid?: string | null;
                     quality?: string | null;
-                    data?: string | null;
                 } | undefined
                 : db.prepare(`
-                    SELECT provider, provider_id, release_mbid, quality, data
+                    SELECT provider, provider_id, release_mbid, quality
                     FROM ProviderItems
                     WHERE entity_type = 'album'
                       AND release_group_mbid = ?
@@ -244,7 +236,6 @@ class LibraryMetadataBackfillService {
                     provider_id?: string | null;
                     release_mbid?: string | null;
                     quality?: string | null;
-                    data?: string | null;
                 } | undefined;
             const representativeAlbumId = String(albumProviderItem?.provider_id || selectedProviderAlbumId || "").trim() || null;
             const canonicalReleaseMbid = selectedSlot?.selected_release_mbid || albumProviderItem?.release_mbid || null;
@@ -252,14 +243,14 @@ class LibraryMetadataBackfillService {
                 canonicalReleaseGroupMbid,
                 canonicalReleaseMbid,
             });
-            const albumData = parseProviderData(albumProviderItem?.data);
+            const albumData = albumProviderItem || {};
             const album = {
                 id: representativeAlbumId,
                 title: canonicalAlbum?.title || albumData.title || null,
                 version: albumData.version || null,
                 release_date: canonicalAlbum?.releaseDate || albumData.release_date || null,
-                num_volumes: canonicalAlbum?.volumeCount || albumData.num_volumes || 1,
-                video_cover: canonicalAlbum?.videoCover || albumData.video_cover || null,
+                num_volumes: canonicalAlbum?.volumeCount || albumData.volume_number || 1,
+                video_cover: canonicalAlbum?.videoCover || albumData.cover || null,
                 quality: albumProviderItem?.quality || albumData.quality || null,
                 mbid: canonicalAlbum?.albumMbid || null,
                 mb_release_group_id: canonicalReleaseGroupMbid,
@@ -746,7 +737,7 @@ class LibraryMetadataBackfillService {
              r.title AS media_title,
              pi.version AS media_version,
              r.release_date AS media_release_date,
-             pi.data AS provider_data,
+             pi.copyright AS provider_copyright,
              ar.name AS artist_name,
              album.title AS album_title
       FROM TrackFiles lf
@@ -762,7 +753,7 @@ class LibraryMetadataBackfillService {
                 media_title: string;
                 media_version: string | null;
                 media_release_date: string | null;
-                provider_data: string | null;
+                provider_copyright: string | null;
                 artist_name: string;
                 album_title: string | null;
             }>;
@@ -778,8 +769,7 @@ class LibraryMetadataBackfillService {
                 const videoTitle = video.media_version
                     ? `${video.media_title} (${video.media_version})`
                     : video.media_title;
-                const providerData = parseProviderData(video.provider_data);
-                const copyright = String(providerData.copyright || "").trim() || undefined;
+                const copyright = String(video.provider_copyright || "").trim() || undefined;
 
                 let providerVideoUrl: string | undefined;
                 try {

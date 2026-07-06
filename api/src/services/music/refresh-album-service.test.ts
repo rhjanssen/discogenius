@@ -110,12 +110,12 @@ test("artist album upsert stores allowed provider supplements on catalog album a
   assert.equal(release.barcode, null);
   assert.equal(release.copyright, "(P) 2024 Example");
 
-  const item = dbModule.db.prepare("SELECT upc, data FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?")
-    .get("provider-album-supplements") as { upc: string | null; data: string };
+  const item = dbModule.db.prepare("SELECT upc FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?")
+    .get("provider-album-supplements") as { upc: string | null };
   assert.equal(item.upc, "123456789012");
-  const itemData = JSON.parse(item.data);
-  assert.equal(itemData.video_cover, "provider-video-cover-id");
-  assert.equal(itemData.copyright, "(P) 2024 Example");
+  
+  const albumRow = dbModule.db.prepare("SELECT video_cover FROM Albums WHERE mbid = ?").get(releaseGroupMbid) as { video_cover: string | null };
+  assert.equal(albumRow.video_cover, "provider-video-cover-id");
 });
 
 test("album track scan stores provider track offers linked to the selected canonical release tracks", async () => {
@@ -248,3 +248,5 @@ dbModule.db.prepare(`
   assert.equal(recording.peak, 0.97);
   assert.equal(recording.isrcs, null);
 });
+
+

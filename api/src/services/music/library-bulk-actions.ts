@@ -272,12 +272,15 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
                 rgs.selected_provider,
                 rgs.selected_provider_id,
                 rgs.quality,
-                rgs.provider_data,
+                pi.cover AS provider_cover,
+                pi.title AS provider_title,
+                pi.provider_artist_name AS provider_artist_name,
                 rg.title,
                 artist.name AS artist_name
             FROM ReleaseGroupSlots rgs
             JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
             LEFT JOIN ArtistMetadata artist ON artist.mbid = rg.artist_mbid
+            LEFT JOIN ProviderItems pi ON pi.provider_id = rgs.selected_provider_id AND pi.entity_type = 'album'
             WHERE rgs.release_group_mbid = ?
               AND rgs.monitored = 1
               AND rgs.selected_provider IS NOT NULL
@@ -287,7 +290,9 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
             slot?: string | null;
             selected_provider?: string | null;
             selected_provider_id?: string | number | null;
-            provider_data?: string | null;
+            provider_cover?: string | null;
+            provider_title?: string | null;
+            provider_artist_name?: string | null;
         }>;
 
         for (const album of selections) {
@@ -295,19 +300,12 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
                 continue;
             }
 
-            let providerData: any = null;
-            try {
-                providerData = album.provider_data ? JSON.parse(String(album.provider_data)) : null;
-            } catch {
-                providerData = null;
-            }
-
             const providerAlbumId = String(album.selected_provider_id);
             const provider = album.selected_provider || "tidal";
             const slot = String(album.slot || "stereo");
-            const artistNames = [String(album.artist_name || providerData?.artist?.name || "").trim()].filter(Boolean);
-            const title = String(providerData?.title || album.title || "Unknown Album").trim();
-            const version = String(providerData?.version || album.version || "").trim();
+            const artistNames = [String(album.artist_name || album.provider_artist_name || "").trim()].filter(Boolean);
+            const title = String(album.provider_title || album.title || "Unknown Album").trim();
+            const version = String(album.version || "").trim();
             const displayTitle = version && !title.toLowerCase().includes(version.toLowerCase())
                 ? `${title} (${version})`
                 : title;
@@ -315,7 +313,7 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
 
             const commandId = CommandQueueManager.push(CommandNames.DownloadAlbum, {
                 url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
-                type: "album",
+                type: 'album',
                 provider,
                 providerId: providerAlbumId,
                 releaseGroupMbid,
@@ -325,8 +323,8 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
                 title: displayTitle,
                 artist: primaryArtist,
                 artists: artistNames,
-                cover: providerData?.cover || album.cover || null,
-                quality: album.quality || providerData?.quality || null,
+                cover: album.provider_cover || album.cover || null,
+                quality: album.quality || null,
                 description: `${displayTitle} by ${primaryArtist} (${slot})`,
             }, `${releaseGroupMbid}:${slot}`);
 
@@ -358,7 +356,7 @@ function queueTrackDownloads(trackIds: string[]): number[] {
                 pi.title AS provider_title,
                 pi.version,
                 pi.quality,
-                pi.data AS provider_data
+                pi.cover AS provider_cover
             FROM Tracks t
             JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
             JOIN Albums album ON album.mbid = ar.release_group_mbid
@@ -844,3 +842,4 @@ export class LibraryBulkActionService {
         return result;
     }
 }
+

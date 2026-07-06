@@ -70,7 +70,7 @@ test("download processor resolves canonical album provider offers without legacy
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
       artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, selected_release_mbid, quality, provider_data
+      selected_provider, selected_provider_id, selected_release_mbid, quality, cover
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "artist-bastille",
@@ -81,7 +81,7 @@ test("download processor resolves canonical album provider offers without legacy
     "tidal-gmtf-expanded",
     "release-gmtf",
     "HIRES_LOSSLESS",
-    JSON.stringify({ cover: "slot-cover", artist: { name: "Bastille" } }),
+    "slot-cover"
   );
 
   const payload = {
@@ -212,3 +212,4 @@ test("download processor detects canonical track and video files without Provide
   });
   assert.equal(processor.isCanonicalProviderItemDownloaded("tidal-video", "video", { type: "video", providerId: "tidal-video" }), true);
 });
+

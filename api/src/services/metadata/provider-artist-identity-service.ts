@@ -777,16 +777,18 @@ export class ProviderArtistIdentityService {
     db.prepare(`
       INSERT INTO ProviderItems (
         provider, entity_type, provider_id, artist_mbid,
-        title, match_status, match_confidence, match_method, data, updated_at
+        title, match_status, match_confidence, match_method, cover, popularity, provider_url, updated_at
       )
-      VALUES (?, 'artist', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, 'artist', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
         artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
         title = excluded.title,
         match_status = excluded.match_status,
         match_confidence = excluded.match_confidence,
         match_method = excluded.match_method,
-        data = excluded.data,
+        cover = excluded.cover,
+        popularity = excluded.popularity,
+        provider_url = excluded.provider_url,
         updated_at = CURRENT_TIMESTAMP
     `).run(
       provider,
@@ -796,12 +798,9 @@ export class ProviderArtistIdentityService {
       resolution.status,
       resolution.confidence,
       resolution.method,
-      JSON.stringify({
-        picture: artist.picture || null,
-        providerUrl: artist.providerUrl || null,
-        providerUrls: artist.providerUrls || null,
-        popularity: artist.popularity ?? null,
-      }),
+      artist.picture || null,
+      artist.popularity ?? null,
+      artist.providerUrl || artist.providerUrls?.[0] || null,
     );
   }
 

@@ -25,7 +25,9 @@ type ReleaseGroupSlotRow = {
     selected_provider?: string | null;
     selected_provider_id?: string | null;
     selected_release_mbid?: string | null;
-    provider_data?: string | null;
+    provider_cover?: string | null;
+    provider_title?: string | null;
+    provider_artist_name?: string | null;
     monitored_lock?: number | null;
 };
 
@@ -191,7 +193,9 @@ export class DownloadMissingService {
                 rgs.selected_provider_id,
                 rgs.selected_release_mbid,
                 rgs.quality,
-                rgs.provider_data,
+                pi.cover AS provider_cover,
+                pi.title AS provider_title,
+                pi.provider_artist_name AS provider_artist_name,
                 rg.primary_type,
                 rg.secondary_types,
                 rg.title,
@@ -201,6 +205,7 @@ export class DownloadMissingService {
             FROM ReleaseGroupSlots rgs
             JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
             JOIN Artists monitored_artist ON monitored_artist.mbid = rgs.artist_mbid
+            LEFT JOIN ProviderItems pi ON pi.provider_id = rgs.selected_provider_id AND pi.entity_type = 'album'
             LEFT JOIN Tracks t ON t.release_mbid = rgs.selected_release_mbid
             LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid AND COALESCE(recording.is_video, 0) = 0
             LEFT JOIN TrackFiles tf ON tf.file_type = 'track' 
@@ -232,20 +237,14 @@ export class DownloadMissingService {
                 continue;
             }
 
-            let providerData: any = null;
-            try {
-                providerData = slot.provider_data ? JSON.parse(String(slot.provider_data)) : null;
-            } catch {
-                providerData = null;
-            }
-            const artistNames = [slot.artist_name || providerData?.artist?.name].filter(Boolean);
+            const artistNames = [slot.artist_name || slot.provider_artist_name].filter(Boolean);
             queueAlbumDownload({
                 id: String(slot.selected_provider_id),
-                title: providerData?.title || slot.title,
-                version: providerData?.version || null,
-                cover: providerData?.cover || null,
-                quality: slot.quality || providerData?.quality || null,
-                artist_name: slot.artist_name || providerData?.artist?.name || null,
+                title: slot.title || slot.provider_title || null,
+                version: null,
+                cover: slot.provider_cover || null,
+                quality: slot.quality || null,
+                artist_name: slot.artist_name || slot.provider_artist_name || null,
                 provider: slot.selected_provider || null,
                 releaseGroupMbid: slot.release_group_mbid || null,
                 releaseMbid: slot.selected_release_mbid || null,
@@ -401,4 +400,5 @@ export class DownloadMissingService {
         return { albums: albumJobs, tracks: trackJobs, videos: videoJobs };
     }
 }
+
 

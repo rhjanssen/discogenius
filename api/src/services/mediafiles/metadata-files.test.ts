@@ -65,28 +65,27 @@ function seedMusicBrainzMetadata() {
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-mbid-300", "album-mbid-200", "recording-mbid-300", 1, 1, "Example Track", 180000);
 
-    dbModule.db.prepare(`
-        INSERT INTO ProviderItems(
-            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-            album_id, title, quality, upc, duration, release_date, library_slot, data
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        "tidal",
-        "album",
-        "200",
-        "artist-mbid-100",
-        "release-group-mbid-200",
-        "album-mbid-200",
-        "200",
-        "Example Album",
-        "LOSSLESS",
-        "123456789012",
-        180,
-        "2024-02-03",
-        "stereo",
-        JSON.stringify({ num_tracks: 1, num_volumes: 1, num_videos: 1 }),
-    );
+      dbModule.db.prepare(`
+          INSERT INTO ProviderItems(
+              provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+              album_id, title, quality, upc, duration, release_date, library_slot
+          )
+          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+          "tidal",
+          "album",
+          "200",
+          "artist-mbid-100",
+          "release-group-mbid-200",
+          "album-mbid-200",
+          "200",
+          "Example Album",
+          "LOSSLESS",
+          "123456789012",
+          180,
+          "2024-02-03",
+          "stereo"
+      );
     dbModule.db.prepare(`
         INSERT INTO ProviderItems(
             provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
@@ -108,34 +107,33 @@ function seedMusicBrainzMetadata() {
         180,
         "stereo",
     );
-    dbModule.db.prepare(`
-        INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date, length_ms)
-        VALUES(?, ?, ?, ?, ?, ?)
-    `).run("video-mbid-400", "artist-mbid-100", "Example Video", 1, "2024-02-03", 210000);
+      dbModule.db.prepare(`
+          INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date, length_ms, credits)
+          VALUES(?, ?, ?, ?, ?, ?, ?)
+      `).run("video-mbid-400", "artist-mbid-100", "Example Video", 1, "2024-02-03", 210000, JSON.stringify([{ name: "The Example Artist" }, { name: "Guest Artist" }]));
     const videoRecordingId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get("video-mbid-400") as { id: number }).id;
-    dbModule.db.prepare(`
-        INSERT INTO ProviderItems(
-            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-            recording_mbid, recording_id, album_id, title, quality, duration, release_date, library_slot, data
-        )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        "tidal",
-        "video",
-        "400",
-        "artist-mbid-100",
-        "release-group-mbid-200",
-        "album-mbid-200",
-        "video-mbid-400",
-        videoRecordingId,
-        "200",
-        "Example Video",
-        "MP4_1080P",
-        210,
-        "2024-02-03",
-        "video",
-        JSON.stringify({ artists: [{ name: "The Example Artist" }, { name: "Guest Artist" }] }),
-    );
+      dbModule.db.prepare(`
+          INSERT INTO ProviderItems(
+              provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+              recording_mbid, recording_id, album_id, title, quality, duration, release_date, library_slot
+          )
+          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+          "tidal",
+          "video",
+          "400",
+          "artist-mbid-100",
+          "release-group-mbid-200",
+          "album-mbid-200",
+          "video-mbid-400",
+          videoRecordingId,
+          "200",
+          "Example Video",
+          "MP4_1080P",
+          210,
+          "2024-02-03",
+          "video"
+      );
 }
 
 test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs", async () => {

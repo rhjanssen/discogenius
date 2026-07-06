@@ -31,7 +31,7 @@ type AlbumProviderItemRow = {
     provider_release_date: string | null;
     provider_upc: string | null;
     provider_asset_id: string | null;
-    provider_data: string | null;
+
     release_group_title: string | null;
     primary_type: string | null;
     first_release_date: string | null;
@@ -68,7 +68,7 @@ type VideoProviderItemRow = {
     provider_duration: number | null;
     provider_release_date: string | null;
     provider_asset_id: string | null;
-    provider_data: string | null;
+
     recording_title: string | null;
     recording_release_date: string | null;
     recording_cover_image_id: string | null;
@@ -157,7 +157,7 @@ function loadAlbumProviderItem(albumId: string): AlbumProviderItemRow | null {
             pi.release_date AS provider_release_date,
             pi.upc AS provider_upc,
             pi.asset_id AS provider_asset_id,
-            pi.data AS provider_data,
+
             rg.title AS release_group_title,
             rg.primary_type AS primary_type,
             rg.first_release_date AS first_release_date,
@@ -207,7 +207,7 @@ function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
             pi.duration AS provider_duration,
             pi.release_date AS provider_release_date,
             pi.asset_id AS provider_asset_id,
-            pi.data AS provider_data,
+
             recording.title AS recording_title,
             recording.release_date AS recording_release_date,
             recording.cover_image_id AS recording_cover_image_id,
@@ -277,11 +277,10 @@ async function getAlbumForNfo(albumId: string) {
         const row = loadAlbumProviderItem(albumId);
 
         if (!row) throw error;
-        const providerData = parseJsonObject(row.provider_data) || {};
         const artistName = row.artist_name || "Unknown Artist";
         const artistId = row.artist_id || row.artist_mbid || "";
-        const title = row.release_group_title || row.release_title || row.provider_title || providerData.title || "Unknown Album";
-        const releaseDate = row.release_date || row.first_release_date || row.provider_release_date || providerData.release_date || null;
+        const title = row.release_group_title || row.release_title || row.provider_title || "Unknown Album";
+        const releaseDate = row.release_date || row.first_release_date || row.provider_release_date || null;
         return {
             id: String(row.provider_id),
             title,
@@ -292,19 +291,19 @@ async function getAlbumForNfo(albumId: string) {
                     return null;
                 }
             })(),
-            cover: row.release_group_cover_image_id || row.provider_asset_id || providerData.cover || providerData.image || null,
+            cover: row.release_group_cover_image_id || row.provider_asset_id || null,
             releaseDate,
             release_date: releaseDate,
-            type: row.primary_type || providerData.type || "ALBUM",
-            quality: row.provider_quality || providerData.quality || "UNKNOWN",
-            explicit: Boolean(row.provider_explicit ?? providerData.explicit),
-            popularity: row.release_group_popularity || providerData.popularity || 0,
-            duration: row.provider_duration || providerData.duration || 0,
-            numberOfTracks: row.track_count || providerData.num_tracks || providerData.trackCount || 0,
-            numberOfVideos: providerData.num_videos || providerData.videoCount || 0,
-            numberOfVolumes: row.media_count || providerData.num_volumes || providerData.volumeCount || 1,
-            vibrant_color: row.release_group_vibrant_color || providerData.vibrant_color || null,
-            version: row.provider_version || providerData.version || null,
+            type: row.primary_type || "ALBUM",
+            quality: row.provider_quality || "UNKNOWN",
+            explicit: Boolean(row.provider_explicit ),
+            popularity: row.release_group_popularity || 0,
+            duration: row.provider_duration || 0,
+            numberOfTracks: row.track_count || 0,
+            numberOfVideos: 0,
+            numberOfVolumes: row.media_count || 1,
+            vibrant_color: row.release_group_vibrant_color || null,
+            version: row.provider_version || null,
             items: [],
             artist: {
                 id: String(artistId),
@@ -313,12 +312,12 @@ async function getAlbumForNfo(albumId: string) {
             },
             artist_id: String(artistId),
             artist_name: artistName,
-            upc: row.barcode || row.provider_upc || providerData.upc || null,
-            copyright: row.release_copyright || providerData.copyright || null,
-            video_cover: row.release_group_video_cover || providerData.video_cover || providerData.videoCover || null,
-            num_videos: providerData.num_videos || providerData.videoCount || 0,
-            num_volumes: row.media_count || providerData.num_volumes || providerData.volumeCount || 1,
-            num_tracks: row.track_count || providerData.num_tracks || providerData.trackCount || 0,
+            upc: row.barcode || row.provider_upc || null,
+            copyright: row.release_copyright || null,
+            video_cover: row.release_group_video_cover || null,
+            num_videos: 0,
+            num_volumes: row.media_count || 1,
+            num_tracks: row.track_count || 0,
             artists: [{ id: String(artistId), name: artistName, picture: null }],
         };
     }
@@ -333,13 +332,9 @@ async function getAlbumReviewTextForNfo(albumId: string): Promise<string> {
     }
 
     const row = loadAlbumProviderItem(albumId);
-    const providerData = parseJsonObject(row?.provider_data) || {};
     const review = textOrNull(
         row?.release_group_review_text,
         row?.release_group_overview,
-        providerData.review_text,
-        providerData.review,
-        providerData.description,
     );
     return review ? cleanProviderText(review) : "";
 }
@@ -379,27 +374,22 @@ async function getVideoForNfo(videoId: string) {
 
         if (!row) throw error;
         const artistId = row.artist_id ? String(row.artist_id) : null;
-        const providerData = parseJsonObject(row.provider_data) || {};
         const artistName = row.artist_name || row.recording_artist_credit || null;
-        const artists = Array.isArray(providerData.artists)
-            ? providerData.artists
-            : Array.isArray(providerData.credits)
-                ? providerData.credits
-                : parseRecordingCredits(row.recording_credits);
+        const artists = parseRecordingCredits(row.recording_credits);
         return {
             id: String(row.provider_id),
-            title: row.recording_title || row.provider_title || providerData.title || "Unknown Video",
+            title: row.recording_title || row.provider_title || "Unknown Video",
             artist_id: artistId,
             artist_name: artistName,
             artists: artists.length > 0 ? artists : (artistId && artistName ? [{ id: artistId, name: artistName }] : []),
             album_id: row.album_id ? String(row.album_id) : null,
             duration: row.provider_duration || (row.recording_length_ms ? Math.round(row.recording_length_ms / 1000) : 0),
-            release_date: row.recording_release_date || row.provider_release_date || providerData.release_date || null,
-            image_id: row.recording_cover_image_id || row.provider_asset_id || providerData.cover || null,
+            release_date: row.recording_release_date || row.provider_release_date || null,
+            image_id: row.recording_cover_image_id || row.provider_asset_id || null,
             vibrant_color: null,
-            quality: row.provider_quality || providerData.quality || "MP4_1080P",
-            explicit: Boolean(row.provider_explicit ?? providerData.explicit),
-            popularity: providerData.popularity || 0,
+            quality: row.provider_quality || "MP4_1080P",
+            explicit: Boolean(row.provider_explicit ),
+            popularity: 0,
             url: (() => {
                 try {
                     return buildStreamingMediaUrl("video", String(row.provider_id));
@@ -500,16 +490,16 @@ function loadAlbumArtworkContext(albumId: string): {
             pi.provider AS selected_provider,
             pi.provider_id AS selected_provider_id,
             pi.asset_id AS provider_asset_id,
-            pi.data AS provider_data,
+            pi.cover AS provider_cover,
             rg.mbid AS album_mbid,
             rg.cover_image_id AS release_group_cover,
             rg.images AS release_group_images,
             stereo.selected_provider AS stereo_provider,
             stereo.selected_provider_id AS stereo_provider_id,
-            stereo.provider_data AS stereo_provider_data,
+            stereo.cover AS stereo_cover,
             spatial.selected_provider AS spatial_provider,
             spatial.selected_provider_id AS spatial_provider_id,
-            spatial.provider_data AS spatial_provider_data
+            spatial.cover AS spatial_cover
         FROM ProviderItems pi
         LEFT JOIN Albums rg
           ON rg.mbid = pi.release_group_mbid
@@ -541,7 +531,7 @@ function loadAlbumArtworkContext(albumId: string): {
             provider: String(row.selected_provider || "tidal"),
             entityId: row.provider_album_id == null ? albumId : String(row.provider_album_id),
             imageId: row.provider_cover == null ? null : String(row.provider_cover),
-            data: row.provider_data,
+
         },
     ];
 
@@ -565,7 +555,7 @@ function loadArtistArtworkContext(artistId: string): {
             am.images AS artist_metadata_images,
             pi.provider,
             pi.provider_id,
-            pi.data AS provider_data
+            pi.cover AS provider_cover
         FROM Artists a
         LEFT JOIN ArtistMetadata am
           ON am.mbid = a.mbid
@@ -592,13 +582,13 @@ function loadArtistArtworkContext(artistId: string): {
                 provider: row.provider ? String(row.provider) : "tidal",
                 entityId: row.provider_id == null ? artistId : String(row.provider_id),
                 imageId: normalizeArtworkUrl(row.picture) ? String(row.picture) : (row.picture == null ? null : String(row.picture)),
-                data: row.provider_data,
+
             },
             {
                 provider: row.provider ? String(row.provider) : "tidal",
                 entityId: row.provider_id == null ? artistId : String(row.provider_id),
                 imageId: normalizeArtworkUrl(row.cover_image_url) ? String(row.cover_image_url) : null,
-                data: row.provider_data,
+
             },
         ],
     };
@@ -987,3 +977,6 @@ export async function saveVideoNfoFile(
     writeXmlFile(outputPath, xml);
     console.log(`✅ [METADATA] Video NFO saved: ${outputPath}`);
 }
+
+
+

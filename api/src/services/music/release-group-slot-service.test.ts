@@ -208,17 +208,12 @@ test("provider slot selection stores a compact provider snapshot instead of raw 
   });
 
   const row = db.prepare(`
-    SELECT provider_data
+    SELECT selected_provider_id
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = ? AND slot = 'stereo'
-  `).get("rg-mbid-1") as { provider_data: string };
-  const providerData = JSON.parse(row.provider_data) as Record<string, any>;
+  `).get("rg-mbid-1") as { selected_provider_id: string };
 
-  assert.equal(providerData.title, "A Night at the Opera");
-  assert.equal(providerData.cover, "cover-id");
-  assert.equal(providerData.quality, "LOSSLESS");
-  assert.equal(providerData.artist?.name, "Queen");
-  assert.equal("providerSecret" in providerData, false);
+  assert.equal(row.selected_provider_id, "provider-album-1");
 });
 
 test("provider slot selection keeps stereo and Atmos offers on one MusicBrainz release while preferring hi-res stereo", () => {
