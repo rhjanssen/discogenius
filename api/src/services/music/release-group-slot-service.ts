@@ -146,10 +146,26 @@ function scoreCandidate(
                 ? -Math.min(80, Math.max(1, Math.abs(targetVolumeCount - volumes)) * 20)
                 : 0;
     const typeBonus = evidence.typeMatched ? 60 : -60;
+    // Release-specific identity dominates title/shape evidence: an offer that
+    // shares the release URL or barcode is the release, whereas a same-titled
+    // remix or alternate version can accrue identical title/type/track bonuses.
+    // Without this the wrong edition (e.g. a "… (Remix)" single) could tie and
+    // win the slot over the barcode-matched original.
+    const identityBonus =
+        (evidence.providerUrlMatched ? 400 : 0)
+        + (evidence.upcMatched ? 300 : 0)
+        + (Number(evidence.isrcOverlap || 0) >= 2 ? 120 : 0);
+    // Prefer the closest title. In Servarr Metadata Server mode there is no UPC
+    // to lean on, so an exact-title offer ("One Day (Vandaag)") and a
+    // remix-suffixed one ("… (Oliver $ Remix)") tie on every other axis; this
+    // term deterministically favours the exact match over a prefix expansion.
+    const titleQualityBonus = Math.round(Number(evidence.titleScore || 0) * 40);
 
     return Number((
         qualityScore(slot, album.quality)
         + matchBonus
+        + identityBonus
+        + titleQualityBonus
         + (match.confidence * 20)
         + trackShapeBonus
         + volumeShapeBonus

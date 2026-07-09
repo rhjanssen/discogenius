@@ -46,6 +46,36 @@ test("two genuinely different songs at the same position with a coincidental dur
   assert.ok(s < TRACK_MATCH_THRESHOLD, `expected no match, got ${s}`);
 });
 
+test("a remix does not match a radio-edit recording at the same position (version-aware)", () => {
+  // Bakermat "One Day (Vandaag)": the remix single and the radio edit share a
+  // base title and track slot. In Servarr mode there is no UPC to separate them,
+  // so the track matcher must: conflicting significant versions are not the same
+  // recording.
+  const s = scoreTrackMatch(
+    target({ title: "One Day (Vandaag) (radio edit)", trackNumber: 1, durationSec: 200 }),
+    provider({ title: "One Day (Vandaag) (Oliver $ & Matthew K Remix)", trackNumber: 1, durationSec: 260 }),
+  );
+  assert.ok(s < TRACK_MATCH_THRESHOLD, `remix should not match radio edit, got ${s}`);
+});
+
+test("a matching significant version still matches (radio edit vs radio edit)", () => {
+  const s = scoreTrackMatch(
+    target({ title: "One Day (Vandaag) (radio edit)", trackNumber: 1, durationSec: 200 }),
+    provider({ title: "One Day (Vandaag) (Radio Edit)", trackNumber: 1, durationSec: 201 }),
+  );
+  assert.ok(s >= 0.9, `radio edit should match radio edit, got ${s}`);
+});
+
+test("a plain provider title still matches a versioned recording (one-sided qualifier)", () => {
+  // The provider omits the "(radio edit)" qualifier the MB recording carries —
+  // a one-sided qualifier must stay compatible, not block the match.
+  const s = scoreTrackMatch(
+    target({ title: "One Day (Vandaag) (radio edit)", trackNumber: 1, durationSec: 200 }),
+    provider({ title: "One Day (Vandaag)", trackNumber: 1, durationSec: 201 }),
+  );
+  assert.ok(s >= 0.9, `plain title should match a versioned recording, got ${s}`);
+});
+
 test("base-title match with duration agreement matches across differing positions (combine case)", () => {
   // A standalone single (track 1) covering an album target at position 7.
   const s = scoreTrackMatch(

@@ -534,6 +534,16 @@ function scoreAlbumAgainstReleaseGroup(
         }
     }
 
+    // Release URL and UPC are the only release-specific identity signals. Every
+    // other path (title, title-expansion, year/type/track corroboration) is
+    // shape evidence that a same-titled remix, radio edit, or alternate version
+    // satisfies just as well. Keep those strictly below the UPC tier (0.995) so
+    // the release that actually shares the barcode always outranks a look-alike
+    // in confidence-ordered offer selection (ProviderItemMatches / slot picks).
+    if (!matchedReleaseByUrl && !matchedReleaseByUpc) {
+        confidence = Math.min(confidence, 0.99);
+    }
+
     return {
         releaseGroup,
         confidence: Math.max(0, Math.min(1, Number(confidence.toFixed(3)))),

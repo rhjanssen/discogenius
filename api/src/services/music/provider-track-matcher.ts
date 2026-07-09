@@ -3,6 +3,7 @@ import {
     normalizeComparableText,
     providerTrackComparableTitle,
     stringSimilarity,
+    versionsCompatible,
 } from "../mediafiles/import-matching-utils.js";
 
 /**
@@ -90,21 +91,27 @@ export function scoreTrackMatch(target: MatchTargetTrack, pt: MatchProviderTrack
     const targetBase = baseComparableTitle(target.title);
     const providerBase = baseComparableTitle(providerComparable);
     const baseMatch = Boolean(targetBase) && targetBase === providerBase;
+    // A remix/edit/live variant shares the base title and often the track slot,
+    // but it is a different recording. When the two carry conflicting significant
+    // versions, the structural shortcuts below must not assert a match — this is
+    // the only title signal available when the catalog strips UPC/ISRC (Servarr
+    // mode), so it also settles offer selection there.
+    const versionsOk = versionsCompatible(target.title, providerComparable);
 
     // 2. Structural-first acceptance. Streaming providers give exact track
     //    positions and durations, so a same-slot match is decisive even when
     //    the displayed title carries extra decoration the canonical title omits.
     //    The `titleSim >= 0.3` guard blocks two genuinely different songs that
     //    merely share a position and a coincidental duration.
-    if (positionAligned && baseMatch) {
+    if (versionsOk && positionAligned && baseMatch) {
         return 0.95;
     }
-    if (positionAligned && durationClose && titleSim >= 0.3) {
+    if (versionsOk && positionAligned && durationClose && titleSim >= 0.3) {
         return 0.95;
     }
     // 3. Title + duration agree but the position differs — the case when a
     //    standalone single is combined into an album to cover a target.
-    if (baseMatch && durationClose) {
+    if (versionsOk && baseMatch && durationClose) {
         return 0.9;
     }
 
@@ -113,8 +120,12 @@ export function scoreTrackMatch(target: MatchTargetTrack, pt: MatchProviderTrack
     //    cannot carry a match when the titles actively contradict — that avoids
     //    false coverage when two different songs share a slot and a coincidental
     //    runtime. A strong title with structural agreement still clears the bar.
-    const structuralBonus = (positionAligned ? 0.15 : 0) + (durationClose ? 0.1 : 0);
-    return Math.min(1, titleSim * 0.75 + structuralBonus);
+    const structuralBonus = versionsOk ? (positionAligned ? 0.15 : 0) + (durationClose ? 0.1 : 0) : 0;
+    const blended = Math.min(1, titleSim * 0.75 + structuralBonus);
+    // Conflicting significant versions can still share enough base-title text to
+    // drift over the threshold; hold them just under it so they never count as
+    // the same recording on title alone.
+    return versionsOk ? blended : Math.min(blended, TRACK_MATCH_THRESHOLD - 0.05);
 }
 
 export function isTrackMatch(target: MatchTargetTrack, pt: MatchProviderTrack): boolean {

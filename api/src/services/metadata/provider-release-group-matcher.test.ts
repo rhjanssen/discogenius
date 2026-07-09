@@ -194,6 +194,60 @@ test("prefers an exact title over a nearby version even when release dates diffe
     assert.notEqual(match.status, "ambiguous");
 });
 
+test("a same-titled remix cannot tie the barcode-matched original (identity ceiling)", () => {
+    // Regression for Bakermat "One Day (Vandaag)": the "… (Remix)" single
+    // (no matching barcode) title-expanded onto the base release and reached
+    // confidence 1.0, tying the radio edit that actually shares the barcode and
+    // winning downstream confidence-ordered selection.
+    const vandaag = [
+        {
+            mbid: "9aad95d9-0674-433b-ab50-2229c93d32b2",
+            title: "Vandaag",
+            primaryType: "Single",
+            secondaryTypes: [],
+            firstReleaseDate: "2012-08-27",
+            releases: [
+                {
+                    mbid: "1bdcf41c-63d1-43be-a69f-2836a9a49213",
+                    title: "One Day (Vandaag)",
+                    barcode: "886444522359",
+                    trackCount: 1,
+                    mediaCount: 1,
+                },
+            ],
+        },
+    ];
+
+    const radioEdit = matchProviderAlbumToReleaseGroup({
+        providerId: "26891889",
+        title: "One Day (Vandaag)",
+        version: "Radio Edit",
+        upc: "886444522359",
+        type: "SINGLE",
+        trackCount: 1,
+        volumeCount: 1,
+        releaseDate: "2014-03-14",
+    }, vandaag);
+
+    const remix = matchProviderAlbumToReleaseGroup({
+        providerId: "33923839",
+        title: "One Day (Vandaag) (Oliver $ & Matthew K Remix)",
+        upc: "886444809603", // matches no MusicBrainz barcode in the group
+        type: "SINGLE",
+        trackCount: 1,
+        volumeCount: 1,
+        releaseDate: "2014-09-01",
+    }, vandaag);
+
+    assert.equal(radioEdit.evidence.upcMatched, true);
+    assert.equal(remix.evidence.upcMatched, false);
+    assert.ok(
+        remix.confidence < radioEdit.confidence,
+        `remix ${remix.confidence} must stay below the barcode match ${radioEdit.confidence}`,
+    );
+    assert.ok(remix.confidence <= 0.99, `remix confidence ${remix.confidence} must be below the UPC tier`);
+});
+
 test("uses UPC evidence to verify a provider album against a MusicBrainz release", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "upc-match",

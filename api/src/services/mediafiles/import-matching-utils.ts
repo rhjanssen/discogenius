@@ -146,6 +146,56 @@ export function baseComparableTitle(input?: string | null): string {
     return normalizeComparableText(text);
 }
 
+// Version qualifiers that denote a genuinely different recording (not cosmetic
+// decoration). "One Day (radio edit)" and "One Day (Oliver $ Remix)" share a
+// base title but are NOT the same recording. Shared by provider track matching
+// and provider↔MusicBrainz video matching so there is one definition.
+const SIGNIFICANT_VERSION_RE =
+    /\b(remix|re-?edit|\bedit\b|\bmix\b|version|live|acoustic|unplugged|instrumental|a\s*cappella|acappella|karaoke|dub|rework|refix|flip|vip|bootleg|reprise|orchestral|symphonic|extended|radio|club|demo|session|rerecorded|re-?recorded)\b/;
+
+/**
+ * The significant version signature of a title — the normalized text of its
+ * parenthetical/bracketed qualifiers, but only when they name a recording
+ * variant (remix/edit/live/…). Cosmetic qualifiers (feat., explicit, remaster,
+ * bit-depth, year) are dropped by normalizeComparableText, so they never count.
+ * Returns "" when the title carries no significant version.
+ */
+export function versionQualifierSignature(title?: string | null): string {
+    const qualifiers: string[] = [];
+    const pattern = /[([]([^()[\]]*)[)\]]/g;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(String(title || ""))) !== null) {
+        qualifiers.push(match[1]);
+    }
+    const normalized = normalizeComparableText(qualifiers.join(" "));
+    return normalized && SIGNIFICANT_VERSION_RE.test(normalized) ? normalized : "";
+}
+
+/**
+ * Two titles are version-incompatible when BOTH carry a significant version
+ * qualifier and those versions disagree (a remix vs a radio edit). A missing
+ * qualifier on either side is treated as compatible so ordinary provider/MB
+ * decoration differences never block a legitimate match.
+ */
+export function versionsCompatible(titleA?: string | null, titleB?: string | null): boolean {
+    const a = versionQualifierSignature(titleA);
+    const b = versionQualifierSignature(titleB);
+    if (!a || !b) {
+        return true;
+    }
+    return a === b || stringSimilarity(a, b) >= 0.6;
+}
+
+/**
+ * Whether two titles describe the same recording: identical base title AND
+ * compatible significant versions. Used to attach a provider item to an existing
+ * MusicBrainz recording by title (e.g. video ↔ MusicBrainz video).
+ */
+export function sameRecordingTitle(titleA?: string | null, titleB?: string | null): boolean {
+    const baseA = baseComparableTitle(titleA);
+    return Boolean(baseA) && baseA === baseComparableTitle(titleB) && versionsCompatible(titleA, titleB);
+}
+
 export function providerTrackComparableTitle(track: {
     title?: string | null;
     version?: string | null;

@@ -594,6 +594,43 @@ test("provider slot selection prefers an offer compatible with the Lidarr-like r
   assert.equal(selections[0]?.match.releaseMbid, "release-complete");
 });
 
+test("Servarr mode (no UPC): an exact-title offer beats a remix-suffixed one", () => {
+  // Skyhook strips UPC/ISRC, so the Bakermat "One Day (Vandaag)" case cannot be
+  // settled by barcode in Servarr mode. The radio edit is an exact title match
+  // while the "… (Remix)" single is only a prefix expansion — the exact match
+  // must still win the slot.
+  const releaseGroupMbid = "rg-mbid-servarr-remix";
+  insertReleaseGroup(releaseGroupMbid);
+
+  const candidate = (providerId: string, titleScore: number, providerTitle: string) => ({
+    provider: "tidal",
+    album: {
+      providerId,
+      title: providerTitle,
+      quality: "LOSSLESS",
+      trackCount: 1,
+      volumeCount: 1,
+    },
+    match: {
+      ...buildMatch(releaseGroupMbid, providerId),
+      evidence: {
+        ...buildMatch(releaseGroupMbid, providerId).evidence,
+        providerTitle,
+        titleScore,
+        upcMatched: false,
+        availableReleaseMbids: [] as string[],
+      },
+    },
+  });
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    candidate("provider-remix", 0.9, "One Day (Vandaag) (Oliver $ Remix)"),
+    candidate("provider-radio", 1, "One Day (Vandaag)"),
+  ]);
+
+  assert.equal(selections[0]?.album.providerId, "provider-radio");
+});
+
 test("provider slot selection matches multiple provider releases to cover a MusicBrainz release", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-multi";

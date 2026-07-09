@@ -1,3 +1,4 @@
+import pLimit from "p-limit";
 import { db, runChunkedWrite } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
 import {
@@ -19,7 +20,7 @@ import {
 import { ProviderArtistIdentityService, normalizeProviderArtist } from "../metadata/provider-artist-identity-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { StreamingProvider, ProviderAlbum, ProviderArtist, ProviderTrack, ProviderVideo } from "../providers/streaming-provider.js";
-import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate } from "./release-group-slot-service.js";
+import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate, type ProviderTrackDetail } from "./release-group-slot-service.js";
 import { upsertProviderReleaseMatch } from "./provider-matches.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
@@ -183,14 +184,22 @@ export class RefreshArtistService {
             ORDER BY rg.mbid ASC
         `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
 
-        for (const releaseGroup of releaseGroups) {
+        // Hydrate release groups concurrently. Each syncReleaseGroup makes several
+        // catalog round-trips and resolveAlbumArtwork downloads cover art — both
+        // network-bound. Run one release group at a time this dominated MB-mode
+        // refresh (~6s × 80 groups ≈ 8 min). The SQLite writes stay safe because
+        // better-sqlite3 is synchronous, so statements never actually interleave;
+        // the cap keeps us within the catalog Postgres pool (max 4) plus headroom
+        // for the parallel artwork fetches.
+        const limit = pLimit(6);
+        await Promise.all(releaseGroups.map((releaseGroup) => limit(async () => {
             try {
                 await servarrMetadata.syncReleaseGroup(releaseGroup.mbid, artistMbid);
                 await resolveAlbumArtwork({ albumMbid: releaseGroup.mbid });
             } catch (error) {
                 console.warn(`[RefreshArtistService] Failed to hydrate canonical release group ${releaseGroup.mbid}:`, error);
             }
-        }
+        })));
     }
 
     static async upsertMusicBrainzArtist(artistMbid: string, options: RefreshOptions = {}): Promise<string> {
@@ -770,12 +779,6 @@ export class RefreshArtistService {
                             provider: providerId,
                             entityId: providerAlbumId,
                             imageId: album.cover || null,
-                            data: JSON.stringify({
-                                cover: album.cover || null,
-                                image: album.image || null,
-                                image_id: album.image_id || null,
-                                imageId: album.imageId || null,
-                            }),
                         },
                     });
                 }
@@ -863,6 +866,48 @@ export class RefreshArtistService {
             disambiguation: string | null;
         }>;
 
+        // Load each offer's provider tracks so the slot selector can validate
+        // candidates against a release's actual tracklist (title/ISRC/version)
+        // rather than falling back to album-shape scoring. Without this a
+        // same-titled remix and the radio edit are indistinguishable when the
+        // catalog strips UPC/ISRC (Servarr mode). Batched to avoid a per-album N+1.
+        const tracksByAlbum = new Map<string, ProviderTrackDetail[]>();
+        const albumProviderIds = rows.map((row) => String(row.provider_id));
+        if (albumProviderIds.length > 0) {
+            const placeholders = albumProviderIds.map(() => "?").join(",");
+            const trackRows = db.prepare(`
+                SELECT provider_album_id, title, version, isrc, duration, track_mbid, recording_mbid
+                FROM ProviderItems
+                WHERE entity_type = 'track'
+                  AND provider_album_id IN (${placeholders})
+            `).all(...albumProviderIds) as Array<{
+                provider_album_id: string | null;
+                title: string | null;
+                version: string | null;
+                isrc: string | null;
+                duration: number | null;
+                track_mbid: string | null;
+                recording_mbid: string | null;
+            }>;
+            for (const track of trackRows) {
+                const key = String(track.provider_album_id || "");
+                if (!key) {
+                    continue;
+                }
+                const list = tracksByAlbum.get(key) || [];
+                list.push({
+                    mbid: track.track_mbid || track.recording_mbid || null,
+                    isrc: track.isrc || null,
+                    title: track.title || "",
+                    version: track.version || null,
+                    track_number: null,
+                    volume_number: null,
+                    duration: track.duration ?? null,
+                });
+                tracksByAlbum.set(key, list);
+            }
+        }
+
         return rows.map((row) => {
             const evidence = parseJsonObject(row.match_evidence);
             let secondaryTypes: string[] = [];
@@ -893,6 +938,7 @@ export class RefreshArtistService {
                     explicit: row.explicit,
                     trackCount: providerTrackCount > 0 ? providerTrackCount : null,
                     volumeCount: providerVolumeCount > 0 ? providerVolumeCount : null,
+                    tracks: tracksByAlbum.get(providerId) || [],
                 },
                 match: {
                     providerId,
