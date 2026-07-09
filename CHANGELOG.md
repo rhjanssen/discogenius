@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.3.0] - 2026-07-09
+
+### Changed
+- Fix clipped action buttons on artist and album detail pages
+- Unify artwork pipeline and fix video handling
+- Fix provider matching and speed up MusicBrainz-mode refresh
+- Fix Docker build reproducibility and provider-item schema compile errors
+- Refactor provider item handling and database schema
+- Fix UI glitches, active download cover art, and unmapped files metadata detection
+- Fix UI glitches, queue artwork, and video handling
+
 ## [2.2.1] - 2026-07-05
 
 ### Changed
