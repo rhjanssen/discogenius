@@ -648,6 +648,8 @@ export class ArtistQueryService {
         spatial.match_method AS spatial_match_method,
         spatial.cover AS spatial_cover,
         spatial.monitored_lock AS spatial_monitor_lock,
+        album_offer.asset_id AS provider_asset_id,
+        album_offer.cover AS provider_cover,
         CASE
           WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
           WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1
@@ -660,6 +662,10 @@ export class ArtistQueryService {
       LEFT JOIN ReleaseGroupSlots spatial
         ON spatial.release_group_mbid = rg.mbid
        AND spatial.slot = 'spatial'
+      LEFT JOIN ProviderItems album_offer
+        ON album_offer.entity_type = 'album'
+       AND album_offer.provider = COALESCE(stereo.selected_provider, spatial.selected_provider)
+       AND CAST(album_offer.provider_id AS TEXT) = CAST(COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS TEXT)
       WHERE rg.artist_mbid = ?
          OR EXISTS (
            SELECT 1
@@ -926,6 +932,8 @@ export class ArtistQueryService {
            spatial.match_method AS spatial_match_method,
            spatial.cover AS spatial_cover,
            spatial.monitored_lock AS spatial_monitor_lock,
+           album_offer.asset_id AS provider_asset_id,
+           album_offer.cover AS provider_cover,
            CASE
              WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
              WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1
@@ -939,6 +947,12 @@ export class ArtistQueryService {
          LEFT JOIN ReleaseGroupSlots spatial
            ON spatial.release_group_mbid = rg.mbid
           AND spatial.slot = 'spatial'
+         -- Selected provider album offer supplies the artwork fallback
+         -- (asset_id/cover) when the slot has no cached cover yet.
+         LEFT JOIN ProviderItems album_offer
+           ON album_offer.entity_type = 'album'
+          AND album_offer.provider = COALESCE(stereo.selected_provider, spatial.selected_provider)
+          AND CAST(album_offer.provider_id AS TEXT) = CAST(COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS TEXT)
          -- OR rg.mbid IN (subquery), instead of OR EXISTS(...), keeps both
          -- branches index-searchable so SQLite OR-optimizes rather than
          -- scanning Albums.

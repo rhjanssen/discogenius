@@ -3,6 +3,8 @@
 .env
 dist
 build
+**/dist
+**/*.tsbuildinfo
 *.log
 .DS_Store
 config/

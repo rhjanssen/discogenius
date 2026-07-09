@@ -20,6 +20,17 @@ import { buildStreamingMediaUrl } from "../download/download-routing.js";
 
 
 
+type ProviderAlbumOfferRow = {
+    provider?: string | null;
+    provider_id?: string | null;
+    release_mbid?: string | null;
+    quality?: string | null;
+    title?: string | null;
+    version?: string | null;
+    release_date?: string | null;
+    cover?: string | null;
+};
+
 function firstProviderIdFromSlot(value: string | null | undefined): string | null {
     return String(value || "")
         .split(";")
@@ -208,35 +219,25 @@ class LibraryMetadataBackfillService {
                 : undefined;
             const selectedProviderAlbumId = firstProviderIdFromSlot(selectedSlot?.selected_provider_id);
             // Album metadata for sidecar generation comes from the canonical graph
-            // plus the album's ProviderItems offer (provider asset ids/quality live
-            // in ProviderItems.data), not ProviderAlbums.
+            // plus the album's ProviderItems offer (provider asset ids/quality/cover
+            // live in explicit ProviderItems columns), not ProviderAlbums.
             const albumProviderItem = selectedProviderAlbumId
                 ? db.prepare(`
-                    SELECT provider, provider_id, release_mbid, quality
+                    SELECT provider, provider_id, release_mbid, quality, title, version, release_date, cover
                     FROM ProviderItems
                     WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
                     ORDER BY updated_at DESC
                     LIMIT 1
-                `).get(selectedProviderAlbumId) as {
-                    provider?: string | null;
-                    provider_id?: string | null;
-                    release_mbid?: string | null;
-                    quality?: string | null;
-                } | undefined
+                `).get(selectedProviderAlbumId) as ProviderAlbumOfferRow | undefined
                 : db.prepare(`
-                    SELECT provider, provider_id, release_mbid, quality
+                    SELECT provider, provider_id, release_mbid, quality, title, version, release_date, cover
                     FROM ProviderItems
                     WHERE entity_type = 'album'
                       AND release_group_mbid = ?
                       AND library_slot = ?
                     ORDER BY updated_at DESC
                     LIMIT 1
-                `).get(canonicalReleaseGroupMbid, librarySlot) as {
-                    provider?: string | null;
-                    provider_id?: string | null;
-                    release_mbid?: string | null;
-                    quality?: string | null;
-                } | undefined;
+                `).get(canonicalReleaseGroupMbid, librarySlot) as ProviderAlbumOfferRow | undefined;
             const representativeAlbumId = String(albumProviderItem?.provider_id || selectedProviderAlbumId || "").trim() || null;
             const canonicalReleaseMbid = selectedSlot?.selected_release_mbid || albumProviderItem?.release_mbid || null;
             const canonicalAlbum = getCanonicalAlbumMetadata({
@@ -249,7 +250,7 @@ class LibraryMetadataBackfillService {
                 title: canonicalAlbum?.title || albumData.title || null,
                 version: albumData.version || null,
                 release_date: canonicalAlbum?.releaseDate || albumData.release_date || null,
-                num_volumes: canonicalAlbum?.volumeCount || albumData.volume_number || 1,
+                num_volumes: canonicalAlbum?.volumeCount || 1,
                 video_cover: canonicalAlbum?.videoCover || albumData.cover || null,
                 quality: albumProviderItem?.quality || albumData.quality || null,
                 mbid: canonicalAlbum?.albumMbid || null,

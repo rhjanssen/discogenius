@@ -145,7 +145,6 @@ interface ProviderReleaseOfferRow {
   confidence: number | null;
   method: string | null;
   evidence: string | null;
-  evidence: string | null;
 }
 
 interface TargetTrackRow {
@@ -204,7 +203,6 @@ interface ProviderAlbumRow {
   provider: string;
   provider_item_id: string;
   quality: string | null;
-  library_slot: string | null;
   library_slot: string | null;
 }
 
