@@ -771,10 +771,10 @@ export class RefreshAlbumService {
         const upsertProviderTrackOffer = db.prepare(`
             INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, provider_album_id, title, version, explicit, quality,
-                isrc, duration, release_date, artist_mbid, release_group_mbid, release_mbid,
+                isrc, duration, track_number, volume_number, release_date, artist_mbid, release_group_mbid, release_mbid,
                 track_mbid, recording_mbid, library_slot, track_id, recording_id,
                 match_status, match_confidence, match_method, match_evidence, provider_artist_name, cover, updated_at
-            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 title = excluded.title,
@@ -783,6 +783,8 @@ export class RefreshAlbumService {
                 quality = excluded.quality,
                 isrc = excluded.isrc,
                 duration = excluded.duration,
+                track_number = excluded.track_number,
+                volume_number = excluded.volume_number,
                 release_date = excluded.release_date,
                 artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
                 release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
@@ -834,6 +836,8 @@ export class RefreshAlbumService {
                             currentTrack.quality || selectedRelease?.quality || null,
                             currentTrack.isrc || null,
                             currentTrack.duration || null,
+                            currentTrack.track_number ?? null,
+                            currentTrack.volume_number ?? null,
                             currentTrack.release_date || null,
                             selectedRelease?.artist_mbid || null,
                             selectedRelease?.release_group_mbid || null,

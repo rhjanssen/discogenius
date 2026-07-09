@@ -880,7 +880,7 @@ export class RefreshArtistService {
         if (albumProviderIds.length > 0) {
             const placeholders = albumProviderIds.map(() => "?").join(",");
             const trackRows = db.prepare(`
-                SELECT provider_album_id, title, version, isrc, duration, track_mbid, recording_mbid
+                SELECT provider_album_id, title, version, isrc, duration, track_number, volume_number, track_mbid, recording_mbid
                 FROM ProviderItems
                 WHERE entity_type = 'track'
                   AND provider_album_id IN (${placeholders})
@@ -890,6 +890,8 @@ export class RefreshArtistService {
                 version: string | null;
                 isrc: string | null;
                 duration: number | null;
+                track_number: number | null;
+                volume_number: number | null;
                 track_mbid: string | null;
                 recording_mbid: string | null;
             }>;
@@ -904,8 +906,8 @@ export class RefreshArtistService {
                     isrc: track.isrc || null,
                     title: track.title || "",
                     version: track.version || null,
-                    track_number: null,
-                    volume_number: null,
+                    track_number: track.track_number ?? null,
+                    volume_number: track.volume_number ?? null,
                     duration: track.duration ?? null,
                 });
                 tracksByAlbum.set(key, list);

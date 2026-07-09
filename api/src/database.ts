@@ -330,7 +330,7 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-const BASE_SCHEMA_VERSION = 35;
+const BASE_SCHEMA_VERSION = 36;
 
 // ====================================================================
 // SCHEMA
@@ -828,6 +828,8 @@ function ensureMusicBrainzProviderSchema(): void {
       isrc TEXT,
       duration INT,
       volume_count INTEGER,               -- album offer medium/disc count
+      track_number INTEGER,               -- track offer position on its medium
+      volume_number INTEGER,              -- track offer medium/disc number
       release_date TEXT,
       availability TEXT,
       library_slot TEXT NOT NULL DEFAULT 'stereo',
