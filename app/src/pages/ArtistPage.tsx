@@ -223,7 +223,11 @@ const useStyles = makeStyles({
     flexWrap: "nowrap",
     justifyContent: "center",
     width: "100%",
-    overflow: "hidden",
+    // The glass buttons lift (translateY) and cast a shadow on hover; a plain
+    // `overflow: hidden` here sliced off their rounded top edge. Keep it visible
+    // so the hover state renders fully. Horizontal fit is handled by the
+    // ActionOverflowMenu collapsing extra actions rather than by clipping.
+    overflow: "visible",
     marginTop: tokens.spacingVerticalS,
     alignItems: "stretch",
     "@media (min-width: 768px)": {
@@ -232,7 +236,7 @@ const useStyles = makeStyles({
       gap: tokens.spacingHorizontalM,
       marginTop: tokens.spacingVerticalM,
       flexWrap: "nowrap",
-      overflow: "hidden",
+      overflow: "visible",
     },
   },
   // Transparent button base style
