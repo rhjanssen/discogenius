@@ -16,6 +16,30 @@ import {
   videoCoverLocalUrl,
 } from "../metadata/media-cover-service.js";
 
+const TIDAL_IMAGE_ASSET_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Queue payloads carry the provider's raw cover asset id (a TIDAL image UUID),
+ * but the UI can only render a URL — a bare id shows as a blank cover. Turn it
+ * into a small, UI-sized image URL (never the multi-MB origin). Local
+ * media-cover proxy paths and absolute URLs pass through unchanged.
+ */
+function toRenderableProviderCover(value: string | null | undefined, provider?: string | null): string | null {
+  const text = String(value || "").trim();
+  if (!text) {
+    return null;
+  }
+  if (/^(https?:\/\/|\/|data:|blob:)/i.test(text)) {
+    return text;
+  }
+  if (TIDAL_IMAGE_ASSET_RE.test(text) && (!provider || provider.toLowerCase() === "tidal")) {
+    return `https://resources.tidal.com/images/${text.replace(/-/g, "/")}/320x320.jpg`;
+  }
+  // Anything else (already-resolved values, non-TIDAL providers) passes through
+  // unchanged — this helper only adds the raw-asset-id → URL conversion.
+  return text;
+}
+
 type QueueJobRow = {
   id: number;
   name: string;
@@ -966,8 +990,13 @@ export class DownloadQueueQueryService {
       contentType,
       providerId,
     }) : null;
-    if (hasDisplayBasics && albumId && contentType === "album") {
-      cover ||= albumCoverLocalUrl({ albumMbid: albumId }) ?? null;
+    // Point album items at the internal media-cover proxy — the same source the
+    // library grid, artist page and album page use — instead of the raw provider
+    // asset id from the payload. This keeps artwork handling in one place (the
+    // backend proxy fetches/caches/resizes) and gives the queue the resized UI
+    // image rather than a bare id the frontend can't render.
+    if (albumId && contentType === "album") {
+      cover = albumCoverLocalUrl({ albumMbid: albumId }) ?? cover;
     }
     const offerMetadata = canonicalMetadata ?? providerItemMetadata;
     if (offerMetadata) {
@@ -1004,7 +1033,7 @@ export class DownloadQueueQueryService {
       path: getOptionalString(job.payload?.path) ?? null,
       title: title || "Unknown",
       artist: artist || "Unknown",
-      cover: cover ?? null,
+      cover: toRenderableProviderCover(cover, getOptionalString(job.payload?.provider)),
       quality: quality ?? null,
       album_id: albumId ?? null,
       album_title: albumTitle ?? null,

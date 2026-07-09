@@ -8,6 +8,7 @@ import {
     albumProviderArtworkCandidatesFromRow,
     imageContainerFromImagesColumn,
     getMediaCoverFilePathFromUrl,
+    getServarrMetadataArtistImageUrl,
     normalizeArtworkUrl,
     parseJsonObject,
     resolveAlbumArtwork,
@@ -665,29 +666,42 @@ export async function downloadArtistPicture(
     outputPath: string
 ): Promise<void> {
     const context = loadArtistArtworkContext(artistId);
-    const resolvedArtworkUrl = context
-        ? await resolveArtistArtwork({
-            servarrMetadataData: context.servarrMetadataData,
-            providerCandidates: context.providerCandidates,
-            preferredCoverTypes: ["Poster", "Headshot", "Fanart"],
-            size: resolution,
-        })
-        : loadResolvedArtistArtwork(artistId);
-    if (resolvedArtworkUrl) {
-        await downloadProviderArtwork(resolvedArtworkUrl, outputPath, `artist picture for ${artistId}`);
-        return;
+    const preferredCoverTypes = ["Poster", "Headshot", "Fanart"];
+
+    // Source first: the catalog metadata images (ArtistMetadata.images — MusicBrainz
+    // in MB mode, Servarr in Servarr mode). Resolve the remote origin URL and
+    // download it directly so the on-disk picture is full resolution, not a resized
+    // media-cover proxy copy. (resolveArtistArtwork returns a proxy URL sized for the
+    // UI; the on-disk sidecar wants the original.)
+    let sourceUrl: string | null | undefined = context
+        ? getServarrMetadataArtistImageUrl(context.servarrMetadataData, preferredCoverTypes)
+        : null;
+
+    // Streaming provider fallback: only reached when the catalog carried no artist
+    // image. Use the resolved provider artist id from the context when available —
+    // the raw artistId is the MBID in MB mode, which the provider cannot resolve.
+    if (!sourceUrl) {
+        const providerCandidate = (context?.providerCandidates || []).find(
+            (candidate) => candidate.provider && candidate.entityId,
+        );
+        try {
+            sourceUrl = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
+                entityType: "artist",
+                providerId: providerCandidate?.entityId != null ? String(providerCandidate.entityId) : artistId,
+                size: resolution,
+            });
+        } catch (error) {
+            console.warn(`⚠️ [METADATA] Failed to resolve provider artist picture for ${artistId}: ${(error as Error).message}`);
+        }
     }
 
-    try {
-        const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
-            entityType: "artist",
-            providerId: artistId,
-            size: resolution,
-        });
-        await downloadProviderArtwork(url, outputPath, `artist picture for ${artistId}`);
-    } catch (error) {
-        console.warn(`⚠️ [METADATA] Failed to resolve provider artist picture for ${artistId}: ${(error as Error).message}`);
+    // Last resort: a URL already cached on the artist row (may be a media-cover
+    // proxy path, which downloadProviderArtwork copies from the local cache).
+    if (!sourceUrl) {
+        sourceUrl = loadResolvedArtistArtwork(artistId);
     }
+
+    await downloadProviderArtwork(sourceUrl, outputPath, `artist picture for ${artistId}`);
 }
 
 /**

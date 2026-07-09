@@ -347,11 +347,19 @@ export class DownloadMissingService {
                     index,
                     groupKey: videoGroupKey(video.artist_mbid, video.video_title),
                     typeRank: videoTypeRank[resolvePlexVideoSuffix(video.video_title)] ?? 9,
-                    officialRank: /\\bofficial\\b/i.test(String(video.video_title || "")) ? 0 : 1,
+                    // Audio-only uploads ("… (Audio)") are not the music video — when
+                    // a song has both, keep the actual video. (Was previously lost:
+                    // "(Audio)" sorted before "(Official Video)" alphabetically.)
+                    audioRank: /\(\s*audio\s*\)|\baudio[\s-]*only\b/i.test(String(video.video_title || "")) ? 1 : 0,
+                    // Prefer the labelled "Official …" cut. The old regex escaped the
+                    // word boundaries (\\b) so it matched a literal "\bofficial\b" and
+                    // never fired.
+                    officialRank: /\bofficial\b/i.test(String(video.video_title || "")) ? 0 : 1,
                 }))
                 .sort((left, right) =>
                     left.groupKey.localeCompare(right.groupKey)
                     || left.typeRank - right.typeRank
+                    || left.audioRank - right.audioRank
                     || left.officialRank - right.officialRank
                     || left.index - right.index,
                 );

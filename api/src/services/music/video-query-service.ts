@@ -251,14 +251,37 @@ export function listVideos(input: ListVideosQuery): VideosListResponseContract {
 }
 
 export function getVideoDetail(videoId: string): VideoDetailContract | null {
+  // Accept either a canonical video recording id (/video/196) or a provider
+  // video id (/video/64660138). The download queue links by provider id, so
+  // resolve that to the recording id first — otherwise the queue's video link
+  // 404s while the same video opens fine from the artist page.
+  const recordingId = resolveVideoRecordingId(videoId);
+  if (!recordingId) {
+    return null;
+  }
+
   const canonicalRow = db.prepare(`
     SELECT *
     FROM (${getCanonicalVideoSelectSql("WHERE recording.is_video = 1 AND CAST(recording.id AS TEXT) = CAST(? AS TEXT)")}) canonical_video
-  `).get(videoId) as (VideoRow & { downloaded?: number }) | undefined;
+  `).get(recordingId) as (VideoRow & { downloaded?: number }) | undefined;
 
   if (canonicalRow) {
     return mapVideoDetail(canonicalRow, Boolean(canonicalRow.downloaded));
   }
 
   return null;
+}
+
+function resolveVideoRecordingId(videoId: string): string | null {
+  const direct = db.prepare(
+    "SELECT id FROM Recordings WHERE is_video = 1 AND CAST(id AS TEXT) = CAST(? AS TEXT) LIMIT 1",
+  ).get(videoId) as { id?: number | string } | undefined;
+  if (direct?.id != null) {
+    return String(direct.id);
+  }
+
+  const viaProvider = db.prepare(
+    "SELECT recording_id FROM ProviderItems WHERE entity_type = 'video' AND recording_id IS NOT NULL AND CAST(provider_id AS TEXT) = CAST(? AS TEXT) ORDER BY updated_at DESC LIMIT 1",
+  ).get(videoId) as { recording_id?: number | string | null } | undefined;
+  return viaProvider?.recording_id != null ? String(viaProvider.recording_id) : null;
 }

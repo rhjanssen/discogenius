@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
 import type { RefreshOptions } from "./scan-types.js";
+import { baseComparableTitle, sameRecordingTitle } from "../mediafiles/import-matching-utils.js";
 
 type AudioRecordingVideoMatch = {
     id: number;
@@ -385,6 +386,24 @@ function ensureProviderVideoRecording(input: {
         return input.existingRecordingId;
     }
 
+    // No provider MBID and no prior match: before minting a new provider-only
+    // recording, attach to an existing MusicBrainz video recording for this
+    // artist with the same comparable title (e.g. MB "Living" ↔ TIDAL "Living
+    // (feat. Alex Clare) (Official Video)"). Otherwise the canonical MB video and
+    // its streaming source stay split — the MB video has no downloadable offer
+    // and the provider video is an orphan.
+    const musicBrainzRecordingId = artistMbid
+        ? findMusicBrainzVideoRecordingIdByTitle(artistMbid, title)
+        : null;
+    if (musicBrainzRecordingId) {
+        db.prepare(`
+            UPDATE Recordings
+            SET length_ms = COALESCE(length_ms, ?), updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(lengthMs, musicBrainzRecordingId);
+        return musicBrainzRecordingId;
+    }
+
     const result = db.prepare(`
         INSERT INTO Recordings (
             artist_metadata_id, artist_mbid, title, artist_credit, length_ms,
@@ -399,6 +418,33 @@ function ensureProviderVideoRecording(input: {
     );
 
     return Number(result.lastInsertRowid);
+}
+
+/**
+ * Find an existing MusicBrainz video recording (is_video, canonical MBID) for the
+ * artist whose comparable title matches the provider video's. Comparison strips
+ * "official / video / audio / feat …" decoration, so a provider upload maps onto
+ * the canonical MB video instead of creating a duplicate provider-only recording.
+ */
+function findMusicBrainzVideoRecordingIdByTitle(artistMbid: string, title: string): number | null {
+    // Reuse the shared recording-title comparison (same base title + compatible
+    // significant version) so "Living (feat. Alex Clare) (Official Video)" unifies
+    // with the canonical MB "Living", while a genuinely different version (e.g. a
+    // live cut) is not force-merged. One definition, shared with track matching.
+    if (!baseComparableTitle(title)) {
+        return null;
+    }
+    const rows = db.prepare(`
+        SELECT id, title
+        FROM Recordings
+        WHERE is_video = 1 AND mbid IS NOT NULL AND artist_mbid = ?
+    `).all(artistMbid) as Array<{ id: number; title: string | null }>;
+    for (const row of rows) {
+        if (sameRecordingTitle(title, row.title)) {
+            return Number(row.id);
+        }
+    }
+    return null;
 }
 
 export class RefreshVideoService {
