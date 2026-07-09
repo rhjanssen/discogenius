@@ -114,6 +114,25 @@ export function normalizeTitle(input: string): string {
         .trim();
 }
 
+/**
+ * Comparable title for video ↔ recording matching: strips accents, punctuation
+ * and video-designation words ("official / music / lyric / audio / video / live
+ * / …") so a provider upload ("Living (feat. …) (Official Video)") compares equal
+ * to the plain recording title. Lives here with the other title helpers rather
+ * than duplicated in the video service. (See docs/MATCHING_SET_COVER_DESIGN.md §5
+ * for the planned collapse of these variants into one Lidarr-style cleaner.)
+ */
+export function videoComparableTitle(value?: string | null): string {
+    return String(value || "")
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\b(official|music|lyric|lyrics|audio|visualizer|visualiser|video|hd|hq|4k|remaster(?:ed)?|live|performance)\b/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 export function normalizeComparableText(input?: string | null): string {
     return (input || "")
         .toLowerCase()

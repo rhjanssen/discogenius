@@ -1,6 +1,6 @@
 import { db } from "../../database.js";
 import type { RefreshOptions } from "./scan-types.js";
-import { baseComparableTitle, sameRecordingTitle } from "../mediafiles/import-matching-utils.js";
+import { baseComparableTitle, sameRecordingTitle, videoComparableTitle } from "../mediafiles/import-matching-utils.js";
 
 type AudioRecordingVideoMatch = {
     id: number;
@@ -16,13 +16,6 @@ function normalizeVideoText(value: unknown): string {
         .replace(/[\u0300-\u036f]/g, "")
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, " ")
-        .trim();
-}
-
-function normalizeVideoComparableTitle(value: unknown): string {
-    return normalizeVideoText(value)
-        .replace(/\b(official|music|lyric|lyrics|audio|visualizer|visualiser|video|hd|hq|4k|remaster(?:ed)?|live|performance)\b/g, " ")
-        .replace(/\s+/g, " ")
         .trim();
 }
 
@@ -208,7 +201,7 @@ function findRelatedAudioRecordingForVideo(
     video: any,
     candidates: AudioRecordingCandidateRow[],
 ): AudioRecordingVideoMatch | null {
-    const videoTitle = normalizeVideoComparableTitle(video.title);
+    const videoTitle = videoComparableTitle(video.title);
     if (!videoTitle || candidates.length === 0) {
         return null;
     }
@@ -219,7 +212,7 @@ function findRelatedAudioRecordingForVideo(
 
     let best: AudioRecordingVideoMatch | null = null;
     for (const row of rows) {
-        const audioTitle = normalizeVideoComparableTitle(row.title);
+        const audioTitle = videoComparableTitle(row.title);
         if (!audioTitle) {
             continue;
         }

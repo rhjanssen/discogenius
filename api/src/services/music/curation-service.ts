@@ -3,7 +3,6 @@ import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
 import { LibraryFilesService, resolvePlexVideoSuffix } from "../mediafiles/library-files.js";
-import { baseComparableTitle } from "../mediafiles/import-matching-utils.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
