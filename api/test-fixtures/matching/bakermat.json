@@ -1,0 +1,2310 @@
+{
+  "artist": {
+    "name": "Bakermat",
+    "mbid": "df60a241-e8df-4917-82db-1f1a8ecd7cc3"
+  },
+  "capturedFrom": {
+    "catalogSource": "unknown",
+    "dbPath": "config\\discogenius.db"
+  },
+  "releaseGroups": [
+    {
+      "mbid": "030e7fcc-8390-4006-86d6-cf1248cfe83c",
+      "title": "Joy / Work It Out",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "c9b90cf9-1ced-416d-9459-5a23db697963",
+          "title": "Joy / Work It Out",
+          "disambiguation": null,
+          "barcode": "3617052247191",
+          "date": null,
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700151",
+            "NLQ8X1700139"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "06e3a8ff-abc5-4a51-b2e3-44a956056aa4",
+      "title": "Learn to Lose",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2019",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "933e8118-f897-4507-b960-c126a74e8901",
+          "title": "Learn to Lose",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2019",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "18332970-c3f2-4d6e-ad52-2bdce5ea4318",
+      "title": "Good Feeling",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2023-03-24",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "14bc780d-802d-4142-9b6b-deb4be2cf1b2",
+          "title": "Good Feeling",
+          "disambiguation": null,
+          "barcode": "3617056213574",
+          "date": "2023-03-24",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700154"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "18b03817-b776-454a-9b93-342abc77d5cd",
+      "title": "Don't Want You Back",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "0634d55e-5f46-4b52-a88c-e1d8b36078b6",
+          "title": "Don't Want You Back",
+          "disambiguation": null,
+          "barcode": "886446499444",
+          "date": null,
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801700212",
+            "NLE801700189"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "1aa03237-99c8-4339-96b2-9a7c6d586aa5",
+      "title": "Zomer EP",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2012",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "227619dc-9bd8-483c-8f74-337be47d74c9",
+          "title": "Zomer EP",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2012",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "296a7ac9-e15e-438c-ac57-37724f5934e2",
+      "title": "Praise Break",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2024-04-12",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "dc210f51-197f-4964-886c-52580a90be1f",
+          "title": "Praise Break",
+          "disambiguation": null,
+          "barcode": "3617385740703",
+          "date": "2024-04-12",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700214",
+            "NLQ8X1700215"
+          ]
+        },
+        {
+          "mbid": "64f9cef9-1c9a-4839-b1df-9ca3a82e4ca8",
+          "title": "Praise Break",
+          "disambiguation": null,
+          "barcode": "3617385621101",
+          "date": "2024-04-12",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700214",
+            "NLQ8X1700215"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "2f1ea280-939c-4e1a-a0c1-13f4a07c8ff9",
+      "title": "Grace Note (Continued)",
+      "primaryType": "EP",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": "2025-05-02",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "f60060c1-73bd-4962-a47c-5d47a203f913",
+          "title": "Grace Note (Continued)",
+          "disambiguation": null,
+          "barcode": "3617393343118",
+          "date": "2025-05-02",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700297",
+            "NLQ8X1700298",
+            "NLQ8X1700299",
+            "NLQ8X1700300"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "2fc06abc-a560-4e37-b280-ee5ee10d60ca",
+      "title": "Low Again",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2024-02-02",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "8ce81675-4856-4e3f-99f5-5cc0887d8a37",
+          "title": "Low Again",
+          "disambiguation": null,
+          "barcode": "3617381824841",
+          "date": "2024-02-02",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700190"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "31d963dc-4791-4838-80ae-3658e9cf4a46",
+      "title": "Teach Me",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2015-02-06",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "fac5af29-31f0-4d6e-95dc-a3a9133e6661",
+          "title": "Teach Me",
+          "disambiguation": null,
+          "barcode": "",
+          "date": "2015-02-06",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801400559",
+            "NLE801400535"
+          ]
+        },
+        {
+          "mbid": "c3e33602-23e9-4c4e-ade1-43342d79bef5",
+          "title": "Teach Me",
+          "disambiguation": null,
+          "barcode": "886445082524",
+          "date": "2015-02-06",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801400559",
+            "NLE801400535",
+            "NLE801400602"
+          ]
+        },
+        {
+          "mbid": "c2253f08-f86b-4e76-a119-c19506676c55",
+          "title": "Teach Me (MK Remix)",
+          "disambiguation": null,
+          "barcode": "",
+          "date": "2015-02-13",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801400602"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "3705bfea-9da8-4596-bf0a-df43ec23238e",
+      "title": "Dreamreacher",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2016-08-26",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "bb293bf9-75b1-41e0-8415-f5642bfceaad",
+          "title": "Dreamreacher",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2016-08-26",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801600469"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "37769014-b94f-4022-b79b-a9048e648daf",
+      "title": "Wahejo",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2025-09-26",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "9abe8deb-6a58-4146-ace1-9351df0f1fe4",
+          "title": "Wahejo",
+          "disambiguation": null,
+          "barcode": "3618020315355",
+          "date": "2025-09-26",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700347"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "387d361b-7a7b-4f43-aed9-4e95e02ed4b7",
+      "title": "Madan (King)",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2022-06-17",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "2d967fb9-9b58-4680-9789-7a4b52bfe880",
+          "title": "Madan (King)",
+          "disambiguation": null,
+          "barcode": "190296119637",
+          "date": "2022-06-17",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700127"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "3a926a58-b63e-4bd4-ad86-666673b11ee2",
+      "title": "Don’t Want You Back (remixes)",
+      "primaryType": "Single",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": "2017-08-25",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "6f90d982-4e4f-4304-b522-53538b99f0ff",
+          "title": "Don’t Want You Back (remixes)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2017-08-25",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801700331",
+            "NLE801700329",
+            "NLE801700332"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "3ba81220-45b5-49db-b0c3-c361d3851566",
+      "title": "Joy",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2022-09-16",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "4517f807-c868-4cdb-9359-ef93c8ff73d9",
+          "title": "Joy",
+          "disambiguation": null,
+          "barcode": "3617050394156",
+          "date": "2022-09-16",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700139",
+            "NLQ8X1700141"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "406a4f08-c780-4d7a-8916-9609828e7a83",
+      "title": "Baianá",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2019-10-31",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "78354d34-8976-4ca7-b578-b388a7e21e89",
+          "title": "Baianá",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2019-10-31",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801900440"
+          ]
+        },
+        {
+          "mbid": "832f0578-d68d-45e0-b777-02601e45ccee",
+          "title": "Baianá",
+          "disambiguation": null,
+          "barcode": "886448117186",
+          "date": "2019-11-08",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801900440",
+            "NLE801900441"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "44c9296c-d137-4d3e-8450-70655aa50bb3",
+      "title": "From a Bakermat Point of View",
+      "primaryType": "Album",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2023-09-08",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "3aa91731-cef8-4fff-89fa-8601ad7bb78e",
+          "title": "From a Bakermat Point of View",
+          "disambiguation": null,
+          "barcode": "3617223288527",
+          "date": "2023-09-08",
+          "trackCount": 9,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700174",
+            "NLQ8X1700161",
+            "NLQ8X1700154",
+            "NLQ8X1700167",
+            "NLQ8X1700175",
+            "NLQ8X1700176",
+            "NLQ8X1700177",
+            "NLQ8X1700178",
+            "NLQ8X1700179"
+          ]
+        },
+        {
+          "mbid": "3cc52f6a-124c-477d-9d62-7f03a40a3810",
+          "title": "From a Bakermat Point of View",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2023-12-08",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700174",
+            "NLQ8X1700161",
+            "NLQ8X1700154",
+            "NLQ8X1700167",
+            "NLQ8X1700175",
+            "NLQ8X1700189",
+            "NLQ8X1700176",
+            "NLQ8X1700177",
+            "NLQ8X1700178",
+            "NLQ8X1700179"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "4d24502d-2c99-4f11-b5da-69a6aee0df56",
+      "title": "High Above",
+      "primaryType": "Album",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2024-12-06",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "c733b8aa-961a-4e22-9743-e6e08cf8ff9c",
+          "title": "High Above",
+          "disambiguation": null,
+          "barcode": "3617666221617",
+          "date": "2024-12-06",
+          "trackCount": 7,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700267",
+            "NLQ8X1700256",
+            "NLQ8X1700250",
+            "NLQ8X1700237",
+            "NLQ8X1700214",
+            "NLQ8X1700151",
+            "NLQ8X1700139"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "5bbd1800-4585-454f-8e90-b472dc144d2a",
+      "title": "Uitzicht (remixes)",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "4961a054-63f8-40ef-874b-dc31e899901f",
+          "title": "Uitzicht (remixes)",
+          "disambiguation": null,
+          "barcode": "4050486096833",
+          "date": null,
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": [
+            "DEZ651317140",
+            "DEZ651317141",
+            "DEZ651317142",
+            "DEZ651317143"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "5f699603-5079-4575-994a-b107746ae6a1",
+      "title": "Strandfeest",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2013",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "dfd66953-bd6b-44be-b0cf-d8b1884afad7",
+          "title": "Strandfeest",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2013",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "69fb7092-19aa-401e-a3f2-8dd3b3487120",
+      "title": "Under the Sun",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2008-07-19",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "cf0e9c6c-eb24-494b-8ff1-3ebd4700cd4c",
+          "title": "Under the Sun",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2008-07-19",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "7791af00-5be3-47bd-a0ee-868fbf236b6c",
+          "title": "Under the Sun",
+          "disambiguation": null,
+          "barcode": "4050538601435",
+          "date": "2020-02-21",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "GB5KW2000092",
+            "GB5KW1903797"
+          ]
+        },
+        {
+          "mbid": "8632c935-a26e-4a6d-a982-961dff28e389",
+          "title": "Under the Sun",
+          "disambiguation": null,
+          "barcode": "886448263852",
+          "date": "2020-02-21",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "GB5KW2000092",
+            "GB5KW1903797"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "6bb5b3df-c963-49ef-b1e1-2c8ad370eb98",
+      "title": "The Spirit",
+      "primaryType": "Album",
+      "secondaryTypes": [],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "cc378fa5-a876-49f3-b533-b9518a0c84c5",
+          "title": "The Spirit",
+          "disambiguation": null,
+          "barcode": "886449340491",
+          "date": null,
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE802100252",
+            "NLE802100072",
+            "NLE802100253",
+            "NLE802100211",
+            "NLE802100254",
+            "NLE802100255",
+            "NLE802100256",
+            "NLE802100257",
+            "NLE802100258",
+            "NLE802100259",
+            "NLE802100260",
+            "NLE802100261"
+          ]
+        },
+        {
+          "mbid": "df59cfb6-bedc-4363-a06d-451b92dfc68b",
+          "title": "The Spirit (Track by Track)",
+          "disambiguation": null,
+          "barcode": "886449497898",
+          "date": null,
+          "trackCount": 24,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE802100385",
+            "NLE802100252",
+            "NLE802100386",
+            "NLE802100072",
+            "NLE802100387",
+            "NLE802100253",
+            "NLE802100388",
+            "NLE802100211",
+            "NLE802100389",
+            "NLE802100254",
+            "NLE802100390",
+            "NLE802100255",
+            "NLE802100391",
+            "NLE802100256",
+            "NLE802100392",
+            "NLE802100257",
+            "NLE802100393",
+            "NLE802100258",
+            "NLE802100394",
+            "NLE802100259",
+            "NLE802100395",
+            "NLE802100260",
+            "NLE802100396",
+            "NLE802100261"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "760e602a-7777-474a-be26-e74b10064073",
+      "title": "Temptation (GAMPER & DADONI remix)",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2022-04-22",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "3180691f-24da-4f77-8945-01ec192caff0",
+          "title": "Temptation (GAMPER & DADONI remix)",
+          "disambiguation": null,
+          "barcode": "0190296149283",
+          "date": "2022-04-22",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700118",
+            "NLQ8X1700123"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "77b0eb25-6c5d-4a32-a8f9-c4da0766a773",
+      "title": "Save My Soul",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2024-09-06",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "2e91768b-4548-4e79-9809-caeb6abe6cd1",
+          "title": "Save My Soul",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2024-09-06",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700250"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "79221373-a6d5-4e42-a224-efbbfb772e5e",
+      "title": "Without Ya",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2024-11-08",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "6f37bbba-cef9-4ded-8326-f8e6e9755721",
+          "title": "Without Ya",
+          "disambiguation": null,
+          "barcode": "3617664658644",
+          "date": "2024-11-08",
+          "trackCount": 6,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700256",
+            "NLQ8X1700250",
+            "NLQ8X1700237",
+            "NLQ8X1700214",
+            "NLQ8X1700151",
+            "NLQ8X1700139"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "7b5e026b-3197-46df-8e1f-c87baec08bca",
+      "title": "Playing With Fire",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2026-03-06",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "a14f1bc2-4ed7-481f-974e-869e1e619ef7",
+          "title": "Playing With Fire",
+          "disambiguation": null,
+          "barcode": "3618027703414",
+          "date": "2026-03-06",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "7fea40aa-4df6-4950-9514-bb520c4b220d",
+      "title": "I Love Life",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2026-05-01",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "529c085a-9f17-48d0-84be-51e1d9b0f4e7",
+          "title": "I Love Life",
+          "disambiguation": null,
+          "barcode": "3618029738575",
+          "date": "2026-05-01",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700383"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "8056e83e-ff40-42b7-92a0-c3a3c924caba",
+      "title": "Ballade",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2016-03-04",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "790a09fd-f667-4c56-98f0-677ee23cfd63",
+          "title": "Ballade",
+          "disambiguation": null,
+          "barcode": "886445753219",
+          "date": "2016-03-04",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801600104",
+            "NLE801600105"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "81a8a84e-27a3-4d41-953e-53c71683d7f9",
+      "title": "Gatluak (Bakermat Remix)",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2021-07-23",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "183a06e0-f4ae-485b-9de6-641ac1316a6e",
+          "title": "Gatluak (Bakermat Remix)",
+          "disambiguation": null,
+          "barcode": "0190296640711",
+          "date": "2021-07-23",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700100"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "846675bb-dc08-4296-82e7-37d4ec525fc3",
+      "title": "Ain't Nobody",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2021-05-28",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "6133d8e0-eeb0-403d-83e5-5c0f72e90c8e",
+          "title": "Ain't Nobody",
+          "disambiguation": null,
+          "barcode": "886449254309",
+          "date": "2021-05-28",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE802100211"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "86fcc36d-e1e4-414c-ace1-03cb80ed481b",
+      "title": "Baby",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2017-01-27",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "da7206ef-95bc-4560-b944-e39da6f94494",
+          "title": "Baby",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801600842"
+          ]
+        },
+        {
+          "mbid": "fe3cab7d-51cd-44cf-a10a-b00b18ad5276",
+          "title": "Baby",
+          "disambiguation": null,
+          "barcode": "",
+          "date": "2017-01-27",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "89ba94d6-d11a-43b9-b4b5-96cddf40b29c",
+      "title": "Walk That Walk (Another Chemical Love Story remix)",
+      "primaryType": "Single",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "8ec84f24-dba7-4ab5-a999-44f51bcd4cf3",
+          "title": "Walk That Walk (Another Chemical Love Story remix)",
+          "disambiguation": null,
+          "barcode": "886449334926",
+          "date": null,
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE802100284",
+            "NLE802100288"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "9aad95d9-0674-433b-ab50-2229c93d32b2",
+      "title": "Vandaag",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2012-08-27",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "49576ac7-c046-4a7e-95f3-b95a8c059362",
+          "title": "Vandaag",
+          "disambiguation": null,
+          "barcode": "848422032304",
+          "date": "2012-08-27",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "QMSNZ1258477"
+          ]
+        },
+        {
+          "mbid": "1bdcf41c-63d1-43be-a69f-2836a9a49213",
+          "title": "One Day (Vandaag)",
+          "disambiguation": null,
+          "barcode": "886444522359",
+          "date": "2014-03-14",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "DEE861400079"
+          ]
+        },
+        {
+          "mbid": "122a8e2f-3a41-43d1-9c0d-ae0ab40df07d",
+          "title": "One Day (Vandaag)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2014-03-14",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "360ec8be-ecb2-4229-b4f6-7424e40c9d1d",
+          "title": "One Day (Vandaag)",
+          "disambiguation": null,
+          "barcode": "888430726024",
+          "date": "2014-04-25",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "DEE861400079",
+            "QMSNZ1258477"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "a80f8720-1891-40c5-8cab-77a3f2ae2766",
+      "title": "Temptation",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330",
+          "title": "Temptation",
+          "disambiguation": null,
+          "barcode": "190296275739",
+          "date": null,
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700114"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "ad889c8e-f976-474c-8deb-6ab7f9de5fbf",
+      "title": "Can’t Bring Me Down",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "ff6df1a5-bb9b-485b-a23b-389a4c2ecd7b",
+          "title": "Can’t Bring Me Down",
+          "disambiguation": null,
+          "barcode": "3617059299810",
+          "date": null,
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700161",
+            "NLQ8X1700154"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "b14c65e0-d21c-4999-aa9e-0c2cb9a23f8d",
+      "title": "Games Continued",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2016-02-05",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "16462c36-3748-4edd-9bb8-334628778f14",
+          "title": "Games",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "642b667a-b2b1-424d-bfea-b1da1ae17136",
+          "title": "Games Continued",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2016-02-05",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "c38b5cb0-13f8-46bd-93cf-f8af9ec38399",
+      "title": "Do Your Thing / Lion",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2018-06-08",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "7aa1eeef-4dc7-4a71-bf5e-5401b9d3ee1b",
+          "title": "Do Your Thing / Lion",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2018-06-08",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801800183",
+            "NLE801800184"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "d001d291-5a2b-4568-bdb4-c738a1fb636d",
+      "title": "900 Miles",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "c7550b98-c7a1-48d4-9db9-39e7388142ac",
+          "title": "900 Miles",
+          "disambiguation": null,
+          "barcode": "3618022699286",
+          "date": null,
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700361"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "d2c7be4f-f18f-4275-b41e-15b82a8c7aa1",
+      "title": "Living",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2016-07-15",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "aaa2d1a7-8f61-4998-ab95-7c6c4fa6a1cb",
+          "title": "Living",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2016-07-15",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801600355"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "d5d49949-aa44-420b-8921-1374fd5e7205",
+      "title": "Partystarter",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2018-10-12",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "74040b23-fbe6-4591-9aaa-794e36a4569c",
+          "title": "Partystarter",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2018-10-12",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "d7deaee8-c9e5-44ea-b6eb-1aebc91468bf",
+      "title": "Grace Note",
+      "primaryType": "Album",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2025-02-07",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "783974cc-f85d-484f-8322-168eaf695e13",
+          "title": "Grace Note",
+          "disambiguation": null,
+          "barcode": "3617665486048",
+          "date": "2025-02-07",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700263",
+            "NLQ8X1700264",
+            "NLQ8X1700151",
+            "NLQ8X1700139",
+            "NLQ8X1700214",
+            "NLQ8X1700265",
+            "NLQ8X1700256",
+            "NLQ8X1700266",
+            "NLQ8X1700267",
+            "NLQ8X1700268",
+            "NLQ8X1700269",
+            "NLQ8X1700270",
+            "NLQ8X1700271",
+            "NLQ8X1700250",
+            "NLQ8X1700237"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "e98c9bf0-e0a9-40ec-9378-214ece2d3e85",
+      "title": "Your Shine",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2024-06-28",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "304468cc-5a92-4d94-80bb-767d48862db7",
+          "title": "Your Shine",
+          "disambiguation": null,
+          "barcode": "3617388781253",
+          "date": "2024-06-28",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLQ8X1700237"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "ec2f1ecf-cd51-4471-8af8-5591ffeaca80",
+      "title": "Baianá (Tisoki dj tool)",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2023-04-03",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "07c319ea-7280-4747-8e0e-77f9b3b140cd",
+          "title": "Baianá (Tisoki dj tool)",
+          "disambiguation": null,
+          "barcode": "",
+          "date": "2023-04-03",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "f0a6daa7-cf56-404d-bcd7-f7c18d5867cc",
+      "title": "The Ringmaster",
+      "primaryType": "Album",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2020-10-09",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "44847ed2-3de3-498e-ac09-a663b4ffefd5",
+          "title": "The Ringmaster",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2020-10-09",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801900028",
+            "NLE802000491",
+            "NLE802000493",
+            "NLE801900440",
+            "NLE801900202",
+            "GB5KW2000092",
+            "NLE801800427",
+            "NLE802000495",
+            "NLE802000497",
+            "NLE802000499"
+          ]
+        },
+        {
+          "mbid": "dccb460d-1002-45a5-a1f8-1c865f0f1994",
+          "title": "The Ringmaster",
+          "disambiguation": null,
+          "barcode": "8715576195037",
+          "date": "2020-10-09",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801900028",
+            "NLE802000491",
+            "NLE802000493",
+            "NLE801900440",
+            "NLE801900202",
+            "GB5KW2000092",
+            "NLE801800427",
+            "NLE802000495",
+            "NLE802000497",
+            "NLE802000499"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "f5eb6adb-cdf7-4f9d-b8b3-64b0b5dec285",
+      "title": "Trouble",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2019",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "a4204157-ef3c-4f6a-ae25-cc2db9a260f6",
+          "title": "Trouble",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2019",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "NLE801900028"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "fd5dbf65-c32a-4e25-ac2b-43fc1e73d3bd",
+      "title": "Temptation (Big Top Family Remix Pack)",
+      "primaryType": "Single",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "c00ef7f1-89dc-4e7b-a712-6d2f4fdabae6",
+          "title": "Temptation (Big Top Family Remix Pack)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 7,
+          "mediaCount": 2,
+          "isrcs": [
+            "NLQ8X1700118",
+            "NLQ8X1700123"
+          ]
+        }
+      ]
+    }
+  ],
+  "providerAlbums": [
+    {
+      "provider": "tidal",
+      "providerId": "103305111",
+      "title": "Trouble",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2019-02-22",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "193483448053",
+      "isrcs": [
+        "NLE801900028"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "107102284",
+      "title": "Learn To Lose (feat. Alex Clare)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2019-04-26",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "8715576185144",
+      "isrcs": [
+        "NLE801900202"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "110492267",
+      "title": "Learn To Lose (feat. Alex Clare) (Remixes)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2019-07-05",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "8715576186813",
+      "isrcs": [
+        "NLE801900381",
+        "NLE801900383"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "121873249",
+      "title": "Baianá",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2019-07-26",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "194491590666",
+      "isrcs": [
+        "NLE801900440",
+        "NLE801900441"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "129180396",
+      "title": "Under the Sun",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2020-02-21",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "194491917470",
+      "isrcs": [
+        "GB5KW2000092",
+        "GB5KW1903797"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "153518229",
+      "title": "The Ringmaster",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2023-04-07",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "195497175338",
+      "isrcs": [
+        "NLE801900028",
+        "NLE802000491",
+        "NLE802000493",
+        "NLE801900440",
+        "NLE801900202",
+        "GB5KW2000092",
+        "NLE801800427",
+        "NLE802000495",
+        "NLE802000497",
+        "NLE802000499"
+      ],
+      "trackCount": 10
+    },
+    {
+      "provider": "tidal",
+      "providerId": "175421175",
+      "title": "Walk That Walk",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2021-03-26",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "196006228811",
+      "isrcs": [
+        "NLE802100072"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "182240453",
+      "title": "Ain't Nobody",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2021-05-28",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "196006588557",
+      "isrcs": [
+        "NLE802100211"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "186804979",
+      "title": "Walk That Walk (Another Chemical Love Story Remix)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2021-06-11",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "196006826048",
+      "isrcs": [
+        "NLE802100284",
+        "NLE802100288"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "186809646",
+      "title": "The Spirit",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2021-06-24",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "196006896034",
+      "isrcs": [
+        "NLE802100252",
+        "NLE802100072",
+        "NLE802100253",
+        "NLE802100211",
+        "NLE802100254",
+        "NLE802100255",
+        "NLE802100256",
+        "NLE802100257",
+        "NLE802100258",
+        "NLE802100259",
+        "NLE802100260",
+        "NLE802100261"
+      ],
+      "trackCount": 12
+    },
+    {
+      "provider": "tidal",
+      "providerId": "193939700",
+      "title": "The Spirit (Track by Track)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2021-06-24",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "196292294880",
+      "isrcs": [
+        "NLE802100385",
+        "NLE802100252",
+        "NLE802100386",
+        "NLE802100072",
+        "NLE802100387",
+        "NLE802100253",
+        "NLE802100388",
+        "NLE802100211",
+        "NLE802100389",
+        "NLE802100254",
+        "NLE802100390",
+        "NLE802100255",
+        "NLE802100391",
+        "NLE802100256",
+        "NLE802100392",
+        "NLE802100257",
+        "NLE802100393",
+        "NLE802100258",
+        "NLE802100394",
+        "NLE802100259",
+        "NLE802100395",
+        "NLE802100260",
+        "NLE802100396",
+        "NLE802100261"
+      ],
+      "trackCount": 24
+    },
+    {
+      "provider": "tidal",
+      "providerId": "244473528",
+      "title": "Joy (with Ann Nesby)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2022-09-16",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617050394156",
+      "isrcs": [
+        "NLQ8X1700139",
+        "NLQ8X1700141"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "251215280",
+      "title": "Madan (King)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2022-06-17",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "0190296119637",
+      "isrcs": [
+        "NLQ8X1700127"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "25459012",
+      "title": "Strandfeest",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2014-02-03",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "00602537640089",
+      "isrcs": [
+        "DECL81200020"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "256208589",
+      "title": "Joy / Work It Out",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2022-11-18",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "3617052247191",
+      "isrcs": [
+        "NLQ8X1700151",
+        "NLQ8X1700139"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "257021430",
+      "title": "Temptation (Superlover Remix)",
+      "version": "Superlover Remix",
+      "providerUrl": null,
+      "releaseDate": "2022-03-25",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "0190296149238",
+      "isrcs": [
+        "NLQ8X1700121"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "257021434",
+      "title": "Temptation (Castelle Nighttime Remix)",
+      "version": "Castelle Nighttime Remix",
+      "providerUrl": null,
+      "releaseDate": "2022-03-25",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "0190296149269",
+      "isrcs": [
+        "NLQ8X1700120"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "257021455",
+      "title": "Temptation (Big Top Family Remix Pack)",
+      "version": "Big Top Family Remix Pack",
+      "providerUrl": null,
+      "releaseDate": "2022-04-22",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "0190296149344",
+      "isrcs": [
+        "NLQ8X1700118",
+        "NLQ8X1700119",
+        "NLQ8X1700120",
+        "NLQ8X1700121",
+        "NLQ8X1700122",
+        "NLQ8X1700123",
+        "NLQ8X1700124"
+      ],
+      "trackCount": 7
+    },
+    {
+      "provider": "tidal",
+      "providerId": "257021477",
+      "title": "Temptation",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2022-03-25",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "0190296275739",
+      "isrcs": [
+        "NLQ8X1700114"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "257764211",
+      "title": "Temptation",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2022-03-25",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "0190296149283",
+      "isrcs": [
+        "NLQ8X1700118",
+        "NLQ8X1700123"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "257770751",
+      "title": "Temptation (Kronan Remix)",
+      "version": "Kronan Remix",
+      "providerUrl": null,
+      "releaseDate": "2022-03-25",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "0190296149276",
+      "isrcs": [
+        "NLQ8X1700119",
+        "NLQ8X1700124"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "26891889",
+      "title": "One Day (Vandaag) (Radio Edit)",
+      "version": "Radio Edit",
+      "providerUrl": null,
+      "releaseDate": "2014-03-14",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886444522359",
+      "isrcs": [
+        "DEE861400079"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "275484061",
+      "title": "Good Feeling",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2023-03-24",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617056213574",
+      "isrcs": [
+        "NLQ8X1700154"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "290251063",
+      "title": "Can't Bring Me Down",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2023-06-02",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617059299810",
+      "isrcs": [
+        "NLQ8X1700161",
+        "NLQ8X1700154"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "303307833",
+      "title": "Higher (Escalators)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2023-07-28",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617224255405",
+      "isrcs": [
+        "NLQ8X1700167"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "304203502",
+      "title": "From A Bakermat Point Of View",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2023-09-08",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 1,
+      "upc": "3617223288527",
+      "isrcs": [
+        "NLQ8X1700174",
+        "NLQ8X1700161",
+        "NLQ8X1700154",
+        "NLQ8X1700167",
+        "NLQ8X1700175",
+        "NLQ8X1700176",
+        "NLQ8X1700177",
+        "NLQ8X1700178",
+        "NLQ8X1700179"
+      ],
+      "trackCount": 9
+    },
+    {
+      "provider": "tidal",
+      "providerId": "313745026",
+      "title": "So Glad That The Lord (Remix)",
+      "version": "Remix",
+      "providerUrl": null,
+      "releaseDate": "2023-10-06",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617226810640",
+      "isrcs": [
+        "NLQ8X1700182",
+        "NLQ8X1700183",
+        "NLQ8X1700174"
+      ],
+      "trackCount": 3
+    },
+    {
+      "provider": "tidal",
+      "providerId": "328140343",
+      "title": "From A Bakermat Point Of View",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2023-09-08",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 1,
+      "upc": "3617380014526",
+      "isrcs": [
+        "NLQ8X1700174",
+        "NLQ8X1700161",
+        "NLQ8X1700154",
+        "NLQ8X1700167",
+        "NLQ8X1700175",
+        "NLQ8X1700189",
+        "NLQ8X1700176",
+        "NLQ8X1700177",
+        "NLQ8X1700178",
+        "NLQ8X1700179"
+      ],
+      "trackCount": 10
+    },
+    {
+      "provider": "tidal",
+      "providerId": "336069294",
+      "title": "Low Again",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2024-02-02",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 1,
+      "upc": "3617381824841",
+      "isrcs": [
+        "NLQ8X1700190"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "336702718",
+      "title": "Baianá (Prince Kaybee Remix)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2024-01-05",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "8715576210280",
+      "isrcs": [
+        "NLE802300581",
+        "NLE801900440"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "33923839",
+      "title": "One Day (Vandaag) (Oliver $ & Matthew K Remix)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2014-09-01",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886444809603",
+      "isrcs": [
+        "DEE861400339"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "352102368",
+      "title": "Praise Break",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2024-04-12",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617385621101",
+      "isrcs": [
+        "NLQ8X1700214",
+        "NLQ8X1700215"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "359812962",
+      "title": "Praise Break (Big Top's Next Generation Remixes)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2024-05-31",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617387045998",
+      "isrcs": [
+        "NLQ8X1700220",
+        "NLQ8X1700221",
+        "NLQ8X1700222",
+        "NLQ8X1700214"
+      ],
+      "trackCount": 4
+    },
+    {
+      "provider": "tidal",
+      "providerId": "366373483",
+      "title": "Your Shine",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2024-06-28",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617388781253",
+      "isrcs": [
+        "NLQ8X1700237"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "372258097",
+      "title": "Your Shine (Fly Disco Butter Remix)",
+      "version": "Fly Disco Butter Remix",
+      "providerUrl": null,
+      "releaseDate": "2024-07-12",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "3617389775732",
+      "isrcs": [
+        "NLQ8X1700241",
+        "NLQ8X1700237"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "379606676",
+      "title": "Save My Soul",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2024-09-06",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617661589118",
+      "isrcs": [
+        "NLQ8X1700250"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "38984935",
+      "title": "Teach Me (Radio Edit)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2014-12-19",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886445025859",
+      "isrcs": [
+        "NLE801400559"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "390381098",
+      "title": "Save My Soul (feat. AMANZI) (Ampersounds Remix)",
+      "version": "Ampersounds Remix",
+      "providerUrl": null,
+      "releaseDate": "2024-10-11",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "3617664062755",
+      "isrcs": [
+        "NLQ8X1700254",
+        "NLQ8X1700250"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "392547326",
+      "title": "Without Ya",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2024-11-08",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "3617664658644",
+      "isrcs": [
+        "NLQ8X1700256",
+        "NLQ8X1700250",
+        "NLQ8X1700237",
+        "NLQ8X1700214",
+        "NLQ8X1700151",
+        "NLQ8X1700139"
+      ],
+      "trackCount": 6
+    },
+    {
+      "provider": "tidal",
+      "providerId": "396126620",
+      "title": "Grace Note",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2025-02-07",
+      "quality": "DOLBY_ATMOS",
+      "explicit": 0,
+      "upc": "3617665486048",
+      "isrcs": [
+        "NLQ8X1700263",
+        "NLQ8X1700264",
+        "NLQ8X1700151",
+        "NLQ8X1700139",
+        "NLQ8X1700214",
+        "NLQ8X1700265",
+        "NLQ8X1700256",
+        "NLQ8X1700266",
+        "NLQ8X1700267",
+        "NLQ8X1700268",
+        "NLQ8X1700269",
+        "NLQ8X1700270",
+        "NLQ8X1700271",
+        "NLQ8X1700250",
+        "NLQ8X1700237"
+      ],
+      "trackCount": 15
+    },
+    {
+      "provider": "tidal",
+      "providerId": "400336510",
+      "title": "High Above",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2024-12-06",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "3617666221617",
+      "isrcs": [
+        "NLQ8X1700267",
+        "NLQ8X1700256",
+        "NLQ8X1700250",
+        "NLQ8X1700237",
+        "NLQ8X1700214",
+        "NLQ8X1700151",
+        "NLQ8X1700139"
+      ],
+      "trackCount": 7
+    },
+    {
+      "provider": "tidal",
+      "providerId": "40775426",
+      "title": "Teach Me",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2015-02-06",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886445082524",
+      "isrcs": [
+        "NLE801400559",
+        "NLE801400535",
+        "NLE801400602"
+      ],
+      "trackCount": 3
+    },
+    {
+      "provider": "tidal",
+      "providerId": "427324125",
+      "title": "Grace Note (Continued)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2025-05-02",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617393343118",
+      "isrcs": [
+        "NLQ8X1700297",
+        "NLQ8X1700298",
+        "NLQ8X1700299",
+        "NLQ8X1700300"
+      ],
+      "trackCount": 4
+    },
+    {
+      "provider": "tidal",
+      "providerId": "433185281",
+      "title": "Grace Note (Continued) (Extended)",
+      "version": "Extended",
+      "providerUrl": null,
+      "releaseDate": "2025-05-02",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3617394922947",
+      "isrcs": [
+        "NLQ8X1700304",
+        "NLQ8X1700297",
+        "NLQ8X1700305",
+        "NLQ8X1700298",
+        "NLQ8X1700306",
+        "NLQ8X1700299",
+        "NLQ8X1700307",
+        "NLQ8X1700300"
+      ],
+      "trackCount": 8
+    },
+    {
+      "provider": "tidal",
+      "providerId": "455743087",
+      "title": "Wahejo",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2025-09-26",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3618020315355",
+      "isrcs": [
+        "NLQ8X1700347"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "467627208",
+      "title": "900 Miles",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2025-11-28",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3618022699286",
+      "isrcs": [
+        "NLQ8X1700361"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "498446503",
+      "title": "Playing With Fire",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2026-03-06",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3618027703414",
+      "isrcs": [
+        "NLQ8X1700382"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "511738658",
+      "title": "I Love Life (feat. RANI)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2026-05-01",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 0,
+      "upc": "3618029738575",
+      "isrcs": [
+        "NLQ8X1700383"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "55046646",
+      "title": "Uitzicht",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2013-03-29",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "4050486096833",
+      "isrcs": [
+        "DEZ651317140",
+        "DEZ651317141",
+        "DEZ651317142",
+        "DEZ651317143"
+      ],
+      "trackCount": 4
+    },
+    {
+      "provider": "tidal",
+      "providerId": "57231699",
+      "title": "Games (feat. Marie Plassard)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2016-02-05",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886445745085",
+      "isrcs": [
+        "NLE801600002",
+        "NLE801600003",
+        "NLE801600004"
+      ],
+      "trackCount": 3
+    },
+    {
+      "provider": "tidal",
+      "providerId": "57379621",
+      "title": "Ballade",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2016-06-10",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886445753219",
+      "isrcs": [
+        "NLE801600104",
+        "NLE801600105"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "61799966",
+      "title": "Living (feat. Alex Clare)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2016-07-15",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886445961409",
+      "isrcs": [
+        "NLE801600355"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "63938656",
+      "title": "Dreamreacher (feat. Dumang)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2016-08-26",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886446065250",
+      "isrcs": [
+        "NLE801600469"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "67222460",
+      "title": "Living (Remixes) (feat. Alex Clare)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2016-12-02",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886446238883",
+      "isrcs": [
+        "NLE801600747",
+        "NLE801600746",
+        "NLE801600556"
+      ],
+      "trackCount": 3
+    },
+    {
+      "provider": "tidal",
+      "providerId": "68459773",
+      "title": "Living (feat. Alex Clare) (Dante Klein Remix)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2016-12-23",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886446303314",
+      "isrcs": [
+        "NLE801600821"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "69637552",
+      "title": "Baby",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2017-01-27",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886446315331",
+      "isrcs": [
+        "NLE801600842"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "74015560",
+      "title": "Don't Want You Back (feat. Kiesza)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2017-06-02",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "886446503448",
+      "isrcs": [
+        "NLE801700189"
+      ],
+      "trackCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "77519176",
+      "title": "Don't Want You Back (Remixes) (feat. Kiesza)",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2017-08-25",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "886446692708",
+      "isrcs": [
+        "NLE801700331",
+        "NLE801700329",
+        "NLE801700332"
+      ],
+      "trackCount": 3
+    },
+    {
+      "provider": "tidal",
+      "providerId": "89220076",
+      "title": "Do Your Thing / Lion",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2018-06-08",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "886447108321",
+      "isrcs": [
+        "NLE801800183",
+        "NLE801800184"
+      ],
+      "trackCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "95678942",
+      "title": "Partystarter",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2018-10-12",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "193483014456",
+      "isrcs": [
+        "NLE801800427"
+      ],
+      "trackCount": 1
+    }
+  ]
+}
