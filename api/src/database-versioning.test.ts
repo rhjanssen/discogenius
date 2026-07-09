@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 34;
+const CURRENT_SCHEMA_VERSION = 35;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -132,8 +132,10 @@ test("provider evidence schema is provider-agnostic and match edges target Music
     "release_mbid",
     "track_mbid",
     "recording_mbid",
+    "type",
     "upc",
     "isrc",
+    "volume_count",
     "provider_album_id",
     "provider_url",
     "asset_id",

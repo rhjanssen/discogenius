@@ -22,7 +22,7 @@
     "providerTitle": "Learn To Lose (feat. Alex Clare) (Remixes)",
     "status": "probable",
     "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.96,
+    "confidence": 0.99,
     "releaseGroupMbid": "06e3a8ff-abc5-4a51-b2e3-44a956056aa4",
     "releaseMbid": "933e8118-f897-4507-b960-c126a74e8901"
   },
@@ -139,7 +139,7 @@
     "providerTitle": "Temptation (Superlover Remix)",
     "status": "verified",
     "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.94,
+    "confidence": 0.99,
     "releaseGroupMbid": "a80f8720-1891-40c5-8cab-77a3f2ae2766",
     "releaseMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
   },
@@ -148,7 +148,7 @@
     "providerTitle": "Temptation (Castelle Nighttime Remix)",
     "status": "verified",
     "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.94,
+    "confidence": 0.99,
     "releaseGroupMbid": "a80f8720-1891-40c5-8cab-77a3f2ae2766",
     "releaseMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
   },
@@ -184,7 +184,7 @@
     "providerTitle": "Temptation (Kronan Remix)",
     "status": "probable",
     "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.9,
+    "confidence": 0.97,
     "releaseGroupMbid": "a80f8720-1891-40c5-8cab-77a3f2ae2766",
     "releaseMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
   },
@@ -274,7 +274,7 @@
     "providerTitle": "One Day (Vandaag) (Oliver $ & Matthew K Remix)",
     "status": "verified",
     "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.94,
+    "confidence": 0.99,
     "releaseGroupMbid": "9aad95d9-0674-433b-ab50-2229c93d32b2",
     "releaseMbid": "1bdcf41c-63d1-43be-a69f-2836a9a49213"
   },
@@ -292,7 +292,7 @@
     "providerTitle": "Praise Break (Big Top's Next Generation Remixes)",
     "status": "probable",
     "method": "musicbrainz-recording-isrc",
-    "confidence": 0.97,
+    "confidence": 0.99,
     "releaseGroupMbid": "296a7ac9-e15e-438c-ac57-37724f5934e2",
     "releaseMbid": "dc210f51-197f-4964-886c-52580a90be1f"
   },
@@ -481,7 +481,7 @@
     "providerTitle": "Living (Remixes) (feat. Alex Clare)",
     "status": "probable",
     "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.96,
+    "confidence": 0.87,
     "releaseGroupMbid": "d2c7be4f-f18f-4275-b41e-15b82a8c7aa1",
     "releaseMbid": "aaa2d1a7-8f61-4998-ab95-7c6c4fa6a1cb"
   },

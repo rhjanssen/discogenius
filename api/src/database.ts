@@ -330,7 +330,7 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-const BASE_SCHEMA_VERSION = 34;
+const BASE_SCHEMA_VERSION = 35;
 
 // ====================================================================
 // SCHEMA
@@ -823,9 +823,11 @@ function ensureMusicBrainzProviderSchema(): void {
       version TEXT,
       explicit BOOLEAN,
       quality TEXT,
+      type TEXT,                          -- album offer type: album/single/ep/compilation/...
       upc TEXT,
       isrc TEXT,
       duration INT,
+      volume_count INTEGER,               -- album offer medium/disc count
       release_date TEXT,
       availability TEXT,
       library_slot TEXT NOT NULL DEFAULT 'stereo',

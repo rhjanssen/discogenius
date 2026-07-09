@@ -1,0 +1,1361 @@
+[
+  {
+    "providerId": "11198920",
+    "providerTitle": "Viva La Vida or Death and All His Friends",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a1084754-8bb5-3ebc-bbd2-6a27d48e798a",
+    "releaseMbid": "fbfb5993-e66a-42f3-becc-07f9983c0c4e"
+  },
+  {
+    "providerId": "118826839",
+    "providerTitle": "Talk",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "2cc618bc-da20-38d5-bb0b-838b8ef829d0",
+    "releaseMbid": "15e0e484-0061-41d6-ac8d-cec92e9063fb"
+  },
+  {
+    "providerId": "118827048",
+    "providerTitle": "Every Teardrop Is a Waterfall",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "9c95d32c-7679-4c08-b2bd-a337c46a80ca",
+    "releaseMbid": "8d084725-e81b-4496-99fc-b1438c7227b9"
+  },
+  {
+    "providerId": "120267",
+    "providerTitle": "Parachutes",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "1dc4c347-a1db-32aa-b14f-bc9cc507b843",
+    "releaseMbid": "c1c48ede-5a55-419e-b193-886e96563da5"
+  },
+  {
+    "providerId": "120739317",
+    "providerTitle": "Orphans / Arabesque",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "ad49298b-6062-4286-b1f9-2145dceff658",
+    "releaseMbid": "45e240c2-ee0e-4a7d-8126-5506ce50ad3a"
+  },
+  {
+    "providerId": "120739339",
+    "providerTitle": "Orphans / Arabesque",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "ad49298b-6062-4286-b1f9-2145dceff658",
+    "releaseMbid": "92eb1e06-094b-4a4f-98d4-0515f6e12be7"
+  },
+  {
+    "providerId": "121261095",
+    "providerTitle": "Everyday Life",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "1b4af054-277d-4ba8-a159-84f913af8e59",
+    "releaseMbid": "4e316162-6e5f-4766-b220-26f59cb06451"
+  },
+  {
+    "providerId": "122358623",
+    "providerTitle": "Orphans (Muzi Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8d5fb30f-1167-4c17-82c9-540dcd8ec8d4",
+    "releaseMbid": "69e023f6-81d9-41a9-8799-5d005cf34d04"
+  },
+  {
+    "providerId": "122393088",
+    "providerTitle": "Champion Of The World",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "3a0e128c-f89c-477e-ba75-98823ffbf79d",
+    "releaseMbid": "e5e4d85b-34cb-42e7-bd35-ba43f7126a2e"
+  },
+  {
+    "providerId": "122625817",
+    "providerTitle": "Daddy",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "2fe7bbf9-7d4e-4ad8-90d7-d8163b444a7f",
+    "releaseMbid": "ef67c129-4a91-4b54-af73-71b526a31fcc"
+  },
+  {
+    "providerId": "122846721",
+    "providerTitle": "Everyday Life",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "e45c32be-8e8b-48b5-8bbb-60f1a3115532",
+    "releaseMbid": "76d2b045-8812-4b16-9f5f-db29b6178940"
+  },
+  {
+    "providerId": "122999084",
+    "providerTitle": "Everyday Life",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "e45c32be-8e8b-48b5-8bbb-60f1a3115532",
+    "releaseMbid": "4dab2893-ffc8-42e2-8d57-6975e4935801"
+  },
+  {
+    "providerId": "125751188",
+    "providerTitle": "Everyday Life",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "e45c32be-8e8b-48b5-8bbb-60f1a3115532",
+    "releaseMbid": "76d2b045-8812-4b16-9f5f-db29b6178940"
+  },
+  {
+    "providerId": "125753178",
+    "providerTitle": "Everyday Life",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "e45c32be-8e8b-48b5-8bbb-60f1a3115532",
+    "releaseMbid": "4dab2893-ffc8-42e2-8d57-6975e4935801"
+  },
+  {
+    "providerId": "128526",
+    "providerTitle": "The Blue Room",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.98,
+    "releaseGroupMbid": "859bac1f-fbd1-333e-af66-f1423af39a87",
+    "releaseMbid": "3f3cc644-b064-3f26-8fda-10e44e692f93"
+  },
+  {
+    "providerId": "128546",
+    "providerTitle": "X&Y",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "c50b180a-12c9-3153-8ba5-eac6a6537d6f",
+    "releaseMbid": "68781b42-c14c-4631-af34-f5682a5b72cc"
+  },
+  {
+    "providerId": "128601",
+    "providerTitle": "A Rush of Blood to the Head",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "120c786d-a3b2-3c19-b4ff-2b7b3b4435bf",
+    "releaseMbid": "4b7f7429-68d7-43d4-ad2c-ade801014739"
+  },
+  {
+    "providerId": "129169",
+    "providerTitle": "Live 2003",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "470a94fd-1da8-3cb3-bc96-1f3a82cc3579",
+    "releaseMbid": "2038bd39-9d5c-4db8-b743-cd4ea2ccc777"
+  },
+  {
+    "providerId": "13338998",
+    "providerTitle": "Mylo Xyloto",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "61b7b6cd-86a6-4728-9478-b58c93bca8fd",
+    "releaseMbid": "c96948f8-d7e6-4d03-9a05-76329e6a5463"
+  },
+  {
+    "providerId": "133904030",
+    "providerTitle": "Champion Of The World (Live at NPR's Tiny Desk)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "1564b980-a40f-4fa3-af95-52cecbdc6836",
+    "releaseMbid": "9a9893da-3fd5-4e8b-9d40-e77812951023"
+  },
+  {
+    "providerId": "1340751",
+    "providerTitle": "Talk",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "2cc618bc-da20-38d5-bb0b-838b8ef829d0",
+    "releaseMbid": "15e0e484-0061-41d6-ac8d-cec92e9063fb"
+  },
+  {
+    "providerId": "138851",
+    "providerTitle": "Speed of Sound",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "c08a8841-a4f5-3737-94af-a21b6403e661",
+    "releaseMbid": "7b7f5351-a840-4662-9935-c57ff813e6be"
+  },
+  {
+    "providerId": "1404114",
+    "providerTitle": "Speed of Sound",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8140cdd7-996e-48ca-baf0-7c9bfeb344eb",
+    "releaseMbid": "3ca993a0-a904-40e9-bc9a-e9c3adb1fe7c"
+  },
+  {
+    "providerId": "1442658",
+    "providerTitle": "The Scientist",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "941f4fc8-6eb2-346f-8527-52f634944de7",
+    "releaseMbid": "5846a788-c365-4ef8-aca7-f4094d7082ed"
+  },
+  {
+    "providerId": "1442812",
+    "providerTitle": "Clocks",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "6cbada78-bb2d-3f91-914c-caa11f8879cb",
+    "releaseMbid": "7fa195c1-65bc-4f97-9f9b-113de6b016a7"
+  },
+  {
+    "providerId": "1442815",
+    "providerTitle": "Clocks",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "6cbada78-bb2d-3f91-914c-caa11f8879cb",
+    "releaseMbid": "cc0d029f-bd4a-4cc1-835c-39ee01173d79"
+  },
+  {
+    "providerId": "1492786",
+    "providerTitle": "Yellow",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8049edc0-0bf7-319c-a9b3-ae9922fc0160",
+    "releaseMbid": "157c3d31-3977-45fb-a70f-1b4eed779345"
+  },
+  {
+    "providerId": "1527774",
+    "providerTitle": "Fix You",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "26b88bae-5be9-45ea-bd82-4af766fdad21",
+    "releaseMbid": "b8b318cd-9a5f-412e-af79-0b7af7854ade"
+  },
+  {
+    "providerId": "154084",
+    "providerTitle": "In My Place",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "b59aa7e0-2571-37a5-82ac-debe6abc9b9b",
+    "releaseMbid": "9941e3d0-2e63-473a-b896-704c50b65eb9"
+  },
+  {
+    "providerId": "15729535",
+    "providerTitle": "Princess of China",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "fdd6aa86-9b2b-48b6-8e9d-70d89b78db53",
+    "releaseMbid": "06213471-2803-4c5b-919a-96e2a6d15cad"
+  },
+  {
+    "providerId": "164679",
+    "providerTitle": "Murder",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "1ed86191-279f-431e-b535-86998fae6869",
+    "releaseMbid": "34144716-3d33-40f2-97db-f865929d217c"
+  },
+  {
+    "providerId": "165377698",
+    "providerTitle": "Flags",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "75a7e18b-ecd4-46e4-8102-fbbbf7e1febc",
+    "releaseMbid": "f0e7aca7-74f3-4bc8-aa36-df1b69701520"
+  },
+  {
+    "providerId": "1717932",
+    "providerTitle": "Violet Hill",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "98baa12c-0430-37f8-b4c7-98fc2c9cb32f",
+    "releaseMbid": "ece649e8-9eaa-4a02-a068-cd933d6d6586"
+  },
+  {
+    "providerId": "18056405",
+    "providerTitle": "Live 2012",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "2f215175-266c-4945-b622-8c4f8cb0d4fb",
+    "releaseMbid": "c182470c-7bd3-4fc0-a97b-8c267450915c"
+  },
+  {
+    "providerId": "182957811",
+    "providerTitle": "Higher Power",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "7348d949-285f-4dff-a19c-3c4ec14d58d0",
+    "releaseMbid": "19829ea7-8314-4512-b10b-04c4d89aac7d"
+  },
+  {
+    "providerId": "184191673",
+    "providerTitle": "Higher Power (ZHU Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8aee04b8-1c35-4b60-bf3a-646c599a8ef7",
+    "releaseMbid": "2678b21c-862b-438b-a963-d801e6d1734c"
+  },
+  {
+    "providerId": "185035623",
+    "providerTitle": "Higher Power (Tiësto Remix)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "656aeabe-204f-4a69-b7e0-29e328546699",
+    "releaseMbid": "fb6e256b-5a3d-46e4-8e49-7fc8337482ca"
+  },
+  {
+    "providerId": "186801159",
+    "providerTitle": "Higher Power (Acoustic Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "01134202-7978-441c-a67b-f5f30c143204",
+    "releaseMbid": "f3840314-aeed-4a39-8338-68ca4cf47b33"
+  },
+  {
+    "providerId": "189976261",
+    "providerTitle": "Higher Power (Alyx Ander Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "4e367b85-cacf-4416-a223-975faaad888f",
+    "releaseMbid": "bc6d3843-33d9-44da-8a0a-feae06602a3f"
+  },
+  {
+    "providerId": "190918351",
+    "providerTitle": "Coloratura",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "a73c67b8-6967-4620-b8a0-4aaf37c22c32",
+    "releaseMbid": "8fa32ada-d8ab-42c2-a126-588b0c687845"
+  },
+  {
+    "providerId": "193176347",
+    "providerTitle": "LeftRightLeftRightLeft (Live)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "64ad146f-304f-3353-9fc2-d21833a830ff",
+    "releaseMbid": "8b000d86-bbd0-44eb-a31e-95a53f957b69"
+  },
+  {
+    "providerId": "198016100",
+    "providerTitle": "My Universe",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "6270c4e1-62c7-4502-bbf3-5842f1329d86",
+    "releaseMbid": "df235189-7c71-4c08-a066-925ec367ec3d"
+  },
+  {
+    "providerId": "198203996",
+    "providerTitle": "My Universe",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "6270c4e1-62c7-4502-bbf3-5842f1329d86",
+    "releaseMbid": "fe2e516b-c80f-4bf2-88dd-c97cabb38d54"
+  },
+  {
+    "providerId": "198252106",
+    "providerTitle": "My Universe",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "6270c4e1-62c7-4502-bbf3-5842f1329d86",
+    "releaseMbid": "e7f6990d-bcd2-4d5f-bdb2-e2dd5434e714"
+  },
+  {
+    "providerId": "200813772",
+    "providerTitle": "Music Of The Spheres",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "c169f440-90bf-4a0b-aa6a-c83072bd7eed",
+    "releaseMbid": "b02b4782-76f9-4d6b-983a-b24cfec63ba3"
+  },
+  {
+    "providerId": "201224681",
+    "providerTitle": "Music Of The Spheres",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "c169f440-90bf-4a0b-aa6a-c83072bd7eed",
+    "releaseMbid": "033db61a-cb66-43d9-ac9b-98a7bebc89ba"
+  },
+  {
+    "providerId": "201424252",
+    "providerTitle": "My Universe (SUGA's Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "3c6d6ab2-8178-4460-94e0-668cfdaef29d",
+    "releaseMbid": "1e330024-7952-43ff-a315-c1de68998a9d"
+  },
+  {
+    "providerId": "201464844",
+    "providerTitle": "Everyday Life",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "e45c32be-8e8b-48b5-8bbb-60f1a3115532",
+    "releaseMbid": "4dab2893-ffc8-42e2-8d57-6975e4935801"
+  },
+  {
+    "providerId": "201464861",
+    "providerTitle": "Everyday Life",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "e45c32be-8e8b-48b5-8bbb-60f1a3115532",
+    "releaseMbid": "76d2b045-8812-4b16-9f5f-db29b6178940"
+  },
+  {
+    "providerId": "203566723",
+    "providerTitle": "My Universe (Galantis Remix)",
+    "status": "ambiguous",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "5763e68c-515d-42ce-8ae9-10256e239dfd",
+    "releaseMbid": "8572b609-a664-4ac1-b06b-352c635e0afc"
+  },
+  {
+    "providerId": "204831537",
+    "providerTitle": "My Universe (David Guetta Remix)",
+    "status": "ambiguous",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "771b9b39-fef7-4df9-a904-8cbc54f7358a",
+    "releaseMbid": "60fd60fa-be9c-4c40-b3d0-067f3cfce721"
+  },
+  {
+    "providerId": "2067559",
+    "providerTitle": "Lost!",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "d5e18344-6d57-38a9-931f-f55af0995177",
+    "releaseMbid": "7b52b8f8-8ee2-4084-9e17-86a25793e45e"
+  },
+  {
+    "providerId": "2128827",
+    "providerTitle": "Viva La Vida (Prospekt's March Edition)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a1084754-8bb5-3ebc-bbd2-6a27d48e798a",
+    "releaseMbid": "d68beb32-0e9d-4c64-ba90-1948494a80f4"
+  },
+  {
+    "providerId": "2128846",
+    "providerTitle": "Prospekt's March",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "c11617f3-d81f-3866-acdd-6b8dc2d63f44",
+    "releaseMbid": "e3ef4654-fc04-4f3c-b986-2947c6ad9f25"
+  },
+  {
+    "providerId": "215323922",
+    "providerTitle": "Let Somebody Go",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "c2ed9ec5-394d-4aa9-818e-5d31f99a369f",
+    "releaseMbid": "ad84391e-3f9a-4fbe-8409-0cfcc0954077"
+  },
+  {
+    "providerId": "218158792",
+    "providerTitle": "Let Somebody Go (Single Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "c2ed9ec5-394d-4aa9-818e-5d31f99a369f",
+    "releaseMbid": "0e9cdb7e-082d-411e-a457-7934fc99ae45"
+  },
+  {
+    "providerId": "219118835",
+    "providerTitle": "Let Somebody Go (Kygo Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "dd26b2b6-9d72-40af-98d5-5987772a02a6",
+    "releaseMbid": "9453bc4a-890e-444b-8993-7181ab2aa739"
+  },
+  {
+    "providerId": "220133260",
+    "providerTitle": "Let Somebody Go (Piano Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "d64d28f1-6da8-4a19-8a3f-9fc0312de3f2",
+    "releaseMbid": "1dae8a4c-78f5-4663-a4ef-0f0561bb56eb"
+  },
+  {
+    "providerId": "22302843",
+    "providerTitle": "Atlas (From “The Hunger Games: Catching Fire” Soundtrack)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "cccf3b43-3a88-4083-b8b9-e271df6b4f61",
+    "releaseMbid": "262de19d-4ed6-4f6f-aa7a-61dc50a34bce"
+  },
+  {
+    "providerId": "224282053",
+    "providerTitle": "Let Somebody Go (Ofenbach Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "714fcb33-6ac0-45e9-9c9c-05cf72210add",
+    "releaseMbid": "303f8c01-4703-4486-9a1d-ecc4bde90a24"
+  },
+  {
+    "providerId": "227818957",
+    "providerTitle": "Adventure of a Lifetime (Yotto Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "7b695f06-13df-47c7-803c-f112cdb7bd31",
+    "releaseMbid": "cae0b141-47ff-45c8-affb-7af39eb20ff1"
+  },
+  {
+    "providerId": "2282471",
+    "providerTitle": "Life in Technicolor ii",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "185fa212-fc02-3e60-953c-769d8eedab2f",
+    "releaseMbid": "961c4af2-c362-4454-a8b4-1834eca2574c"
+  },
+  {
+    "providerId": "235446795",
+    "providerTitle": "Biutyful",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "72d769ef-565a-4efb-aef8-e8da59256b12",
+    "releaseMbid": "0e5145e8-ba51-4afd-a455-e368bb35d7cc"
+  },
+  {
+    "providerId": "243175232",
+    "providerTitle": "A Rush of Blood to the Head",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "120c786d-a3b2-3c19-b4ff-2b7b3b4435bf",
+    "releaseMbid": "5b59d66b-8902-4350-b2e3-324037ef4cb0"
+  },
+  {
+    "providerId": "2587418",
+    "providerTitle": "Brothers & Sisters",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "2cbd8f25-00e0-387b-bc14-d387d6146e39",
+    "releaseMbid": "4ff74938-9f00-3747-bc54-0399090d2db8"
+  },
+  {
+    "providerId": "262520609",
+    "providerTitle": "Christmas Lights",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "2d5d4717-0503-4d3c-8a11-57130387862f",
+    "releaseMbid": "f58c85ae-04d5-4495-835e-857bf79b0924"
+  },
+  {
+    "providerId": "26735951",
+    "providerTitle": "Magic",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "2c75b783-e2ec-462f-9841-85bc3cd0bafa",
+    "releaseMbid": "64faf9c1-193d-4df7-b07c-6280a516e89a"
+  },
+  {
+    "providerId": "2874436",
+    "providerTitle": "Shiver",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "b44c2e2b-b350-33db-a88f-ab91e2475529",
+    "releaseMbid": "6c2cdbe9-cd3f-4aca-99d3-b6b28cd5e039"
+  },
+  {
+    "providerId": "2875987",
+    "providerTitle": "Trouble",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "6d6fab8d-2657-3f50-b87f-0e6a62118b10",
+    "releaseMbid": "03317aa5-1ddc-40f6-84a5-2a56b9b48838"
+  },
+  {
+    "providerId": "29377021",
+    "providerTitle": "Midnight",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "5c329da4-a37a-4d73-afae-0cf1269c9fc1",
+    "releaseMbid": "de97d73c-c3a3-492d-85bf-9f6cc48b6ed5"
+  },
+  {
+    "providerId": "29449312",
+    "providerTitle": "A Sky Full of Stars",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "aa4f1215-af04-44c6-8fb9-6e42c68a09f7",
+    "releaseMbid": "fad5ea7c-449f-4a26-8ab7-fb21c8e57630"
+  },
+  {
+    "providerId": "31888963",
+    "providerTitle": "A Sky Full of Stars",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "aa4f1215-af04-44c6-8fb9-6e42c68a09f7",
+    "releaseMbid": "24454dba-2bcc-479f-bb65-afde78e9845c"
+  },
+  {
+    "providerId": "3226827",
+    "providerTitle": "Strawberry Swing",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "63706893-381c-43e4-ac25-c183e3f1b037",
+    "releaseMbid": "5b20164e-5186-49c3-ac8a-e1ce6839890b"
+  },
+  {
+    "providerId": "3254008",
+    "providerTitle": "Don't Panic",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "7f916a6f-9480-3a0f-b9e1-5682e15aba24",
+    "releaseMbid": "a98fa8f9-de49-44a9-b6a1-ebf092c3e189"
+  },
+  {
+    "providerId": "33000627",
+    "providerTitle": "True Love",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "e680b8ae-720d-4360-a3c9-c4368738eac3",
+    "releaseMbid": "a9499d56-22ea-4cf0-b1ae-26e20f27bea5"
+  },
+  {
+    "providerId": "34444387",
+    "providerTitle": "Every Teardrop Is a Waterfall",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "9c95d32c-7679-4c08-b2bd-a337c46a80ca",
+    "releaseMbid": "e67d7559-34b9-4619-9f85-36d602246a8a"
+  },
+  {
+    "providerId": "35013183",
+    "providerTitle": "Ghost Stories",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "9c5aa9d2-068b-4626-b352-ae6f4f4e0b15",
+    "releaseMbid": "083305cf-1772-4db5-b10a-fb363c7e600b"
+  },
+  {
+    "providerId": "36311228",
+    "providerTitle": "Ink (Live at Le Casino De Paris, Paris)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "40a4293e-88b6-4284-b251-d3aad454f8ab",
+    "releaseMbid": "beac719e-0c18-46e5-bccd-fc193776d8e9"
+  },
+  {
+    "providerId": "370086545",
+    "providerTitle": "feelslikeimfallinginlove (Single Version)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "22e406d4-6ef5-4903-beae-da3e3cce1f0c",
+    "releaseMbid": "8bd11fc5-afde-4d17-9a29-f535c51fc95f"
+  },
+  {
+    "providerId": "370281530",
+    "providerTitle": "feelslikeimfallinginlove",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "22e406d4-6ef5-4903-beae-da3e3cce1f0c",
+    "releaseMbid": "8bd11fc5-afde-4d17-9a29-f535c51fc95f"
+  },
+  {
+    "providerId": "377614775",
+    "providerTitle": "feelslikeimfallinginlove (Zerb x Coldplay)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "ac03ecda-df8c-4f68-80c8-0d0ff5a9b998",
+    "releaseMbid": "860c7455-51dc-4588-a46a-e6a60d9ebfa9"
+  },
+  {
+    "providerId": "37968154",
+    "providerTitle": "Ghost Stories Live 2014",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "233bd660-b3a0-478e-a60c-056e2aeeddd7",
+    "releaseMbid": "81baf070-c2dd-4e28-b2b1-69ff5f9fef1d"
+  },
+  {
+    "providerId": "382305921",
+    "providerTitle": "WE PRAY (Single Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "429baa3b-99d9-44b0-aeed-7a00aeb6dfc2",
+    "releaseMbid": "21163437-ca79-4db1-8d21-ccb12b0c0d7d"
+  },
+  {
+    "providerId": "38269214",
+    "providerTitle": "A Sky Full of Stars (Hardwell Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "aa4f1215-af04-44c6-8fb9-6e42c68a09f7",
+    "releaseMbid": "223a5eda-dee5-43ed-bf25-4d6b1658ac33"
+  },
+  {
+    "providerId": "382959678",
+    "providerTitle": "WE PRAY (TINI Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "5350b9c8-1849-4bd3-ab9c-1c5b3248111d",
+    "releaseMbid": "895fb31c-4f7b-4553-9e93-f8e4e8c2f172"
+  },
+  {
+    "providerId": "382959693",
+    "providerTitle": "WE PRAY (Elyanna Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "bed68e7f-3c42-4df9-81ce-36e18d717c20",
+    "releaseMbid": "1d59c742-db26-4a8a-8e28-fe6841bb3504"
+  },
+  {
+    "providerId": "38415153",
+    "providerTitle": "True Love (Davide Rossi Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "74cb452e-4998-4861-95ad-78540d952475",
+    "releaseMbid": "5e236710-f1c2-4235-ba71-7026a6a65601"
+  },
+  {
+    "providerId": "390469439",
+    "providerTitle": "Moon Music",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "3988c875-b35f-4c3e-b143-ccb484d45347",
+    "releaseMbid": "1f67b59d-811c-4680-8e75-fa37f2a96f1a"
+  },
+  {
+    "providerId": "391126342",
+    "providerTitle": "Moon Music (Full Moon Edition)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "3988c875-b35f-4c3e-b143-ccb484d45347",
+    "releaseMbid": "663f60b0-b1d8-49a5-bc13-cc9808f6635c"
+  },
+  {
+    "providerId": "391196846",
+    "providerTitle": "WE PRAY (Single Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-group-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "429baa3b-99d9-44b0-aeed-7a00aeb6dfc2",
+    "releaseMbid": null
+  },
+  {
+    "providerId": "391196848",
+    "providerTitle": "feelslikeimfallinginlove (Single Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-group-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "22e406d4-6ef5-4903-beae-da3e3cce1f0c",
+    "releaseMbid": "8bd11fc5-afde-4d17-9a29-f535c51fc95f"
+  },
+  {
+    "providerId": "393684563",
+    "providerTitle": "God Put a Smile upon Your Face",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "179fcc9d-1e94-3060-a438-2fdb8fefb748",
+    "releaseMbid": "d6120747-7635-47a4-897a-65c2952bc38d"
+  },
+  {
+    "providerId": "393684566",
+    "providerTitle": "The Hardest Part",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "b1f71149-a860-4c02-9b5e-b55a781a0b82",
+    "releaseMbid": "502358dd-1033-4607-816c-4033a7423a44"
+  },
+  {
+    "providerId": "393688808",
+    "providerTitle": "Viva La Vida",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "846eecd7-c7fd-38fd-8843-5e6d812208f9",
+    "releaseMbid": "31d77f68-5479-4e69-b64e-6b7d3c277a20"
+  },
+  {
+    "providerId": "393784316",
+    "providerTitle": "Hurts Like Heaven",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "dbf88f06-9b73-4313-a175-7c6f470485b7",
+    "releaseMbid": "4b3f04ea-48c6-482b-9f1b-4e8c22502a9b"
+  },
+  {
+    "providerId": "394366814",
+    "providerTitle": "Charlie Brown",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "4d3d0e67-fb38-4b4b-8242-9ec6e1148b2a",
+    "releaseMbid": "7643d129-750f-481f-bbb1-6d94374ca20a"
+  },
+  {
+    "providerId": "398213752",
+    "providerTitle": "A Spell a Rebel Yell",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "61122019-23b9-4429-a63d-45eb052c7b08",
+    "releaseMbid": "e73734b0-9729-4abb-8c8c-86fc535ad8bf"
+  },
+  {
+    "providerId": "400520907",
+    "providerTitle": "ALL MY LOVE",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "26e5d962-75f7-4564-a1f1-1395195e0c16",
+    "releaseMbid": "db43a483-ad95-40bb-aff7-cc60ed75f8af"
+  },
+  {
+    "providerId": "400889903",
+    "providerTitle": "Moon Music (Christmas Moon Edition)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "3988c875-b35f-4c3e-b143-ccb484d45347",
+    "releaseMbid": "fad76017-ccd6-4317-af0e-4b9bdbedd551"
+  },
+  {
+    "providerId": "401824899",
+    "providerTitle": "Clocks (Royksopp Trembling Heart Mix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "d2a5bef3-04d2-4269-9448-d2f6a821fa17",
+    "releaseMbid": "fa03f013-efcb-4e20-8a72-bf50b490ee27"
+  },
+  {
+    "providerId": "415940135",
+    "providerTitle": "WE PRAY (Jasleen Royal Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "90e746de-799d-486c-a50f-eeba8ec13800",
+    "releaseMbid": "c8c90695-befa-41d9-82f6-60e0447c3142"
+  },
+  {
+    "providerId": "424931088",
+    "providerTitle": "Charlie Brown (Dave Audé Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "4d3d0e67-fb38-4b4b-8242-9ec6e1148b2a",
+    "releaseMbid": "63666463-c6bd-4d69-ad44-fc886b7c1428"
+  },
+  {
+    "providerId": "424937075",
+    "providerTitle": "Midnight (Kygo Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "5c329da4-a37a-4d73-afae-0cf1269c9fc1",
+    "releaseMbid": "d5ba8797-1b6c-4757-bbf8-732056453416"
+  },
+  {
+    "providerId": "424937505",
+    "providerTitle": "A Sky Full of Stars (Robin Schulz Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "aa4f1215-af04-44c6-8fb9-6e42c68a09f7",
+    "releaseMbid": "788ee95c-8b52-428f-9bd1-3868969708fa"
+  },
+  {
+    "providerId": "424938995",
+    "providerTitle": "Midnight (Remixes)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "5c329da4-a37a-4d73-afae-0cf1269c9fc1",
+    "releaseMbid": "6f09115d-3bb2-4025-a68c-49e21304f90f"
+  },
+  {
+    "providerId": "424946761",
+    "providerTitle": "Princess of China (Andre Sobota Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "fdd6aa86-9b2b-48b6-8e9d-70d89b78db53",
+    "releaseMbid": "f8edb6e7-4a6a-4890-b55c-c59b05a59af4"
+  },
+  {
+    "providerId": "428639801",
+    "providerTitle": "WE PRAY (TWICE Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "c44b4ccf-f93e-4870-92e4-d6db1d192147",
+    "releaseMbid": "ab5ddcc5-ee72-4e74-8fe4-4f483fc54895"
+  },
+  {
+    "providerId": "455042408",
+    "providerTitle": "ALL MY LOVE",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "26e5d962-75f7-4564-a1f1-1395195e0c16",
+    "releaseMbid": "7f6fe0e4-c3bf-4154-a7da-9c18e7a9e507"
+  },
+  {
+    "providerId": "5077876",
+    "providerTitle": "Christmas Lights",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "2d5d4717-0503-4d3c-8a11-57130387862f",
+    "releaseMbid": "60186f6c-bc07-482c-bebb-546f0f8db711"
+  },
+  {
+    "providerId": "53607999",
+    "providerTitle": "Adventure of a Lifetime",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "1da5937d-2938-4842-8171-7670ec7efa7a",
+    "releaseMbid": "121b26c8-8bca-4dc2-9ab7-d50e6ff80882"
+  },
+  {
+    "providerId": "53966986",
+    "providerTitle": "Adventure of a Lifetime",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "1da5937d-2938-4842-8171-7670ec7efa7a",
+    "releaseMbid": "7684058d-6430-4c2c-858e-4694138646c7"
+  },
+  {
+    "providerId": "54437901",
+    "providerTitle": "Everglow",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "edc6fd57-72e5-4bfa-a310-db8e2aeb0fa8",
+    "releaseMbid": "3a1ed52e-5df5-4f59-9fdf-c36e8fa9a8ea"
+  },
+  {
+    "providerId": "54728054",
+    "providerTitle": "A Head Full of Dreams",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "27da3ef8-f3b0-47bf-898d-9bdf4af7fc04",
+    "releaseMbid": "0d8af7c8-14b9-41e1-8542-0afbda09adc1"
+  },
+  {
+    "providerId": "56747277",
+    "providerTitle": "Adventure of a Lifetime (Matoma Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "1da5937d-2938-4842-8171-7670ec7efa7a",
+    "releaseMbid": "eb5ae72e-baa6-4f31-87ad-128f21da035a"
+  },
+  {
+    "providerId": "59315092",
+    "providerTitle": "Up&Up",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "27329da6-b5a4-456c-8deb-993c93e5470e",
+    "releaseMbid": "9f590424-aed8-4050-800e-3ce4aa4e38e5"
+  },
+  {
+    "providerId": "60365220",
+    "providerTitle": "Hymn for the Weekend (Seeb Remix)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "75886611-dc6d-43e4-ad1b-71579e2d437a",
+    "releaseMbid": "85c03937-95d5-4306-9780-725238e0c57c"
+  },
+  {
+    "providerId": "64772628",
+    "providerTitle": "Up&Up (Freedo Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8024c920-4fc8-4209-afd8-6e2b96c18ac9",
+    "releaseMbid": "73484380-ba2e-4fbc-90a4-656780a04e0d"
+  },
+  {
+    "providerId": "67044902",
+    "providerTitle": "Everglow",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "edc6fd57-72e5-4bfa-a310-db8e2aeb0fa8",
+    "releaseMbid": "d5c1f842-1eca-48c1-adbe-922b6983e370"
+  },
+  {
+    "providerId": "68641609",
+    "providerTitle": "Viva La Vida (Prospekt's March Edition)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a1084754-8bb5-3ebc-bbd2-6a27d48e798a",
+    "releaseMbid": "f01db8c7-f9b2-4c73-b55c-e50d41916344"
+  },
+  {
+    "providerId": "68641711",
+    "providerTitle": "Prospekt's March",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "c11617f3-d81f-3866-acdd-6b8dc2d63f44",
+    "releaseMbid": "d1868c85-3baf-4743-8746-f479a323cd04"
+  },
+  {
+    "providerId": "68641720",
+    "providerTitle": "Viva La Vida or Death and All His Friends",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a1084754-8bb5-3ebc-bbd2-6a27d48e798a",
+    "releaseMbid": "b9cdf4d2-c741-49b0-8d1a-93b5984a767a"
+  },
+  {
+    "providerId": "68641774",
+    "providerTitle": "A Rush of Blood to the Head",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "120c786d-a3b2-3c19-b4ff-2b7b3b4435bf",
+    "releaseMbid": "34947b29-2db8-4377-898b-dd2106ca0bbe"
+  },
+  {
+    "providerId": "68642199",
+    "providerTitle": "X&Y",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "c50b180a-12c9-3153-8ba5-eac6a6537d6f",
+    "releaseMbid": "e4c0fc1a-8c2d-4be2-8d69-9f787e210e32"
+  },
+  {
+    "providerId": "68642259",
+    "providerTitle": "Parachutes",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "1dc4c347-a1db-32aa-b14f-bc9cc507b843",
+    "releaseMbid": "12bcef19-a186-4f3a-b8e5-0b7676f04c4c"
+  },
+  {
+    "providerId": "68646630",
+    "providerTitle": "Prospekt's March",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "c11617f3-d81f-3866-acdd-6b8dc2d63f44",
+    "releaseMbid": "99f09891-fadb-4771-baa0-3305429a294d"
+  },
+  {
+    "providerId": "68646696",
+    "providerTitle": "Viva La Vida or Death and All His Friends",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a1084754-8bb5-3ebc-bbd2-6a27d48e798a",
+    "releaseMbid": "657a8ec1-4ff7-4b1f-86ef-92bcaede53ea"
+  },
+  {
+    "providerId": "68646764",
+    "providerTitle": "X&Y",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "c50b180a-12c9-3153-8ba5-eac6a6537d6f",
+    "releaseMbid": "83351c48-5b6f-4357-a433-8f8a81be24b0"
+  },
+  {
+    "providerId": "68646780",
+    "providerTitle": "Parachutes",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "1dc4c347-a1db-32aa-b14f-bc9cc507b843",
+    "releaseMbid": "c1b0fac7-e1db-485a-8367-5472b561f02b"
+  },
+  {
+    "providerId": "68649375",
+    "providerTitle": "A Head Full of Dreams",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "27da3ef8-f3b0-47bf-898d-9bdf4af7fc04",
+    "releaseMbid": "7d208ea6-d4f8-4dfb-8b6e-0e49c545de58"
+  },
+  {
+    "providerId": "68735637",
+    "providerTitle": "Ghost Stories",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "9c5aa9d2-068b-4626-b352-ae6f4f4e0b15",
+    "releaseMbid": "c0b87194-9708-44a6-a1f9-af853406a368"
+  },
+  {
+    "providerId": "70891624",
+    "providerTitle": "Hypnotised",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "f12f358e-7cde-4667-8a77-d142794455cf",
+    "releaseMbid": "d0b5d23d-751d-4796-a1c7-a2e8cd256269"
+  },
+  {
+    "providerId": "71006311",
+    "providerTitle": "Hypnotised",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "f12f358e-7cde-4667-8a77-d142794455cf",
+    "releaseMbid": "387d1046-0f75-47c9-a421-9d70b863afc3"
+  },
+  {
+    "providerId": "73104022",
+    "providerTitle": "Fix you (BSNO remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "01db576c-068f-42d8-851d-9a81f9c5935a",
+    "releaseMbid": "082f3096-1e72-459f-8ae0-0be8769a0444"
+  },
+  {
+    "providerId": "74847184",
+    "providerTitle": "Something Just Like This (Tokyo Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "02e03103-b488-44b9-8212-4476cb399db9",
+    "releaseMbid": "a2157cad-a3c0-4d02-ab79-bd5dcd4b2f4b"
+  },
+  {
+    "providerId": "75160399",
+    "providerTitle": "All I Can Think About Is You",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "d6e18d5a-a0b6-4064-9d85-0519abc87dd0",
+    "releaseMbid": "e561b36c-3ee8-4830-9419-a20f3c6e85d6"
+  },
+  {
+    "providerId": "76001843",
+    "providerTitle": "A L I E N S",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "7c1bb5f6-89e5-4ff2-8ce2-aa859e8b8fec",
+    "releaseMbid": "b33056f4-2184-4b4e-9375-dacdc84f3a0e"
+  },
+  {
+    "providerId": "76209667",
+    "providerTitle": "Kaleidoscope EP",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "04dbe014-a249-4ba9-895a-e000954ad14b",
+    "releaseMbid": "edede1b6-6949-4eae-8b11-55d502b2a444"
+  },
+  {
+    "providerId": "76271103",
+    "providerTitle": "Kaleidoscope EP",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "04dbe014-a249-4ba9-895a-e000954ad14b",
+    "releaseMbid": "0cf380ca-be46-426c-a575-cbe74f0ff3db"
+  },
+  {
+    "providerId": "76322768",
+    "providerTitle": "A L I E N S (Markus Dravs Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "701bc368-4cf6-474e-a361-ee2ff3f0c952",
+    "releaseMbid": "546c57db-1228-493b-aa9b-6fa31d0c358f"
+  },
+  {
+    "providerId": "7842435",
+    "providerTitle": "Paradise",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "13f91af7-ba7a-42b5-a15f-4f5eb31aae5d",
+    "releaseMbid": "d97825ff-ff11-4989-8c94-e5b14c6370ae"
+  },
+  {
+    "providerId": "81175273",
+    "providerTitle": "Have Yourself a Merry Little Christmas (Jo Whiley, BBC Radio 1 Session)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "33c91f60-80e1-4b09-a8cc-256a9d687150",
+    "releaseMbid": "2965cbce-1816-4a59-bb03-f595f4de19ae"
+  },
+  {
+    "providerId": "81175275",
+    "providerTitle": "2000 Miles",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a905af66-82d7-4765-874e-d696381a1cbf",
+    "releaseMbid": "04106a55-2eeb-44a8-82f6-fe6fb905ebb7"
+  },
+  {
+    "providerId": "8594942",
+    "providerTitle": "Mylo Xyloto",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "61b7b6cd-86a6-4728-9478-b58c93bca8fd",
+    "releaseMbid": "3e082b0f-a78b-4327-b24c-af84d7050747"
+  },
+  {
+    "providerId": "96906133",
+    "providerTitle": "Viva La Vida (Live in Buenos Aires)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "b9c9c340-57bd-4918-9f3e-5636987e8d5f",
+    "releaseMbid": "c5ebcc72-b231-47aa-a584-c96728f5fc74"
+  },
+  {
+    "providerId": "96906145",
+    "providerTitle": "Viva La Vida (Live in Buenos Aires)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "b9c9c340-57bd-4918-9f3e-5636987e8d5f",
+    "releaseMbid": "c5ebcc72-b231-47aa-a584-c96728f5fc74"
+  },
+  {
+    "providerId": "97448364",
+    "providerTitle": "Fix You (Live in Buenos Aires)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "573ffd21-3438-407d-98d6-487d05d95255",
+    "releaseMbid": "2c9e43be-1827-4ef4-a311-04b6a63633d3"
+  },
+  {
+    "providerId": "97832977",
+    "providerTitle": "Fix You (Live in Buenos Aires)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "573ffd21-3438-407d-98d6-487d05d95255",
+    "releaseMbid": "2c9e43be-1827-4ef4-a311-04b6a63633d3"
+  },
+  {
+    "providerId": "99218496",
+    "providerTitle": "A Head Full of Dreams (Live in Buenos Aires)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "1415bc3f-9f33-4a70-b86d-0e394ce3f305",
+    "releaseMbid": "45a0fcfe-c639-4ea8-8f38-f9dfe71c8bac"
+  },
+  {
+    "providerId": "99219467",
+    "providerTitle": "A Head Full of Dreams (Live in Buenos Aires)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "1415bc3f-9f33-4a70-b86d-0e394ce3f305",
+    "releaseMbid": "45a0fcfe-c639-4ea8-8f38-f9dfe71c8bac"
+  },
+  {
+    "providerId": "99624342",
+    "providerTitle": "Live in Buenos Aires",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "29b926ef-2080-44e9-b9e0-2ed6c25799f9",
+    "releaseMbid": "9e7b4d74-4bc2-4f99-8b60-b5c62f43c72c"
+  },
+  {
+    "providerId": "99629414",
+    "providerTitle": "Live in Buenos Aires",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "29b926ef-2080-44e9-b9e0-2ed6c25799f9",
+    "releaseMbid": "d5ad4de2-2893-4573-85e0-506634bf17aa"
+  }
+]

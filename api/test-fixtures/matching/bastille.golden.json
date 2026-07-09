@@ -562,7 +562,7 @@
     "providerTitle": "Give Me The Future (Deluxe Edition)",
     "status": "probable",
     "method": "musicbrainz-release-group-title-year-type-track-count",
-    "confidence": 0.99,
+    "confidence": 0.91,
     "releaseGroupMbid": "e106cc81-6620-40ab-a37e-1e8a943e3410",
     "releaseMbid": null
   },
@@ -931,7 +931,7 @@
     "providerTitle": "“&” (Ampersand), Part One",
     "status": "verified",
     "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "confidence": 0.95,
     "releaseGroupMbid": "64589d51-4d3a-48ac-89cd-e268eb5c6117",
     "releaseMbid": "293c41c0-78ae-4a88-aabd-5a7a95395b3a"
   },
@@ -940,7 +940,7 @@
     "providerTitle": "“&” (Ampersand), Part One",
     "status": "verified",
     "method": "musicbrainz-release-title-year-type-track-count",
-    "confidence": 0.99,
+    "confidence": 0.95,
     "releaseGroupMbid": "64589d51-4d3a-48ac-89cd-e268eb5c6117",
     "releaseMbid": "293c41c0-78ae-4a88-aabd-5a7a95395b3a"
   },
@@ -1390,7 +1390,7 @@
     "providerTitle": "World Gone Mad (King Topher Remix)",
     "status": "verified",
     "method": "musicbrainz-recording-isrc",
-    "confidence": 0.965,
+    "confidence": 0.99,
     "releaseGroupMbid": "f9c531e4-d7bc-45a4-abe1-995f9a0129a0",
     "releaseMbid": "2869bd35-351e-4541-9476-b139c29990fb"
   },

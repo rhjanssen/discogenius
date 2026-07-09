@@ -31,6 +31,8 @@ const outDir = path.join(repoRoot, "api", "test-fixtures", "matching");
 const ARTISTS = [
   { slug: "bakermat", name: "Bakermat", mbid: "df60a241-e8df-4917-82db-1f1a8ecd7cc3" },
   { slug: "bastille", name: "Bastille", mbid: "7808accb-6395-4b25-858c-678bbb73896b" },
+  { slug: "imagine-dragons", name: "Imagine Dragons", mbid: "012151a8-0f9a-44c9-997f-ebd68b5389f9" },
+  { slug: "coldplay", name: "Coldplay", mbid: "cc197bad-dc9c-440d-a5b5-d52ba2e14234" },
 ];
 
 function parseJsonArray(value) {
@@ -112,8 +114,8 @@ function captureReleaseGroups(db, artistMbid) {
 
 function captureProviderAlbums(db, artistMbid) {
   const albums = db.prepare(`
-    SELECT provider, provider_id, title, version, explicit, quality, upc,
-           release_date, provider_url
+    SELECT provider, provider_id, title, version, explicit, quality, type, upc,
+           volume_count, release_date, provider_url
     FROM ProviderItems
     WHERE entity_type = 'album' AND artist_mbid = ?
     ORDER BY provider_id
@@ -149,11 +151,13 @@ function captureProviderAlbums(db, artistMbid) {
       version: album.version || null,
       providerUrl: album.provider_url || null,
       releaseDate: album.release_date || null,
+      type: album.type || null,
       quality: album.quality || null,
       explicit: album.explicit,
       upc: album.upc || null,
       isrcs: Array.from(isrcsByAlbum.get(id) || []),
       trackCount: trackCountByAlbum.get(id) || null,
+      volumeCount: album.volume_count ?? null,
     };
   });
 }

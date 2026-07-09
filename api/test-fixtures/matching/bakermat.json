@@ -1281,13 +1281,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2019-02-22",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "193483448053",
       "isrcs": [
         "NLE801900028"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1296,13 +1298,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2019-04-26",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "8715576185144",
       "isrcs": [
         "NLE801900202"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1311,6 +1315,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2019-07-05",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "8715576186813",
@@ -1318,7 +1323,8 @@
         "NLE801900381",
         "NLE801900383"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1327,6 +1333,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2019-07-26",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "194491590666",
@@ -1334,7 +1341,8 @@
         "NLE801900440",
         "NLE801900441"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1343,6 +1351,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2020-02-21",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "194491917470",
@@ -1350,7 +1359,8 @@
         "GB5KW2000092",
         "GB5KW1903797"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1359,6 +1369,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2023-04-07",
+      "type": "ALBUM",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "195497175338",
@@ -1374,7 +1385,8 @@
         "NLE802000497",
         "NLE802000499"
       ],
-      "trackCount": 10
+      "trackCount": 10,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1383,13 +1395,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2021-03-26",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "196006228811",
       "isrcs": [
         "NLE802100072"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1398,13 +1412,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2021-05-28",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "196006588557",
       "isrcs": [
         "NLE802100211"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1413,6 +1429,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2021-06-11",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "196006826048",
@@ -1420,7 +1437,8 @@
         "NLE802100284",
         "NLE802100288"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1429,6 +1447,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2021-06-24",
+      "type": "ALBUM",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "196006896034",
@@ -1446,7 +1465,8 @@
         "NLE802100260",
         "NLE802100261"
       ],
-      "trackCount": 12
+      "trackCount": 12,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1455,6 +1475,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2021-06-24",
+      "type": "ALBUM",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "196292294880",
@@ -1484,7 +1505,8 @@
         "NLE802100396",
         "NLE802100261"
       ],
-      "trackCount": 24
+      "trackCount": 24,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1493,6 +1515,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2022-09-16",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617050394156",
@@ -1500,7 +1523,8 @@
         "NLQ8X1700139",
         "NLQ8X1700141"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1509,13 +1533,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2022-06-17",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "0190296119637",
       "isrcs": [
         "NLQ8X1700127"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1524,13 +1550,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2014-02-03",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "00602537640089",
       "isrcs": [
         "DECL81200020"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1539,6 +1567,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2022-11-18",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "3617052247191",
@@ -1546,7 +1575,8 @@
         "NLQ8X1700151",
         "NLQ8X1700139"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1555,13 +1585,15 @@
       "version": "Superlover Remix",
       "providerUrl": null,
       "releaseDate": "2022-03-25",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "0190296149238",
       "isrcs": [
         "NLQ8X1700121"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1570,13 +1602,15 @@
       "version": "Castelle Nighttime Remix",
       "providerUrl": null,
       "releaseDate": "2022-03-25",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "0190296149269",
       "isrcs": [
         "NLQ8X1700120"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1585,6 +1619,7 @@
       "version": "Big Top Family Remix Pack",
       "providerUrl": null,
       "releaseDate": "2022-04-22",
+      "type": "ALBUM",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "0190296149344",
@@ -1597,7 +1632,8 @@
         "NLQ8X1700123",
         "NLQ8X1700124"
       ],
-      "trackCount": 7
+      "trackCount": 7,
+      "volumeCount": 2
     },
     {
       "provider": "tidal",
@@ -1606,13 +1642,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2022-03-25",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "0190296275739",
       "isrcs": [
         "NLQ8X1700114"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1621,6 +1659,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2022-03-25",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "0190296149283",
@@ -1628,7 +1667,8 @@
         "NLQ8X1700118",
         "NLQ8X1700123"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1637,6 +1677,7 @@
       "version": "Kronan Remix",
       "providerUrl": null,
       "releaseDate": "2022-03-25",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "0190296149276",
@@ -1644,7 +1685,8 @@
         "NLQ8X1700119",
         "NLQ8X1700124"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1653,13 +1695,15 @@
       "version": "Radio Edit",
       "providerUrl": null,
       "releaseDate": "2014-03-14",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886444522359",
       "isrcs": [
         "DEE861400079"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1668,13 +1712,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2023-03-24",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617056213574",
       "isrcs": [
         "NLQ8X1700154"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1683,6 +1729,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2023-06-02",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617059299810",
@@ -1690,7 +1737,8 @@
         "NLQ8X1700161",
         "NLQ8X1700154"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1699,13 +1747,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2023-07-28",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617224255405",
       "isrcs": [
         "NLQ8X1700167"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1714,6 +1764,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2023-09-08",
+      "type": "ALBUM",
       "quality": "HIRES_LOSSLESS",
       "explicit": 1,
       "upc": "3617223288527",
@@ -1728,7 +1779,8 @@
         "NLQ8X1700178",
         "NLQ8X1700179"
       ],
-      "trackCount": 9
+      "trackCount": 9,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1737,6 +1789,7 @@
       "version": "Remix",
       "providerUrl": null,
       "releaseDate": "2023-10-06",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617226810640",
@@ -1745,7 +1798,8 @@
         "NLQ8X1700183",
         "NLQ8X1700174"
       ],
-      "trackCount": 3
+      "trackCount": 3,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1754,6 +1808,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2023-09-08",
+      "type": "ALBUM",
       "quality": "HIRES_LOSSLESS",
       "explicit": 1,
       "upc": "3617380014526",
@@ -1769,7 +1824,8 @@
         "NLQ8X1700178",
         "NLQ8X1700179"
       ],
-      "trackCount": 10
+      "trackCount": 10,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1778,13 +1834,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2024-02-02",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 1,
       "upc": "3617381824841",
       "isrcs": [
         "NLQ8X1700190"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1793,6 +1851,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2024-01-05",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "8715576210280",
@@ -1800,7 +1859,8 @@
         "NLE802300581",
         "NLE801900440"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1809,13 +1869,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2014-09-01",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886444809603",
       "isrcs": [
         "DEE861400339"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1824,6 +1886,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2024-04-12",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617385621101",
@@ -1831,7 +1894,8 @@
         "NLQ8X1700214",
         "NLQ8X1700215"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1840,6 +1904,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2024-05-31",
+      "type": "EP",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617387045998",
@@ -1849,7 +1914,8 @@
         "NLQ8X1700222",
         "NLQ8X1700214"
       ],
-      "trackCount": 4
+      "trackCount": 4,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1858,13 +1924,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2024-06-28",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617388781253",
       "isrcs": [
         "NLQ8X1700237"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1873,6 +1941,7 @@
       "version": "Fly Disco Butter Remix",
       "providerUrl": null,
       "releaseDate": "2024-07-12",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "3617389775732",
@@ -1880,7 +1949,8 @@
         "NLQ8X1700241",
         "NLQ8X1700237"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1889,13 +1959,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2024-09-06",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617661589118",
       "isrcs": [
         "NLQ8X1700250"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1904,13 +1976,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2014-12-19",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886445025859",
       "isrcs": [
         "NLE801400559"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1919,6 +1993,7 @@
       "version": "Ampersounds Remix",
       "providerUrl": null,
       "releaseDate": "2024-10-11",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "3617664062755",
@@ -1926,7 +2001,8 @@
         "NLQ8X1700254",
         "NLQ8X1700250"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1935,6 +2011,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2024-11-08",
+      "type": "EP",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "3617664658644",
@@ -1946,7 +2023,8 @@
         "NLQ8X1700151",
         "NLQ8X1700139"
       ],
-      "trackCount": 6
+      "trackCount": 6,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1955,6 +2033,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2025-02-07",
+      "type": "ALBUM",
       "quality": "DOLBY_ATMOS",
       "explicit": 0,
       "upc": "3617665486048",
@@ -1975,7 +2054,8 @@
         "NLQ8X1700250",
         "NLQ8X1700237"
       ],
-      "trackCount": 15
+      "trackCount": 15,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -1984,6 +2064,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2024-12-06",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "3617666221617",
@@ -1996,7 +2077,8 @@
         "NLQ8X1700151",
         "NLQ8X1700139"
       ],
-      "trackCount": 7
+      "trackCount": 7,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2005,6 +2087,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2015-02-06",
+      "type": "EP",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886445082524",
@@ -2013,7 +2096,8 @@
         "NLE801400535",
         "NLE801400602"
       ],
-      "trackCount": 3
+      "trackCount": 3,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2022,6 +2106,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2025-05-02",
+      "type": "EP",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617393343118",
@@ -2031,7 +2116,8 @@
         "NLQ8X1700299",
         "NLQ8X1700300"
       ],
-      "trackCount": 4
+      "trackCount": 4,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2040,6 +2126,7 @@
       "version": "Extended",
       "providerUrl": null,
       "releaseDate": "2025-05-02",
+      "type": "ALBUM",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3617394922947",
@@ -2053,7 +2140,8 @@
         "NLQ8X1700307",
         "NLQ8X1700300"
       ],
-      "trackCount": 8
+      "trackCount": 8,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2062,13 +2150,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2025-09-26",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3618020315355",
       "isrcs": [
         "NLQ8X1700347"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2077,13 +2167,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2025-11-28",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3618022699286",
       "isrcs": [
         "NLQ8X1700361"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2092,13 +2184,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2026-03-06",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3618027703414",
       "isrcs": [
         "NLQ8X1700382"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2107,13 +2201,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2026-05-01",
+      "type": "SINGLE",
       "quality": "HIRES_LOSSLESS",
       "explicit": 0,
       "upc": "3618029738575",
       "isrcs": [
         "NLQ8X1700383"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2122,6 +2218,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2013-03-29",
+      "type": "EP",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "4050486096833",
@@ -2131,7 +2228,8 @@
         "DEZ651317142",
         "DEZ651317143"
       ],
-      "trackCount": 4
+      "trackCount": 4,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2140,6 +2238,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2016-02-05",
+      "type": "EP",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886445745085",
@@ -2148,7 +2247,8 @@
         "NLE801600003",
         "NLE801600004"
       ],
-      "trackCount": 3
+      "trackCount": 3,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2157,6 +2257,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2016-06-10",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886445753219",
@@ -2164,7 +2265,8 @@
         "NLE801600104",
         "NLE801600105"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2173,13 +2275,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2016-07-15",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886445961409",
       "isrcs": [
         "NLE801600355"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2188,13 +2292,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2016-08-26",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886446065250",
       "isrcs": [
         "NLE801600469"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2203,6 +2309,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2016-12-02",
+      "type": "EP",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886446238883",
@@ -2211,7 +2318,8 @@
         "NLE801600746",
         "NLE801600556"
       ],
-      "trackCount": 3
+      "trackCount": 3,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2220,13 +2328,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2016-12-23",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886446303314",
       "isrcs": [
         "NLE801600821"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2235,13 +2345,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2017-01-27",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886446315331",
       "isrcs": [
         "NLE801600842"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2250,13 +2362,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2017-06-02",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 1,
       "upc": "886446503448",
       "isrcs": [
         "NLE801700189"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2265,6 +2379,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2017-08-25",
+      "type": "EP",
       "quality": "LOSSLESS",
       "explicit": 1,
       "upc": "886446692708",
@@ -2273,7 +2388,8 @@
         "NLE801700329",
         "NLE801700332"
       ],
-      "trackCount": 3
+      "trackCount": 3,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2282,6 +2398,7 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2018-06-08",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "886447108321",
@@ -2289,7 +2406,8 @@
         "NLE801800183",
         "NLE801800184"
       ],
-      "trackCount": 2
+      "trackCount": 2,
+      "volumeCount": 1
     },
     {
       "provider": "tidal",
@@ -2298,13 +2416,15 @@
       "version": null,
       "providerUrl": null,
       "releaseDate": "2018-10-12",
+      "type": "SINGLE",
       "quality": "LOSSLESS",
       "explicit": 0,
       "upc": "193483014456",
       "isrcs": [
         "NLE801800427"
       ],
-      "trackCount": 1
+      "trackCount": 1,
+      "volumeCount": 1
     }
   ]
 }

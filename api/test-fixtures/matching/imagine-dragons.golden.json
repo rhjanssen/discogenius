@@ -1,0 +1,902 @@
+[
+  {
+    "providerId": "102004838",
+    "providerTitle": "Believer",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "93f9ba25-64c9-4074-9401-0443dae9c76b",
+    "releaseMbid": "3f8aeab4-7042-4684-9b76-5d52acacf128"
+  },
+  {
+    "providerId": "110147418",
+    "providerTitle": "Bad Liar – Stripped",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "be9b09ab-d507-4963-b708-4674f7f81845",
+    "releaseMbid": "63309851-15f7-4c5c-87a3-90338fff52b9"
+  },
+  {
+    "providerId": "111149371",
+    "providerTitle": "Birds",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "e336805b-a48b-4d57-a1fc-f6dd90be7abb",
+    "releaseMbid": "72fd4b76-a71b-44b3-8f16-34ed63834144"
+  },
+  {
+    "providerId": "131069352",
+    "providerTitle": "Believer",
+    "status": "ambiguous",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "8bcb5dcd-88bd-4651-9822-51b069b5e0d9",
+    "releaseMbid": "9e182980-1696-4064-9071-6fe727128c02"
+  },
+  {
+    "providerId": "176593519",
+    "providerTitle": "Follow You / Cutthroat",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "e4d28d46-4abe-4d83-a5ef-9c144b98c2a7",
+    "releaseMbid": "d64736da-34a9-42f4-971c-a1cff624faf1"
+  },
+  {
+    "providerId": "176593520",
+    "providerTitle": "Follow You / Cutthroat",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "e4d28d46-4abe-4d83-a5ef-9c144b98c2a7",
+    "releaseMbid": "1ecd3d4a-0b32-4020-a190-dd8b6b40fa5a"
+  },
+  {
+    "providerId": "185744546",
+    "providerTitle": "Follow You (Summer ’21 Version)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "5637e463-cd3f-44b9-9e8f-052931bbe7fb",
+    "releaseMbid": "35a9747e-0998-4b7a-8415-12c1575efa36"
+  },
+  {
+    "providerId": "185744547",
+    "providerTitle": "Follow You (Summer ’21 Version)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "5637e463-cd3f-44b9-9e8f-052931bbe7fb",
+    "releaseMbid": "35a9747e-0998-4b7a-8415-12c1575efa36"
+  },
+  {
+    "providerId": "18692663",
+    "providerTitle": "Night Visions",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "caef5f01-8568-4573-8458-c9e99ff7c734",
+    "releaseMbid": "10eef06f-b74a-4db8-a775-dc2107a038c0"
+  },
+  {
+    "providerId": "188897376",
+    "providerTitle": "Follow You / Cutthroat",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.95,
+    "releaseGroupMbid": "9ce73eb5-8929-4934-9cb9-6d386c92762e",
+    "releaseMbid": "f0d78d4a-90c1-4896-b241-440555e0d2ba"
+  },
+  {
+    "providerId": "189287561",
+    "providerTitle": "Wrecked",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "6dd3e443-13e9-4cc1-93f8-21a59268622c",
+    "releaseMbid": "d1d550f8-1f60-4268-9729-8f4778411098"
+  },
+  {
+    "providerId": "189288362",
+    "providerTitle": "Wrecked",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "6dd3e443-13e9-4cc1-93f8-21a59268622c",
+    "releaseMbid": "d1d550f8-1f60-4268-9729-8f4778411098"
+  },
+  {
+    "providerId": "189552689",
+    "providerTitle": "Wrecked",
+    "status": "ambiguous",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.9,
+    "releaseGroupMbid": "9ce73eb5-8929-4934-9cb9-6d386c92762e",
+    "releaseMbid": "f0d78d4a-90c1-4896-b241-440555e0d2ba"
+  },
+  {
+    "providerId": "196316502",
+    "providerTitle": "Mercury - Act 1",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "9ce73eb5-8929-4934-9cb9-6d386c92762e",
+    "releaseMbid": "f0d78d4a-90c1-4896-b241-440555e0d2ba"
+  },
+  {
+    "providerId": "200587489",
+    "providerTitle": "Imagine Dragons EP",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.96,
+    "releaseGroupMbid": "fba9f42f-83d1-4cc5-940d-27a46985d535",
+    "releaseMbid": "820507b6-4513-47cc-9993-28941bfd4788"
+  },
+  {
+    "providerId": "200588097",
+    "providerTitle": "It’s Time EP",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "ef6eb8a4-0a77-44ff-80b0-867da07441e4",
+    "releaseMbid": "cf6e538f-4aee-4fe4-8626-9fb25159642a"
+  },
+  {
+    "providerId": "200588189",
+    "providerTitle": "Hell And Silence EP",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "36e9fdfb-4e73-4ea7-bbed-ecd1b4bd35a6",
+    "releaseMbid": "481e7b71-9657-4a07-8cde-5edb3be56179"
+  },
+  {
+    "providerId": "201305384",
+    "providerTitle": "Demons (TELYKast Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "020a5758-c010-42e8-84b8-53b8acc0a12e",
+    "releaseMbid": "fed5a65c-43f9-4344-8e08-cd17e6668ef0"
+  },
+  {
+    "providerId": "202445043",
+    "providerTitle": "Enemy (from the series Arcane League of Legends)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "35990e4e-72da-4ca1-9193-2ee30cc23050",
+    "releaseMbid": "0159480a-7033-418f-b095-f80626ddd26b"
+  },
+  {
+    "providerId": "202445638",
+    "providerTitle": "Enemy (from the series Arcane League of Legends)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "35990e4e-72da-4ca1-9193-2ee30cc23050",
+    "releaseMbid": "e8c84a42-f976-43d4-b4fa-0d8260e31565"
+  },
+  {
+    "providerId": "202493354",
+    "providerTitle": "Enemy (from the series Arcane League of Legends)",
+    "status": "ambiguous",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.9,
+    "releaseGroupMbid": "df3f76e4-dbfb-40d8-aac5-f8bff8d58b29",
+    "releaseMbid": "f6a569ee-ca57-48ab-927c-ca552c30952a"
+  },
+  {
+    "providerId": "203955921",
+    "providerTitle": "Enemy (from the series Arcane League of Legends)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8668ecdc-b292-4a1e-b519-10f15e2a942c",
+    "releaseMbid": "4ec47f27-13ae-4a2f-88a0-ce3abb4372bb"
+  },
+  {
+    "providerId": "204879598",
+    "providerTitle": "Evolve",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "8341c952-694d-4866-870e-df48c9e10f17",
+    "releaseMbid": "09d04174-898d-4c65-a87f-69f9dc541968"
+  },
+  {
+    "providerId": "214359608",
+    "providerTitle": "Mercury - Act 1 (Additional Track Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "9ce73eb5-8929-4934-9cb9-6d386c92762e",
+    "releaseMbid": "15f1cc88-cce1-490e-9724-0e60957a7211"
+  },
+  {
+    "providerId": "218953137",
+    "providerTitle": "Bones",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "0359e46f-7050-4f6a-ba24-5e4118db8943",
+    "releaseMbid": "e1d02fd4-7115-461a-ab49-f60838de67d2"
+  },
+  {
+    "providerId": "218953139",
+    "providerTitle": "Bones",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "0359e46f-7050-4f6a-ba24-5e4118db8943",
+    "releaseMbid": "e1d02fd4-7115-461a-ab49-f60838de67d2"
+  },
+  {
+    "providerId": "219753302",
+    "providerTitle": "Bones",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.9,
+    "releaseGroupMbid": "df3f76e4-dbfb-40d8-aac5-f8bff8d58b29",
+    "releaseMbid": "f6a569ee-ca57-48ab-927c-ca552c30952a"
+  },
+  {
+    "providerId": "22506991",
+    "providerTitle": "Night Visions (Deluxe)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "caef5f01-8568-4573-8458-c9e99ff7c734",
+    "releaseMbid": "792bf9d6-fd11-4aee-adb4-f98ba2e27adb"
+  },
+  {
+    "providerId": "226738556",
+    "providerTitle": "Smoke + Mirrors",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "a186ae54-41a1-4b46-861c-c0d80c154556",
+    "releaseMbid": "0ded7d48-b917-4799-863b-2a7a5e904851"
+  },
+  {
+    "providerId": "227401767",
+    "providerTitle": "Origins (Deluxe)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "042160ca-6094-42b4-8399-9e0141fa9515",
+    "releaseMbid": "28adcf65-8c07-4da2-96eb-582943c0327d"
+  },
+  {
+    "providerId": "234352254",
+    "providerTitle": "Sharks",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "4b2826c1-c93c-4c8d-9c24-e7dc83533261",
+    "releaseMbid": "e2d9ab23-74f4-41db-ae81-08f54c90081f"
+  },
+  {
+    "providerId": "234352256",
+    "providerTitle": "Sharks",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "4b2826c1-c93c-4c8d-9c24-e7dc83533261",
+    "releaseMbid": "e2d9ab23-74f4-41db-ae81-08f54c90081f"
+  },
+  {
+    "providerId": "234556980",
+    "providerTitle": "Sharks",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.9,
+    "releaseGroupMbid": "df3f76e4-dbfb-40d8-aac5-f8bff8d58b29",
+    "releaseMbid": "f6a569ee-ca57-48ab-927c-ca552c30952a"
+  },
+  {
+    "providerId": "23543377",
+    "providerTitle": "On Top Of The World (RAC Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "24acad96-7f22-42f2-9d6f-3f9120a0657d",
+    "releaseMbid": "3ec62e87-e95b-4f8c-a6e6-2ae88f917f9b"
+  },
+  {
+    "providerId": "235605520",
+    "providerTitle": "Mercury - Acts 1 & 2",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "df3f76e4-dbfb-40d8-aac5-f8bff8d58b29",
+    "releaseMbid": "f6a569ee-ca57-48ab-927c-ca552c30952a"
+  },
+  {
+    "providerId": "235605577",
+    "providerTitle": "Mercury - Acts 1 & 2",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "df3f76e4-dbfb-40d8-aac5-f8bff8d58b29",
+    "releaseMbid": "bb19c617-94ce-446f-b121-e74deab6d8c8"
+  },
+  {
+    "providerId": "235605610",
+    "providerTitle": "Mercury - Acts 1 & 2",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "df3f76e4-dbfb-40d8-aac5-f8bff8d58b29",
+    "releaseMbid": "091b39d2-00be-4640-9bcb-f1b1b7ddb583"
+  },
+  {
+    "providerId": "238551877",
+    "providerTitle": "Night Visions (Deluxe)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "caef5f01-8568-4573-8458-c9e99ff7c734",
+    "releaseMbid": "533f6898-49e4-4783-8880-2cb97d700a25"
+  },
+  {
+    "providerId": "245030999",
+    "providerTitle": "Love Of Mine (Night Visions Demo)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "030f01d8-b5d4-477d-a16a-88d936a01be0",
+    "releaseMbid": "f01f7855-0b7b-40eb-ad9c-865beff42d48"
+  },
+  {
+    "providerId": "246221141",
+    "providerTitle": "Night Visions (Expanded Edition / Super Deluxe)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "caef5f01-8568-4573-8458-c9e99ff7c734",
+    "releaseMbid": "5a99048b-460f-482b-9b65-a0b3bc419330"
+  },
+  {
+    "providerId": "248711763",
+    "providerTitle": "Love Of Mine",
+    "status": "verified",
+    "method": "musicbrainz-release-group-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "030f01d8-b5d4-477d-a16a-88d936a01be0",
+    "releaseMbid": "f01f7855-0b7b-40eb-ad9c-865beff42d48"
+  },
+  {
+    "providerId": "254267597",
+    "providerTitle": "Bones (twocolors Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "8b017299-b116-43c6-8f01-12c2db7a83de",
+    "releaseMbid": "73e4a884-3cf0-4e30-9461-19ab075183e9"
+  },
+  {
+    "providerId": "254268904",
+    "providerTitle": "Bones (twocolors Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8b017299-b116-43c6-8f01-12c2db7a83de",
+    "releaseMbid": "73e4a884-3cf0-4e30-9461-19ab075183e9"
+  },
+  {
+    "providerId": "25711599",
+    "providerTitle": "Radioactive",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "4e673944-ce73-451a-b44b-2656d853d34d",
+    "releaseMbid": "868bc651-2961-40d7-b69e-17fbc7de1414"
+  },
+  {
+    "providerId": "299807357",
+    "providerTitle": "Symphony (Inner City Youth Orchestra of Los Angeles Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "f7a83edf-b2d0-42db-a7c1-90acf9c22639",
+    "releaseMbid": "a1897078-9500-4b11-9d62-1cee469518a5"
+  },
+  {
+    "providerId": "299807361",
+    "providerTitle": "Symphony (Inner City Youth Orchestra of Los Angeles Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "f7a83edf-b2d0-42db-a7c1-90acf9c22639",
+    "releaseMbid": "85e359c6-e7ce-4ea4-9859-cce92b4face9"
+  },
+  {
+    "providerId": "302135568",
+    "providerTitle": "Symphony (Inner City Youth Orchestra of Los Angeles Version)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "f7a83edf-b2d0-42db-a7c1-90acf9c22639",
+    "releaseMbid": "4279591e-3c9f-4036-84c1-aec26bd69c8a"
+  },
+  {
+    "providerId": "304630344",
+    "providerTitle": "Smoke + Mirrors Live (Live At The Air Canada Centre)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "768a1cf4-84ae-4df5-ab4a-78cc9bfa30c8",
+    "releaseMbid": "4aafa30d-e609-4270-8e11-1ae30096e448"
+  },
+  {
+    "providerId": "306143307",
+    "providerTitle": "Imagine Dragons Live in Vegas",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "bc56f4c1-1724-4fa7-873c-dc088323a502",
+    "releaseMbid": "aac0d2d3-fe94-49c4-9b3a-66b08ace6661"
+  },
+  {
+    "providerId": "306166092",
+    "providerTitle": "Imagine Dragons Live in Vegas",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "bc56f4c1-1724-4fa7-873c-dc088323a502",
+    "releaseMbid": "465d02df-b365-41c9-8470-3202d332dc32"
+  },
+  {
+    "providerId": "307167058",
+    "providerTitle": "Imagine Dragons Live in Vegas",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "bc56f4c1-1724-4fa7-873c-dc088323a502",
+    "releaseMbid": "c24617bd-6f5e-4e52-aabd-2e890908d1a1"
+  },
+  {
+    "providerId": "312557892",
+    "providerTitle": "Children of the Sky (a Starfield song)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "7e027e9a-18a1-4914-b051-ed92de7e1e8b",
+    "releaseMbid": "db17241b-be08-4543-89bd-c01d86e7b73f"
+  },
+  {
+    "providerId": "312557966",
+    "providerTitle": "Children of the Sky (a Starfield song)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "7e027e9a-18a1-4914-b051-ed92de7e1e8b",
+    "releaseMbid": "d113347d-be23-4f9c-96d0-9585f31e1bf6"
+  },
+  {
+    "providerId": "313453628",
+    "providerTitle": "Children of the Sky (a Starfield song)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "7e027e9a-18a1-4914-b051-ed92de7e1e8b",
+    "releaseMbid": "580de0b2-4e3f-400d-9215-30b6742cf3ac"
+  },
+  {
+    "providerId": "353981457",
+    "providerTitle": "Eyes Closed",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8f20ab35-25bd-4fc0-bd95-8216d2dd2c9b",
+    "releaseMbid": "8d5fa5b4-2ae9-4fc0-b68b-7f1be3c63024"
+  },
+  {
+    "providerId": "353981669",
+    "providerTitle": "Eyes Closed",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8f20ab35-25bd-4fc0-bd95-8216d2dd2c9b",
+    "releaseMbid": "a7f154bf-29af-4564-af99-5e542c60514f"
+  },
+  {
+    "providerId": "353981673",
+    "providerTitle": "Eyes Closed",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8f20ab35-25bd-4fc0-bd95-8216d2dd2c9b",
+    "releaseMbid": "4bd03618-9abb-498c-9edd-5d9784339e6b"
+  },
+  {
+    "providerId": "360759412",
+    "providerTitle": "Eyes Closed",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "18acab74-93d3-4e57-9e32-6a9cca929b9b",
+    "releaseMbid": "0080bc69-90a0-4294-acb3-d1ea8983654c"
+  },
+  {
+    "providerId": "363684638",
+    "providerTitle": "Nice to Meet You",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "05777a75-ba02-47b2-a806-2ab997291794",
+    "releaseMbid": "58a45dee-baf0-412b-a441-80feb4f7b015"
+  },
+  {
+    "providerId": "370597447",
+    "providerTitle": "LOOM",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "aa61c278-bbe2-4e97-90e7-9b227e0b49d3",
+    "releaseMbid": "77c2bfbf-bdad-4abb-9c8f-b78299b4157a"
+  },
+  {
+    "providerId": "370597458",
+    "providerTitle": "LOOM",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "aa61c278-bbe2-4e97-90e7-9b227e0b49d3",
+    "releaseMbid": "bb2feb80-f58a-49ff-bf5c-7cba57c5b34f"
+  },
+  {
+    "providerId": "370597539",
+    "providerTitle": "LOOM",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "aa61c278-bbe2-4e97-90e7-9b227e0b49d3",
+    "releaseMbid": "0f767e2f-ece1-40c8-badf-3334881f0857"
+  },
+  {
+    "providerId": "391234941",
+    "providerTitle": "Take Me to the Beach",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "37501754-4cd2-47a0-b8a0-8f090fea6ce3",
+    "releaseMbid": "b7d4f566-1f00-47bf-b0b8-bc0944a25795"
+  },
+  {
+    "providerId": "391234957",
+    "providerTitle": "Take Me to the Beach",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "37501754-4cd2-47a0-b8a0-8f090fea6ce3",
+    "releaseMbid": "b7d4f566-1f00-47bf-b0b8-bc0944a25795"
+  },
+  {
+    "providerId": "392605390",
+    "providerTitle": "Take Me to the Beach",
+    "status": "ambiguous",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "37501754-4cd2-47a0-b8a0-8f090fea6ce3",
+    "releaseMbid": "b7d4f566-1f00-47bf-b0b8-bc0944a25795"
+  },
+  {
+    "providerId": "392623580",
+    "providerTitle": "Take Me to the Beach",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "a9dbf373-747c-49de-bba0-09a1a23e186b",
+    "releaseMbid": "c635434d-87a6-4de7-b7c3-94dfd8814f38"
+  },
+  {
+    "providerId": "392625990",
+    "providerTitle": "Take Me to the Beach",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "a9dbf373-747c-49de-bba0-09a1a23e186b",
+    "releaseMbid": "c635434d-87a6-4de7-b7c3-94dfd8814f38"
+  },
+  {
+    "providerId": "394016895",
+    "providerTitle": "Take Me to the Beach",
+    "status": "ambiguous",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "37501754-4cd2-47a0-b8a0-8f090fea6ce3",
+    "releaseMbid": "b7d4f566-1f00-47bf-b0b8-bc0944a25795"
+  },
+  {
+    "providerId": "395505276",
+    "providerTitle": "Take Me to the Beach",
+    "status": "ambiguous",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "37501754-4cd2-47a0-b8a0-8f090fea6ce3",
+    "releaseMbid": "b7d4f566-1f00-47bf-b0b8-bc0944a25795"
+  },
+  {
+    "providerId": "395528654",
+    "providerTitle": "Take Me to the Beach",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "8ae4a6ce-f44e-4363-a63e-200fdff52036",
+    "releaseMbid": "41e70411-2f57-4f5e-a502-2a2a4e1b2266"
+  },
+  {
+    "providerId": "395529501",
+    "providerTitle": "Take Me to the Beach",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "8ae4a6ce-f44e-4363-a63e-200fdff52036",
+    "releaseMbid": "41e70411-2f57-4f5e-a502-2a2a4e1b2266"
+  },
+  {
+    "providerId": "40354880",
+    "providerTitle": "I Bet My Life (Remixes)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "52d8b6ec-b3f4-4a3b-8109-0382655735f9",
+    "releaseMbid": "bb5cca14-3c4c-42a8-be6c-58173c6786f8"
+  },
+  {
+    "providerId": "404032581",
+    "providerTitle": "Take Me to the Beach",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "a401a5c7-e1e7-46ea-a81b-f1046fa9dda6",
+    "releaseMbid": "67bd3804-c1be-4350-9459-3c00ace3ac81"
+  },
+  {
+    "providerId": "404032583",
+    "providerTitle": "Take Me to the Beach",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a401a5c7-e1e7-46ea-a81b-f1046fa9dda6",
+    "releaseMbid": "9aa2e9f7-70e1-49f4-b9f0-2b4da164e767"
+  },
+  {
+    "providerId": "404939404",
+    "providerTitle": "Take Me to the Beach",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a401a5c7-e1e7-46ea-a81b-f1046fa9dda6",
+    "releaseMbid": "3cdf4018-961f-4ac5-bb70-5facf34e68a3"
+  },
+  {
+    "providerId": "40934566",
+    "providerTitle": "Smoke + Mirrors",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a186ae54-41a1-4b46-861c-c0d80c154556",
+    "releaseMbid": "94c554ab-6d13-4aa3-baad-6fdbb202136f"
+  },
+  {
+    "providerId": "41009432",
+    "providerTitle": "I Bet My Life (Riot Games Remix)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "a2e01377-d1c8-45c2-8eee-47af13e82b20",
+    "releaseMbid": "6828db89-fb9a-4d28-963d-93245eacfde9"
+  },
+  {
+    "providerId": "413690076",
+    "providerTitle": "Monica (Demo)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "93bc060c-9125-4f5b-a3a9-32f64e7166ce",
+    "releaseMbid": "872a40bb-e456-41a6-93e8-69ecfde4b67f"
+  },
+  {
+    "providerId": "417865388",
+    "providerTitle": "Reflections (From The Vault Of Smoke + Mirrors)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "6441e6d9-166c-45d0-a250-da22364ada29",
+    "releaseMbid": "85052090-fc79-49e2-9baa-36a486d69fac"
+  },
+  {
+    "providerId": "419469192",
+    "providerTitle": "Reflections",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "6441e6d9-166c-45d0-a250-da22364ada29",
+    "releaseMbid": "c1ad42ed-7b7c-4cca-a5e0-077bb3a01338"
+  },
+  {
+    "providerId": "45061914",
+    "providerTitle": "Shots EP",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "cfbf14ae-de09-4006-9784-63c7aa94ffa2",
+    "releaseMbid": "ebf257df-d0ad-4d72-b00b-a30645cd1c42"
+  },
+  {
+    "providerId": "49639043",
+    "providerTitle": "Shots (The Funk Hunters Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "f47cccf2-58f8-418a-b553-783190258e6d",
+    "releaseMbid": "6a909a7f-193f-4fda-8596-be0e38daf90c"
+  },
+  {
+    "providerId": "50384975",
+    "providerTitle": "Roots",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "2ed092ea-4067-482d-883e-612b1fd0de17",
+    "releaseMbid": "331271c3-6564-4e2c-a13b-710ea1c6a949"
+  },
+  {
+    "providerId": "52266205",
+    "providerTitle": "Smoke + Mirrors (Deluxe)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a186ae54-41a1-4b46-861c-c0d80c154556",
+    "releaseMbid": "6ace8918-8da5-4d95-9f62-49f64e60fedd"
+  },
+  {
+    "providerId": "52642303",
+    "providerTitle": "I Was Me",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "123922fd-1eda-4be2-927d-ad7cfd537efd",
+    "releaseMbid": "489b819f-181b-4af2-8b5e-c3ffd68d5c05"
+  },
+  {
+    "providerId": "64743471",
+    "providerTitle": "Gold (Jorgen Odegard Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "09e43d20-46c1-4c6e-af38-4cd766253e58",
+    "releaseMbid": "aead439d-d7b8-4844-b1c3-d2de3bb2f519"
+  },
+  {
+    "providerId": "67481310",
+    "providerTitle": "Levitate (From The Original Motion Picture “Passengers”)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a2e51460-75fc-43e3-b62a-6da7ba88fa5f",
+    "releaseMbid": "adca9f14-0c7e-4d92-a4da-fe87fe7840da"
+  },
+  {
+    "providerId": "74645981",
+    "providerTitle": "Believer (Kaskade Remix)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "36377fca-3f71-48f8-aebe-4fa34f32d357",
+    "releaseMbid": "4e7c92e4-aee3-430f-9ba6-4c81f38641b7"
+  },
+  {
+    "providerId": "76786045",
+    "providerTitle": "Live At AllSaints Studios",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "08908163-2db9-4417-9966-4c82e79adf32",
+    "releaseMbid": "dee6f417-046f-4d68-a269-138373638ab9"
+  },
+  {
+    "providerId": "77703570",
+    "providerTitle": "Smoke + Mirrors",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "a186ae54-41a1-4b46-861c-c0d80c154556",
+    "releaseMbid": "0ded7d48-b917-4799-863b-2a7a5e904851"
+  },
+  {
+    "providerId": "78174698",
+    "providerTitle": "Thunder (Official Remix)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "b6af94e2-4675-4b78-a48a-e437f59a4ad0",
+    "releaseMbid": "fb1a5053-dc41-4a5a-8f6e-9e7276f715bb"
+  },
+  {
+    "providerId": "80799207",
+    "providerTitle": "Whatever It Takes (Jorgen Odegard Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "251e0b53-9b79-48b9-9e0e-e4b9795825b9",
+    "releaseMbid": "4798b503-c1ec-49f3-820a-47bde61898b7"
+  },
+  {
+    "providerId": "81085473",
+    "providerTitle": "Whatever It Takes (Miss Congeniality Remix)",
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "76b33b0f-7bbc-4127-a1a3-83dd3886dfa1",
+    "releaseMbid": "47e65f9b-8db4-46b7-9b9a-5ae9225de3ca"
+  },
+  {
+    "providerId": "82471118",
+    "providerTitle": "Thunder / Young Dumb & Broke (Medley)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "477be0a3-64ef-4829-a4a8-06d0a13dad92",
+    "releaseMbid": "1992f1b5-8377-4acd-986e-31ed09c8cba5"
+  },
+  {
+    "providerId": "91943457",
+    "providerTitle": "Evolve",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "8341c952-694d-4866-870e-df48c9e10f17",
+    "releaseMbid": "735c4aaa-b56a-4586-a9ef-8b6074e8b710"
+  },
+  {
+    "providerId": "91950965",
+    "providerTitle": "Evolve",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "8341c952-694d-4866-870e-df48c9e10f17",
+    "releaseMbid": "1533fbdd-1641-46f8-8d0c-3efa7f297d66"
+  },
+  {
+    "providerId": "94966168",
+    "providerTitle": "Zero (From the Original Motion Picture \"Ralph Breaks The Internet\")",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "9bfe6874-c497-4e03-813e-80c7f63860ff",
+    "releaseMbid": "51fe171c-a770-45d3-8fab-12fa412bdb3d"
+  },
+  {
+    "providerId": "97872450",
+    "providerTitle": "Origins (Deluxe)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "042160ca-6094-42b4-8399-9e0141fa9515",
+    "releaseMbid": "c9a6f7c0-e160-4ba1-aca9-05b465a78bb8"
+  },
+  {
+    "providerId": "97872466",
+    "providerTitle": "Origins",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "042160ca-6094-42b4-8399-9e0141fa9515",
+    "releaseMbid": "3883933c-8b48-443d-ac6c-388bdd4fb24e"
+  },
+  {
+    "providerId": "97874143",
+    "providerTitle": "Origins (Deluxe Edition)",
+    "status": "verified",
+    "method": "musicbrainz-recording-isrc",
+    "confidence": 0.99,
+    "releaseGroupMbid": "042160ca-6094-42b4-8399-9e0141fa9515",
+    "releaseMbid": "c9a6f7c0-e160-4ba1-aca9-05b465a78bb8"
+  }
+]

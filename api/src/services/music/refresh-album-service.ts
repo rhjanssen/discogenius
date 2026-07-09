@@ -902,17 +902,19 @@ export class RefreshAlbumService {
 
         db.prepare(`
             INSERT INTO ProviderItems (
-                provider, entity_type, provider_id, title, version, explicit, quality,
-                upc, duration, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
+                provider, entity_type, provider_id, title, version, explicit, quality, type,
+                upc, duration, volume_count, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
                 match_status, match_confidence, match_method, match_evidence, cover, updated_at
-            ) VALUES ('tidal', 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES ('tidal', 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
                 version = excluded.version,
                 explicit = excluded.explicit,
                 quality = excluded.quality,
+                type = excluded.type,
                 upc = excluded.upc,
                 duration = excluded.duration,
+                volume_count = excluded.volume_count,
                 release_date = excluded.release_date,
                 artist_mbid = excluded.artist_mbid,
                 release_group_mbid = excluded.release_group_mbid,
@@ -930,8 +932,10 @@ export class RefreshAlbumService {
             album.version || null,
             album.explicit ? 1 : 0,
             album.quality || null,
+            album.type || null,
             album.upc || null,
             album.duration || null,
+            album.num_volumes ?? null,
             album.release_date || null,
             matchedArtistMbid,
             matchedReleaseGroup?.mbid || null,
