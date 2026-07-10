@@ -450,7 +450,9 @@ async function downloadProviderArtwork(
 
     let response: Response;
     try {
-        response = await fetch(fetchUrl);
+        // Timeout so a dead/slow image host can't hang metadata generation
+        // (which runs inside the maxConcurrent=1 refresh — one hang stalls all).
+        response = await fetch(fetchUrl, { signal: AbortSignal.timeout(30_000) });
     } catch (error) {
         console.warn(`⚠️ [METADATA] Failed to download ${label}: ${(error as Error).message}`);
         return;

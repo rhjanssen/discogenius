@@ -251,6 +251,10 @@ export async function ensureCachedMediaCover(options: {
       headers: {
         "User-Agent": getDiscogeniusUserAgent("media cover"),
       },
+      // Without a timeout a dead/slow image host hangs this fetch forever,
+      // freezing the RefreshArtist worker (0 CPU, never resolves) — and with
+      // maxConcurrent=1 that one hang deadlocks the whole refresh queue.
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!response.ok) {

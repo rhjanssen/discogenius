@@ -346,7 +346,12 @@ async function tidalFetchWithRetry(
     await acquireRequestSlot(context);
     let response: Response;
     try {
-      response = await fetch(url, options);
+      // Per-attempt timeout unless the caller supplied its own signal, so a
+      // hung TIDAL connection can't freeze matching/downloads indefinitely.
+      response = await fetch(url, {
+        ...options,
+        signal: (options as { signal?: AbortSignal }).signal ?? AbortSignal.timeout(45_000),
+      });
     } finally {
       releaseRequestSlot();
     }
