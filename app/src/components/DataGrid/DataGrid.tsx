@@ -117,7 +117,7 @@ const useStyles = makeStyles({
             backgroundColor: tokens.colorSubtleBackgroundSelected,
         },
     },
-    cellLeft: { textAlign: "left" },
+    cellLeft: { textAlign: "left", justifyContent: "flex-start" },
     cellCenter: { textAlign: "center", justifyContent: "center" },
     cellRight: { textAlign: "right", justifyContent: "flex-end" },
     headerCell: {

@@ -224,7 +224,9 @@ const useStyles = makeStyles({
   },
   qualityContent: {
     display: "flex",
-    flexWrap: "nowrap",
+    // Wrap so several badges stack within the now fixed-width Quality column
+    // instead of clipping.
+    flexWrap: "wrap",
     alignItems: "center",
     gap: tokens.spacingHorizontalXXS,
     minWidth: 0,
@@ -729,8 +731,13 @@ const TrackList = <T extends TrackListItem>({
     if (showQuality) {
       trackColumns.push({
         key: "quality",
+        // Fixed (not max-content): each row is its own CSS grid, so a
+        // content-sized track resolves to a different width per row (and vs the
+        // header), which misaligns this column and shoves the fluid Artist
+        // column sideways. A deterministic width keeps header + every row lined
+        // up; the badge stack wraps if it needs more than one line.
         header: "Quality",
-        width: "max-content",
+        width: "140px",
         render: (track) => {
           const providerQualityTags = getQualityTags(track);
           const fileQualityTags = showFileQualityDifferences ? getFileQualityTags(getTrackFiles(track)) : [];
