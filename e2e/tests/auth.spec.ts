@@ -25,7 +25,7 @@ test.describe('Auth flow', () => {
       });
     });
 
-    await page.route('**/api/auth/device-login', async (route) => {
+    await page.route('**/api/auth/device-login**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
