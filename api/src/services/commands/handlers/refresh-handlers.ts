@@ -3,7 +3,6 @@ import { RefreshAlbumService } from "../../music/refresh-album-service.js";
 import { MediaSeedService } from "../../music/media-seed-service.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
 import { db } from "../../../database.js";
-import { shouldRefreshArtist } from "../../config/refresh-policy.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { buildMatchArtistProvidersCommand, queueArtistWorkflow } from "../../music/artist-workflow.js";
 import { appEvents, AppEvent } from "../app-events.js";
@@ -155,7 +154,10 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
         description: `${baseLabel} - preparing metadata refresh`,
     });
 
-    // Resolve target artists (monitoring cycle uses dueOnly with staleness skip)
+    // Resolve target artists. Staleness selection already happened upstream in
+    // queueMetadataRefreshPass (dueOnly for the monitoring cycle, all managed
+    // artists for a manual refresh), and the resulting ids arrive as artistIds —
+    // so this handler force-queues exactly what it was handed, no second filter.
     const selectedArtistIds = Array.isArray(job.payload.artistIds)
         ? job.payload.artistIds.map((id: any) => String(id))
         : undefined;
@@ -168,15 +170,6 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
         const artist = allArtists[i];
         const artistId = String(artist.id);
         const artistName = String((artist as any).name || '').trim();
-
-        // Staleness skip: check if artist needs refresh
-        if (!selectedArtistIds && !shouldRefreshArtist({
-            artistId,
-            lastScanned: (artist as any).last_scanned,
-        })) {
-            skipped++;
-            continue;
-        }
 
         const progress = Math.min(90, 10 + Math.round(((i + 1) / allArtists.length) * 80));
         ctx.updateCommandDescription(job, {
