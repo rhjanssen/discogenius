@@ -980,11 +980,12 @@ export class ArtistQueryService {
         // section, so the feature was removed during the provider-table retirement.
 
         const topTracks = db.prepare(`
-      -- Drive from the artist's release groups (a small, indexed set) instead of
-      -- scanning all Tracks: the old "WHERE release_group.artist_mbid = ? OR
-      -- EXISTS(...)" forced a full Tracks scan (~750k rows) with per-row
-      -- correlated subqueries — ~58s on a large library. Restricting
-      -- track.release_mbid to the artist's releases uses the release index.
+      -- Top-tracks is a bounded display list (<=100 rows). The old query enriched
+      -- EVERY track across all the artist's releases (8 correlated subqueries + a
+      -- 3-way UNION per row) and only THEN ranked + limited — a 4-16s synchronous
+      -- stall that froze the whole event loop on big artists. Now it runs in two
+      -- phases: (1) dedup-by-recording + rank + LIMIT on cheap columns, then
+      -- (2) run the expensive per-row enrichment for just those <=100 survivors.
       WITH artist_rgs(mbid) AS (
         SELECT mbid FROM Albums WHERE artist_mbid = ?
         UNION
@@ -995,7 +996,38 @@ export class ArtistQueryService {
         FROM AlbumReleases ar
         JOIN artist_rgs ON ar.release_group_mbid = artist_rgs.mbid
       ),
-      ranked AS (
+      -- Phase 1: dedup one track per recording + rank + limit using ONLY cheap
+      -- columns. Crucially the ranking is a pure window over the release date —
+      -- NO per-track correlated subqueries. (The old ranking ran a has-file and a
+      -- has-provider EXISTS per track; over a 12k-track artist that alone was
+      -- ~18s.) The representative is the earliest release of each recording;
+      -- is_downloaded is computed recording-wide in phase 2 so it stays correct
+      -- regardless of which edition is the representative.
+      dedup AS (
+        SELECT
+          track.mbid AS track_mbid,
+          COALESCE(rel.date, rg.first_release_date) AS release_date,
+          COALESCE(am.popularity, 0) AS popularity,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(track.recording_mbid, track.mbid)
+            ORDER BY
+              COALESCE(rel.date, rg.first_release_date) ASC,
+              track.mbid ASC
+          ) AS recording_rank
+        FROM Tracks track
+        JOIN AlbumReleases rel ON rel.mbid = track.release_mbid
+        JOIN Albums rg ON rg.mbid = rel.release_group_mbid
+        LEFT JOIN ArtistMetadata am ON am.mbid = rg.artist_mbid
+        WHERE track.release_mbid IN (SELECT mbid FROM artist_releases)
+      ),
+      top AS (
+        SELECT track_mbid, release_date, popularity
+        FROM dedup
+        WHERE recording_rank = 1
+        ORDER BY popularity DESC, release_date DESC, track_mbid ASC
+        LIMIT 100
+      )
+      -- Phase 2: enrich only the <=100 survivors.
       SELECT
         track.mbid AS id,
         release_group.mbid AS album_id,
@@ -1038,7 +1070,7 @@ export class ArtistQueryService {
             AND monitored_slot.monitored = 1
         ) THEN 1 ELSE 0 END AS is_monitored,
         COALESCE(selected_slot.monitored_lock, 0) AS monitored_lock,
-        COALESCE(artist_metadata.popularity, 0) AS popularity,
+        top.popularity AS popularity,
         release_group.title AS album_title,
         provider_album.asset_id AS album_cover,
         artist_metadata.name AS artist_name,
@@ -1056,22 +1088,13 @@ export class ArtistQueryService {
           SELECT 1
           FROM TrackFiles downloaded_file
           WHERE downloaded_file.file_type = 'track'
-            AND downloaded_file.canonical_track_mbid = track.mbid
-        ) THEN 1 ELSE 0 END AS is_downloaded,
-        ROW_NUMBER() OVER (
-          PARTITION BY COALESCE(track.recording_mbid, track.mbid)
-          ORDER BY
-            CASE WHEN EXISTS (
-              SELECT 1
-              FROM TrackFiles rep_file
-              WHERE rep_file.file_type = 'track'
-                AND rep_file.canonical_track_mbid = track.mbid
-            ) THEN 0 ELSE 1 END,
-            CASE WHEN provider_track.provider_id IS NOT NULL THEN 0 ELSE 1 END,
-            COALESCE(release.date, release_group.first_release_date) ASC,
-            track.mbid ASC
-        ) AS recording_rank
-      FROM Tracks track
+            AND (
+              downloaded_file.canonical_track_mbid = track.mbid
+              OR (track.recording_mbid IS NOT NULL AND downloaded_file.canonical_recording_mbid = track.recording_mbid)
+            )
+        ) THEN 1 ELSE 0 END AS is_downloaded
+      FROM top
+      JOIN Tracks track ON track.mbid = top.track_mbid
       JOIN AlbumReleases release ON release.mbid = track.release_mbid
       JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
       LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = release_group.artist_mbid
@@ -1125,13 +1148,8 @@ export class ArtistQueryService {
          ORDER BY CASE preferred_file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, preferred_file.id ASC
          LIMIT 1
        )
-      WHERE track.release_mbid IN (SELECT mbid FROM artist_releases)
       GROUP BY track.mbid
-      )
-      SELECT * FROM ranked
-      WHERE recording_rank = 1
       ORDER BY popularity DESC, release_date DESC, id ASC
-      LIMIT 100
     `).all(String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[];
 
         const releaseGroupDownloadStats = getReleaseGroupDownloadStatsMap(musicBrainzReleaseGroups.map((album) => album.mbid));
