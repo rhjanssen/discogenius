@@ -553,8 +553,19 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        // 2. Single candidate fully covering a release, most complete edition first.
+        // 2. Single candidate fully covering a release. Consider EVERY release that
+        //    has a full cover — not just the first — then pick by most-complete
+        //    edition, then highest provider quality, then score. Two editions of the
+        //    same EP (a 16-bit and a 24-bit release, each matched to its own MB
+        //    release) must not be decided by release order alone: the hi-res offer
+        //    should win the slot.
         let selectedSingle: { candidate: ProviderAlbumCandidateWithTracks; releaseMbid: string } | null = null;
+        const coveredReleaseOptions: Array<{
+            candidate: ProviderAlbumCandidateWithTracks;
+            releaseMbid: string;
+            trackCount: number;
+            quality: number;
+        }> = [];
         for (const target of releaseTargets) {
             const releaseCompatibleCandidates = candidatesWithTracks.filter(candidate =>
                 candidateCanRepresentRelease(candidate, target.releaseMbid)
@@ -564,9 +575,25 @@ export function selectReleaseGroupSlotAlbums(
             );
             if (fullCovers.length > 0) {
                 sortCandidatesForSlot(slot, fullCovers);
-                selectedSingle = { candidate: fullCovers[0], releaseMbid: target.releaseMbid };
-                break;
+                coveredReleaseOptions.push({
+                    candidate: fullCovers[0],
+                    releaseMbid: target.releaseMbid,
+                    trackCount: target.tracks.length,
+                    quality: qualityScore(slot, fullCovers[0].album.quality),
+                });
             }
+        }
+        if (coveredReleaseOptions.length > 0) {
+            coveredReleaseOptions.sort((left, right) =>
+                right.trackCount - left.trackCount
+                || right.quality - left.quality
+                || right.candidate.score - left.candidate.score
+                || left.releaseMbid.localeCompare(right.releaseMbid)
+            );
+            selectedSingle = {
+                candidate: coveredReleaseOptions[0].candidate,
+                releaseMbid: coveredReleaseOptions[0].releaseMbid,
+            };
         }
 
         if (selectedSingle) {

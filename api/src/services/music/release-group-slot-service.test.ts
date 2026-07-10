@@ -1324,3 +1324,77 @@ test("MusicBrainz parenthetical bonus-track suffixes do not break edition covera
   assert.equal(selections[0]?.album.providerId, "provider-anniv-sfx");
   assert.equal(selections[0]?.match.releaseMbid, "release-anniv-sfx");
 });
+
+test("equal-completeness editions: the higher-bit-depth (hi-res) release wins the stereo slot", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-hires-tiebreak";
+  insertReleaseGroup(releaseGroupMbid);
+
+  // Two editions of the same EP, same recordings, same track count. The 16-bit
+  // release MBID deliberately sorts BEFORE the 24-bit one, reproducing the bug
+  // where release order (not audio quality) decided the slot. Each provider
+  // offer is UPC-bound to exactly one edition (distinct match.releaseMbid), so
+  // neither offer can cross-cover the other edition.
+  const release16 = "release-goosebumps-a16"; // sorts first
+  const release24 = "release-goosebumps-b24"; // sorts second
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run(release16, releaseGroupMbid, "artist-mbid-1", "Goosebumps EP", "Official", "2021-01-29", 2, 1);
+  insertRelease.run(release24, releaseGroupMbid, "artist-mbid-1", "Goosebumps EP", "Official", "2021-01-29", 2, 1);
+
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  insertRecording.run("rec-goose-1", "Track One", JSON.stringify(["GBHR21000001"]));
+  insertRecording.run("rec-goose-2", "Track Two", JSON.stringify(["GBHR21000002"]));
+  // Both editions carry the same two recordings.
+  insertTrack.run("track-goose-16a", release16, "rec-goose-1", "Track One", 1, 1);
+  insertTrack.run("track-goose-16b", release16, "rec-goose-2", "Track Two", 2, 1);
+  insertTrack.run("track-goose-24a", release24, "rec-goose-1", "Track One", 1, 1);
+  insertTrack.run("track-goose-24b", release24, "rec-goose-2", "Track Two", 2, 1);
+
+  const providerTracks = [
+    { mbid: null, isrc: "GBHR21000001", title: "Track One", track_number: 1, volume_number: 1, duration: null },
+    { mbid: null, isrc: "GBHR21000002", title: "Track Two", track_number: 2, volume_number: 1, duration: null },
+  ];
+  // 16-bit offer bound to the first-sorting edition; 24-bit to the second.
+  const match16 = { ...buildMatch(releaseGroupMbid, "163897895"), releaseMbid: release16 };
+  const match24 = { ...buildMatch(releaseGroupMbid, "163897909"), releaseMbid: release24 };
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: {
+        providerId: "163897895",
+        title: "Goosebumps EP",
+        quality: "LOSSLESS", // 16-bit
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: providerTracks,
+      },
+      match: match16,
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "163897909",
+        title: "Goosebumps EP",
+        quality: "HIRES_LOSSLESS", // 24-bit
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: providerTracks,
+      },
+      match: match24,
+    },
+  ]);
+
+  // Both editions are fully and equally covered; audio quality must break the
+  // tie in favour of the 24-bit HIRES offer and bind the slot to its edition.
+  const stereo = selections.find((selection) => selection.slot === "stereo");
+  assert.ok(stereo, "expected a stereo slot selection");
+  assert.equal(stereo?.album.providerId, "163897909");
+  assert.equal(stereo?.match.releaseMbid, release24);
+});
