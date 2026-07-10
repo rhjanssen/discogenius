@@ -846,7 +846,19 @@ export class ArtistQueryService {
         }
         const needsEnrichment = shouldHydrateArtistPage(artist, artistId);
 
+        // Scope to this artist's video recordings via a UNION of the two
+        // artist-link columns — each branch uses a covering index
+        // (artist_metadata_id, is_video) / (artist_mbid, is_video). The prior
+        // form filtered `is_video = 1 AND (CAST(...) = ? OR ...)`, whose CAST +
+        // OR-join to ArtistMetadata forced a scan of EVERY artist's videos on
+        // every artist-page load. All rows here belong to `artist`, so the
+        // ArtistMetadata join is gone and id/name are bound directly.
         const videos = db.prepare(`
+         WITH artist_videos(id) AS (
+           SELECT id FROM Recordings WHERE is_video = 1 AND artist_metadata_id = @artistMetadataId
+           UNION
+           SELECT id FROM Recordings WHERE is_video = 1 AND artist_mbid = @artistMbid
+         )
          SELECT
            CAST(recording.id AS TEXT) AS id,
            recording.title,
@@ -866,8 +878,8 @@ export class ArtistQueryService {
            COALESCE(recording.cover_image_id, provider_item.asset_id) AS cover,
            recording.cover_image_url AS cover_art_url,
            provider_item.provider_url AS url,
-           CAST(COALESCE(recording.artist_metadata_id, artist_metadata.id) AS TEXT) AS artist_id,
-           artist_metadata.name AS artist_name,
+           CAST(COALESCE(recording.artist_metadata_id, @artistIdNum) AS TEXT) AS artist_id,
+           @artistName AS artist_name,
            COALESCE(recording.monitored, 0) AS monitored,
            COALESCE(recording.monitored_lock, 0) AS monitored_lock,
            recording.updated_at AS last_scanned,
@@ -886,9 +898,7 @@ export class ArtistQueryService {
                )
            ) THEN 1 ELSE 0 END AS is_downloaded
          FROM Recordings recording
-         LEFT JOIN ArtistMetadata artist_metadata
-           ON artist_metadata.id = recording.artist_metadata_id
-          OR (recording.artist_mbid IS NOT NULL AND artist_metadata.mbid = recording.artist_mbid)
+         JOIN artist_videos av ON av.id = recording.id
          LEFT JOIN ProviderItems provider_item
            ON provider_item.rowid = (
              SELECT candidate.rowid
@@ -901,14 +911,13 @@ export class ArtistQueryService {
              ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC, candidate.provider_id ASC
              LIMIT 1
            )
-         WHERE recording.is_video = 1
-           AND (
-             CAST(recording.artist_metadata_id AS TEXT) = ?
-             OR recording.artist_mbid = ?
-             OR artist_metadata.mbid = ?
-           )
          ORDER BY COALESCE(video_popularity, 0) DESC, (COALESCE(recording.release_date, provider_item.release_date) IS NULL) ASC, COALESCE(recording.release_date, provider_item.release_date) DESC, recording.title ASC, recording.id ASC
-       `).all(String(artist.id), String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[];
+       `).all({
+            artistMetadataId: Number(artist.id) || -1,
+            artistMbid: String(artist.mbid || artistId),
+            artistIdNum: Number(artist.id) || null,
+            artistName: (artist as any).name ?? null,
+        }) as any[];
         const musicBrainzReleaseGroups = artist.mbid
             ? db.prepare(`
          SELECT
