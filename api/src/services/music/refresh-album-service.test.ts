@@ -165,7 +165,7 @@ test("album track scan stores provider track offers linked to the selected canon
         quality: "LOSSLESS",
         artist: { providerId: "fake-artist", name: "Bastille" },
         // provider rows carry audio-normalization in `raw`; the scan homes it to
-        // the canonical Recording (replay_gain is negative dB, peak is a fraction).
+        // the ProviderItems track offer (replay_gain is negative dB, peak a fraction).
         raw: {
           provider_id: "provider-track-1",
           title: "Track One",
@@ -227,7 +227,7 @@ dbModule.db.prepare(`
   await refreshServiceModule.RefreshAlbumService.refreshTracks("provider-album-1", { resolveMusicBrainz: false });
 
   const offer = dbModule.db.prepare(`
-    SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method, isrc
+    SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method, isrc, replay_gain, peak
     FROM ProviderItems
     WHERE provider = 'fake' AND entity_type = 'track' AND provider_id = 'provider-track-1'
   `).get() as any;
@@ -239,13 +239,15 @@ dbModule.db.prepare(`
   assert.equal(offer.library_slot, "stereo");
   assert.equal(offer.match_method, "selected-release-position");
   assert.equal(offer.isrc, "USABC240001");
+  // replay_gain/peak are provider-only facts and live on the ProviderItems
+  // track offer, not the canonical MusicBrainz Recording.
+  assert.equal(offer.replay_gain, -8.4);
+  assert.equal(offer.peak, 0.97);
 
-  const recording = dbModule.db.prepare("SELECT copyright, popularity, replay_gain, peak, isrcs FROM Recordings WHERE mbid = ?")
-    .get(recordingMbid) as { copyright: string | null; popularity: number | null; replay_gain: number | null; peak: number | null; isrcs: string | null };
+  const recording = dbModule.db.prepare("SELECT copyright, popularity, isrcs FROM Recordings WHERE mbid = ?")
+    .get(recordingMbid) as { copyright: string | null; popularity: number | null; isrcs: string | null };
   assert.equal(recording.copyright, "(P) 2024 Track");
   assert.equal(recording.popularity, 56);
-  assert.equal(recording.replay_gain, -8.4);
-  assert.equal(recording.peak, 0.97);
   assert.equal(recording.isrcs, null);
 });
 

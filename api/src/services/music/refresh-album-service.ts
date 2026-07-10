@@ -71,6 +71,10 @@ export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): a
         explicit: false,
         quality: providerTrack.quality || "LOSSLESS",
         copyright: (providerTrack as any).copyright || null,
+        replay_gain: (providerTrack as any).replay_gain ?? null,
+        peak: (providerTrack as any).peak ?? null,
+        bpm: (providerTrack as any).bpm ?? null,
+        musical_key: (providerTrack as any).musical_key ?? null,
         artist_id: providerTrack.artist?.providerId || null,
         artist_name: providerTrack.artist?.name || "Unknown Artist",
         artists: Array.isArray(providerTrack.artists)
@@ -224,15 +228,11 @@ export class RefreshAlbumService {
             UPDATE Recordings SET
                 copyright = COALESCE(NULLIF(?, ''), copyright),
                 popularity = COALESCE(?, popularity),
-                replay_gain = COALESCE(?, replay_gain),
-                peak = COALESCE(?, peak),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `).run(
             textOrNull(track?.copyright),
             positiveNumberOrNull(track?.popularity),
-            finiteNumberOrNull(track?.replay_gain),
-            finiteNumberOrNull(track?.peak),
             recordingId,
         );
     }
@@ -773,8 +773,9 @@ export class RefreshAlbumService {
                 provider, entity_type, provider_id, provider_album_id, title, version, explicit, quality,
                 isrc, duration, track_number, volume_number, release_date, artist_mbid, release_group_mbid, release_mbid,
                 track_mbid, recording_mbid, library_slot, track_id, recording_id,
-                match_status, match_confidence, match_method, match_evidence, provider_artist_name, cover, updated_at
-            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                match_status, match_confidence, match_method, match_evidence, provider_artist_name, cover,
+                replay_gain, peak, bpm, musical_key, updated_at
+            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 title = excluded.title,
@@ -800,6 +801,10 @@ export class RefreshAlbumService {
                 match_evidence = excluded.match_evidence,
                 provider_artist_name = excluded.provider_artist_name,
                 cover = COALESCE(excluded.cover, ProviderItems.cover),
+                replay_gain = COALESCE(excluded.replay_gain, ProviderItems.replay_gain),
+                peak = COALESCE(excluded.peak, ProviderItems.peak),
+                bpm = COALESCE(excluded.bpm, ProviderItems.bpm),
+                musical_key = COALESCE(excluded.musical_key, ProviderItems.musical_key),
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -857,6 +862,10 @@ export class RefreshAlbumService {
                             }),
                             currentTrack.artist?.name || null,
                             null,
+                            finiteNumberOrNull(currentTrack.replay_gain),
+                            finiteNumberOrNull(currentTrack.peak),
+                            finiteNumberOrNull(currentTrack.bpm),
+                            textOrNull(currentTrack.musical_key),
                         );
                         this.storeCanonicalTrackSupplements(canonicalTrack?.recording_id || null, currentTrack);
                     }

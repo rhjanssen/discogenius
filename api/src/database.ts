@@ -330,7 +330,7 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-const BASE_SCHEMA_VERSION = 36;
+const BASE_SCHEMA_VERSION = 37;
 
 // ====================================================================
 // SCHEMA
@@ -767,8 +767,6 @@ function ensureMusicBrainzProviderSchema(): void {
       title TEXT NOT NULL,
       artist_credit TEXT,
       length_ms INT,
-      replay_gain REAL,                 -- provider-sourced audio normalization (supplement)
-      peak REAL,                        -- provider-sourced peak amplitude (supplement)
       is_video BOOLEAN NOT NULL DEFAULT 0,
       metadata_status TEXT NOT NULL DEFAULT 'musicbrainz',
       release_date DATETIME,
@@ -830,6 +828,10 @@ function ensureMusicBrainzProviderSchema(): void {
       volume_count INTEGER,               -- album offer medium/disc count
       track_number INTEGER,               -- track offer position on its medium
       volume_number INTEGER,              -- track offer medium/disc number
+      replay_gain REAL,                   -- provider-only: track loudness normalization (MB has none)
+      peak REAL,                          -- provider-only: track peak amplitude
+      bpm REAL,                           -- provider-only: tempo
+      musical_key TEXT,                   -- provider-only: musical key
       release_date TEXT,
       availability TEXT,
       library_slot TEXT NOT NULL DEFAULT 'stereo',

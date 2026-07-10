@@ -1464,6 +1464,7 @@ export async function getAlbumTracks(albumId: string) {
     bpm: item.bpm || null,
     key: item.key || null,
     key_scale: item.keyScale || null,
+    musical_key: item.key ? (item.keyScale ? `${item.key} ${item.keyScale}` : item.key) : null,
     peak: item.peak || null,
     replay_gain: item.replayGain || null,
     popularity: item.popularity || 0,

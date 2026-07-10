@@ -840,14 +840,8 @@ export class AudioTagService {
           provider_recording.copyright,
           provider_track.copyright
         ) AS media_copyright,
-        COALESCE(
-          canonical_recording.replay_gain,
-          provider_recording.replay_gain
-        ) AS media_replay_gain,
-        COALESCE(
-          canonical_recording.peak,
-          provider_recording.peak
-        ) AS media_peak,
+        provider_track.replay_gain AS media_replay_gain,
+        provider_track.peak AS media_peak,
         COALESCE(canonical_group.title, canonical_release.title, alb.title, provider_album.title) AS album_title,
         CASE WHEN COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid, provider_track.release_group_mbid) IS NOT NULL THEN NULL ELSE provider_album.version END AS album_version,
         COALESCE(canonical_release.date, ar.date, provider_album.release_date) AS album_release_date,
