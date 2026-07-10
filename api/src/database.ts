@@ -62,6 +62,33 @@ function profileWrite<T>(op: () => T): T {
   }
 }
 
+// Optional READ profiling, symmetric to the write profiler. The main thread is
+// the event loop and better-sqlite3 reads are synchronous, so a slow read
+// (a scan, a big join) blocks every request/SSE/health probe for its whole
+// duration — the chief cause of the UI bogging down under heavy refresh/import
+// load. Set DISCOGENIUS_READ_PROFILE_MS to log any main-thread read that holds
+// the loop longer than that (ms), so the culprit query is found by data, not
+// guesswork, and can be scoped/indexed (or offloaded) specifically. Off by
+// default: when unset, statements are never wrapped, so there is zero per-read
+// overhead on the hot path.
+const READ_PROFILE_MS = (() => {
+  const raw = Number.parseInt(String(process.env.DISCOGENIUS_READ_PROFILE_MS ?? ""), 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+})();
+
+function profileRead<T>(source: string, op: () => T): T {
+  const startedAt = Date.now();
+  try {
+    return op();
+  } finally {
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= READ_PROFILE_MS) {
+      const sql = source.replace(/\s+/g, " ").trim().slice(0, 160);
+      console.warn(`[read-profile] main-thread read held ${elapsed}ms: ${sql}`);
+    }
+  }
+}
+
 function isSqliteBusy(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const code = (error as { code?: string }).code;
@@ -182,6 +209,14 @@ export const db = new Proxy({} as any, {
         const stmt = instance.prepare(source);
         const originalRun = stmt.run.bind(stmt);
         stmt.run = ((...args: unknown[]) => runWithSqliteBusyRetry(() => originalRun(...args))) as typeof stmt.run;
+        // Only wrap reads when profiling is on AND we're on the event loop —
+        // otherwise leave .get/.all untouched for zero hot-path overhead.
+        if (READ_PROFILE_MS && isMainThread) {
+          const originalGet = stmt.get.bind(stmt);
+          const originalAll = stmt.all.bind(stmt);
+          stmt.get = ((...args: unknown[]) => profileRead(source, () => originalGet(...args))) as typeof stmt.get;
+          stmt.all = ((...args: unknown[]) => profileRead(source, () => originalAll(...args))) as typeof stmt.all;
+        }
         return stmt;
       };
     }
