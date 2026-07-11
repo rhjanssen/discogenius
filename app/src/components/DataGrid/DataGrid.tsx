@@ -31,6 +31,14 @@ export interface DataGridProps<T = any> {
     emptyContent?: React.ReactNode;
     className?: string;
     disableStickyHeader?: boolean;
+    /**
+     * Render the header + all rows as CSS subgrids of one parent grid, so
+     * content-sized columns (max-content) resolve to the SAME width across every
+     * row and the header and stay aligned. Without this each row is its own grid
+     * and a max-content column sizes to that row's content, misaligning columns.
+     * Requires all rows to be in the DOM (no windowing) — true for the track list.
+     */
+    sharedColumns?: boolean;
     compact?: boolean;
     disableResponsiveColumnHiding?: boolean;
     resizableColumns?: boolean;
@@ -60,6 +68,25 @@ const useStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         width: "100%",
+    },
+    // sharedColumns: the root becomes the one grid that owns the column tracks;
+    // the header and every row are subgrids of it, so content-sized columns
+    // resolve identically across all rows. Horizontal padding moves here (rows
+    // drop theirs) so the tracks line up; column gap lives here too.
+    rootSharedColumns: {
+        display: "grid",
+        columnGap: tokens.spacingHorizontalS,
+        paddingLeft: tokens.spacingHorizontalM,
+        paddingRight: tokens.spacingHorizontalM,
+    },
+    sharedGridRow: {
+        gridColumn: "1 / -1",
+        gridTemplateColumns: "subgrid",
+        paddingLeft: 0,
+        paddingRight: 0,
+    },
+    sharedFullWidthRow: {
+        gridColumn: "1 / -1",
     },
     header: {
         display: "grid",
@@ -229,6 +256,7 @@ function DataGridInner<T>(
         emptyContent,
         className,
         disableStickyHeader,
+        sharedColumns,
         compact,
         disableResponsiveColumnHiding,
         resizableColumns,
@@ -386,12 +414,18 @@ function DataGridInner<T>(
     }
 
     return (
-        <div className={mergeClasses(styles.root, className)} ref={ref} role="grid" aria-rowcount={items.length + 1}>
+        <div
+            className={mergeClasses(styles.root, sharedColumns ? styles.rootSharedColumns : undefined, className)}
+            ref={ref}
+            role="grid"
+            aria-rowcount={items.length + 1}
+            style={sharedColumns ? gridStyle : undefined}
+        >
             <div
-                className={styles.header}
+                className={mergeClasses(styles.header, sharedColumns ? styles.sharedGridRow : undefined)}
                 role="row"
                 style={{
-                    ...gridStyle,
+                    ...(sharedColumns ? {} : gridStyle),
                     ...(disableStickyHeader ? { position: "relative" } : {}),
                 }}
             >
@@ -443,7 +477,7 @@ function DataGridInner<T>(
                 return (
                     <React.Fragment key={rowId}>
                         {beforeRow ? (
-                            <div className={styles.rowBefore} role="row">
+                            <div className={mergeClasses(styles.rowBefore, sharedColumns ? styles.sharedFullWidthRow : undefined)} role="row">
                                 {beforeRow}
                             </div>
                         ) : null}
@@ -454,9 +488,10 @@ function DataGridInner<T>(
                                 onRowClick ? styles.rowClickable : undefined,
                                 compact ? styles.rowCompact : undefined,
                                 rowSelected ? styles.rowSelected : undefined,
+                                sharedColumns ? styles.sharedGridRow : undefined,
                                 getRowClassName?.(item, index)
                             )}
-                            style={gridStyle}
+                            style={sharedColumns ? undefined : gridStyle}
                             onClick={onRowClick ? () => handleRowClick(item) : undefined}
                         >
                             {selection ? (
@@ -491,7 +526,7 @@ function DataGridInner<T>(
                         </div>
                         {rowDetail ? (
                             <div
-                                className={styles.rowDetail}
+                                className={mergeClasses(styles.rowDetail, sharedColumns ? styles.sharedFullWidthRow : undefined)}
                                 role="row"
                                 onClick={(event) => event.stopPropagation()}
                             >

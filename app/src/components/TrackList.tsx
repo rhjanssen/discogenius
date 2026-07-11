@@ -684,7 +684,9 @@ const TrackList = <T extends TrackListItem>({
     trackColumns.push({
       key: "title",
       header: "Title",
-      width: showArtist || showAlbum ? "minmax(0, 1.35fr)" : "minmax(0, 1fr)",
+      // Title and Artist each take an equal share of the space left after the
+      // content-sized columns (Quality/Duration).
+      width: "minmax(0, 1fr)",
       render: (track) => renderTitle(track),
     });
 
@@ -692,7 +694,7 @@ const TrackList = <T extends TrackListItem>({
       trackColumns.push({
         key: "artist",
         header: "Artist",
-        width: "minmax(120px, 1fr)",
+        width: "minmax(0, 1fr)",
         minWidth: 768,
         render: (track) => (
           <span className={mergeClasses(dgCell.subtitleText, styles.linkText)}>
@@ -706,7 +708,7 @@ const TrackList = <T extends TrackListItem>({
       trackColumns.push({
         key: "album",
         header: "Album",
-        width: "minmax(150px, 1.2fr)",
+        width: "minmax(0, 1fr)",
         minWidth: 768,
         render: (track) => {
           const displayAlbum = shouldShowAlbum(track, showAlbum, contextAlbumTitle)
@@ -731,13 +733,11 @@ const TrackList = <T extends TrackListItem>({
     if (showQuality) {
       trackColumns.push({
         key: "quality",
-        // Fixed (not max-content): each row is its own CSS grid, so a
-        // content-sized track resolves to a different width per row (and vs the
-        // header), which misaligns this column and shoves the fluid Artist
-        // column sideways. A deterministic width keeps header + every row lined
-        // up; the badge stack wraps if it needs more than one line.
+        // Sized to its widest badge cluster (max-content). This stays aligned
+        // because the grid uses subgrid (sharedColumns), so the column resolves
+        // once across every row instead of per-row.
         header: "Quality",
-        width: "140px",
+        width: "max-content",
         render: (track) => {
           const providerQualityTags = getQualityTags(track);
           const fileQualityTags = showFileQualityDifferences ? getFileQualityTags(getTrackFiles(track)) : [];
@@ -767,8 +767,8 @@ const TrackList = <T extends TrackListItem>({
     trackColumns.push({
       key: "duration",
       header: "Duration",
-      width: "64px",
-      align: "right",
+      // Content-sized and left-aligned, like the other columns.
+      width: "max-content",
       render: (track) => (
         <Text size={200} className={styles.durationText}>
           {formatDurationSeconds(track.duration)}
@@ -931,6 +931,10 @@ const TrackList = <T extends TrackListItem>({
         renderRowDetail={renderRowDetail}
         getRowClassName={(track) => playingTrackId === track.id ? styles.rowPlaying : undefined}
         disableStickyHeader={disableStickyHeader}
+        // Bounded track lists (album / top-tracks) render every row, so subgrid
+        // keeps content-sized columns aligned. Skip it for the virtualized
+        // full-page variant (where not all rows are in the DOM).
+        sharedColumns={disableStickyHeader}
       />
 
       {infoTrack ? (
