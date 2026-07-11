@@ -150,6 +150,17 @@ export interface CatalogProvider {
   /** Release-group detail incl. all releases (without tracks necessarily filled). */
   getReleaseGroup(releaseGroupMbid: string): Promise<LidarrReleaseGroupDetail>;
 
+  /**
+   * Bulk variant of getReleaseGroup: full details for MANY release groups in a
+   * fixed number of set-based queries instead of one round-trip per group — the
+   * "one fetch per artist" path that removes the per-RG N+1 during refresh.
+   * Optional: providers that can't batch (hosted Servarr) let callers fall back
+   * to per-RG getReleaseGroup.
+   */
+  getReleaseGroupDetails?(
+    releaseGroupMbids: string[],
+  ): Promise<Array<{ releaseGroupMbid: string; detail: LidarrReleaseGroupDetail }>>;
+
   /** A single release with its full medium/track list. */
   getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null>;
 

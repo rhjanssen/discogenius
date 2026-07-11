@@ -568,10 +568,51 @@ export class ServarrMetadataService {
   }
 
   async syncReleaseGroup(releaseGroupMbid: string, artistMbid: string): Promise<void> {
-    // Fetch via the active catalog source; MB-local returns the full tracklist in
-    // one query (no N+1). Same LidarrReleaseGroupDetail DTO → unchanged write path.
     const { catalogProviderRegistry } = await import("../catalog/index.js");
     const detail = await catalogProviderRegistry.getActive().getReleaseGroup(releaseGroupMbid);
+    this.reconcileReleaseGroupDetail(releaseGroupMbid, artistMbid, detail);
+  }
+
+  /**
+   * Fetch full detail for many of an artist's release groups in ONE bulk call
+   * (the "one fetch per artist" path that removes the per-RG N+1 during refresh),
+   * then reconcile each with the identical write path. Falls back to per-RG
+   * getReleaseGroup for providers that can't batch (hosted Servarr).
+   */
+  async syncArtistReleaseGroups(artistMbid: string, releaseGroupMbids: string[]): Promise<void> {
+    const mbids = Array.from(new Set(releaseGroupMbids.map((mbid) => String(mbid || "").trim()).filter(Boolean)));
+    if (mbids.length === 0) {
+      return;
+    }
+    const { catalogProviderRegistry } = await import("../catalog/index.js");
+    const provider = catalogProviderRegistry.getActive();
+    if (typeof provider.getReleaseGroupDetails === "function") {
+      const details = await provider.getReleaseGroupDetails(mbids);
+      for (const entry of details) {
+        try {
+          this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
+        } catch (error) {
+          console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
+        }
+      }
+    } else {
+      for (const mbid of mbids) {
+        try {
+          const detail = await provider.getReleaseGroup(mbid);
+          this.reconcileReleaseGroupDetail(mbid, artistMbid, detail);
+        } catch (error) {
+          console.warn(`[ServarrMetadata] Failed to reconcile release group ${mbid}:`, error);
+        }
+      }
+    }
+  }
+
+  /**
+   * Reconcile one release group's full detail into the catalog (RG + releases +
+   * tracks + recordings). Shared by the single and bulk sync paths so the write
+   * behaviour is identical regardless of how the detail was fetched.
+   */
+  private reconcileReleaseGroupDetail(releaseGroupMbid: string, artistMbid: string, detail: LidarrReleaseGroupDetail): void {
     const ownerArtistMbid = String(detail.artistid || detail.artistId || artistMbid).trim();
 
     // Diff-reconcile: skip rewriting an unchanged release group's entire

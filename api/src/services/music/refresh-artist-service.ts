@@ -184,20 +184,26 @@ export class RefreshArtistService {
             ORDER BY rg.mbid ASC
         `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
 
-        // Hydrate release groups concurrently. Each syncReleaseGroup makes several
-        // catalog round-trips and resolveAlbumArtwork downloads cover art — both
-        // network-bound. Run one release group at a time this dominated MB-mode
-        // refresh (~6s × 80 groups ≈ 8 min). The SQLite writes stay safe because
-        // better-sqlite3 is synchronous, so statements never actually interleave;
-        // the cap keeps us within the catalog Postgres pool (max 4) plus headroom
-        // for the parallel artwork fetches.
+        // One bulk metadata fetch + reconcile for the whole artist. The old path
+        // called syncReleaseGroup per release group (~3 catalog round-trips each,
+        // ~6s × 80 groups ≈ 8 min) — a per-RG N+1. syncArtistReleaseGroups fetches
+        // every group's detail in a fixed number of set-based queries (MB-local)
+        // and reconciles each with the same write path.
+        const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
+        try {
+            await servarrMetadata.syncArtistReleaseGroups(artistMbid, releaseGroupMbids);
+        } catch (error) {
+            console.warn(`[RefreshArtistService] Failed to bulk-hydrate release groups for ${artistMbid}:`, error);
+        }
+
+        // Cover art is network-bound (one download per group) and stays
+        // parallelized, independent of the metadata fetch above.
         const limit = pLimit(6);
-        await Promise.all(releaseGroups.map((releaseGroup) => limit(async () => {
+        await Promise.all(releaseGroupMbids.map((releaseGroupMbid) => limit(async () => {
             try {
-                await servarrMetadata.syncReleaseGroup(releaseGroup.mbid, artistMbid);
-                await resolveAlbumArtwork({ albumMbid: releaseGroup.mbid });
+                await resolveAlbumArtwork({ albumMbid: releaseGroupMbid });
             } catch (error) {
-                console.warn(`[RefreshArtistService] Failed to hydrate canonical release group ${releaseGroup.mbid}:`, error);
+                console.warn(`[RefreshArtistService] Failed to resolve artwork for release group ${releaseGroupMbid}:`, error);
             }
         })));
     }

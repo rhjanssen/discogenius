@@ -211,18 +211,91 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
   }
 
   /**
+   * Bulk variant of getReleaseGroup — full detail for many release groups in a
+   * fixed number of set-based queries (one header query + two release/track
+   * queries) instead of ~3 per group. This is the "one fetch per artist" path:
+   * an 80-RG artist goes from ~240 round-trips to 3.
+   */
+  async getReleaseGroupDetails(
+    releaseGroupMbids: string[],
+  ): Promise<Array<{ releaseGroupMbid: string; detail: LidarrReleaseGroupDetail }>> {
+    const mbids = Array.from(new Set(releaseGroupMbids.map((m) => String(m || "").trim()).filter(Boolean)));
+    if (mbids.length === 0) {
+      return [];
+    }
+
+    const headers = await this.query<{
+      id: number; gid: string; name: string; primary_type: string | null; comment: string | null;
+      artist_gid: string | null; secondary_types: string[] | null;
+    }>(
+      `SELECT rg.id, rg.gid, rg.name, rgpt.name AS primary_type, rg.comment,
+          (SELECT a.gid FROM artist_credit_name acn JOIN artist a ON a.id = acn.artist
+             WHERE acn.artist_credit = rg.artist_credit ORDER BY acn.position LIMIT 1) AS artist_gid,
+          (SELECT array_agg(st.name ORDER BY st.name)
+             FROM release_group_secondary_type_join j
+             JOIN release_group_secondary_type st ON st.id = j.secondary_type
+             WHERE j.release_group = rg.id) AS secondary_types
+       FROM release_group rg
+       LEFT JOIN release_group_primary_type rgpt ON rgpt.id = rg.type
+       WHERE rg.gid = ANY($1::uuid[])`,
+      [mbids],
+    );
+    if (headers.length === 0) {
+      return [];
+    }
+
+    const releasesByRgId = await this.loadReleasesForGroups(headers.map((header) => header.id));
+
+    return headers.map((header) => {
+      const releases = releasesByRgId.get(header.id) ?? [];
+      const firstReleaseDate = releases
+        .map((release) => release.date ?? null)
+        .reduce<string | null>((acc, date) => earlierDate(acc, date), null);
+      const mbReleaseGroup: MbReleaseGroup = {
+        id: header.gid,
+        title: header.name,
+        "primary-type": header.primary_type,
+        "secondary-types": Array.isArray(header.secondary_types) ? header.secondary_types.filter(Boolean) : [],
+        "first-release-date": firstReleaseDate,
+        disambiguation: header.comment || null,
+        "artist-credit": header.artist_gid ? [{ artist: { id: header.artist_gid } }] : [],
+        releases,
+      };
+      return { releaseGroupMbid: header.gid, detail: mapMbReleaseGroupToLidarrDetail(mbReleaseGroup) };
+    });
+  }
+
+  /**
    * Load every release in a release group WITH its media, tracks, recordings and
-   * ISRCs in a single JOIN, plus a small per-release date/country pass. Returns
-   * `MbRelease[]` ready for the existing mapper.
+   * ISRCs. Delegates to the bulk loader so single and bulk fetches share one
+   * assembly and can never diverge.
    */
   private async loadReleasesForGroup(releaseGroupId: number): Promise<MbRelease[]> {
+    return (await this.loadReleasesForGroups([releaseGroupId])).get(releaseGroupId) ?? [];
+  }
+
+  /**
+   * Bulk variant: all releases (media, tracks, recordings, ISRCs) for MANY
+   * release groups in exactly two set-based queries, grouped by release_group id.
+   * This is what turns the per-RG N+1 into a fixed number of round-trips per
+   * artist.
+   */
+  private async loadReleasesForGroups(releaseGroupIds: number[]): Promise<Map<number, MbRelease[]>> {
+    const result = new Map<number, MbRelease[]>();
+    const ids = Array.from(new Set(releaseGroupIds.filter((id) => Number.isFinite(id))));
+    if (ids.length === 0) {
+      return result;
+    }
+
     const rows = await this.query<{
+      rg_id: number;
       release_id: number; release_gid: string; release_name: string; status: string | null; barcode: string | null; release_comment: string | null;
       medium_pos: number; format: string | null; medium_name: string | null;
       track_gid: string; track_pos: number; track_number: string | null; track_name: string; track_length: number | null;
       recording_gid: string; recording_name: string; recording_length: number | null; video: boolean; isrcs: string | null;
     }>(
       `SELECT
+          r.release_group AS rg_id,
           r.id AS release_id, r.gid AS release_gid, r.name AS release_name, rst.name AS status,
           r.barcode, r.comment AS release_comment,
           m.position AS medium_pos, mf.name AS format, m.name AS medium_name,
@@ -235,9 +308,9 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
        LEFT JOIN medium_format mf ON mf.id = m.format
        JOIN track t ON t.medium = m.id AND t.is_data_track = false
        JOIN recording rec ON rec.id = t.recording
-       WHERE r.release_group = $1
-       ORDER BY r.id, m.position, t.position`,
-      [releaseGroupId],
+       WHERE r.release_group = ANY($1::int[])
+       ORDER BY r.release_group, r.id, m.position, t.position`,
+      [ids],
     );
 
     const dateRows = await this.query<{ release_gid: string; y: number | null; m: number | null; d: number | null; code: string | null }>(
@@ -245,8 +318,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
        FROM release r
        LEFT JOIN release_country rc ON rc.release = r.id
        LEFT JOIN iso_3166_1 iso ON iso.area = rc.country
-       WHERE r.release_group = $1`,
-      [releaseGroupId],
+       WHERE r.release_group = ANY($1::int[])`,
+      [ids],
     );
     const releaseDate = new Map<string, string | null>();
     const releaseCountry = new Map<string, string | null>();
@@ -258,7 +331,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       }
     }
 
-    // Assemble: release → media[] → tracks[] (grouped by the ordered rows).
+    // Assemble: release → media[] → tracks[] (grouped by the ordered rows),
+    // bucketed into result by release_group id.
     const releaseMap = new Map<string, MbRelease>();
     const mediaMap = new Map<string, MbMedium>();
     for (const row of rows) {
@@ -275,6 +349,12 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           media: [],
         };
         releaseMap.set(row.release_gid, release);
+        let list = result.get(row.rg_id);
+        if (!list) {
+          list = [];
+          result.set(row.rg_id, list);
+        }
+        list.push(release);
       }
       const mediumKey = `${row.release_gid}:${row.medium_pos}`;
       let medium = mediaMap.get(mediumKey);
@@ -299,7 +379,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       };
       medium.tracks!.push(track);
     }
-    return Array.from(releaseMap.values());
+    return result;
   }
 
   async getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null> {
