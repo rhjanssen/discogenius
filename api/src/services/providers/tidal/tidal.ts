@@ -9,6 +9,11 @@ import {
 } from "./tidal-auth.js";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 const TIDAL_API_BASE_V2 = "https://api.tidal.com/v2";
+// TIDAL's JSON:API developer platform. Our device-flow token is accepted here
+// (INTERNAL access tier) — no separate OAuth2 app needed. Used for batched
+// album+track fetches (filter[id], include=items) that collapse the per-album
+// track N+1 during matching.
+const TIDAL_OPENAPI_BASE = "https://openapi.tidal.com/v2";
 const TIDAL_HIFI_BASE = "https://api.tidalhifi.com/v1";
 const TIDAL_AUTH_BASE = "https://auth.tidal.com/v1/oauth2";
 const TIDAL_CLIENT_TOKEN = "wdgaB1CilGA-S_sj"; // Public client token used by TIDAL web clients
@@ -724,6 +729,21 @@ async function parseTidalJsonResponse(response: Response): Promise<unknown> {
 export async function tidalApiRequestV2(endpoint: string, options: RequestInit = {}): Promise<unknown> {
   const response = await tidalRawRequest(TIDAL_API_BASE_V2, endpoint, options, `v2:${endpoint}`);
   return parseTidalJsonResponse(response);
+}
+
+/** Request against the JSON:API developer platform (openapi.tidal.com). */
+async function tidalOpenApiRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
+  const headers = new Headers(options.headers as any);
+  headers.set("Accept", "application/vnd.api+json");
+  const response = await tidalRawRequest(TIDAL_OPENAPI_BASE, endpoint, { ...options, headers }, `openapi:${endpoint}`);
+  return parseTidalJsonResponse(response);
+}
+
+/** ISO-8601 duration (e.g. "PT4M11S") → whole seconds. */
+function parseIso8601DurationSeconds(iso: string | null | undefined): number {
+  const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(String(iso ?? ""));
+  if (!match) return 0;
+  return (Number(match[1] || 0) * 3600) + (Number(match[2] || 0) * 60) + Number(match[3] || 0);
 }
 
 // Paginated API request - fetches all items by following pagination
@@ -1475,6 +1495,76 @@ export async function getAlbumTracks(albumId: string) {
     popularity: item.popularity || 0,
     release_date: item.streamStartDate || null,
   })) || [];
+}
+
+/**
+ * Bulk track fetch via the v2 JSON:API: given many album ids, fetch each
+ * album's full tracklist in batches of 20 (`/albums?filter[id]=…&include=items`)
+ * instead of one `/albums/{id}/tracks` call per album. Returns a map of
+ * albumId → raw track rows in the same shape as getAlbumTracks.
+ *
+ * Note: v2 track resources expose identity/quality (isrc, mediaTags, bpm, key)
+ * but NOT replayGain/peak — those are only needed for tag embedding at download
+ * time (per-track, few tracks), not for matching, so the bulk path omits them.
+ */
+export async function getAlbumTracksBulk(albumIds: string[]): Promise<Map<string, any[]>> {
+  const cc = getCountryCode();
+  const result = new Map<string, any[]>();
+  const ids = Array.from(new Set(albumIds.map((id) => String(id || "").trim()).filter(Boolean)));
+  const FILTER_ID_CAP = 20; // TIDAL v2 rejects >20 ids per filter[id]
+
+  for (let i = 0; i < ids.length; i += FILTER_ID_CAP) {
+    const chunk = ids.slice(i, i + FILTER_ID_CAP);
+    const albums: any[] = [];
+    const includedTracks = new Map<string, any>();
+    // The compound document returns all albums + track resources in one shot at
+    // these volumes, but follow links.next defensively in case it ever paginates.
+    let endpoint: string | null =
+      `/albums?filter%5Bid%5D=${chunk.join(",")}&countryCode=${cc}&include=items`;
+    let guard = 0;
+    while (endpoint && guard++ < 50) {
+      const doc = await tidalOpenApiRequest(endpoint);
+      for (const album of doc?.data || []) albums.push(album);
+      for (const inc of doc?.included || []) {
+        if (inc?.type === "tracks") includedTracks.set(String(inc.id), inc);
+      }
+      const next: string | undefined = doc?.links?.next;
+      endpoint = next ? (next.startsWith("http") ? next.replace(TIDAL_OPENAPI_BASE, "") : next) : null;
+    }
+
+    for (const album of albums) {
+      const items: any[] = album?.relationships?.items?.data || [];
+      const tracks = items.map((item: any) => {
+        const attr = includedTracks.get(String(item.id))?.attributes || {};
+        return {
+          provider_id: String(item.id),
+          title: attr.title || "Unknown Track",
+          duration: parseIso8601DurationSeconds(attr.duration),
+          track_number: item?.meta?.trackNumber || 0,
+          volume_number: item?.meta?.volumeNumber || 1,
+          version: attr.version || null,
+          isrc: attr.isrc || null,
+          explicit: attr.explicit || false,
+          quality: deriveQuality({ mediaMetadata: { tags: attr.mediaTags || [] } }) || "LOSSLESS",
+          copyright: attr.copyright || null,
+          artist_id: null,
+          artist_name: "Unknown Artist",
+          artists: [],
+          url: `https://listen.tidal.com/track/${item.id}`,
+          bpm: attr.bpm || null,
+          key: attr.key || null,
+          key_scale: attr.keyScale || null,
+          musical_key: attr.key ? (attr.keyScale ? `${attr.key} ${attr.keyScale}` : attr.key) : null,
+          peak: null,
+          replay_gain: null,
+          popularity: typeof attr.popularity === "number" ? Math.round(attr.popularity * 100) : 0,
+          release_date: null,
+        };
+      });
+      result.set(String(album.id), tracks);
+    }
+  }
+  return result;
 }
 
 // Get album items (tracks + videos) - use this for video albums

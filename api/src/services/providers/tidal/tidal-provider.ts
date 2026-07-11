@@ -367,6 +367,15 @@ export class TidalProvider implements StreamingProvider {
     return (await tidal.getAlbumTracks(String(id))).map((track: any) => this.mapTrack(track));
   }
 
+  async getAlbumTracksBulk(ids: Array<string | number>): Promise<Map<string, ProviderTrack[]>> {
+    const raw = await tidal.getAlbumTracksBulk(ids.map((id) => String(id)));
+    const mapped = new Map<string, ProviderTrack[]>();
+    for (const [albumId, tracks] of raw) {
+      mapped.set(albumId, tracks.map((track: any) => this.mapTrack(track)));
+    }
+    return mapped;
+  }
+
   async getTrack(id: string | number): Promise<ProviderTrack> {
     return this.mapTrack(await tidal.getTrack(String(id)));
   }

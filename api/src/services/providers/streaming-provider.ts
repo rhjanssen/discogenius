@@ -109,6 +109,13 @@ export interface StreamingProvider {
   searchReleaseGroup?(query: ProviderReleaseGroupSearch): Promise<ProviderAlbum[]>;
   getAlbum(id: string | number): Promise<ProviderAlbum>;
   getAlbumTracks(id: string | number): Promise<ProviderTrack[]>;
+  /**
+   * Optional bulk tracklist fetch: given many album ids, return a map of
+   * albumId → tracks, fetched in as few provider calls as possible (batched).
+   * Providers that can't batch omit this and callers fall back to per-album
+   * getAlbumTracks.
+   */
+  getAlbumTracksBulk?(ids: Array<string | number>): Promise<Map<string, ProviderTrack[]>>;
   getTrack(id: string | number): Promise<ProviderTrack>;
   getVideo?(id: string | number): Promise<ProviderVideo>;
   getPlaybackInfo?(id: string | number, preferredQuality?: string): Promise<ProviderPlaybackInfo | null>;

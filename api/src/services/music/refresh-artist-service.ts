@@ -1563,14 +1563,29 @@ export class RefreshArtistService {
                 const missingAlbums = albums.filter((album) => !album._provider_tracks);
                 if (missingAlbums.length > 0) {
                     console.log(`[RefreshArtistService] Fetching tracklists for ${missingAlbums.length} albums from ${provider.name}...`);
+
+                    // Prefer one batched fetch for the whole artist when the provider
+                    // supports it (TIDAL v2: ~2×ceil(albums/20) calls instead of one per
+                    // album — the provider-matching N+1 killer). Falls back to per-album
+                    // getAlbumTracks for any album the batch didn't return.
+                    let bulkTracks: Map<string, any> | null = null;
+                    if (provider.getAlbumTracksBulk) {
+                        try {
+                            bulkTracks = await provider.getAlbumTracksBulk(missingAlbums.map((album) => String(album.provider_id)));
+                        } catch (error) {
+                            console.warn(`[RefreshArtistService] Bulk tracklist fetch failed for ${provider.name}, falling back per-album:`, error);
+                        }
+                    }
+
                     const chunkSize = 5;
                     for (let i = 0; i < missingAlbums.length; i += chunkSize) {
                         const chunk = missingAlbums.slice(i, i + chunkSize);
                         await Promise.all(
                             chunk.map(async (album) => {
                                 try {
-                                    const rawTracks = await provider.getAlbumTracks(album.provider_id);
-                                    album._provider_tracks = rawTracks.map((t) => this.slotTrack(t));
+                                    const batched = bulkTracks?.get(String(album.provider_id));
+                                    const rawTracks = batched ?? await provider.getAlbumTracks(album.provider_id);
+                                    album._provider_tracks = rawTracks.map((t: any) => this.slotTrack(t));
                                     // Keep the raw provider tracks so we can persist them as
                                     // track offer rows once the album offers exist (below).
                                     album._provider_raw_tracks = rawTracks;
