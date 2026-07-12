@@ -28,6 +28,7 @@ import {
     getServarrMetadataArtistImageUrl,
     resolveAlbumArtwork,
     resolveArtistArtwork,
+    resolveVideoArtwork,
     type ProviderArtworkCandidate,
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
@@ -1826,9 +1827,45 @@ export class RefreshArtistService {
                 }));
             console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
             RefreshVideoService.upsertArtistVideos(artistId, videos, options);
+            await this.precacheArtistVideoArtwork(artistId);
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);
         }
+    }
+
+    /**
+     * Warm the video-thumbnail proxies during refresh (parallel, off the request
+     * thread) so the artist page never has to fetch them on load — the same
+     * shape as resolveAlbumArtwork for album covers. Only cold-loading an artist
+     * straight from search results should ever resolve a thumbnail on the fly.
+     * resolveVideoArtwork self-resolves each video's provider candidate from the
+     * DB and stores a UI proxy (see its size default), so a video's full-res
+     * artwork is still only fetched onto disk by the library download path.
+     */
+    private static async precacheArtistVideoArtwork(artistId: string): Promise<void> {
+        const artistMbid = this.getArtistMusicBrainzId(artistId);
+        const videoIds = db.prepare(`
+            SELECT DISTINCT recording.id AS id
+            FROM Recordings recording
+            JOIN ProviderItems offer
+              ON offer.entity_type = 'video'
+             AND (offer.recording_id = recording.id
+                  OR (recording.mbid IS NOT NULL AND offer.recording_mbid = recording.mbid))
+            WHERE recording.is_video = 1
+              AND (recording.artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = ?)
+                   OR recording.artist_mbid = ?)
+        `).all(artistMbid, artistMbid) as Array<{ id: number }>;
+        if (videoIds.length === 0) {
+            return;
+        }
+        const limit = pLimit(6);
+        await Promise.all(videoIds.map((video) => limit(async () => {
+            try {
+                await resolveVideoArtwork({ videoId: video.id });
+            } catch (error) {
+                console.warn(`[RefreshArtistService] Failed to pre-cache video artwork for ${video.id}:`, error);
+            }
+        })));
     }
 
 }

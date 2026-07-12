@@ -291,7 +291,7 @@ test("provider video artwork ids resolve through the provider interface before c
     entityType: "video",
     providerId: "provider-video-id",
     imageId: "video-image-id",
-    size: "1080x720",
+    size: "640x360",
   }]);
   assert.deepEqual(fetchCalls, [providerUrl]);
   assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Videos", String(recording.id), "cover.jpg")), true);
@@ -388,7 +388,7 @@ test("provider video artwork can resolve from provider id when no image id is st
     entityType: "video",
     providerId: "provider-video-without-image-id",
     imageId: null,
-    size: "1080x720",
+    size: "640x360",
   }]);
 });
 

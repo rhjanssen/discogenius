@@ -1235,7 +1235,10 @@ export async function resolveVideoArtwork(options: {
   const providerUrl = await resolveProviderArtworkUrl(
     providerCandidates,
     "video",
-    options.size ?? "1080x720",
+    // Discogenius stores a proxy-sized thumbnail for the UI (TIDAL maps
+    // 640x360 -> 480x320); full-resolution artwork is only fetched onto disk
+    // by the library download path (organizer video_thumbnail_resolution).
+    options.size ?? "640x360",
   );
   if (providerUrl) {
     const cached = await ensureCachedMediaCover({
