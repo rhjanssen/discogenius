@@ -362,122 +362,152 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
   }
 
   if (missing.length > 0) {
-    const values = missing.map(() => "(?)").join(", ");
-    const rows = db.prepare(`
-      WITH input_artists(input_id) AS (
-        VALUES ${values}
-      ),
-      target_artists AS (
-        SELECT
-          CAST(input_artists.input_id AS TEXT) AS input_id,
-          CAST(managed_artist.id AS TEXT) AS artist_id,
-          COALESCE(managed_artist.mbid, artist_metadata.mbid, CAST(input_artists.input_id AS TEXT)) AS artist_mbid,
-          artist_metadata.id AS artist_metadata_id
-        FROM input_artists
-        LEFT JOIN Artists managed_artist
-          ON CAST(managed_artist.id AS TEXT) = CAST(input_artists.input_id AS TEXT)
-          OR managed_artist.mbid = CAST(input_artists.input_id AS TEXT)
-        LEFT JOIN ArtistMetadata artist_metadata
-          ON artist_metadata.mbid = COALESCE(managed_artist.mbid, CAST(input_artists.input_id AS TEXT))
-          OR CAST(artist_metadata.id AS TEXT) = CAST(input_artists.input_id AS TEXT)
-      ),
-      monitored_release_slots AS (
-        SELECT
-          target_artists.input_id,
-          rgs.release_group_mbid,
-          rgs.slot,
-          rgs.selected_release_mbid
-        FROM target_artists
-        JOIN ReleaseGroupSlots rgs
-          ON rgs.artist_mbid = target_artists.artist_mbid
-        WHERE (rgs.monitored = 1 OR COALESCE(rgs.monitored_lock, 0) = 1)
-          AND rgs.slot IN ('stereo', 'spatial')
-          AND rgs.selected_release_mbid IS NOT NULL
-      ),
-      release_slot_stats AS (
-        SELECT
-          mrs.input_id,
-          mrs.release_group_mbid,
-          mrs.slot,
-          COUNT(DISTINCT track.mbid) AS total_tracks,
-          COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN track.mbid END) AS downloaded_tracks
-        FROM monitored_release_slots mrs
-        LEFT JOIN Tracks track
-          ON track.release_mbid = mrs.selected_release_mbid
-        LEFT JOIN Recordings recording
-          ON recording.mbid = track.recording_mbid
-        LEFT JOIN TrackFiles lf
-          ON (
-            lf.canonical_track_mbid = track.mbid
-            OR (
-              lf.canonical_track_mbid IS NULL
-              AND lf.canonical_recording_mbid = track.recording_mbid
-            )
-          )
-         AND lf.file_type = 'track'
-         AND lf.library_slot = mrs.slot
-        WHERE COALESCE(recording.is_video, 0) = 0
-        GROUP BY mrs.input_id, mrs.release_group_mbid, mrs.slot
-      ),
-      monitored_videos AS (
-        SELECT
-          target_artists.input_id,
-          recording.id AS recording_id,
-          CASE WHEN EXISTS (
-            SELECT 1
-            FROM TrackFiles lf
-            WHERE lf.file_type = 'video'
-              AND (
-                (recording.mbid IS NOT NULL AND lf.canonical_recording_mbid = recording.mbid)
-                OR CAST(lf.provider_id AS TEXT) IN (
-                  SELECT CAST(pi.provider_id AS TEXT)
-                  FROM ProviderItems pi
-                  WHERE pi.entity_type = 'video'
-                    AND (
-                      pi.recording_id = recording.id
-                      OR (recording.mbid IS NOT NULL AND pi.recording_mbid = recording.mbid)
-                    )
-                )
-              )
-          ) THEN 1 ELSE 0 END AS is_downloaded
-        FROM target_artists
-        JOIN Recordings recording
-          ON recording.is_video = 1
-         AND (COALESCE(recording.monitored, 0) = 1 OR COALESCE(recording.monitored_lock, 0) = 1)
-         AND (
-          recording.artist_mbid = target_artists.artist_mbid
-          OR (
-            target_artists.artist_metadata_id IS NOT NULL
-            AND recording.artist_metadata_id = target_artists.artist_metadata_id
-          )
-         )
-      )
+    // Resolve each input id (a local Artists.id or an MBID) to its linked
+    // artist_mbid + ArtistMetadata id with cheap point lookups, then aggregate
+    // with plain IN-list queries that each use one index. Doing the resolution
+    // inside one big CTE made the link table a CAST-heavy, non-materialized
+    // subquery that SQLite re-evaluated per Recordings row — at ~1M recordings
+    // one library-page call ran for minutes and, because main-thread reads are
+    // synchronous, wedged every request behind it.
+    const resolveArtistRow = db.prepare(
+      "SELECT mbid FROM Artists WHERE CAST(id AS TEXT) = ? OR mbid = ? LIMIT 1",
+    );
+    const resolveMetadataByMbid = db.prepare("SELECT id, mbid FROM ArtistMetadata WHERE mbid = ? LIMIT 1");
+    const resolveMetadataById = db.prepare("SELECT id, mbid FROM ArtistMetadata WHERE CAST(id AS TEXT) = ? LIMIT 1");
+    const targets = missing.map((inputId) => {
+      const artistRow = resolveArtistRow.get(inputId, inputId) as { mbid?: string | null } | undefined;
+      let artistMbid = String(artistRow?.mbid || inputId);
+      let metadata = resolveMetadataByMbid.get(artistMbid) as { id?: number; mbid?: string } | undefined;
+      if (!metadata) {
+        metadata = resolveMetadataById.get(inputId) as { id?: number; mbid?: string } | undefined;
+        if (!artistRow?.mbid && metadata?.mbid) {
+          artistMbid = String(metadata.mbid);
+        }
+      }
+      return { inputId, artistMbid, artistMetadataId: metadata?.id ?? null };
+    });
+
+    const mbids = Array.from(new Set(targets.map((target) => target.artistMbid)));
+    const metadataIds = Array.from(new Set(
+      targets.map((target) => target.artistMetadataId).filter((id): id is number => id != null),
+    ));
+    const mbidMarks = mbids.map(() => "?").join(", ");
+
+    // 1. Monitored release-slot completeness (indexed on rgs.artist_mbid).
+    const slotRows = mbids.length === 0 ? [] : db.prepare(`
       SELECT
-        target_artists.input_id AS artist_id,
-        COALESCE((
-          SELECT COUNT(*)
-          FROM release_slot_stats rss
-          WHERE rss.input_id = target_artists.input_id
-        ), 0) + COALESCE((
-          SELECT COUNT(*)
-          FROM monitored_videos mv
-          WHERE mv.input_id = target_artists.input_id
-        ), 0) AS total_items,
-        COALESCE((
-          SELECT SUM(CASE WHEN rss.total_tracks > 0 AND rss.downloaded_tracks >= rss.total_tracks THEN 1 ELSE 0 END)
-          FROM release_slot_stats rss
-          WHERE rss.input_id = target_artists.input_id
-        ), 0) + COALESCE((
-          SELECT SUM(mv.is_downloaded)
-          FROM monitored_videos mv
-          WHERE mv.input_id = target_artists.input_id
-        ), 0) AS downloaded_items
-      FROM target_artists
-    `).all(...missing) as Array<{
-      artist_id: string;
-      total_items: number;
-      downloaded_items: number;
-    }>;
+        rgs.artist_mbid,
+        COUNT(DISTINCT track.mbid) AS total_tracks,
+        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN track.mbid END) AS downloaded_tracks
+      FROM ReleaseGroupSlots rgs
+      LEFT JOIN Tracks track
+        ON track.release_mbid = rgs.selected_release_mbid
+      LEFT JOIN Recordings recording
+        ON recording.mbid = track.recording_mbid
+      LEFT JOIN TrackFiles lf
+        ON (
+          lf.canonical_track_mbid = track.mbid
+          OR (
+            lf.canonical_track_mbid IS NULL
+            AND lf.canonical_recording_mbid = track.recording_mbid
+          )
+        )
+       AND lf.file_type = 'track'
+       AND lf.library_slot = rgs.slot
+      WHERE rgs.artist_mbid IN (${mbidMarks})
+        AND (rgs.monitored = 1 OR COALESCE(rgs.monitored_lock, 0) = 1)
+        AND rgs.slot IN ('stereo', 'spatial')
+        AND rgs.selected_release_mbid IS NOT NULL
+        AND COALESCE(recording.is_video, 0) = 0
+      GROUP BY rgs.artist_mbid, rgs.release_group_mbid, rgs.slot
+    `).all(...mbids) as Array<{ artist_mbid: string; total_tracks: number; downloaded_tracks: number }>;
+
+    // 2. Monitored videos — one indexed query per artist-link column instead of
+    //    an OR-join that defeats both indexes.
+    const monitoredVideoFlag = "(COALESCE(recording.monitored, 0) = 1 OR COALESCE(recording.monitored_lock, 0) = 1)";
+    const videosLinkedByMbid = mbids.length === 0 ? [] : db.prepare(`
+      SELECT recording.artist_mbid AS link, recording.id AS recording_id
+      FROM Recordings recording
+      WHERE recording.is_video = 1
+        AND recording.artist_mbid IN (${mbidMarks})
+        AND ${monitoredVideoFlag}
+    `).all(...mbids) as Array<{ link: string; recording_id: number }>;
+    const videosLinkedByMetadataId = metadataIds.length === 0 ? [] : db.prepare(`
+      SELECT recording.artist_metadata_id AS link, recording.id AS recording_id
+      FROM Recordings recording
+      WHERE recording.is_video = 1
+        AND recording.artist_metadata_id IN (${metadataIds.map(() => "?").join(", ")})
+        AND ${monitoredVideoFlag}
+    `).all(...metadataIds) as Array<{ link: number; recording_id: number }>;
+
+    // 3. Downloaded video recordings, derived once from the (small) set of
+    //    downloaded video files; no video files ⇒ nothing is downloaded.
+    const downloadedVideoIds = new Set<number>();
+    if (db.prepare("SELECT 1 FROM TrackFiles WHERE file_type = 'video' LIMIT 1").get()) {
+      const downloadedRows = db.prepare(`
+        SELECT recording.id AS recording_id
+        FROM TrackFiles lf
+        JOIN Recordings recording ON recording.mbid = lf.canonical_recording_mbid
+        WHERE lf.file_type = 'video' AND lf.canonical_recording_mbid IS NOT NULL
+        UNION
+        SELECT pi.recording_id
+        FROM TrackFiles lf
+        JOIN ProviderItems pi
+          ON pi.entity_type = 'video'
+         AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+        WHERE lf.file_type = 'video' AND pi.recording_id IS NOT NULL
+        UNION
+        SELECT recording.id
+        FROM TrackFiles lf
+        JOIN ProviderItems pi
+          ON pi.entity_type = 'video'
+         AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+        JOIN Recordings recording ON recording.mbid = pi.recording_mbid
+        WHERE lf.file_type = 'video'
+      `).all() as Array<{ recording_id: number }>;
+      for (const row of downloadedRows) {
+        downloadedVideoIds.add(Number(row.recording_id));
+      }
+    }
+
+    // Combine per requested artist in JS.
+    const slotsByMbid = new Map<string, Array<{ total: number; downloaded: number }>>();
+    for (const row of slotRows) {
+      const list = slotsByMbid.get(row.artist_mbid) ?? [];
+      list.push({ total: Number(row.total_tracks), downloaded: Number(row.downloaded_tracks) });
+      slotsByMbid.set(row.artist_mbid, list);
+    }
+    const videosByMbid = new Map<string, Set<number>>();
+    for (const row of videosLinkedByMbid) {
+      const set = videosByMbid.get(String(row.link)) ?? new Set<number>();
+      set.add(Number(row.recording_id));
+      videosByMbid.set(String(row.link), set);
+    }
+    const videosByMetadataId = new Map<number, Set<number>>();
+    for (const row of videosLinkedByMetadataId) {
+      const set = videosByMetadataId.get(Number(row.link)) ?? new Set<number>();
+      set.add(Number(row.recording_id));
+      videosByMetadataId.set(Number(row.link), set);
+    }
+
+    const rows = targets.map((target) => {
+      const slots = slotsByMbid.get(target.artistMbid) ?? [];
+      const videoIds = new Set<number>(videosByMbid.get(target.artistMbid) ?? []);
+      if (target.artistMetadataId != null) {
+        for (const id of videosByMetadataId.get(target.artistMetadataId) ?? []) {
+          videoIds.add(id);
+        }
+      }
+      let downloadedVideos = 0;
+      for (const id of videoIds) {
+        if (downloadedVideoIds.has(id)) downloadedVideos += 1;
+      }
+      return {
+        artist_id: target.inputId,
+        total_items: slots.length + videoIds.size,
+        downloaded_items: slots.filter((slot) => slot.total > 0 && slot.downloaded >= slot.total).length + downloadedVideos,
+      };
+    });
 
     const statsByArtistId = new Map(rows.map((row) => [String(row.artist_id), row]));
     for (const artistId of missing) {
