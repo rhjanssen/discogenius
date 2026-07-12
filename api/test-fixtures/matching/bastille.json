@@ -24,9 +24,7 @@
           "date": "2017-11-24",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBARL1701677"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "551c6984-f6f9-4c31-8743-752bd6d3a09b",
@@ -36,9 +34,7 @@
           "date": "2017-12-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBARL1702169"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -58,9 +54,7 @@
           "date": "2021-08-18",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72104380"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -69,20 +63,18 @@
       "title": "Flaws / Icarus",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2011",
+      "firstReleaseDate": "2011-06-06",
       "disambiguation": null,
       "releases": [
         {
           "mbid": "00384701-3389-4868-8a35-2e7a8a324416",
           "title": "Flaws",
           "disambiguation": null,
-          "barcode": "",
-          "date": "2011",
+          "barcode": null,
+          "date": "2011-01-01",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200682"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2285b736-786e-4602-add2-24c4916207eb",
@@ -92,21 +84,17 @@
           "date": "2011-06-06",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200682"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "90e5a9e9-9ebd-4cc4-a561-079207177e56",
           "title": "Flaws / Icarus",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2011-07-04",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200682"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -115,15 +103,15 @@
       "title": "Torn Apart",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2014",
+      "firstReleaseDate": "2014-10-31",
       "disambiguation": null,
       "releases": [
         {
           "mbid": "2b902ac9-177a-4c83-87ad-15cd21971600",
           "title": "Torn Apart",
           "disambiguation": null,
-          "barcode": "",
-          "date": "2014",
+          "barcode": null,
+          "date": "2014-01-01",
           "trackCount": 2,
           "mediaCount": 1,
           "isrcs": []
@@ -133,7 +121,7 @@
           "title": "Torn Apart (Cash Cash Remix)",
           "disambiguation": null,
           "barcode": null,
-          "date": "2014",
+          "date": "2014-01-01",
           "trackCount": 1,
           "mediaCount": 1,
           "isrcs": []
@@ -146,10 +134,7 @@
           "date": "2014-10-31",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71406108",
-            "GBUM71405405"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -171,9 +156,7 @@
           "date": "2020-12-11",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72006406"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -195,9 +178,7 @@
           "date": "2014-03-31",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71401449"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -206,48 +187,28 @@
       "title": "Laura Palmer EP",
       "primaryType": "EP",
       "secondaryTypes": [],
-      "firstReleaseDate": "2011",
+      "firstReleaseDate": "2011-11-14",
       "disambiguation": null,
       "releases": [
         {
           "mbid": "596c5908-9f15-4462-baaa-ca053dedc5d2",
           "title": "Laura Palmer EP",
           "disambiguation": "alternate artwork",
-          "barcode": "",
-          "date": "2011",
+          "barcode": null,
+          "date": "2011-01-01",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200937",
-            "FR6V80478105"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "ffff0567-1295-4e33-9fc6-f9fe91f01dd9",
           "title": "Laura Palmer EP",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2011-11-14",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200937",
-            "FR6V80478105"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "102645c4-a133-4456-9314-13a0fcc28879",
@@ -257,17 +218,7 @@
           "date": "2011-11-14",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200937",
-            "FR6V80478105"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "9a9ef23f-47f1-41b0-ab39-9cdba160f9ff",
@@ -277,17 +228,7 @@
           "date": "2011-11-14",
           "trackCount": 5,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200937",
-            "FR6V80478105"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -309,9 +250,7 @@
           "date": "2017-11-09",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "USAT21704727"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -324,20 +263,7 @@
       ],
       "firstReleaseDate": "2016-10-21",
       "disambiguation": null,
-      "releases": [
-        {
-          "mbid": "2df4d2b1-40c6-48ce-ad6b-d286e383f05f",
-          "title": "Send Them Off! (Mike Mago Remix)",
-          "disambiguation": null,
-          "barcode": "",
-          "date": "2016-10-21",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71605309"
-          ]
-        }
-      ]
+      "releases": []
     },
     {
       "mbid": "16a5492a-36e6-42f4-ac5d-03687a0e807a",
@@ -355,9 +281,7 @@
           "date": "2019-05-02",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71900904"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2a0d4ff5-0e26-4f4b-a2e3-cc5594b4f629",
@@ -367,9 +291,7 @@
           "date": "2019-05-02",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71900904"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -391,18 +313,7 @@
           "date": "2014-12-05",
           "trackCount": 9,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71405337",
-            "GBUM71405338",
-            "GBUM71405304",
-            "GBUM71405339",
-            "GBUM71405340",
-            "GBUM71406108",
-            "GBUM71405405",
-            "GBUM71405404",
-            "GBUM71405341",
-            "GBUM71405343"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "66762f69-beab-421b-a394-e414a509b8fd",
@@ -412,17 +323,7 @@
           "date": "2014-12-05",
           "trackCount": 8,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71405337",
-            "GBUM71405338",
-            "GBUM71405304",
-            "GBUM71405339",
-            "GBUM71405340",
-            "GBUM71406108",
-            "GBUM71405405",
-            "GBUM71405341",
-            "GBUM71405343"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2dc67133-c787-4398-aa95-7c7aa087f4d9",
@@ -432,18 +333,7 @@
           "date": "2014-12-08",
           "trackCount": 9,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71405337",
-            "GBUM71405338",
-            "GBUM71405304",
-            "GBUM71405339",
-            "GBUM71405340",
-            "GBUM71406108",
-            "GBUM71405405",
-            "GBUM71405404",
-            "GBUM71405341",
-            "GBUM71405343"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "27bf1ce1-8cdc-40cd-955f-e47270d6bb6f",
@@ -453,18 +343,7 @@
           "date": "2014-12-08",
           "trackCount": 9,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71405337",
-            "GBUM71405338",
-            "GBUM71405304",
-            "GBUM71405339",
-            "GBUM71405340",
-            "GBUM71406108",
-            "GBUM71405405",
-            "GBUM71405404",
-            "GBUM71405341",
-            "GBUM71405343"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "405a10e6-ddcd-4351-ad6e-537122b8afac",
@@ -474,18 +353,7 @@
           "date": "2014-12-09",
           "trackCount": 9,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71405337",
-            "GBUM71405338",
-            "GBUM71405304",
-            "GBUM71405339",
-            "GBUM71405340",
-            "GBUM71406108",
-            "GBUM71405405",
-            "GBUM71405404",
-            "GBUM71405341",
-            "GBUM71405343"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "c596ae1f-9c3a-4c41-9b69-73788b3237c2",
@@ -495,17 +363,7 @@
           "date": "2014-12-15",
           "trackCount": 8,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71405337",
-            "GBUM71405338",
-            "GBUM71405304",
-            "GBUM71405339",
-            "GBUM71405340",
-            "GBUM71406108",
-            "GBUM71405405",
-            "GBUM71405341",
-            "GBUM71405343"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -516,93 +374,78 @@
       "secondaryTypes": [
         "Remix"
       ],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2023-09-01",
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "7c69c913-b363-4892-a9bb-e700caa34c34",
+          "mbid": "2e49436d-f13b-42b3-bcc5-0bd936c0521a",
           "title": "Pompeii MMXXIII",
-          "disambiguation": null,
-          "barcode": "00602458458459",
-          "date": null,
+          "disambiguation": "Dolby Atmos mix",
+          "barcode": "00602458458510",
+          "date": "2023-09-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72307839"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "ac065dd4-861c-4937-9edb-8e9526baba6e",
           "title": "Pompeii MMXXIII",
           "disambiguation": "hi-res",
           "barcode": "00602458458503",
-          "date": null,
+          "date": "2023-09-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72307839"
-          ]
+          "isrcs": []
         },
         {
-          "mbid": "2e49436d-f13b-42b3-bcc5-0bd936c0521a",
+          "mbid": "7c69c913-b363-4892-a9bb-e700caa34c34",
           "title": "Pompeii MMXXIII",
-          "disambiguation": "Dolby Atmos mix",
-          "barcode": "00602458458510",
-          "date": null,
+          "disambiguation": null,
+          "barcode": "00602458458459",
+          "date": "2023-09-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72307877"
-          ]
-        },
-        {
-          "mbid": "2d05d807-8fee-4083-ae73-9a0c373394ad",
-          "title": "Pompeii MMXXIII (instrumental)",
-          "disambiguation": null,
-          "barcode": "00602458629811",
-          "date": null,
-          "trackCount": 2,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72308981",
-            "GBUM72307839"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "9a152488-cb61-44ec-85b2-13ed537bf7c4",
           "title": "Pompeii MMXXIII (instrumental)",
           "disambiguation": null,
           "barcode": "00602458629781",
-          "date": null,
+          "date": "2023-10-20",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72308981"
-          ]
+          "isrcs": []
         },
         {
-          "mbid": "ca29513d-05c4-4204-a45b-19ff411e6be6",
+          "mbid": "2d05d807-8fee-4083-ae73-9a0c373394ad",
           "title": "Pompeii MMXXIII (instrumental)",
           "disambiguation": null,
-          "barcode": "00602458629774",
-          "date": null,
-          "trackCount": 1,
+          "barcode": "00602458629811",
+          "date": "2023-10-20",
+          "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72308981"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "e0ac059f-83a8-4cda-b637-ddd0293a2699",
           "title": "Pompeii MMXXIII (instrumental)",
           "disambiguation": "Dolby Atmos mix",
           "barcode": "00602458629798",
-          "date": null,
+          "date": "2023-10-20",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72308982"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "ca29513d-05c4-4204-a45b-19ff411e6be6",
+          "title": "Pompeii MMXXIII (instrumental)",
+          "disambiguation": null,
+          "barcode": "00602458629774",
+          "date": "2023-10-20",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -624,9 +467,7 @@
           "date": "2016-09-30",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71605282"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -644,7 +485,7 @@
           "mbid": "f2b94fa3-4c88-4a3a-b9a3-069371106315",
           "title": "Warmth (Live From Elbphilharmonie, Hamburg / Amazon Original)",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2021-01-15",
           "trackCount": 1,
           "mediaCount": 1,
@@ -670,9 +511,7 @@
           "date": "2017-08-18",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71703590"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "3b35570e-db6a-4a8b-b725-e9b1d17e4248",
@@ -682,9 +521,7 @@
           "date": "2017-08-18",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71703590"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -706,14 +543,7 @@
           "date": "2017-05-26",
           "trackCount": 6,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71700680",
-            "GBUM71701963",
-            "GBUM71700681",
-            "GBUM71700682",
-            "GBUM71700683",
-            "GBUM71700684"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -728,18 +558,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "6c34ef8b-0aa6-4ce1-93b0-0bd4e33f65f5",
-          "title": "Glory (Jack Wins remix)",
-          "disambiguation": null,
-          "barcode": "602557770629",
-          "date": "2017-07-21",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71702750"
-          ]
-        },
-        {
           "mbid": "38059ce0-2434-4592-bfc0-71f530a7f2ee",
           "title": "Glory (Jack Wins remix)",
           "disambiguation": null,
@@ -747,9 +565,17 @@
           "date": "2017-07-21",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71702750"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "6c34ef8b-0aa6-4ce1-93b0-0bd4e33f65f5",
+          "title": "Glory (Jack Wins remix)",
+          "disambiguation": null,
+          "barcode": "602557770629",
+          "date": "2017-07-21",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -769,19 +595,7 @@
           "date": "2019-06-14",
           "trackCount": 11,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71803860",
-            "GBUM71900902",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "997de744-4d30-41c9-9df3-c885e427343a",
@@ -791,21 +605,7 @@
           "date": "2019-06-14",
           "trackCount": 13,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71803860",
-            "GBUM71900902",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904",
-            "GBUM71902366",
-            "GBUM71902367"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "9b5224d7-beee-4b2a-a93a-3b4b2b3d25c3",
@@ -815,19 +615,7 @@
           "date": "2019-06-14",
           "trackCount": 11,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71803860",
-            "GBUM71900902",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "cd0204f2-6c07-4578-b482-b50d3d60bd0c",
@@ -837,19 +625,7 @@
           "date": "2019-06-14",
           "trackCount": 11,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71803860",
-            "GBUM71900902",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "430712c8-1cbd-4ecb-81d8-5a382a1effbf",
@@ -859,85 +635,7 @@
           "date": "2019-06-14",
           "trackCount": 11,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71803860",
-            "GBUM71900902",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904"
-          ]
-        },
-        {
-          "mbid": "7807b0b4-9774-4343-9014-8efd4ff580e8",
-          "title": "Doom Days (This Got Out of Hand edition)",
-          "disambiguation": "explicit",
-          "barcode": "00602508557958",
-          "date": "2019-12-06",
-          "trackCount": 22,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71803860",
-            "GBUM71900902",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904",
-            "GBUM71803861",
-            "GBUM71803862",
-            "GBUM71902367",
-            "GBUM71902366",
-            "GBUM71906203",
-            "GBUM71603690",
-            "GBUM71904828",
-            "GBUM71606458",
-            "GBUM71905436",
-            "GBUM71506109",
-            "GBUM71906405"
-          ]
-        },
-        {
-          "mbid": "84e2ffc3-7d4b-48e8-9c7a-e3931c3f30f8",
-          "title": "Doom Days (This Got Out of Hand edition)",
-          "disambiguation": "24bit/44.1kHz; explicit",
-          "barcode": null,
-          "date": "2019-12-06",
-          "trackCount": 22,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71803860",
-            "GBUM71900902",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904",
-            "GBUM71803861",
-            "GBUM71803862",
-            "GBUM71902367",
-            "GBUM71902366",
-            "GBUM71906203",
-            "GBUM71603690",
-            "GBUM71904828",
-            "GBUM71606458",
-            "GBUM71905436",
-            "GBUM71506109",
-            "GBUM71906405"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "0ed3ad66-0510-426d-bf5c-e02a4746714f",
@@ -947,30 +645,7 @@
           "date": "2019-12-06",
           "trackCount": 22,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71906343",
-            "GBUM71906344",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904",
-            "GBUM71803861",
-            "GBUM71803862",
-            "GBUM71902367",
-            "GBUM71906345",
-            "GBUM71906203",
-            "GBUM71603690",
-            "GBUM71904829",
-            "GBUM71606458",
-            "GBUM71905436",
-            "GBUM71506109",
-            "GBUM71906405"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "a78abbb4-59ea-47be-8a25-68c9bbd52506",
@@ -980,30 +655,7 @@
           "date": "2019-12-06",
           "trackCount": 22,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71803860",
-            "GBUM71900902",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904",
-            "GBUM71803861",
-            "GBUM71803862",
-            "GBUM71902367",
-            "GBUM71902366",
-            "GBUM71906203",
-            "GBUM71603690",
-            "GBUM71904828",
-            "GBUM71606458",
-            "GBUM71905436",
-            "GBUM71506109",
-            "GBUM71906405"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2ede092d-b102-4070-aad5-74b38254ccd4",
@@ -1013,30 +665,27 @@
           "date": "2019-12-06",
           "trackCount": 22,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713",
-            "GBUM71803859",
-            "GBUM71803864",
-            "GBUM71803863",
-            "GBUM71906343",
-            "GBUM71906344",
-            "GBUM71803858",
-            "GBUM71803865",
-            "GBUM71900903",
-            "GBUM71803866",
-            "GBUM71900904",
-            "GBUM71803861",
-            "GBUM71803862",
-            "GBUM71902367",
-            "GBUM71906345",
-            "GBUM71906203",
-            "GBUM71603690",
-            "GBUM71904829",
-            "GBUM71606458",
-            "GBUM71905436",
-            "GBUM71506109",
-            "GBUM71906405"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "7807b0b4-9774-4343-9014-8efd4ff580e8",
+          "title": "Doom Days (This Got Out of Hand edition)",
+          "disambiguation": "explicit",
+          "barcode": "00602508557958",
+          "date": "2019-12-06",
+          "trackCount": 22,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "84e2ffc3-7d4b-48e8-9c7a-e3931c3f30f8",
+          "title": "Doom Days (This Got Out of Hand edition)",
+          "disambiguation": "24bit/44.1kHz; explicit",
+          "barcode": null,
+          "date": "2019-12-06",
+          "trackCount": 22,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -1056,9 +705,7 @@
           "date": "2019-04-25",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71900902"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "bd005812-25a0-4fe2-8c48-d1e0ee709bd8",
@@ -1068,9 +715,7 @@
           "date": "2019-04-25",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71900902"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "be32f227-f0dd-49a1-8887-dc45062cb41c",
@@ -1080,9 +725,7 @@
           "date": "2019-04-25",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71900902"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1100,13 +743,11 @@
           "mbid": "6085cdeb-aa4b-4d64-937b-4f22f8520546",
           "title": "Other People’s Heartache, Pt. 2",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2012-12-06",
           "trackCount": 11,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1300203"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1124,7 +765,7 @@
           "mbid": "abc0744e-2d9d-45f3-ab55-8c47eee86723",
           "title": "2014-01-25: Saturday Night Live: New York, NY, USA",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2014-01-25",
           "trackCount": 2,
           "mediaCount": 1,
@@ -1141,64 +782,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "95d1321e-b50d-4afa-b5b0-9e695df9a2ba",
-          "title": "Wild World",
-          "disambiguation": "complete edition",
-          "barcode": "602557003062",
-          "date": "2016-09-09",
-          "trackCount": 19,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603426"
-          ]
-        },
-        {
-          "mbid": "9a26e92e-d527-48af-a2a8-8462005b58e5",
-          "title": "Wild World",
-          "disambiguation": null,
-          "barcode": "602557003017",
-          "date": "2016-09-09",
-          "trackCount": 14,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422"
-          ]
-        },
-        {
           "mbid": "2d542c1d-7aaf-43f7-aebf-7fee7f0c746c",
           "title": "Wild World",
           "disambiguation": null,
@@ -1206,267 +789,7 @@
           "date": "2016-09-09",
           "trackCount": 14,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422"
-          ]
-        },
-        {
-          "mbid": "3942079f-f2a8-499c-9952-c9040ae5af2e",
-          "title": "Wild World",
-          "disambiguation": null,
-          "barcode": "602557003086",
-          "date": "2016-09-09",
-          "trackCount": 19,
-          "mediaCount": 2,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603426"
-          ]
-        },
-        {
-          "mbid": "11a0662a-521e-448f-9e84-8e7c86bc517f",
-          "title": "Wild World",
-          "disambiguation": null,
-          "barcode": "602557004168",
-          "date": "2016-09-09",
-          "trackCount": 14,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422"
-          ]
-        },
-        {
-          "mbid": "2903b1df-ba9c-4c2d-8ef3-7475fd218e6c",
-          "title": "Wild World",
-          "disambiguation": "complete edition",
-          "barcode": "602557004199",
-          "date": "2016-09-09",
-          "trackCount": 19,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603426"
-          ]
-        },
-        {
-          "mbid": "c098ae94-113d-45d0-9b56-33b4b9cd2d5e",
-          "title": "Wild World",
-          "disambiguation": "24bit",
-          "barcode": "602557169713",
-          "date": "2016-09-09",
-          "trackCount": 14,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422"
-          ]
-        },
-        {
-          "mbid": "0feb5813-fbfe-4960-9e82-d0186e7966d1",
-          "title": "Wild World",
-          "disambiguation": "complete edition, 24bit",
-          "barcode": "602557169737",
-          "date": "2016-09-09",
-          "trackCount": 19,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603426"
-          ]
-        },
-        {
-          "mbid": "42e36da7-6675-4aa9-ab9f-b06fba3d1d26",
-          "title": "Wild World",
-          "disambiguation": "complete edition",
-          "barcode": "602557003062",
-          "date": "2016-09-09",
-          "trackCount": 19,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603426"
-          ]
-        },
-        {
-          "mbid": "0e6508f5-6d38-46f3-926d-9417f1dcd30d",
-          "title": "Wild World",
-          "disambiguation": null,
-          "barcode": "602557003086",
-          "date": "2016-09-09",
-          "trackCount": 19,
-          "mediaCount": 2,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603426"
-          ]
-        },
-        {
-          "mbid": "24aec84b-e030-4955-a334-4320cf51bda2",
-          "title": "Wild World",
-          "disambiguation": "Amazon exclusive white vinyl",
-          "barcode": "602557076790",
-          "date": "2016-09-09",
-          "trackCount": 19,
-          "mediaCount": 2,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603426"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "e1d24316-6283-48d8-a9f9-9eab982aa509",
@@ -1476,65 +799,7 @@
           "date": "2016-09-09",
           "trackCount": 21,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603690",
-            "GBUM71603426",
-            "GBUM71603689"
-          ]
-        },
-        {
-          "mbid": "f0e4b692-cf4f-4bde-b72b-04cd813579d5",
-          "title": "Wild World",
-          "disambiguation": "Target exclusive",
-          "barcode": "602557071696",
-          "date": "2016-09-09",
-          "trackCount": 21,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603690",
-            "GBUM71603426",
-            "GBUM71603689"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "708bfe28-0542-4da3-ab85-609fee90d058",
@@ -1544,29 +809,77 @@
           "date": "2016-09-09",
           "trackCount": 39,
           "mediaCount": 4,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603426"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "0e6508f5-6d38-46f3-926d-9417f1dcd30d",
+          "title": "Wild World",
+          "disambiguation": null,
+          "barcode": "602557003086",
+          "date": "2016-09-09",
+          "trackCount": 19,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "3942079f-f2a8-499c-9952-c9040ae5af2e",
+          "title": "Wild World",
+          "disambiguation": null,
+          "barcode": "602557003086",
+          "date": "2016-09-09",
+          "trackCount": 19,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "f0e4b692-cf4f-4bde-b72b-04cd813579d5",
+          "title": "Wild World",
+          "disambiguation": "Target exclusive",
+          "barcode": "602557071696",
+          "date": "2016-09-09",
+          "trackCount": 21,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "c098ae94-113d-45d0-9b56-33b4b9cd2d5e",
+          "title": "Wild World",
+          "disambiguation": "24bit",
+          "barcode": "602557169713",
+          "date": "2016-09-09",
+          "trackCount": 14,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "0feb5813-fbfe-4960-9e82-d0186e7966d1",
+          "title": "Wild World",
+          "disambiguation": "complete edition, 24bit",
+          "barcode": "602557169737",
+          "date": "2016-09-09",
+          "trackCount": 19,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "2903b1df-ba9c-4c2d-8ef3-7475fd218e6c",
+          "title": "Wild World",
+          "disambiguation": "complete edition",
+          "barcode": "602557004199",
+          "date": "2016-09-09",
+          "trackCount": 19,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "11a0662a-521e-448f-9e84-8e7c86bc517f",
+          "title": "Wild World",
+          "disambiguation": null,
+          "barcode": "602557004168",
+          "date": "2016-09-09",
+          "trackCount": 14,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "1ca46abb-1c78-473f-83b5-3be5500ccf85",
@@ -1576,23 +889,7 @@
           "date": "2016-09-09",
           "trackCount": 14,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "a1c830fc-8f97-469e-96ed-e122c5baae30",
@@ -1602,29 +899,47 @@
           "date": "2016-09-09",
           "trackCount": 19,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603410",
-            "GBUM71603411",
-            "GBUM71603412",
-            "GBUM71603413",
-            "GBUM71603419",
-            "GBUM71603062",
-            "GBUM71603418",
-            "GBUM71603414",
-            "GBUM71603415",
-            "GBUM71603420",
-            "GBUM71603416",
-            "GBUM71603421",
-            "GBUM71603422",
-            "GBUM71603423",
-            "GBUM71604728",
-            "GBUM71603417",
-            "GBUM71603424",
-            "GBUM71603425",
-            "GBUM71603426"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "24aec84b-e030-4955-a334-4320cf51bda2",
+          "title": "Wild World",
+          "disambiguation": "Amazon exclusive white vinyl",
+          "barcode": "602557076790",
+          "date": "2016-09-09",
+          "trackCount": 19,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "9a26e92e-d527-48af-a2a8-8462005b58e5",
+          "title": "Wild World",
+          "disambiguation": null,
+          "barcode": "602557003017",
+          "date": "2016-09-09",
+          "trackCount": 14,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "42e36da7-6675-4aa9-ab9f-b06fba3d1d26",
+          "title": "Wild World",
+          "disambiguation": "complete edition",
+          "barcode": "602557003062",
+          "date": "2016-09-09",
+          "trackCount": 19,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "95d1321e-b50d-4afa-b5b0-9e695df9a2ba",
+          "title": "Wild World",
+          "disambiguation": "complete edition",
+          "barcode": "602557003062",
+          "date": "2016-09-09",
+          "trackCount": 19,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -1637,25 +952,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "713be094-41e5-411d-8409-8f672a2d1718",
-          "title": "“&” (Ampersand), Part Four",
-          "disambiguation": "24bit/96kHz",
-          "barcode": "00602478596612",
-          "date": null,
-          "trackCount": 8,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72403777",
-            "GBUM72504510",
-            "GBUM72504482",
-            "GBUM72504496",
-            "GBUM72504537",
-            "GBUM72504536",
-            "GBUM72504535",
-            "GBUM72504538"
-          ]
-        },
-        {
           "mbid": "36271705-2a0b-4c23-8c6f-0e4f90db744b",
           "title": "“&” (Ampersand), Part Four",
           "disambiguation": null,
@@ -1663,16 +959,17 @@
           "date": "2025-08-15",
           "trackCount": 8,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72403777",
-            "GBUM72504510",
-            "GBUM72504482",
-            "GBUM72504496",
-            "GBUM72504537",
-            "GBUM72504536",
-            "GBUM72504535",
-            "GBUM72504538"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "713be094-41e5-411d-8409-8f672a2d1718",
+          "title": "“&” (Ampersand), Part Four",
+          "disambiguation": "24bit/96kHz",
+          "barcode": "00602478596612",
+          "date": "2025-08-15",
+          "trackCount": 8,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -1692,10 +989,7 @@
           "date": "2016-04-16",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71506109",
-            "GBUM71504481"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1713,15 +1007,11 @@
           "mbid": "b8f50118-3d3c-4826-a4b3-cf6228a97515",
           "title": "Other People’s Heartache",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2012-02-17",
           "trackCount": 7,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306881",
-            "GBUM71306498",
-            "GBUM71307999"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1741,9 +1031,7 @@
           "date": "2025-05-09",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "US5ED2407419"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1763,9 +1051,7 @@
           "date": "2020-07-30",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72003738"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1785,13 +1071,7 @@
           "date": "2020-12-04",
           "trackCount": 5,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72006241",
-            "GBUM72003947",
-            "GBUM72003738",
-            "GBUM72006218",
-            "GBUM72006219"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2d5783ca-40e5-46c6-a1dc-914aef8bf669",
@@ -1801,13 +1081,7 @@
           "date": "2020-12-04",
           "trackCount": 5,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72006241",
-            "GBUM72003947",
-            "GBUM72003738",
-            "GBUM72006218",
-            "GBUM72006219"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "5ea966d0-f8d3-4c0a-ae32-5bbd0c28bc7f",
@@ -1817,13 +1091,7 @@
           "date": "2020-12-04",
           "trackCount": 5,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72006241",
-            "GBUM72003947",
-            "GBUM72003738",
-            "GBUM72006218",
-            "GBUM72006219"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1845,9 +1113,7 @@
           "date": "2017-06-30",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71702588"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1860,28 +1126,14 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "8637eb2b-9ab4-41b5-ad05-849beb38501f",
+          "mbid": "b97f8c10-64fd-435d-9ce2-4c4157b0a93e",
           "title": "Happier",
-          "disambiguation": null,
-          "barcode": "00602567973393",
-          "date": null,
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "USUG11801651"
-          ]
-        },
-        {
-          "mbid": "340c7808-9a0e-4bfc-b52f-4481dd22ec81",
-          "title": "Happier",
-          "disambiguation": "Apple Digital Master",
-          "barcode": "602567973409",
+          "disambiguation": "hi‐res",
+          "barcode": "00602567973416",
           "date": "2018-08-17",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG11801651"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "7a29752e-348c-48c7-ace8-3c8889b25b33",
@@ -1894,16 +1146,24 @@
           "isrcs": []
         },
         {
-          "mbid": "b97f8c10-64fd-435d-9ce2-4c4157b0a93e",
+          "mbid": "340c7808-9a0e-4bfc-b52f-4481dd22ec81",
           "title": "Happier",
-          "disambiguation": "hi‐res",
-          "barcode": "00602567973416",
+          "disambiguation": "Apple Digital Master",
+          "barcode": "602567973409",
           "date": "2018-08-17",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG11801651"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "8637eb2b-9ab4-41b5-ad05-849beb38501f",
+          "title": "Happier",
+          "disambiguation": null,
+          "barcode": "00602567973393",
+          "date": "2018-08-17",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "28fd1c0a-ab29-49d3-a585-5b4bdb8a45a6",
@@ -1913,9 +1173,7 @@
           "date": "2018-09-11",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG11802372"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "9ba17c50-2215-4172-a626-da87eb382a63",
@@ -1925,9 +1183,7 @@
           "date": "2018-11-09",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG11802372"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "3be52d26-33d3-43d3-8be9-1171dc9475d4",
@@ -1937,10 +1193,7 @@
           "date": "2018-11-23",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG11801651",
-            "USUG11802189"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "5616a877-a3b6-42d6-b25b-70f593175bce",
@@ -1950,11 +1203,7 @@
           "date": "2022-07-18",
           "trackCount": 3,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG12205351",
-            "USUG12205353",
-            "USUG11801651"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1976,18 +1225,7 @@
           "date": "2013-10-22",
           "trackCount": 10,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200628",
-            "GBAAA1200384",
-            "GBAAA1200951",
-            "GBAAA1300233",
-            "GBUM71306042",
-            "GBAAA1200852",
-            "GBAAA1200627",
-            "GBAAA1200383",
-            "GBAAA1200950",
-            "GBAAA1200942"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "b847872c-bcd0-41a6-9149-e429635f4414",
@@ -1997,18 +1235,7 @@
           "date": "2013-12-03",
           "trackCount": 10,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200628",
-            "GBAAA1200384",
-            "GBAAA1200951",
-            "GBAAA1300233",
-            "GBUM71306042",
-            "GBAAA1200852",
-            "GBAAA1200627",
-            "GBAAA1200383",
-            "GBAAA1200950",
-            "GBAAA1200942"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2030,14 +1257,7 @@
           "date": "2021-03-19",
           "trackCount": 6,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71904828",
-            "GBUM71906203",
-            "GBUM71701265",
-            "GBAAA1200941",
-            "GBUM71304896",
-            "GBUM72101401"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2057,9 +1277,7 @@
           "date": "2016-12-15",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603420"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "81ad4db3-6037-4fb7-8f0e-1b76e48935c6",
@@ -2069,9 +1287,7 @@
           "date": "2017-01-20",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71700029"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "63448945-86a6-46de-8367-abec25cf2c17",
@@ -2081,10 +1297,7 @@
           "date": "2017-03-31",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603420",
-            "GBUM71700029"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2104,9 +1317,7 @@
           "date": "2020-09-22",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72003947"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2124,27 +1335,21 @@
           "mbid": "533ed65a-bac9-4c89-b06d-388e855df27b",
           "title": "Live at KOKO",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2013-02-15",
           "trackCount": 3,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1300111",
-            "GBAAA1300112",
-            "GBAAA1300113"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2b4e02b9-abed-40bb-ba7c-7dfc694dafee",
           "title": "Live at KOKO",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2013-03-04",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1300113"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "34e18623-572c-4335-b513-25408798e708",
@@ -2154,13 +1359,7 @@
           "date": "2013-03-05",
           "trackCount": 5,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1300106",
-            "GBAAA1300107",
-            "GBAAA1300108",
-            "GBAAA1300109",
-            "GBAAA1300110"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2180,9 +1379,7 @@
           "date": "2025-07-25",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72504510"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2204,9 +1401,7 @@
           "date": "2016-09-30",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71605283"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2215,7 +1410,7 @@
       "title": "“&” (Ampersand), Part One",
       "primaryType": "EP",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2024-07-26",
       "disambiguation": null,
       "releases": [
         {
@@ -2223,15 +1418,10 @@
           "title": "“&” (Ampersand), Part One",
           "disambiguation": null,
           "barcode": null,
-          "date": null,
+          "date": "2024-07-26",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72403758",
-            "GBUM72403759",
-            "GBUM72403760",
-            "GBUM72403761"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2244,18 +1434,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "218d2f07-99a1-4271-8386-39210b41daec",
-          "title": "SAVE MY SOUL",
-          "disambiguation": null,
-          "barcode": "00602488328203",
-          "date": "2025-11-21",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72506722"
-          ]
-        },
-        {
           "mbid": "3627b42b-a361-4854-8ccd-aa4235887bf9",
           "title": "SAVE MY SOUL",
           "disambiguation": null,
@@ -2263,9 +1441,17 @@
           "date": "2025-11-21",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72506722"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "218d2f07-99a1-4271-8386-39210b41daec",
+          "title": "SAVE MY SOUL",
+          "disambiguation": null,
+          "barcode": "00602488328203",
+          "date": "2025-11-21",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -2287,9 +1473,7 @@
           "date": "2016-08-05",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71604130"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2309,9 +1493,7 @@
           "date": "2022-07-28",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72202372"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2333,14 +1515,7 @@
           "date": "2018-11-30",
           "trackCount": 6,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG11802752",
-            "USUG11802754",
-            "USUG11802756",
-            "USUG11802753",
-            "USUG11802751",
-            "USUG11802755"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2353,18 +1528,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "aee39419-cfdc-47f4-9e75-c266d4eac1bd",
-          "title": "Remind Me",
-          "disambiguation": null,
-          "barcode": "00602445854127",
-          "date": "2022-06-10",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72202389"
-          ]
-        },
-        {
           "mbid": "a7eea723-4420-48b7-925c-905637d1260b",
           "title": "Remind Me",
           "disambiguation": null,
@@ -2372,9 +1535,17 @@
           "date": "2022-06-10",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72202389"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "aee39419-cfdc-47f4-9e75-c266d4eac1bd",
+          "title": "Remind Me",
+          "disambiguation": null,
+          "barcode": "00602445854127",
+          "date": "2022-06-10",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -2396,12 +1567,7 @@
           "date": "2012-09-11",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200748",
-            "GBAAA1200749",
-            "GBAAA1200750",
-            "GBAAA1200751"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2423,12 +1589,7 @@
           "date": "2018-02-09",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBARL1800085",
-            "GBARL1800086",
-            "GBARL1800087",
-            "GBARL1800088"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2446,7 +1607,7 @@
           "mbid": "e144be6c-462b-4571-9558-c40f9ae12f88",
           "title": "Pompeii (Slander heaven trap edit)",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2014-07-29",
           "trackCount": 1,
           "mediaCount": 1,
@@ -2472,9 +1633,7 @@
           "date": "2016-10-14",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71605720"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2494,9 +1653,7 @@
           "date": "2019-06-04",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71803866"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2509,6 +1666,16 @@
       "disambiguation": null,
       "releases": [
         {
+          "mbid": "a658dbdc-9722-4d18-bab5-a4bebecd0a70",
+          "title": "Haunt",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2013-05-28",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
           "mbid": "a17f1cb0-22b8-4216-bfb8-964a636016c5",
           "title": "Haunt",
           "disambiguation": null,
@@ -2516,29 +1683,7 @@
           "date": "2013-05-28",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200920",
-            "GBAAA1200626"
-          ]
-        },
-        {
-          "mbid": "a658dbdc-9722-4d18-bab5-a4bebecd0a70",
-          "title": "Haunt",
-          "disambiguation": null,
-          "barcode": "",
-          "date": "2013-05-28",
-          "trackCount": 4,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200920",
-            "GBAAA1200626"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "113d0120-09f2-4a09-a0b7-bf8d7ca5dc50",
@@ -2548,13 +1693,7 @@
           "date": "2013-07-23",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200920",
-            "GBAAA1200626"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "765379e1-6bdc-4b89-9f80-58d7370c42f0",
@@ -2564,13 +1703,7 @@
           "date": "2013-07-23",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200920",
-            "GBAAA1200626"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2592,12 +1725,7 @@
           "date": "2024-11-29",
           "trackCount": 6,
           "mediaCount": 1,
-          "isrcs": [
-            "QZ8BZ2410217",
-            "QZ8BZ2410218",
-            "QZ8BZ2410219",
-            "QZ8BZ2410220"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2619,9 +1747,7 @@
           "date": "2017-07-14",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71702751"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2643,12 +1769,7 @@
           "date": "2017-01-06",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71606613",
-            "GBUM71606653",
-            "GBUM71606614",
-            "GBUM71606654"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2659,26 +1780,18 @@
       "secondaryTypes": [
         "Live"
       ],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2025-11-05",
       "disambiguation": null,
       "releases": [
         {
           "mbid": "f1f72aeb-64f5-4dec-9db1-778b15bd8bd7",
           "title": "From All Sides",
           "disambiguation": null,
-          "barcode": "",
-          "date": null,
+          "barcode": null,
+          "date": "2025-11-05",
           "trackCount": 12,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200748",
-            "GBUM71307183",
-            "GBAAA1300112",
-            "GBUM71405636",
-            "GBUM71603449",
-            "GBUM71701265",
-            "GBUM72300557"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2698,9 +1811,7 @@
           "date": "2019-11-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71905436"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "61f618aa-168c-46c9-a205-334fe11b4b23",
@@ -2710,9 +1821,7 @@
           "date": "2019-11-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71905436"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2721,37 +1830,28 @@
       "title": "Pompeii",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2013",
+      "firstReleaseDate": "2013-02-22",
       "disambiguation": null,
       "releases": [
+        {
+          "mbid": "c74f49d2-e7da-4683-9314-6526cebb6f24",
+          "title": "Pompeii",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2013-01-01",
+          "trackCount": 7,
+          "mediaCount": 1,
+          "isrcs": []
+        },
         {
           "mbid": "c9dfd21b-dfae-4928-a787-382c091fae1f",
           "title": "Pompeii",
           "disambiguation": null,
           "barcode": "5099972310922",
-          "date": "2013",
+          "date": "2013-01-01",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200796"
-          ]
-        },
-        {
-          "mbid": "c74f49d2-e7da-4683-9314-6526cebb6f24",
-          "title": "Pompeii",
-          "disambiguation": null,
-          "barcode": "",
-          "date": "2013",
-          "trackCount": 7,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200951",
-            "GBAAA1200949",
-            "GBAAA1200950",
-            "GBAAA1200796"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "f74c5763-5b39-4e4c-b91a-359692c2d8a0",
@@ -2761,13 +1861,7 @@
           "date": "2013-02-22",
           "trackCount": 5,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200948",
-            "GBAAA1200950",
-            "GBAAA1200949",
-            "GBAAA1200951"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "26fd6b98-2d13-4461-9e43-8c7d97417f6e",
@@ -2777,22 +1871,17 @@
           "date": "2013-02-24",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200948"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "64616266-7887-4c8e-8caf-6449d2cf1f33",
           "title": "Pompeii",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2013-02-24",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "0d9078e8-c7b6-4d92-9c28-e29cf832d407",
@@ -2802,9 +1891,7 @@
           "date": "2013-05-28",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2ee76e40-3920-4679-9fe4-df34957b7f3b",
@@ -2814,10 +1901,7 @@
           "date": "2013-07-12",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200951"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "94f621be-ccd5-4f5e-a694-0086e4205bd2",
@@ -2827,10 +1911,7 @@
           "date": "2013-07-12",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200951"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2839,7 +1920,7 @@
       "title": "Happier (Stripped) - Single",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2018-11-09",
       "disambiguation": null,
       "releases": [
         {
@@ -2847,7 +1928,7 @@
           "title": "Happier (Stripped) - Single",
           "disambiguation": null,
           "barcode": null,
-          "date": null,
+          "date": "2018-11-09",
           "trackCount": 1,
           "mediaCount": 1,
           "isrcs": []
@@ -2859,31 +1940,18 @@
       "title": "Bad Blood",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2012",
+      "firstReleaseDate": "2012-08-17",
       "disambiguation": null,
       "releases": [
-        {
-          "mbid": "f3f36d7e-3544-4910-bfc4-0f52fe844abf",
-          "title": "Bad Blood",
-          "disambiguation": null,
-          "barcode": "5099973589051",
-          "date": null,
-          "trackCount": 5,
-          "mediaCount": 1,
-          "isrcs": []
-        },
         {
           "mbid": "20944ad6-faea-4ee9-91cb-ed5dfee55b3e",
           "title": "Bad Blood",
           "disambiguation": null,
           "barcode": "5099962406420",
-          "date": "2012",
+          "date": "2012-01-01",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200920",
-            "GBAAA1200511"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "45ef0028-2dea-45b1-9958-3b1b170f0314",
@@ -2893,10 +1961,7 @@
           "date": "2012-08-17",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200920",
-            "GBAAA1200626"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "5bca186e-3dfb-4191-a3b1-8876d454c53c",
@@ -2906,13 +1971,7 @@
           "date": "2012-11-30",
           "trackCount": 5,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200920",
-            "GBAAA1200626",
-            "GBAAA1200627",
-            "GBAAA1200628",
-            "GBAAA1200629"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2137c5b6-12fc-44aa-9967-5e3f999d382c",
@@ -2922,39 +1981,37 @@
           "date": "2012-11-30",
           "trackCount": 6,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200920",
-            "GBAAA1200626",
-            "GBAAA1200627",
-            "GBAAA1200628",
-            "GBAAA1200629",
-            "GB1201200048"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "f3f36d7e-3544-4910-bfc4-0f52fe844abf",
+          "title": "Bad Blood",
+          "disambiguation": null,
+          "barcode": "5099973589051",
+          "date": "2012-11-30",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "81b2fbb1-8ad5-4473-a5e0-b4bb6359c62e",
           "title": "Bad Blood",
           "disambiguation": null,
           "barcode": null,
-          "date": "2014",
+          "date": "2014-01-01",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200920",
-            "GBAAA1200511"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "52fff4d1-f120-4d4e-b245-b81f912dd620",
           "title": "Bad Blood",
           "disambiguation": null,
           "barcode": null,
-          "date": "2014",
+          "date": "2014-01-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200920"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -2974,9 +2031,7 @@
           "date": "2018-05-09",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "cdbd8bb9-2d89-42ab-8b31-1f72a6c2b857",
@@ -2986,9 +2041,7 @@
           "date": "2018-05-09",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71801713"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3008,9 +2061,7 @@
           "date": "2016-08-31",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603418"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "f10abf13-5c6a-4c46-92b3-172c7594f71b",
@@ -3020,10 +2071,7 @@
           "date": "2016-12-09",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603418",
-            "GBUM71605015"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3043,9 +2091,7 @@
           "date": "2022-01-14",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72104398"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3065,9 +2111,7 @@
           "date": "2023-08-04",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72305795"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3080,20 +2124,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "e6973e2d-0288-4196-b85d-8758ed37594b",
-          "title": "Head Down (Remix Pack)",
-          "disambiguation": null,
-          "barcode": "196871951814",
-          "date": null,
-          "trackCount": 3,
-          "mediaCount": 1,
-          "isrcs": [
-            "BEHP42400004",
-            "BEHP42400002",
-            "BEHP42400003"
-          ]
-        },
-        {
           "mbid": "3f8bd88d-69e5-4843-bad1-56fa3eaa12d0",
           "title": "Head Down",
           "disambiguation": null,
@@ -3104,6 +2134,16 @@
           "isrcs": [
             "BEHP42300071"
           ]
+        },
+        {
+          "mbid": "e6973e2d-0288-4196-b85d-8758ed37594b",
+          "title": "Head Down (Remix Pack)",
+          "disambiguation": null,
+          "barcode": "196871951814",
+          "date": "2024-03-20",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -3116,27 +2156,14 @@
       ],
       "firstReleaseDate": "2016-10-28",
       "disambiguation": null,
-      "releases": [
-        {
-          "mbid": "58d8e0de-033b-486b-9ada-3531e286b7e0",
-          "title": "Send Them Off! (Skream Remix Radio Edit)",
-          "disambiguation": null,
-          "barcode": "",
-          "date": "2016-10-28",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71605310"
-          ]
-        }
-      ]
+      "releases": []
     },
     {
       "mbid": "93288d2d-d447-4d21-a2f8-b51f05c59f44",
       "title": "Overjoyed",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2012",
+      "firstReleaseDate": "2012-04-27",
       "disambiguation": null,
       "releases": [
         {
@@ -3144,13 +2171,10 @@
           "title": "Overjoyed",
           "disambiguation": null,
           "barcode": "5099944048426",
-          "date": "2012",
+          "date": "2012-01-01",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200921",
-            "FR6V80478103"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "4a2e40ce-5d34-48fe-a324-197ca0646c37",
@@ -3160,11 +2184,7 @@
           "date": "2012-04-27",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200361"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "06044f5b-d37e-4878-916b-be7721355e8d",
@@ -3174,14 +2194,7 @@
           "date": "2012-04-27",
           "trackCount": 5,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200383",
-            "GBAAA1200384",
-            "GBAAA1200385",
-            "GBAAA1200386"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2c6498a1-bfce-4de5-a466-740a65fa26da",
@@ -3191,15 +2204,7 @@
           "date": "2012-04-27",
           "trackCount": 7,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200361",
-            "GBAAA1200383",
-            "GBAAA1200384",
-            "GBAAA1200385",
-            "GBAAA1200386"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "5eae6630-f1ae-479b-8beb-2646e87915cd",
@@ -3209,15 +2214,7 @@
           "date": "2012-11-30",
           "trackCount": 6,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200361",
-            "GBAAA1200383",
-            "GBAAA1200384",
-            "GBAAA1200385",
-            "GBAAA1200386"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3257,10 +2254,7 @@
           "date": "2012-10-19",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200682",
-            "GBAAA1200754"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2e01b92e-ff44-44ca-ac0c-7147f57a1b9b",
@@ -3270,25 +2264,7 @@
           "date": "2012-10-19",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200682",
-            "GBAAA1200683"
-          ]
-        },
-        {
-          "mbid": "f347193a-db19-405a-9584-a9f7a7e5a2be",
-          "title": "Flaws",
-          "disambiguation": null,
-          "barcode": null,
-          "date": "2012-10-21",
-          "trackCount": 4,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200682",
-            "GBAAA1200754",
-            "GBAAA1200755",
-            "GBAAA1200756"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "fb9d6f87-a94d-4578-ba59-fca1101504d8",
@@ -3298,26 +2274,27 @@
           "date": "2012-10-21",
           "trackCount": 5,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200682",
-            "GBAAA1200754",
-            "GBAAA1200755",
-            "GBAAA1200756",
-            "GB1201200073"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "f347193a-db19-405a-9584-a9f7a7e5a2be",
+          "title": "Flaws",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2012-10-21",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "65f2e43c-4830-4f6e-b6fc-724c6d168a4d",
           "title": "Flaws",
           "disambiguation": null,
           "barcode": null,
-          "date": "2014",
+          "date": "2014-01-01",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200682",
-            "GBAAA1200683"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3339,9 +2316,7 @@
           "date": "2014-02-19",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GB3CJ1400002"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3363,12 +2338,7 @@
           "date": "2013-09-27",
           "trackCount": 7,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306590",
-            "GBUM71306594",
-            "GBUM71306595",
-            "GBUM71306597"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3383,32 +2353,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "b90ef5ef-d869-475f-ac94-02bed9fea9fe",
-          "title": "MTV Unplugged – Live in London",
-          "disambiguation": "Dolby Atmos mix",
-          "barcode": "00602455117915",
-          "date": null,
-          "trackCount": 15,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72304109",
-            "GBUM72304108",
-            "GBUM72304095",
-            "GBUM72304097",
-            "GBUM72304094",
-            "GBUM72304096",
-            "GBUM72304100",
-            "GBUM72304105",
-            "GBUM72304099",
-            "GBUM72304101",
-            "GBUM72304106",
-            "GBUM72304104",
-            "GBUM72304103",
-            "GBUM72304102",
-            "GBUM72304107"
-          ]
-        },
-        {
           "mbid": "2568a304-23c9-4812-aee5-dd4a04bbfeb2",
           "title": "MTV Unplugged – Live in London",
           "disambiguation": null,
@@ -3416,23 +2360,7 @@
           "date": "2023-04-22",
           "trackCount": 15,
           "mediaCount": 2,
-          "isrcs": [
-            "GBUM72300557",
-            "GBUM72300558",
-            "GBUM72300572",
-            "GBUM72300573",
-            "GBUM72300574",
-            "GBUM72300575",
-            "GBUM72300576",
-            "GBUM72300577",
-            "GBUM72300578",
-            "GBUM72300579",
-            "GBUM72300581",
-            "GBUM72300582",
-            "GBUM72300583",
-            "GBUM72300584",
-            "GBUM72300585"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "3b8a729e-651a-4865-bcc0-6e99c1885f93",
@@ -3442,23 +2370,7 @@
           "date": "2023-04-28",
           "trackCount": 15,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72300557",
-            "GBUM72300558",
-            "GBUM72300572",
-            "GBUM72300573",
-            "GBUM72300574",
-            "GBUM72300575",
-            "GBUM72300576",
-            "GBUM72300577",
-            "GBUM72300578",
-            "GBUM72300579",
-            "GBUM72300581",
-            "GBUM72300582",
-            "GBUM72300583",
-            "GBUM72300584",
-            "GBUM72300585"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "8aebcc05-4bca-47f8-931a-f6590f1bf9b6",
@@ -3468,23 +2380,17 @@
           "date": "2023-04-28",
           "trackCount": 15,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72300557",
-            "GBUM72300558",
-            "GBUM72300572",
-            "GBUM72300573",
-            "GBUM72300574",
-            "GBUM72300575",
-            "GBUM72300576",
-            "GBUM72300577",
-            "GBUM72300578",
-            "GBUM72300579",
-            "GBUM72300581",
-            "GBUM72300582",
-            "GBUM72300583",
-            "GBUM72300584",
-            "GBUM72300585"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "b90ef5ef-d869-475f-ac94-02bed9fea9fe",
+          "title": "MTV Unplugged – Live in London",
+          "disambiguation": "Dolby Atmos mix",
+          "barcode": "00602455117915",
+          "date": "2023-04-28",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -3504,9 +2410,7 @@
           "date": "2023-11-24",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72310499"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "7cb8aad0-f1c6-49ef-b9a5-665d54c69f6b",
@@ -3516,10 +2420,7 @@
           "date": "2023-11-24",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72310499",
-            "GBUM72307839"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3539,9 +2440,7 @@
           "date": "2021-06-23",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72103268"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "7df03d92-97f4-416c-99d6-18b10f07b44c",
@@ -3551,9 +2450,7 @@
           "date": "2021-06-23",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72103268"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3562,20 +2459,18 @@
       "title": "Oblivion",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2014",
+      "firstReleaseDate": "2014-09-07",
       "disambiguation": null,
       "releases": [
         {
           "mbid": "3b4a4a84-4cc0-4c20-8eeb-a29eeb78b757",
           "title": "Oblivion",
           "disambiguation": null,
-          "barcode": "",
-          "date": "2014",
+          "barcode": null,
+          "date": "2014-01-01",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200935"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "f8188504-d85b-484a-ad54-9e3164fad91f",
@@ -3585,14 +2480,7 @@
           "date": "2014-09-07",
           "trackCount": 7,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200935",
-            "GBUM71404283",
-            "GBUM71401141",
-            "GBAAA1200940",
-            "GBUM71404302",
-            "GBUM71404304"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "813703a9-5912-441c-a002-1eb41db8308d",
@@ -3602,10 +2490,7 @@
           "date": "2014-09-08",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200935",
-            "GBUM71404283"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "17e8e4ec-7bb0-4c90-b902-36956ae5af5e",
@@ -3615,14 +2500,7 @@
           "date": "2014-09-09",
           "trackCount": 6,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200935",
-            "GBUM71404283",
-            "GBUM71401141",
-            "GBAAA1200940",
-            "GBUM71404302",
-            "GBUM71404304"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3641,26 +2519,20 @@
           "title": "Pompeii / Come as You Are (MTV Unplugged)",
           "disambiguation": null,
           "barcode": "00602455465092",
-          "date": null,
+          "date": "2023-04-12",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72302279",
-            "GBUM72302277"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "03358ffb-95aa-4b21-b506-fd79cb0c838b",
           "title": "Pompeii / Come as You Are (MTV Unplugged)",
           "disambiguation": null,
           "barcode": "00602455470188",
-          "date": null,
+          "date": "2023-04-12",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72302279",
-            "GBUM72302277"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "6fcb9de3-d857-480c-9e32-8c9711486f31",
@@ -3670,9 +2542,7 @@
           "date": "2023-04-12",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUV72300539"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3694,9 +2564,7 @@
           "date": "2019-02-08",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NOUM71900017"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3716,9 +2584,7 @@
           "date": "2023-09-08",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72308213"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "89cc1ee0-4eb0-413b-b1cd-83c12150a306",
@@ -3728,10 +2594,7 @@
           "date": "2023-09-08",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72308213",
-            "GBUM72305795"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -3746,20 +2609,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "fab7ff68-52e8-45e4-9218-c4eb369c4bc2",
-          "title": "Killing Me Softly With His Song (MTV Unplugged)",
-          "disambiguation": null,
-          "barcode": "00602455702258",
-          "date": "2023-04-26",
-          "trackCount": 3,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72302334",
-            "GBUM72302279",
-            "GBUM72302277"
-          ]
-        },
-        {
           "mbid": "dd546f3c-e6f9-480b-ac07-2773e2da388b",
           "title": "Killing Me Softly With His Song (MTV Unplugged)",
           "disambiguation": null,
@@ -3767,9 +2616,7 @@
           "date": "2023-04-26",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72302334"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "36f2b40f-b46d-4f37-8931-02c487a7ad3e",
@@ -3779,9 +2626,17 @@
           "date": "2023-04-26",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72302334"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "fab7ff68-52e8-45e4-9218-c4eb369c4bc2",
+          "title": "Killing Me Softly With His Song (MTV Unplugged)",
+          "disambiguation": null,
+          "barcode": "00602455702258",
+          "date": "2023-04-26",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -3799,7 +2654,7 @@
           "mbid": "c8044afe-f112-47cf-90ff-6e581271251e",
           "title": "2012-05-22: Church Studios, London, England, UK",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2012-05-22",
           "trackCount": 5,
           "mediaCount": 1,
@@ -3823,22 +2678,7 @@
           "date": "2024-10-25",
           "trackCount": 14,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72403758",
-            "GBUM72403759",
-            "GBUM72403761",
-            "GBUM72403557",
-            "GBUM72403779",
-            "GBUM72403872",
-            "GBUM72403893",
-            "GBUM72403760",
-            "GBUM72403778",
-            "GBUM72403875",
-            "GBUM72403891",
-            "GBUM72403781",
-            "GBUM72403892",
-            "GBUM72403838"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "3b3fba73-03c6-4c2a-b1e0-377362cf91a9",
@@ -3848,22 +2688,7 @@
           "date": "2024-10-25",
           "trackCount": 14,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72403758",
-            "GBUM72403759",
-            "GBUM72403761",
-            "GBUM72403557",
-            "GBUM72403779",
-            "GBUM72403872",
-            "GBUM72403893",
-            "GBUM72403760",
-            "GBUM72403778",
-            "GBUM72403875",
-            "GBUM72403891",
-            "GBUM72403781",
-            "GBUM72403892",
-            "GBUM72403838"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2f9dbbe0-8f80-4e1e-90ee-2b4c38cd48ca",
@@ -3913,9 +2738,7 @@
           "date": "2021-10-19",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72104386"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "8c0c8180-6f95-4ed8-8003-828292ec55d4",
@@ -3925,27 +2748,7 @@
           "date": "2021-10-19",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72104386",
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104402"
-          ]
-        },
-        {
-          "mbid": "5c125443-4375-4127-a010-970c2b61bb38",
-          "title": "No Bad Days",
-          "disambiguation": "explicit",
-          "barcode": "00602445004638",
-          "date": "2021-10-19",
-          "trackCount": 4,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72104384",
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104402"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "44a5c47d-9c84-4b83-9d54-09a82d5909a7",
@@ -3955,9 +2758,17 @@
           "date": "2021-10-19",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72104384"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "5c125443-4375-4127-a010-970c2b61bb38",
+          "title": "No Bad Days",
+          "disambiguation": "explicit",
+          "barcode": "00602445004638",
+          "date": "2021-10-19",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -3966,21 +2777,18 @@
       "title": "Laura Palmer",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2013",
+      "firstReleaseDate": "2013-05-21",
       "disambiguation": null,
       "releases": [
         {
           "mbid": "43325d78-d37c-4d03-be1e-3aeb25829fb6",
           "title": "Laura Palmer",
           "disambiguation": null,
-          "barcode": "",
-          "date": "2013",
+          "barcode": null,
+          "date": "2013-01-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200505",
-            "FR6V80478102"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "fc562ef1-0eec-46d4-beab-acd4f075921b",
@@ -3990,14 +2798,7 @@
           "date": "2013-05-21",
           "trackCount": 5,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1300232",
-            "GBAAA1300233",
-            "GBAAA1300234",
-            "GBAAA1300235"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "ee40587b-a764-4844-abdc-8dbc052e636e",
@@ -4007,10 +2808,7 @@
           "date": "2013-05-31",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200505",
-            "FR6V80478102"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "d0cc3a7d-b4d9-4539-b751-fb10993218cf",
@@ -4020,11 +2818,7 @@
           "date": "2013-06-03",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1300232"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -4044,45 +2838,7 @@
           "date": null,
           "trackCount": 13,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407"
-          ]
-        },
-        {
-          "mbid": "778cf1e9-18e8-4a08-b4ff-74a9a844c1c9",
-          "title": "Give Me The Future",
-          "disambiguation": null,
-          "barcode": "602438542109",
-          "date": null,
-          "trackCount": 13,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "f115addb-849b-4421-9177-8e093b30ce65",
@@ -4092,69 +2848,7 @@
           "date": "2022-02-04",
           "trackCount": 13,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407"
-          ]
-        },
-        {
-          "mbid": "1298636a-760b-46b4-ac23-c5219610640e",
-          "title": "Give Me the Future",
-          "disambiguation": "explicit",
-          "barcode": "00602438711901",
-          "date": "2022-02-04",
-          "trackCount": 13,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407"
-          ]
-        },
-        {
-          "mbid": "80be9b57-8517-4806-b50a-b74b0f63b711",
-          "title": "Give Me the Future",
-          "disambiguation": "clean",
-          "barcode": "602445084777",
-          "date": "2022-02-04",
-          "trackCount": 13,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104386",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72107742",
-            "GBUM72104397",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72107741"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "bb1e1151-0175-4e8a-ab69-5b397884b62f",
@@ -4164,21 +2858,17 @@
           "date": "2022-02-04",
           "trackCount": 13,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104386",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72107742",
-            "GBUM72104397",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72107741"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "1298636a-760b-46b4-ac23-c5219610640e",
+          "title": "Give Me the Future",
+          "disambiguation": "explicit",
+          "barcode": "00602438711901",
+          "date": "2022-02-04",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "4aeeaffd-bfba-43db-ad64-385432f5b9b3",
@@ -4188,21 +2878,27 @@
           "date": "2022-02-04",
           "trackCount": 13,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "80be9b57-8517-4806-b50a-b74b0f63b711",
+          "title": "Give Me the Future",
+          "disambiguation": "clean",
+          "barcode": "602445084777",
+          "date": "2022-02-04",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "778cf1e9-18e8-4a08-b4ff-74a9a844c1c9",
+          "title": "Give Me The Future",
+          "disambiguation": null,
+          "barcode": "602438542109",
+          "date": "2022-02-04",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "3888c164-4ae0-414c-8183-ca59ac0a000b",
@@ -4212,53 +2908,7 @@
           "date": "2022-02-07",
           "trackCount": 17,
           "mediaCount": 2,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407",
-            "GBUM72200551",
-            "GBUM72200547",
-            "GBUM72003947",
-            "GBUM72200552"
-          ]
-        },
-        {
-          "mbid": "85152ab0-bcbd-4b6f-b91a-b2a18edbbc31",
-          "title": "Give Me the Future",
-          "disambiguation": "deluxe edition - clean",
-          "barcode": "00602445547630",
-          "date": "2022-02-07",
-          "trackCount": 17,
-          "mediaCount": 2,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104386",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72107742",
-            "GBUM72104397",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72107741",
-            "GBUM72200551",
-            "GBUM72200547",
-            "GBUM72003947",
-            "GBUM72200552"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "f26807a5-da19-4206-94fc-9e3b7bfdee2b",
@@ -4268,25 +2918,7 @@
           "date": "2022-02-07",
           "trackCount": 17,
           "mediaCount": 2,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104386",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72107742",
-            "GBUM72104397",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72107741",
-            "GBUM72200551",
-            "GBUM72200547",
-            "GBUM72003947",
-            "GBUM72200552"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "f7f99d1d-8d78-41f6-ac45-74b03e71ce72",
@@ -4296,25 +2928,17 @@
           "date": "2022-02-07",
           "trackCount": 17,
           "mediaCount": 2,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407",
-            "GBUM72200551",
-            "GBUM72200547",
-            "GBUM72003947",
-            "GBUM72200552"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "85152ab0-bcbd-4b6f-b91a-b2a18edbbc31",
+          "title": "Give Me the Future",
+          "disambiguation": "deluxe edition - clean",
+          "barcode": "00602445547630",
+          "date": "2022-02-07",
+          "trackCount": 17,
+          "mediaCount": 2,
+          "isrcs": []
         },
         {
           "mbid": "0a0bd5a8-6635-48df-980e-1f9b4d22c722",
@@ -4324,35 +2948,7 @@
           "date": "2022-08-16",
           "trackCount": 27,
           "mediaCount": 2,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407",
-            "GBUM72200551",
-            "GBUM72200547",
-            "GBUM72202364",
-            "GBUM72202366",
-            "GBUM72202372",
-            "GBUM72003947",
-            "GBUM72108141",
-            "GBUM72202375",
-            "GBUM72202377",
-            "GBUM72201157",
-            "GBUM72202389",
-            "GBUM72202391",
-            "GBUM72108363",
-            "GBUM72202390"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "60d849a0-cd90-418f-8ff3-651d138c11de",
@@ -4362,35 +2958,7 @@
           "date": "2022-08-26",
           "trackCount": 27,
           "mediaCount": 3,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407",
-            "GBUM72200551",
-            "GBUM72200547",
-            "GBUM72202364",
-            "GBUM72202366",
-            "GBUM72202372",
-            "GBUM72003947",
-            "GBUM72108141",
-            "GBUM72202375",
-            "GBUM72202377",
-            "GBUM72201157",
-            "GBUM72202389",
-            "GBUM72202391",
-            "GBUM72108363",
-            "GBUM72202390"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "8b5b8dbd-305f-4f61-ae74-8d41dfa204b6",
@@ -4400,35 +2968,7 @@
           "date": "2022-08-26",
           "trackCount": 27,
           "mediaCount": 3,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104386",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72107742",
-            "GBUM72104397",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72107741",
-            "GBUM72200551",
-            "GBUM72200547",
-            "GBUM72202364",
-            "GBUM72202366",
-            "GBUM72202372",
-            "GBUM72003947",
-            "GBUM72204363",
-            "GBUM72202375",
-            "GBUM72202377",
-            "GBUM72201157",
-            "GBUM72202389",
-            "GBUM72202391",
-            "GBUM72108363",
-            "GBUM72202390"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "18d7cf25-d2fa-448a-ae11-72aa6b474a42",
@@ -4438,35 +2978,7 @@
           "date": "2022-08-26",
           "trackCount": 27,
           "mediaCount": 3,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104384",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72104393",
-            "GBUM72104395",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72104407",
-            "GBUM72200551",
-            "GBUM72200547",
-            "GBUM72202364",
-            "GBUM72202366",
-            "GBUM72202372",
-            "GBUM72003947",
-            "GBUM72108141",
-            "GBUM72202375",
-            "GBUM72202377",
-            "GBUM72201157",
-            "GBUM72202389",
-            "GBUM72202391",
-            "GBUM72108363",
-            "GBUM72202390"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "063b19f1-73b7-4a4c-b98c-6bf50838d377",
@@ -4476,35 +2988,7 @@
           "date": "2022-08-26",
           "trackCount": 27,
           "mediaCount": 3,
-          "isrcs": [
-            "GBUM72103268",
-            "GBUM72104380",
-            "GBUM72104386",
-            "GBUM72104392",
-            "GBUM72103992",
-            "GBUM72107742",
-            "GBUM72104397",
-            "GBUM72104398",
-            "GBUM72104400",
-            "GBUM72104402",
-            "GBUM72104404",
-            "GBUM72104406",
-            "GBUM72107741",
-            "GBUM72200551",
-            "GBUM72200547",
-            "GBUM72202364",
-            "GBUM72202366",
-            "GBUM72202372",
-            "GBUM72003947",
-            "GBUM72204363",
-            "GBUM72202375",
-            "GBUM72202377",
-            "GBUM72201157",
-            "GBUM72202389",
-            "GBUM72202391",
-            "GBUM72108363",
-            "GBUM72202390"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -4524,9 +3008,7 @@
           "date": "2019-11-19",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71906405"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -4546,206 +3028,27 @@
           "date": "2012-04-27",
           "trackCount": 30,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200948",
-            "GBAAA1200939",
-            "GBAAA1200626",
-            "GBAAA1200938",
-            "GBAAA1200361",
-            "GBAAA1200754",
-            "GBAAA1200943",
-            "GBUM71307129",
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71306880",
-            "GBUM71306881",
-            "GBUM71306879",
-            "GBUM71307139",
-            "GBAAA1200942",
-            "GBAAA1200941",
-            "GBUM71307183",
-            "GBUM71401141",
-            "GBAAA1200940"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "d1644b7b-c346-421b-820d-97f3a64e9168",
           "title": "Bad Blood",
           "disambiguation": null,
           "barcode": "5099972110720",
-          "date": "2013",
+          "date": "2013-01-01",
           "trackCount": 12,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1300067"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "cb38790c-02c3-4814-9093-037bd862767c",
           "title": "All This Bad Blood",
           "disambiguation": null,
           "barcode": "602537608140",
-          "date": "2013",
+          "date": "2013-01-01",
           "trackCount": 25,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200948",
-            "GBAAA1200939",
-            "GBAAA1200626",
-            "GBAAA1200938",
-            "GBAAA1200361",
-            "GBAAA1200754",
-            "GBAAA1200943",
-            "GBUM71307129",
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71306880",
-            "GBUM71306881",
-            "GBUM71306879",
-            "GBUM71307139"
-          ]
-        },
-        {
-          "mbid": "9b93a90b-717d-450b-9718-a21211ef4d39",
-          "title": "Bad Blood",
-          "disambiguation": null,
-          "barcode": "5099972110720",
-          "date": "2013-03-04",
-          "trackCount": 12,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1300067"
-          ]
-        },
-        {
-          "mbid": "53967218-4f1d-4418-b60f-29ee6ec6199d",
-          "title": "Bad Blood",
-          "disambiguation": null,
-          "barcode": "5099972111055",
-          "date": "2013-03-04",
-          "trackCount": 13,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938"
-          ]
-        },
-        {
-          "mbid": "8a29e103-7fad-4392-bec6-050eea70f041",
-          "title": "Bad Blood: The Extended Cut",
-          "disambiguation": "iTunes",
-          "barcode": null,
-          "date": "2013-03-04",
-          "trackCount": 24,
-          "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200939",
-            "GBAAA1200943",
-            "GBAAA1200940",
-            "GBAAA1200941",
-            "GBAAA1200942",
-            "GBAAA1200944",
-            "GB1201200048",
-            "GB1201200073"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "9998df85-832a-49b6-b4d0-e5ecaac47f3c",
@@ -4755,31 +3058,27 @@
           "date": "2013-03-04",
           "trackCount": 18,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200939",
-            "GBAAA1200943",
-            "GBAAA1200940",
-            "GBAAA1200941",
-            "GBAAA1200942"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "53967218-4f1d-4418-b60f-29ee6ec6199d",
+          "title": "Bad Blood",
+          "disambiguation": null,
+          "barcode": "5099972111055",
+          "date": "2013-03-04",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "8a29e103-7fad-4392-bec6-050eea70f041",
+          "title": "Bad Blood: The Extended Cut",
+          "disambiguation": "iTunes",
+          "barcode": null,
+          "date": "2013-03-04",
+          "trackCount": 24,
+          "mediaCount": 2,
+          "isrcs": []
         },
         {
           "mbid": "13c91c4f-1ecf-4341-9f99-4e28140683d7",
@@ -4789,32 +3088,17 @@
           "date": "2013-03-04",
           "trackCount": 19,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200939",
-            "GBAAA1200943",
-            "GBAAA1200940",
-            "GBAAA1200941",
-            "GBAAA1200942",
-            "GBAAA1200944"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "9b93a90b-717d-450b-9718-a21211ef4d39",
+          "title": "Bad Blood",
+          "disambiguation": null,
+          "barcode": "5099972110720",
+          "date": "2013-03-04",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "c31cb52f-0e02-40ed-87b3-71cf618d43ac",
@@ -4824,25 +3108,7 @@
           "date": "2013-06-03",
           "trackCount": 12,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "b4653af0-c9cd-436c-adb1-fa29cd78ae6c",
@@ -4852,32 +3118,7 @@
           "date": "2013-07-03",
           "trackCount": 19,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200939",
-            "GBAAA1200943",
-            "GBAAA1200948",
-            "GBAAA1200626",
-            "GBAAA1200361",
-            "GBAAA1200754"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "4471492d-2164-4440-bbe0-9a3065a1b663",
@@ -4887,123 +3128,7 @@
           "date": "2013-07-17",
           "trackCount": 19,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200939",
-            "GBAAA1200943",
-            "GBAAA1200948",
-            "GBAAA1200626",
-            "GBAAA1200361",
-            "GBAAA1200754"
-          ]
-        },
-        {
-          "mbid": "99d80ba7-516e-4058-8c01-ab04e4ccca4b",
-          "title": "Bad Blood",
-          "disambiguation": null,
-          "barcode": "602537478538",
-          "date": "2013-09-03",
-          "trackCount": 15,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200939",
-            "GBAAA1200938",
-            "GBAAA1200943"
-          ]
-        },
-        {
-          "mbid": "f278a5ee-14d9-4e8f-b4db-40a201618b6b",
-          "title": "Bad Blood",
-          "disambiguation": null,
-          "barcode": "602537487691",
-          "date": "2013-09-03",
-          "trackCount": 14,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1300067",
-            "GBAAA1200951",
-            "GBUM71304903"
-          ]
-        },
-        {
-          "mbid": "53495034-33c0-4d46-be0d-554bc52a4da1",
-          "title": "Bad Blood",
-          "disambiguation": null,
-          "barcode": "602537477340",
-          "date": "2013-09-03",
-          "trackCount": 15,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200939",
-            "GBAAA1200938",
-            "GBAAA1200943"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "57cea15d-25b9-44f9-a9d0-b661fb8d19e0",
@@ -5013,25 +3138,37 @@
           "date": "2013-09-03",
           "trackCount": 12,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "f278a5ee-14d9-4e8f-b4db-40a201618b6b",
+          "title": "Bad Blood",
+          "disambiguation": null,
+          "barcode": "602537487691",
+          "date": "2013-09-03",
+          "trackCount": 14,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "53495034-33c0-4d46-be0d-554bc52a4da1",
+          "title": "Bad Blood",
+          "disambiguation": null,
+          "barcode": "602537477340",
+          "date": "2013-09-03",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "99d80ba7-516e-4058-8c01-ab04e4ccca4b",
+          "title": "Bad Blood",
+          "disambiguation": null,
+          "barcode": "602537478538",
+          "date": "2013-09-03",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "7410b943-b219-45ae-97c4-35597c916fea",
@@ -5041,39 +3178,7 @@
           "date": "2013-11-25",
           "trackCount": 25,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200948",
-            "GBAAA1200939",
-            "GBAAA1200626",
-            "GBAAA1200938",
-            "GBAAA1200361",
-            "GBAAA1200754",
-            "GBAAA1200943",
-            "GBUM71307129",
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71306880",
-            "GBUM71306881",
-            "GBUM71306879",
-            "GBUM71307139"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "af4473b4-b39d-4694-9ed5-726a2ada0686",
@@ -5083,39 +3188,7 @@
           "date": "2013-11-25",
           "trackCount": 25,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200948",
-            "GBAAA1200939",
-            "GBAAA1200626",
-            "GBAAA1200938",
-            "GBAAA1200361",
-            "GBAAA1200754",
-            "GBAAA1200943",
-            "GBUM71307129",
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71306880",
-            "GBUM71306881",
-            "GBUM71306879",
-            "GBUM71307139"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "994546f3-b9f6-459b-8a6c-76333b476067",
@@ -5125,41 +3198,7 @@
           "date": "2014-04-22",
           "trackCount": 27,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200948",
-            "GBAAA1200939",
-            "GBAAA1200626",
-            "GBAAA1200938",
-            "GBAAA1200361",
-            "GBAAA1200754",
-            "GBAAA1200943",
-            "GBUM71307129",
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71306880",
-            "GBUM71306881",
-            "GBUM71306879",
-            "GBUM71307139",
-            "GBUM71401141",
-            "GBUM71307183"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "eac2544d-eb6a-4ef2-bef5-6d7effe47bc7",
@@ -5169,39 +3208,7 @@
           "date": "2014-04-22",
           "trackCount": 25,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200948",
-            "GBAAA1200939",
-            "GBAAA1200626",
-            "GBAAA1200938",
-            "GBAAA1200361",
-            "GBAAA1200754",
-            "GBAAA1200943",
-            "GBUM71307129",
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71306880",
-            "GBUM71306881",
-            "GBUM71306879",
-            "GBUM71307139"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "0907384f-cc09-4de6-b90c-725756ad0a20",
@@ -5211,44 +3218,7 @@
           "date": "2014-06-06",
           "trackCount": 30,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200948",
-            "GBAAA1200939",
-            "GBAAA1200626",
-            "GBAAA1200938",
-            "GBAAA1200361",
-            "GBAAA1200754",
-            "GBAAA1200943",
-            "GBUM71307129",
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71306880",
-            "GBUM71306881",
-            "GBUM71306879",
-            "GBUM71307139",
-            "GBAAA1200942",
-            "GBAAA1200941",
-            "GBUM71307183",
-            "GBUM71401141",
-            "GBAAA1200940"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "b86714d6-1f68-449a-9a98-d42004df3ef6",
@@ -5258,47 +3228,7 @@
           "date": "2014-11-13",
           "trackCount": 33,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200948",
-            "GBAAA1200939",
-            "GBAAA1200626",
-            "GBAAA1200938",
-            "GBAAA1200361",
-            "GBAAA1200754",
-            "GBAAA1200943",
-            "GBUM71307129",
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71306880",
-            "GBUM71306881",
-            "GBUM71306879",
-            "GBUM71307139",
-            "GBUM71405601",
-            "GBUM71405635",
-            "GBAAA1200942",
-            "GBUM71401141",
-            "GBAAA1200941",
-            "GBUM71405636",
-            "GBUM71405637",
-            "GBUM71404283"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "e582b59a-3d98-4710-bbda-711ac301a966",
@@ -5308,158 +3238,37 @@
           "date": "2014-11-13",
           "trackCount": 33,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200948",
-            "GBAAA1200939",
-            "GBAAA1200626",
-            "GBAAA1200938",
-            "GBAAA1200361",
-            "GBAAA1200754",
-            "GBAAA1200943",
-            "GBUM71307129",
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71306880",
-            "GBUM71306881",
-            "GBUM71306879",
-            "GBUM71307139",
-            "GBUM71405601",
-            "GBUM71405635",
-            "GBAAA1200942",
-            "GBUM71401141",
-            "GBAAA1200941",
-            "GBUM71405636",
-            "GBUM71405637",
-            "GBUM71404283"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "d97174f9-175f-4994-a251-4ba6398cdb97",
           "title": "Bad Blood: The Extended Cut",
           "disambiguation": "iTunes",
           "barcode": null,
-          "date": "2015",
+          "date": "2015-01-01",
           "trackCount": 19,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200939",
-            "GBAAA1200943",
-            "GBAAA1200940",
-            "GBAAA1200941",
-            "GBAAA1200942",
-            "GBAAA1200944"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "da0dda52-181a-49f3-939e-68a52be89c67",
           "title": "Bad Blood",
           "disambiguation": null,
           "barcode": "5099972110720",
-          "date": "2015",
+          "date": "2015-01-01",
           "trackCount": 12,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1300067"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2ae85560-0c6b-48f2-8d37-4e717e97e73c",
           "title": "Bad Blood X",
           "disambiguation": "10th Anniversary Edition",
           "barcode": null,
-          "date": "2023",
+          "date": "2023-01-01",
           "trackCount": 33,
           "mediaCount": 2,
-          "isrcs": [
-            "GBUM72307839",
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200940",
-            "GBAAA1200941",
-            "GBAAA1200942",
-            "GBAAA1200944",
-            "GBUM71307183",
-            "GBUM71405601",
-            "GBUM72301353",
-            "GBUM72301351",
-            "GBUM72301352",
-            "GBUM72304146",
-            "GBUM71306054",
-            "GBAAA1300203",
-            "GBAAA1300113",
-            "GBUM71306590",
-            "GBAAA1300111",
-            "GBAAA1300112",
-            "GBUM71306595",
-            "GBUM71306597",
-            "GBUM71306594"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "20d01ccb-f796-4916-861c-49535a6d7b46",
@@ -5469,45 +3278,7 @@
           "date": "2023-07-14",
           "trackCount": 32,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200940",
-            "GBAAA1200941",
-            "GBAAA1200942",
-            "GBAAA1200944",
-            "GBUM71307183",
-            "GBUM71405601",
-            "GBUM72301353",
-            "GBUM72301351",
-            "GBUM72301352",
-            "GBUM72304146",
-            "GBUM71306054",
-            "GBAAA1300203",
-            "GBAAA1300113",
-            "GBUM71306590",
-            "GBAAA1300111",
-            "GBAAA1300112",
-            "GBUM71306595",
-            "GBUM71306597",
-            "GBUM71306594"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "08f57847-2080-44a3-8b56-dbdfd6a74ee6",
@@ -5517,45 +3288,7 @@
           "date": "2023-07-14",
           "trackCount": 32,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200940",
-            "GBAAA1200941",
-            "GBAAA1200942",
-            "GBAAA1200944",
-            "GBUM71307183",
-            "GBUM71405601",
-            "GBUM72301353",
-            "GBUM72301351",
-            "GBUM72301352",
-            "GBUM72304146",
-            "GBUM71306054",
-            "GBAAA1300203",
-            "GBAAA1300113",
-            "GBUM71306590",
-            "GBAAA1300111",
-            "GBAAA1300112",
-            "GBUM71306595",
-            "GBUM71306597",
-            "GBUM71306594"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "8427c3aa-0f25-48c0-a615-fe8e74e009fa",
@@ -5565,28 +3298,7 @@
           "date": "2023-07-14",
           "trackCount": 15,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBUM72301351",
-            "GBUM72301352"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "8a10e86a-13d5-4f00-9457-cbad694ae085",
@@ -5596,45 +3308,7 @@
           "date": "2023-07-14",
           "trackCount": 32,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBAAA1200940",
-            "GBAAA1200941",
-            "GBAAA1200942",
-            "GBAAA1200944",
-            "GBUM71307183",
-            "GBUM71405601",
-            "GBUM72301353",
-            "GBUM72301351",
-            "GBUM72301352",
-            "GBUM72304146",
-            "GBUM71306054",
-            "GBAAA1300203",
-            "GBAAA1300113",
-            "GBUM71306590",
-            "GBAAA1300111",
-            "GBAAA1300112",
-            "GBUM71306595",
-            "GBUM71306597",
-            "GBUM71306594"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "7c49f1fc-785a-43b5-9b04-dc02b540aec0",
@@ -5644,46 +3318,7 @@
           "date": "2023-10-13",
           "trackCount": 33,
           "mediaCount": 2,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200938",
-            "GBUM72307839",
-            "GBAAA1200940",
-            "GBAAA1200941",
-            "GBAAA1200942",
-            "GBAAA1200944",
-            "GBUM71307183",
-            "GBUM71405601",
-            "GBUM72301353",
-            "GBUM72301351",
-            "GBUM72301352",
-            "GBUM72304146",
-            "GBUM71306054",
-            "GBAAA1300203",
-            "GBAAA1300113",
-            "GBUM71306590",
-            "GBAAA1300111",
-            "GBAAA1300112",
-            "GBUM71306595",
-            "GBUM71306597",
-            "GBUM71306594"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -5703,9 +3338,7 @@
           "date": "2016-07-27",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603416"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -5725,9 +3358,7 @@
           "date": "2023-06-15",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72304146"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -5749,9 +3380,7 @@
           "date": "2019-03-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NOUM71900123"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -5760,7 +3389,7 @@
       "title": "Of the Night",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2013",
+      "firstReleaseDate": "2013-10-11",
       "disambiguation": null,
       "releases": [
         {
@@ -5768,26 +3397,20 @@
           "title": "Of the Night",
           "disambiguation": null,
           "barcode": null,
-          "date": "2013",
+          "date": "2013-01-01",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306498",
-            "GBUM71307999"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "6694ddd4-2b3f-49e9-8a3c-c058312e9248",
           "title": "Of the Night",
           "disambiguation": null,
-          "barcode": "",
-          "date": "2013",
+          "barcode": null,
+          "date": "2013-01-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306498",
-            "GBUM71307999"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "a151bdc8-bc23-4a8a-8f40-cfb9227db698",
@@ -5797,10 +3420,7 @@
           "date": "2013-10-11",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306498",
-            "GBUM71307999"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "89cbde4e-b81e-43a0-82d5-634cef9e81ef",
@@ -5810,32 +3430,7 @@
           "date": "2013-11-15",
           "trackCount": 6,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71307183",
-            "GBUM71307186",
-            "GBUM71307184",
-            "GBUM71307185",
-            "GBUV71301305"
-          ]
-        },
-        {
-          "mbid": "fcb64b9c-0e4d-4798-bcc5-a9371f9657fc",
-          "title": "Of the Night",
-          "disambiguation": null,
-          "barcode": "0602537621958",
-          "date": "2013-11-18",
-          "trackCount": 5,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71307183",
-            "GBUM71307186",
-            "GBUM71307184",
-            "GBUM71307185"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "bfbc35bf-30e2-4871-9246-462c937eea71",
@@ -5845,29 +3440,27 @@
           "date": "2013-11-18",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71307186",
-            "GBUM71307183",
-            "GBUM71307184"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "fcb64b9c-0e4d-4798-bcc5-a9371f9657fc",
+          "title": "Of the Night",
+          "disambiguation": null,
+          "barcode": "0602537621958",
+          "date": "2013-11-18",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "656bbcc5-b010-447e-89e1-cb74d95eab71",
           "title": "Of the Night",
           "disambiguation": null,
-          "barcode": "",
-          "date": "2014",
+          "barcode": null,
+          "date": "2014-01-01",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71307186",
-            "GBUM71307184",
-            "GBUM71307185"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "bc7a9684-99b9-44d9-9c86-04a6ed35d3f2",
@@ -5877,11 +3470,7 @@
           "date": "2014-02-04",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71306498",
-            "GBUM71307999",
-            "GBUM71307186"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -5890,34 +3479,28 @@
       "title": "“&” (Ampersand), Part Two",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2024-09-13",
       "disambiguation": null,
       "releases": [
-        {
-          "mbid": "549a4721-fe6f-4c53-b89b-951d21c22504",
-          "title": "“&” (Ampersand), Part Two",
-          "disambiguation": null,
-          "barcode": null,
-          "date": null,
-          "trackCount": 2,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72403557",
-            "GBUM72403779"
-          ]
-        },
         {
           "mbid": "348e902a-3c12-45a6-85cf-a3e900d54cae",
           "title": "“&” (Ampersand), Part Two",
           "disambiguation": null,
           "barcode": "00602465922370",
-          "date": null,
+          "date": "2024-09-13",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72403557",
-            "GBUM72403779"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "549a4721-fe6f-4c53-b89b-951d21c22504",
+          "title": "“&” (Ampersand), Part Two",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2024-09-13",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -5926,22 +3509,18 @@
       "title": "Things We Lost in the Fire",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2013",
+      "firstReleaseDate": "2013-01-01",
       "disambiguation": null,
       "releases": [
         {
           "mbid": "71e8038e-2207-45ec-831f-ca694eba7b04",
           "title": "Things We Lost in the Fire",
           "disambiguation": null,
-          "barcode": "",
-          "date": "2013",
+          "barcode": null,
+          "date": "2013-01-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "0b09fa43-3c52-42f9-aad0-e09f7b4ed845",
@@ -5954,25 +3533,6 @@
           "isrcs": []
         },
         {
-          "mbid": "bec8bf47-15e3-4940-9a2e-2ed5ec6cd131",
-          "title": "Things We Lost in the Fire",
-          "disambiguation": null,
-          "barcode": "05099940922454",
-          "date": "2013-08-23",
-          "trackCount": 6,
-          "mediaCount": 3,
-          "isrcs": [
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBUM71304896",
-            "GBUM71304903",
-            "GBUM71304904",
-            "GBUV71300811",
-            "GBUV71301028"
-          ]
-        },
-        {
           "mbid": "3ebc4c74-bd38-4b30-adb0-a9a3d09a3c39",
           "title": "Things We Lost in the Fire",
           "disambiguation": null,
@@ -5980,29 +3540,17 @@
           "date": "2013-08-23",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBUM71304896",
-            "GBUM71304903",
-            "GBUM71304904"
-          ]
+          "isrcs": []
         },
         {
-          "mbid": "00f8118e-b554-47e1-ae8f-999e559c84b2",
+          "mbid": "bec8bf47-15e3-4940-9a2e-2ed5ec6cd131",
           "title": "Things We Lost in the Fire",
           "disambiguation": null,
-          "barcode": "602537503803",
-          "date": "2013-08-26",
-          "trackCount": 2,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBUM71304896"
-          ]
+          "barcode": "05099940922454",
+          "date": "2013-08-23",
+          "trackCount": 6,
+          "mediaCount": 3,
+          "isrcs": []
         },
         {
           "mbid": "445c8809-5835-4f3f-b25d-3522b6eeeae0",
@@ -6012,11 +3560,17 @@
           "date": "2013-08-26",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "00f8118e-b554-47e1-ae8f-999e559c84b2",
+          "title": "Things We Lost in the Fire",
+          "disambiguation": null,
+          "barcode": "602537503803",
+          "date": "2013-08-26",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -6029,18 +3583,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "30162ba9-86fe-4a33-92d5-20c3768af6d0",
-          "title": "Grip",
-          "disambiguation": null,
-          "barcode": "00602577355721",
-          "date": "2018-12-06",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "NOUM71800389"
-          ]
-        },
-        {
           "mbid": "60ded8aa-88fd-4102-ad9e-ab8894498853",
           "title": "Grip",
           "disambiguation": null,
@@ -6048,9 +3590,17 @@
           "date": "2018-12-06",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NOUM71800389"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "30162ba9-86fe-4a33-92d5-20c3768af6d0",
+          "title": "Grip",
+          "disambiguation": null,
+          "barcode": "00602577355721",
+          "date": "2018-12-06",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -6072,9 +3622,7 @@
           "date": "2016-07-08",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603634"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6085,7 +3633,7 @@
       "secondaryTypes": [
         "Remix"
       ],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "0001-01-01",
       "disambiguation": null,
       "releases": [
         {
@@ -6118,12 +3666,7 @@
           "date": "2018-10-19",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG11802190",
-            "USUG11802189",
-            "USUG11802191",
-            "USUG11802188"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6143,9 +3686,7 @@
           "date": "2022-04-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72201157"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "7a2ce402-4a12-4dce-b23e-bbdf00b92b5d",
@@ -6155,9 +3696,7 @@
           "date": "2022-04-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72201157"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6177,9 +3716,7 @@
           "date": "2026-01-16",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG12509641"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "2a007926-1ed4-4850-b972-0954e088c17f",
@@ -6189,9 +3726,7 @@
           "date": "2026-01-16",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "USUG12509641"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6213,9 +3748,7 @@
           "date": "2017-12-15",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBARL1702243"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6230,6 +3763,16 @@
       "disambiguation": null,
       "releases": [
         {
+          "mbid": "fc06077c-e670-400f-8cf5-af400fb8be35",
+          "title": "No Bad Days (piano version)",
+          "disambiguation": null,
+          "barcode": "00602445138180",
+          "date": "2021-11-19",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
           "mbid": "959c9feb-711e-4b60-a74c-880e4efd3ef4",
           "title": "No Bad Days (piano version)",
           "disambiguation": null,
@@ -6237,10 +3780,7 @@
           "date": "2021-11-19",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72108141",
-            "GBUM72104384"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "6b565db7-1d0f-4590-9364-9fb6c602735a",
@@ -6250,21 +3790,7 @@
           "date": "2021-11-19",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72108141"
-          ]
-        },
-        {
-          "mbid": "fc06077c-e670-400f-8cf5-af400fb8be35",
-          "title": "No Bad Days (piano version)",
-          "disambiguation": null,
-          "barcode": "00602445138180",
-          "date": "2021-11-19",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM72108141"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6286,15 +3812,7 @@
           "date": "2021-04-23",
           "trackCount": 6,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71803859",
-            "GBUM71306880",
-            "GBUM72003947",
-            "GBAAA1200935",
-            "GBUM71803865",
-            "GBAAA1200937",
-            "FR6V80478105"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6314,9 +3832,7 @@
           "date": "2021-07-15",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72104402"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "9278e24c-3973-44ca-b9b3-1e7cab988540",
@@ -6326,9 +3842,7 @@
           "date": "2021-07-15",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72104402"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6341,42 +3855,25 @@
       ],
       "firstReleaseDate": "2018-06-29",
       "disambiguation": null,
-      "releases": [
-        {
-          "mbid": "d192de4a-0730-4480-a896-0463203f12ec",
-          "title": "Quarter Past Midnight (Remixes)",
-          "disambiguation": null,
-          "barcode": "",
-          "date": "2018-06-29",
-          "trackCount": 3,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71803477",
-            "GBUM71803475",
-            "GBUM71803649"
-          ]
-        }
-      ]
+      "releases": []
     },
     {
       "mbid": "e21c13bb-f742-4d4f-8f4b-8a2d51706ea2",
       "title": "These Streets",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2012",
+      "firstReleaseDate": "2012-01-01",
       "disambiguation": null,
       "releases": [
         {
           "mbid": "d76155f8-b38e-4434-a612-6dc832d5945c",
           "title": "These Streets",
           "disambiguation": null,
-          "barcode": "",
-          "date": "2012",
+          "barcode": null,
+          "date": "2012-01-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200933"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6389,18 +3886,6 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "89554e90-1a36-4131-af4c-9aff0afe99b9",
-          "title": "Glory (single version)",
-          "disambiguation": null,
-          "barcode": "602557781373",
-          "date": null,
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71702641"
-          ]
-        },
-        {
           "mbid": "bc83fb4e-1cae-4182-92b5-97a0274f7f5f",
           "title": "Glory (single version)",
           "disambiguation": "Mastered for iTunes",
@@ -6408,9 +3893,17 @@
           "date": "2017-06-23",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71702641"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "89554e90-1a36-4131-af4c-9aff0afe99b9",
+          "title": "Glory (single version)",
+          "disambiguation": null,
+          "barcode": "602557781373",
+          "date": "2017-06-23",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
         },
         {
           "mbid": "411954cb-ca82-44a6-bbe6-4b66c123ed22",
@@ -6420,9 +3913,7 @@
           "date": "2017-07-07",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71702586"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "ba9ada9a-63e7-46dd-a40b-4e7481f2f8e4",
@@ -6432,10 +3923,7 @@
           "date": "2017-07-14",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603413",
-            "GBUM71701265"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6450,22 +3938,14 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "4d86b1a9-0ac9-4fa7-9a3f-69e35ba9d840",
+          "mbid": "48be9657-046c-440e-83b6-7b28f230a394",
           "title": "Other People’s Heartache, Pt. 4",
           "disambiguation": null,
-          "barcode": "602577391804",
-          "date": null,
+          "barcode": "00602577304767",
+          "date": "2018-12-07",
           "trackCount": 7,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71807610",
-            "GBUM71807611",
-            "NOUM71800389",
-            "GBUM71807612",
-            "GBUM71807614",
-            "GBUM71807615",
-            "GBUM71807616"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "4c6d2ffa-cd7a-4d71-a247-707b03f95f1d",
@@ -6475,33 +3955,17 @@
           "date": "2018-12-07",
           "trackCount": 7,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71807610",
-            "GBUM71807611",
-            "NOUM71800389",
-            "GBUM71807612",
-            "GBUM71807614",
-            "GBUM71807615",
-            "GBUM71807616"
-          ]
+          "isrcs": []
         },
         {
-          "mbid": "48be9657-046c-440e-83b6-7b28f230a394",
+          "mbid": "4d86b1a9-0ac9-4fa7-9a3f-69e35ba9d840",
           "title": "Other People’s Heartache, Pt. 4",
           "disambiguation": null,
-          "barcode": "00602577304767",
-          "date": "2018-12-07",
+          "barcode": "602577391804",
+          "date": "2019-04-13",
           "trackCount": 7,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71807610",
-            "GBUM71807611",
-            "NOUM71800389",
-            "GBUM71807612",
-            "GBUM71807614",
-            "GBUM71807615",
-            "GBUM71807616"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6521,9 +3985,7 @@
           "date": "2013-03-05",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBAAA1200943"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6545,9 +4007,7 @@
           "date": "2016-07-22",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71604015"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6558,7 +4018,7 @@
       "secondaryTypes": [
         "Compilation"
       ],
-      "firstReleaseDate": "2013",
+      "firstReleaseDate": "2013-01-01",
       "disambiguation": null,
       "releases": [
         {
@@ -6566,39 +4026,10 @@
           "title": "Bad Blood / Haunt / Remixed",
           "disambiguation": null,
           "barcode": "602537456376",
-          "date": "2013",
+          "date": "2013-01-01",
           "trackCount": 26,
           "mediaCount": 3,
-          "isrcs": [
-            "GBAAA1200795",
-            "GBAAA1200932",
-            "FR6V80478104",
-            "GBUM71304586",
-            "GBAAA1200920",
-            "GBAAA1200921",
-            "FR6V80478103",
-            "GBAAA1200933",
-            "GBAAA1200638",
-            "GBAAA1200934",
-            "GBAAA1200935",
-            "GBAAA1200682",
-            "GBAAA1200936",
-            "GBAAA1200505",
-            "FR6V80478102",
-            "GBAAA1200937",
-            "FR6V80478105",
-            "GBAAA1200626",
-            "GBAAA1200628",
-            "GBAAA1200384",
-            "GBAAA1200951",
-            "GBAAA1300233",
-            "GBUM71306042",
-            "GBAAA1200852",
-            "GBAAA1200627",
-            "GBAAA1200383",
-            "GBAAA1200950",
-            "GBAAA1200942"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6611,20 +4042,7 @@
       ],
       "firstReleaseDate": "2019-09-27",
       "disambiguation": null,
-      "releases": [
-        {
-          "mbid": "736f1412-df83-4adf-a5f8-1c4d92ac7c19",
-          "title": "Million Pieces (M-22 Remix)",
-          "disambiguation": null,
-          "barcode": "",
-          "date": "2019-09-27",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71904785"
-          ]
-        }
-      ]
+      "releases": []
     },
     {
       "mbid": "f0b9005f-f960-47e2-a9dd-b55f15fa5160",
@@ -6644,10 +4062,7 @@
           "date": "2022-04-22",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72202527",
-            "GBUM72202528"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "4a313b60-3d72-49e8-8efe-f35deb0205b6",
@@ -6657,10 +4072,7 @@
           "date": "2022-04-22",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM72202527",
-            "GBUM72202528"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6669,7 +4081,7 @@
       "title": "Bite Down (Bastille Vs. HAIM)",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2014-12-04",
       "disambiguation": null,
       "releases": [
         {
@@ -6677,7 +4089,7 @@
           "title": "Bite Down (Bastille Vs. HAIM)",
           "disambiguation": null,
           "barcode": "602547128539",
-          "date": null,
+          "date": "2014-12-04",
           "trackCount": 1,
           "mediaCount": 1,
           "isrcs": []
@@ -6702,9 +4114,7 @@
           "date": "2018-01-26",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "USAT21800333"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -6717,20 +4127,7 @@
       ],
       "firstReleaseDate": "2018-07-06",
       "disambiguation": null,
-      "releases": [
-        {
-          "mbid": "e0bcfce1-b0ee-4dea-b8a7-d35ab6aeacb3",
-          "title": "Quarter Past Midnight (One Eyed Jack's Session)",
-          "disambiguation": null,
-          "barcode": "",
-          "date": "2018-07-06",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "GBUM71803776"
-          ]
-        }
-      ]
+      "releases": []
     },
     {
       "mbid": "ffc4f35c-fc04-43e2-8f82-df58931dab00",
@@ -6748,10 +4145,7 @@
           "date": "2016-06-15",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "e3b26665-955f-457b-8cb1-b0222cece00d",
@@ -6761,9 +4155,7 @@
           "date": "2016-07-15",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603449"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "00880cd1-473d-4e0f-b71f-bbf56d6aaa71",
@@ -6773,11 +4165,7 @@
           "date": "2016-10-08",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GBUM71603448",
-            "GBUM71602854",
-            "GBUM71603449"
-          ]
+          "isrcs": []
         }
       ]
     }
@@ -7692,40 +5080,6 @@
       "upc": "00602438959976",
       "isrcs": [
         "GBUM72104384"
-      ],
-      "trackCount": 1,
-      "volumeCount": 1
-    },
-    {
-      "provider": "tidal",
-      "providerId": "204867705",
-      "title": "No More Bad Days",
-      "version": null,
-      "providerUrl": null,
-      "releaseDate": "2021-10-19",
-      "type": "SINGLE",
-      "quality": "LOSSLESS",
-      "explicit": 1,
-      "upc": "00602445138180",
-      "isrcs": [
-        "GBUM72108141"
-      ],
-      "trackCount": 1,
-      "volumeCount": 1
-    },
-    {
-      "provider": "tidal",
-      "providerId": "204867714",
-      "title": "No More Bad Days",
-      "version": null,
-      "providerUrl": null,
-      "releaseDate": "2021-10-19",
-      "type": "SINGLE",
-      "quality": "HIRES_LOSSLESS",
-      "explicit": 1,
-      "upc": "00602445138203",
-      "isrcs": [
-        "GBUM72108141"
       ],
       "trackCount": 1,
       "volumeCount": 1

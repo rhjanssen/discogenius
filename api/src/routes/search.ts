@@ -266,19 +266,32 @@ router.get("/", async (req, res) => {
             JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
             LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid
             LEFT JOIN ProviderItems provider_track
-              ON provider_track.rowid = (
-                SELECT preferred_provider_track.rowid
-                FROM ProviderItems preferred_provider_track
-                WHERE preferred_provider_track.entity_type = 'track'
-                  AND (
-                    preferred_provider_track.track_mbid = t.mbid
-                    OR preferred_provider_track.recording_mbid = t.recording_mbid
-                  )
-                ORDER BY
-                  CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-                  preferred_provider_track.updated_at DESC,
-                  preferred_provider_track.provider_id ASC
-                LIMIT 1
+              -- COALESCE of two single-index lookups: an OR across track_mbid /
+              -- recording_mbid defeats both (entity_type, *) indexes and scans
+              -- every track offer per result row (~0.5s x row).
+              ON provider_track.rowid = COALESCE(
+                (
+                  SELECT preferred_provider_track.rowid
+                  FROM ProviderItems preferred_provider_track
+                  WHERE preferred_provider_track.entity_type = 'track'
+                    AND preferred_provider_track.track_mbid = t.mbid
+                  ORDER BY
+                    CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+                    preferred_provider_track.updated_at DESC,
+                    preferred_provider_track.provider_id ASC
+                  LIMIT 1
+                ),
+                (
+                  SELECT preferred_provider_track.rowid
+                  FROM ProviderItems preferred_provider_track
+                  WHERE preferred_provider_track.entity_type = 'track'
+                    AND preferred_provider_track.recording_mbid = t.recording_mbid
+                  ORDER BY
+                    CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+                    preferred_provider_track.updated_at DESC,
+                    preferred_provider_track.provider_id ASC
+                  LIMIT 1
+                )
               )
             LEFT JOIN ProviderItems provider_album
               ON provider_album.rowid = (

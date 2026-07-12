@@ -1,0 +1,3633 @@
+{
+  "artist": {
+    "name": "Amy Winehouse",
+    "mbid": "dfe9a7c4-8cf2-47f4-9dcb-d233c2b86ec3"
+  },
+  "capturedFrom": {
+    "catalogSource": "unknown",
+    "dbPath": "config\\discogenius.db"
+  },
+  "releaseGroups": [
+    {
+      "mbid": "02799c9d-a2fd-385a-8283-4d34483ddd44",
+      "title": "In My Bed / You Sent Me Flying",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2004-04-05",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "ef0ae2e2-a4f8-4fc1-b8e8-9b06baea77e1",
+          "title": "In My Bed / You Sent Me Flying",
+          "disambiguation": null,
+          "barcode": "602498662519",
+          "date": "2004-04-05",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "e45f5625-7f88-4d3d-ac10-5fca80447eab",
+          "title": "In My Bed / You Sent Me Flying",
+          "disambiguation": null,
+          "barcode": "00602458986457",
+          "date": "2024-01-26",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "057e5c6d-0a75-43f4-a408-376d3749f7cd",
+      "title": "To Know Him Is to Love Him (live from Dermot O’Leary’s Saturday Sessions / 2006)",
+      "primaryType": "Single",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2026-04-24",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "09fe92a0-3697-4937-8fbc-e0c435cb5f70",
+          "title": "To Know Him Is to Love Him (live from Dermot O’Leary’s Saturday Sessions / 2006)",
+          "disambiguation": null,
+          "barcode": "00199957741019",
+          "date": "2026-04-24",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "10ee9e20-ea0e-4863-b563-85a485099855",
+      "title": "Back to Black (Remixes & B Sides)",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2006",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "5264fdae-7c98-45e5-ba8a-99d5c47e6783",
+          "title": "Back to Black (Remixes & B Sides)",
+          "disambiguation": null,
+          "barcode": "602547505040",
+          "date": "2006-01-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "15b3778a-311c-3691-b1da-436b7a42b52c",
+      "title": "Pumps / Help Yourself",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2004-08-23",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "1592d731-73f5-4e64-ad5a-4924c07499e8",
+          "title": "Pumps",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2004-01-01",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "1c4ee467-2c8d-4493-8802-a9c2df9e10a7",
+          "title": "Pumps / Help Yourself",
+          "disambiguation": null,
+          "barcode": "602498670873",
+          "date": "2004-08-23",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "1ada70b8-cabe-488c-b535-426efb32e1f8",
+      "title": "Rehab (remix)",
+      "primaryType": "Single",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": "2007",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "b475c6c1-ce37-4529-a8a1-f94dcc34171d",
+          "title": "Rehab (remix)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "1b269383-8fa2-4aac-a720-41f936019814",
+      "title": "Body and Soul",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2011-09-14",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "6d5f7835-4767-47d8-9e23-14c62a033ce8",
+          "title": "Body and Soul",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2011-09-14",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "2055411d-eb3c-407a-8e23-b3584bd26c45",
+      "title": "In Memoriam",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2011",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "a5f7333d-cbff-403c-832f-3428c529201f",
+          "title": "In Memoriam",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2011-01-01",
+          "trackCount": 14,
+          "mediaCount": 0,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "28749cbd-34be-391d-bc8e-ab82971f9a2e",
+      "title": "2007-02-08: Paradiso, Amsterdam, Netherlands",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2007",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "ec056772-f378-49cb-95ef-be9448b8a487",
+          "title": "2007-02-08: Paradiso, Amsterdam, Netherlands",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 13,
+          "mediaCount": 0,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "287c9187-08c3-4c36-bbfa-20fea5eccb9d",
+      "title": "Back to Black - The Singles Remixes",
+      "primaryType": "EP",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": "2007",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "db5c7402-aa93-4bc0-aaf2-e265e89adca0",
+          "title": "Back to Black - The Singles Remixes",
+          "disambiguation": null,
+          "barcode": "600753058909",
+          "date": "2007-01-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "2f834c8d-70ff-4244-acb0-6f08545cd1ec",
+      "title": "Greatest Hits",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2008",
+      "disambiguation": "bootleg",
+      "releases": [
+        {
+          "mbid": "191970eb-a39e-4d4b-9420-2e48b02a83d0",
+          "title": "Greatest Hits",
+          "disambiguation": null,
+          "barcode": "4607147862742",
+          "date": "2008-01-01",
+          "trackCount": 23,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "69f7757e-4254-42fe-9358-bdcceac7e922",
+          "title": "Greatest Hits",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2012-01-01",
+          "trackCount": 23,
+          "mediaCount": 0,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "c7d1ae3a-eb9c-482f-aaff-439694c0d443",
+          "title": "Greatest Hits",
+          "disambiguation": null,
+          "barcode": "4607147908914",
+          "date": "2012-01-01",
+          "trackCount": 40,
+          "mediaCount": 2,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "32543b69-69ae-368b-8d86-62c3f51d7982",
+      "title": "2007-06-22: Backstage, Glastonbury Festival, Glastonbury, UK",
+      "primaryType": null,
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "2cd2262c-f77c-43b7-a3ca-5e33b5dccd31",
+          "title": "2007-06-22: Backstage, Glastonbury Festival, Glastonbury, UK",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 1,
+          "mediaCount": 0,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "32bb17ec-4b52-38b5-b4b0-432794be8eda",
+      "title": "Stronger Than Me",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2003-10-06",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "a083779e-2a9a-4096-8c51-c9b054758ac6",
+          "title": "Stronger Than Me",
+          "disambiguation": null,
+          "barcode": "602498125915",
+          "date": "2003-01-01",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "9a5c4550-24e3-470c-af34-43417bb502b7",
+          "title": "Stronger Than Me",
+          "disambiguation": null,
+          "barcode": "602498125908",
+          "date": "2003-10-06",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "75d57a2a-2113-48fe-bf96-1e72da3cf3f4",
+          "title": "Stronger Than Me",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2023-12-08",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "36e15cf1-2e2b-4133-bf8e-46ab435f2375",
+      "title": "iTunes Festival: London",
+      "primaryType": "EP",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2007-01-01",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "77c54de5-1f69-4afa-9036-258f42486191",
+          "title": "iTunes Festival: London 2007",
+          "disambiguation": null,
+          "barcode": "0602517458383",
+          "date": "2007-01-01",
+          "trackCount": 8,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "af5467b0-187e-4297-85df-21bf0a657572",
+          "title": "iTunes Festival: London",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-08-13",
+          "trackCount": 8,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "395c3c5d-a677-3c1f-ac1f-1beff237f62d",
+      "title": "Back to Black",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2007-04-30",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "f89d5372-5b60-459e-9d62-751ed15e3928",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "28df339c-24c0-4e4d-b356-ed6ad541d180",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517323261",
+          "date": "2007-04-30",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "68f58168-ab91-46a0-ba14-574eccf3a7a7",
+          "title": "Back to Black (Mushtaq Remix)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-04-30",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "e75e5bc2-0145-4a26-8b87-7340362dfe4b",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517323254",
+          "date": "2007-04-30",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "39f0aa4c-3c7b-447a-a5df-baba4d8d20fd",
+      "title": "Best Friend (acoustic)",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2008",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "41a44533-deaa-4e2d-9201-bb13a6d8c878",
+          "title": "Best Friend (acoustic)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2008-01-01",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "3ac63a4b-fd60-3451-afb0-6c98c62e7d3b",
+      "title": "Love Is a Losing Game",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2007-12-10",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "40facafb-69cd-4fae-a1cf-685d484f19c7",
+          "title": "Love Is a Losing Game",
+          "disambiguation": null,
+          "barcode": "602517553989",
+          "date": "2007-12-10",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "402505a5-e4e3-4790-b881-9f536fb8ed90",
+      "title": "The Soul of Unplugged and Electrified",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2008",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "2c40ba95-92e7-416d-a99d-281277b8006d",
+          "title": "The Soul of Unplugged and Electrified",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "0001-01-01",
+          "trackCount": 23,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "41f05094-2811-48a6-a4dc-471574d86dc1",
+      "title": "Live Eurockéennes 2007",
+      "primaryType": "Broadcast",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2007-06-29",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "09d8e12a-f801-4005-88fb-19be4d28c761",
+          "title": "Live Eurockéennes 2007",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-06-29",
+          "trackCount": 14,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "4c273ca1-9372-4e2b-998c-0f734ea40d12",
+      "title": "2008-08-29: Glastonbury Festival, England",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "23053f72-0b91-4797-97c5-a7e316f27403",
+          "title": "2008-08-29: Glastonbury Festival, England",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 14,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "4e44da84-21f2-47ad-a44d-2f7b47a6cb50",
+      "title": "The Rarities",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2016",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "456c5873-09bb-4983-807b-106fd383593d",
+          "title": "The Rarities",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2016-01-01",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "54301b58-471d-41ca-90c6-d292aa70b708",
+      "title": "Live Eurockéennes De Belfort 2007",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2007-06-29",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "153bce3c-bbf2-4bdc-b5a4-d21bcbfe18c6",
+          "title": "Live Eurockéennes De Belfort 2007",
+          "disambiguation": null,
+          "barcode": "8712177058969",
+          "date": "2007-06-29",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "56d2ee98-b657-435f-8eae-af964d9fa748",
+      "title": "Live Glastonbury Festival",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "645a631d-fcff-48d8-9a9c-97b21a556114",
+          "title": "2007-06-22: Glastonbury Festival, Glastonbury, UK",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "70e2fd92-caba-49d2-a537-286ea116e8d9",
+          "title": "Live Glastonbury Festival",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "0001-01-01",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "5b4bbd28-8205-38dc-ac85-ec3a4fb81185",
+      "title": "2007-10-15: Absolutely Live, Tempodrom, Berlin (Radio FM 1 Broadcast)",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2008-01-22",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "1dcb0db2-7d8d-4940-8de4-ae0b8d0e3ea9",
+          "title": "2007-10-15: Absolutely Live, Tempodrom, Berlin (Radio FM 1 Broadcast)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2008-01-22",
+          "trackCount": 14,
+          "mediaCount": 0,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "5bd6bcb0-9727-3282-9e68-839d731f2c5a",
+      "title": "The Other Side of Amy Winehouse: B-sides, Remixes & Rarities",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2007",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "c53ddb36-c40d-4a89-a4f1-21c5bdb8b714",
+          "title": "The Other Side of Amy Winehouse: B-Sides, Remixes & Rarities",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 36,
+          "mediaCount": 0,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "5de337da-586a-4b0b-9303-c4be705151e8",
+      "title": "Live in Germany",
+      "primaryType": "EP",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2007-09-14",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "d788f561-9203-4460-89c6-243705c67b50",
+          "title": "Live in Germany",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-09-14",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "6030347b-be0f-43b8-b3e1-d16ddaa42ed0",
+      "title": "Remixes",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": "2020",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "f552a1ec-f94b-4bae-95da-003888270d8c",
+          "title": "Remixes",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2020-01-01",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "cebdfcad-5397-4805-93f9-2b9114cf045f",
+          "title": "Remixes",
+          "disambiguation": "Record Store Day 2021",
+          "barcode": "602435427508",
+          "date": "2021-06-12",
+          "trackCount": 15,
+          "mediaCount": 2,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "60363837-adbe-445d-8fa3-b9df49364ed8",
+      "title": "New Collection",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2008",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "6bfad521-53bb-40ed-8e67-a6aa0408d38a",
+          "title": "New Collection",
+          "disambiguation": null,
+          "barcode": "483107080081",
+          "date": "2008-01-01",
+          "trackCount": 20,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "617c01c3-e3d4-4c94-9073-7d11dd80c19e",
+      "title": "Tears Dry on Their Own (Remixes & B Sides)",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2015-07-17",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "815dc9a7-78e7-4f9e-a800-ec4f07ceb3cb",
+          "title": "Tears Dry on Their Own (Remixes & B Sides)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2015-07-17",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "628ed87c-789d-4839-b92d-df7b1ed8c86d",
+      "title": "Amy",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Soundtrack"
+      ],
+      "firstReleaseDate": "2015-10-30",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "ef23abb2-4dd7-49f5-afdb-e4d17154bcaa",
+          "title": "Amy (Original Motion Picture Soundtrack)",
+          "disambiguation": null,
+          "barcode": "602547628039",
+          "date": "2015-10-30",
+          "trackCount": 23,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "08343cca-7931-4d6e-a3e1-0d79722e5d2e",
+          "title": "Amy (Original Motion Picture Soundtrack)",
+          "disambiguation": null,
+          "barcode": "602547628046",
+          "date": "2015-10-30",
+          "trackCount": 23,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "64666eb0-ae4b-39ea-999a-ca3abbd83680",
+      "title": "Valerie",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2007-10-15",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "f698be24-e3cf-4bf6-9ecb-ce5bd67fcc56",
+          "title": "Valerie",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 9,
+          "mediaCount": 0,
+          "isrcs": []
+        },
+        {
+          "mbid": "efd1dcb9-6bc2-4c24-a981-b47d359bdbe5",
+          "title": "Valerie",
+          "disambiguation": null,
+          "barcode": "886972786520",
+          "date": "2007-01-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "5970b57f-9ee2-4e46-bdc4-758c91d7e7c3",
+          "title": "Valerie",
+          "disambiguation": null,
+          "barcode": "886971863321",
+          "date": "2007-10-15",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "1cecb042-ee99-3b18-8c10-5990d96f4814",
+          "title": "Valerie",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-10-15",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "8a32e583-a2fc-42ac-ad89-7dea67577cd1",
+          "title": "Valerie",
+          "disambiguation": null,
+          "barcode": "886971863314",
+          "date": "2007-10-15",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "14a37e4b-588c-46ce-b6b4-22f5ffa72f6b",
+          "title": "Valerie",
+          "disambiguation": null,
+          "barcode": "888880454843",
+          "date": "2008-02-08",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "6aaf88a1-64e6-4587-a43c-0be2d8ad2ea4",
+      "title": "Will You Still Love Me Tomorrow?",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2012-01-09",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "b923addf-06de-448d-8728-2b00eb33d048",
+          "title": "Will You Still Love Me Tomorrow?",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2012-01-09",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "6d009623-d4d0-4a96-acc2-c62e84a9916d",
+      "title": "I Saw Mommy Kissing Santa Claus (Live At Union Chapel / BBC Radio 2)",
+      "primaryType": "Single",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2020-11-20",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "78da034d-2eef-4f99-b1de-fa43aea1708a",
+          "title": "I Saw Mommy Kissing Santa Claus (Live At Union Chapel / BBC Radio 2)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2020-11-20",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "6e0a13cc-60f2-4bad-a8c4-f9088526bfd3",
+      "title": "Sessions@AOL",
+      "primaryType": "EP",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2004-06-01",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "8afd0c47-85b9-49a5-b3cd-eadfb4ad32ae",
+          "title": "Sessions@AOL",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2004-06-01",
+          "trackCount": 6,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "6eac2e57-ee50-36f8-b0c4-c4c847a2c098",
+      "title": "Back to Black",
+      "primaryType": "Album",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2006-10-30",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "e437eca8-29ed-422d-bd25-f19780b48d87",
+          "title": "Back to Black",
+          "disambiguation": "Reissue",
+          "barcode": "602517130418",
+          "date": "0001-01-01",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "0dfd2d0a-371b-4441-8cdc-04b16ba25af0",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517261334",
+          "date": "2006-01-01",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "ad0833f5-b669-4e8b-b736-1fad3eaa3ac8",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517229679",
+          "date": "2006-01-01",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "d5829aac-9649-401b-828d-fb98967f0891",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517142114",
+          "date": "2006-01-01",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "59d53bb2-fbd8-4b5c-88aa-00398fa67200",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "0600753768952",
+          "date": "2006-01-01",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "37ac1dbb-bca1-4c07-a9e0-53b0386d6335",
+          "title": "Back to Black + Instrumentals",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2006-01-01",
+          "trackCount": 22,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "490df983-14cd-448a-b42f-a284449cd008",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2006-01-01",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "7a1aad4e-9908-3434-a185-ebb260b1d50a",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517142114",
+          "date": "2006-01-01",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "bef386f1-3b81-461a-85c6-f97a2e61ac9e",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517130418",
+          "date": "2006-10-30",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "44fcd57e-11c0-4782-919e-de6f48b43bca",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517142114",
+          "date": "2006-12-12",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "3960527e-87e4-49da-b4a5-5c7f83b2e4a3",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2006-12-17",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "715fb907-5504-4267-af9c-b56f1bb7354c",
+          "title": "Back to Black",
+          "disambiguation": "deluxe edition",
+          "barcode": "0600753047583",
+          "date": "2007-01-01",
+          "trackCount": 19,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "680ec7fa-1f54-4ec4-8d5b-435de33f0f15",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "0600753049402",
+          "date": "2007-01-01",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "e4b1770b-ef7a-4b04-a3cb-a93ff5c0958c",
+          "title": "Back to Black",
+          "disambiguation": "deluxe edition",
+          "barcode": "602517556317",
+          "date": "2007-01-01",
+          "trackCount": 19,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "06fe3b0f-350a-48a3-9455-cf4b86ceed9a",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517396906",
+          "date": "2007-01-01",
+          "trackCount": 16,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "a02ff495-160b-45d3-8384-ec0abe3499e4",
+          "title": "Back to Black",
+          "disambiguation": "deluxe edition",
+          "barcode": "602517521193",
+          "date": "2007-01-01",
+          "trackCount": 19,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "8f396007-1903-3ed3-888c-4eee72e3bc7c",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517229679",
+          "date": "2007-03-13",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "1a6ecd02-a613-4239-abbe-21da23149fa6",
+          "title": "Back to Black",
+          "disambiguation": "BMG club edition",
+          "barcode": null,
+          "date": "2007-03-13",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "274af9e8-5676-405b-804d-28df0ab76f75",
+          "title": "Back to Black",
+          "disambiguation": "clean",
+          "barcode": "602517246621",
+          "date": "2007-03-13",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "c7551677-2d53-47e9-804e-17a405726a4a",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517341289",
+          "date": "2007-05-25",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "8102e070-6340-43de-80e8-b6e31c48a53e",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517341289",
+          "date": "2007-05-28",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "34e743a0-5908-4314-a46b-984de5c2e20e",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "0600753003916",
+          "date": "2007-06-15",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "07ab1ed9-e120-3d09-a92b-b2094a8c017c",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517341296",
+          "date": "2007-06-19",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "01742201-123e-4e31-a0bb-627c2f9e436d",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "602517413030",
+          "date": "2007-07-01",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "d7670efc-d8ba-45e8-9b3a-c3962a128987",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "4988005487865",
+          "date": "2007-09-05",
+          "trackCount": 16,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "3722893f-765a-32d3-93a0-51ebfd50460d",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "4988005487858",
+          "date": "2007-09-05",
+          "trackCount": 16,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "79d99daf-8106-3336-9b2d-f7e9dc1e5706",
+          "title": "Back to Black",
+          "disambiguation": "deluxe edition",
+          "barcode": "0602517490970",
+          "date": "2007-11-05",
+          "trackCount": 19,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "917d379a-b7a2-3097-8594-cca84ab338b7",
+          "title": "Back to Black",
+          "disambiguation": "deluxe edition",
+          "barcode": "602517556317",
+          "date": "2007-11-30",
+          "trackCount": 18,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "d62eacb1-6980-4c67-b7b7-0fb6b42b2c50",
+          "title": "Back to Black",
+          "disambiguation": "deluxe edition with extra disc for Germany",
+          "barcode": "602517556317",
+          "date": "2007-11-30",
+          "trackCount": 23,
+          "mediaCount": 3,
+          "isrcs": []
+        },
+        {
+          "mbid": "0b0ca6cc-f793-3dd8-9329-611a9fb08ae2",
+          "title": "Back to Black (Deluxe Edition)",
+          "disambiguation": "deluxe edition",
+          "barcode": "4988005506351",
+          "date": "2008-02-06",
+          "trackCount": 20,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "43580af8-1244-3c29-b91c-cf8732c2933d",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "4988005536747",
+          "date": "2008-11-19",
+          "trackCount": 16,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "c1dd70bb-2345-3d95-a9fc-890639ed0207",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "4988005541147",
+          "date": "2009-03-04",
+          "trackCount": 16,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "8e87d349-514c-48b4-8f3b-e55af64c3b70",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "00602517130418",
+          "date": "2012-06-29",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "4a2c6af3-7420-48be-aad9-0b7a1929906b",
+          "title": "Back to Black",
+          "disambiguation": "deluxe edition",
+          "barcode": "00602537567713",
+          "date": "2013-10-14",
+          "trackCount": 19,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "0164ea1e-5587-4396-ac9d-8611f608b2da",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "600753450628",
+          "date": "2013-10-30",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "ccf4da26-ea82-462f-b753-88bb976fd40e",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": "00602547462220",
+          "date": "2015-06-29",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "ba220088-ab65-400a-9a34-b91b6dd9a223",
+          "title": "Back to Black",
+          "disambiguation": "explicit",
+          "barcode": "00602547377876",
+          "date": "2015-06-29",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "660183cc-e9c5-4aea-a862-eb9494c75974",
+          "title": "Back to Black",
+          "disambiguation": "clean",
+          "barcode": "00602547456588",
+          "date": "2015-06-29",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "e2b06999-d1db-4389-8a4c-0f39f052da71",
+          "title": "Back to Black",
+          "disambiguation": "clean",
+          "barcode": "00602547456700",
+          "date": "2015-06-29",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "3b14e1b4-c5c3-4f93-83a1-e478010be110",
+          "title": "Back to Black",
+          "disambiguation": "deluxe edition, remastered reissue",
+          "barcode": "0600753691090",
+          "date": "2016-11-25",
+          "trackCount": 19,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "217fab95-4f51-490d-ae55-f3ef19782f79",
+          "title": "Back to Black",
+          "disambiguation": "pink vinyl",
+          "barcode": "600753874714",
+          "date": "2019-05-31",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "c4d2c8ab-13ee-4f51-95b0-6e74a1918fc3",
+          "title": "Back to Black",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2020-01-01",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "77bf5bc0-5871-3a83-81b4-9dfb690f9882",
+      "title": "Remixes Promo 2",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": "2007",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "def80c79-c9e3-42bb-979f-5ac778840e07",
+          "title": "Remixes Promo 2",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 9,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "8400ddfa-acc1-46bf-9dd7-c9ab35892140",
+      "title": "Back to Black: B‐Sides",
+      "primaryType": "EP",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2007-01-01",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "8b2e3d04-3dd9-4494-ba8f-451f26b97941",
+          "title": "Back to Black: B‐Sides",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 8,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "86da8ce7-05ef-4109-8186-c6fa69c57729",
+      "title": "Lioness: Hidden Treasures",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2011-12-02",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "68565c66-d386-4525-8eb0-dd61c09a4bae",
+          "title": "Lioness: Hidden Treasures",
+          "disambiguation": null,
+          "barcode": "602527920542",
+          "date": "2011-01-01",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "d075b94b-049a-44f6-b0eb-18cc1e084e48",
+          "title": "Lioness: Hidden Treasures",
+          "disambiguation": null,
+          "barcode": "602527903330",
+          "date": "2011-01-01",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "50952560-4dc2-4a5f-a4b6-83baf43b9f15",
+          "title": "Lioness: Hidden Treasures",
+          "disambiguation": null,
+          "barcode": "602527906034",
+          "date": "2011-12-01",
+          "trackCount": 12,
+          "mediaCount": 2,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "a7823139-41f5-4bee-94e1-5f84ff8142ac",
+          "title": "Lioness: Hidden Treasures",
+          "disambiguation": null,
+          "barcode": "602527903330",
+          "date": "2011-12-02",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "f5782f17-2504-494f-a4c5-328a5ee25ffd",
+          "title": "Lioness: Hidden Treasures",
+          "disambiguation": null,
+          "barcode": "602527903330",
+          "date": "2011-12-02",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "157f27fb-7f7f-4ea9-9674-fd84ed9db612",
+          "title": "Lioness: Hidden Treasures",
+          "disambiguation": null,
+          "barcode": "602527904368",
+          "date": "2011-12-05",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "d325899b-9c9e-4fa0-a733-1a7e11c3606f",
+          "title": "Lioness: Hidden Treasures",
+          "disambiguation": null,
+          "barcode": "4988005696021",
+          "date": "2011-12-14",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "4bf91297-546b-48a0-a03f-57a32417c921",
+          "title": "Lioness: Hidden Treasures",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2020-01-01",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "8cfd52dc-1827-4e01-8fa4-c6b13bcb9912",
+      "title": "Frank - Remixes",
+      "primaryType": "EP",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": "2007-08-04",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "bd7fa791-60c8-4fe3-95ea-99320ced6f70",
+          "title": "Frank - Remixes",
+          "disambiguation": null,
+          "barcode": "602517359482",
+          "date": "2007-08-04",
+          "trackCount": 7,
+          "mediaCount": 2,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "912459a6-f92f-4131-aad7-81de7ef3fdec",
+      "title": "The Ska Collection",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2014",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "a2bee68b-2976-42f9-b04a-8120e58014b7",
+          "title": "The Ska Collection",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2014-01-01",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "91f94648-dc57-4a6a-ac61-7c4e53254b82",
+      "title": "Gypsy Lady",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2014-01-02",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "c343a31f-8c0a-49bc-8a20-6b5ab030806b",
+          "title": "Gypsy Lady",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2014-01-02",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "943e83f7-f231-4e4b-995b-488111f1751e",
+      "title": "Frank & Back to Black",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2008",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "41546c12-2c12-3ac5-8a26-66a7bd8997eb",
+          "title": "Frank & Back to Black",
+          "disambiguation": null,
+          "barcode": "602517895584",
+          "date": "2008-01-01",
+          "trackCount": 50,
+          "mediaCount": 4,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "9478a738-f687-4094-8f4f-14e88a03e61e",
+      "title": "Live on Other Voices 2006",
+      "primaryType": "EP",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2024",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "00a79a49-9daa-4cb5-bebc-56b935da9624",
+          "title": "Live on Other Voices 2006",
+          "disambiguation": "youtube official playlist",
+          "barcode": null,
+          "date": "2024-01-01",
+          "trackCount": 6,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "94fabeb3-5538-407a-8094-ea86db7b7fdb",
+      "title": "Remix Promo 3",
+      "primaryType": null,
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2007",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "04bf79eb-46e7-4bb2-946b-df2a7fc8f732",
+          "title": "Remix Promo 3",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "9a0ff7de-9b2c-4b83-902d-2293e2bbb504",
+      "title": "The Album Collection",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2012",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "734ce6cd-5e6e-4135-b774-f36ac302e335",
+          "title": "The Album Collection",
+          "disambiguation": null,
+          "barcode": "602537136766",
+          "date": "2012-01-01",
+          "trackCount": 36,
+          "mediaCount": 3,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "39cb9a57-d1e0-46ce-86a4-3f5052da9d9c",
+          "title": "The Album Collection",
+          "disambiguation": null,
+          "barcode": "4605026711754",
+          "date": "2012-01-01",
+          "trackCount": 36,
+          "mediaCount": 3,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "324ed6ea-bcf9-43c8-90f6-1d16e0dae7b1",
+          "title": "The Album Collection",
+          "disambiguation": null,
+          "barcode": "602537136766",
+          "date": "2012-01-01",
+          "trackCount": 35,
+          "mediaCount": 3,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "9a9d41e9-2080-3293-8676-9e26f44a05b1",
+      "title": "Frank",
+      "primaryType": "Album",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2003-10-20",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "b4dc732e-e8bc-4358-8621-931ad4a95265",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602517539037",
+          "date": "0001-01-01",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "01b5ee99-0a8b-4496-8e5d-b5f395fd544c",
+          "title": "Frank",
+          "disambiguation": "Sony DADC pressing",
+          "barcode": "602498129180",
+          "date": "0001-01-01",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "5e65e61a-cb2f-4dda-9245-3867482707c1",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "00602547456434",
+          "date": "0001-01-01",
+          "trackCount": 18,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "a7dc3e8b-f8bb-401e-9662-649b80f0b9f3",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "4988005541130",
+          "date": "0001-01-01",
+          "trackCount": 16,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "8b660c53-f43f-4897-8854-f40653208e90",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2003-01-01",
+          "trackCount": 11,
+          "mediaCount": 0,
+          "isrcs": []
+        },
+        {
+          "mbid": "9768c6a5-fac1-3d29-a646-ff5df7d88639",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602498661826",
+          "date": "2003-01-01",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "f51a1d11-98aa-4957-9ad1-f1877aee07a8",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2003-01-01",
+          "trackCount": 18,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "b6c3304e-8f2b-4ada-a8f8-3434ff23144d",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602498129180",
+          "date": "2003-10-01",
+          "trackCount": 19,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "525f2c36-f338-4c92-aea3-0e4e646d2139",
+          "title": "Frank",
+          "disambiguation": "Disctronics pressing",
+          "barcode": "602498129180",
+          "date": "2003-10-20",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "62ff0360-f8b1-464f-b023-f092dd1e1722",
+          "title": "Frank",
+          "disambiguation": "clean edition",
+          "barcode": "602517539037",
+          "date": "2003-12-02",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "13a69b29-09b2-4032-8358-6bc0f05d38c3",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602498659809",
+          "date": "2004-01-01",
+          "trackCount": 11,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "effe4647-545b-4141-bc1c-ba41802142a6",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602517265882",
+          "date": "2007-11-20",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "3e9ccabf-7f24-4397-a8f8-0d4c80d4139a",
+          "title": "Frank",
+          "disambiguation": "BMG club edition",
+          "barcode": null,
+          "date": "2007-11-20",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "c25f9f35-8345-4f33-a90d-bf0c746769ea",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602517735545",
+          "date": "2008-01-01",
+          "trackCount": 31,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "783439ef-6187-416f-a92f-377889474c5d",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602517735545",
+          "date": "2008-01-01",
+          "trackCount": 29,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "511ca3d7-c9ed-4e0e-846e-35f09ebce566",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602517762411",
+          "date": "2008-01-01",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "464cc755-1ed7-3bba-9515-da14d4452b3f",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602517681224",
+          "date": "2008-01-01",
+          "trackCount": 30,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "187e5a40-e083-43d6-bdc3-d472a35622e5",
+          "title": "Frank",
+          "disambiguation": "deluxe edition",
+          "barcode": "602517681224",
+          "date": "2008-05-09",
+          "trackCount": 30,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "0f14d272-1806-40db-9a18-86d67227ff52",
+          "title": "Frank",
+          "disambiguation": "The Super Deluxe Edition UK",
+          "barcode": "602517658356",
+          "date": "2008-05-12",
+          "trackCount": 31,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "d4685d5b-c688-466b-b516-4457f1dc880a",
+          "title": "Frank (B-Sides)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2008-05-13",
+          "trackCount": 17,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "3ea9303f-ac9c-3612-8b74-cadf6fd7b012",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602517735545",
+          "date": "2008-06-03",
+          "trackCount": 29,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "a82653b0-ddcd-4ccb-956f-944676e2fed9",
+          "title": "Frank",
+          "disambiguation": "180 gram",
+          "barcode": "602517762411",
+          "date": "2008-07-15",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "e5bb7df7-3081-4a41-a6d9-ad8db373699c",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602547465566",
+          "date": "2015-06-29",
+          "trackCount": 16,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "785b8bfa-2a60-4582-9d65-16ed9bad1862",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602547515858",
+          "date": "2016-02-12",
+          "trackCount": 14,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "ba04f2dd-1708-43eb-ac9f-52e0a7c2e833",
+          "title": "Frank",
+          "disambiguation": null,
+          "barcode": "602517762411",
+          "date": "2019-01-01",
+          "trackCount": 13,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "07f1b968-4e05-4b2e-a4c5-a981b71d26ea",
+          "title": "Frank",
+          "disambiguation": "half-speed vinyl",
+          "barcode": "602508973383",
+          "date": "2020-09-04",
+          "trackCount": 13,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "7db94d19-b548-44eb-bade-585fea2806ce",
+          "title": "Frank",
+          "disambiguation": "Dolby Atmos mix, explicit",
+          "barcode": "00602458516876",
+          "date": "2023-10-20",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "e31a882d-3a11-4c8d-a5f4-7251b86530a7",
+          "title": "Frank",
+          "disambiguation": "Dolby Atmos mix, clean",
+          "barcode": "00602458627763",
+          "date": "2023-10-20",
+          "trackCount": 15,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "9bdbaef5-996e-4843-9803-26b0cc1dd278",
+      "title": "2007-06-22: Glastonbury Festival of Contemporary Performing Arts, UK",
+      "primaryType": "Broadcast",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2007-06-22",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "b48aa203-d643-4a65-91ab-9262ee5c57f7",
+          "title": "2007-06-22: Glastonbury Festival of Contemporary Performing Arts, UK",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-06-22",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "9d945f21-62a1-4356-8fcc-a1cf724031a3",
+      "title": "Frank: Remixes",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Remix"
+      ],
+      "firstReleaseDate": "2007-01-01",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "e680addd-70d1-4164-b616-a14d34417392",
+          "title": "Frank: Remixes",
+          "disambiguation": null,
+          "barcode": "00602517426146",
+          "date": "2007-01-01",
+          "trackCount": 7,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "a07ac8dd-a0bc-4638-a32f-e0de2c751734",
+      "title": "Remixes & B Sides",
+      "primaryType": "Album",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2007",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "86001c1f-d335-4e27-87f8-408ccee50169",
+          "title": "Remixes & B Sides",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 9,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "a2a922cd-b8ea-41ab-88fa-4ed45a41f287",
+      "title": "2007-06-26: Hove Festival, Arendal, Norway",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2007-06-26",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "f775b512-5015-4c27-988b-0a3051af3a01",
+          "title": "2007-06-26: Hove Festival, Arendal, Norway",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-06-26",
+          "trackCount": 15,
+          "mediaCount": 0,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "a86f66e1-d8d1-3e13-abf1-1372a64c4c98",
+      "title": "You Know I’m No Good",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2006",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "c111a13e-559c-4404-be19-6fa9295cc770",
+          "title": "You Know I’m No Good",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2006-01-01",
+          "trackCount": 4,
+          "mediaCount": 0,
+          "isrcs": []
+        },
+        {
+          "mbid": "c0e03989-cc0d-420f-bf5a-38dcd42a153c",
+          "title": "You Know I'm No Good",
+          "disambiguation": null,
+          "barcode": "602517322356",
+          "date": "2006-01-01",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "70d616a0-3b00-4bd7-b2dd-bf5d028e3303",
+          "title": "You Know I’m No Good",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2006-01-01",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "3053e36c-9efe-4a7a-8a98-fad1e4be0128",
+          "title": "You Know I'm No Good",
+          "disambiguation": null,
+          "barcode": "602517232785",
+          "date": "2006-01-01",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "31697128-336b-4409-a80a-54a0912b77d1",
+          "title": "You Know I’m No Good",
+          "disambiguation": null,
+          "barcode": "602517208490",
+          "date": "2007-01-08",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "5fb94679-b805-41da-b18f-31b13283c94b",
+          "title": "You Know I’m No Good",
+          "disambiguation": null,
+          "barcode": "602517208483",
+          "date": "2007-01-08",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "aea5b8c0-5e9d-30c1-873b-510f592faa1f",
+      "title": "Rehab",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2006-10-23",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "44721ee8-e1fa-40f0-8675-1299cd815a37",
+          "title": "Rehab (Hot Chip remix)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2006-01-01",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "6517f186-eff7-4a26-96a1-8c03b826bd0f",
+          "title": "Rehab",
+          "disambiguation": null,
+          "barcode": "602517095359",
+          "date": "2006-10-23",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "263b570a-4379-4677-afa1-761885bec224",
+          "title": "Rehab",
+          "disambiguation": null,
+          "barcode": "602517095342",
+          "date": "2006-10-23",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "c24295ea-e86c-4843-b560-a8954f9b9bd0",
+          "title": "Rehab (Remixes)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2006-11-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "c5efe396-65fc-4115-9cd7-08c3d183fd14",
+          "title": "Rehab",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-01-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "5186dcbc-624d-40f9-b5bc-7fb77be441bb",
+          "title": "Rehab",
+          "disambiguation": null,
+          "barcode": "602517178243",
+          "date": "2007-03-09",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "f95f01b6-b6da-4aa5-9aaf-b8ea0731c7ac",
+          "title": "Rehab (remix)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2010-02-16",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "b65d0630-3b3d-4bcd-8ac1-101e2f67f902",
+      "title": "Our Day Will Come",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2011-11-14",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "051474f6-7303-4096-89e8-4be4344b6089",
+          "title": "Our Day Will Come",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2011-11-14",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "4c6f61bd-3c99-4708-9e7c-37d8a68c30c8",
+          "title": "Our Day Will Come",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2011-12-04",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "a379edd7-9171-496b-991c-3001c5d3f3ae",
+          "title": "Our Day Will Come",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2011-12-04",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "b7041eb8-0b5f-44f2-87ee-3bdf986bf80b",
+      "title": "2007-03-08: London, UK",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "5b220bcb-20de-4a4c-9cbd-9da51c63fbb8",
+          "title": "2007-03-08: London, UK",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 14,
+          "mediaCount": 0,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "b87e2596-4e3f-4d33-a3b9-4a4e80a1f315",
+      "title": "Unreleased Rarities",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2016-09",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "d5e6438a-9e9b-408f-a1fa-ec6ce64b1b77",
+          "title": "Unreleased Rarities",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2016-09-01",
+          "trackCount": 10,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "c45347c5-69aa-3a05-8d07-1045bba94fef",
+      "title": "Take the Box",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2004-01-01",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "eaf2a626-4444-4c78-8ddc-390a1788c92a",
+          "title": "Take the Box",
+          "disambiguation": null,
+          "barcode": "00602458986679",
+          "date": "2004-01-01",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "7229ea38-0bc2-4c60-98a1-eb4eb3b07903",
+          "title": "Take the Box",
+          "disambiguation": null,
+          "barcode": "602498158876",
+          "date": "2004-01-12",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "d3eb426e-48ed-402b-b0a9-59fb3e4f39b0",
+      "title": "You Know I’m No Good: Remixes & B Sides",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2015-07-03",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "a3244003-6716-41b1-b497-0e4310908574",
+          "title": "You Know I’m No Good: Remixes & B Sides",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2015-07-03",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "d95fc636-8af2-4dab-a44b-f585c8248a0e",
+      "title": "2007-02-19: Astoria, London, UK",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "9ceea682-805a-46ff-bf86-e09800124333",
+          "title": "2007-02-19: Astoria, London, UK",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 14,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "e27cada2-ed83-4a9d-a800-8665679f276d",
+      "title": "2007 01 29: Live de la semaine Canal+",
+      "primaryType": null,
+      "secondaryTypes": [],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "b567f821-2eb0-4cb7-8e7f-72bea569c0dc",
+          "title": "2007 01 29: Live de la semaine Canal+",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 9,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "e486d041-a5c0-3afc-be8d-e506172e4ec3",
+      "title": "I Told You I Was Trouble: Amy Winehouse Live in London",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2007-11-05",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "1b558779-a4b4-437c-a5bf-4bc1bd1b7496",
+          "title": "I Told You I Was Trouble: Amy Winehouse Live in London",
+          "disambiguation": null,
+          "barcode": "602517799622",
+          "date": "2007-11-05",
+          "trackCount": 35,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "50255af4-b7e8-426d-aaa6-cc7877431388",
+          "title": "I Told You I Was Trouble: Amy Winehouse Live From London",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-11-05",
+          "trackCount": 18,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "a9069f3e-e1ea-37e7-a16d-d1649de2e6cf",
+          "title": "I Told You I Was Trouble: Amy Winehouse Live From London",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-11-10",
+          "trackCount": 18,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "4ff1c0c4-98f6-4bab-b8c8-c2c09e7f11dd",
+          "title": "I Told You I Was Trouble: Live in London",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2020-01-01",
+          "trackCount": 16,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "9ddc03a2-cb17-4f94-802a-3f01ecb1838f",
+          "title": "I Told You I Was Trouble: Live in London",
+          "disambiguation": null,
+          "barcode": "602435752853",
+          "date": "2021-02-05",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "78158978-7389-4ddd-9276-7536af754e07",
+          "title": "I Told You I Was Trouble: Live in London",
+          "disambiguation": null,
+          "barcode": "602435752860",
+          "date": "2021-02-12",
+          "trackCount": 8,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "86797a1f-259c-4291-8a0d-510092aa1e51",
+          "title": "I Told You I Was Trouble: Amy Winehouse Live From London",
+          "disambiguation": null,
+          "barcode": "602435752907",
+          "date": "2021-02-26",
+          "trackCount": 16,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "e754a71b-184e-35fb-baed-df1dbd1fde61",
+      "title": "2007-04-27: Coachella Festival, Gobi Tent, Indio, CA, USA",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "7ad6b111-60fb-48b7-a402-75eb8c447074",
+          "title": "2007-04-27: Coachella Festival, Gobi Tent, Indio, CA, USA",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 11,
+          "mediaCount": 0,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "ea0ce6b1-9842-4a39-bbcc-d953fad2d2bc",
+      "title": "Amy Winehouse at the BBC",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation",
+        "Live"
+      ],
+      "firstReleaseDate": "2012-11-16",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "30d0d8f1-5f9a-4bcc-8407-a34900574f01",
+          "title": "Amy Winehouse at the BBC",
+          "disambiguation": null,
+          "barcode": "602537219735",
+          "date": "2012-01-01",
+          "trackCount": 20,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "af2d77af-5998-47bf-9607-fbf61fb1fc03",
+          "title": "Amy Winehouse at the BBC",
+          "disambiguation": null,
+          "barcode": "602537151165",
+          "date": "2012-11-16",
+          "trackCount": 52,
+          "mediaCount": 4,
+          "isrcs": []
+        },
+        {
+          "mbid": "302ae914-42d3-46ec-8a0d-1df2d514041c",
+          "title": "Amy Winehouse at the BBC",
+          "disambiguation": null,
+          "barcode": "602537219735",
+          "date": "2012-11-19",
+          "trackCount": 20,
+          "mediaCount": 2,
+          "isrcs": []
+        },
+        {
+          "mbid": "21d945e4-9904-44ad-b96d-d8aa334e8872",
+          "title": "At the BBC",
+          "disambiguation": null,
+          "barcode": "602435875064",
+          "date": "2021-04-30",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "b07684b9-d6ce-47fd-9677-f2fa8a3901b8",
+          "title": "At the BBC",
+          "disambiguation": null,
+          "barcode": "602435415604",
+          "date": "2021-05-07",
+          "trackCount": 38,
+          "mediaCount": 3,
+          "isrcs": []
+        },
+        {
+          "mbid": "9762afeb-e17e-45e7-aac8-12f72c111c5d",
+          "title": "At the BBC",
+          "disambiguation": null,
+          "barcode": "602435415840",
+          "date": "2021-05-07",
+          "trackCount": 38,
+          "mediaCount": 3,
+          "isrcs": []
+        },
+        {
+          "mbid": "7ce319a3-ad91-429f-b720-6fdfb9416557",
+          "title": "Amy Winehouse at the BBC",
+          "disambiguation": null,
+          "barcode": "602435415659",
+          "date": "2021-05-07",
+          "trackCount": 38,
+          "mediaCount": 3,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "ecdb4c6c-45c8-35c9-9029-98bde94de55e",
+      "title": "Tears Dry on Their Own",
+      "primaryType": "Single",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2007-08-06",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "ec6ef0cb-dcb0-4a45-bab2-1eebd1b19690",
+          "title": "Tears Dry on Their Own",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-08-06",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "c511e856-8f1c-4125-a476-06b6308862d1",
+          "title": "Tears Dry on Their Own",
+          "disambiguation": null,
+          "barcode": "602517447929",
+          "date": "2007-08-13",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "60b7444f-4b80-4113-9788-d410da041704",
+          "title": "Tears Dry on Their Own",
+          "disambiguation": null,
+          "barcode": "602517447936",
+          "date": "2007-08-13",
+          "trackCount": 3,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "2f76adce-e85b-4ae1-9273-be6679f0e0dd",
+          "title": "Tears Dry on Their Own",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-08-13",
+          "trackCount": 2,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "4336cd31-7708-4d65-bc3f-c85a48939858",
+          "title": "Tears Dry on Their Own",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-08-13",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "58d45ca0-70e8-4701-829a-cc58db2a08d9",
+          "title": "Tears Dry on Their Own",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-08-13",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "a906652c-0c1c-46c3-b6b5-5cc14ec078e3",
+          "title": "Tears Dry on Their Own",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-08-13",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "868f1a73-07db-40d0-8503-b1865b9ee27b",
+          "title": "Tears Dry on Their Own",
+          "disambiguation": null,
+          "barcode": "602517445444",
+          "date": "2007-08-13",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "2c2fe642-b134-458b-936f-d8748a24ef8e",
+          "title": "Tears Dry on Their Own",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-08-17",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "f39b8a03-82fd-4036-94b2-61f07b48449c",
+      "title": "2007-03-12: Late Night with David Letterman: New York, NY, USA",
+      "primaryType": "Broadcast",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": "2007-03-12",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "b8c61492-9ad6-41d0-96ab-4244eede42e5",
+          "title": "2007-03-12: Late Night with David Letterman: New York, NY, USA",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2007-03-12",
+          "trackCount": 1,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "f4cb9d73-9bd6-4a0a-9788-0c50dc3ad68c",
+      "title": "Rehab (Remixes & B Sides)",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2015-07-03",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "71a33469-7a26-4ae5-ad34-05afa180c4cf",
+          "title": "Rehab (Remixes & B Sides)",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2015-07-03",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "f5ba8c33-4d26-4ad4-8149-7b7316e8663a",
+      "title": "The Collection",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Compilation"
+      ],
+      "firstReleaseDate": "2015-12-11",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "1ef5c862-3a90-4e9f-bc08-87e59e452f8e",
+          "title": "The Collection",
+          "disambiguation": null,
+          "barcode": "602547428585",
+          "date": "2015-12-11",
+          "trackCount": 65,
+          "mediaCount": 7,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        },
+        {
+          "mbid": "c9362de7-b0b6-4ed0-a6f4-34be14afc551",
+          "title": "The Collection",
+          "disambiguation": null,
+          "barcode": "602435099927",
+          "date": "2020-11-27",
+          "trackCount": 67,
+          "mediaCount": 5,
+          "isrcs": [
+            "USSM11104355",
+            "USSM21101620"
+          ]
+        }
+      ]
+    },
+    {
+      "mbid": "f60c8fe4-1ea3-4df5-9fcd-2322360d5ed9",
+      "title": "Hit Pac 5 Series",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2008",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "9f5f1571-76dc-4235-a09f-3652ba7afd4f",
+          "title": "Hit Pac 5 Series",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2008-01-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "8d494ffa-fd30-497e-a5de-ec58b341aa8e",
+          "title": "Hit Pac 5 Series",
+          "disambiguation": null,
+          "barcode": "600753122334",
+          "date": "2008-01-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        },
+        {
+          "mbid": "5e8cb394-23f7-4a9c-a142-f9d1ab000bdf",
+          "title": "Hit Pac 5 Series",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2009-01-01",
+          "trackCount": 5,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "fabef1ce-44e8-3a11-bc03-e908e5b9f942",
+      "title": "The Ska EP",
+      "primaryType": "EP",
+      "secondaryTypes": [],
+      "firstReleaseDate": "2008",
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "8a3bc435-23af-4c2a-8ff2-c9a817568c27",
+          "title": "The Ska EP",
+          "disambiguation": null,
+          "barcode": null,
+          "date": "2008-01-01",
+          "trackCount": 4,
+          "mediaCount": 1,
+          "isrcs": []
+        }
+      ]
+    },
+    {
+      "mbid": "fdb09c01-53b6-3978-a769-0a30826aac04",
+      "title": "2007-03-16: South by Southwest, La Zona Rosa, Austin, TX, USA",
+      "primaryType": "Album",
+      "secondaryTypes": [
+        "Live"
+      ],
+      "firstReleaseDate": null,
+      "disambiguation": null,
+      "releases": [
+        {
+          "mbid": "102169c3-b648-4b2e-8879-2bd90a87a00a",
+          "title": "2007-03-16: South by Southwest, La Zona Rosa, Austin, TX, USA",
+          "disambiguation": null,
+          "barcode": null,
+          "date": null,
+          "trackCount": 11,
+          "mediaCount": 0,
+          "isrcs": []
+        }
+      ]
+    }
+  ],
+  "providerAlbums": [
+    {
+      "provider": "tidal",
+      "providerId": "10779569",
+      "title": "Lioness: Hidden Treasures",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2011-12-05",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602527903330",
+      "isrcs": [
+        "GBUM71110106",
+        "GBUM71110009",
+        "GBUM71110108",
+        "GBUM71110028",
+        "GBUM71110105",
+        "GBARL1101309",
+        "GBUM71110103",
+        "GBUM71110104",
+        "GBUM71110027",
+        "GBUM71110102",
+        "USSM21101620",
+        "GBUM71110107"
+      ],
+      "trackCount": 12,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "12914927",
+      "title": "Back To Black - The Singles Remixes",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2007-01-01",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00600753058909",
+      "isrcs": [
+        "GBUM70705004",
+        "GBUM70705005",
+        "GBUM70708497",
+        "GBUM70707825",
+        "GBUM70711219"
+      ],
+      "trackCount": 5,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "162641404",
+      "title": "I Saw Mommy Kissing Santa Claus (Live At Union Chapel / BBC Radio 2)",
+      "version": "Live At Union Chapel / BBC Radio 2",
+      "providerUrl": null,
+      "releaseDate": "2020-11-20",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "00602435362861",
+      "isrcs": [
+        "GBCAD2000629"
+      ],
+      "trackCount": 1,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "174263919",
+      "title": "I Told You I Was Trouble: Live In London",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2021-02-05",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602435752907",
+      "isrcs": [
+        "GBUM71503489",
+        "GBUM71503490",
+        "GBUM71503491",
+        "GBUM71503495",
+        "GBUM71503497",
+        "GBUM71503500",
+        "GBUM71503501",
+        "GBUM71503503",
+        "GBUM71503504",
+        "GBUM71503505",
+        "GBUM71503506",
+        "GBUM71503507",
+        "GBUM71503509",
+        "GBUM71503510",
+        "GBUM71503511",
+        "GBUM71503512"
+      ],
+      "trackCount": 16,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "182434156",
+      "title": "At The BBC",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2012-11-13",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602435415840",
+      "isrcs": [
+        "GBCAD2001785",
+        "GBCAD2001786",
+        "GBCAD2001787",
+        "GBCAD2001788",
+        "GBCAD2001789",
+        "GBCAD2001790",
+        "GBCAD2001791",
+        "GBCAD2001792",
+        "GBCAD2001793",
+        "GBCAD2001794",
+        "GBCAD2001795",
+        "GBCAD2001796",
+        "GBCAD2001797",
+        "GBCAD2001798",
+        "GBCAD2001799",
+        "GBCAD2001800",
+        "GBCAD2001801",
+        "GBCAD2001802",
+        "GBCAD2001803",
+        "GBCAD2001804",
+        "GBCAD2001805",
+        "GBCAD2001806",
+        "GBCAD2001807",
+        "GBCAD2001808",
+        "GBUM72006739",
+        "GBUM72006740",
+        "GBUM72006741",
+        "GBUM72006742",
+        "GBUM72006743",
+        "GBUM72006744",
+        "GBUM72006745",
+        "GBUM72006746",
+        "GBUM72006747",
+        "GBUM72006748",
+        "GBUM72006749",
+        "GBUM72006750",
+        "GBUM72006751",
+        "GBUM72006752"
+      ],
+      "trackCount": 38,
+      "volumeCount": 3
+    },
+    {
+      "provider": "tidal",
+      "providerId": "206507774",
+      "title": "Back To Black",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2006-12-19",
+      "type": "ALBUM",
+      "quality": "DOLBY_ATMOS",
+      "explicit": 1,
+      "upc": "00602445289219",
+      "isrcs": [
+        "GBUM71903372",
+        "GBUM71903373",
+        "GBUM71904628",
+        "GBUM71903666",
+        "GBUM71903264",
+        "GBUM71903665",
+        "GBUM71903664",
+        "GBUM72108525",
+        "GBUM71905316",
+        "GBUM71905315",
+        "GBUM72108526"
+      ],
+      "trackCount": 11,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "21446570",
+      "title": "Frank (Deluxe Edition)",
+      "version": "Deluxe Edition",
+      "providerUrl": null,
+      "releaseDate": "2003-12-02",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602517668546",
+      "isrcs": [
+        "GBAAN0300532",
+        "GBAAN0300533",
+        "GBAAN0300470",
+        "GBAAN0300464",
+        "GBAAN0300410",
+        "GBAAN0300540",
+        "GBAAN0300495",
+        "GBAAN0300408",
+        "GBAAN0300409",
+        "GBAAN0300469",
+        "GBAAN0300411",
+        "GBAAN0300474",
+        "GBAAN0300528",
+        "GBAAN0300019",
+        "GBAAN0300021",
+        "GBAAN0300020",
+        "GBUM70803164",
+        "GBUM70803742",
+        "GBUM70803176",
+        "GBAAN0300468",
+        "GBAAN0300443",
+        "GBUM70803183",
+        "GBUM70803178",
+        "GBUM70803180",
+        "GBUM70803181",
+        "GBUM70803182",
+        "GBUM70803184",
+        "GBAAN0400550",
+        "GBAAN0300706",
+        "GBAAN0300475",
+        "GBAAN0400100"
+      ],
+      "trackCount": 31,
+      "volumeCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "22888255",
+      "title": "Back To Black (Deluxe Edition)",
+      "version": "Deluxe Edition",
+      "providerUrl": null,
+      "releaseDate": "2006-12-19",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602537567713",
+      "isrcs": [
+        "GBUM70603730",
+        "GBUM70603488",
+        "GBUM70603492",
+        "GBUM70604696",
+        "GBUM70604698",
+        "GBUM70603489",
+        "GBUM70603494",
+        "GBUM70603491",
+        "GBUM70603490",
+        "GBUM70604606",
+        "GBUM70604699",
+        "GBUM70702678",
+        "GBUM70708468",
+        "GBUM70607203",
+        "GBUM70709182",
+        "GBUM70702677",
+        "GBUM70706267",
+        "GBUM70606486",
+        "GBUM70708460"
+      ],
+      "trackCount": 19,
+      "volumeCount": 2
+    },
+    {
+      "provider": "tidal",
+      "providerId": "2798956",
+      "title": "Back To Black",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2006-12-19",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602517130418",
+      "isrcs": [
+        "GBUM70603730",
+        "GBUM70603488",
+        "GBUM70603492",
+        "GBUM70604696",
+        "GBUM70604698",
+        "GBUM70603489",
+        "GBUM70603494",
+        "GBUM70603491",
+        "GBUM70603490",
+        "GBUM70604606",
+        "GBUM70604699"
+      ],
+      "trackCount": 11,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "321517814",
+      "title": "Frank",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2003-12-02",
+      "type": "ALBUM",
+      "quality": "DOLBY_ATMOS",
+      "explicit": 1,
+      "upc": "00602458504095",
+      "isrcs": [
+        "GBUM72308151",
+        "GBUM72308152",
+        "GBUM72308153",
+        "GBUM72308154",
+        "GBUM72308155",
+        "GBUM72308156",
+        "GBUM72308157",
+        "GBUM72308158",
+        "GBUM72308159",
+        "GBUM72308160",
+        "GBUM72308161",
+        "GBUM72308162",
+        "GBUM72308163",
+        "GBUM72308164",
+        "GBUM72308165",
+        "GBUM72308166"
+      ],
+      "trackCount": 16,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "321517869",
+      "title": "Frank",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2003-12-02",
+      "type": "ALBUM",
+      "quality": "DOLBY_ATMOS",
+      "explicit": 0,
+      "upc": "00602458627787",
+      "isrcs": [
+        "GBUM72308151",
+        "GBUM72308152",
+        "GBUM72308153",
+        "GBUM72308942",
+        "GBUM72308155",
+        "GBUM72308156",
+        "GBUM72308157",
+        "GBUM72308158",
+        "GBUM72308944",
+        "GBUM72308160",
+        "GBUM72308945",
+        "GBUM72308162",
+        "GBUM72308163",
+        "GBUM72308164",
+        "GBUM72308165",
+        "GBUM72308166"
+      ],
+      "trackCount": 16,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "332267344",
+      "title": "Stronger Than Me",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2003-11-18",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602458932195",
+      "isrcs": [
+        "GBAAN0300358",
+        "GBAAN0300503",
+        "GBAAN0300497",
+        "GBAAN0300412",
+        "GBAAN0300500"
+      ],
+      "trackCount": 5,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "338436506",
+      "title": "Take The Box",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2004-01-01",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602458986679",
+      "isrcs": [
+        "GBAAN0300409",
+        "GBAAN0300468",
+        "GBAAN0300710",
+        "GBAAN0300497"
+      ],
+      "trackCount": 4,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "340824328",
+      "title": "In My Bed / You Sent Me Flying",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2004-01-01",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "00602458986457",
+      "isrcs": [
+        "GBAAN0400051",
+        "GBAAN0400098",
+        "GBAAN0300499",
+        "GBAAN0400099"
+      ],
+      "trackCount": 4,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "343281522",
+      "title": "Pumps / Help Yourself",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2004-08-23",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602458986402",
+      "isrcs": [
+        "GBAAN0300464",
+        "GBAAN0400331",
+        "GBAAN0400362"
+      ],
+      "trackCount": 3,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "34769031",
+      "title": "Frank - Remixes",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2007-06-05",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602517426146",
+      "isrcs": [
+        "GBAAN0400551",
+        "GBAAN0400550",
+        "GBAAN0300475",
+        "GBAAN0400086",
+        "GBAAN0400087",
+        "GBAAN0300706",
+        "GBAAN0300707"
+      ],
+      "trackCount": 7,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "36190581",
+      "title": "Rehab  (Remix) (Edited Version)",
+      "version": "Edited Version",
+      "providerUrl": null,
+      "releaseDate": "2006-11-07",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "00602517396654",
+      "isrcs": [
+        "GBUM70704744"
+      ],
+      "trackCount": 1,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "46977383",
+      "title": "Frank",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2003-12-02",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602547456434",
+      "isrcs": [
+        "GBAAN0300532",
+        "GBAAN0300533",
+        "GBAAN0300470",
+        "GBAAN0300464",
+        "GBAAN0300410",
+        "GBAAN0300540",
+        "GBAAN0300495",
+        "GBAAN0300408",
+        "GBAAN0300409",
+        "GBAAN0300469",
+        "GBAAN0300411",
+        "GBAAN0300474",
+        "GBAAN0300429",
+        "GBAAN0300473",
+        "GBAAN0300471",
+        "GBAAN0300465"
+      ],
+      "trackCount": 16,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "47078183",
+      "title": "Back To Black",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2006-12-19",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "00602547456700",
+      "isrcs": [
+        "GBUM70603730",
+        "GBUM70603488",
+        "GBUM70700412",
+        "GBUM70700413",
+        "GBUM70607752",
+        "GBUM70603489",
+        "GBUM70603573",
+        "GBUM70603491",
+        "GBUM70603490",
+        "GBUM70604606",
+        "GBUM70604699"
+      ],
+      "trackCount": 11,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "49168384",
+      "title": "Rehab (Remixes & B Sides)",
+      "version": "Remixes & B Sides",
+      "providerUrl": null,
+      "releaseDate": "2006-11-07",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602547505057",
+      "isrcs": [
+        "GBUM70605280",
+        "GBUM70703574",
+        "GBUM70604332",
+        "GBUM70703877",
+        "GBUM70704743"
+      ],
+      "trackCount": 5,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "49174528",
+      "title": "You Know I'm No Good (Remixes & B Sides)",
+      "version": "Remixes & B Sides",
+      "providerUrl": null,
+      "releaseDate": "2007-01-08",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "00602547504999",
+      "isrcs": [
+        "GBUM70607209",
+        "GBUM70607317",
+        "GBUM70606905",
+        "GBUM70703572",
+        "GBUM70702849"
+      ],
+      "trackCount": 5,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "49174555",
+      "title": "Back To Black (Remixes & B Sides)",
+      "version": "Remixes & B Sides",
+      "providerUrl": null,
+      "releaseDate": "2007-01-01",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "00602547505040",
+      "isrcs": [
+        "GBUM70701443",
+        "GBUM70701441",
+        "GBUM70702598",
+        "GBUM70703571",
+        "GBUM70701439"
+      ],
+      "trackCount": 5,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "49174582",
+      "title": "Tears Dry On Their Own (Remixes & B Sides)",
+      "version": "Remixes & B Sides",
+      "providerUrl": null,
+      "releaseDate": "2007-07-23",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602547505064",
+      "isrcs": [
+        "GBUM70703575",
+        "GBUM70705006",
+        "GBUM70705003",
+        "GBUM70705005",
+        "GBUM70706485"
+      ],
+      "trackCount": 5,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "49174609",
+      "title": "Frank",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2003-12-02",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "00602547505286",
+      "isrcs": [
+        "GBAAN0300532",
+        "GBAAN0300533",
+        "GBAAN0300470",
+        "GBAAN0400460",
+        "GBAAN0300410",
+        "GBAAN0300540",
+        "GBAAN0300495",
+        "GBAAN0300408",
+        "GBAAN0300656",
+        "GBAAN0300469",
+        "GBUM70711077",
+        "GBAAN0300474",
+        "GBAAN0300429",
+        "GBAAN0300473",
+        "GBAAN0300471",
+        "GBAAN0300465"
+      ],
+      "trackCount": 16,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "512743981",
+      "title": "To Know Him Is To Love Him (Live From Dermot O'Leary's Saturday Sessions / 2006)",
+      "version": "Live From Dermot O'Leary's Saturday Sessions / 2006",
+      "providerUrl": null,
+      "releaseDate": "2026-04-24",
+      "type": "SINGLE",
+      "quality": "LOSSLESS",
+      "explicit": 0,
+      "upc": "00199957741019",
+      "isrcs": [
+        "GBCAD0706887"
+      ],
+      "trackCount": 1,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "52603664",
+      "title": "AMY (Original Motion Picture Soundtrack)",
+      "version": "Original Motion Picture Soundtrack",
+      "providerUrl": null,
+      "releaseDate": "2015-10-30",
+      "type": "ALBUM",
+      "quality": "LOSSLESS",
+      "explicit": 1,
+      "upc": "00602547628039",
+      "isrcs": [
+        "QM2981500001",
+        "GBAAN0300358",
+        "GBWWP1501277",
+        "GBUM71506491",
+        "GB2H71500472",
+        "GBUM70709182",
+        "QM2981500003",
+        "QM2981500004",
+        "GBUM71506473",
+        "GBUM70603494",
+        "QM2981500012",
+        "GBUM71506478",
+        "QM2981500005",
+        "GBCAD1500850",
+        "QM2981500006",
+        "GBUM71506492",
+        "QM2981500009",
+        "GBCAD1500849",
+        "QM2981500008",
+        "QM2981500010",
+        "GBUM70702678"
+      ],
+      "trackCount": 21,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "77555663",
+      "title": "AMY (Original Motion Picture Soundtrack)",
+      "version": "Original Motion Picture Soundtrack",
+      "providerUrl": null,
+      "releaseDate": "2015-10-30",
+      "type": "ALBUM",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 1,
+      "upc": "00602547665911",
+      "isrcs": [
+        "QM2981500001",
+        "GBAAN0300358",
+        "GBWWP1501277",
+        "GBUM71506491",
+        "GB2H71500472",
+        "GBUM70709182",
+        "QM2981500003",
+        "QM2981500004",
+        "GBUM71506473",
+        "GBUM70603494",
+        "QM2981500012",
+        "GBUM71506478",
+        "QM2981500005",
+        "GBCAD1500850",
+        "QM2981500006",
+        "GBUM71506492",
+        "QM2981500009",
+        "GBCAD1500849",
+        "QM2981500008",
+        "USSM11104355",
+        "QM2981500010",
+        "GBUM70702678"
+      ],
+      "trackCount": 22,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "77655302",
+      "title": "Frank",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2003-12-02",
+      "type": "ALBUM",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 1,
+      "upc": "00602547465566",
+      "isrcs": [
+        "GBAAN0300532",
+        "GBAAN0300533",
+        "GBAAN0300470",
+        "GBAAN0300464",
+        "GBAAN0300410",
+        "GBAAN0300540",
+        "GBAAN0300495",
+        "GBAAN0300408",
+        "GBAAN0300409",
+        "GBAAN0300469",
+        "GBAAN0300411",
+        "GBAAN0300474",
+        "GBAAN0300429",
+        "GBAAN0300473",
+        "GBAAN0300471",
+        "GBAAN0300465"
+      ],
+      "trackCount": 16,
+      "volumeCount": 1
+    },
+    {
+      "provider": "tidal",
+      "providerId": "77661290",
+      "title": "Back To Black",
+      "version": null,
+      "providerUrl": null,
+      "releaseDate": "2006-12-19",
+      "type": "ALBUM",
+      "quality": "HIRES_LOSSLESS",
+      "explicit": 1,
+      "upc": "00602547462220",
+      "isrcs": [
+        "GBUM70603730",
+        "GBUM70603488",
+        "GBUM70603492",
+        "GBUM70604696",
+        "GBUM70604698",
+        "GBUM70603489",
+        "GBUM70603494",
+        "GBUM70603491",
+        "GBUM70603490",
+        "GBUM70604606",
+        "GBUM70604699"
+      ],
+      "trackCount": 11,
+      "volumeCount": 1
+    }
+  ]
+}

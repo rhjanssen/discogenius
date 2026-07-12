@@ -42,7 +42,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "ad49298b-6062-4286-b1f9-2145dceff658",
-    "releaseMbid": "45e240c2-ee0e-4a7d-8126-5506ce50ad3a"
+    "releaseMbid": "d329060b-3119-4720-b2fe-1785458b50d8"
   },
   {
     "providerId": "120739339",
@@ -128,20 +128,20 @@
   {
     "providerId": "128526",
     "providerTitle": "The Blue Room",
-    "status": "verified",
-    "method": "musicbrainz-recording-isrc",
-    "confidence": 0.98,
+    "status": "probable",
+    "method": "musicbrainz-release-group-title-year-type-track-count",
+    "confidence": 0.83,
     "releaseGroupMbid": "859bac1f-fbd1-333e-af66-f1423af39a87",
-    "releaseMbid": "3f3cc644-b064-3f26-8fda-10e44e692f93"
+    "releaseMbid": null
   },
   {
     "providerId": "128546",
     "providerTitle": "X&Y",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "c50b180a-12c9-3153-8ba5-eac6a6537d6f",
-    "releaseMbid": "68781b42-c14c-4631-af34-f5682a5b72cc"
+    "releaseMbid": "19c937af-98b3-4cf4-bba7-5dede9fd1fc9"
   },
   {
     "providerId": "128601",
@@ -219,10 +219,10 @@
     "providerId": "1442812",
     "providerTitle": "Clocks",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "6cbada78-bb2d-3f91-914c-caa11f8879cb",
-    "releaseMbid": "7fa195c1-65bc-4f97-9f9b-113de6b016a7"
+    "releaseMbid": "684334ee-b77b-4543-be8d-06bc1fc735ed"
   },
   {
     "providerId": "1442815",
@@ -273,7 +273,7 @@
     "providerId": "164679",
     "providerTitle": "Murder",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "1ed86191-279f-431e-b535-86998fae6869",
     "releaseMbid": "34144716-3d33-40f2-97db-f865929d217c"
@@ -291,16 +291,16 @@
     "providerId": "1717932",
     "providerTitle": "Violet Hill",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "98baa12c-0430-37f8-b4c7-98fc2c9cb32f",
-    "releaseMbid": "ece649e8-9eaa-4a02-a068-cd933d6d6586"
+    "releaseMbid": "12b84424-4318-3af3-9e89-473317943530"
   },
   {
     "providerId": "18056405",
     "providerTitle": "Live 2012",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "2f215175-266c-4945-b622-8c4f8cb0d4fb",
     "releaseMbid": "c182470c-7bd3-4fc0-a97b-8c267450915c"
@@ -327,7 +327,7 @@
     "providerId": "185035623",
     "providerTitle": "Higher Power (Tiësto Remix)",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "656aeabe-204f-4a69-b7e0-29e328546699",
     "releaseMbid": "fb6e256b-5a3d-46e4-8e49-7fc8337482ca"
@@ -390,7 +390,7 @@
     "providerId": "198252106",
     "providerTitle": "My Universe",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "6270c4e1-62c7-4502-bbf3-5842f1329d86",
     "releaseMbid": "e7f6990d-bcd2-4d5f-bdb2-e2dd5434e714"
@@ -525,7 +525,7 @@
     "providerId": "22302843",
     "providerTitle": "Atlas (From “The Hunger Games: Catching Fire” Soundtrack)",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "cccf3b43-3a88-4083-b8b9-e271df6b4f61",
     "releaseMbid": "262de19d-4ed6-4f6f-aa7a-61dc50a34bce"
@@ -561,7 +561,7 @@
     "providerId": "235446795",
     "providerTitle": "Biutyful",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "72d769ef-565a-4efb-aef8-e8da59256b12",
     "releaseMbid": "0e5145e8-ba51-4afd-a455-e368bb35d7cc"
@@ -678,10 +678,10 @@
     "providerId": "34444387",
     "providerTitle": "Every Teardrop Is a Waterfall",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "9c95d32c-7679-4c08-b2bd-a337c46a80ca",
-    "releaseMbid": "e67d7559-34b9-4619-9f85-36d602246a8a"
+    "releaseMbid": "47ccab04-bbd0-4efd-abf2-5efa21e5023d"
   },
   {
     "providerId": "35013183",
@@ -705,7 +705,7 @@
     "providerId": "370086545",
     "providerTitle": "feelslikeimfallinginlove (Single Version)",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "22e406d4-6ef5-4903-beae-da3e3cce1f0c",
     "releaseMbid": "8bd11fc5-afde-4d17-9a29-f535c51fc95f"
@@ -891,6 +891,15 @@
     "releaseMbid": "fad76017-ccd6-4317-af0e-4b9bdbedd551"
   },
   {
+    "providerId": "401045403",
+    "providerTitle": "ALL MY LOVE (PNAU x Coldplay)",
+    "status": "verified",
+    "method": "musicbrainz-release-upc",
+    "confidence": 1,
+    "releaseGroupMbid": "56713870-0cc8-48e5-b609-4f5f7de83315",
+    "releaseMbid": "86b52b57-2ecb-4a9d-9109-cd210ee2d010"
+  },
+  {
     "providerId": "401824899",
     "providerTitle": "Clocks (Royksopp Trembling Heart Mix)",
     "status": "verified",
@@ -939,7 +948,7 @@
     "providerId": "424938995",
     "providerTitle": "Midnight (Remixes)",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "5c329da4-a37a-4d73-afae-0cf1269c9fc1",
     "releaseMbid": "6f09115d-3bb2-4025-a68c-49e21304f90f"
@@ -1002,10 +1011,10 @@
     "providerId": "54437901",
     "providerTitle": "Everglow",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "edc6fd57-72e5-4bfa-a310-db8e2aeb0fa8",
-    "releaseMbid": "3a1ed52e-5df5-4f59-9fdf-c36e8fa9a8ea"
+    "releaseMbid": "08544914-a4a5-4e0e-9e70-dd278c0fc069"
   },
   {
     "providerId": "54728054",
@@ -1038,7 +1047,7 @@
     "providerId": "60365220",
     "providerTitle": "Hymn for the Weekend (Seeb Remix)",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "75886611-dc6d-43e4-ad1b-71579e2d437a",
     "releaseMbid": "85c03937-95d5-4306-9780-725238e0c57c"
@@ -1056,7 +1065,7 @@
     "providerId": "67044902",
     "providerTitle": "Everglow",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "edc6fd57-72e5-4bfa-a310-db8e2aeb0fa8",
     "releaseMbid": "d5c1f842-1eca-48c1-adbe-922b6983e370"
@@ -1218,7 +1227,7 @@
     "providerId": "76001843",
     "providerTitle": "A L I E N S",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "7c1bb5f6-89e5-4ff2-8ce2-aa859e8b8fec",
     "releaseMbid": "b33056f4-2184-4b4e-9375-dacdc84f3a0e"
@@ -1227,10 +1236,10 @@
     "providerId": "76209667",
     "providerTitle": "Kaleidoscope EP",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "04dbe014-a249-4ba9-895a-e000954ad14b",
-    "releaseMbid": "edede1b6-6949-4eae-8b11-55d502b2a444"
+    "releaseMbid": "0cf380ca-be46-426c-a575-cbe74f0ff3db"
   },
   {
     "providerId": "76271103",
@@ -1254,7 +1263,7 @@
     "providerId": "7842435",
     "providerTitle": "Paradise",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
+    "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "13f91af7-ba7a-42b5-a15f-4f5eb31aae5d",
     "releaseMbid": "d97825ff-ff11-4989-8c94-e5b14c6370ae"

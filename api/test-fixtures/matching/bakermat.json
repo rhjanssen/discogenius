@@ -13,7 +13,7 @@
       "title": "Joy / Work It Out",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2022-11-18",
       "disambiguation": null,
       "releases": [
         {
@@ -21,13 +21,10 @@
           "title": "Joy / Work It Out",
           "disambiguation": null,
           "barcode": "3617052247191",
-          "date": null,
+          "date": "2022-11-18",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700151",
-            "NLQ8X1700139"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -36,7 +33,7 @@
       "title": "Learn to Lose",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2019",
+      "firstReleaseDate": "2019-01-01",
       "disambiguation": null,
       "releases": [
         {
@@ -44,7 +41,7 @@
           "title": "Learn to Lose",
           "disambiguation": null,
           "barcode": null,
-          "date": "2019",
+          "date": "2019-01-01",
           "trackCount": 1,
           "mediaCount": 1,
           "isrcs": []
@@ -67,9 +64,7 @@
           "date": "2023-03-24",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700154"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -78,7 +73,7 @@
       "title": "Don't Want You Back",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2017-06-02",
       "disambiguation": null,
       "releases": [
         {
@@ -86,13 +81,10 @@
           "title": "Don't Want You Back",
           "disambiguation": null,
           "barcode": "886446499444",
-          "date": null,
+          "date": "2017-06-02",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801700212",
-            "NLE801700189"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -101,7 +93,7 @@
       "title": "Zomer EP",
       "primaryType": "EP",
       "secondaryTypes": [],
-      "firstReleaseDate": "2012",
+      "firstReleaseDate": "2012-01-01",
       "disambiguation": null,
       "releases": [
         {
@@ -109,7 +101,7 @@
           "title": "Zomer EP",
           "disambiguation": null,
           "barcode": null,
-          "date": "2012",
+          "date": "2012-01-01",
           "trackCount": 2,
           "mediaCount": 1,
           "isrcs": []
@@ -132,10 +124,7 @@
           "date": "2024-04-12",
           "trackCount": 3,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700214",
-            "NLQ8X1700215"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "64f9cef9-1c9a-4839-b1df-9ca3a82e4ca8",
@@ -145,10 +134,7 @@
           "date": "2024-04-12",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700214",
-            "NLQ8X1700215"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -170,12 +156,7 @@
           "date": "2025-05-02",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700297",
-            "NLQ8X1700298",
-            "NLQ8X1700299",
-            "NLQ8X1700300"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -195,9 +176,7 @@
           "date": "2024-02-02",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700190"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -213,14 +192,11 @@
           "mbid": "fac5af29-31f0-4d6e-95dc-a3a9133e6661",
           "title": "Teach Me",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2015-02-06",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801400559",
-            "NLE801400535"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "c3e33602-23e9-4c4e-ade1-43342d79bef5",
@@ -230,23 +206,17 @@
           "date": "2015-02-06",
           "trackCount": 3,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801400559",
-            "NLE801400535",
-            "NLE801400602"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "c2253f08-f86b-4e76-a119-c19506676c55",
           "title": "Teach Me (MK Remix)",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2015-02-13",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801400602"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -266,9 +236,7 @@
           "date": "2016-08-26",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801600469"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -288,9 +256,7 @@
           "date": "2025-09-26",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700347"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -310,9 +276,7 @@
           "date": "2022-06-17",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700127"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -334,11 +298,7 @@
           "date": "2017-08-25",
           "trackCount": 3,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801700331",
-            "NLE801700329",
-            "NLE801700332"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -358,10 +318,7 @@
           "date": "2022-09-16",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700139",
-            "NLQ8X1700141"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -381,9 +338,7 @@
           "date": "2019-10-31",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801900440"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "832f0578-d68d-45e0-b777-02601e45ccee",
@@ -393,10 +348,7 @@
           "date": "2019-11-08",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801900440",
-            "NLE801900441"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -416,17 +368,7 @@
           "date": "2023-09-08",
           "trackCount": 9,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700174",
-            "NLQ8X1700161",
-            "NLQ8X1700154",
-            "NLQ8X1700167",
-            "NLQ8X1700175",
-            "NLQ8X1700176",
-            "NLQ8X1700177",
-            "NLQ8X1700178",
-            "NLQ8X1700179"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "3cc52f6a-124c-477d-9d62-7f03a40a3810",
@@ -436,18 +378,7 @@
           "date": "2023-12-08",
           "trackCount": 10,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700174",
-            "NLQ8X1700161",
-            "NLQ8X1700154",
-            "NLQ8X1700167",
-            "NLQ8X1700175",
-            "NLQ8X1700189",
-            "NLQ8X1700176",
-            "NLQ8X1700177",
-            "NLQ8X1700178",
-            "NLQ8X1700179"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -467,15 +398,7 @@
           "date": "2024-12-06",
           "trackCount": 7,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700267",
-            "NLQ8X1700256",
-            "NLQ8X1700250",
-            "NLQ8X1700237",
-            "NLQ8X1700214",
-            "NLQ8X1700151",
-            "NLQ8X1700139"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -484,7 +407,7 @@
       "title": "Uitzicht (remixes)",
       "primaryType": "EP",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2013-06-21",
       "disambiguation": null,
       "releases": [
         {
@@ -492,15 +415,10 @@
           "title": "Uitzicht (remixes)",
           "disambiguation": null,
           "barcode": "4050486096833",
-          "date": null,
+          "date": "2013-06-21",
           "trackCount": 4,
           "mediaCount": 1,
-          "isrcs": [
-            "DEZ651317140",
-            "DEZ651317141",
-            "DEZ651317142",
-            "DEZ651317143"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -509,20 +427,9 @@
       "title": "Strandfeest",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2013",
+      "firstReleaseDate": "2013-01-01",
       "disambiguation": null,
-      "releases": [
-        {
-          "mbid": "dfd66953-bd6b-44be-b0cf-d8b1884afad7",
-          "title": "Strandfeest",
-          "disambiguation": null,
-          "barcode": null,
-          "date": "2013",
-          "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": []
-        }
-      ]
+      "releases": []
     },
     {
       "mbid": "69fb7092-19aa-401e-a3f2-8dd3b3487120",
@@ -533,11 +440,11 @@
       "disambiguation": null,
       "releases": [
         {
-          "mbid": "cf0e9c6c-eb24-494b-8ff1-3ebd4700cd4c",
+          "mbid": "8632c935-a26e-4a6d-a982-961dff28e389",
           "title": "Under the Sun",
           "disambiguation": null,
-          "barcode": null,
-          "date": "2008-07-19",
+          "barcode": "886448263852",
+          "date": "2020-02-21",
           "trackCount": 2,
           "mediaCount": 1,
           "isrcs": []
@@ -550,23 +457,7 @@
           "date": "2020-02-21",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "GB5KW2000092",
-            "GB5KW1903797"
-          ]
-        },
-        {
-          "mbid": "8632c935-a26e-4a6d-a982-961dff28e389",
-          "title": "Under the Sun",
-          "disambiguation": null,
-          "barcode": "886448263852",
-          "date": "2020-02-21",
-          "trackCount": 2,
-          "mediaCount": 1,
-          "isrcs": [
-            "GB5KW2000092",
-            "GB5KW1903797"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -575,66 +466,28 @@
       "title": "The Spirit",
       "primaryType": "Album",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2021-06-24",
       "disambiguation": null,
       "releases": [
-        {
-          "mbid": "cc378fa5-a876-49f3-b533-b9518a0c84c5",
-          "title": "The Spirit",
-          "disambiguation": null,
-          "barcode": "886449340491",
-          "date": null,
-          "trackCount": 12,
-          "mediaCount": 1,
-          "isrcs": [
-            "NLE802100252",
-            "NLE802100072",
-            "NLE802100253",
-            "NLE802100211",
-            "NLE802100254",
-            "NLE802100255",
-            "NLE802100256",
-            "NLE802100257",
-            "NLE802100258",
-            "NLE802100259",
-            "NLE802100260",
-            "NLE802100261"
-          ]
-        },
         {
           "mbid": "df59cfb6-bedc-4363-a06d-451b92dfc68b",
           "title": "The Spirit (Track by Track)",
           "disambiguation": null,
           "barcode": "886449497898",
-          "date": null,
+          "date": "2021-06-24",
           "trackCount": 24,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE802100385",
-            "NLE802100252",
-            "NLE802100386",
-            "NLE802100072",
-            "NLE802100387",
-            "NLE802100253",
-            "NLE802100388",
-            "NLE802100211",
-            "NLE802100389",
-            "NLE802100254",
-            "NLE802100390",
-            "NLE802100255",
-            "NLE802100391",
-            "NLE802100256",
-            "NLE802100392",
-            "NLE802100257",
-            "NLE802100393",
-            "NLE802100258",
-            "NLE802100394",
-            "NLE802100259",
-            "NLE802100395",
-            "NLE802100260",
-            "NLE802100396",
-            "NLE802100261"
-          ]
+          "isrcs": []
+        },
+        {
+          "mbid": "cc378fa5-a876-49f3-b533-b9518a0c84c5",
+          "title": "The Spirit",
+          "disambiguation": null,
+          "barcode": "886449340491",
+          "date": "2021-06-25",
+          "trackCount": 12,
+          "mediaCount": 1,
+          "isrcs": []
         }
       ]
     },
@@ -654,10 +507,7 @@
           "date": "2022-04-22",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700118",
-            "NLQ8X1700123"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -677,9 +527,7 @@
           "date": "2024-09-06",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700250"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -699,14 +547,7 @@
           "date": "2024-11-08",
           "trackCount": 6,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700256",
-            "NLQ8X1700250",
-            "NLQ8X1700237",
-            "NLQ8X1700214",
-            "NLQ8X1700151",
-            "NLQ8X1700139"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -746,9 +587,7 @@
           "date": "2026-05-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700383"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -768,10 +607,7 @@
           "date": "2016-03-04",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801600104",
-            "NLE801600105"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -791,9 +627,7 @@
           "date": "2021-07-23",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700100"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -813,9 +647,7 @@
           "date": "2021-05-28",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE802100211"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -832,18 +664,16 @@
           "title": "Baby",
           "disambiguation": null,
           "barcode": null,
-          "date": null,
+          "date": "2017-01-27",
           "trackCount": 1,
-          "mediaCount": 1,
-          "isrcs": [
-            "NLE801600842"
-          ]
+          "mediaCount": 0,
+          "isrcs": []
         },
         {
           "mbid": "fe3cab7d-51cd-44cf-a10a-b00b18ad5276",
           "title": "Baby",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2017-01-27",
           "trackCount": 1,
           "mediaCount": 1,
@@ -858,7 +688,7 @@
       "secondaryTypes": [
         "Remix"
       ],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2021-06-11",
       "disambiguation": null,
       "releases": [
         {
@@ -866,13 +696,10 @@
           "title": "Walk That Walk (Another Chemical Love Story remix)",
           "disambiguation": null,
           "barcode": "886449334926",
-          "date": null,
+          "date": "2021-06-11",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE802100284",
-            "NLE802100288"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -892,9 +719,7 @@
           "date": "2012-08-27",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "QMSNZ1258477"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "1bdcf41c-63d1-43be-a69f-2836a9a49213",
@@ -904,9 +729,7 @@
           "date": "2014-03-14",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "DEE861400079"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "122a8e2f-3a41-43d1-9c0d-ae0ab40df07d",
@@ -926,10 +749,7 @@
           "date": "2014-04-25",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "DEE861400079",
-            "QMSNZ1258477"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -938,7 +758,7 @@
       "title": "Temptation",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2022-03-25",
       "disambiguation": null,
       "releases": [
         {
@@ -946,12 +766,10 @@
           "title": "Temptation",
           "disambiguation": null,
           "barcode": "190296275739",
-          "date": null,
+          "date": "2022-03-25",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700114"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -960,7 +778,7 @@
       "title": "Can’t Bring Me Down",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2023-06-02",
       "disambiguation": null,
       "releases": [
         {
@@ -968,13 +786,10 @@
           "title": "Can’t Bring Me Down",
           "disambiguation": null,
           "barcode": "3617059299810",
-          "date": null,
+          "date": "2023-06-02",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700161",
-            "NLQ8X1700154"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -991,7 +806,7 @@
           "title": "Games",
           "disambiguation": null,
           "barcode": null,
-          "date": null,
+          "date": "2016-02-05",
           "trackCount": 3,
           "mediaCount": 1,
           "isrcs": []
@@ -1024,10 +839,7 @@
           "date": "2018-06-08",
           "trackCount": 2,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801800183",
-            "NLE801800184"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1036,7 +848,7 @@
       "title": "900 Miles",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2025-11-28",
       "disambiguation": null,
       "releases": [
         {
@@ -1044,12 +856,10 @@
           "title": "900 Miles",
           "disambiguation": null,
           "barcode": "3618022699286",
-          "date": null,
+          "date": "2025-11-28",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700361"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1069,9 +879,7 @@
           "date": "2016-07-15",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801600355"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1111,23 +919,7 @@
           "date": "2025-02-07",
           "trackCount": 15,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700263",
-            "NLQ8X1700264",
-            "NLQ8X1700151",
-            "NLQ8X1700139",
-            "NLQ8X1700214",
-            "NLQ8X1700265",
-            "NLQ8X1700256",
-            "NLQ8X1700266",
-            "NLQ8X1700267",
-            "NLQ8X1700268",
-            "NLQ8X1700269",
-            "NLQ8X1700270",
-            "NLQ8X1700271",
-            "NLQ8X1700250",
-            "NLQ8X1700237"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1147,9 +939,7 @@
           "date": "2024-06-28",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLQ8X1700237"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1165,7 +955,7 @@
           "mbid": "07c319ea-7280-4747-8e0e-77f9b3b140cd",
           "title": "Baianá (Tisoki dj tool)",
           "disambiguation": null,
-          "barcode": "",
+          "barcode": null,
           "date": "2023-04-03",
           "trackCount": 1,
           "mediaCount": 1,
@@ -1189,18 +979,7 @@
           "date": "2020-10-09",
           "trackCount": 10,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801900028",
-            "NLE802000491",
-            "NLE802000493",
-            "NLE801900440",
-            "NLE801900202",
-            "GB5KW2000092",
-            "NLE801800427",
-            "NLE802000495",
-            "NLE802000497",
-            "NLE802000499"
-          ]
+          "isrcs": []
         },
         {
           "mbid": "dccb460d-1002-45a5-a1f8-1c865f0f1994",
@@ -1210,18 +989,7 @@
           "date": "2020-10-09",
           "trackCount": 10,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801900028",
-            "NLE802000491",
-            "NLE802000493",
-            "NLE801900440",
-            "NLE801900202",
-            "GB5KW2000092",
-            "NLE801800427",
-            "NLE802000495",
-            "NLE802000497",
-            "NLE802000499"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1230,7 +998,7 @@
       "title": "Trouble",
       "primaryType": "Single",
       "secondaryTypes": [],
-      "firstReleaseDate": "2019",
+      "firstReleaseDate": "2019-01-01",
       "disambiguation": null,
       "releases": [
         {
@@ -1238,12 +1006,10 @@
           "title": "Trouble",
           "disambiguation": null,
           "barcode": null,
-          "date": "2019",
+          "date": "2019-01-01",
           "trackCount": 1,
           "mediaCount": 1,
-          "isrcs": [
-            "NLE801900028"
-          ]
+          "isrcs": []
         }
       ]
     },
@@ -1254,7 +1020,7 @@
       "secondaryTypes": [
         "Remix"
       ],
-      "firstReleaseDate": null,
+      "firstReleaseDate": "2022-04-22",
       "disambiguation": null,
       "releases": [
         {
@@ -1262,13 +1028,10 @@
           "title": "Temptation (Big Top Family Remix Pack)",
           "disambiguation": null,
           "barcode": null,
-          "date": null,
+          "date": "2022-04-22",
           "trackCount": 7,
           "mediaCount": 2,
-          "isrcs": [
-            "NLQ8X1700118",
-            "NLQ8X1700123"
-          ]
+          "isrcs": []
         }
       ]
     }
@@ -1386,23 +1149,6 @@
         "NLE802000499"
       ],
       "trackCount": 10,
-      "volumeCount": 1
-    },
-    {
-      "provider": "tidal",
-      "providerId": "175421175",
-      "title": "Walk That Walk",
-      "version": null,
-      "providerUrl": null,
-      "releaseDate": "2021-03-26",
-      "type": "SINGLE",
-      "quality": "HIRES_LOSSLESS",
-      "explicit": 0,
-      "upc": "196006228811",
-      "isrcs": [
-        "NLE802100072"
-      ],
-      "trackCount": 1,
       "volumeCount": 1
     },
     {
@@ -1742,23 +1488,6 @@
     },
     {
       "provider": "tidal",
-      "providerId": "303307833",
-      "title": "Higher (Escalators)",
-      "version": null,
-      "providerUrl": null,
-      "releaseDate": "2023-07-28",
-      "type": "SINGLE",
-      "quality": "HIRES_LOSSLESS",
-      "explicit": 0,
-      "upc": "3617224255405",
-      "isrcs": [
-        "NLQ8X1700167"
-      ],
-      "trackCount": 1,
-      "volumeCount": 1
-    },
-    {
-      "provider": "tidal",
       "providerId": "304203502",
       "title": "From A Bakermat Point Of View",
       "version": null,
@@ -1780,25 +1509,6 @@
         "NLQ8X1700179"
       ],
       "trackCount": 9,
-      "volumeCount": 1
-    },
-    {
-      "provider": "tidal",
-      "providerId": "313745026",
-      "title": "So Glad That The Lord (Remix)",
-      "version": "Remix",
-      "providerUrl": null,
-      "releaseDate": "2023-10-06",
-      "type": "SINGLE",
-      "quality": "HIRES_LOSSLESS",
-      "explicit": 0,
-      "upc": "3617226810640",
-      "isrcs": [
-        "NLQ8X1700182",
-        "NLQ8X1700183",
-        "NLQ8X1700174"
-      ],
-      "trackCount": 3,
       "volumeCount": 1
     },
     {

@@ -33,6 +33,11 @@ const ARTISTS = [
   { slug: "bastille", name: "Bastille", mbid: "7808accb-6395-4b25-858c-678bbb73896b" },
   { slug: "imagine-dragons", name: "Imagine Dragons", mbid: "012151a8-0f9a-44c9-997f-ebd68b5389f9" },
   { slug: "coldplay", name: "Coldplay", mbid: "cc197bad-dc9c-440d-a5b5-d52ba2e14234" },
+  // Amy Winehouse exercises the quality-aware hybrid planner: Back to Black's
+  // hi-res 11-track album + lossless deluxe must combine per volume, and the
+  // "(live at Kalkscheune, Berlin)" disc of the 3-media German edition must
+  // stay uncovered (TIDAL carries no Kalkscheune session).
+  { slug: "amy-winehouse", name: "Amy Winehouse", mbid: "dfe9a7c4-8cf2-47f4-9dcb-d233c2b86ec3" },
 ];
 
 function parseJsonArray(value) {
