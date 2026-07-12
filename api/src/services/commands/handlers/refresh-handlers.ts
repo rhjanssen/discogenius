@@ -20,7 +20,7 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
     // MatchArtistProviders command enqueued below (RefreshArtist →
     // MatchArtistProviders → RescanFolders → CurateArtist). refreshArtist returns
     // the context that command needs to stay faithful to the old inline path.
-    const { artistMbid, shouldHydrateCatalog } = await RefreshArtistService.refreshArtist(job.payload.artistId, {
+    const { artistMbid, shouldHydrateCatalog, metadataChanged, isNewArtist } = await RefreshArtistService.refreshArtist(job.payload.artistId, {
         monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
         monitorAlbums: job.payload.monitorAlbums,
         hydrateCatalog: job.payload.hydrateCatalog,
@@ -54,6 +54,8 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
             artistName: job.payload.artistName,
             artistMbid,
             shouldHydrateCatalog,
+            metadataChanged,
+            isNewArtist,
             workflow: job.payload.workflow,
             forceUpdate: job.payload.forceUpdate ?? false,
             monitoringCycle: job.payload.monitoringCycle,
@@ -133,6 +135,8 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         artistName: job.payload.artistName,
         workflow: job.payload.workflow,
         scanLibrary: job.payload.scanLibrary ?? false,
+        metadataChanged: job.payload.metadataChanged ?? false,
+        isNewArtist: job.payload.isNewArtist ?? false,
         forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
         trigger: job.trigger ?? CommandTrigger.Unspecified,
     });

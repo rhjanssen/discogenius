@@ -83,6 +83,7 @@ export interface Video {
   artist_id: string;
   artist_name?: string | null;
   is_monitored: boolean;
+  monitored_lock?: boolean;
   is_downloaded: boolean;
   created_at?: string | null;
 }
@@ -154,6 +155,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
               subtitle={subtitle}
               explicit={video.explicit}
               monitored={video.is_monitored}
+              monitoringLocked={Boolean(video.monitored_lock)}
               videoAspect
               onClick={() => handleVideoClick(video)}
               onMonitorToggle={onToggleMonitor ? () => onToggleMonitor(video) : undefined}

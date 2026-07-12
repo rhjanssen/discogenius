@@ -51,6 +51,8 @@ export interface ArtistRefreshCompleteEventPayload {
     workflow?: ArtistWorkflow;
     monitoringCycle?: MonitoringPassWorkflowValue;
     scanLibrary: boolean;
+    metadataChanged: boolean;
+    isNewArtist: boolean;
     forceDownloadQueue: boolean;
     trigger: number;
 }

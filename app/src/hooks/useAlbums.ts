@@ -205,6 +205,7 @@ export const useAlbums = (options?: UseAlbumsOptions) => {
     loading: query.loading,
     isPopulated: query.isPopulated,
     hasMore: query.hasMore,
+    isFetchingMore: query.isFetchingNextPage,
     total: query.total,
     loadMore,
     refetch: () => query.refetch(),

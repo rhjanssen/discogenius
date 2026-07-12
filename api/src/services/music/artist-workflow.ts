@@ -126,6 +126,8 @@ export function buildMatchArtistProvidersCommand(params: {
   artistName: string;
   artistMbid: string | null;
   shouldHydrateCatalog: boolean;
+  metadataChanged: boolean;
+  isNewArtist: boolean;
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
   monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
@@ -136,6 +138,8 @@ export function buildMatchArtistProvidersCommand(params: {
     artistName: params.artistName,
     artistMbid: params.artistMbid,
     shouldHydrateCatalog: params.shouldHydrateCatalog,
+    metadataChanged: params.metadataChanged,
+    isNewArtist: params.isNewArtist,
     workflow: params.workflow,
     scanLibrary: phases.scanLibrary,
     forceDownloadQueue: phases.queueDownloads,

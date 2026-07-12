@@ -1130,6 +1130,77 @@ types.
 - pending: Download/curate per library type while keeping release-type filtering
   global.
 
+## 2.3.1 - Load Stabilization And UI Cleanup
+
+Scope: findings from the July 2026 fresh 500-artist import in local-MusicBrainz
+mode. This is an unreleased stabilization pass; move the completed details to
+`CHANGELOG.md` when it ships.
+
+- in progress: The load/UI stabilization slice bounds Library infinite scrolling
+  to the viewport and one request at a time, lazy-loads card artwork, restores
+  DataGrid accessibility/deep-link row props, rejects incomplete TIDAL bulk
+  tracklists, preserves bulk-track artists/copyright, keeps unknown-country and
+  local-MB release dates, reduces MusicBrainz video upserts, and deduplicates
+  credited/canonical release-group statistics.
+- done: Replaced the artist-page top-track and video correlated lookups with
+  bounded, set-based queries (top tracks are capped at 100 recordings). On the
+  active 500-artist database the pathological track enrichment phase fell from
+  more than 124 seconds to about four seconds in isolation; rebuilt API requests
+  now complete under load instead of timing out, with worker contention still a
+  follow-up profiling target.
+- done: Aligned scheduled metadata refresh with Lidarr's daily cadence and
+  command de-duplication semantics: all due artists are considered in one pass,
+  while artists with pending refresh/scan/match/curate work are not enqueued
+  again. The per-artist commands remain Discogenius' queue fan-out adaptation.
+- done: The hosted Servarr fallback now fetches required release-group details
+  with bounded concurrency and reconciles SQLite writes serially. Artist content
+  hashes are committed only after child summaries succeed, following Lidarr's
+  parent-last refresh invariant.
+- done: Weak ISRC overlap is retained as candidate evidence for hybrid coverage
+  without becoming direct provider availability. A single provider release is
+  preferred when it is the best complete source; candidate evidence becomes
+  verified release availability only with complete canonical track coverage,
+  while incomplete coverage remains explicitly probable/partial.
+- done: Replaced whole-album-first hybrid selection with a deterministic
+  per-canonical-track acquisition plan. The objective is: maximize covered
+  recordings, prefer a complete edition on equal coverage, maximize per-track
+  quality, then minimize provider albums and redundant source tracks. This lets
+  hi-res standard-edition tracks supplement lossless deluxe-only tracks and keeps
+  strict partial coverage explicit. Composite/partial plans queue provider tracks
+  individually for both automatic and manual downloads, avoiding duplicate
+  whole-album downloads. Logical provider tracks are one-to-one with canonical
+  tracks, and repeated ambiguous titles require MBID/ISRC evidence so vocal tracks
+  cannot falsely cover a same-title instrumental disc.
+- done: Split the artist page into identity, album, top-track, and video resources
+  at the read boundary. The frontend renders the local artist header first, then
+  loads the three collections independently, following Lidarr's separately fetched
+  artist/album/track collections.
+- done: Provider matching now narrows a bulk artist release list with cheap album
+  metadata before fetching detailed provider tracklists. Full canonical
+  MusicBrainz tracklists remain available for curation/deduplication, while
+  non-candidate provider compilations no longer monopolize the match worker.
+- done: Separated Lidarr-style scheduled tasks and refresh events. RefreshArtist
+  and root-folder RescanFolders now have independent daily schedules; unchanged
+  automatic artist refreshes skip their per-artist disk scan and continue directly
+  to curation, while new artists, changed metadata, and manual refresh-scan actions
+  still rescan.
+- done: Provider album/track release dates and copyright now survive the common
+  provider model where supplied, and locked music videos are represented and
+  disabled consistently in the frontend monitor controls.
+- pending: Finish catalog diff reconciliation: reconcile removals and do not
+  stamp `last_scanned` after partial refresh failures.
+- pending: Surface track-level coverage and mixed-quality distributions in the
+  release switcher so partial/composite availability is visible before download.
+- pending: Replace provider availability/match edges for a refreshed artist
+  instead of upsert-only accumulation; partition composite coverage by library
+  slot and remove the divergent duplicate composite matcher.
+- pending: Remove the unused synchronous `monitoring/check-stream` refresh path,
+  fix locked-video monitor actions consistently, give artwork URLs a revisioned
+  cache key, and split `TrackList`/detail action rows into smaller shared Fluent
+  UI components without changing the visual result.
+- pending: Add frontend unit coverage for pagination/locked actions and run the
+  full Playwright suite in CI.
+
 ## 3.0 - Catalog Source Modes And Local MusicBrainz
 
 Scope: full metadata-provider/backend-mode implementation in backend and

@@ -102,4 +102,12 @@ test("syncMusicBrainzVideosForArtist upserts relation artists before recording r
   assert.ok(videoRecording);
   assert.equal(videoRecording.artist_mbid, "artist-mbid-1");
   assert.ok(videoRecording.artist_metadata_id, "video recording should link to local artist metadata");
+
+  const resynced = await videoService.syncMusicBrainzVideosForArtist("artist-mbid-1", { force: true });
+  assert.equal(resynced, 1);
+  assert.equal(
+    (dbModule.db.prepare("SELECT COUNT(*) AS count FROM Recordings").get() as { count: number }).count,
+    2,
+    "force refresh should update canonical recordings rather than duplicate them",
+  );
 });

@@ -4,6 +4,7 @@ import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
 import { getConfigSection } from "../config/config.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
+import { queueTrackAcquisitionPlan } from "./release-group-acquisition-plan.js";
 
 type AlbumSlotSelection = {
     slot: "stereo" | "spatial";
@@ -16,6 +17,9 @@ type AlbumSlotSelection = {
     provider_artist_name?: string | null;
     title?: string | null;
     artist_name?: string | null;
+    release_group_mbid?: string | null;
+    match_method?: string | null;
+    match_evidence?: string | null;
 };
 
 export class AlbumCommandService {
@@ -95,6 +99,9 @@ export class AlbumCommandService {
               rgs.selected_provider_id,
               rgs.selected_release_mbid,
               rgs.quality,
+              rgs.release_group_mbid,
+              rgs.match_method,
+              rgs.match_evidence,
               pi.cover AS provider_cover,
               pi.title AS provider_title,
               pi.provider_artist_name AS provider_artist_name,
@@ -252,6 +259,11 @@ export class AlbumCommandService {
         const commandIds: number[] = [];
         if (shouldDownload) {
             for (const selection of selections) {
+                const planned = queueTrackAcquisitionPlan(selection);
+                if (planned.recognized) {
+                    commandIds.push(...planned.commandIds);
+                    continue;
+                }
                 const providerAlbumId = selection.selected_provider_id;
                 const artistName = selection.artist_name || selection.provider_artist_name || 'Unknown Artist';
                 const provider = selection.selected_provider || "tidal";

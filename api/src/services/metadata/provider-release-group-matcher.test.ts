@@ -77,6 +77,55 @@ test("matches expanded provider editions to the MusicBrainz release group", () =
     assert.ok(match.confidence >= 0.78);
 });
 
+test("keeps one shared ISRC as a hybrid candidate when track counts differ", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "short-remix",
+        title: "Unrelated Remix Package",
+        type: "EP",
+        trackCount: 3,
+        volumeCount: 1,
+        isrcs: ["NLAAA0100001", "NLAAA0100002", "NLAAA0100003"],
+    }, [{
+        mbid: "full-album-group",
+        title: "Original Album",
+        primaryType: "Album",
+        releases: [{
+            mbid: "full-album-release",
+            trackCount: 9,
+            mediaCount: 1,
+            isrcs: ["NLAAA0100001"],
+        }],
+    }]);
+
+    assert.equal(match.status, "candidate");
+    assert.equal(match.releaseGroup?.mbid, "full-album-group");
+    assert.equal(match.evidence.isrcCoverageMatched, false);
+});
+
+test("keeps one shared ISRC candidate-only for equal-sized multi-track releases", () => {
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "compilation",
+        title: "Unrelated Compilation",
+        type: "Album",
+        trackCount: 9,
+        volumeCount: 1,
+        isrcs: ["NLAAA0100001", "NLBBB0100002"],
+    }, [{
+        mbid: "original-group",
+        title: "Original Album",
+        primaryType: "Album",
+        releases: [{
+            mbid: "original-release",
+            trackCount: 9,
+            mediaCount: 1,
+            isrcs: ["NLAAA0100001", "NLCCC0100003"],
+        }],
+    }]);
+
+    assert.equal(match.status, "candidate");
+    assert.equal(match.evidence.isrcCoverageMatched, false);
+});
+
 test("a fully-track-covered '… EP' expansion is verified, not just probable", () => {
     // Provider titles an EP "Goosebumps EP" while MusicBrainz titles the release
     // group "Goosebumps"; the track count matches the MB edition exactly.

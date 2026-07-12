@@ -70,6 +70,7 @@ export function mapAppleAlbum(resource: AppleResource): ProviderAlbum {
     contentRating?: string;
     url?: string;
     recordLabel?: string;
+    copyright?: string;
   };
   const traits = audioTraits(resource.attributes);
   const artistResource = resource.relationships?.artists?.data?.[0];
@@ -91,6 +92,7 @@ export function mapAppleAlbum(resource: AppleResource): ProviderAlbum {
     type,
     explicit: attrs.contentRating ? attrs.contentRating === "explicit" : null,
     upc: attrs.upc || null,
+    copyright: attrs.copyright || null,
     quality: traits[0] || null,
     qualityTags: traits,
     url: attrs.url,
@@ -110,6 +112,8 @@ export function mapAppleTrack(resource: AppleResource): ProviderTrack {
     contentRating?: string;
     url?: string;
     artwork?: AppleArtwork;
+    releaseDate?: string;
+    copyright?: string;
   };
   const traits = audioTraits(resource.attributes);
   const albumResource = resource.relationships?.albums?.data?.[0];
@@ -136,6 +140,8 @@ export function mapAppleTrack(resource: AppleResource): ProviderTrack {
     volumeNumber: attrs.discNumber ?? 1,
     url: attrs.url,
     isrc: attrs.isrc || null,
+    releaseDate: attrs.releaseDate || null,
+    copyright: attrs.copyright || null,
     quality: traits[0] || null,
     qualityTags: traits,
     raw: resource,

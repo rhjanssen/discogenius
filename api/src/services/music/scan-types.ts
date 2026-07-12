@@ -32,6 +32,8 @@ export interface RefreshOptions {
 export interface ArtistRefreshResult {
     artistMbid: string | null;
     shouldHydrateCatalog: boolean;
+    metadataChanged: boolean;
+    isNewArtist: boolean;
 }
 
 export type ArtistScanProgressEvent =

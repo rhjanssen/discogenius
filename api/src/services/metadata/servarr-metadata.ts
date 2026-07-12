@@ -4,6 +4,7 @@ import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-grou
 import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
+import pLimit from "p-limit";
 
 /** Servarr metadata-server rating (≈ Lidarr's RatingResource). */
 export interface ServarrMetadataRating {
@@ -476,9 +477,9 @@ export class ServarrMetadataService {
     db.prepare(`
       INSERT INTO ArtistMetadata (
         mbid, name, sort_name, disambiguation, type, overview, status, popularity,
-        images, links, genres, ratings, aliases, old_foreign_ids, content_hash, updated_at
+        images, links, genres, ratings, aliases, old_foreign_ids, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         name = excluded.name,
         sort_name = excluded.sort_name,
@@ -495,7 +496,6 @@ export class ServarrMetadataService {
         ratings = excluded.ratings,
         aliases = excluded.aliases,
         old_foreign_ids = excluded.old_foreign_ids,
-        content_hash = excluded.content_hash,
         updated_at = CURRENT_TIMESTAMP
     `).run(
       artist.id,
@@ -512,7 +512,6 @@ export class ServarrMetadataService {
       JSON.stringify(raw.rating ?? raw.Rating ?? null),
       JSON.stringify(raw.artistaliases ?? raw.aliases ?? []),
       JSON.stringify(raw.oldids ?? raw.oldIds ?? []),
-      contentHash,
     );
 
     // The artist payload carries only summary album entries (no images, links,
@@ -558,6 +557,15 @@ export class ServarrMetadataService {
       MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
     });
 
+    // Match Lidarr's refresh invariant: mark the parent current only after its
+    // children have been processed successfully. If an album batch throws, the
+    // previous hash remains and the next refresh retries the whole diff.
+    db.prepare(`
+      UPDATE ArtistMetadata
+      SET content_hash = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE mbid = ?
+    `).run(contentHash, artist.id);
+
     await MediaCoverService.resolveArtistArtwork({
       artistMbid: artist.id,
       servarrMetadataData: enrich,
@@ -596,12 +604,25 @@ export class ServarrMetadataService {
         }
       }
     } else {
-      for (const mbid of mbids) {
+      // Hosted Servarr exposes one album-detail endpoint per release group, as
+      // Lidarr itself uses. Fetch a small bounded group concurrently, then run
+      // the synchronous SQLite reconciliation serially so network latency is
+      // overlapped without multiplying writers.
+      const limit = pLimit(4);
+      const details = await Promise.all(mbids.map((mbid) => limit(async () => {
         try {
-          const detail = await provider.getReleaseGroup(mbid);
-          this.reconcileReleaseGroupDetail(mbid, artistMbid, detail);
+          return { mbid, detail: await provider.getReleaseGroup(mbid) };
         } catch (error) {
-          console.warn(`[ServarrMetadata] Failed to reconcile release group ${mbid}:`, error);
+          console.warn(`[ServarrMetadata] Failed to fetch release group ${mbid}:`, error);
+          return null;
+        }
+      })));
+      for (const entry of details) {
+        if (!entry) continue;
+        try {
+          this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
+        } catch (error) {
+          console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
         }
       }
     }

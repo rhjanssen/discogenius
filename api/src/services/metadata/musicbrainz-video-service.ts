@@ -26,6 +26,11 @@ const MUSICBRAINZ_BASE_URL = "https://musicbrainz.org/ws/2";
 const MUSICBRAINZ_PAGE_SIZE = 100;
 const MUSICBRAINZ_FETCH_ATTEMPTS = 2;
 
+type SyncContext = {
+  artistMetadataIds: Map<string, number | null>;
+  upsertRecording: { get(...params: unknown[]): unknown };
+};
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function nullableText(value: unknown): string | null {
@@ -61,10 +66,18 @@ function structuredArtistCredits(recording: MusicBrainzRecording): string | null
   return credits.length > 0 ? JSON.stringify(credits) : null;
 }
 
-function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artistMbid: string | null): number | null {
+function upsertArtistMetadataForRecording(
+  recording: MusicBrainzRecording,
+  artistMbid: string | null,
+  context: SyncContext,
+): number | null {
   const normalizedArtistMbid = nullableText(artistMbid);
   if (!normalizedArtistMbid) {
     return null;
+  }
+
+  if (context.artistMetadataIds.has(normalizedArtistMbid)) {
+    return context.artistMetadataIds.get(normalizedArtistMbid) ?? null;
   }
 
   const existing = db.prepare(`
@@ -74,7 +87,9 @@ function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artis
     LIMIT 1
   `).get(normalizedArtistMbid, normalizedArtistMbid) as { id?: number | null } | undefined;
   if (existing?.id != null) {
-    return Number(existing.id);
+    const id = Number(existing.id);
+    context.artistMetadataIds.set(normalizedArtistMbid, id);
+    return id;
   }
 
   const matchingCredit = (recording["artist-credit"] || [])
@@ -104,7 +119,33 @@ function upsertArtistMetadataForRecording(recording: MusicBrainzRecording, artis
     LIMIT 1
   `).get(normalizedArtistMbid, normalizedArtistMbid) as { id?: number | null } | undefined;
 
-  return row?.id == null ? null : Number(row.id);
+  const id = row?.id == null ? null : Number(row.id);
+  context.artistMetadataIds.set(normalizedArtistMbid, id);
+  return id;
+}
+
+function createSyncContext(): SyncContext {
+  return {
+    artistMetadataIds: new Map(),
+    upsertRecording: db.prepare(`
+      INSERT INTO Recordings (
+        foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
+        artist_credit, credits, length_ms, is_video, metadata_status, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', CURRENT_TIMESTAMP)
+      ON CONFLICT(mbid) DO UPDATE SET
+        foreign_recording_id = COALESCE(Recordings.foreign_recording_id, excluded.foreign_recording_id),
+        artist_metadata_id = COALESCE(Recordings.artist_metadata_id, excluded.artist_metadata_id),
+        artist_mbid = COALESCE(Recordings.artist_mbid, excluded.artist_mbid),
+        title = COALESCE(NULLIF(excluded.title, ''), Recordings.title),
+        artist_credit = COALESCE(Recordings.artist_credit, excluded.artist_credit),
+        credits = COALESCE(Recordings.credits, excluded.credits),
+        length_ms = COALESCE(excluded.length_ms, Recordings.length_ms),
+        is_video = CASE WHEN excluded.is_video = 1 THEN 1 ELSE Recordings.is_video END,
+        metadata_status = 'musicbrainz',
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id
+    `),
+  };
 }
 
 async function fetchMusicBrainzJson<T>(path: string): Promise<T> {
@@ -142,7 +183,7 @@ async function fetchMusicBrainzJson<T>(path: string): Promise<T> {
 function upsertRecording(recording: MusicBrainzRecording, options: {
   artistMbid?: string | null;
   isVideo: boolean;
-}): number | null {
+}, context: SyncContext): number | null {
   const recordingMbid = nullableText(recording.id);
   if (!recordingMbid) {
     return null;
@@ -150,15 +191,10 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
 
   const title = nullableText(recording.title) ?? recordingMbid;
   const artistMbid = nullableText(options.artistMbid);
-  const artistMetadataId = upsertArtistMetadataForRecording(recording, artistMbid);
+  const artistMetadataId = upsertArtistMetadataForRecording(recording, artistMbid, context);
   const recordingArtistMbid = artistMetadataId == null ? null : artistMbid;
 
-  db.prepare(`
-    INSERT OR IGNORE INTO Recordings (
-      foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
-      artist_credit, credits, length_ms, is_video, metadata_status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', CURRENT_TIMESTAMP)
-  `).run(
+  const row = context.upsertRecording.get(
     recordingMbid,
     recordingMbid,
     artistMetadataId,
@@ -168,44 +204,16 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     structuredArtistCredits(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
     options.isVideo ? 1 : 0,
-  );
-
-  db.prepare(`
-    UPDATE Recordings
-    SET
-      artist_metadata_id = COALESCE(artist_metadata_id, ?),
-      artist_mbid = COALESCE(artist_mbid, ?),
-      title = COALESCE(NULLIF(?, ''), title),
-      artist_credit = COALESCE(artist_credit, ?),
-      credits = COALESCE(credits, ?),
-      length_ms = COALESCE(?, length_ms),
-      is_video = CASE WHEN ? = 1 THEN 1 ELSE is_video END,
-      metadata_status = 'musicbrainz',
-      updated_at = CURRENT_TIMESTAMP
-    WHERE foreign_recording_id = ? OR mbid = ?
-  `).run(
-    artistMetadataId,
-    recordingArtistMbid,
-    title,
-    artistCredit(recording),
-    structuredArtistCredits(recording),
-    Number(recording.length || 0) > 0 ? Number(recording.length) : null,
-    options.isVideo ? 1 : 0,
-    recordingMbid,
-    recordingMbid,
-  );
-
-  const row = db.prepare(`
-    SELECT id
-    FROM Recordings
-    WHERE foreign_recording_id = ? OR mbid = ?
-    LIMIT 1
-  `).get(recordingMbid, recordingMbid) as { id?: number | null } | undefined;
+  ) as { id?: number | null } | undefined;
 
   return row?.id == null ? null : Number(row.id);
 }
 
-function upsertMusicVideoRelations(video: MusicBrainzRecording, sourceRecordingId: number | null): void {
+function upsertMusicVideoRelations(
+  video: MusicBrainzRecording,
+  sourceRecordingId: number | null,
+  context: SyncContext,
+): void {
   const videoMbid = nullableText(video.id);
   if (!videoMbid) {
     return;
@@ -220,7 +228,7 @@ function upsertMusicVideoRelations(video: MusicBrainzRecording, sourceRecordingI
     const targetRecordingId = upsertRecording(targetRecording, {
       isVideo: isVideoRecording(targetRecording),
       artistMbid: targetRecording["artist-credit"]?.[0]?.artist?.id ?? null,
-    });
+    }, context);
     const targetMbid = nullableText(targetRecording.id);
     if (!targetMbid) {
       continue;
@@ -267,9 +275,10 @@ export async function syncMusicBrainzVideosForArtist(
       const recordings = await active.getArtistVideoRecordings(artistMbid);
       let synced = 0;
       db.transaction(() => {
+        const context = createSyncContext();
         for (const recording of recordings.filter(isVideoRecording)) {
-          const recordingId = upsertRecording(recording, { artistMbid, isVideo: true });
-          upsertMusicVideoRelations(recording, recordingId);
+          const recordingId = upsertRecording(recording, { artistMbid, isVideo: true }, context);
+          upsertMusicVideoRelations(recording, recordingId, context);
           synced++;
         }
       })();
@@ -296,12 +305,13 @@ export async function syncMusicBrainzVideosForArtist(
     total = Number(page["recording-count"] ?? recordings.length);
 
     db.transaction(() => {
+      const context = createSyncContext();
       for (const recording of recordings.filter(isVideoRecording)) {
         const recordingId = upsertRecording(recording, {
           artistMbid,
           isVideo: true,
-        });
-        upsertMusicVideoRelations(recording, recordingId);
+        }, context);
+        upsertMusicVideoRelations(recording, recordingId, context);
         synced++;
       }
     })();

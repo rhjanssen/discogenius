@@ -150,6 +150,8 @@ export interface MatchArtistProvidersCommand extends CommandBodyCommon {
    *  the deferred match keeps the same decision the inline path would have made
    *  (the scan level changes once intake has run). */
   shouldHydrateCatalog: boolean;
+  metadataChanged?: boolean;
+  isNewArtist?: boolean;
   workflow: ArtistWorkflowValue;
   scanLibrary: boolean;
   forceDownloadQueue: boolean;

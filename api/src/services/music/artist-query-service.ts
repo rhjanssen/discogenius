@@ -824,7 +824,19 @@ export class ArtistQueryService {
         return { artist, albums: grouped };
     }
 
-    static async getArtistPage(artistId: string): Promise<any | null> {
+    static async getArtistPage(
+        artistId: string,
+        options: {
+            includeReleaseGroups?: boolean;
+            includeTracks?: boolean;
+            includeVideos?: boolean;
+            includeStatistics?: boolean;
+        } = {},
+    ): Promise<any | null> {
+        const includeReleaseGroups = options.includeReleaseGroups !== false;
+        const includeTracks = options.includeTracks !== false;
+        const includeVideos = options.includeVideos !== false;
+        const includeStatistics = options.includeStatistics !== false;
         let artist = loadArtistWithEffectiveMonitor(artistId);
 
         // Cold-load: seed basic canonical metadata for not-yet-added artists so
@@ -853,11 +865,79 @@ export class ArtistQueryService {
         // OR-join to ArtistMetadata forced a scan of EVERY artist's videos on
         // every artist-page load. All rows here belong to `artist`, so the
         // ArtistMetadata join is gone and id/name are bound directly.
-        const videos = db.prepare(`
+        const videos = includeVideos ? db.prepare(`
          WITH artist_videos(id) AS (
            SELECT id FROM Recordings WHERE is_video = 1 AND artist_metadata_id = @artistMetadataId
            UNION
            SELECT id FROM Recordings WHERE is_video = 1 AND artist_mbid = @artistMbid
+         ),
+         provider_video_candidate_ids(recording_id, provider_rowid) AS MATERIALIZED (
+           SELECT artist_videos.id, provider_item.rowid
+           FROM artist_videos
+           CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_recording_id
+           WHERE provider_item.recording_id = artist_videos.id
+             AND provider_item.entity_type = 'video'
+
+           UNION
+
+           SELECT artist_videos.id, provider_item.rowid
+           FROM artist_videos
+           JOIN Recordings recording ON recording.id = artist_videos.id
+           CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_entity_recording
+           WHERE recording.mbid IS NOT NULL
+             AND provider_item.entity_type = 'video'
+             AND provider_item.recording_mbid = recording.mbid
+         ),
+         provider_videos AS (
+           SELECT
+             candidates.recording_id,
+             provider_item.provider,
+             provider_item.provider_id,
+             provider_item.duration,
+             provider_item.release_date,
+             provider_item.version,
+             provider_item.explicit,
+             provider_item.quality,
+             provider_item.asset_id,
+             provider_item.provider_url,
+             provider_item.popularity,
+             ROW_NUMBER() OVER (
+               PARTITION BY candidates.recording_id
+               ORDER BY COALESCE(provider_item.match_confidence, 0) DESC,
+                        provider_item.updated_at DESC,
+                        provider_item.provider_id ASC
+             ) AS rank
+           FROM provider_video_candidate_ids candidates
+           CROSS JOIN ProviderItems provider_item
+           WHERE provider_item.rowid = candidates.provider_rowid
+         ),
+         downloaded_videos(recording_id) AS (
+           SELECT DISTINCT artist_videos.id
+           FROM artist_videos
+           CROSS JOIN TrackFiles file INDEXED BY idx_track_files_recording_id
+           WHERE file.file_type = 'video'
+             AND file.recording_id = artist_videos.id
+
+           UNION
+
+           SELECT DISTINCT artist_videos.id
+           FROM artist_videos
+           JOIN Recordings recording ON recording.id = artist_videos.id
+           CROSS JOIN TrackFiles file INDEXED BY idx_track_files_canonical_recording_type
+           WHERE recording.mbid IS NOT NULL
+             AND file.file_type = 'video'
+             AND file.canonical_recording_mbid = recording.mbid
+
+           UNION
+
+           SELECT DISTINCT provider_video.recording_id
+           FROM provider_videos provider_video
+           CROSS JOIN TrackFiles file INDEXED BY idx_track_files_provider_resource
+           WHERE provider_video.rank = 1
+             AND file.file_type = 'video'
+             AND file.provider = provider_video.provider
+             AND file.provider_entity_type = 'video'
+             AND CAST(file.provider_id AS TEXT) = CAST(provider_video.provider_id AS TEXT)
          )
          SELECT
            CAST(recording.id AS TEXT) AS id,
@@ -887,38 +967,22 @@ export class ArtistQueryService {
              COALESCE(CAST(recording.popularity AS REAL), 0),
              COALESCE(CAST(provider_item.popularity AS REAL), 0)
            ) AS video_popularity,
-           CASE WHEN EXISTS (
-             SELECT 1
-             FROM TrackFiles lf
-             WHERE lf.file_type = 'video'
-               AND (
-                 lf.recording_id = recording.id
-                 OR lf.canonical_recording_mbid = recording.mbid
-                 OR CAST(lf.provider_id AS TEXT) = CAST(provider_item.provider_id AS TEXT)
-               )
-           ) THEN 1 ELSE 0 END AS is_downloaded
+           CASE WHEN downloaded_video.recording_id IS NOT NULL THEN 1 ELSE 0 END AS is_downloaded
          FROM Recordings recording
          JOIN artist_videos av ON av.id = recording.id
-         LEFT JOIN ProviderItems provider_item
-           ON provider_item.rowid = (
-             SELECT candidate.rowid
-             FROM ProviderItems candidate
-             WHERE candidate.entity_type = 'video'
-               AND (
-                 candidate.recording_id = recording.id
-                 OR (recording.mbid IS NOT NULL AND candidate.recording_mbid = recording.mbid)
-               )
-             ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC, candidate.provider_id ASC
-             LIMIT 1
-           )
+         LEFT JOIN provider_videos provider_item
+           ON provider_item.recording_id = recording.id
+          AND provider_item.rank = 1
+         LEFT JOIN downloaded_videos downloaded_video
+           ON downloaded_video.recording_id = recording.id
          ORDER BY COALESCE(video_popularity, 0) DESC, (COALESCE(recording.release_date, provider_item.release_date) IS NULL) ASC, COALESCE(recording.release_date, provider_item.release_date) DESC, recording.title ASC, recording.id ASC
        `).all({
             artistMetadataId: Number(artist.id) || -1,
             artistMbid: String(artist.mbid || artistId),
             artistIdNum: Number(artist.id) || null,
             artistName: (artist as any).name ?? null,
-        }) as any[];
-        const musicBrainzReleaseGroups = artist.mbid
+        }) as any[] : [];
+        const musicBrainzReleaseGroups = includeReleaseGroups && artist.mbid
             ? db.prepare(`
          SELECT
            rg.*,
@@ -979,13 +1043,11 @@ export class ArtistQueryService {
         // MusicBrainz/Servarr Metadata Server has no similar-artist concept and Lidarr has no such
         // section, so the feature was removed during the provider-table retirement.
 
-        const topTracks = db.prepare(`
-      -- Top-tracks is a bounded display list (<=100 rows). The old query enriched
-      -- EVERY track across all the artist's releases (8 correlated subqueries + a
-      -- 3-way UNION per row) and only THEN ranked + limited — a 4-16s synchronous
-      -- stall that froze the whole event loop on big artists. Now it runs in two
-      -- phases: (1) dedup-by-recording + rank + LIMIT on cheap columns, then
-      -- (2) run the expensive per-row enrichment for just those <=100 survivors.
+        const topTracks = includeTracks ? db.prepare(`
+      -- Rank cheaply, materialize the <=100 survivors, then enrich the whole
+      -- set through indexed joins. Correlated provider/file lookups here used
+      -- to execute once per survivor and could still stall an artist page for
+      -- minutes even after the initial LIMIT.
       WITH artist_rgs(mbid) AS (
         SELECT mbid FROM Albums WHERE artist_mbid = ?
         UNION
@@ -996,13 +1058,6 @@ export class ArtistQueryService {
         FROM AlbumReleases ar
         JOIN artist_rgs ON ar.release_group_mbid = artist_rgs.mbid
       ),
-      -- Phase 1: dedup one track per recording + rank + limit using ONLY cheap
-      -- columns. Crucially the ranking is a pure window over the release date —
-      -- NO per-track correlated subqueries. (The old ranking ran a has-file and a
-      -- has-provider EXISTS per track; over a 12k-track artist that alone was
-      -- ~18s.) The representative is the earliest release of each recording;
-      -- is_downloaded is computed recording-wide in phase 2 so it stays correct
-      -- regardless of which edition is the representative.
       dedup AS (
         SELECT
           track.mbid AS track_mbid,
@@ -1026,134 +1081,198 @@ export class ArtistQueryService {
         WHERE recording_rank = 1
         ORDER BY popularity DESC, release_date DESC, track_mbid ASC
         LIMIT 100
+      ),
+      top_tracks AS MATERIALIZED (
+        SELECT
+          top.popularity,
+          track.mbid AS id,
+          track.id AS track_row_id,
+          track.title,
+          track.length_ms,
+          track.position,
+          track.medium_position,
+          track.recording_mbid,
+          track.release_mbid,
+          track.updated_at,
+          release.date AS release_date,
+          release_group.mbid AS release_group_mbid,
+          release_group.title AS release_group_title,
+          release_group.first_release_date,
+          artist_metadata.name AS artist_name,
+          artist_metadata.mbid AS artist_mbid,
+          recording.length_ms AS recording_length_ms,
+          recording.id AS recording_row_id,
+          recording.credits AS recording_credits
+        FROM top
+        JOIN Tracks track ON track.mbid = top.track_mbid
+        JOIN AlbumReleases release ON release.mbid = track.release_mbid
+        JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
+        LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = release_group.artist_mbid
+        LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
+      ),
+      provider_track_candidate_ids(track_id, provider_rowid) AS MATERIALIZED (
+        SELECT top_tracks.id, provider_item.rowid
+        FROM top_tracks
+        CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_recording_id
+        WHERE top_tracks.recording_row_id IS NOT NULL
+          AND provider_item.recording_id = top_tracks.recording_row_id
+          AND provider_item.entity_type = 'track'
+      ),
+      provider_tracks AS (
+        SELECT
+          candidates.track_id,
+          provider_item.provider,
+          provider_item.provider_id,
+          provider_item.duration,
+          provider_item.explicit,
+          provider_item.quality,
+          ROW_NUMBER() OVER (
+            PARTITION BY candidates.track_id
+            ORDER BY
+              CASE provider_item.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+              provider_item.updated_at DESC,
+              provider_item.provider_id ASC
+          ) AS rank
+        FROM provider_track_candidate_ids candidates
+        CROSS JOIN ProviderItems provider_item
+        WHERE provider_item.rowid = candidates.provider_rowid
+      ),
+      provider_albums AS (
+        SELECT
+          top_tracks.id AS track_id,
+          provider_item.asset_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY top_tracks.id
+            ORDER BY
+              CASE provider_item.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+              provider_item.updated_at DESC,
+              provider_item.provider_id ASC
+          ) AS rank
+        FROM top_tracks
+        JOIN ProviderItems provider_item
+          ON provider_item.entity_type = 'album'
+         AND provider_item.release_group_mbid = top_tracks.release_group_mbid
+      ),
+      selected_slots AS (
+        SELECT
+          top_tracks.id AS track_id,
+          slot.quality,
+          slot.monitored_lock,
+          ROW_NUMBER() OVER (
+            PARTITION BY top_tracks.id
+            ORDER BY CASE slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+          ) AS rank
+        FROM top_tracks
+        JOIN ReleaseGroupSlots slot
+          ON slot.release_group_mbid = top_tracks.release_group_mbid
+         AND slot.selected_release_mbid = top_tracks.release_mbid
+      ),
+      primary_files AS (
+        SELECT
+          top_tracks.id AS track_id,
+          file.quality,
+          ROW_NUMBER() OVER (
+            PARTITION BY top_tracks.id
+            ORDER BY CASE file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, file.id ASC
+          ) AS rank
+        FROM top_tracks
+        CROSS JOIN TrackFiles file INDEXED BY idx_track_files_canonical_track_type
+        WHERE file.canonical_track_mbid = top_tracks.id
+          AND file.file_type = 'track'
+      ),
+      quality_values(track_id, quality) AS (
+        SELECT top_tracks.id, slot.quality
+        FROM top_tracks
+        JOIN ReleaseGroupSlots slot
+          ON slot.release_group_mbid = top_tracks.release_group_mbid
+         AND slot.selected_release_mbid = top_tracks.release_mbid
+        WHERE slot.quality IS NOT NULL AND TRIM(slot.quality) != ''
+        UNION
+        SELECT candidates.track_id, provider_item.quality
+        FROM provider_track_candidate_ids candidates
+        CROSS JOIN ProviderItems provider_item
+        WHERE provider_item.quality IS NOT NULL AND TRIM(provider_item.quality) != ''
+          AND provider_item.rowid = candidates.provider_rowid
+        UNION
+        SELECT top_tracks.id, file.quality
+        FROM top_tracks
+        CROSS JOIN TrackFiles file INDEXED BY idx_track_files_canonical_track_type
+        WHERE file.canonical_track_mbid = top_tracks.id
+          AND file.quality IS NOT NULL AND TRIM(file.quality) != ''
+      ),
+      quality_tags AS (
+        SELECT track_id, GROUP_CONCAT(quality) AS tags
+        FROM quality_values
+        GROUP BY track_id
+      ),
+      monitored_groups AS (
+        SELECT DISTINCT top_tracks.release_group_mbid
+        FROM top_tracks
+        JOIN ReleaseGroupSlots slot
+          ON slot.release_group_mbid = top_tracks.release_group_mbid
+         AND slot.monitored = 1
+      ),
+      downloaded_tracks(track_id) AS (
+        SELECT DISTINCT top_tracks.id
+        FROM top_tracks
+        CROSS JOIN TrackFiles file INDEXED BY idx_track_files_canonical_track_type
+        WHERE file.file_type = 'track'
+          AND file.canonical_track_mbid = top_tracks.id
+        UNION
+        SELECT DISTINCT top_tracks.id
+        FROM top_tracks
+        CROSS JOIN TrackFiles file INDEXED BY idx_track_files_canonical_recording_type
+        WHERE top_tracks.recording_mbid IS NOT NULL
+          AND file.file_type = 'track'
+          AND file.canonical_recording_mbid = top_tracks.recording_mbid
       )
-      -- Phase 2: enrich only the <=100 survivors.
       SELECT
-        track.mbid AS id,
-        release_group.mbid AS album_id,
-        track.title,
+        top_tracks.id,
+        top_tracks.release_group_mbid AS album_id,
+        top_tracks.title,
         NULL AS version,
         COALESCE(
-          ROUND(COALESCE(track.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0),
+          ROUND(COALESCE(top_tracks.length_ms, top_tracks.recording_length_ms, provider_track.duration, 0) / 1000.0),
           0
         ) AS duration,
-        track.position AS track_number,
-        track.medium_position AS volume_number,
+        top_tracks.position AS track_number,
+        top_tracks.medium_position AS volume_number,
         COALESCE(provider_track.explicit, 0) AS explicit,
         COALESCE(provider_track.quality, selected_slot.quality, primary_file.quality, '') AS quality,
-        (
-          SELECT GROUP_CONCAT(quality_value)
-          FROM (
-            SELECT slot_quality.quality AS quality_value
-            FROM ReleaseGroupSlots slot_quality
-            WHERE slot_quality.release_group_mbid = release_group.mbid
-              AND slot_quality.selected_release_mbid = track.release_mbid
-            UNION
-            SELECT provider_quality.quality AS quality_value
-            FROM ProviderItems provider_quality
-            WHERE provider_quality.entity_type = 'track'
-              AND (
-                provider_quality.track_mbid = track.mbid
-                OR provider_quality.recording_mbid = track.recording_mbid
-              )
-            UNION
-            SELECT file_quality.quality AS quality_value
-            FROM TrackFiles file_quality
-            WHERE file_quality.canonical_track_mbid = track.mbid
-          )
-          WHERE quality_value IS NOT NULL AND TRIM(quality_value) != ''
-        ) AS quality_tags,
-        CASE WHEN EXISTS (
-          SELECT 1
-          FROM ReleaseGroupSlots monitored_slot
-          WHERE monitored_slot.release_group_mbid = release_group.mbid
-            AND monitored_slot.monitored = 1
-        ) THEN 1 ELSE 0 END AS is_monitored,
+        quality_tags.tags AS quality_tags,
+        CASE WHEN monitored_groups.release_group_mbid IS NOT NULL THEN 1 ELSE 0 END AS is_monitored,
         COALESCE(selected_slot.monitored_lock, 0) AS monitored_lock,
-        top.popularity AS popularity,
-        release_group.title AS album_title,
+        top_tracks.popularity AS popularity,
+        top_tracks.release_group_title AS album_title,
         provider_album.asset_id AS album_cover,
-        artist_metadata.name AS artist_name,
-        artist_metadata.mbid AS artist_id,
-        COALESCE(release.date, release_group.first_release_date) AS release_date,
-        track.updated_at AS last_scanned,
-        track.updated_at AS created_at,
-        track.updated_at AS updated_at,
+        top_tracks.artist_name,
+        top_tracks.artist_mbid AS artist_id,
+        top_tracks.recording_credits,
+        COALESCE(top_tracks.release_date, top_tracks.first_release_date) AS release_date,
+        top_tracks.updated_at AS last_scanned,
+        top_tracks.updated_at AS created_at,
+        top_tracks.updated_at AS updated_at,
         provider_track.provider AS preview_provider,
         provider_track.provider_id AS preview_provider_track_id,
-        track.mbid AS musicbrainz_track_id,
-        track.recording_mbid AS musicbrainz_recording_id,
-        track.release_mbid AS musicbrainz_release_id,
-        CASE WHEN EXISTS (
-          SELECT 1
-          FROM TrackFiles downloaded_file
-          WHERE downloaded_file.file_type = 'track'
-            AND (
-              downloaded_file.canonical_track_mbid = track.mbid
-              OR (track.recording_mbid IS NOT NULL AND downloaded_file.canonical_recording_mbid = track.recording_mbid)
-            )
-        ) THEN 1 ELSE 0 END AS is_downloaded
-      FROM top
-      JOIN Tracks track ON track.mbid = top.track_mbid
-      JOIN AlbumReleases release ON release.mbid = track.release_mbid
-      JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
-      LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = release_group.artist_mbid
-      LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
-      LEFT JOIN ProviderItems provider_track
-        ON provider_track.rowid = (
-          SELECT preferred_provider_track.rowid
-          FROM ProviderItems preferred_provider_track
-          WHERE preferred_provider_track.entity_type = 'track'
-            AND (
-              preferred_provider_track.track_mbid = track.mbid
-              OR preferred_provider_track.recording_mbid = track.recording_mbid
-            )
-          ORDER BY
-            CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-            preferred_provider_track.updated_at DESC,
-            preferred_provider_track.provider_id ASC
-          LIMIT 1
-        )
-      LEFT JOIN ProviderItems provider_album
-        ON provider_album.rowid = (
-          SELECT preferred_provider_album.rowid
-          FROM ProviderItems preferred_provider_album
-          WHERE preferred_provider_album.entity_type = 'album'
-            AND preferred_provider_album.release_group_mbid = release_group.mbid
-          ORDER BY
-            CASE preferred_provider_album.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-            preferred_provider_album.updated_at DESC,
-            preferred_provider_album.provider_id ASC
-          LIMIT 1
-        )
-      LEFT JOIN ReleaseGroupSlots selected_slot
-        ON selected_slot.release_group_mbid = release_group.mbid
-       AND selected_slot.selected_release_mbid = track.release_mbid
-       AND selected_slot.id = (
-         SELECT preferred_slot.id
-         FROM ReleaseGroupSlots preferred_slot
-         WHERE preferred_slot.release_group_mbid = release_group.mbid
-           AND preferred_slot.selected_release_mbid = track.release_mbid
-         ORDER BY CASE preferred_slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
-         LIMIT 1
-       )
-      LEFT JOIN TrackFiles primary_file
-        ON primary_file.canonical_track_mbid = track.mbid
-       AND primary_file.file_type = 'track'
-       AND primary_file.id = (
-         SELECT preferred_file.id
-         FROM TrackFiles preferred_file
-         WHERE preferred_file.canonical_track_mbid = track.mbid
-           AND preferred_file.file_type = 'track'
-         ORDER BY CASE preferred_file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, preferred_file.id ASC
-         LIMIT 1
-       )
-      GROUP BY track.mbid
+        top_tracks.id AS musicbrainz_track_id,
+        top_tracks.recording_mbid AS musicbrainz_recording_id,
+        top_tracks.release_mbid AS musicbrainz_release_id,
+        CASE WHEN downloaded_tracks.track_id IS NOT NULL THEN 1 ELSE 0 END AS is_downloaded
+      FROM top_tracks
+      LEFT JOIN provider_tracks provider_track ON provider_track.track_id = top_tracks.id AND provider_track.rank = 1
+      LEFT JOIN provider_albums provider_album ON provider_album.track_id = top_tracks.id AND provider_album.rank = 1
+      LEFT JOIN selected_slots selected_slot ON selected_slot.track_id = top_tracks.id AND selected_slot.rank = 1
+      LEFT JOIN primary_files primary_file ON primary_file.track_id = top_tracks.id AND primary_file.rank = 1
+      LEFT JOIN quality_tags ON quality_tags.track_id = top_tracks.id
+      LEFT JOIN monitored_groups ON monitored_groups.release_group_mbid = top_tracks.release_group_mbid
+      LEFT JOIN downloaded_tracks ON downloaded_tracks.track_id = top_tracks.id
       ORDER BY popularity DESC, release_date DESC, id ASC
-    `).all(String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[];
+    `).all(String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[] : [];
 
         const releaseGroupDownloadStats = getReleaseGroupDownloadStatsMap(musicBrainzReleaseGroups.map((album) => album.mbid));
-        const artistDownloadStats = getArtistDownloadStats(artistId);
+        const artistDownloadStats = includeStatistics
+            ? getArtistDownloadStats(artistId)
+            : { downloadedPercent: 0, isDownloaded: false };
 
         const modules: Record<string, any[]> = {
             ARTIST_ALBUMS: [],

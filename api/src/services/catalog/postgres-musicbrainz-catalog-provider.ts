@@ -174,8 +174,10 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     const [header] = await this.query<{
       id: number; gid: string; name: string; primary_type: string | null; comment: string | null;
       artist_gid: string | null; secondary_types: string[] | null;
+      y: number | null; m: number | null; d: number | null;
     }>(
       `SELECT rg.id, rg.gid, rg.name, rgpt.name AS primary_type, rg.comment,
+          rgm.first_release_date_year AS y, rgm.first_release_date_month AS m, rgm.first_release_date_day AS d,
           (SELECT a.gid FROM artist_credit_name acn JOIN artist a ON a.id = acn.artist
              WHERE acn.artist_credit = rg.artist_credit ORDER BY acn.position LIMIT 1) AS artist_gid,
           (SELECT array_agg(st.name ORDER BY st.name)
@@ -184,6 +186,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
              WHERE j.release_group = rg.id) AS secondary_types
        FROM release_group rg
        LEFT JOIN release_group_primary_type rgpt ON rgpt.id = rg.type
+       LEFT JOIN release_group_meta rgm ON rgm.id = rg.id
        WHERE rg.gid = $1`,
       [releaseGroupMbid],
     );
@@ -193,9 +196,12 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
 
     const releases = await this.loadReleasesForGroup(header.id);
 
-    const firstReleaseDate = releases
-      .map((release) => release.date ?? null)
-      .reduce<string | null>((acc, date) => earlierDate(acc, date), null);
+    const firstReleaseDate = earlierDate(
+      releases
+        .map((release) => release.date ?? null)
+        .reduce<string | null>((acc, date) => earlierDate(acc, date), null),
+      formatMbDate(header.y, header.m, header.d),
+    );
 
     const mbReleaseGroup: MbReleaseGroup = {
       id: header.gid,
@@ -227,8 +233,10 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     const headers = await this.query<{
       id: number; gid: string; name: string; primary_type: string | null; comment: string | null;
       artist_gid: string | null; secondary_types: string[] | null;
+      y: number | null; m: number | null; d: number | null;
     }>(
       `SELECT rg.id, rg.gid, rg.name, rgpt.name AS primary_type, rg.comment,
+          rgm.first_release_date_year AS y, rgm.first_release_date_month AS m, rgm.first_release_date_day AS d,
           (SELECT a.gid FROM artist_credit_name acn JOIN artist a ON a.id = acn.artist
              WHERE acn.artist_credit = rg.artist_credit ORDER BY acn.position LIMIT 1) AS artist_gid,
           (SELECT array_agg(st.name ORDER BY st.name)
@@ -237,6 +245,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
              WHERE j.release_group = rg.id) AS secondary_types
        FROM release_group rg
        LEFT JOIN release_group_primary_type rgpt ON rgpt.id = rg.type
+       LEFT JOIN release_group_meta rgm ON rgm.id = rg.id
        WHERE rg.gid = ANY($1::uuid[])`,
       [mbids],
     );
@@ -248,9 +257,12 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
 
     return headers.map((header) => {
       const releases = releasesByRgId.get(header.id) ?? [];
-      const firstReleaseDate = releases
-        .map((release) => release.date ?? null)
-        .reduce<string | null>((acc, date) => earlierDate(acc, date), null);
+      const firstReleaseDate = earlierDate(
+        releases
+          .map((release) => release.date ?? null)
+          .reduce<string | null>((acc, date) => earlierDate(acc, date), null),
+        formatMbDate(header.y, header.m, header.d),
+      );
       const mbReleaseGroup: MbReleaseGroup = {
         id: header.gid,
         title: header.name,
@@ -316,8 +328,13 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     const dateRows = await this.query<{ release_gid: string; y: number | null; m: number | null; d: number | null; code: string | null }>(
       `SELECT r.gid AS release_gid, rc.date_year AS y, rc.date_month AS m, rc.date_day AS d, iso.code
        FROM release r
-       LEFT JOIN release_country rc ON rc.release = r.id
+       JOIN release_country rc ON rc.release = r.id
        LEFT JOIN iso_3166_1 iso ON iso.area = rc.country
+       WHERE r.release_group = ANY($1::int[])
+       UNION ALL
+       SELECT r.gid AS release_gid, ruc.date_year AS y, ruc.date_month AS m, ruc.date_day AS d, NULL AS code
+       FROM release r
+       JOIN release_unknown_country ruc ON ruc.release = r.id
        WHERE r.release_group = ANY($1::int[])`,
       [ids],
     );

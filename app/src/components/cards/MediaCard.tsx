@@ -34,6 +34,8 @@ export interface MediaCardProps {
     qualityBadges?: React.ReactNode;
     /** Is this item monitored? */
     monitored?: boolean;
+    /** User-locked monitor state cannot be toggled by this control. */
+    monitoringLocked?: boolean;
 
     /** Called when monitor indicator is clicked */
     onMonitorToggle?: (e: React.MouseEvent) => void;
@@ -68,6 +70,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     quality,
     qualityBadges,
     monitored,
+    monitoringLocked,
 
     onMonitorToggle,
     mini,
@@ -143,11 +146,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                         src={activeImageUrl}
                         alt={alt}
                         className={mergeClasses(styles.cardImage, !imageLoaded && styles.cardImageLoading)}
-                        // NOT loading="lazy": the card grids scroll inside a nested
-                        // container, but native lazy-loading only observes the
-                        // document viewport, so below-fold covers never loaded.
-                        // (The real perf fix is caching covers to disk — Lidarr's
-                        // MediaCoverService model — so eager loading is cheap.)
+                        loading="lazy"
                         decoding="async"
                         onLoad={() => setImageLoaded(true)}
                         onError={() => {
@@ -181,8 +180,9 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                         type="button"
                         className={styles.monitorIndicator}
                         onClick={handleMonitorClick}
+                        disabled={monitoringLocked}
                         aria-label={monitored ? "Unmonitor" : "Monitor"}
-                        title={monitored ? "Unmonitor" : "Monitor"}
+                        title={monitoringLocked ? "Monitoring is locked" : monitored ? "Unmonitor" : "Monitor"}
                     >
                         {monitored ? (
                             <EyeOff16Regular className={styles.monitorIcon} />

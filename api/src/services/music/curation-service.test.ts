@@ -420,6 +420,91 @@ test("CurationService queues spatial slot when only the stereo selected release 
   assert.equal(payload.releaseGroupMbid, "rg-mbid-1");
 });
 
+test("DownloadMissingService queues quality-aware composite plans as canonical tracks", async () => {
+  const { db } = dbModule;
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)")
+    .run("artist-1", "Amy Winehouse", "artist-mbid-1");
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid-1", "Amy Winehouse");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
+    .run("rg-back-to-black", "artist-mbid-1", "Back to Black");
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+    VALUES (?, ?, ?, ?, 2, 1)
+  `).run("release-back-to-black-deluxe", "rg-back-to-black", "artist-mbid-1", "Back to Black (Deluxe Edition)");
+  db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("amy-recording-1", "artist-mbid-1", "Rehab");
+  db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("amy-recording-2", "artist-mbid-1", "Valerie");
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("amy-track-1", "release-back-to-black-deluxe", "amy-recording-1", "Rehab", 1, 1);
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("amy-track-2", "release-back-to-black-deluxe", "amy-recording-2", "Valerie", 2, 1);
+
+  const matchEvidence = JSON.stringify({
+    matchKind: "composite",
+    coverage: {
+      coveredTracks: 2,
+      targetTracks: 2,
+      complete: true,
+      qualityTrackCounts: { HIRES_LOSSLESS: 1, LOSSLESS: 1 },
+    },
+    trackSources: [
+      {
+        canonicalTrackMbid: "amy-track-1",
+        canonicalRecordingMbid: "amy-recording-1",
+        providerTrackId: "tidal-hires-rehab",
+        providerAlbumId: "tidal-standard-hires",
+        quality: "HIRES_LOSSLESS",
+        title: "Rehab",
+      },
+      {
+        canonicalTrackMbid: "amy-track-2",
+        canonicalRecordingMbid: "amy-recording-2",
+        providerTrackId: "tidal-lossless-valerie",
+        providerAlbumId: "tidal-deluxe-lossless",
+        quality: "LOSSLESS",
+        title: "Valerie",
+      },
+    ],
+  });
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid, quality,
+      match_status, match_method, match_evidence
+    ) VALUES (?, ?, 'stereo', 1, 'tidal', ?, ?, 'LOSSLESS', 'verified', ?, ?)
+  `).run(
+    "artist-mbid-1",
+    "rg-back-to-black",
+    "tidal-standard-hires;tidal-deluxe-lossless",
+    "release-back-to-black-deluxe",
+    "quality_optimized_composite_track_coverage",
+    matchEvidence,
+  );
+
+  const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
+  assert.deepEqual(queued, { albums: 0, tracks: 2, videos: 0 });
+
+  const jobs = db.prepare(`
+    SELECT ref_id AS refId, payload
+    FROM commands
+    WHERE name = ?
+    ORDER BY id
+  `).all(queueModule.CommandNames.DownloadTrack) as Array<{ refId: string; payload: string }>;
+  assert.deepEqual(jobs.map((job) => job.refId), ["amy-track-1:stereo", "amy-track-2:stereo"]);
+  assert.deepEqual(jobs.map((job) => JSON.parse(job.payload).quality), ["HIRES_LOSSLESS", "LOSSLESS"]);
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS count FROM commands WHERE name = ?")
+      .get(queueModule.CommandNames.DownloadAlbum) as { count: number }).count,
+    0,
+  );
+});
+
 test("DownloadMissingService can queue monitored albums in bounded batches", async () => {
   const { db } = dbModule;
 

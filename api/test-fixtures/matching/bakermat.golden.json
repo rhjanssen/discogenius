@@ -12,10 +12,10 @@
     "providerId": "107102284",
     "providerTitle": "Learn To Lose (feat. Alex Clare)",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
-    "confidence": 0.9,
-    "releaseGroupMbid": "f0a6daa7-cf56-404d-bcd7-f7c18d5867cc",
-    "releaseMbid": "44847ed2-3de3-498e-ac09-a663b4ffefd5"
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "06e3a8ff-abc5-4a51-b2e3-44a956056aa4",
+    "releaseMbid": "933e8118-f897-4507-b960-c126a74e8901"
   },
   {
     "providerId": "110492267",
@@ -56,9 +56,9 @@
   {
     "providerId": "175421175",
     "providerTitle": "Walk That Walk",
-    "status": "verified",
+    "status": "candidate",
     "method": "musicbrainz-recording-isrc",
-    "confidence": 0.9,
+    "confidence": 0.24,
     "releaseGroupMbid": "6bb5b3df-c963-49ef-b1e1-2c8ad370eb98",
     "releaseMbid": "cc378fa5-a876-49f3-b533-b9518a0c84c5"
   },
@@ -218,9 +218,9 @@
   {
     "providerId": "303307833",
     "providerTitle": "Higher (Escalators)",
-    "status": "verified",
+    "status": "candidate",
     "method": "musicbrainz-recording-isrc",
-    "confidence": 0.9,
+    "confidence": 0.172,
     "releaseGroupMbid": "44c9296c-d137-4d3e-8450-70655aa50bb3",
     "releaseMbid": "3aa91731-cef8-4fff-89fa-8601ad7bb78e"
   },
@@ -236,9 +236,9 @@
   {
     "providerId": "313745026",
     "providerTitle": "So Glad That The Lord (Remix)",
-    "status": "probable",
+    "status": "candidate",
     "method": "musicbrainz-recording-isrc",
-    "confidence": 0.217,
+    "confidence": 0.207,
     "releaseGroupMbid": "44c9296c-d137-4d3e-8450-70655aa50bb3",
     "releaseMbid": "3aa91731-cef8-4fff-89fa-8601ad7bb78e"
   },
@@ -389,9 +389,9 @@
   {
     "providerId": "433185281",
     "providerTitle": "Grace Note (Continued) (Extended)",
-    "status": "verified",
+    "status": "probable",
     "method": "musicbrainz-recording-isrc",
-    "confidence": 0.99,
+    "confidence": 0.97,
     "releaseGroupMbid": "2f1ea280-939c-4e1a-a0c1-13f4a07c8ff9",
     "releaseMbid": "f60060c1-73bd-4962-a47c-5d47a203f913"
   },
@@ -534,9 +534,9 @@
     "providerId": "95678942",
     "providerTitle": "Partystarter",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
-    "confidence": 0.9,
-    "releaseGroupMbid": "f0a6daa7-cf56-404d-bcd7-f7c18d5867cc",
-    "releaseMbid": "44847ed2-3de3-498e-ac09-a663b4ffefd5"
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "d5d49949-aa44-420b-8921-1374fd5e7205",
+    "releaseMbid": "74040b23-fbe6-4591-9aaa-794e36a4569c"
   }
 ]

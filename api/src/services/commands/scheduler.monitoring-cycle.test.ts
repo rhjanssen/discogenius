@@ -36,7 +36,7 @@ after(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("monitoring cycle waits for downstream work before queueing downloads and stamping completion", () => {
+test("monitoring cycle is independent from the daily root scan and stamps after downloads", () => {
     const initialSnapshot = taskSchedulerModule.getScheduledTaskSnapshots().find((task) => task.key === "monitoring-cycle");
     assert.ok(initialSnapshot);
     assert.equal(initialSnapshot.lastQueuedAt, null);
@@ -64,22 +64,9 @@ test("monitoring cycle waits for downstream work before queueing downloads and s
         [queueModule.CommandNames.RescanFolders],
         10,
     );
-    assert.equal(pendingRootScans.length, 1);
-    assert.equal((pendingRootScans[0].payload as Record<string, unknown>).monitoringCycle, "full-cycle");
-    assert.equal((pendingRootScans[0].payload as Record<string, unknown>).trackUnmappedFiles, false);
+    assert.equal(pendingRootScans.length, 0);
 
-    let pendingDownloads = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
-        [queueModule.CommandNames.DownloadMissing],
-        10,
-    );
-    assert.equal(pendingDownloads.length, 0);
-    assert.equal(taskStateModule.hasActiveMonitoringCycleWorkflow(), true);
-
-    const rootScanJob = pendingRootScans[0];
-    queueModule.CommandQueueManager.complete(rootScanJob.id);
-    taskSchedulerModule.queueNextMonitoringPass(rootScanJob);
-
-    pendingDownloads = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+    const pendingDownloads = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
         [queueModule.CommandNames.DownloadMissing],
         10,
     );
@@ -122,6 +109,40 @@ test("scheduled monitoring cycle with no due artists stops without no-op rescan 
     assert.ok(finalSnapshot);
     assert.notEqual(finalSnapshot.lastQueuedAt, null);
     assert.equal(taskStateModule.hasActiveMonitoringCycleWorkflow(), false);
+});
+
+test("scheduled monitoring excludes due artists already in an intake workflow", () => {
+    dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, ?)").run(
+        "artist-1",
+        "Artist One",
+        "artist-mbid-1",
+        1,
+    );
+    const intakeRefreshId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RefreshArtist,
+        workflowModule.buildRefreshArtistCommand({
+            artistId: "artist-1",
+            artistName: "Artist One",
+            workflow: "monitoring-intake",
+        }),
+        "artist-1",
+    );
+    assert.ok(intakeRefreshId > 0);
+
+    const refreshJobId = taskSchedulerModule.queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
+    assert.ok(refreshJobId > 0);
+    const refreshJob = queueModule.CommandQueueManager.get(refreshJobId);
+    assert.ok(refreshJob);
+    assert.equal((refreshJob.payload as Record<string, unknown>).expectedArtists, 0);
+
+    queueModule.CommandQueueManager.complete(refreshJobId);
+    taskSchedulerModule.queueNextMonitoringPass(refreshJob);
+
+    assert.equal(queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.RescanFolders],
+        10,
+    ).length, 0);
+    assert.equal(pendingDownloadMissing().length, 0);
 });
 
 function completeAndAdvance(commandId: number) {

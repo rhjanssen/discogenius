@@ -1507,6 +1507,54 @@ export async function getAlbumTracks(albumId: string) {
  * but NOT replayGain/peak — those are only needed for tag embedding at download
  * time (per-track, few tracks), not for matching, so the bulk path omits them.
  */
+export function mapTidalOpenApiTrack(
+  item: any,
+  trackResource: any,
+  includedArtists: ReadonlyMap<string, any>,
+): any {
+  const attr = trackResource?.attributes || {};
+  const artists = (trackResource?.relationships?.artists?.data || [])
+    .map((artistRef: any) => {
+      const artist = includedArtists.get(String(artistRef?.id));
+      const name = String(artist?.attributes?.name || "").trim();
+      return artistRef?.id && name
+        ? { id: String(artistRef.id), name, type: null }
+        : null;
+    })
+    .filter(Boolean);
+  const primaryArtist = artists[0] || null;
+  const copyright = typeof attr.copyright === "string"
+    ? attr.copyright
+    : typeof attr.copyright?.text === "string"
+      ? attr.copyright.text
+      : null;
+
+  return {
+    provider_id: String(item.id),
+    title: attr.title || "Unknown Track",
+    duration: parseIso8601DurationSeconds(attr.duration),
+    track_number: item?.meta?.trackNumber || 0,
+    volume_number: item?.meta?.volumeNumber || 1,
+    version: attr.version || null,
+    isrc: attr.isrc || null,
+    explicit: attr.explicit || false,
+    quality: deriveQuality({ mediaMetadata: { tags: attr.mediaTags || [] } }) || "LOSSLESS",
+    copyright,
+    artist_id: primaryArtist?.id || null,
+    artist_name: primaryArtist?.name || "Unknown Artist",
+    artists,
+    url: `https://listen.tidal.com/track/${item.id}`,
+    bpm: attr.bpm || null,
+    key: attr.key || null,
+    key_scale: attr.keyScale || null,
+    musical_key: attr.key ? (attr.keyScale ? `${attr.key} ${attr.keyScale}` : attr.key) : null,
+    peak: null,
+    replay_gain: null,
+    popularity: typeof attr.popularity === "number" ? Math.round(attr.popularity * 100) : 0,
+    release_date: attr.releaseDate || attr.streamStartDate || null,
+  };
+}
+
 export async function getAlbumTracksBulk(albumIds: string[]): Promise<Map<string, any[]>> {
   const cc = getCountryCode();
   const result = new Map<string, any[]>();
@@ -1517,50 +1565,39 @@ export async function getAlbumTracksBulk(albumIds: string[]): Promise<Map<string
     const chunk = ids.slice(i, i + FILTER_ID_CAP);
     const albums: any[] = [];
     const includedTracks = new Map<string, any>();
+    const includedArtists = new Map<string, any>();
     // The compound document returns all albums + track resources in one shot at
     // these volumes, but follow links.next defensively in case it ever paginates.
     let endpoint: string | null =
-      `/albums?filter%5Bid%5D=${chunk.join(",")}&countryCode=${cc}&include=items`;
+      `/albums?filter%5Bid%5D=${chunk.join(",")}&countryCode=${cc}&include=items,items.artists`;
     let guard = 0;
     while (endpoint && guard++ < 50) {
       const doc = await tidalOpenApiRequest(endpoint);
       for (const album of doc?.data || []) albums.push(album);
       for (const inc of doc?.included || []) {
         if (inc?.type === "tracks") includedTracks.set(String(inc.id), inc);
+        if (inc?.type === "artists") includedArtists.set(String(inc.id), inc);
       }
       const next: string | undefined = doc?.links?.next;
       endpoint = next ? (next.startsWith("http") ? next.replace(TIDAL_OPENAPI_BASE, "") : next) : null;
     }
 
     for (const album of albums) {
-      const items: any[] = album?.relationships?.items?.data || [];
-      const tracks = items.map((item: any) => {
-        const attr = includedTracks.get(String(item.id))?.attributes || {};
-        return {
-          provider_id: String(item.id),
-          title: attr.title || "Unknown Track",
-          duration: parseIso8601DurationSeconds(attr.duration),
-          track_number: item?.meta?.trackNumber || 0,
-          volume_number: item?.meta?.volumeNumber || 1,
-          version: attr.version || null,
-          isrc: attr.isrc || null,
-          explicit: attr.explicit || false,
-          quality: deriveQuality({ mediaMetadata: { tags: attr.mediaTags || [] } }) || "LOSSLESS",
-          copyright: attr.copyright || null,
-          artist_id: null,
-          artist_name: "Unknown Artist",
-          artists: [],
-          url: `https://listen.tidal.com/track/${item.id}`,
-          bpm: attr.bpm || null,
-          key: attr.key || null,
-          key_scale: attr.keyScale || null,
-          musical_key: attr.key ? (attr.keyScale ? `${attr.key} ${attr.keyScale}` : attr.key) : null,
-          peak: null,
-          replay_gain: null,
-          popularity: typeof attr.popularity === "number" ? Math.round(attr.popularity * 100) : 0,
-          release_date: null,
-        };
-      });
+      // `include=items` is capped independently per album. The continuation is
+      // nested under relationships.items (not doc.links.next) and contains only
+      // relationship identifiers, so this compound document is not a complete
+      // ProviderTrack[] yet. Omit it from the bulk map; the generic caller will
+      // use getAlbumTracks for this one long album.
+      if (album?.relationships?.items?.links?.next) {
+        continue;
+      }
+      const items: any[] = (album?.relationships?.items?.data || [])
+        .filter((item: any) => item?.type === "tracks");
+      const tracks = items.map((item: any) => mapTidalOpenApiTrack(
+        item,
+        includedTracks.get(String(item.id)),
+        includedArtists,
+      ));
       result.set(String(album.id), tracks);
     }
   }

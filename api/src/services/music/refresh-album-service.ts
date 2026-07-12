@@ -49,7 +49,7 @@ function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
         quality: providerAlbum.quality || "LOSSLESS",
         url: providerAlbum.url,
         popularity: providerAlbum.popularity ?? 0,
-        copyright: null,
+        copyright: providerAlbum.copyright || null,
         upc: providerAlbum.upc || null,
     };
 }
@@ -70,7 +70,7 @@ export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): a
         isrc: providerTrack.isrc || null,
         explicit: false,
         quality: providerTrack.quality || "LOSSLESS",
-        copyright: (providerTrack as any).copyright || null,
+        copyright: providerTrack.copyright || null,
         replay_gain: (providerTrack as any).replay_gain ?? null,
         peak: (providerTrack as any).peak ?? null,
         bpm: (providerTrack as any).bpm ?? null,
@@ -82,7 +82,7 @@ export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): a
             : (providerTrack.artist ? [{ id: providerTrack.artist.providerId, name: providerTrack.artist.name }] : []),
         url: providerTrack.url,
         popularity: (providerTrack as any).popularity || 0,
-        release_date: null,
+        release_date: providerTrack.releaseDate || null,
     };
 }
 

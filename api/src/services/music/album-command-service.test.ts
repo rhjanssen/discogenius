@@ -134,3 +134,65 @@ test("track monitor command uses canonical tracks and selected provider offers",
   assert.equal(payload.canonicalTrackId, "401");
   assert.equal(payload.canonicalTrackMbid, "track-mbid-1");
 });
+
+test("manual album download uses the shared hybrid per-track acquisition plan", async () => {
+  seedAlbum();
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT INTO Recordings (id, foreign_recording_id, mbid, artist_mbid, title, is_video)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(302, "recording-mbid-2", "recording-mbid-2", "artist-mbid-1", "Bonus Track", 0);
+  db.prepare(`
+    INSERT INTO Tracks (id, foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(402, "track-mbid-2", "recording-mbid-2", "track-mbid-2", "release-mbid-1", "recording-mbid-2", 1, 2, "2", "Bonus Track");
+
+  const evidence = JSON.stringify({
+    trackSources: [
+      {
+        canonicalTrackMbid: "track-mbid-1",
+        canonicalRecordingMbid: "recording-mbid-1",
+        providerTrackId: "provider-hires-track-1",
+        providerAlbumId: "provider-hires-album",
+        title: "Track One",
+        quality: "HI_RES_LOSSLESS",
+      },
+      {
+        canonicalTrackMbid: "track-mbid-2",
+        canonicalRecordingMbid: "recording-mbid-2",
+        providerTrackId: "provider-deluxe-track-2",
+        providerAlbumId: "provider-deluxe-album",
+        title: "Bonus Track",
+        quality: "LOSSLESS",
+      },
+    ],
+  });
+  db.prepare(`
+    UPDATE ReleaseGroupSlots
+    SET monitored = 1,
+        selected_provider_id = ?,
+        selected_release_mbid = ?,
+        match_method = ?,
+        match_evidence = ?
+    WHERE release_group_mbid = ? AND slot = 'stereo'
+  `).run(
+    "provider-hires-album;provider-deluxe-album",
+    "release-mbid-1",
+    "quality_optimized_composite_track_coverage",
+    evidence,
+    "release-group-mbid-1",
+  );
+
+  const result = await serviceModule.AlbumCommandService.addAlbum("release-group-mbid-1", true, "stereo");
+  assert.equal(result.success, true);
+  assert.equal(result.commandIds?.length, 2);
+
+  const jobs = db.prepare("SELECT name, ref_id AS refId, payload FROM commands ORDER BY id").all() as Array<{
+    name: string;
+    refId: string;
+    payload: string;
+  }>;
+  assert.deepEqual(jobs.map((job) => job.name), [queueModule.CommandNames.DownloadTrack, queueModule.CommandNames.DownloadTrack]);
+  assert.deepEqual(jobs.map((job) => job.refId), ["track-mbid-1:stereo", "track-mbid-2:stereo"]);
+  assert.deepEqual(jobs.map((job) => JSON.parse(job.payload).quality), ["HI_RES_LOSSLESS", "LOSSLESS"]);
+});

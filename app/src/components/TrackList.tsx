@@ -922,9 +922,11 @@ const TrackList = <T extends TrackListItem>({
   return (
     <>
       <DataGrid
+        ariaLabel="Track list"
         columns={columns}
         items={tracks}
         getRowKey={(track) => track.id}
+        getRowProps={(track) => ({ "data-album-track-id": String(track.id) })}
         onRowClick={onTrackClick}
         selection={selection}
         renderBeforeRow={renderBeforeRow}

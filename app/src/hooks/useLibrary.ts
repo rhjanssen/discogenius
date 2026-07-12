@@ -307,6 +307,8 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     sort: listSort,
     hasMoreArtists: artistsQuery.hasMore,
     hasMoreAlbums: albumsQuery.hasMore,
+    artistsFetchingMore: artistsQuery.isFetchingMore,
+    albumsFetchingMore: albumsQuery.isFetchingMore,
     loadMoreArtists: artistsQuery.loadMore,
     loadMoreAlbums: albumsQuery.loadMore,
     refetchArtists: () => artistsQuery.refetch(),

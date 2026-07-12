@@ -669,8 +669,8 @@ test("provider slot selection matches multiple provider releases to cover a Musi
 
   // Candidates list: prov-album-a has higher score or we provide both as candidates.
   // We need matches to map both.
-  const matchA = buildMatch(releaseGroupMbid, "prov-album-a");
-  const matchB = buildMatch(releaseGroupMbid, "prov-album-b");
+  const matchA = { ...buildMatch(releaseGroupMbid, "prov-album-a"), status: "candidate" as const };
+  const matchB = { ...buildMatch(releaseGroupMbid, "prov-album-b"), status: "candidate" as const };
 
   slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
     provider: "tidal",
@@ -705,14 +705,16 @@ test("provider slot selection matches multiple provider releases to cover a Musi
   });
 
   const slot = db.prepare(`
-    SELECT monitored AS wanted, selected_provider, selected_provider_id
+    SELECT monitored AS wanted, selected_provider, selected_provider_id, match_status, match_method
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = ? AND slot = 'stereo'
-  `).get(releaseGroupMbid) as { wanted: number; selected_provider: string | null; selected_provider_id: string | null };
+  `).get(releaseGroupMbid) as { wanted: number; selected_provider: string | null; selected_provider_id: string | null; match_status: string | null; match_method: string | null };
 
   assert.equal(slot.selected_provider, "tidal");
   // It should select the combined provider ID separated by semicolon!
   assert.equal(slot.selected_provider_id, "prov-album-a;prov-album-b");
+  assert.equal(slot.match_status, "verified");
+  assert.equal(slot.match_method, "quality_optimized_composite_track_coverage");
 });
 
 test("provider slot selection combines hydrated offers before legacy provider rows are stored", () => {
@@ -781,7 +783,7 @@ test("provider slot selection combines hydrated offers before legacy provider ro
   assert.equal(selections[0]?.match.releaseMbid, "release-mbid-hydrated-multi");
 });
 
-test("provider slot selection skips partial provider releases unless they complete the MusicBrainz release", () => {
+test("provider slot selection retains strict partial coverage without claiming completeness", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-incomplete";
   insertReleaseGroup(releaseGroupMbid);
@@ -845,15 +847,24 @@ test("provider slot selection skips partial provider releases unless they comple
   });
 
   const slot = db.prepare(`
-    SELECT selected_provider_id
+    SELECT selected_provider_id, match_status, match_method, match_evidence
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = ? AND slot = 'stereo'
-  `).get(releaseGroupMbid) as { selected_provider_id: string | null } | undefined;
+  `).get(releaseGroupMbid) as { selected_provider_id: string | null; match_status: string; match_method: string; match_evidence: string };
 
-  assert.equal(slot, undefined);
+  assert.equal(slot.selected_provider_id, "prov-incomplete-a;prov-incomplete-b");
+  assert.equal(slot.match_status, "probable");
+  assert.equal(slot.match_method, "strict_partial_track_coverage");
+  assert.deepEqual(JSON.parse(slot.match_evidence).coverage, {
+    coveredTracks: 2,
+    targetTracks: 3,
+    complete: false,
+    qualityTrackCounts: { LOSSLESS: 2 },
+    extraProviderTracks: 0,
+  });
 });
 
-test("provider slot selection rejects a high quality partial release when target tracks are missing", () => {
+test("provider slot selection keeps high quality partial coverage explicit", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-high-quality-partial";
   insertReleaseGroup(releaseGroupMbid);
@@ -899,12 +910,15 @@ test("provider slot selection rejects a high quality partial release when target
   });
 
   const slot = db.prepare(`
-    SELECT selected_provider_id
+    SELECT selected_provider_id, quality, match_status, match_method
     FROM ReleaseGroupSlots
     WHERE release_group_mbid = ? AND slot = 'stereo'
-  `).get(releaseGroupMbid) as { selected_provider_id: string | null } | undefined;
+  `).get(releaseGroupMbid) as { selected_provider_id: string | null; quality: string; match_status: string; match_method: string };
 
-  assert.equal(slot, undefined);
+  assert.equal(slot.selected_provider_id, "prov-hq-partial");
+  assert.equal(slot.quality, "HIRES_LOSSLESS");
+  assert.equal(slot.match_status, "probable");
+  assert.equal(slot.match_method, "strict_partial_track_coverage");
 });
 
 test("provider slot selection falls back to strong release-shape evidence when noisy track titles block strict matching", () => {
@@ -1323,6 +1337,218 @@ test("MusicBrainz parenthetical bonus-track suffixes do not break edition covera
   assert.equal(selections.length, 1);
   assert.equal(selections[0]?.album.providerId, "provider-anniv-sfx");
   assert.equal(selections[0]?.match.releaseMbid, "release-anniv-sfx");
+});
+
+test("quality-aware coverage uses hi-res standard tracks and lossless deluxe-only tracks", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-back-to-black";
+  const standardReleaseMbid = "release-back-to-black-standard";
+  const deluxeReleaseMbid = "release-back-to-black-deluxe";
+  insertReleaseGroup(releaseGroupMbid);
+
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2006-10-27', ?, ?)
+  `);
+  insertRelease.run(standardReleaseMbid, releaseGroupMbid, "artist-mbid-1", "Back to Black", 2, 1);
+  insertRelease.run(deluxeReleaseMbid, releaseGroupMbid, "artist-mbid-1", "Back to Black (Deluxe Edition)", 4, 2);
+
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const [index, title, isrc] of [
+    [1, "Rehab", "ISRCAMY001"],
+    [2, "You Know I'm No Good", "ISRCAMY002"],
+    [3, "Valerie", "ISRCAMY003"],
+    [4, "Cupid", "ISRCAMY004"],
+  ] as const) {
+    insertRecording.run(`amy-rec-${index}`, title, JSON.stringify([isrc]));
+    if (index <= 2) {
+      insertTrack.run(`amy-standard-track-${index}`, standardReleaseMbid, `amy-rec-${index}`, title, index, 1);
+    }
+    insertTrack.run(`amy-deluxe-track-${index}`, deluxeReleaseMbid, `amy-rec-${index}`, title, index <= 2 ? index : index - 2, index <= 2 ? 1 : 2);
+  }
+
+  const standardMatch = {
+    ...buildMatch(releaseGroupMbid, "tidal-standard-hires"),
+    releaseMbid: standardReleaseMbid,
+    evidence: {
+      ...buildMatch(releaseGroupMbid, "tidal-standard-hires").evidence,
+      availableReleaseMbids: [standardReleaseMbid],
+    },
+  };
+  const deluxeMatch = {
+    ...buildMatch(releaseGroupMbid, "tidal-deluxe-lossless"),
+    releaseMbid: deluxeReleaseMbid,
+    evidence: {
+      ...buildMatch(releaseGroupMbid, "tidal-deluxe-lossless").evidence,
+      availableReleaseMbids: [deluxeReleaseMbid],
+    },
+  };
+  const providerTrack = (album: string, index: number, title: string, isrc: string) => ({
+    mbid: null,
+    providerId: `${album}-track-${index}`,
+    isrc,
+    title,
+    track_number: index,
+    volume_number: 1,
+    duration: 180,
+  });
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "tidal",
+    artistMbid: "artist-mbid-1",
+    albums: [
+      {
+        providerId: "tidal-standard-hires",
+        title: "Back to Black",
+        quality: "HIRES_LOSSLESS",
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: [
+          providerTrack("tidal-standard-hires", 1, "Rehab", "ISRCAMY001"),
+          providerTrack("tidal-standard-hires", 2, "You Know I'm No Good", "ISRCAMY002"),
+        ],
+      },
+      {
+        providerId: "tidal-deluxe-lossless",
+        title: "Back to Black (Deluxe Edition)",
+        quality: "LOSSLESS",
+        trackCount: 4,
+        volumeCount: 2,
+        tracks: [
+          providerTrack("tidal-deluxe-lossless", 1, "Rehab", "ISRCAMY001"),
+          providerTrack("tidal-deluxe-lossless", 2, "You Know I'm No Good", "ISRCAMY002"),
+          providerTrack("tidal-deluxe-lossless", 3, "Valerie", "ISRCAMY003"),
+          providerTrack("tidal-deluxe-lossless", 4, "Cupid", "ISRCAMY004"),
+        ],
+      },
+    ],
+    matches: new Map([
+      ["tidal-standard-hires", standardMatch],
+      ["tidal-deluxe-lossless", deluxeMatch],
+    ]),
+  });
+
+  const slot = db.prepare(`
+    SELECT selected_provider_id, selected_release_mbid, quality, match_method, match_evidence
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ? AND slot = 'stereo'
+  `).get(releaseGroupMbid) as any;
+  const evidence = JSON.parse(slot.match_evidence);
+
+  assert.equal(slot.selected_provider_id, "tidal-standard-hires;tidal-deluxe-lossless");
+  assert.equal(slot.selected_release_mbid, deluxeReleaseMbid);
+  assert.equal(slot.quality, "LOSSLESS");
+  assert.equal(slot.match_method, "quality_optimized_composite_track_coverage");
+  assert.deepEqual(evidence.coverage.qualityTrackCounts, { HIRES_LOSSLESS: 2, LOSSLESS: 2 });
+  assert.deepEqual(
+    evidence.trackSources.map((source: any) => source.providerAlbumId),
+    ["tidal-standard-hires", "tidal-standard-hires", "tidal-deluxe-lossless", "tidal-deluxe-lossless"],
+  );
+});
+
+test("hybrid coverage cannot reuse one logical provider track through duplicate candidates", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-one-to-one-track-plan";
+  const releaseMbid = "release-one-to-one-track-plan";
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', 2, 1)
+  `).run(releaseMbid, releaseGroupMbid, "artist-mbid-1", "Two Track EP");
+  db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)")
+    .run("one-to-one-rec-1", "First Song", JSON.stringify(["ONETOONE01"]));
+  db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)")
+    .run("one-to-one-rec-2", "Second Song", JSON.stringify(["ONETOONE02"]));
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, ?, 1)
+  `);
+  insertTrack.run("one-to-one-track-1", releaseMbid, "one-to-one-rec-1", "First Song", 1);
+  insertTrack.run("one-to-one-track-2", releaseMbid, "one-to-one-rec-2", "Second Song", 2);
+
+  const match = { ...buildMatch(releaseGroupMbid, "duplicate-provider-album"), releaseMbid };
+  const duplicateCandidate = {
+    provider: "tidal",
+    album: {
+      providerId: "duplicate-provider-album",
+      title: "Two Track EP",
+      quality: "LOSSLESS",
+      trackCount: 1,
+      volumeCount: 1,
+      tracks: [{
+        mbid: null,
+        providerId: "only-provider-track",
+        isrc: "ONETOONE01",
+        title: "First Song",
+        track_number: 1,
+        volume_number: 1,
+        duration: 180,
+      }],
+    },
+    match,
+  };
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([duplicateCandidate, { ...duplicateCandidate }]);
+
+  assert.equal(selections.length, 1);
+  assert.equal(selections[0]?.match.method, "strict_partial_track_coverage");
+  const evidence = selections[0]?.match.evidence as any;
+  assert.equal(evidence.coverage.coveredTracks, 1);
+  assert.equal(evidence.coverage.targetTracks, 2);
+  assert.deepEqual(evidence.providerAlbumIds, ["duplicate-provider-album"]);
+  assert.equal(evidence.trackSources.length, 1);
+});
+
+test("title-only matching does not confuse repeated vocal and instrumental recordings", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-repeated-instrumental-titles";
+  const releaseMbid = "release-repeated-instrumental-titles";
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', 2, 2)
+  `).run(releaseMbid, releaseGroupMbid, "artist-mbid-1", "Album + Instrumentals");
+  db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, '[]')")
+    .run("vocal-recording", "Same Song");
+  db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, '[]')")
+    .run("instrumental-recording", "Same Song");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+    VALUES (?, ?, ?, ?, 1, ?)
+  `);
+  insertTrack.run("vocal-track", releaseMbid, "vocal-recording", "Same Song", 1);
+  insertTrack.run("instrumental-track", releaseMbid, "instrumental-recording", "Same Song", 2);
+
+  const match = {
+    ...buildMatch(releaseGroupMbid, "vocal-provider-album"),
+    releaseMbid,
+    status: "candidate" as const,
+  };
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([{
+    provider: "tidal",
+    album: {
+      providerId: "vocal-provider-album",
+      title: "Album",
+      quality: "LOSSLESS",
+      trackCount: 1,
+      volumeCount: 1,
+      tracks: [{
+        mbid: null,
+        providerId: "vocal-provider-track",
+        isrc: null,
+        title: "Same Song",
+        track_number: 1,
+        volume_number: 1,
+        duration: null,
+      }],
+    },
+    match,
+  }]);
+
+  assert.deepEqual(selections, []);
 });
 
 test("equal-completeness editions: the higher-bit-depth (hi-res) release wins the stereo slot", () => {

@@ -42,10 +42,9 @@ let activeMonitoringDownloadPassStmt: any | null = null;
 
 const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 30 * 1000, 1_000);
 const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
-const METADATA_REFRESH_BATCH_SIZE = readIntEnv("DISCOGENIUS_METADATA_REFRESH_BATCH_SIZE", 50, 1);
-const MONITORING_DUE_CHECK_INTERVAL_MINUTES = readIntEnv("DISCOGENIUS_MONITORING_DUE_CHECK_INTERVAL_MINUTES", 60, 1);
+const MONITORING_DUE_CHECK_INTERVAL_MINUTES = readIntEnv("DISCOGENIUS_MONITORING_DUE_CHECK_INTERVAL_MINUTES", 24 * 60, 1);
 
-export type ScheduledTaskKey = "monitoring-cycle" | "housekeeping";
+export type ScheduledTaskKey = "monitoring-cycle" | "root-scan" | "housekeeping";
 
 interface ScheduledTaskDefinition {
     key: ScheduledTaskKey;
@@ -184,9 +183,10 @@ function selectMetadataRefreshArtists(options: {
 }) {
     const artistIds = normalizeArtistIds(options.artistIds);
     if (options.dueOnly) {
+        const pendingArtistIds = getArtistsWithPendingJobs();
         return getManagedArtistsDueForRefresh({
             artistIds,
-        });
+        }).filter((artist) => !pendingArtistIds.has(String(artist.id)));
     }
 
     return getManagedArtists({ orderByLastScanned: true, artistIds });
@@ -199,15 +199,15 @@ export function queueMetadataRefreshPass(options: {
     artistIds?: string[];
 } = {}) {
     const monitoringCycle = normalizeMonitoringPassWorkflow(options.monitoringCycle);
-    const selectedArtistIds = normalizeArtistIds(options.artistIds) ?? [];
     const artists = selectMetadataRefreshArtists({
         artistIds: options.artistIds,
         dueOnly: options.dueOnly,
     });
-    const shouldBatchDueRefresh = Boolean(options.dueOnly) && selectedArtistIds.length === 0;
-    const queuedArtists = shouldBatchDueRefresh
-        ? artists.slice(0, METADATA_REFRESH_BATCH_SIZE)
-        : artists;
+    // Lidarr's scheduled RefreshArtist command considers the complete managed
+    // artist set in one daily pass. Discogenius fans that pass out into durable
+    // per-artist commands, but keeps the same all-due semantics; queue equality
+    // and the pending-id filter above prevent duplicate work.
+    const queuedArtists = artists;
     const queuedArtistIds = queuedArtists.map((artist) => String(artist.id));
     const artistLabel = options.dueOnly ? "due managed artist(s)" : "managed artist(s)";
     const refId = monitoringCycle ? `metadata-refresh:${monitoringCycle}` : "metadata-refresh";
@@ -216,9 +216,7 @@ export function queueMetadataRefreshPass(options: {
         {
             title: "Refreshing metadata",
             description: queuedArtists.length > 0
-                ? shouldBatchDueRefresh && queuedArtists.length < artists.length
-                    ? `Queueing metadata refresh for ${queuedArtists.length} of ${artists.length} ${artistLabel}`
-                    : `Queueing metadata refresh for ${queuedArtists.length} ${artistLabel}`
+                ? `Queueing metadata refresh for ${queuedArtists.length} ${artistLabel}`
                 : (options.dueOnly ? "No managed artists are due for metadata refresh" : "Queueing metadata refresh"),
             artistIds: queuedArtistIds,
             expectedArtists: queuedArtists.length,
@@ -341,22 +339,9 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
                 markMonitoringCycleCompleted();
                 return;
             }
-            // Per-artist curation/matching is handled by the event-driven pipeline
-            // (ARTIST_REFRESH_COMPLETE → MatchArtistProviders → RescanFolders →
-            // ARTIST_SCANNED → CurateArtist). On a full cycle we STILL queue the
-            // library-wide root scan here: it inventories the disk (new/unmapped
-            // files) which the per-artist folder scans don't cover. It can't race
-            // provider matching — it's disk inventory, and the terminal
-            // DownloadMissing is deferred below until all follow-up work drains.
-            if (monitoringCycle === "full-cycle") {
-                queueRescanFoldersPass({
-                    trigger: job.trigger ?? CommandTrigger.Unspecified,
-                    fullProcessing: true,
-                    trackUnmappedFiles: false,
-                    monitoringCycle,
-                    addNewArtists: false,
-                });
-            }
+            // Per-artist matching and curation are event-driven. Root-folder
+            // inventory is an independent daily RescanFolders task, matching
+            // Lidarr's separate RefreshArtist and RescanFolders schedules.
             break;
         case CommandNames.RescanFolders:
             break;
@@ -434,10 +419,17 @@ function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
     return [
         {
             key: "monitoring-cycle",
-            name: "Monitoring Cycle",
-            taskName: CommandNames.RescanFolders,
+            name: "Refresh Artists",
+            taskName: CommandNames.RefreshMetadata,
             intervalMinutes: MONITORING_DUE_CHECK_INTERVAL_MINUTES,
             enabled: Boolean(config.enable_active_monitoring),
+        },
+        {
+            key: "root-scan",
+            name: "Rescan Folders",
+            taskName: CommandNames.RescanFolders,
+            intervalMinutes: 24 * 60,
+            enabled: true,
         },
         {
             key: "housekeeping",
@@ -506,6 +498,8 @@ function getScheduledTaskActiveState(definition: ScheduledTaskDefinition): boole
     switch (definition.key) {
         case "monitoring-cycle":
             return hasActiveMonitoringCycleWorkflow();
+        case "root-scan":
+            return hasActiveTask(CommandNames.RescanFolders);
         case "housekeeping":
             return hasActiveHousekeepingTask();
         default:
@@ -635,6 +629,22 @@ function queueDueScheduledTasks() {
                 markScheduledTaskQueued(definition.key);
                 console.log("🧹 Scheduled housekeeping queued");
             }
+            continue;
+        }
+
+        if (definition.key === "root-scan") {
+            if (hasActiveTask(CommandNames.RescanFolders)) {
+                continue;
+            }
+            const commandId = queueRescanFoldersPass({
+                trigger: CommandTrigger.Scheduled,
+                fullProcessing: false,
+                addNewArtists: false,
+            });
+            if (commandId !== -1) {
+                markScheduledTaskQueued(definition.key);
+                console.log("📁 Scheduled root-folder rescan queued");
+            }
         }
     }
 }
@@ -648,7 +658,7 @@ export function startMonitoring() {
     trySyncScheduledTasks();
 
     const { config } = getMonitoringStatus();
-    console.log(`🔍 Starting scheduled task runner (artist due-check every ${MONITORING_DUE_CHECK_INTERVAL_MINUTES}m, housekeeping every ${Math.round(HOUSEKEEPING_INTERVAL_MS / 3_600_000)}h — Lidarr-style adaptive refresh)`);
+    console.log(`🔍 Starting scheduled task runner (artist refresh and root scan every ${MONITORING_DUE_CHECK_INTERVAL_MINUTES}m, housekeeping every ${Math.round(HOUSEKEEPING_INTERVAL_MS / 3_600_000)}h)`);
     isMonitoring = true;
 
     const tick = () => {

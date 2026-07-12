@@ -46,6 +46,29 @@ export function initCurationListeners() {
     // Trigger disk scan after metadata refresh is complete
     appEvents.on(AppEvent.ARTIST_REFRESH_COMPLETE, (payload: ArtistRefreshCompleteEventPayload | undefined) => {
         if (payload?.scanLibrary) {
+            const shouldRescan = payload.isNewArtist
+                || payload.metadataChanged
+                || payload.trigger === CommandTrigger.Manual;
+            if (!shouldRescan) {
+                const curationWorkflow = resolveCurationWorkflow(payload.workflow);
+                if (curationWorkflow) {
+                    console.log(`[Listeners] Artist ${payload.artistId} metadata unchanged; skipping RescanFolders and queueing CurateArtist`);
+                    CommandQueueManager.push(
+                        CommandNames.CurateArtist,
+                        buildCurateArtistCommand({
+                            artistId: payload.artistId,
+                            artistName: payload.artistName,
+                            workflow: curationWorkflow,
+                            monitoringCycle: payload.monitoringCycle,
+                        }),
+                        payload.artistId,
+                        0,
+                        payload.trigger ?? CommandTrigger.Unspecified,
+                    );
+                }
+                return;
+            }
+
             const workflow = resolveRescanWorkflow(payload?.workflow);
             if (!workflow) {
                 console.warn(`[Listeners] Artist ${payload?.artistId ?? "unknown"} metadata refreshed without a rescan workflow; skipping RescanFolders`);

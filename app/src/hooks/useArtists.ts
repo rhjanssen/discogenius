@@ -170,6 +170,7 @@ export const useArtists = (options?: UseArtistsOptions) => {
     loading: query.loading,
     isPopulated: query.isPopulated,
     hasMore: query.hasMore,
+    isFetchingMore: query.isFetchingNextPage,
     total: query.total,
     loadMore,
     refetch: () => query.refetch(),

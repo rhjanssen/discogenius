@@ -37,6 +37,15 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+test("bulk provider tracklists are accepted only when the album is complete", () => {
+  const complete = Array.from({ length: 24 }, (_, index) => ({ id: index + 1 }));
+  const truncated = complete.slice(0, 20);
+
+  assert.equal(refreshServiceModule.completeBulkTrackList(24, truncated), null);
+  assert.equal(refreshServiceModule.completeBulkTrackList(24, undefined), null);
+  assert.equal(refreshServiceModule.completeBulkTrackList(24, complete), complete);
+});
+
 test("unmatched provider offers retain discovery provenance without claiming canonical ownership", () => {
   const artistMbid = "artist-mbid-bastille";
   const album = {
@@ -54,20 +63,69 @@ test("unmatched provider offers retain discovery provenance without claiming can
   );
 
   const row = dbModule.db.prepare(`
-    SELECT artist_mbid, release_group_mbid, match_status
+    SELECT artist_mbid, release_group_mbid, discovered_from_artist_mbid, match_status
     FROM ProviderItems
     WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
   `).get(album.provider_id) as {
     artist_mbid: string | null;
     release_group_mbid: string | null;
+    discovered_from_artist_mbid: string | null;
     match_status: string;
-    data: string;
   };
 
   assert.equal(row.artist_mbid, null);
   assert.equal(row.release_group_mbid, null);
+  assert.equal(row.discovered_from_artist_mbid, artistMbid);
   assert.equal(row.match_status, "unmatched");
-  // assert.equal(JSON.parse(row.data).discoveredFromArtistMbid, artistMbid);
+});
+
+test("hybrid candidates retain discovery provenance without publishing direct availability", () => {
+  const artistMbid = "artist-mbid-bastille";
+  const album = {
+    provider_id: "candidate-album-1",
+    title: "Partial provider edition",
+    artist_name: "Bastille",
+    quality: "LOSSLESS",
+  };
+
+  (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
+    "tidal",
+    artistMbid,
+    [album],
+    new Map([[album.provider_id, {
+      providerId: album.provider_id,
+      status: "candidate",
+      confidence: 0.24,
+      method: "musicbrainz-recording-isrc",
+      releaseMbid: "release-mbid-candidate",
+      releaseGroup: {
+        mbid: "release-group-mbid-candidate",
+        title: "Canonical album",
+      },
+      evidence: { isrcOverlap: 1 },
+    }]]),
+  );
+
+  const offer = dbModule.db.prepare(`
+    SELECT artist_mbid, release_group_mbid, release_mbid,
+           discovered_from_artist_mbid, match_status
+    FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
+  `).get(album.provider_id) as Record<string, string | null>;
+  const directMatchCount = dbModule.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM ProviderItemMatches
+    WHERE provider = 'tidal'
+      AND provider_item_type = 'album'
+      AND provider_item_id = ?
+  `).get(album.provider_id) as { count: number };
+
+  assert.equal(offer.artist_mbid, artistMbid);
+  assert.equal(offer.release_group_mbid, "release-group-mbid-candidate");
+  assert.equal(offer.release_mbid, "release-mbid-candidate");
+  assert.equal(offer.discovered_from_artist_mbid, artistMbid);
+  assert.equal(offer.match_status, "candidate");
+  assert.equal(directMatchCount.count, 0);
 });
 
 test("provider release-group matching passes spatial quality and release disambiguation", () => {

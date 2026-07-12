@@ -48,6 +48,7 @@ import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
 import TrackList from "@/components/TrackList";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import { navigateToAlbumTrack } from "@/utils/albumNavigation";
 import VideoGrid from "@/components/VideoGrid";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
@@ -164,16 +165,6 @@ const useStyles = makeStyles({
       gap: tokens.spacingHorizontalM,
     },
   },
-  tabContent: {
-    display: "flex",
-    flexDirection: "column",
-    height: "100%",
-    gap: tokens.spacingVerticalS,
-  },
-  scrollContainer: {
-    overflow: "auto",
-    flexGrow: 1,
-  },
   contentPadding: {
     padding: tokens.spacingHorizontalXXS,
     "@media (min-width: 768px)": {
@@ -193,7 +184,6 @@ const useStyles = makeStyles({
     gap: tokens.spacingVerticalS,
   },
   tabScroller: {
-    overflow: "auto",
     flexGrow: 1,
   },
   sentinel: {
@@ -281,6 +271,8 @@ const Library = () => {
     stats,
     hasMoreArtists,
     hasMoreAlbums,
+    artistsFetchingMore,
+    albumsFetchingMore,
     loadMoreArtists,
     loadMoreAlbums,
     refetchArtists,
@@ -306,21 +298,7 @@ const Library = () => {
   const { addToQueue, getProgressByProviderId } = useQueueStatus();
   const [importModalOpen, setImportModalOpen] = useState(false);
   const { setArtwork } = useUltraBlurContext();
-  const artistSentinelRef = useRef<HTMLDivElement | null>(null);
-  const albumSentinelRef = useRef<HTMLDivElement | null>(null);
-  const trackSentinelRef = useRef<HTMLDivElement | null>(null);
-  const videoSentinelRef = useRef<HTMLDivElement | null>(null);
-  // Scroll container refs for IntersectionObserver root
-  const artistScrollRef = useRef<HTMLDivElement | null>(null);
-  const albumScrollRef = useRef<HTMLDivElement | null>(null);
-  const trackScrollRef = useRef<HTMLDivElement | null>(null);
-  const videoScrollRef = useRef<HTMLDivElement | null>(null);
-  const [isFetchingMore, setIsFetchingMore] = useState({
-    artists: false,
-    albums: false,
-    tracks: false,
-    videos: false,
-  });
+  const activeSentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Filters - load from persisted settings
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'spatial' | 'video'>(
@@ -389,6 +367,7 @@ const Library = () => {
     loading: tracksLoading,
     isPopulated: tracksIsPopulated,
     hasMore: hasMoreTracks,
+    isFetchingMore: tracksFetchingMore,
     loadMore: loadMoreTracks,
     refetch: refetchTracks,
     hasRefreshError: tracksHasRefreshError,
@@ -407,6 +386,7 @@ const Library = () => {
     loading: videosLoading,
     isPopulated: videosIsPopulated,
     hasMore: hasMoreVideos,
+    isFetchingMore: videosFetchingMore,
     loadMore: loadMoreVideos,
     refetch: refetchVideos,
     toggleMonitor: toggleVideoMonitor,
@@ -783,100 +763,71 @@ const Library = () => {
     setBrandKeyColor(null);
   }, [setArtwork, setBrandKeyColor]);
 
-  // Infinite scroll observer for each tab - uses tab-specific scroll container as root
-  // Artists tab observer
-  useEffect(() => {
-    // Wait for data to be loaded before setting up observer
-    if (selectedTab !== "artists" || loading || artists.length === 0) return;
-    if (!artistScrollRef.current || !artistSentinelRef.current) return;
+  const activeInfiniteScroll = useMemo(() => {
+    if (selectedTab === "albums") {
+      return {
+        hasMore: hasMoreAlbums,
+        isLoading: albumsFetchingMore,
+        itemCount: albums.length,
+        initialLoading: loading,
+        loadMore: loadMoreAlbums,
+      };
+    }
+    if (selectedTab === "tracks") {
+      return {
+        hasMore: hasMoreTracks,
+        isLoading: tracksFetchingMore,
+        itemCount: tracks.length,
+        initialLoading: tracksLoading,
+        loadMore: loadMoreTracks,
+      };
+    }
+    if (selectedTab === "videos") {
+      return {
+        hasMore: hasMoreVideos,
+        isLoading: videosFetchingMore,
+        itemCount: videos.length,
+        initialLoading: videosLoading,
+        loadMore: loadMoreVideos,
+      };
+    }
+    return {
+      hasMore: hasMoreArtists,
+      isLoading: artistsFetchingMore,
+      itemCount: artists.length,
+      initialLoading: loading,
+      loadMore: loadMoreArtists,
+    };
+  }, [
+    albums.length,
+    albumsFetchingMore,
+    artists.length,
+    artistsFetchingMore,
+    hasMoreAlbums,
+    hasMoreArtists,
+    hasMoreTracks,
+    hasMoreVideos,
+    loadMoreAlbums,
+    loadMoreArtists,
+    loadMoreTracks,
+    loadMoreVideos,
+    loading,
+    selectedTab,
+    tracks.length,
+    tracksFetchingMore,
+    tracksLoading,
+    videos.length,
+    videosFetchingMore,
+    videosLoading,
+  ]);
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && hasMoreArtists && !isFetchingMore.artists) {
-            setIsFetchingMore((prev) => ({ ...prev, artists: true }));
-            loadMoreArtists().finally(() =>
-              setIsFetchingMore((prev) => ({ ...prev, artists: false }))
-            );
-          }
-        });
-      },
-      { root: artistScrollRef.current, rootMargin: "0px 0px 400px 0px" }
-    );
-
-    observer.observe(artistSentinelRef.current);
-    return () => observer.disconnect();
-  }, [selectedTab, hasMoreArtists, isFetchingMore.artists, loadMoreArtists, loading, artists.length]);
-
-  // Albums tab observer
-  useEffect(() => {
-    // Wait for data to be loaded before setting up observer
-    if (selectedTab !== "albums" || loading || albums.length === 0) return;
-    if (!albumScrollRef.current || !albumSentinelRef.current) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && hasMoreAlbums && !isFetchingMore.albums) {
-            setIsFetchingMore((prev) => ({ ...prev, albums: true }));
-            loadMoreAlbums().finally(() =>
-              setIsFetchingMore((prev) => ({ ...prev, albums: false }))
-            );
-          }
-        });
-      },
-      { root: albumScrollRef.current, rootMargin: "0px 0px 400px 0px" }
-    );
-
-    observer.observe(albumSentinelRef.current);
-    return () => observer.disconnect();
-  }, [selectedTab, hasMoreAlbums, isFetchingMore.albums, loadMoreAlbums, loading, albums.length]);
-
-  // Tracks tab observer
-  useEffect(() => {
-    if (selectedTab !== "tracks" || tracksLoading || tracks.length === 0) return;
-    if (selectedTab !== "tracks" || !trackScrollRef.current || !trackSentinelRef.current) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && hasMoreTracks && !isFetchingMore.tracks) {
-            setIsFetchingMore((prev) => ({ ...prev, tracks: true }));
-            loadMoreTracks().finally(() =>
-              setIsFetchingMore((prev) => ({ ...prev, tracks: false }))
-            );
-          }
-        });
-      },
-      { root: trackScrollRef.current, rootMargin: "0px 0px 400px 0px" }
-    );
-
-    observer.observe(trackSentinelRef.current);
-    return () => observer.disconnect();
-  }, [selectedTab, hasMoreTracks, loadMoreTracks, isFetchingMore.tracks, tracksLoading, tracks.length]);
-
-  // Videos tab observer
-  useEffect(() => {
-    if (selectedTab !== "videos" || videosLoading || videos.length === 0) return;
-    if (selectedTab !== "videos" || !videoScrollRef.current || !videoSentinelRef.current) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && hasMoreVideos && !isFetchingMore.videos) {
-            setIsFetchingMore((prev) => ({ ...prev, videos: true }));
-            loadMoreVideos().finally(() =>
-              setIsFetchingMore((prev) => ({ ...prev, videos: false }))
-            );
-          }
-        });
-      },
-      { root: videoScrollRef.current, rootMargin: "0px 0px 400px 0px" }
-    );
-
-    observer.observe(videoSentinelRef.current);
-    return () => observer.disconnect();
-  }, [selectedTab, hasMoreVideos, loadMoreVideos, isFetchingMore.videos, videosLoading, videos.length]);
+  useInfiniteScroll({
+    sentinelRef: activeSentinelRef,
+    hasMore: activeInfiniteScroll.hasMore,
+    isLoading: activeInfiniteScroll.isLoading,
+    onLoadMore: activeInfiniteScroll.loadMore,
+    enabled: activeInfiniteScroll.itemCount > 0 && !activeInfiniteScroll.initialLoading,
+  });
 
   const importableFollowedProviders = useMemo(
     () => (streamingProviders?.providers ?? []).filter((provider: StreamingProviderStatus) => (
@@ -1766,13 +1717,11 @@ const Library = () => {
   };
 
   const renderPane = ({
-    scrollRef,
     sentinelRef,
     isFetching,
     children,
     topContent,
   }: {
-    scrollRef: any;
     sentinelRef: any;
     isFetching: boolean;
     children: React.ReactNode;
@@ -1780,7 +1729,7 @@ const Library = () => {
   }) => (
     <div className={styles.tabPanel}>
       {topContent ? <div>{topContent}</div> : null}
-      <div ref={scrollRef} className={mergeClasses(styles.tabScroller, styles.contentPadding)}>
+      <div className={mergeClasses(styles.tabScroller, styles.contentPadding)}>
         {children}
         <div ref={sentinelRef} className={styles.sentinel} />
         {isFetching ? <div className={styles.fetchMoreRow}><Text size={200}>Loading more...</Text></div> : null}
@@ -1926,8 +1875,7 @@ const Library = () => {
         {selectedTab === "artists" && (
           <div className={styles.virtuosoContainer}>
             {loading ? renderPane({
-              scrollRef: artistScrollRef,
-              sentinelRef: artistSentinelRef,
+              sentinelRef: activeSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
             }) : artistsHasRefreshError && (artists.length === 0 || !artistsIsPopulated) ? (
@@ -1940,9 +1888,8 @@ const Library = () => {
               renderNoResultsContent("artists")
             ) : (
               renderPane({
-                scrollRef: artistScrollRef,
-                sentinelRef: artistSentinelRef,
-                isFetching: isFetchingMore.artists,
+                sentinelRef: activeSentinelRef,
+                isFetching: artistsFetchingMore,
                 topContent: renderSelectionBar(),
                 children: viewMode === 'grid' ? (
                   <div className={styles.grid}>
@@ -1968,8 +1915,7 @@ const Library = () => {
         {selectedTab === "albums" && (
           <div className={styles.virtuosoContainer}>
             {loading ? renderPane({
-              scrollRef: albumScrollRef,
-              sentinelRef: albumSentinelRef,
+              sentinelRef: activeSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
             }) : albumsHasRefreshError && (albums.length === 0 || !albumsIsPopulated) ? (
@@ -1982,9 +1928,8 @@ const Library = () => {
               renderNoResultsContent("albums")
             ) : (
               renderPane({
-                scrollRef: albumScrollRef,
-                sentinelRef: albumSentinelRef,
-                isFetching: isFetchingMore.albums,
+                sentinelRef: activeSentinelRef,
+                isFetching: albumsFetchingMore,
                 topContent: renderSelectionBar(),
                 children: viewMode === 'grid' ? (
                   <div className={styles.grid}>
@@ -2010,8 +1955,7 @@ const Library = () => {
         {selectedTab === "tracks" && (
           <div className={styles.virtuosoContainer}>
             {tracksLoading ? renderPane({
-              scrollRef: trackScrollRef,
-              sentinelRef: trackSentinelRef,
+              sentinelRef: activeSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
             }) : tracksHasRefreshError && (tracks.length === 0 || !tracksIsPopulated) ? (
@@ -2024,9 +1968,8 @@ const Library = () => {
               renderNoResultsContent("tracks")
             ) : (
               renderPane({
-                scrollRef: trackScrollRef,
-                sentinelRef: trackSentinelRef,
-                isFetching: isFetchingMore.tracks,
+                sentinelRef: activeSentinelRef,
+                isFetching: tracksFetchingMore,
                 topContent: renderSelectionBar(),
                 children: <TrackList
                   tracks={tracks}
@@ -2058,8 +2001,7 @@ const Library = () => {
         {selectedTab === "videos" && (
           <div className={styles.virtuosoContainer}>
             {videosLoading ? renderPane({
-              scrollRef: videoScrollRef,
-              sentinelRef: videoSentinelRef,
+              sentinelRef: activeSentinelRef,
               isFetching: false,
               children: renderLoadingContent(),
             }) : videosHasRefreshError && (videos.length === 0 || !videosIsPopulated) ? (
@@ -2072,9 +2014,8 @@ const Library = () => {
               renderNoResultsContent("videos")
             ) : (
               renderPane({
-                scrollRef: videoScrollRef,
-                sentinelRef: videoSentinelRef,
-                isFetching: isFetchingMore.videos,
+                sentinelRef: activeSentinelRef,
+                isFetching: videosFetchingMore,
                 topContent: renderSelectionBar(),
                 children: viewMode === 'grid' ? (
                   <VideoGrid

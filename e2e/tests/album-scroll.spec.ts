@@ -367,7 +367,7 @@ test.describe('Album scroll behavior', () => {
 
         await page.goto(baseURL, { waitUntil: 'domcontentloaded' });
 
-        const trackList = page.getByRole('table', { name: 'Track list' });
+        const trackList = page.getByRole('grid', { name: 'Track list' });
         await expect(trackList).toBeVisible();
 
         await trackList.getByText(targetTrackTitle, { exact: true }).click();

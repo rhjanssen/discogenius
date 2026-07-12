@@ -41,7 +41,7 @@ export type MusicBrainzReleaseGroupForMatching = {
     releases?: MusicBrainzReleaseForMatching[];
 };
 
-export type ProviderReleaseGroupMatchStatus = "verified" | "probable" | "ambiguous" | "unmatched";
+export type ProviderReleaseGroupMatchStatus = "verified" | "probable" | "candidate" | "ambiguous" | "unmatched";
 
 export type ProviderReleaseGroupMatch = {
     providerId: string;
@@ -64,6 +64,7 @@ export type ProviderReleaseGroupMatch = {
         providerUrlMatched?: boolean;
         releaseTitleMatched?: boolean;
         isrcOverlap?: number;
+        isrcCoverageMatched?: boolean;
         trackCountMatched?: boolean;
         volumeCountMatched?: boolean;
         providerTrackCount?: number | null;
@@ -367,6 +368,14 @@ function scoreAlbumAgainstReleaseGroup(
     const trackCountEvidence = nearestNumericMatch(album.trackCount, releases.map((release) => release.trackCount));
     const volumeCountEvidence = nearestNumericMatch(album.volumeCount, releases.map((release) => release.mediaCount));
     const trackCountMatched = trackCountEvidence.matched;
+    // ISRC overlap identifies recordings, not the release as a whole. It is
+    // release-level evidence only when the provider and MB edition shapes also
+    // agree and at least two recordings overlap (or both are genuinely
+    // one-track releases). Without this boundary, one shared recording can
+    // attach a short remix/EP—or an unrelated same-length compilation—to an
+    // album.
+    const isrcCoverageMatched = trackCountMatched
+        && (isrcOverlap >= 2 || (isrcOverlap === 1 && Number(album.trackCount) === 1));
     const volumeCountMatched = volumeCountEvidence.matched;
     const providerTitles = providerTitleCandidates(album);
     const releaseTitleMatches = releases
@@ -503,7 +512,7 @@ function scoreAlbumAgainstReleaseGroup(
     if (bestTitle.titleScore >= 0.72 && volumeCountMatched) {
         confidence += 0.03;
     }
-    if (isrcOverlap > 0) {
+    if (isrcCoverageMatched) {
         const providerIsrcsCount = providerIsrcs.size;
         const overlapRatio = providerIsrcsCount > 0 ? isrcOverlap / providerIsrcsCount : 0;
         if (overlapRatio >= 0.5 || isrcOverlap >= 2) {
@@ -556,6 +565,7 @@ function scoreAlbumAgainstReleaseGroup(
         releaseTitleMatched: Boolean(matchedReleaseByTitle),
         upcMatched: Boolean(matchedReleaseByUpc),
         isrcOverlap,
+        isrcCoverageMatched,
         trackCountMatched,
         volumeCountMatched,
         titleExpansionMatched,
@@ -578,10 +588,12 @@ export function matchProviderAlbumToReleaseGroup(
         .sort((left, right) =>
             Number(right.providerUrlMatched) - Number(left.providerUrlMatched)
             || Number(right.upcMatched) - Number(left.upcMatched)
-            || right.isrcOverlap - left.isrcOverlap
+            || Number(right.isrcCoverageMatched) - Number(left.isrcCoverageMatched)
+            || Number(right.confidence >= 0.78) - Number(left.confidence >= 0.78)
             || right.titleScore - left.titleScore
             || right.titleSpecificity - left.titleSpecificity
             || right.confidence - left.confidence
+            || right.isrcOverlap - left.isrcOverlap
         );
 
     const best = scored[0];
@@ -620,14 +632,21 @@ export function matchProviderAlbumToReleaseGroup(
         .map((candidate) => candidate.releaseGroup.mbid);
     const exactTitleMatch = best.titleScore === 1;
     const exactProviderTitleMatch = exactTitleMatch && !best.titleExpansionMatched;
-    const strongIdentityMatch = best.providerUrlMatched || best.upcMatched || best.isrcOverlap >= 2 || (best.isrcOverlap >= 1 && best.providerTrackCount === 1);
+    const strongIdentityMatch = best.providerUrlMatched || best.upcMatched || best.isrcCoverageMatched;
     // A prefix-expansion title ("… EP", "… X") whose track count matches the MB
     // edition is as trustworthy as an exact title — promote it to verified so a
     // fully-covered EP doesn't sit at "probable".
     const verifiedTrackMatch = best.titleExpansionMatched && best.trackCountMatched;
     const verifiedSpatialReleaseMatch = Boolean(isSpatialProviderAlbum(album) && best.matchedReleaseMbid && best.trackCountMatched && best.volumeCountMatched);
+    const weakCoverageCandidate = best.isrcOverlap > 0
+        && !best.isrcCoverageMatched
+        && !best.providerUrlMatched
+        && !best.upcMatched
+        && best.confidence < 0.78;
     const status: ProviderReleaseGroupMatchStatus = ambiguousWith.length > 0
         ? "ambiguous"
+        : weakCoverageCandidate
+            ? "candidate"
         : (strongIdentityMatch || verifiedTrackMatch || verifiedSpatialReleaseMatch || (exactProviderTitleMatch && best.confidence >= 0.96))
             ? "verified"
             : "probable";
@@ -662,6 +681,7 @@ export function matchProviderAlbumToReleaseGroup(
             releaseTitleMatched: best.releaseTitleMatched,
             upcMatched: best.upcMatched,
             isrcOverlap: best.isrcOverlap,
+            isrcCoverageMatched: best.isrcCoverageMatched,
             trackCountMatched: best.trackCountMatched,
             volumeCountMatched: best.volumeCountMatched,
             providerTrackCount: best.providerTrackCount,

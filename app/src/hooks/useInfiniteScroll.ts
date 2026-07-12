@@ -6,8 +6,8 @@
 import { useEffect, useRef } from "react";
 
 export interface UseInfiniteScrollOptions {
-    /** Container scroll ref, used as IntersectionObserver root */
-    containerRef: React.RefObject<HTMLDivElement | null>;
+    /** Optional scroll root. Omit it to observe against the document viewport. */
+    rootRef?: React.RefObject<Element | null>;
     /** Sentinel element ref that triggers load-more when visible */
     sentinelRef: React.RefObject<HTMLDivElement | null>;
     /** Whether more items are available to load */
@@ -27,7 +27,7 @@ export interface UseInfiniteScrollOptions {
  * Triggers onLoadMore when sentinel element becomes visible within rootMargin
  */
 export const useInfiniteScroll = ({
-    containerRef,
+    rootRef,
     sentinelRef,
     hasMore,
     isLoading,
@@ -42,7 +42,13 @@ export const useInfiniteScroll = ({
     }, [isLoading]);
 
     useEffect(() => {
-        if (!enabled || !hasMore || isLoading || !containerRef.current || !sentinelRef.current) {
+        if (!enabled || !hasMore || isLoading || !sentinelRef.current) {
+            return;
+        }
+
+        // A supplied root must exist before observation. With no rootRef the
+        // observer intentionally uses the document viewport.
+        if (rootRef && !rootRef.current) {
             return;
         }
 
@@ -50,15 +56,23 @@ export const useInfiniteScroll = ({
             (entries) => {
                 entries.forEach((entry) => {
                     if (entry.isIntersecting && hasMore && !isLoadingRef.current) {
-                        onLoadMore().catch((err) => console.error("Infinite scroll load error:", err));
+                        // IntersectionObserver can deliver several entries before
+                        // React has propagated isLoading. Close that window here so
+                        // one intersection can enqueue at most one page.
+                        isLoadingRef.current = true;
+                        onLoadMore()
+                            .catch((err) => console.error("Infinite scroll load error:", err))
+                            .finally(() => {
+                                isLoadingRef.current = false;
+                            });
                     }
                 });
             },
-            { root: containerRef.current, rootMargin }
+            { root: rootRef?.current ?? null, rootMargin }
         );
 
         observer.observe(sentinelRef.current);
         return () => observer.disconnect();
-    }, [enabled, hasMore, isLoading, containerRef, sentinelRef, onLoadMore, rootMargin]);
+    }, [enabled, hasMore, isLoading, rootRef, sentinelRef, onLoadMore, rootMargin]);
 };
 

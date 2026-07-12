@@ -20,21 +20,89 @@ export function useArtistPage(artistId: string | undefined) {
         debounceMs: 400,
     });
 
-    return useQuery({
-        queryKey: ["artistPage", artistId],
+    const summaryQuery = useQuery<any>({
+        queryKey: ["artistPage", artistId, "identity"],
         queryFn: async ({ signal }) => {
             if (!artistId) throw new Error("Artist ID is required");
-
-            // Artist page reads stay local-first and only seed core artist metadata when needed.
-            // Full enrichment remains an explicit scan/refresh action so navigation stays responsive.
             return api.getArtistPage(artistId, {
+                section: "identity",
                 signal,
                 timeoutMs: 15_000,
             });
         },
-        enabled: !!artistId,
+        enabled: Boolean(artistId),
         refetchOnWindowFocus: false,
         staleTime: 30_000,
         retry: 1,
     });
+
+    const albumsQuery = useQuery<any>({
+        queryKey: ["artistPage", artistId, "albums"],
+        queryFn: async ({ signal }) => api.getArtistPage(artistId!, {
+            section: "albums",
+            signal,
+            timeoutMs: 60_000,
+        }),
+        enabled: Boolean(artistId) && summaryQuery.isSuccess,
+        refetchOnWindowFocus: false,
+        staleTime: 30_000,
+        retry: 1,
+    });
+
+    const tracksQuery = useQuery<any>({
+        queryKey: ["artistPage", artistId, "tracks"],
+        queryFn: async ({ signal }) => api.getArtistPage(artistId!, {
+            section: "tracks",
+            signal,
+            timeoutMs: 60_000,
+        }),
+        enabled: Boolean(artistId) && summaryQuery.isSuccess,
+        refetchOnWindowFocus: false,
+        staleTime: 30_000,
+        retry: 1,
+    });
+
+    const videosQuery = useQuery<any>({
+        queryKey: ["artistPage", artistId, "videos"],
+        queryFn: async ({ signal }) => api.getArtistPage(artistId!, {
+            section: "videos",
+            signal,
+            timeoutMs: 60_000,
+        }),
+        enabled: Boolean(artistId) && summaryQuery.isSuccess,
+        refetchOnWindowFocus: false,
+        staleTime: 30_000,
+        retry: 1,
+    });
+
+    const data = summaryQuery.data
+        ? {
+            ...summaryQuery.data,
+            ...albumsQuery.data,
+            artist: {
+                ...summaryQuery.data.artist,
+                ...(albumsQuery.data?.artist || {}),
+            },
+            rows: [
+                ...(tracksQuery.data?.rows || []),
+                ...(albumsQuery.data?.rows || []),
+                ...(videosQuery.data?.rows || []),
+            ],
+        }
+        : undefined;
+
+    return {
+        ...summaryQuery,
+        data,
+        isFetching: summaryQuery.isFetching || albumsQuery.isFetching || tracksQuery.isFetching || videosQuery.isFetching,
+        refetch: async () => {
+            const [summary] = await Promise.all([
+                summaryQuery.refetch(),
+                albumsQuery.refetch(),
+                tracksQuery.refetch(),
+                videosQuery.refetch(),
+            ]);
+            return summary;
+        },
+    };
 }

@@ -625,9 +625,9 @@ export function persistCompositeReleaseMatches(releaseGroupMbid: string): void {
     SELECT provider, provider_id AS provider_item_id, quality, library_slot
     FROM ProviderItems
     WHERE entity_type = 'album'
-      AND artist_mbid = ?
+      AND (artist_mbid = ? OR discovered_from_artist_mbid = ?)
       AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
-  `).all(groupArtist.artist_mbid) as ProviderAlbumRow[];
+  `).all(groupArtist.artist_mbid, groupArtist.artist_mbid) as ProviderAlbumRow[];
 
   if (providerAlbums.length < 2) return;
 

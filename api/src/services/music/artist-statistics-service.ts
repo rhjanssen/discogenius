@@ -43,11 +43,10 @@ function calculateArtistStatistics(artistIds?: string[]): ArtistStatisticsRow[] 
       WHERE 1 = 1
       ${artistFilter.sql}
     ),
-    artist_scope AS (
+    artist_scope_mbids AS (
       SELECT selected.artist_id,
              selected.artist_mbid,
              selected.artist_metadata_id,
-             album.id AS release_group_id,
              album.mbid AS release_group_mbid
       FROM selected_artists selected
       JOIN Albums album
@@ -59,12 +58,20 @@ function calculateArtistStatistics(artistIds?: string[]): ArtistStatisticsRow[] 
       SELECT selected.artist_id,
              selected.artist_mbid,
              selected.artist_metadata_id,
-             related.release_group_id,
              related.release_group_mbid
       FROM selected_artists selected
       JOIN ArtistReleaseGroups related
         ON related.artist_metadata_id = selected.artist_metadata_id
         OR (related.artist_metadata_id IS NULL AND related.artist_mbid = selected.artist_mbid)
+    ),
+    artist_scope AS (
+      SELECT scope.artist_id,
+             scope.artist_mbid,
+             scope.artist_metadata_id,
+             album.id AS release_group_id,
+             scope.release_group_mbid
+      FROM artist_scope_mbids scope
+      JOIN Albums album ON album.mbid = scope.release_group_mbid
     ),
     release_group_stats AS (
       SELECT scope.artist_id,

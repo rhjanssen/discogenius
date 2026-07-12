@@ -22,6 +22,13 @@ export interface DataGridColumn<T = any> {
     className?: string;
 }
 
+export type DataGridRowProps = Omit<
+    React.HTMLAttributes<HTMLDivElement>,
+    "className" | "style" | "onClick" | "role"
+> & {
+    [key: `data-${string}`]: string | number | boolean | undefined;
+};
+
 export interface DataGridProps<T = any> {
     columns: DataGridColumn<T>[];
     items: T[];
@@ -30,6 +37,8 @@ export interface DataGridProps<T = any> {
     loading?: boolean;
     emptyContent?: React.ReactNode;
     className?: string;
+    /** Accessible name for the grid, for example "Track list". */
+    ariaLabel?: string;
     disableStickyHeader?: boolean;
     /**
      * Render the header + all rows as CSS subgrids of one parent grid, so
@@ -50,6 +59,8 @@ export interface DataGridProps<T = any> {
         isRowSelectable?: (item: T) => boolean;
     };
     getRowClassName?: (item: T, index: number) => string | undefined;
+    /** Stable row metadata used by deep links, tests, and other consumers. */
+    getRowProps?: (item: T, index: number) => DataGridRowProps;
     /**
      * Optional full-width content rendered directly under a row (spanning all
      * columns). Return null for rows with no detail. Used e.g. for the inline
@@ -75,6 +86,7 @@ const useStyles = makeStyles({
     // drop theirs) so the tracks line up; column gap lives here too.
     rootSharedColumns: {
         display: "grid",
+        boxSizing: "border-box",
         columnGap: tokens.spacingHorizontalS,
         paddingLeft: tokens.spacingHorizontalM,
         paddingRight: tokens.spacingHorizontalM,
@@ -255,6 +267,7 @@ function DataGridInner<T>(
         loading,
         emptyContent,
         className,
+        ariaLabel,
         disableStickyHeader,
         sharedColumns,
         compact,
@@ -263,6 +276,7 @@ function DataGridInner<T>(
         columnResizeStorageKey,
         selection,
         getRowClassName,
+        getRowProps,
         renderRowDetail,
         renderBeforeRow,
     }: DataGridProps<T>,
@@ -418,6 +432,7 @@ function DataGridInner<T>(
             className={mergeClasses(styles.root, sharedColumns ? styles.rootSharedColumns : undefined, className)}
             ref={ref}
             role="grid"
+            aria-label={ariaLabel}
             aria-rowcount={items.length + 1}
             style={sharedColumns ? gridStyle : undefined}
         >
@@ -473,6 +488,7 @@ function DataGridInner<T>(
                 const rowSelected = selectedRowIdSet.has(rowId);
                 const beforeRow = renderBeforeRow?.(item, index, index > 0 ? items[index - 1] : undefined) ?? null;
                 const rowDetail = renderRowDetail?.(item, index) ?? null;
+                const rowProps = getRowProps?.(item, index);
 
                 return (
                     <React.Fragment key={rowId}>
@@ -482,6 +498,7 @@ function DataGridInner<T>(
                             </div>
                         ) : null}
                         <div
+                            {...rowProps}
                             role="row"
                             className={mergeClasses(
                                 styles.row,

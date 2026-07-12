@@ -21,7 +21,6 @@ import { ProviderArtistIdentityService, normalizeProviderArtist } from "../metad
 import { streamingProviderManager } from "../providers/index.js";
 import type { StreamingProvider, ProviderAlbum, ProviderArtist, ProviderTrack, ProviderVideo } from "../providers/streaming-provider.js";
 import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate, type ProviderTrackDetail } from "./release-group-slot-service.js";
-import { upsertProviderReleaseMatch } from "./provider-matches.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import {
@@ -33,8 +32,24 @@ import {
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
+import { upsertProviderReleaseMatch } from "./provider-matches.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function artistCatalogFingerprint(artistMbid: string | null): string | null {
+    if (!artistMbid) return null;
+    const artist = db.prepare("SELECT content_hash FROM ArtistMetadata WHERE mbid = ?")
+        .get(artistMbid) as { content_hash?: string | null } | undefined;
+    const releaseGroups = db.prepare(`
+        SELECT rg.mbid, rg.content_hash
+        FROM Albums rg
+        LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+        WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+        GROUP BY rg.mbid, rg.content_hash
+        ORDER BY rg.mbid
+    `).all(artistMbid, artistMbid) as Array<{ mbid: string; content_hash: string | null }>;
+    return JSON.stringify({ artist: artist?.content_hash || null, releaseGroups });
+}
 
 export function isMusicBrainzMbid(value: string | number | null | undefined): boolean {
     return MUSICBRAINZ_MBID_RE.test(String(value || "").trim());
@@ -70,7 +85,7 @@ function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId:
         quality: providerAlbum.quality || "LOSSLESS",
         url: providerAlbum.url || null,
         popularity: 0,
-        copyright: null,
+        copyright: providerAlbum.copyright || null,
         upc: providerAlbum.upc || null,
         _group_type: "ALBUMS",
         _module: providerAlbum.type === "EP" ? "EP" : providerAlbum.type === "SINGLE" ? "SINGLE" : "ALBUM",
@@ -117,6 +132,16 @@ function providerArtistArtworkSnapshot(artist: ProviderArtist): string {
         popularity: artist.popularity ?? null,
         url: artist.url || null,
     });
+}
+
+export function completeBulkTrackList<T>(expectedTrackCount: unknown, tracks: T[] | undefined): T[] | null {
+    const expected = Number(expectedTrackCount);
+    return Array.isArray(tracks)
+        && Number.isFinite(expected)
+        && expected > 0
+        && tracks.length === expected
+        ? tracks
+        : null;
 }
 
 export class RefreshArtistService {
@@ -395,6 +420,7 @@ export class RefreshArtistService {
     private static slotTrack(track: ProviderTrack) {
         return {
             mbid: null,
+            providerId: track.providerId || null,
             provider_id: track.providerId || null,
             isrc: this.normalizeIsrc(track.isrc) || null,
             title: track.title || null,
@@ -705,9 +731,9 @@ export class RefreshArtistService {
         const upsert = db.prepare(`
             INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, title, version, explicit, quality, type,
-                upc, duration, volume_count, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
-                match_status, match_confidence, match_method, match_evidence, cover, updated_at
-            ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                upc, copyright, duration, volume_count, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
+                match_status, match_confidence, match_method, match_evidence, cover, discovered_from_artist_mbid, updated_at
+            ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
                 version = excluded.version,
@@ -715,6 +741,7 @@ export class RefreshArtistService {
                 quality = excluded.quality,
                 type = excluded.type,
                 upc = excluded.upc,
+                copyright = COALESCE(excluded.copyright, ProviderItems.copyright),
                 duration = excluded.duration,
                 volume_count = excluded.volume_count,
                 release_date = excluded.release_date,
@@ -727,6 +754,7 @@ export class RefreshArtistService {
                 match_method = excluded.match_method,
                 match_evidence = excluded.match_evidence,
                 cover = COALESCE(excluded.cover, ProviderItems.cover),
+                discovered_from_artist_mbid = excluded.discovered_from_artist_mbid,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -755,6 +783,7 @@ export class RefreshArtistService {
                     album.quality || null,
                     album.type || null,
                     album.upc || null,
+                    album.copyright || null,
                     album.duration || null,
                     album.num_volumes ?? null,
                     album.release_date || null,
@@ -767,9 +796,13 @@ export class RefreshArtistService {
                     match?.method || null,
                     match ? JSON.stringify(match.evidence) : null,
                     album.cover || null,
+                    artistMbid,
                 );
 
-                if (matchedReleaseMbid && match && match.status !== "unmatched") {
+                // Candidate-only edges remain available to strict hybrid
+                // coverage, but are not advertised as direct release
+                // availability until slot selection validates the track set.
+                if (matchedReleaseMbid && match && match.status !== "unmatched" && match.status !== "candidate") {
                     upsertProviderReleaseMatch({
                         provider: providerId,
                         providerId: providerAlbumId,
@@ -848,7 +881,7 @@ export class RefreshArtistService {
              AND scope.artist_mbid = ?
             WHERE pi.entity_type = 'album'
               AND pi.release_group_mbid IS NOT NULL
-              AND pi.match_status IN ('verified', 'probable')
+              AND pi.match_status IN ('verified', 'probable', 'candidate')
               AND (
                 pi.artist_mbid = ?
                 OR rg.artist_mbid = ?
@@ -1349,6 +1382,8 @@ export class RefreshArtistService {
             || (isMusicBrainzMbid(artistId) ? artistId : null);
 
         const artistRow = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
+        const isNewArtist = !artistRow?.last_scanned;
+        const beforeFingerprint = artistCatalogFingerprint(resolveArtistMbid());
 
         // Lidarr's ShouldRefreshArtist staleness gate.
         // Refresh iff forced, never scanned, or stale per the refresh policy
@@ -1364,7 +1399,12 @@ export class RefreshArtistService {
         if (!shouldRefresh) {
             console.log(`[RefreshArtistService] Skipping artist ${artistId} refresh (fresh)`);
             // Fresh: a deferred match would only rebuild slots from stored offers.
-            return { artistMbid: resolveArtistMbid(), shouldHydrateCatalog: false };
+            return {
+                artistMbid: resolveArtistMbid(),
+                shouldHydrateCatalog: false,
+                metadataChanged: false,
+                isNewArtist: false,
+            };
         }
 
         const includeSimilarArtists = options.includeSimilarArtists !== false;
@@ -1417,7 +1457,12 @@ export class RefreshArtistService {
             WHERE id = ?
         `).run(artistId);
         console.log(`[RefreshArtistService] refreshArtist complete for ${artistId}`);
-        return { artistMbid, shouldHydrateCatalog };
+        return {
+            artistMbid,
+            shouldHydrateCatalog,
+            metadataChanged: beforeFingerprint !== artistCatalogFingerprint(artistMbid),
+            isNewArtist,
+        };
     }
 
     /**
@@ -1560,7 +1605,31 @@ export class RefreshArtistService {
 
                 options.progress?.({ kind: "albums_total", total: albums.length });
 
-                const missingAlbums = albums.filter((album) => !album._provider_tracks);
+                // Provider artist catalogs can contain hundreds of compilations and
+                // loosely credited releases. First narrow them using the cheap album
+                // metadata already returned by the artist-catalog call, then hydrate
+                // tracklists only for plausible MusicBrainz release-group candidates.
+                // Canonical MB tracklists remain complete; this only avoids detailed
+                // provider calls for releases the metadata matcher cannot associate.
+                const preliminaryMatches = this.buildProviderReleaseGroupMatches(artistMbid, albums);
+                const candidateAlbumIds = new Set(
+                    Array.from(preliminaryMatches.values())
+                        .filter((match) => Boolean(match.releaseGroup))
+                        .map((match) => String(match.providerId)),
+                );
+                const missingAlbums = albums.filter((album) =>
+                    !album._provider_tracks
+                    && candidateAlbumIds.has(String(album.provider_id)),
+                );
+                const skippedTracklists = albums.length
+                    - albums.filter((album) => Boolean(album._provider_tracks)).length
+                    - missingAlbums.length;
+                if (skippedTracklists > 0) {
+                    console.log(
+                        `[RefreshArtistService] Skipping ${skippedTracklists} non-candidate tracklist(s) `
+                        + `from ${provider.name}; hydrating ${missingAlbums.length}/${albums.length} plausible releases`,
+                    );
+                }
                 if (missingAlbums.length > 0) {
                     console.log(`[RefreshArtistService] Fetching tracklists for ${missingAlbums.length} albums from ${provider.name}...`);
 
@@ -1584,7 +1653,15 @@ export class RefreshArtistService {
                             chunk.map(async (album) => {
                                 try {
                                     const batched = bulkTracks?.get(String(album.provider_id));
-                                    const rawTracks = batched ?? await provider.getAlbumTracks(album.provider_id);
+                                    const completeBatch = completeBulkTrackList(album.num_tracks, batched);
+                                    // Compound provider documents may paginate a nested
+                                    // album relationship independently of the top-level
+                                    // response. A partial batch is unsafe for matching
+                                    // and durable ProviderItems, so refresh just that
+                                    // album through the provider's complete endpoint.
+                                    const rawTracks = completeBatch
+                                        ? completeBatch
+                                        : await provider.getAlbumTracks(album.provider_id);
                                     album._provider_tracks = rawTracks.map((t: any) => this.slotTrack(t));
                                     // Keep the raw provider tracks so we can persist them as
                                     // track offer rows once the album offers exist (below).

@@ -6,10 +6,6 @@ import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from 
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import {
     upsertProviderReleaseMatch,
-    getReleaseGroupAvailability,
-    setSlotSelection,
-    persistCompositeReleaseMatchesForArtist,
-    type ReleaseAvailabilityProvider,
 } from "./provider-matches.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
@@ -181,6 +177,7 @@ function normalizeIsrc(isrc: string | null | undefined): string {
 }
 
 type TargetTrack = {
+    trackMbid: string;
     recordingMbid: string | null;
     isrcs: Set<string>;
     title: string;
@@ -191,6 +188,8 @@ type TargetTrack = {
 
 export type ProviderTrackDetail = {
     mbid: string | null;
+    providerId?: string | null;
+    provider_id?: string | null;
     isrc: string | null;
     title: string | null;
     version?: string | null;
@@ -239,30 +238,6 @@ function isTrackCovered(target: TargetTrack, providerTracks: Array<ProviderTrack
     });
 }
 
-function getMatchedTargets1to1(targetTracks: TargetTrack[], providerTracks: ProviderTrackDetail[]): Set<number> {
-    const usedProviderIndices = new Set<number>();
-    const matchedTargetIndices = new Set<number>();
-    
-    for (let targetIdx = 0; targetIdx < targetTracks.length; targetIdx++) {
-        const target = targetTracks[targetIdx];
-        let bestScore = -1;
-        let bestIdx = -1;
-        for (let i = 0; i < providerTracks.length; i++) {
-            if (usedProviderIndices.has(i)) continue;
-            const score = scoreTrackMatch(target, providerTracks[i]);
-            if (score >= TRACK_MATCH_THRESHOLD && score > bestScore) {
-                bestScore = score;
-                bestIdx = i;
-            }
-        }
-        if (bestIdx !== -1) {
-            matchedTargetIndices.add(targetIdx);
-            usedProviderIndices.add(bestIdx);
-        }
-    }
-    return matchedTargetIndices;
-}
-
 function sortCandidatesForSlot(slot: ReleaseGroupLibrarySlot, candidates: ProviderAlbumCandidateWithTracks[]): void {
     candidates.sort((a, b) => {
         const qA = qualityScore(slot, a.album.quality);
@@ -281,14 +256,29 @@ function compatibleReleaseMbids(match: ProviderReleaseGroupMatch): string[] {
     ].map((releaseMbid) => String(releaseMbid || "").trim()).filter(Boolean)));
 }
 
-function candidateCanRepresentRelease(candidate: ProviderAlbumCandidateWithTracks, releaseMbid: string): boolean {
-    const compatibleMbids = compatibleReleaseMbids(candidate.match);
-    return compatibleMbids.length === 0 || compatibleMbids.includes(releaseMbid);
-}
-
 type ReleaseTrackTargets = {
     releaseMbid: string;
     tracks: TargetTrack[];
+};
+
+type TrackSourceAssignment = {
+    targetIndex: number;
+    candidate: ProviderAlbumCandidateWithTracks;
+    providerTrack: ProviderTrackDetail;
+    matchScore: number;
+};
+
+type ReleaseCoveragePlan = {
+    releaseMbid: string;
+    targetTracks: TargetTrack[];
+    provider: string;
+    assignments: TrackSourceAssignment[];
+    candidates: ProviderAlbumCandidateWithTracks[];
+    complete: boolean;
+    qualityTotal: number;
+    identityCompatibleAssignments: number;
+    extraProviderTracks: number;
+    scoreTotal: number;
 };
 
 /**
@@ -298,7 +288,7 @@ type ReleaseTrackTargets = {
  */
 function loadReleaseTrackTargets(releaseGroupMbid: string): ReleaseTrackTargets[] {
     const rows = db.prepare(`
-        SELECT t.release_mbid, t.recording_mbid, rec.isrcs, t.title, t.position, t.medium_position, t.length_ms
+        SELECT t.release_mbid, t.mbid AS track_mbid, t.recording_mbid, rec.isrcs, t.title, t.position, t.medium_position, t.length_ms
         FROM Tracks t
         JOIN AlbumReleases r ON r.mbid = t.release_mbid
         LEFT JOIN Recordings rec ON rec.mbid = t.recording_mbid
@@ -307,6 +297,7 @@ function loadReleaseTrackTargets(releaseGroupMbid: string): ReleaseTrackTargets[
         ORDER BY t.release_mbid ASC, t.medium_position ASC, t.position ASC
     `).all(releaseGroupMbid) as Array<{
         release_mbid: string;
+        track_mbid: string;
         recording_mbid: string | null;
         isrcs: string | null;
         title: string;
@@ -339,6 +330,7 @@ function loadReleaseTrackTargets(releaseGroupMbid: string): ReleaseTrackTargets[
             byRelease.set(row.release_mbid, tracks);
         }
         tracks.push({
+            trackMbid: row.track_mbid,
             recordingMbid,
             isrcs,
             title: row.title,
@@ -349,6 +341,199 @@ function loadReleaseTrackTargets(releaseGroupMbid: string): ReleaseTrackTargets[
     }
 
     return Array.from(byRelease.entries()).map(([releaseMbid, tracks]) => ({ releaseMbid, tracks }));
+}
+
+function buildCoveragePlanForProvider(
+    target: ReleaseTrackTargets,
+    provider: string,
+    candidates: ProviderAlbumCandidateWithTracks[],
+    slot: ReleaseGroupLibrarySlot,
+): ReleaseCoveragePlan | null {
+    const providerCandidatesByAlbum = new Map<string, ProviderAlbumCandidateWithTracks>();
+    for (const candidate of candidates) {
+        if (candidate.provider !== provider || candidate.tracks.length === 0) continue;
+        const albumId = String(candidate.album.providerId);
+        const existing = providerCandidatesByAlbum.get(albumId);
+        if (!existing || candidate.score > existing.score) {
+            providerCandidatesByAlbum.set(albumId, candidate);
+        }
+    }
+    const providerCandidates = Array.from(providerCandidatesByAlbum.values());
+    if (providerCandidates.length === 0 || target.tracks.length === 0) {
+        return null;
+    }
+
+    const sourcesByKey = new Map<string, {
+        key: string;
+        candidate: ProviderAlbumCandidateWithTracks;
+        providerTrack: ProviderTrackDetail;
+        quality: number;
+    }>();
+    for (const candidate of providerCandidates) {
+        candidate.tracks.forEach((providerTrack, trackIndex) => {
+            const providerTrackId = String(providerTrack.providerId || providerTrack.provider_id || "").trim();
+            const key = providerTrackId
+                ? `${candidate.album.providerId}:${providerTrackId}`
+                : `${candidate.album.providerId}:${providerTrack.volume_number || 1}:${providerTrack.track_number || trackIndex + 1}:${providerTrack.title || ""}`;
+            if (!sourcesByKey.has(key)) {
+                sourcesByKey.set(key, {
+                    key,
+                    candidate,
+                    providerTrack,
+                    quality: qualityScore(slot, candidate.album.quality),
+                });
+            }
+        });
+    }
+    const sources = Array.from(sourcesByKey.values());
+    const normalizedTitle = (value: string | null | undefined) => String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    const titleCounts = new Map<string, number>();
+    for (const track of target.tracks) {
+        const title = normalizedTitle(track.title);
+        titleCounts.set(title, (titleCounts.get(title) || 0) + 1);
+    }
+    const hasStrongTrackIdentity = (targetTrack: TargetTrack, providerTrack: ProviderTrackDetail) => {
+        if (targetTrack.recordingMbid && providerTrack.mbid && targetTrack.recordingMbid === providerTrack.mbid) {
+            return true;
+        }
+        const providerIsrc = normalizeIsrc(providerTrack.isrc);
+        return Boolean(providerIsrc && targetTrack.isrcs.has(providerIsrc));
+    };
+    const edges = target.tracks.map((targetTrack, targetIndex) => sources
+        .map((source) => ({
+            source,
+            targetIndex,
+            matchScore: scoreTrackMatch(targetTrack, source.providerTrack),
+        }))
+        .filter((edge) => {
+            if (edge.matchScore < TRACK_MATCH_THRESHOLD) return false;
+            const duplicateCanonicalTitle = (titleCounts.get(normalizedTitle(targetTrack.title)) || 0) > 1;
+            // Editions such as an original album plus an instrumental disc can
+            // repeat every displayed title while referring to different MB
+            // recordings. Without MBID/ISRC evidence, title/duration cannot say
+            // which repeated recording a provider track represents. Treat that
+            // ambiguity as uncovered instead of reusing vocal tracks as the
+            // instrumental disc (or vice versa).
+            return !duplicateCanonicalTitle || hasStrongTrackIdentity(targetTrack, edge.source.providerTrack);
+        })
+        .sort((left, right) =>
+            right.source.quality - left.source.quality
+            || right.matchScore - left.matchScore
+            || right.source.candidate.score - left.source.candidate.score
+            || left.source.candidate.album.providerId.localeCompare(right.source.candidate.album.providerId)
+            || left.source.key.localeCompare(right.source.key)
+        ));
+
+    const sourceOwner = new Map<string, number>();
+    const assignedSource = new Map<number, typeof sources[number]>();
+    const assignedScore = new Map<number, number>();
+    const tryAssign = (targetIndex: number, visitedSources: Set<string>): boolean => {
+        for (const edge of edges[targetIndex]) {
+            if (visitedSources.has(edge.source.key)) continue;
+            visitedSources.add(edge.source.key);
+            const previousTarget = sourceOwner.get(edge.source.key);
+            if (previousTarget == null || tryAssign(previousTarget, visitedSources)) {
+                sourceOwner.set(edge.source.key, targetIndex);
+                assignedSource.set(targetIndex, edge.source);
+                assignedScore.set(targetIndex, edge.matchScore);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const targetOrder = edges
+        .map((targetEdges, targetIndex) => ({ targetIndex, choices: targetEdges.length }))
+        .filter((entry) => entry.choices > 0)
+        .sort((left, right) => left.choices - right.choices || left.targetIndex - right.targetIndex);
+    for (const { targetIndex } of targetOrder) {
+        tryAssign(targetIndex, new Set());
+    }
+
+    const assignments = Array.from(assignedSource.entries())
+        .map(([targetIndex, source]) => ({
+            targetIndex,
+            candidate: source.candidate,
+            providerTrack: source.providerTrack,
+            matchScore: assignedScore.get(targetIndex) || 0,
+        }))
+        .sort((left, right) => left.targetIndex - right.targetIndex);
+    if (assignments.length === 0) {
+        return null;
+    }
+
+    const selectedCandidates = Array.from(new Set(assignments.map((assignment) => assignment.candidate)));
+    return {
+        releaseMbid: target.releaseMbid,
+        targetTracks: target.tracks,
+        provider,
+        assignments,
+        candidates: selectedCandidates,
+        complete: assignments.length === target.tracks.length,
+        qualityTotal: assignments.reduce((sum, assignment) => sum + qualityScore(slot, assignment.candidate.album.quality), 0),
+        identityCompatibleAssignments: assignments.filter((assignment) =>
+            compatibleReleaseMbids(assignment.candidate.match).includes(target.releaseMbid),
+        ).length,
+        extraProviderTracks: Math.max(0, selectedCandidates.reduce((sum, candidate) => sum + candidate.tracks.length, 0) - assignments.length),
+        scoreTotal: selectedCandidates.reduce((sum, candidate) => sum + candidate.score, 0),
+    };
+}
+
+function compareCoveragePlans(left: ReleaseCoveragePlan, right: ReleaseCoveragePlan): number {
+    return right.assignments.length - left.assignments.length
+        || Number(right.complete) - Number(left.complete)
+        || right.qualityTotal - left.qualityTotal
+        || right.identityCompatibleAssignments - left.identityCompatibleAssignments
+        || left.candidates.length - right.candidates.length
+        || left.extraProviderTracks - right.extraProviderTracks
+        || right.scoreTotal - left.scoreTotal
+        || right.targetTracks.length - left.targetTracks.length
+        || left.releaseMbid.localeCompare(right.releaseMbid)
+        || left.provider.localeCompare(right.provider);
+}
+
+function lowestPlanQuality(plan: ReleaseCoveragePlan, slot: ReleaseGroupLibrarySlot): string | null {
+    return [...plan.assignments]
+        .sort((left, right) =>
+            qualityScore(slot, left.candidate.album.quality) - qualityScore(slot, right.candidate.album.quality),
+        )[0]?.candidate.album.quality || null;
+}
+
+function coveragePlanEvidence(plan: ReleaseCoveragePlan): Record<string, unknown> {
+    const qualityTrackCounts: Record<string, number> = {};
+    for (const assignment of plan.assignments) {
+        const quality = normalizeQualityTag(assignment.candidate.album.quality) || "UNKNOWN";
+        qualityTrackCounts[quality] = (qualityTrackCounts[quality] || 0) + 1;
+    }
+
+    return {
+        matchKind: plan.candidates.length > 1 ? "composite" : plan.complete ? "direct" : "partial",
+        providerAlbumIds: plan.candidates.map((candidate) => candidate.album.providerId),
+        coverage: {
+            coveredTracks: plan.assignments.length,
+            targetTracks: plan.targetTracks.length,
+            complete: plan.complete,
+            qualityTrackCounts,
+            extraProviderTracks: plan.extraProviderTracks,
+        },
+        trackSources: plan.assignments.map((assignment) => {
+            const target = plan.targetTracks[assignment.targetIndex];
+            return {
+                canonicalTrackMbid: target.trackMbid,
+                canonicalRecordingMbid: target.recordingMbid,
+                title: target.title,
+                providerTrackId: assignment.providerTrack.providerId || assignment.providerTrack.provider_id || null,
+                providerAlbumId: assignment.candidate.album.providerId,
+                quality: assignment.candidate.album.quality || null,
+                matchScore: assignment.matchScore,
+            };
+        }),
+    };
 }
 
 function selectReleaseMbidForCandidate(
@@ -453,7 +638,7 @@ export function selectReleaseGroupSlotAlbums(
 
     for (const c of candidates) {
         const { provider, album, match } = c;
-        if (!match?.releaseGroup || (match.status !== "verified" && match.status !== "probable")) {
+        if (!match?.releaseGroup || !["verified", "probable", "candidate"].includes(match.status)) {
             continue;
         }
 
@@ -536,8 +721,12 @@ export function selectReleaseGroupSlotAlbums(
 
         // 1. If there are no target tracks or no candidate track details, select the best candidate by score
         if (releaseTargets.length === 0 || !hasTrackDetails) {
-            candidatesWithTracks.sort((a, b) => b.score - a.score);
-            const best = candidatesWithTracks[0];
+            const standaloneCandidates = candidatesWithTracks.filter((candidate) => candidate.match.status !== "candidate");
+            standaloneCandidates.sort((a, b) => b.score - a.score);
+            if (standaloneCandidates.length === 0) {
+                continue;
+            }
+            const best = standaloneCandidates[0];
             const selectedMatch: ProviderReleaseGroupMatch = {
                 ...best.match,
                 releaseMbid: selectReleaseMbidForCandidate(releaseGroupMbid, best, preferredReleaseRow?.mbid),
@@ -553,132 +742,20 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        // 2. Single candidate fully covering a release. Consider EVERY release that
-        //    has a full cover — not just the first — then pick by most-complete
-        //    edition, then highest provider quality, then score. Two editions of the
-        //    same EP (a 16-bit and a 24-bit release, each matched to its own MB
-        //    release) must not be decided by release order alone: the hi-res offer
-        //    should win the slot.
-        let selectedSingle: { candidate: ProviderAlbumCandidateWithTracks; releaseMbid: string } | null = null;
-        const coveredReleaseOptions: Array<{
-            candidate: ProviderAlbumCandidateWithTracks;
-            releaseMbid: string;
-            trackCount: number;
-            quality: number;
-        }> = [];
-        for (const target of releaseTargets) {
-            const releaseCompatibleCandidates = candidatesWithTracks.filter(candidate =>
-                candidateCanRepresentRelease(candidate, target.releaseMbid)
-            );
-            const fullCovers = releaseCompatibleCandidates.filter(c =>
-                getMatchedTargets1to1(target.tracks, c.tracks).size === target.tracks.length
-            );
-            if (fullCovers.length > 0) {
-                sortCandidatesForSlot(slot, fullCovers);
-                coveredReleaseOptions.push({
-                    candidate: fullCovers[0],
-                    releaseMbid: target.releaseMbid,
-                    trackCount: target.tracks.length,
-                    quality: qualityScore(slot, fullCovers[0].album.quality),
-                });
-            }
-        }
-        if (coveredReleaseOptions.length > 0) {
-            coveredReleaseOptions.sort((left, right) =>
-                right.trackCount - left.trackCount
-                || right.quality - left.quality
-                || right.candidate.score - left.candidate.score
-                || left.releaseMbid.localeCompare(right.releaseMbid)
-            );
-            selectedSingle = {
-                candidate: coveredReleaseOptions[0].candidate,
-                releaseMbid: coveredReleaseOptions[0].releaseMbid,
-            };
-        }
+        // Build a strict per-track acquisition plan for every canonical edition
+        // and provider. Recording identity (MBID/ISRC, then the shared structural
+        // matcher) decides coverage. Quality is optimized per target track, so a
+        // hi-res standard edition can supply disc one while a lossless deluxe
+        // offer supplies otherwise-unavailable bonus tracks. No title-specific
+        // remix/radio-edit rules are needed.
+        const providers = Array.from(new Set(candidatesWithTracks.map((candidate) => candidate.provider)));
+        const coveragePlans = releaseTargets.flatMap((target) => providers
+            .map((provider) => buildCoveragePlanForProvider(target, provider, candidatesWithTracks, slot))
+            .filter((plan): plan is ReleaseCoveragePlan => Boolean(plan)));
+        coveragePlans.sort(compareCoveragePlans);
+        const selectedPlan = coveragePlans[0] || null;
 
-        if (selectedSingle) {
-            const selectedMatch: ProviderReleaseGroupMatch = {
-                ...selectedSingle.candidate.match,
-                releaseMbid: selectedSingle.releaseMbid,
-            };
-            bestByReleaseGroupAndSlot.set(key, {
-                releaseGroupMbid,
-                slot,
-                provider: selectedSingle.candidate.provider,
-                album: selectedSingle.candidate.album,
-                match: selectedMatch,
-                score: selectedSingle.candidate.score,
-            });
-            continue;
-        }
-
-        // 3. Combined matching: no single candidate covers any release, so try to
-        // assemble full coverage from multiple same-provider albums, again
-        // preferring the most complete edition.
-        sortCandidatesForSlot(slot, candidatesWithTracks);
-
-        let selectedCombination: {
-            candidates: ProviderAlbumCandidateWithTracks[];
-            targetTracks: TargetTrack[];
-            releaseMbid: string;
-        } | null = null;
-
-        for (const target of releaseTargets) {
-            const releaseCompatibleCandidates = candidatesWithTracks.filter(candidate =>
-                candidateCanRepresentRelease(candidate, target.releaseMbid)
-            );
-            if (releaseCompatibleCandidates.length === 0) {
-                continue;
-            }
-
-            const primary = releaseCompatibleCandidates[0];
-            const selectedCandidates = [primary];
-            let currentCovered = getMatchedTargets1to1(target.tracks, primary.tracks);
-
-            for (let i = 1; i < releaseCompatibleCandidates.length; i++) {
-                if (currentCovered.size === target.tracks.length) {
-                    break;
-                }
-                const candidate = releaseCompatibleCandidates[i];
-                if (candidate.provider !== primary.provider) {
-                    continue; // Only combine candidates from the same provider
-                }
-
-                // Check if combining this candidate covers new target tracks 1-to-1
-                const combinedTracks = selectedCandidates.concat(candidate).flatMap(c => c.tracks);
-                const combinedCovered = getMatchedTargets1to1(target.tracks, combinedTracks);
-
-                if (combinedCovered.size > currentCovered.size) {
-                    selectedCandidates.push(candidate);
-                    currentCovered = combinedCovered;
-                }
-            }
-
-            if (currentCovered.size < target.tracks.length) {
-                continue;
-            }
-
-            // Reject combinations whose provider tracks don't all map back onto the
-            // target release — leftovers indicate the albums describe something else.
-            if (selectedCandidates.length > 1) {
-                const allProviderTracks = selectedCandidates.flatMap(c => c.tracks);
-                const hasLeftover = allProviderTracks.some(pt => {
-                    return !target.tracks.some(targetTrack => scoreTrackMatch(targetTrack, pt) >= TRACK_MATCH_THRESHOLD);
-                });
-                if (hasLeftover) {
-                    continue;
-                }
-            }
-
-            selectedCombination = {
-                candidates: selectedCandidates,
-                targetTracks: target.tracks,
-                releaseMbid: target.releaseMbid,
-            };
-            break;
-        }
-
-        if (!selectedCombination) {
+        if (!selectedPlan) {
             const strongMetadataCandidates = candidatesWithTracks.filter((candidate) =>
                 hasStrongReleaseShapeEvidence(candidate, preferredReleaseRow?.mbid)
             );
@@ -703,34 +780,52 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        const { candidates: combinedCandidates, targetTracks: combinedTargets } = selectedCombination;
-        const primary = combinedCandidates[0];
-        combinedCandidates.sort((left, right) => {
-            const firstCoveredTarget = (candidate: ProviderAlbumCandidateWithTracks) => {
-                const covered = getMatchedTargets1to1(combinedTargets, candidate.tracks);
-                if (covered.size === 0) return Number.MAX_SAFE_INTEGER;
-                return Math.min(...covered);
-            };
-            return firstCoveredTarget(left) - firstCoveredTarget(right);
-        });
-        const selectedIds = combinedCandidates.map(c => c.album.providerId);
+        const firstAssignmentByCandidate = new Map<ProviderAlbumCandidateWithTracks, number>();
+        for (const assignment of selectedPlan.assignments) {
+            if (!firstAssignmentByCandidate.has(assignment.candidate)) {
+                firstAssignmentByCandidate.set(assignment.candidate, assignment.targetIndex);
+            }
+        }
+        const selectedCandidates = [...selectedPlan.candidates].sort((left, right) =>
+            (firstAssignmentByCandidate.get(left) ?? Number.MAX_SAFE_INTEGER)
+            - (firstAssignmentByCandidate.get(right) ?? Number.MAX_SAFE_INTEGER)
+            || left.album.providerId.localeCompare(right.album.providerId));
+        const primary = selectedCandidates[0];
+        const selectedIds = selectedCandidates.map((candidate) => candidate.album.providerId);
+        const evidence = {
+            ...primary.match.evidence,
+            ...coveragePlanEvidence(selectedPlan),
+        };
         const mergedAlbum: ProviderAlbumSlotCandidate = {
             ...primary.album,
             providerId: selectedIds.join(";"),
+            quality: lowestPlanQuality(selectedPlan, slot),
         };
-
+        const method = selectedPlan.complete
+            ? selectedCandidates.length > 1
+                ? "quality_optimized_composite_track_coverage"
+                : primary.match.status === "candidate"
+                    ? "strict_single_album_track_coverage"
+                    : primary.match.method
+            : "strict_partial_track_coverage";
         const selectedMatch: ProviderReleaseGroupMatch = {
             ...primary.match,
-            releaseMbid: selectedCombination.releaseMbid,
+            releaseMbid: selectedPlan.releaseMbid,
+            status: selectedPlan.complete ? "verified" : "probable",
+            confidence: selectedPlan.complete
+                ? Math.max(0.95, primary.match.confidence)
+                : Math.min(0.94, selectedPlan.assignments.length / selectedPlan.targetTracks.length),
+            method,
+            evidence,
         };
 
         bestByReleaseGroupAndSlot.set(key, {
             releaseGroupMbid,
             slot,
-            provider: primary.provider,
+            provider: selectedPlan.provider,
             album: mergedAlbum,
             match: selectedMatch,
-            score: primary.score,
+            score: selectedPlan.scoreTotal,
         });
     }
 
@@ -908,84 +1003,6 @@ export class ReleaseGroupSlotService {
             }
         })();
 
-        // Materialize composite matches (a set of provider albums covering one MB
-        // release) as first-class match rows now that every direct match is
-        // stored, then re-pick each touched slot's release from the whole-artist
-        // availability graph (direct + composite). The per-group fill above only
-        // sees offers matched to that one group, so a larger MB release whose
-        // tracks span provider albums matched to *different* groups wins here.
-        persistCompositeReleaseMatchesForArtist(input.artistMbid);
-        this.selectLargestCoveredReleasePerSlot(selections);
-
         return counts;
-    }
-
-    private static selectLargestCoveredReleasePerSlot(
-        selections: ReleaseGroupSlotSelection[],
-    ): void {
-        const slotsByGroup = new Map<string, Set<string>>();
-        for (const selection of selections) {
-            let slots = slotsByGroup.get(selection.releaseGroupMbid);
-            if (!slots) {
-                slots = new Set();
-                slotsByGroup.set(selection.releaseGroupMbid, slots);
-            }
-            slots.add(selection.slot);
-        }
-
-        const qualityRank = (quality: string | null | undefined): number => {
-            const q = String(quality || "").toUpperCase();
-            if (q.includes("ATMOS") || q.includes("SPATIAL")) return 4;
-            if (q.includes("HIRES")) return 3;
-            if (q.includes("LOSSLESS")) return 2;
-            if (q.includes("HIGH")) return 1;
-            return 0;
-        };
-
-        for (const [releaseGroupMbid, slots] of slotsByGroup) {
-            const availability = getReleaseGroupAvailability(releaseGroupMbid);
-            const trackCountByRelease = new Map(
-                availability.releases.map((release) => [release.releaseMbid, release.trackCount ?? 0]),
-            );
-
-            for (const slot of slots) {
-                const currentReleaseMbid = availability.selectedReleaseBySlot[slot] ?? null;
-                const currentTracks = currentReleaseMbid ? (trackCountByRelease.get(currentReleaseMbid) ?? 0) : 0;
-
-                let best: { releaseMbid: string; tracks: number; offer: ReleaseAvailabilityProvider } | null = null;
-                for (const release of availability.releases) {
-                    const tracks = release.trackCount ?? 0;
-                    const offer = release.availability
-                        .filter((candidate) => (candidate.librarySlot ?? "stereo") === slot)
-                        .sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality))[0];
-                    if (!offer) continue;
-                    if (!best || tracks > best.tracks) {
-                        best = { releaseMbid: release.releaseMbid, tracks, offer };
-                    }
-                }
-
-                if (!best || best.tracks <= currentTracks || best.releaseMbid === currentReleaseMbid) {
-                    continue;
-                }
-
-                const providerAlbumId = best.offer.providerAlbumIds?.length
-                    ? best.offer.providerAlbumIds.join(";")
-                    : best.offer.providerAlbumId;
-                try {
-                    setSlotSelection({
-                        releaseGroupMbid,
-                        slot,
-                        releaseMbid: best.releaseMbid,
-                        provider: best.offer.provider,
-                        providerAlbumId,
-                    });
-                } catch (error) {
-                    console.warn(
-                        `[Slots] Could not select larger covered release ${best.releaseMbid} for ${releaseGroupMbid}:${slot}:`,
-                        (error as Error)?.message,
-                    );
-                }
-            }
-        }
     }
 }

@@ -720,8 +720,13 @@ class ApiClient {
     return this.request<T>(`/v1/artist/${artistId}`);
   }
 
-  async getArtistPage(artistId: string, options: RequestControlOptions = {}) {
-    return this.request(`/v1/artist/${artistId}/page`, options);
+  async getArtistPage(
+    artistId: string,
+    options: RequestControlOptions & { section?: 'all' | 'identity' | 'summary' | 'albums' | 'tracks' | 'videos' } = {},
+  ) {
+    const { section = 'all', ...requestOptions } = options;
+    const query = section === 'all' ? '' : `?section=${section}`;
+    return this.request(`/v1/artist/${artistId}/page${query}`, requestOptions);
   }
 
   async getArtistDetail(artistId: string) {

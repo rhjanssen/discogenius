@@ -84,10 +84,10 @@
     "providerId": "188897376",
     "providerTitle": "Follow You / Cutthroat",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
-    "confidence": 0.95,
-    "releaseGroupMbid": "9ce73eb5-8929-4934-9cb9-6d386c92762e",
-    "releaseMbid": "f0d78d4a-90c1-4896-b241-440555e0d2ba"
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "e4d28d46-4abe-4d83-a5ef-9c144b98c2a7",
+    "releaseMbid": "1ecd3d4a-0b32-4020-a190-dd8b6b40fa5a"
   },
   {
     "providerId": "189287561",
@@ -110,11 +110,11 @@
   {
     "providerId": "189552689",
     "providerTitle": "Wrecked",
-    "status": "ambiguous",
-    "method": "musicbrainz-recording-isrc",
-    "confidence": 0.9,
-    "releaseGroupMbid": "9ce73eb5-8929-4934-9cb9-6d386c92762e",
-    "releaseMbid": "f0d78d4a-90c1-4896-b241-440555e0d2ba"
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "6dd3e443-13e9-4cc1-93f8-21a59268622c",
+    "releaseMbid": "d1d550f8-1f60-4268-9729-8f4778411098"
   },
   {
     "providerId": "196316502",
@@ -130,7 +130,7 @@
     "providerTitle": "Imagine Dragons EP",
     "status": "verified",
     "method": "musicbrainz-recording-isrc",
-    "confidence": 0.96,
+    "confidence": 0.95,
     "releaseGroupMbid": "fba9f42f-83d1-4cc5-940d-27a46985d535",
     "releaseMbid": "820507b6-4513-47cc-9993-28941bfd4788"
   },
@@ -182,11 +182,11 @@
   {
     "providerId": "202493354",
     "providerTitle": "Enemy (from the series Arcane League of Legends)",
-    "status": "ambiguous",
-    "method": "musicbrainz-recording-isrc",
-    "confidence": 0.9,
-    "releaseGroupMbid": "df3f76e4-dbfb-40d8-aac5-f8bff8d58b29",
-    "releaseMbid": "f6a569ee-ca57-48ab-927c-ca552c30952a"
+    "status": "verified",
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "35990e4e-72da-4ca1-9193-2ee30cc23050",
+    "releaseMbid": "8b04bf33-d51b-4ae8-95e5-9da557f80f0a"
   },
   {
     "providerId": "203955921",
@@ -237,10 +237,10 @@
     "providerId": "219753302",
     "providerTitle": "Bones",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
-    "confidence": 0.9,
-    "releaseGroupMbid": "df3f76e4-dbfb-40d8-aac5-f8bff8d58b29",
-    "releaseMbid": "f6a569ee-ca57-48ab-927c-ca552c30952a"
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "0359e46f-7050-4f6a-ba24-5e4118db8943",
+    "releaseMbid": "65a4d048-15ba-434b-bc4c-28ea927c021c"
   },
   {
     "providerId": "22506991",
@@ -291,10 +291,10 @@
     "providerId": "234556980",
     "providerTitle": "Sharks",
     "status": "verified",
-    "method": "musicbrainz-recording-isrc",
-    "confidence": 0.9,
-    "releaseGroupMbid": "df3f76e4-dbfb-40d8-aac5-f8bff8d58b29",
-    "releaseMbid": "f6a569ee-ca57-48ab-927c-ca552c30952a"
+    "method": "musicbrainz-release-title-year-type-track-count",
+    "confidence": 0.99,
+    "releaseGroupMbid": "4b2826c1-c93c-4c8d-9c24-e7dc83533261",
+    "releaseMbid": "e2d9ab23-74f4-41db-ae81-08f54c90081f"
   },
   {
     "providerId": "23543377",

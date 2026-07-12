@@ -305,6 +305,7 @@ export interface ProviderAlbum {
   type?: "ALBUM" | "EP" | "SINGLE" | string;
   explicit?: boolean | null;
   upc?: string | null;
+  copyright?: string | null;
   popularity?: number | null;
   quality?: string | null;
   qualityTags?: string[];
@@ -325,6 +326,8 @@ export interface ProviderTrack {
   volumeNumber?: number;
   url?: string;
   isrc?: string | null;
+  releaseDate?: string | null;
+  copyright?: string | null;
   quality?: string | null;
   qualityTags?: string[];
   raw?: unknown;

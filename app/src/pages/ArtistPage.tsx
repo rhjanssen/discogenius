@@ -1112,6 +1112,7 @@ const ArtistPage = () => {
               type="button"
               className={cardStyles.monitorIndicator}
               onClick={(e) => toggleVideoMonitored(e, providerId, !isVideoMonitored)}
+              disabled={isLocked}
               title={isLocked ? 'Monitoring is locked' : (isVideoMonitored ? 'Unmonitor' : 'Monitor')}
               style={{ cursor: isLocked ? 'not-allowed' : 'pointer', opacity: isLocked ? 0.5 : 1 }}
             >

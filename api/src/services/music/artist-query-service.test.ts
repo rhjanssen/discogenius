@@ -201,6 +201,40 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(videos.some((video: any) => video.title === "Stale provider Video"), false);
 });
 
+test("artist page sections can be loaded independently", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const identity = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
+    includeReleaseGroups: false,
+    includeTracks: false,
+    includeVideos: false,
+    includeStatistics: false,
+  });
+  const summary = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
+    includeReleaseGroups: true,
+    includeTracks: false,
+    includeVideos: false,
+  });
+  const tracks = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
+    includeReleaseGroups: false,
+    includeTracks: true,
+    includeVideos: false,
+  });
+  const videos = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
+    includeReleaseGroups: false,
+    includeTracks: false,
+    includeVideos: true,
+  });
+
+  const moduleTypes = (page: any) => (page.rows || [])
+    .flatMap((row: any) => row.modules || [])
+    .map((module: any) => module.type);
+  assert.equal(identity.artist.name, "Canonical Artist");
+  assert.deepEqual(moduleTypes(identity), []);
+  assert.deepEqual(moduleTypes(summary), ["ALBUM"]);
+  assert.deepEqual(moduleTypes(tracks), ["TRACK_LIST"]);
+  assert.deepEqual(moduleTypes(videos), ["VIDEO_LIST"]);
+});
+
 test("artist page top tracks collapse alternate quality rows into one provider-backed row", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
@@ -267,6 +301,18 @@ test("artist page top tracks collapse alternate quality rows into one provider-b
 
 test("artist list and album helper count canonical release groups and tracks", () => {
   const { artistId } = seedCanonicalArtistPage();
+
+  // Credited-release rows are often written before the canonical Albums row is
+  // assigned, so their integer FK may legitimately be null. They must still
+  // collapse onto the same canonical release group instead of doubling stats.
+  dbModule.db.prepare(`
+    INSERT INTO ArtistReleaseGroups (
+      artist_metadata_id, artist_mbid, release_group_id, release_group_mbid, relationship
+    ) VALUES (
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid-1'),
+      'artist-mbid-1', NULL, 'release-group-mbid-1', 'primary'
+    )
+  `).run();
 
   // Statistics are precomputed off the request path (command workers refresh
   // them on scan); the list reads the cached ArtistStatistics table rather than

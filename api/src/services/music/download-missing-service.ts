@@ -8,6 +8,7 @@ import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
+import { queueTrackAcquisitionPlan } from "./release-group-acquisition-plan.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -116,7 +117,7 @@ export class DownloadMissingService {
         }): boolean => isMusicBrainzReleaseGroupIncluded(row, filteringConfig);
 
         let albumJobs = 0;
-        const trackJobs = 0;
+        let trackJobs = 0;
         let videoJobs = 0;
         const albumQueuedAsAlbum = new Set<string>();
 
@@ -193,6 +194,8 @@ export class DownloadMissingService {
                 rgs.selected_provider_id,
                 rgs.selected_release_mbid,
                 rgs.quality,
+                rgs.match_method,
+                rgs.match_evidence,
                 pi.cover AS provider_cover,
                 pi.title AS provider_title,
                 pi.provider_artist_name AS provider_artist_name,
@@ -238,6 +241,13 @@ export class DownloadMissingService {
             }
 
             const artistNames = [slot.artist_name || slot.provider_artist_name].filter(Boolean);
+            const plannedTracks = queueTrackAcquisitionPlan(slot, {
+                canQueue: hasBatchCapacity,
+                onQueued: () => { trackJobs += 1; },
+            });
+            if (plannedTracks.recognized) {
+                continue;
+            }
             queueAlbumDownload({
                 id: String(slot.selected_provider_id),
                 title: slot.title || slot.provider_title || null,

@@ -412,14 +412,24 @@ router.get("/:artistId/albums", (req, res) => {
 // even while queue workers are busy.
 router.get("/:artistId/page", async (req, res) => {
   try {
-    let page = await ArtistQueryService.getArtistPage(req.params.artistId);
+    const section = typeof req.query.section === "string" ? req.query.section.trim().toLowerCase() : "all";
+    if (!["all", "identity", "summary", "albums", "tracks", "videos"].includes(section)) {
+      return res.status(400).json({ detail: "section must be all, identity, summary, albums, tracks, or videos" });
+    }
+    const pageOptions = {
+      includeReleaseGroups: section === "all" || section === "summary" || section === "albums",
+      includeTracks: section === "all" || section === "tracks",
+      includeVideos: section === "all" || section === "videos",
+      includeStatistics: section !== "identity",
+    };
+    let page = await ArtistQueryService.getArtistPage(req.params.artistId, pageOptions);
     
     // Auto-fetch collaborating artists on click
     if (!page && MUSICBRAINZ_MBID_RE.test(req.params.artistId)) {
       try {
         const queued = await queueArtistRefreshScan(req.params.artistId, { forceUpdate: true });
         if (queued) {
-          page = await ArtistQueryService.getArtistPage(req.params.artistId);
+          page = await ArtistQueryService.getArtistPage(req.params.artistId, pageOptions);
         }
       } catch (err: any) {
         console.warn(`[artists] Failed to auto-fetch missing MBID ${req.params.artistId}:`, err.message);
