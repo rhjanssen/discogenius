@@ -29,7 +29,7 @@
 ## Table of Contents
 
 - [Features](#features)
-- [Screenshots](#screenshots)
+- [Demo](#demo)
 - [Getting Started](#getting-started)
 - [Support](#support)
 - [Contributing](#contributing)
@@ -51,17 +51,9 @@
 - **Download Management**: Queue with Lidarr-style command exclusivity, background scheduling, and quality profiles.
 - **Manual Import Flow**: Dashboard interface for identifying and importing local music files.
 
-## Screenshots
+## Demo
 <p align="center">
-  <img src="docs/images/readme/library-overview.png" alt="Discogenius library overview" width="100%" />
-</p>
-
-<p align="center">
-  <img src="docs/images/readme/dashboard-overview.png" alt="Discogenius dashboard" width="100%" />
-</p>
-
-<p align="center">
-  <img src="docs/images/readme/settings-overview.png" alt="Discogenius settings" width="100%" />
+  <img src=".github/discogenius-demo.gif" alt="Discogenius demo" width="100%" />
 </p>
 
 ## Getting Started
