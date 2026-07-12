@@ -738,15 +738,6 @@ export function getServarrMetadataAlbumImageUrl(
   return getServarrMetadataImageUrl(album, preferredCoverTypes);
 }
 
-function configuredAlbumCoverResolution(): "origin" | number {
-  try {
-    const resolution = getConfigSection("metadata")?.album_cover_resolution;
-    return resolution === "origin" ? "origin" : Number(resolution || 500);
-  } catch {
-    return 500;
-  }
-}
-
 function nestedRecord(value: unknown): Record<string, any> {
   return value && typeof value === "object" ? value as Record<string, any> : {};
 }
@@ -1032,7 +1023,11 @@ export async function resolveAlbumArtwork(options: {
   const providerUrl = await resolveProviderArtworkUrl(
     options.providerCandidates || [],
     "album",
-    options.size ?? configuredAlbumCoverResolution(),
+    // Fetch the origin image as the cached source — writeResizedMediaCovers
+    // derives the UI proxies from it, the same flow Servarr/CAA artwork uses.
+    // (A configured pixel size here produced invalid TIDAL URLs: 1200x1200
+    // 403s; only fixed square sizes or "origin" exist.)
+    options.size ?? "origin",
   );
   if (providerUrl) {
     persistResolvedFallbackArtwork("Albums", options.albumMbid, "Cover", providerUrl);

@@ -695,7 +695,13 @@ export class TidalProvider implements StreamingProvider {
       return fallback === "origin" ? "origin" : `${fallback}x${fallback}`;
     }
 
-    return `${numeric}x${numeric}`;
+    // TIDAL's image CDN only serves fixed square sizes and 403s anything else
+    // (a configured 1200 used to produce 1200x1200.jpg -> 403, silently killing
+    // provider cover fallbacks). Clamp to the next valid size up so quality
+    // never degrades; anything beyond the largest gets the origin image.
+    const valid = [80, 160, 320, 640, 1280];
+    const clamped = valid.find((candidate) => candidate >= numeric);
+    return clamped ? `${clamped}x${clamped}` : "origin";
   }
 
   private normalizeVideoSize(size: string | number | null | undefined): string {

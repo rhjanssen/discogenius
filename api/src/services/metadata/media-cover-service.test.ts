@@ -190,7 +190,9 @@ test("provider artwork ids resolve through the provider interface before caching
     entityType: "album",
     providerId: "provider-album-id",
     imageId: "provider-image-id",
-    size: 1200,
+    // The cached source is fetched at origin resolution; the UI proxies are
+    // derived locally by writeResizedMediaCovers.
+    size: "origin",
   }]);
   assert.equal(fetchCalls.includes(providerUrl), true);
 });
