@@ -159,7 +159,17 @@ router.get("/", async (req, res) => {
             }
 
             if (requestedTypeSet.has("albums")) {
-                const localReleaseGroups = db
+                // Two-phase like the tracks branch: bare title match first,
+                // slot/artist enrichment only for the survivors.
+                const matchedAlbumMbids = (db.prepare(
+                    `SELECT rg.mbid
+             FROM Albums rg
+             WHERE rg.title LIKE ? ESCAPE '\\'
+             ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
+             LIMIT ?`
+                ).all(like, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
+                const albumMarks = matchedAlbumMbids.map(() => "?").join(", ");
+                const localReleaseGroups = matchedAlbumMbids.length === 0 ? [] : db
                     .prepare(
                         `SELECT
               rg.mbid AS id,
@@ -184,11 +194,10 @@ router.get("/", async (req, res) => {
             LEFT JOIN ReleaseGroupSlots spatial
               ON spatial.release_group_mbid = rg.mbid
              AND spatial.slot = 'spatial'
-            WHERE rg.title LIKE ? ESCAPE '\\'
-            ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
-            LIMIT ?`
+            WHERE rg.mbid IN (${albumMarks})
+            ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC`
                     )
-                    .all(like, limit) as any[];
+                    .all(...matchedAlbumMbids) as any[];
 
                 for (const row of localReleaseGroups) {
                     addedAlbumMbids.add(row.id);
@@ -209,7 +218,23 @@ router.get("/", async (req, res) => {
             }
 
             if (requestedTypeSet.has("tracks")) {
-                const localTracks = db
+                // Two-phase: match + rank + LIMIT on the bare title scan first,
+                // then run the (expensive, correlated) enrichment only for the
+                // few survivors. Enriching during the scan evaluated five
+                // correlated subqueries per candidate row across millions of
+                // Tracks — a 30s+ synchronous stall per keystroke. Group by
+                // recording so one song doesn't fill the results with a copy
+                // per edition.
+                const matchedTrackMbids = (db.prepare(
+                    `SELECT t.mbid
+             FROM Tracks t
+             WHERE t.title LIKE ? ESCAPE '\\'
+             GROUP BY COALESCE(t.recording_mbid, t.mbid)
+             ORDER BY t.title ASC, t.mbid ASC
+             LIMIT ?`
+                ).all(like, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
+                const trackMarks = matchedTrackMbids.map(() => "?").join(", ");
+                const localTracks = matchedTrackMbids.length === 0 ? [] : db
                     .prepare(
                         `SELECT
               t.mbid AS id,
@@ -289,11 +314,10 @@ router.get("/", async (req, res) => {
                ORDER BY CASE preferred_file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, preferred_file.id ASC
                LIMIT 1
              )
-            WHERE t.title LIKE ? ESCAPE '\\'
-            ORDER BY t.title ASC, t.mbid ASC
-            LIMIT ?`
+            WHERE t.mbid IN (${trackMarks})
+            ORDER BY t.title ASC, t.mbid ASC`
                     )
-                    .all(like, limit) as any[];
+                    .all(...matchedTrackMbids) as any[];
 
                 results.tracks.push(...localTracks.map((row: any) => formatSearchResult({
                     id: row.id,
@@ -316,7 +340,19 @@ router.get("/", async (req, res) => {
             }
 
             if (requestedTypeSet.has("videos")) {
-                const localVideos = db
+                // Two-phase like the tracks branch. Overfetch the bare title
+                // matches because the enrichment applies a managed-artist /
+                // provider-offer filter that can drop candidates.
+                const matchedVideoIds = (db.prepare(
+                    `SELECT recording.id
+             FROM Recordings recording
+             WHERE recording.is_video = 1
+               AND recording.title LIKE ? ESCAPE '\\'
+             ORDER BY (recording.release_date IS NULL) ASC, recording.release_date DESC, recording.title ASC, recording.id ASC
+             LIMIT ?`
+                ).all(like, limit * 4) as Array<{ id: number }>).map((row) => row.id);
+                const videoMarks = matchedVideoIds.map(() => "?").join(", ");
+                const localVideos = matchedVideoIds.length === 0 ? [] : db
                     .prepare(
                         `SELECT
               recording.id AS id,
@@ -376,13 +412,12 @@ router.get("/", async (req, res) => {
                   preferred_provider_video.provider_id ASC
                 LIMIT 1
               )
-            WHERE COALESCE(recording.is_video, 0) = 1
-              AND recording.title LIKE ? ESCAPE '\\'
+            WHERE recording.id IN (${videoMarks})
               AND (managed_artist.id IS NOT NULL OR provider_video.provider_id IS NOT NULL)
             ORDER BY (recording.release_date IS NULL) ASC, recording.release_date DESC, recording.title ASC, recording.id ASC
             LIMIT ?`
                     )
-                    .all(like, limit) as any[];
+                    .all(...matchedVideoIds, limit) as any[];
 
                 for (const row of localVideos) {
                     results.videos.push(formatSearchResult({
