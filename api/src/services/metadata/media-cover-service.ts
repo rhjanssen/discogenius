@@ -1235,10 +1235,11 @@ export async function resolveVideoArtwork(options: {
   const providerUrl = await resolveProviderArtworkUrl(
     providerCandidates,
     "video",
-    // Discogenius stores a proxy-sized thumbnail for the UI (TIDAL maps
-    // 640x360 -> 480x320); full-resolution artwork is only fetched onto disk
-    // by the library download path (organizer video_thumbnail_resolution).
-    options.size ?? "640x360",
+    // Video thumbnails top out at 720p, and the video page shows one large in
+    // the player, so — unlike album/artist art — keep the full-resolution image
+    // as the primary cover. writeResizedMediaCovers still derives the 500/250
+    // proxies from it for the grid cards.
+    options.size ?? "1080x720",
   );
   if (providerUrl) {
     const cached = await ensureCachedMediaCover({
