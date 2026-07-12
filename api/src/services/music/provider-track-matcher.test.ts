@@ -99,3 +99,39 @@ test("weak title and no structural agreement falls below threshold", () => {
   );
   assert.ok(s < TRACK_MATCH_THRESHOLD, `got ${s}`);
 });
+
+test("a studio track does NOT cover a live-variant recording across positions (Amy Winehouse case)", () => {
+  // Back to Black: the 11-track hi-res album's studio "Rehab" (vol 1 #1) was
+  // assigned to "Rehab (live at Kalkscheune, Berlin)" (vol 3 #1) because live
+  // cuts often share the studio runtime. A one-sided version claim needs the
+  // SAME slot to count; combined-in tracks may not claim variants on duration.
+  const s = scoreTrackMatch(
+    target({ title: "Rehab (live at Kalkscheune, Berlin)", trackNumber: 1, volumeNumber: 3, durationSec: 213 }),
+    provider({ title: "Rehab", trackNumber: 1, volumeNumber: 1, durationSec: 213 }),
+  );
+  assert.ok(s < TRACK_MATCH_THRESHOLD, `studio track must not cover the live recording, got ${s}`);
+});
+
+test("a one-sided variant at the SAME slot with close duration still matches (Haunt demo shape)", () => {
+  const s = scoreTrackMatch(
+    target({ title: "Rehab (live at Kalkscheune, Berlin)", trackNumber: 1, volumeNumber: 3, durationSec: 213 }),
+    provider({ title: "Rehab", trackNumber: 1, volumeNumber: 3, durationSec: 213 }),
+  );
+  assert.ok(s >= 0.9, `same-slot one-sided qualifier should match, got ${s}`);
+});
+
+test("elaborated qualifiers describe the same variant (demo vs original demo)", () => {
+  const s = scoreTrackMatch(
+    target({ title: "Love Is a Losing Game (original demo)", trackNumber: 7, volumeNumber: 2, durationSec: 154 }),
+    provider({ title: "Love Is A Losing Game (Demo)", trackNumber: 7, volumeNumber: 2, durationSec: 155 }),
+  );
+  assert.ok(s >= 0.9, `demo vs original demo should be compatible, got ${s}`);
+});
+
+test("distinct live venues are different recordings", () => {
+  const s = scoreTrackMatch(
+    target({ title: "Rehab (live at Kalkscheune, Berlin)", trackNumber: 1, durationSec: 213 }),
+    provider({ title: "Rehab (Live At BBC Radio 1)", trackNumber: 1, durationSec: 213 }),
+  );
+  assert.ok(s < TRACK_MATCH_THRESHOLD, `different venues must not match, got ${s}`);
+});

@@ -919,12 +919,13 @@ export class RefreshArtistService {
         if (albumProviderIds.length > 0) {
             const placeholders = albumProviderIds.map(() => "?").join(",");
             const trackRows = db.prepare(`
-                SELECT provider_album_id, title, version, isrc, duration, track_number, volume_number, track_mbid, recording_mbid
+                SELECT provider_album_id, provider_id, title, version, isrc, duration, track_number, volume_number, track_mbid, recording_mbid
                 FROM ProviderItems
                 WHERE entity_type = 'track'
                   AND provider_album_id IN (${placeholders})
             `).all(...albumProviderIds) as Array<{
                 provider_album_id: string | null;
+                provider_id: string | null;
                 title: string | null;
                 version: string | null;
                 isrc: string | null;
@@ -942,6 +943,10 @@ export class RefreshArtistService {
                 const list = tracksByAlbum.get(key) || [];
                 list.push({
                     mbid: track.track_mbid || track.recording_mbid || null,
+                    // The acquisition plan queues per-track downloads by this id;
+                    // without it every trackSource is unqueueable (providerTrackId
+                    // ends up null in the slot evidence).
+                    provider_id: track.provider_id || null,
                     isrc: track.isrc || null,
                     title: track.title || "",
                     version: track.version || null,

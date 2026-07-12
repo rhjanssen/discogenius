@@ -191,18 +191,36 @@ export function versionQualifierSignature(title?: string | null): string {
 }
 
 /**
- * Two titles are version-incompatible when BOTH carry a significant version
- * qualifier and those versions disagree (a remix vs a radio edit). A missing
- * qualifier on either side is treated as compatible so ordinary provider/MB
- * decoration differences never block a legitimate match.
+ * Two titles are version-compatible only when they claim the same recording
+ * variant. A significant qualifier on exactly ONE side ("Rehab (live at
+ * Kalkscheune, Berlin)" vs "Rehab") names a genuinely different recording, so
+ * it is incompatible — title/duration/position must never equate a studio
+ * track with its live/remix/demo variant. Cosmetic decoration (remaster, year,
+ * bit depth, feat.) never reaches this check because versionQualifierSignature
+ * only reports significant variants. Identity evidence (recording MBID/ISRC)
+ * is scored before any title logic, so an ISRC-verified match still wins even
+ * when the displayed titles disagree about the version.
  */
 export function versionsCompatible(titleA?: string | null, titleB?: string | null): boolean {
     const a = versionQualifierSignature(titleA);
     const b = versionQualifierSignature(titleB);
-    if (!a || !b) {
+    if (!a && !b) {
         return true;
     }
-    return a === b || stringSimilarity(a, b) >= 0.6;
+    if (!a || !b) {
+        return false;
+    }
+    if (a === b || stringSimilarity(a, b) >= 0.6) {
+        return true;
+    }
+    // "demo" vs "original demo": one qualifier elaborating the other still
+    // describes the same variant. Distinct variants ("live at kalkscheune
+    // berlin" vs "live at bbc radio 1") share a keyword but neither token set
+    // contains the other.
+    const tokensA = new Set(a.split(" ").filter(Boolean));
+    const tokensB = new Set(b.split(" ").filter(Boolean));
+    const [small, large] = tokensA.size <= tokensB.size ? [tokensA, tokensB] : [tokensB, tokensA];
+    return small.size > 0 && Array.from(small).every((token) => large.has(token));
 }
 
 /**

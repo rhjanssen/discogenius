@@ -3,6 +3,7 @@ import {
     normalizeComparableText,
     providerTrackComparableTitle,
     stringSimilarity,
+    versionQualifierSignature,
     versionsCompatible,
 } from "../mediafiles/import-matching-utils.js";
 
@@ -97,20 +98,33 @@ export function scoreTrackMatch(target: MatchTargetTrack, pt: MatchProviderTrack
     // the only title signal available when the catalog strips UPC/ISRC (Servarr
     // mode), so it also settles offer selection there.
     const versionsOk = versionsCompatible(target.title, providerComparable);
+    // Exactly one side names a variant ("Haunt (demo)" vs plain "Haunt"). That
+    // happens for the SAME recording (MB qualifies it, the provider doesn't —
+    // or vice versa) and for DIFFERENT recordings (a studio track vs its live
+    // cut titled "(live at …)"). Structure disambiguates: the same-recording
+    // cases occupy the same slot with a close duration; a track combined in
+    // from another release does not get to claim a variant title on duration
+    // alone, because live/edit cuts routinely share the studio runtime.
+    const oneSidedVersion = !versionsOk
+        && (versionQualifierSignature(target.title) === "") !== (versionQualifierSignature(providerComparable) === "");
+    const oneSidedStructurallyConfirmed = oneSidedVersion && positionAligned && durationClose;
 
     // 2. Structural-first acceptance. Streaming providers give exact track
     //    positions and durations, so a same-slot match is decisive even when
     //    the displayed title carries extra decoration the canonical title omits.
     //    The `titleSim >= 0.3` guard blocks two genuinely different songs that
     //    merely share a position and a coincidental duration.
-    if (versionsOk && positionAligned && baseMatch) {
+    if ((versionsOk || oneSidedStructurallyConfirmed) && positionAligned && baseMatch) {
         return 0.95;
     }
     if (versionsOk && positionAligned && durationClose && titleSim >= 0.3) {
         return 0.95;
     }
     // 3. Title + duration agree but the position differs — the case when a
-    //    standalone single is combined into an album to cover a target.
+    //    standalone single is combined into an album to cover a target. A
+    //    one-sided version claim is deliberately NOT eligible here: this exact
+    //    path assigned a studio track to "… (live at Kalkscheune, Berlin)"
+    //    purely on a coincidental runtime.
     if (versionsOk && baseMatch && durationClose) {
         return 0.9;
     }
