@@ -259,7 +259,7 @@ const useStyles = makeStyles({
   },
   filterViewDesktop: {
     display: "none",
-    "@media (min-width: 768px)": {
+    "@media (min-width: 1280px)": {
       display: "flex",
       gap: tokens.spacingHorizontalS,
       alignItems: "center",
@@ -271,7 +271,7 @@ const useStyles = makeStyles({
     display: "flex",
     gap: tokens.spacingHorizontalXS,
     alignItems: "center",
-    "@media (min-width: 768px)": {
+    "@media (min-width: 1280px)": {
       display: "none",
     },
   },
@@ -382,22 +382,20 @@ const useStyles = makeStyles({
 });
 
 const COLLAPSED_TOP_TRACK_COUNT = 5;
-const EXPANDED_TOP_TRACK_COUNT = 100;
-const ARTIST_FILTER_STORAGE_PREFIX = "discogenius_artist_filters:";
+const EXPANDED_TOP_TRACK_COUNT = 10;
+// v2 discards the short-lived pre-release value that could be initialized from
+// the identity-only response before monitored content arrived.
+const ARTIST_FILTER_STORAGE_KEY = "discogenius_artist_filters_v2";
 
 type ArtistPageFilterPrefs = {
   libraryFilter: 'all' | 'stereo' | 'spatial' | 'video';
   statusFilters: StatusFilters;
 };
 
-function artistFilterStorageKey(artistId: string) {
-  return `${ARTIST_FILTER_STORAGE_PREFIX}${artistId}`;
-}
-
 function readArtistFilterPrefs(artistId: string | undefined): ArtistPageFilterPrefs | null {
   if (!artistId) return null;
   try {
-    const raw = localStorage.getItem(artistFilterStorageKey(artistId));
+    const raw = localStorage.getItem(ARTIST_FILTER_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<ArtistPageFilterPrefs>;
     const libraryFilter = parsed.libraryFilter;
@@ -449,7 +447,19 @@ const ArtistPage = () => {
     debounceMs: 400,
   });
 
-  const { data: pageData, isLoading: pageLoading, error: pageError, refetch: refetchPage } = useArtistPage(artistId) as { data: any, isLoading: boolean, error: any, refetch: () => void };
+  const {
+    data: pageData,
+    isLoading: pageLoading,
+    isContentLoading: contentLoading,
+    error: pageError,
+    refetch: refetchPage,
+  } = useArtistPage(artistId) as {
+    data: any;
+    isLoading: boolean;
+    isContentLoading: boolean;
+    error: any;
+    refetch: () => void;
+  };
 
   // Poll server for active jobs related to this artist (scanning, curating, downloading)
   const { data: activity } = useQuery({
@@ -500,7 +510,7 @@ const ArtistPage = () => {
   useEffect(() => {
     if (!artistId || !filterInitialized) return;
     try {
-      localStorage.setItem(artistFilterStorageKey(artistId), JSON.stringify({
+      localStorage.setItem(ARTIST_FILTER_STORAGE_KEY, JSON.stringify({
         libraryFilter,
         statusFilters,
       }));
@@ -553,7 +563,7 @@ const ArtistPage = () => {
 
   // Count monitored items from all modules to determine filter default
   useEffect(() => {
-    if (filterInitialized || !pageData?.rows) return;
+    if (filterInitialized || pageLoading || contentLoading || !pageData?.rows) return;
 
     let monitoredCount = 0;
     for (const row of pageData.rows) {
@@ -572,7 +582,7 @@ const ArtistPage = () => {
       setStatusFilters({ ...defaultStatusFilters, onlyMonitored: false });
     }
     setFilterInitialized(true);
-  }, [pageData, filterInitialized]);
+  }, [pageData, filterInitialized, pageLoading, contentLoading]);
 
   useEffect(() => {
     const handleMonitorChange = (event: Event) => {
@@ -940,6 +950,7 @@ const ArtistPage = () => {
 
     const isAlbumMonitored = Boolean(item.is_monitored);
     const isLocked = Boolean(item.monitored_lock);
+    const isDownloaded = Boolean(item.is_downloaded ?? (Number(item.downloaded) >= 100));
     const redundantOf = item.redundant_of ?? item.redundant;
     const isRedundant = Boolean(redundantOf);
     const isPrimary = !isRedundant;
@@ -961,6 +972,14 @@ const ArtistPage = () => {
       const matchesLocked = statusFilters.onlyLocked && isLocked;
       const matchesUnlocked = statusFilters.onlyUnlocked && !isLocked;
       if (!matchesLocked && !matchesUnlocked) return null;
+    }
+
+    // Download filter
+    const hasDownloadFilter = statusFilters.onlyDownloaded || statusFilters.onlyNotDownloaded;
+    if (hasDownloadFilter) {
+      const matchesDownloaded = statusFilters.onlyDownloaded && isDownloaded;
+      const matchesNotDownloaded = statusFilters.onlyNotDownloaded && !isDownloaded;
+      if (!matchesDownloaded && !matchesNotDownloaded) return null;
     }
 
     // Redundancy filter
@@ -1060,6 +1079,7 @@ const ArtistPage = () => {
     const title = item.title || "Unknown Video";
     const isVideoMonitored = Boolean(item.is_monitored);
     const isLocked = Boolean(item.monitored_lock);
+    const isDownloaded = Boolean(item.is_downloaded ?? item.downloaded);
     const imageUrl = renderableArtworkUrl(item.cover_art_url || item.cover || item.cover_id);
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = [artistName, year || ''].filter(Boolean).join(' · ');
@@ -1081,6 +1101,14 @@ const ArtistPage = () => {
       const matchesLocked = statusFilters.onlyLocked && isLocked;
       const matchesUnlocked = statusFilters.onlyUnlocked && !isLocked;
       if (!matchesLocked && !matchesUnlocked) return null;
+    }
+
+    // Download filter
+    const hasDownloadFilter = statusFilters.onlyDownloaded || statusFilters.onlyNotDownloaded;
+    if (hasDownloadFilter) {
+      const matchesDownloaded = statusFilters.onlyDownloaded && isDownloaded;
+      const matchesNotDownloaded = statusFilters.onlyNotDownloaded && !isDownloaded;
+      if (!matchesDownloaded && !matchesNotDownloaded) return null;
     }
 
     if (libraryFilter === 'video' || libraryFilter === 'all') {
@@ -1311,6 +1339,7 @@ const ArtistPage = () => {
            // Same filter logic as renderAlbumCard
            const isAlbumMonitored = Boolean(item.is_monitored);
            const isLocked = Boolean(item.monitored_lock);
+           const isDownloaded = Boolean(item.is_downloaded ?? (Number(item.downloaded) >= 100));
            const hasMonitoringFilter = statusFilters.onlyMonitored || statusFilters.onlyUnmonitored;
            if (hasMonitoringFilter) {
              const matchesMonitored = statusFilters.onlyMonitored && isAlbumMonitored;
@@ -1322,6 +1351,12 @@ const ArtistPage = () => {
              const matchesLocked = statusFilters.onlyLocked && isLocked;
              const matchesUnlocked = statusFilters.onlyUnlocked && !isLocked;
              if (!matchesLocked && !matchesUnlocked) return false;
+           }
+           const hasDownloadFilter = statusFilters.onlyDownloaded || statusFilters.onlyNotDownloaded;
+           if (hasDownloadFilter) {
+             const matchesDownloaded = statusFilters.onlyDownloaded && isDownloaded;
+             const matchesNotDownloaded = statusFilters.onlyNotDownloaded && !isDownloaded;
+             if (!matchesDownloaded && !matchesNotDownloaded) return false;
            }
            const redundantOf = item.redundant_of ?? item.redundant;
            const isRedundant = Boolean(redundantOf);
@@ -1654,9 +1689,12 @@ const ArtistPage = () => {
         {/* Dynamic Modules */}
         <div className={styles.modules}>
           {modules.map((mod, i) => renderModule(mod, i))}
+          {contentLoading && modules.length === 0 && (
+            <Spinner label="Loading artist library..." />
+          )}
         </div>
 
-        {modules.length === 0 && !pageLoading && (
+        {modules.length === 0 && !pageLoading && !contentLoading && (
           <EmptyState
             title="No content found"
             description={!hasBeenScanned ? "Try getting metadata first." : "This artist does not have any surfaced modules yet."}

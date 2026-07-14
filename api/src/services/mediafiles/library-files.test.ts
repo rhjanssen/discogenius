@@ -1056,7 +1056,7 @@ dbModule.db.prepare(`
   const expectedSeparated = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
   // The Plex extras suffix (-video/-lyrics/-live/...) is appended after the
   // provider tag so Plex can classify the extra from the filename.
-  const expectedSeparatedPath = path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {TIDAL-video-inline-test}-video.mp4");
+  const expectedSeparatedPath = path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video {TIDAL-video-inline-test}-video.mp4");
   assert.equal(expectedSeparated.expectedPath, expectedSeparatedPath);
 
   const expectedSeparatedThumbnail = libraryFilesModule.LibraryFilesService.computeExpectedPath({
@@ -1067,7 +1067,7 @@ dbModule.db.prepare(`
   });
   assert.equal(
     expectedSeparatedThumbnail.expectedPath,
-    path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {TIDAL-video-inline-test}-video.jpg"),
+    path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video {TIDAL-video-inline-test}-video.jpg"),
   );
 
   const expectedSeparatedNfo = libraryFilesModule.LibraryFilesService.computeExpectedPath({
@@ -1078,7 +1078,7 @@ dbModule.db.prepare(`
   });
   assert.equal(
     expectedSeparatedNfo.expectedPath,
-    path.join(tempDir, "library", "videos", "Bastille", "Bastille - Pompeii Video {TIDAL-video-inline-test}-video.nfo"),
+    path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video {TIDAL-video-inline-test}-video.nfo"),
   );
 
   config.path.video_folder_layout = "inline";

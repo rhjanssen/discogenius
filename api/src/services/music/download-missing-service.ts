@@ -202,28 +202,38 @@ export class DownloadMissingService {
                 rg.primary_type,
                 rg.secondary_types,
                 rg.title,
-                monitored_artist.name as artist_name,
-                COUNT(t.mbid) as total_tracks,
-                SUM(CASE WHEN tf.id IS NOT NULL THEN 1 ELSE 0 END) as downloaded_tracks
+                monitored_artist.name as artist_name
             FROM ReleaseGroupSlots rgs
-            JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
+            JOIN Albums rg ON rg.id = rgs.release_group_id
             JOIN Artists monitored_artist ON monitored_artist.mbid = rgs.artist_mbid
-            LEFT JOIN ProviderItems pi ON pi.provider_id = rgs.selected_provider_id AND pi.entity_type = 'album'
-            LEFT JOIN Tracks t ON t.release_mbid = rgs.selected_release_mbid
-            LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid AND COALESCE(recording.is_video, 0) = 0
-            LEFT JOIN TrackFiles tf ON tf.file_type = 'track' 
-                                   AND tf.library_slot = COALESCE(rgs.slot, 'stereo') 
-                                   AND (
-                                        tf.canonical_track_mbid = t.mbid 
-                                        OR (tf.canonical_recording_mbid = t.recording_mbid AND t.recording_mbid IS NOT NULL)
-                                   )
+            LEFT JOIN ProviderItems pi
+              ON pi.provider = rgs.selected_provider
+             AND pi.provider_id = rgs.selected_provider_id
+             AND pi.entity_type = 'album'
             WHERE rgs.monitored = 1
               AND rgs.selected_provider IS NOT NULL
               AND rgs.selected_provider_id IS NOT NULL
               AND rgs.selected_release_mbid IS NOT NULL
               AND ${slotArtistWhere}
-            GROUP BY rgs.id
-            HAVING total_tracks = 0 OR downloaded_tracks < total_tracks
+              AND (
+                NOT EXISTS (
+                  SELECT 1 FROM Tracks selected_track
+                  WHERE selected_track.album_release_id = rgs.selected_album_release_id
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM Tracks missing_track
+                  WHERE missing_track.album_release_id = rgs.selected_album_release_id
+                    AND missing_track.id NOT IN (
+                      SELECT downloaded_file.track_id
+                      FROM TrackFiles downloaded_file
+                      WHERE downloaded_file.file_type = 'track'
+                        AND downloaded_file.library_slot = COALESCE(rgs.slot, 'stereo')
+                        AND downloaded_file.track_id IS NOT NULL
+                    )
+                  LIMIT 1
+                )
+              )
             ORDER BY rg.first_release_date DESC, rg.title ASC, rgs.slot ASC
             ${boundedAlbumFetch ? "LIMIT ?" : ""}
         `;

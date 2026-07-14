@@ -138,6 +138,7 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         metadataChanged: job.payload.metadataChanged ?? false,
         isNewArtist: job.payload.isNewArtist ?? false,
         forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
+        monitoringCycle: job.payload.monitoringCycle,
         trigger: job.trigger ?? CommandTrigger.Unspecified,
     });
 };

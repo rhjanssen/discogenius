@@ -154,7 +154,8 @@ export class RenameTrackFileService {
 
         UNION ALL
 
-        SELECT id + 10000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+        SELECT id + 10000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+               CASE WHEN provider_entity_type = 'video' THEN COALESCE(provider_id, canonical_recording_mbid) ELSE COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) END AS media_id,
                canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
                provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
@@ -347,10 +348,13 @@ export class RenameTrackFileService {
       .filter((item) => item.needs_rename)
       .map((item) => item.id);
 
-    return this.executeRenameFiles(ids);
+    return this.executeRenameFiles(ids, { reconcileSeparatedSidecars: true });
   }
 
-  static executeRenameFiles(ids: number[]): RenameApplyResult {
+  static executeRenameFiles(
+    ids: number[],
+    options: { reconcileSeparatedSidecars?: boolean } = {},
+  ): RenameApplyResult {
     const result: RenameApplyResult = { renamed: 0, skipped: 0, conflicts: 0, missing: 0, cleanedDirectories: 0, errors: [] };
     if (!ids || ids.length === 0) {
       return result;
@@ -374,7 +378,8 @@ export class RenameTrackFileService {
         }
       } else if (decoded.tableName === "MetadataFiles") {
         const row = db.prepare(`
-          SELECT id AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id,
+          SELECT id AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id,
+                 CASE WHEN provider_entity_type = 'video' THEN COALESCE(provider_id, canonical_recording_mbid) ELSE COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) END AS media_id,
                  canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
                  file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, extension AS extension, library_slot AS library_slot,
                  provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id,
@@ -647,11 +652,12 @@ export class RenameTrackFileService {
       });
     }
 
-    if (result.renamed > 0) {
+    // Query/artist-wide renames may change every canonical media path and need
+    // a complete separated-root sidecar reconciliation. An explicit id-only
+    // rename already relocates its file and cleans its source parents above;
+    // running these library-wide passes made one-file jobs take minutes.
+    if (result.renamed > 0 && options.reconcileSeparatedSidecars === true) {
       this.replicateSeparatedSidecars();
-    }
-
-    if (result.renamed > 0) {
       result.cleanedDirectories = this.cleanEmptyDirectories();
     }
 

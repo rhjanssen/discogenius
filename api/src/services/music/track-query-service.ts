@@ -5,36 +5,19 @@ import { getConfigSection } from "../config/config.js";
 import { albumCoverLocalUrl } from "../metadata/media-cover-service.js";
 
 const canonicalTrackDownloadedPredicate = `
-  track.mbid IN (
-    SELECT downloaded_file.canonical_track_mbid
+  track.id IN (
+    SELECT downloaded_file.track_id
     FROM TrackFiles downloaded_file
-    WHERE downloaded_file.canonical_track_mbid IS NOT NULL
+    WHERE downloaded_file.track_id IS NOT NULL
       AND downloaded_file.file_type = 'track'
   )
 `;
 
-const canonicalTrackAvailablePredicate = `
-  (
-    track.release_mbid IN (
-      SELECT available_slot.selected_release_mbid
-      FROM ReleaseGroupSlots available_slot
-      WHERE available_slot.selected_release_mbid IS NOT NULL
-        AND available_slot.selected_provider_id IS NOT NULL
-    )
-    OR track.mbid IN (
-      SELECT available_file.canonical_track_mbid
-      FROM TrackFiles available_file
-      WHERE available_file.canonical_track_mbid IS NOT NULL
-        AND available_file.file_type IN ('track', 'lyrics')
-    )
-  )
-`;
-
 const canonicalTrackMonitoredPredicate = `
-  release_group.mbid IN (
-    SELECT monitored_slot.release_group_mbid
+  release_group.id IN (
+    SELECT monitored_slot.release_group_id
     FROM ReleaseGroupSlots monitored_slot
-    WHERE monitored_slot.release_group_mbid IS NOT NULL
+    WHERE monitored_slot.release_group_id IS NOT NULL
       AND monitored_slot.monitored = 1
   )
 `;
@@ -253,15 +236,15 @@ function getTrackOrderBy(sort: SortableTrackField, dir: "ASC" | "DESC"): string 
   }
 }
 
-function getTrackFromSql(selectClause: string, whereClause: string): string {
+function getTrackFromSql(selectClause: string, whereClause: string, candidateScoped = false): string {
   return `
     SELECT
       ${selectClause}
-    FROM Tracks track
-    JOIN AlbumReleases release ON release.mbid = track.release_mbid
-    JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
-    LEFT JOIN ArtistMetadata artist ON artist.mbid = release_group.artist_mbid
-    LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
+    FROM ${candidateScoped ? "candidate_track_ids candidate JOIN Tracks track ON track.id = candidate.id" : "Tracks track"}
+    JOIN AlbumReleases release ON release.id = track.album_release_id
+    JOIN Albums release_group ON release_group.id = release.release_group_id
+    LEFT JOIN ArtistMetadata artist ON artist.id = release_group.artist_metadata_id
+    LEFT JOIN Recordings recording ON recording.id = track.recording_id
     ${whereClause}
   `;
 }
@@ -284,15 +267,15 @@ function getTrackSelectSql(whereClause: string): string {
         FROM (
           SELECT slot_quality.quality AS quality_value
           FROM ReleaseGroupSlots slot_quality
-          WHERE slot_quality.release_group_mbid = release_group.mbid
-            AND slot_quality.selected_release_mbid = track.release_mbid
+          WHERE slot_quality.release_group_id = release_group.id
+            AND slot_quality.selected_album_release_id = track.album_release_id
           UNION
           SELECT provider_quality.quality AS quality_value
           FROM ProviderItems provider_quality
           WHERE provider_quality.entity_type = 'track'
             AND (
-              provider_quality.track_mbid = track.mbid
-              OR provider_quality.recording_mbid = track.recording_mbid
+              provider_quality.track_id = track.id
+              OR provider_quality.recording_id = recording.id
             )
           UNION
           SELECT file_quality.quality AS quality_value
@@ -325,7 +308,20 @@ function getTrackSelectSql(whereClause: string): string {
       CASE WHEN ${canonicalTrackDownloadedPredicate} THEN 1 ELSE 0 END AS is_downloaded
     `, `
     LEFT JOIN ProviderItems provider_track
-      ON provider_track.rowid = (
+      ON provider_track.rowid = COALESCE((
+       SELECT preferred_provider_track.rowid
+       FROM ProviderItems preferred_provider_track
+       WHERE preferred_provider_track.entity_type = 'track'
+         AND (
+           preferred_provider_track.track_id = track.id
+           OR preferred_provider_track.recording_id = recording.id
+         )
+       ORDER BY
+         CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+       preferred_provider_track.updated_at DESC,
+       preferred_provider_track.provider_id ASC
+       LIMIT 1
+     ), (
        SELECT preferred_provider_track.rowid
        FROM ProviderItems preferred_provider_track
        WHERE preferred_provider_track.entity_type = 'track'
@@ -338,7 +334,7 @@ function getTrackSelectSql(whereClause: string): string {
          preferred_provider_track.updated_at DESC,
          preferred_provider_track.provider_id ASC
        LIMIT 1
-     )
+     ))
     LEFT JOIN ProviderItems provider_album
       ON provider_album.rowid = (
        SELECT preferred_provider_album.rowid
@@ -352,13 +348,13 @@ function getTrackSelectSql(whereClause: string): string {
        LIMIT 1
      )
     LEFT JOIN ReleaseGroupSlots selected_slot
-      ON selected_slot.release_group_mbid = release_group.mbid
-     AND selected_slot.selected_release_mbid = track.release_mbid
+      ON selected_slot.release_group_id = release_group.id
+     AND selected_slot.selected_album_release_id = track.album_release_id
      AND selected_slot.id = (
        SELECT preferred_slot.id
        FROM ReleaseGroupSlots preferred_slot
-       WHERE preferred_slot.release_group_mbid = release_group.mbid
-         AND preferred_slot.selected_release_mbid = track.release_mbid
+       WHERE preferred_slot.release_group_id = release_group.id
+         AND preferred_slot.selected_album_release_id = track.album_release_id
        ORDER BY CASE preferred_slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
        LIMIT 1
      )
@@ -529,8 +525,39 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
 }
 
 export function listTracks(input: ListTracksQuery): TracksListResponse {
-  const where: string[] = [canonicalTrackAvailablePredicate];
+  const where: string[] = [];
   const params: Array<string | number> = [];
+
+  const availableSlotWhere = [
+    "available_slot.selected_album_release_id IS NOT NULL",
+    "available_slot.selected_provider_id IS NOT NULL",
+  ];
+  // Push the overwhelmingly common Monitored filter into the candidate source
+  // so SQLite never expands every selected release in the full catalog first.
+  if (input.monitored === true) {
+    availableSlotWhere.push("available_slot.monitored = 1");
+  }
+  const candidateScope = `
+    WITH candidate_track_ids(id) AS MATERIALIZED (
+      SELECT available_track.id
+      FROM ReleaseGroupSlots available_slot
+      JOIN Tracks available_track
+        ON available_track.album_release_id = available_slot.selected_album_release_id
+      WHERE ${availableSlotWhere.join(" AND ")}
+      UNION
+      SELECT available_file.track_id
+      FROM TrackFiles available_file
+      WHERE available_file.track_id IS NOT NULL
+        AND available_file.file_type IN ('track', 'lyrics')
+        ${input.monitored === true ? `AND available_file.track_id IN (
+          SELECT monitored_file_track.id
+          FROM Tracks monitored_file_track
+          JOIN ReleaseGroupSlots monitored_file_slot
+            ON monitored_file_slot.selected_album_release_id = monitored_file_track.album_release_id
+           AND monitored_file_slot.monitored = 1
+        )` : ""}
+    )
+  `;
 
   if (input.search) {
     const searchParam = `%${input.search}%`;
@@ -539,7 +566,11 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
   }
 
   if (input.monitored !== undefined) {
-    where.push(input.monitored ? canonicalTrackMonitoredPredicate : `NOT (${canonicalTrackMonitoredPredicate})`);
+    // The monitored candidate source above already applies this positive
+    // filter before expanding releases into tracks.
+    if (!input.monitored) {
+      where.push(`NOT (${canonicalTrackMonitoredPredicate})`);
+    }
   }
 
   if (input.downloaded !== undefined) {
@@ -561,14 +592,109 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
   const dir = normalizeSortDirection(input.dir);
   const orderBy = getTrackOrderBy(sort, dir);
 
-  const rows = db.prepare(`
-    ${getTrackSelectSql(whereClause)}
-    ${orderBy}
+  // Select the page from canonical integer identities first. Provider offers,
+  // quality unions, files, and credits are intentionally enriched only for
+  // the surviving rows; evaluating those correlated lookups across the whole
+  // multi-million-row Tracks table blocked the API event loop for ~30 seconds.
+  const candidateOrderBy = sort === "popularity"
+    ? ` ORDER BY MAX(
+          COALESCE(recording.popularity, 0),
+          COALESCE((
+            SELECT MAX(track_offer.popularity)
+            FROM ProviderItems track_offer
+            WHERE track_offer.entity_type = 'track'
+              AND track_offer.track_id = track.id
+          ), 0),
+          COALESCE((
+            SELECT MAX(recording_offer.popularity)
+            FROM ProviderItems recording_offer
+            WHERE recording_offer.entity_type = 'track'
+              AND recording_offer.recording_id = recording.id
+          ), 0),
+          COALESCE((
+            SELECT MAX(text_track_offer.popularity)
+            FROM ProviderItems text_track_offer
+            WHERE text_track_offer.entity_type = 'track'
+              AND text_track_offer.track_mbid = track.mbid
+          ), 0),
+          COALESCE((
+            SELECT MAX(text_recording_offer.popularity)
+            FROM ProviderItems text_recording_offer
+            WHERE text_recording_offer.entity_type = 'track'
+              AND text_recording_offer.recording_mbid = track.recording_mbid
+          ), 0)
+        ) ${dir}, COALESCE(artist.popularity, 0) ${dir}, track.mbid ASC`
+    : orderBy;
+  const useReleaseDatePage = sort === "releaseDate" && input.monitored === true;
+  const candidateSql = useReleaseDatePage ? `
+    SELECT track.id, track.mbid
+    FROM Albums release_group INDEXED BY idx_albums_library_release_date
+    JOIN ReleaseGroupSlots available_slot
+      ON available_slot.release_group_id = release_group.id
+     AND available_slot.selected_album_release_id IS NOT NULL
+     AND available_slot.selected_provider_id IS NOT NULL
+     AND available_slot.monitored = 1
+     AND available_slot.id = (
+       SELECT preferred_available_slot.id
+       FROM ReleaseGroupSlots preferred_available_slot
+       WHERE preferred_available_slot.release_group_id = release_group.id
+         AND preferred_available_slot.selected_album_release_id IS NOT NULL
+         AND preferred_available_slot.selected_provider_id IS NOT NULL
+         AND preferred_available_slot.monitored = 1
+       ORDER BY CASE preferred_available_slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+       LIMIT 1
+     )
+    JOIN AlbumReleases release ON release.id = available_slot.selected_album_release_id
+    JOIN Tracks track ON track.album_release_id = release.id
+    ${input.search ? "LEFT JOIN ArtistMetadata artist ON artist.id = release_group.artist_metadata_id" : ""}
+    ${(input.search || input.libraryFilter === "spatial" || input.libraryFilter === "stereo")
+      ? "LEFT JOIN Recordings recording ON recording.id = track.recording_id"
+      : ""}
+    ${whereClause}
+    ${candidateOrderBy}
     LIMIT ? OFFSET ?
-  `).all(...params, input.limit, input.offset) as TrackRow[];
+  ` : `
+    ${candidateScope}
+    ${getTrackFromSql("track.id, track.mbid", whereClause, true)}
+    ${candidateOrderBy}
+    LIMIT ? OFFSET ?
+  `;
+  const candidates = db.prepare(candidateSql)
+    .all(...params, input.limit, input.offset) as Array<{ id: number; mbid: string }>;
+  const candidateIds = candidates.map((candidate) => candidate.id);
+  const candidateMarks = candidateIds.map(() => "?").join(", ");
+  const detailRows = candidateIds.length === 0 ? [] : db.prepare(`
+    ${getTrackSelectSql(`WHERE track.id IN (${candidateMarks})`)}
+  `).all(...candidateIds) as TrackRow[];
+  const detailByMbid = new Map(detailRows.map((row) => [String(row.id), row]));
+  const rows = candidates
+    .map((candidate) => detailByMbid.get(String(candidate.mbid)))
+    .filter((row): row is TrackRow => row != null);
 
-  const totalResult = db.prepare(`
-    ${getTrackFromSql("COUNT(*) as total", whereClause)}
+  const useFastMonitoredCount = input.monitored === true
+    && !input.search
+    && (!input.libraryFilter || input.libraryFilter === "all")
+    && input.locked !== true;
+  const totalResult = useFastMonitoredCount ? db.prepare(`
+    SELECT COUNT(*) AS total
+    FROM Tracks count_track
+    WHERE count_track.album_release_id IN (
+      SELECT count_slot.selected_album_release_id
+      FROM ReleaseGroupSlots count_slot
+      WHERE count_slot.monitored = 1
+        AND count_slot.selected_album_release_id IS NOT NULL
+        AND count_slot.selected_provider_id IS NOT NULL
+    )
+    ${input.downloaded === true ? `AND count_track.id IN (
+      SELECT count_file.track_id FROM TrackFiles count_file
+      WHERE count_file.track_id IS NOT NULL AND count_file.file_type = 'track'
+    )` : input.downloaded === false ? `AND count_track.id NOT IN (
+      SELECT count_file.track_id FROM TrackFiles count_file
+      WHERE count_file.track_id IS NOT NULL AND count_file.file_type = 'track'
+    )` : ""}
+  `).get() as { total: number } : db.prepare(`
+    ${candidateScope}
+    ${getTrackFromSql("COUNT(*) as total", whereClause, true)}
   `).get(...params) as { total: number };
 
   const items = hydrateTrackRows(rows);

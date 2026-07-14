@@ -47,6 +47,24 @@ test("unchanged scheduled monitoring refresh skips rescan and continues to curat
   assert.deepEqual(commands.map((command) => command.name), [commandNamesModule.CommandNames.CurateArtist]);
 });
 
+test("scheduled monitoring context reaches the queued curation command", () => {
+  eventsModule.appEvents.emit(eventsModule.AppEvent.ARTIST_REFRESH_COMPLETE, {
+    artistId: "artist-1",
+    artistName: "Bastille",
+    workflow: "monitoring-intake",
+    monitoringCycle: "full-cycle",
+    scanLibrary: true,
+    metadataChanged: false,
+    isNewArtist: false,
+    forceDownloadQueue: false,
+    trigger: 2,
+  });
+
+  const command = dbModule.db.prepare("SELECT name, payload FROM commands ORDER BY id DESC LIMIT 1").get() as { name: string; payload: string };
+  assert.equal(command.name, commandNamesModule.CommandNames.CurateArtist);
+  assert.equal(JSON.parse(command.payload).monitoringCycle, "full-cycle");
+});
+
 test("changed scheduled monitoring refresh queues the per-artist rescan", () => {
   eventsModule.appEvents.emit(eventsModule.AppEvent.ARTIST_REFRESH_COMPLETE, {
     artistId: "artist-1",

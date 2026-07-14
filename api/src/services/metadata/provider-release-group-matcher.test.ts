@@ -10,6 +10,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
+const configModule = await import("../config/config.js");
+const selectionTestConfig = configModule.readConfig();
+// These matcher-only fixtures intentionally do not materialize their in-memory
+// MusicBrainz releases in SQLite. Keep availability enforcement outside this
+// unit boundary; production/fresh-install defaults are covered separately.
+selectionTestConfig.filtering.require_provider_availability = false;
+configModule.writeConfig(selectionTestConfig);
 
 import { matchProviderAlbumToReleaseGroup } from "./provider-release-group-matcher.js";
 const { selectReleaseGroupSlotAlbums } = await import("../music/release-group-slot-service.js");

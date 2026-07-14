@@ -285,7 +285,8 @@ function mergeQualityTags(...groups: Array<unknown>): string[] {
     const seen = new Set<string>();
     const merged: string[] = [];
     for (const group of groups) {
-        const values = Array.isArray(group) ? group : group ? [group] : [];
+        const values = (Array.isArray(group) ? group : group ? [group] : [])
+            .flatMap((value) => String(value || "").split(","));
         for (const value of values) {
             const quality = String(value || "").trim();
             const key = quality.toUpperCase();
@@ -1015,17 +1016,17 @@ export class ArtistQueryService {
            rg.images
          FROM Albums rg
          LEFT JOIN ReleaseGroupSlots stereo
-           ON stereo.release_group_mbid = rg.mbid
+           ON stereo.release_group_id = rg.id
           AND stereo.slot = 'stereo'
          LEFT JOIN ReleaseGroupSlots spatial
-           ON spatial.release_group_mbid = rg.mbid
+           ON spatial.release_group_id = rg.id
           AND spatial.slot = 'spatial'
          -- Selected provider album offer supplies the artwork fallback
          -- (asset_id/cover) when the slot has no cached cover yet.
          LEFT JOIN ProviderItems album_offer
-           ON album_offer.entity_type = 'album'
-          AND album_offer.provider = COALESCE(stereo.selected_provider, spatial.selected_provider)
-          AND CAST(album_offer.provider_id AS TEXT) = CAST(COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS TEXT)
+          ON album_offer.entity_type = 'album'
+         AND album_offer.provider = COALESCE(stereo.selected_provider, spatial.selected_provider)
+          AND album_offer.provider_id = COALESCE(stereo.selected_provider_id, spatial.selected_provider_id)
          -- OR rg.mbid IN (subquery), instead of OR EXISTS(...), keeps both
          -- branches index-searchable so SQLite OR-optimizes rather than
          -- scanning Albums.
@@ -1044,43 +1045,56 @@ export class ArtistQueryService {
         // section, so the feature was removed during the provider-table retirement.
 
         const topTracks = includeTracks ? db.prepare(`
-      -- Rank cheaply, materialize the <=100 survivors, then enrich the whole
+      -- Rank cheaply, materialize the <=10 survivors, then enrich the whole
       -- set through indexed joins. Correlated provider/file lookups here used
       -- to execute once per survivor and could still stall an artist page for
       -- minutes even after the initial LIMIT.
-      WITH artist_rgs(mbid) AS (
-        SELECT mbid FROM Albums WHERE artist_mbid = ?
-        UNION
-        SELECT release_group_mbid FROM ArtistReleaseGroups WHERE artist_mbid = ?
+      WITH artist_rgs(id) AS (
+        SELECT id FROM Albums WHERE artist_mbid = ?
       ),
-      artist_releases(mbid) AS (
-        SELECT ar.mbid
-        FROM AlbumReleases ar
-        JOIN artist_rgs ON ar.release_group_mbid = artist_rgs.mbid
+      artist_releases(id) AS (
+        SELECT DISTINCT slot.selected_album_release_id
+        FROM artist_rgs
+        JOIN ReleaseGroupSlots slot ON slot.release_group_id = artist_rgs.id
+        WHERE slot.selected_album_release_id IS NOT NULL
+        UNION
+        SELECT DISTINCT provider_track.album_release_id
+        FROM artist_rgs
+        JOIN Albums scoped_group ON scoped_group.id = artist_rgs.id
+        JOIN ProviderItems provider_track
+          ON provider_track.entity_type = 'track'
+         AND provider_track.release_group_mbid = scoped_group.mbid
+        WHERE provider_track.album_release_id IS NOT NULL
       ),
       dedup AS (
         SELECT
+          track.id AS track_id,
           track.mbid AS track_mbid,
           COALESCE(rel.date, rg.first_release_date) AS release_date,
-          COALESCE(am.popularity, 0) AS popularity,
+          MAX(COALESCE(recording.popularity, 0), COALESCE(am.popularity, 0)) AS popularity,
           ROW_NUMBER() OVER (
-            PARTITION BY COALESCE(track.recording_mbid, track.mbid)
+            PARTITION BY COALESCE(track.recording_id, track.id)
             ORDER BY
               COALESCE(rel.date, rg.first_release_date) ASC,
-              track.mbid ASC
+              track.id ASC
           ) AS recording_rank
         FROM Tracks track
-        JOIN AlbumReleases rel ON rel.mbid = track.release_mbid
-        JOIN Albums rg ON rg.mbid = rel.release_group_mbid
-        LEFT JOIN ArtistMetadata am ON am.mbid = rg.artist_mbid
-        WHERE track.release_mbid IN (SELECT mbid FROM artist_releases)
+        JOIN AlbumReleases rel ON rel.id = track.album_release_id
+        JOIN Albums rg ON rg.id = rel.release_group_id
+        LEFT JOIN ArtistMetadata am ON am.id = rg.artist_metadata_id
+        LEFT JOIN Recordings recording ON recording.id = track.recording_id
+        WHERE track.album_release_id IN (SELECT id FROM artist_releases)
+          AND (
+            recording.artist_mbid = ?
+            OR rg.artist_mbid = ?
+          )
       ),
       top AS (
-        SELECT track_mbid, release_date, popularity
+        SELECT track_id, track_mbid, release_date, popularity
         FROM dedup
         WHERE recording_rank = 1
         ORDER BY popularity DESC, release_date DESC, track_mbid ASC
-        LIMIT 100
+        LIMIT 10
       ),
       top_tracks AS MATERIALIZED (
         SELECT
@@ -1104,11 +1118,11 @@ export class ArtistQueryService {
           recording.id AS recording_row_id,
           recording.credits AS recording_credits
         FROM top
-        JOIN Tracks track ON track.mbid = top.track_mbid
-        JOIN AlbumReleases release ON release.mbid = track.release_mbid
-        JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
-        LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = release_group.artist_mbid
-        LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
+        JOIN Tracks track ON track.id = top.track_id
+        JOIN AlbumReleases release ON release.id = track.album_release_id
+        JOIN Albums release_group ON release_group.id = release.release_group_id
+        LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.id = release_group.artist_metadata_id
+        LEFT JOIN Recordings recording ON recording.id = track.recording_id
       ),
       provider_track_candidate_ids(track_id, provider_rowid) AS MATERIALIZED (
         SELECT top_tracks.id, provider_item.rowid
@@ -1267,7 +1281,11 @@ export class ArtistQueryService {
       LEFT JOIN monitored_groups ON monitored_groups.release_group_mbid = top_tracks.release_group_mbid
       LEFT JOIN downloaded_tracks ON downloaded_tracks.track_id = top_tracks.id
       ORDER BY popularity DESC, release_date DESC, id ASC
-    `).all(String(artist.mbid || artistId), String(artist.mbid || artistId)) as any[] : [];
+    `).all(
+            String(artist.mbid || artistId),
+            String(artist.mbid || artistId),
+            String(artist.mbid || artistId),
+        ) as any[] : [];
 
         const releaseGroupDownloadStats = getReleaseGroupDownloadStatsMap(musicBrainzReleaseGroups.map((album) => album.mbid));
         const artistDownloadStats = includeStatistics

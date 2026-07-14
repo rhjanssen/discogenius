@@ -194,8 +194,10 @@ function resizeRgbaNearest(
 
 function writeResizedMediaCovers(originalPath: string, entityId: string | number, coverEntity: MediaCoverEntity, coverType: string, extension: string): void {
   let decoded: { width: number; height: number; data: Uint8Array } | null = null;
+  let originalBuffer: Buffer;
   try {
-    decoded = decodeImage(fs.readFileSync(originalPath), extension);
+    originalBuffer = fs.readFileSync(originalPath);
+    decoded = decodeImage(originalBuffer, extension);
   } catch (error) {
     console.warn("[MediaCoverService] Failed to decode artwork for resizing:", (error as Error).message);
     return;
@@ -217,7 +219,16 @@ function writeResizedMediaCovers(originalPath: string, entityId: string | number
         height: resized.height,
         data: resized.data,
       }, 92).data;
-      fs.writeFileSync(getMediaCoverPath(entityId, coverEntity, coverType, ".jpg", targetHeight), encoded);
+      const resizedPath = getMediaCoverPath(entityId, coverEntity, coverType, ".jpg", targetHeight);
+      // Some upstream images are already aggressively compressed. Re-encoding
+      // those at Lidarr's thumbnail quality can make a 500px derivative larger
+      // than the original, defeating the proxy. In that case omit the resized
+      // file; the media-cover route deliberately falls back to the original.
+      if (encoded.length >= originalBuffer.length) {
+        try { fs.unlinkSync(resizedPath); } catch { /* no stale derivative */ }
+        continue;
+      }
+      fs.writeFileSync(resizedPath, encoded);
     } catch (error) {
       console.warn(`[MediaCoverService] Failed to write ${targetHeight}px artwork:`, (error as Error).message);
     }
@@ -309,22 +320,35 @@ export function resolveMediaCoverFilePath(folder: string, filename: string): str
   }
 
   const requested = path.join(folder, safeFilename);
+  const resizedMatch = safeFilename.match(/^(.+)-\d+\.[a-z0-9]+$/i);
   try {
     const stats = fs.statSync(requested);
     if (stats.isFile() && stats.size > 0) {
+      if (resizedMatch) {
+        for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
+          const original = path.join(folder, `${resizedMatch[1]}${extension}`);
+          try {
+            const originalStats = fs.statSync(original);
+            if (originalStats.isFile() && originalStats.size > 0 && originalStats.size <= stats.size) {
+              return original;
+            }
+          } catch {
+            // try next original extension
+          }
+        }
+      }
       return requested;
     }
   } catch {
     // Try falling back from cover-250.jpg to cover.* like Lidarr's route does.
   }
 
-  const match = safeFilename.match(/^(.+)-\d+\.[a-z0-9]+$/i);
-  if (!match) {
+  if (!resizedMatch) {
     return null;
   }
 
   for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-    const fallback = path.join(folder, `${match[1]}${extension}`);
+    const fallback = path.join(folder, `${resizedMatch[1]}${extension}`);
     try {
       const stats = fs.statSync(fallback);
       if (stats.isFile() && stats.size > 0) {

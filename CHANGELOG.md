@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.3.1] - 2026-07-14
+
+### Added
+- Added maintained full-text indexes for track, artist, album, and video search
+  so global search no longer walks the multi-million-row catalog tables.
+- Added startup repair for legacy music-video files and sidecars that were
+  attached to provider-only artists instead of their canonical MusicBrainz
+  artist.
+
+### Changed
+- Artist pages now render their identity and actions immediately while albums,
+  tracks, and videos load independently, persist one shared filter preference
+  across artists, default to monitored content, and move actions into overflow
+  before the filter/view controls clip.
+- Fresh installations now use the validated monitoring, quality, naming,
+  fingerprinting, and library-folder defaults while keeping spatial audio and
+  music videos disabled and Servarr Metadata Server as the catalog source.
+- Artwork derivatives are retained only when they are smaller than the source;
+  oversized stale proxies transparently fall back to the original asset.
+
+### Fixed
+- Fixed scheduled monitoring cycles dropping their cycle authority between
+  provider matching and curation, which prevented `DownloadMissing` from ever
+  being queued after monitored-artist refreshes.
+- Fixed album, track, video, artist-page, and download-filter queries that
+  synchronously scanned large catalog tables and stalled the entire API.
+- Fixed downloaded/not-downloaded filtering on artist albums, tracks, and
+  videos, plus the empty-state flash during staged artist-page loading.
+- Fixed TIDAL video imports creating duplicate plain-name artist directories;
+  imports now resolve through the provider offer's canonical recording and
+  MusicBrainz artist, including thumbnails and NFO sidecars.
+- Fixed video-sidecar rename previews preferring a recording MBID over the
+  provider video id, which could give the thumbnail a different stem from its
+  video.
+- Fixed ID-only rename commands launching library-wide statistics, sidecar,
+  and empty-folder passes after moving a single file.
+- Fixed provider artwork enrichment joins and preserved TIDAL origin/max-size
+  assets as the source for album, artist, and video artwork fallbacks.
+- Fixed imported audio identity/enrichment paths so real downloads retain their
+  canonical integer links, expected path, embedded MusicBrainz metadata,
+  ReplayGain, lyrics, covers, and NFOs without an immediate rename or retag.
+
 ## [2.3.0] - 2026-07-09
 
 ### Changed

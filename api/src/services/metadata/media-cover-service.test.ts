@@ -423,3 +423,17 @@ test("album artwork resolver caches Cover Art Archive artwork locally when metad
   assert.equal(secondArtworkUrl, artworkUrl);
   assert.equal(calls.length, 1);
 });
+
+test("oversized cached derivatives fall back to the smaller original", () => {
+  const folder = path.join(tempDir, "media-cover", "Albums", "oversized-proxy");
+  fs.mkdirSync(folder, { recursive: true });
+  const original = path.join(folder, "cover.jpg");
+  const derivative = path.join(folder, "cover-500.jpg");
+  fs.writeFileSync(original, Buffer.alloc(100, 1));
+  fs.writeFileSync(derivative, Buffer.alloc(150, 2));
+
+  assert.equal(
+    mediaCoverServiceModule.resolveMediaCoverFilePath(folder, "cover-500.jpg"),
+    original,
+  );
+});

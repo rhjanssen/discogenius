@@ -26,7 +26,7 @@ test("editable settings are persisted to config.toml and read through the cache"
   const rawBefore = fs.readFileSync(configModule.CONFIG_FILE, "utf-8");
   assert.match(rawBefore, /audio_quality = "max"/);
   assert.doesNotMatch(rawBefore, /embed_synced_lyrics/);
-  assert.match(rawBefore, /enable_fingerprinting = false/);
+  assert.match(rawBefore, /enable_fingerprinting = true/);
 
   configModule.updateConfig("quality", { audio_quality: "normal" });
 
@@ -42,6 +42,21 @@ test("editable settings are persisted to config.toml and read through the cache"
 
   configModule.clearConfigCache();
   assert.equal(configModule.readConfig().quality.audio_quality, "normal");
+});
+
+test("fresh installs use the production monitoring and library defaults", () => {
+  const config = configModule.readConfig();
+
+  assert.equal(config.monitoring.monitor_new_artists, true);
+  assert.equal(config.monitoring.remove_unmonitored_files, true);
+  assert.equal(config.quality.upgrade_existing_files, true);
+  assert.equal(config.filtering.require_provider_availability, true);
+  assert.equal(config.filtering.include_spatial, false);
+  assert.equal(config.filtering.include_videos, false);
+  assert.equal(config.path.create_empty_artist_folders, true);
+  assert.equal(config.naming.video_file, "{Video CleanTitle} {{providerName}-{mediaId}}");
+  assert.equal(config.metadata.enable_fingerprinting, true);
+  assert.equal(config.catalog.source, "servarr");
 });
 
 test("config writes strip retired quality settings", () => {

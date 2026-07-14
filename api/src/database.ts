@@ -374,6 +374,7 @@ const BASE_SCHEMA_VERSION = 37;
 // ====================================================================
 function ensureCatalogForeignKeyIndexes(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_albums_artist_metadata_id ON Albums(artist_metadata_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_albums_library_release_date ON Albums((first_release_date IS NULL), first_release_date DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_releases_release_group_id ON AlbumReleases(release_group_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_releases_artist_metadata_id ON AlbumReleases(artist_metadata_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_album_artists_release_group_id ON AlbumArtists(release_group_id)");
@@ -382,7 +383,9 @@ function ensureCatalogForeignKeyIndexes(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_artist_release_groups_release_group_id ON ArtistReleaseGroups(release_group_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_artist_release_group_curation_artist_metadata_id ON ArtistReleaseGroupCuration(source_artist_metadata_id, included)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_artist_release_group_curation_release_group_id ON ArtistReleaseGroupCuration(release_group_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_artist_release_group_curation_source_release_group_id ON ArtistReleaseGroupCuration(source_artist_mbid, included, release_group_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_tracks_album_release_id ON Tracks(album_release_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tracks_album_release_mbid ON Tracks(album_release_id, mbid)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_tracks_recording_id ON Tracks(recording_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_tracks_album_release_position ON Tracks(album_release_id, medium_position, position)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_release_group_slots_artist_metadata_id ON ReleaseGroupSlots(artist_metadata_id, slot)");
@@ -392,6 +395,50 @@ function ensureCatalogForeignKeyIndexes(): void {
 
 function ensureCatalogForeignKeyTriggers(): void {
   db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_artist_release_groups_fks_ai
+    AFTER INSERT ON ArtistReleaseGroups
+    BEGIN
+      UPDATE ArtistReleaseGroups SET
+        artist_metadata_id = COALESCE(NEW.artist_metadata_id, (SELECT id FROM ArtistMetadata WHERE mbid = NEW.artist_mbid)),
+        release_group_id = COALESCE(NEW.release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid))
+      WHERE artist_mbid = NEW.artist_mbid
+        AND release_group_mbid = NEW.release_group_mbid
+        AND relationship = NEW.relationship;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_artist_release_groups_fks_au
+    AFTER UPDATE OF artist_mbid, release_group_mbid ON ArtistReleaseGroups
+    BEGIN
+      UPDATE ArtistReleaseGroups SET
+        artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = NEW.artist_mbid),
+        release_group_id = (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid)
+      WHERE artist_mbid = NEW.artist_mbid
+        AND release_group_mbid = NEW.release_group_mbid
+        AND relationship = NEW.relationship;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_artist_release_group_curation_fks_ai
+    AFTER INSERT ON ArtistReleaseGroupCuration
+    BEGIN
+      UPDATE ArtistReleaseGroupCuration SET
+        source_artist_metadata_id = COALESCE(NEW.source_artist_metadata_id, (SELECT id FROM ArtistMetadata WHERE mbid = NEW.source_artist_mbid)),
+        release_group_id = COALESCE(NEW.release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid)),
+        redundant_to_release_group_id = COALESCE(NEW.redundant_to_release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.redundant_to_release_group_mbid))
+      WHERE source_artist_mbid = NEW.source_artist_mbid
+        AND release_group_mbid = NEW.release_group_mbid;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_artist_release_group_curation_fks_au
+    AFTER UPDATE OF source_artist_mbid, release_group_mbid, redundant_to_release_group_mbid ON ArtistReleaseGroupCuration
+    BEGIN
+      UPDATE ArtistReleaseGroupCuration SET
+        source_artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = NEW.source_artist_mbid),
+        release_group_id = (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid),
+        redundant_to_release_group_id = (SELECT id FROM Albums WHERE mbid = NEW.redundant_to_release_group_mbid)
+      WHERE source_artist_mbid = NEW.source_artist_mbid
+        AND release_group_mbid = NEW.release_group_mbid;
+    END;
+
     CREATE TRIGGER IF NOT EXISTS trg_albums_catalog_fks_ai
     AFTER INSERT ON Albums
     BEGIN
@@ -1010,6 +1057,7 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_isrc ON ProviderItems(provider, isrc)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_match ON ProviderItems(provider, entity_type, match_status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_recording_id ON ProviderItems(recording_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_track_id ON ProviderItems(track_id, entity_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_provider_items_provider_album ON ProviderItems(provider_album_id, entity_type)");
   // The download-queue list resolves each item's metadata by provider_id (N+1
   // lookups in DownloadQueueQueryService). Every other ProviderItems index leads
@@ -1038,6 +1086,7 @@ function ensureMusicBrainzProviderSchema(): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_recordings_artist_mbid ON Recordings(artist_mbid, is_video)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_recordings_artist_metadata ON Recordings(artist_metadata_id, is_video)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_recordings_video ON Recordings(is_video) WHERE is_video = 1");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recordings_video_monitored ON Recordings(is_video, monitored) WHERE is_video = 1");
   // (Tracks.recording_mbid is already indexed by idx_mb_tracks_recording_mbid in
   // initDatabase — no separate index needed here.)
 }
@@ -1073,6 +1122,327 @@ function stampSchemaVersion(): void {
     console.log(`🛠️  Baseline schema at version ${BASE_SCHEMA_VERSION} (PRAGMA user_version=${BASE_SCHEMA_VERSION}).`);
     db.pragma(`user_version = ${BASE_SCHEMA_VERSION}`);
   }
+}
+
+function ensureCurationForeignKeys(): void {
+  const version = db.prepare("SELECT value FROM config WHERE key = ?")
+    .get("catalog.curation_foreign_key_version") as { value?: string } | undefined;
+  if (version?.value === "2") return;
+
+  console.log("🔗 Backfilling curation catalog keys...");
+  db.transaction(() => {
+    db.exec(`
+      UPDATE ArtistReleaseGroups
+      SET artist_metadata_id = (
+            SELECT id FROM ArtistMetadata WHERE mbid = ArtistReleaseGroups.artist_mbid
+          ),
+          release_group_id = (
+            SELECT id FROM Albums WHERE mbid = ArtistReleaseGroups.release_group_mbid
+          )
+      WHERE artist_metadata_id IS NULL OR release_group_id IS NULL;
+
+      UPDATE ArtistReleaseGroupCuration
+      SET source_artist_metadata_id = (
+            SELECT id FROM ArtistMetadata WHERE mbid = ArtistReleaseGroupCuration.source_artist_mbid
+          ),
+          release_group_id = (
+            SELECT id FROM Albums WHERE mbid = ArtistReleaseGroupCuration.release_group_mbid
+          ),
+          redundant_to_release_group_id = (
+            SELECT id FROM Albums WHERE mbid = ArtistReleaseGroupCuration.redundant_to_release_group_mbid
+          )
+      WHERE source_artist_metadata_id IS NULL
+         OR release_group_id IS NULL
+         OR (redundant_to_release_group_mbid IS NOT NULL AND redundant_to_release_group_id IS NULL)
+    `);
+    db.prepare(`
+      INSERT INTO config (key, value, description)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).run(
+      "catalog.curation_foreign_key_version",
+      "2",
+      "Version of the artist release-scope integer-key backfill",
+    );
+  })();
+  console.log("✅ Curation catalog keys ready");
+}
+
+/**
+ * Maintain a compact full-text index for global track-title search.
+ *
+ * Tracks contains one row per release track and reaches millions of rows on a
+ * real library. A leading-wildcard LIKE scan on that table blocks the single
+ * Node event loop for minutes. Lidarr keeps lookup/search work on dedicated
+ * indexes rather than walking the catalog table; FTS5 is SQLite's equivalent.
+ * The marker makes the one-time rebuild transactional and restart-safe, while
+ * triggers keep subsequent catalog refreshes synchronized.
+ */
+function ensureTrackSearchIndex(): void {
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS TrackSearch USING fts5(
+      track_mbid UNINDEXED,
+      recording_mbid UNINDEXED,
+      title,
+      tokenize = 'unicode61 remove_diacritics 2'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS tracks_search_insert
+    AFTER INSERT ON Tracks
+    WHEN NEW.title IS NOT NULL
+    BEGIN
+      INSERT INTO TrackSearch(track_mbid, recording_mbid, title)
+      VALUES (NEW.mbid, NEW.recording_mbid, NEW.title);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS tracks_search_delete
+    AFTER DELETE ON Tracks
+    BEGIN
+      DELETE FROM TrackSearch WHERE track_mbid = OLD.mbid;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS tracks_search_update
+    AFTER UPDATE OF mbid, recording_mbid, title ON Tracks
+    BEGIN
+      DELETE FROM TrackSearch WHERE track_mbid = OLD.mbid;
+      INSERT INTO TrackSearch(track_mbid, recording_mbid, title)
+      SELECT NEW.mbid, NEW.recording_mbid, NEW.title
+      WHERE NEW.title IS NOT NULL;
+    END;
+  `);
+
+  const indexVersion = db.prepare("SELECT value FROM config WHERE key = ?")
+    .get("catalog.track_search_index_version") as { value?: string } | undefined;
+  if (indexVersion?.value === "1") {
+    return;
+  }
+
+  console.log("🔎 Building track-title search index...");
+  db.transaction(() => {
+    db.exec("DELETE FROM TrackSearch");
+    db.exec(`
+      INSERT INTO TrackSearch(track_mbid, recording_mbid, title)
+      SELECT mbid, recording_mbid, title
+      FROM Tracks
+      WHERE title IS NOT NULL
+    `);
+    db.prepare(`
+      INSERT INTO config (key, value, description)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        description = excluded.description,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      "catalog.track_search_index_version",
+      "1",
+      "Version of the maintained FTS5 track-title search index",
+    );
+  })();
+  console.log("✅ Track-title search index ready");
+}
+
+/** Maintained lookup index for the other global-search entity types. */
+function ensureCatalogSearchIndex(): void {
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS CatalogSearch USING fts5(
+      entity_type UNINDEXED,
+      entity_id UNINDEXED,
+      title,
+      tokenize = 'unicode61 remove_diacritics 2'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS artist_catalog_search_insert
+    AFTER INSERT ON Artists
+    WHEN NEW.name IS NOT NULL
+    BEGIN
+      INSERT INTO CatalogSearch(entity_type, entity_id, title)
+      VALUES ('artist', CAST(NEW.id AS TEXT), NEW.name);
+    END;
+    CREATE TRIGGER IF NOT EXISTS artist_catalog_search_delete
+    AFTER DELETE ON Artists
+    BEGIN
+      DELETE FROM CatalogSearch WHERE entity_type = 'artist' AND entity_id = CAST(OLD.id AS TEXT);
+    END;
+    CREATE TRIGGER IF NOT EXISTS artist_catalog_search_update
+    AFTER UPDATE OF id, name ON Artists
+    BEGIN
+      DELETE FROM CatalogSearch WHERE entity_type = 'artist' AND entity_id = CAST(OLD.id AS TEXT);
+      INSERT INTO CatalogSearch(entity_type, entity_id, title)
+      SELECT 'artist', CAST(NEW.id AS TEXT), NEW.name WHERE NEW.name IS NOT NULL;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS album_catalog_search_insert
+    AFTER INSERT ON Albums
+    WHEN NEW.title IS NOT NULL
+    BEGIN
+      INSERT INTO CatalogSearch(entity_type, entity_id, title)
+      VALUES ('album', NEW.mbid, NEW.title);
+    END;
+    CREATE TRIGGER IF NOT EXISTS album_catalog_search_delete
+    AFTER DELETE ON Albums
+    BEGIN
+      DELETE FROM CatalogSearch WHERE entity_type = 'album' AND entity_id = OLD.mbid;
+    END;
+    CREATE TRIGGER IF NOT EXISTS album_catalog_search_update
+    AFTER UPDATE OF mbid, title ON Albums
+    BEGIN
+      DELETE FROM CatalogSearch WHERE entity_type = 'album' AND entity_id = OLD.mbid;
+      INSERT INTO CatalogSearch(entity_type, entity_id, title)
+      SELECT 'album', NEW.mbid, NEW.title WHERE NEW.title IS NOT NULL;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS video_catalog_search_insert
+    AFTER INSERT ON Recordings
+    WHEN NEW.is_video = 1 AND NEW.title IS NOT NULL
+    BEGIN
+      INSERT INTO CatalogSearch(entity_type, entity_id, title)
+      VALUES ('video', CAST(NEW.id AS TEXT), NEW.title);
+    END;
+    CREATE TRIGGER IF NOT EXISTS video_catalog_search_delete
+    AFTER DELETE ON Recordings
+    WHEN OLD.is_video = 1
+    BEGIN
+      DELETE FROM CatalogSearch WHERE entity_type = 'video' AND entity_id = CAST(OLD.id AS TEXT);
+    END;
+    CREATE TRIGGER IF NOT EXISTS video_catalog_search_update
+    AFTER UPDATE OF id, title, is_video ON Recordings
+    BEGIN
+      DELETE FROM CatalogSearch WHERE entity_type = 'video' AND entity_id = CAST(OLD.id AS TEXT);
+      INSERT INTO CatalogSearch(entity_type, entity_id, title)
+      SELECT 'video', CAST(NEW.id AS TEXT), NEW.title
+      WHERE NEW.is_video = 1 AND NEW.title IS NOT NULL;
+    END;
+  `);
+
+  const indexVersion = db.prepare("SELECT value FROM config WHERE key = ?")
+    .get("catalog.entity_search_index_version") as { value?: string } | undefined;
+  if (indexVersion?.value === "1") return;
+
+  console.log("🔎 Building artist/album/video search index...");
+  db.transaction(() => {
+    db.exec(`
+      DELETE FROM CatalogSearch;
+      INSERT INTO CatalogSearch(entity_type, entity_id, title)
+      SELECT 'artist', CAST(id AS TEXT), name FROM Artists WHERE name IS NOT NULL;
+      INSERT INTO CatalogSearch(entity_type, entity_id, title)
+      SELECT 'album', mbid, title FROM Albums WHERE title IS NOT NULL;
+      INSERT INTO CatalogSearch(entity_type, entity_id, title)
+      SELECT 'video', CAST(id AS TEXT), title
+      FROM Recordings WHERE is_video = 1 AND title IS NOT NULL;
+    `);
+    db.prepare(`
+      INSERT INTO config (key, value, description)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        description = excluded.description,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      "catalog.entity_search_index_version",
+      "1",
+      "Version of the maintained artist/album/video FTS5 search index",
+    );
+  })();
+  console.log("✅ Artist/album/video search index ready");
+}
+
+/**
+ * Repair video files imported by older builds against provider-only artist
+ * rows. The recording FK is authoritative: once it belongs to a canonical
+ * MusicBrainz artist, the media file and its sidecars must share that managed
+ * artist so rename previews converge on the prescribed artist folder.
+ */
+function repairCanonicalVideoFileArtists(): void {
+  db.transaction(() => {
+    db.exec(`
+      UPDATE TrackFiles
+      SET artist_id = (
+            SELECT managed_artist.id
+            FROM Recordings recording
+            JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
+            WHERE recording.id = TrackFiles.recording_id
+            LIMIT 1
+          ),
+          canonical_artist_mbid = COALESCE(
+            canonical_artist_mbid,
+            (SELECT artist_mbid FROM Recordings WHERE id = TrackFiles.recording_id)
+          ),
+          canonical_recording_mbid = COALESCE(
+            canonical_recording_mbid,
+            (SELECT mbid FROM Recordings WHERE id = TrackFiles.recording_id)
+          )
+      WHERE file_type = 'video'
+        AND recording_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM Recordings recording
+          JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
+          WHERE recording.id = TrackFiles.recording_id
+            AND CAST(managed_artist.id AS TEXT) <> CAST(TrackFiles.artist_id AS TEXT)
+        );
+
+      UPDATE MetadataFiles
+      SET provider = COALESCE(
+            provider,
+            (
+              SELECT provider_item.provider
+              FROM ProviderItems provider_item
+              WHERE provider_item.entity_type = 'video'
+                AND provider_item.provider_id = MetadataFiles.provider_id
+              ORDER BY provider_item.updated_at DESC
+              LIMIT 1
+            )
+          ),
+          provider_entity_type = 'video',
+          artist_id = (
+            SELECT managed_artist.id
+            FROM ProviderItems provider_item
+            JOIN Recordings recording ON recording.id = provider_item.recording_id
+            JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
+            WHERE (MetadataFiles.provider IS NULL OR provider_item.provider = MetadataFiles.provider)
+              AND provider_item.entity_type = 'video'
+              AND provider_item.provider_id = MetadataFiles.provider_id
+            LIMIT 1
+          ),
+          canonical_artist_mbid = COALESCE(
+            canonical_artist_mbid,
+            (
+              SELECT recording.artist_mbid
+              FROM ProviderItems provider_item
+              JOIN Recordings recording ON recording.id = provider_item.recording_id
+              WHERE (MetadataFiles.provider IS NULL OR provider_item.provider = MetadataFiles.provider)
+                AND provider_item.entity_type = 'video'
+                AND provider_item.provider_id = MetadataFiles.provider_id
+              LIMIT 1
+            )
+          ),
+          canonical_recording_mbid = COALESCE(
+            canonical_recording_mbid,
+            (
+              SELECT recording.mbid
+              FROM ProviderItems provider_item
+              JOIN Recordings recording ON recording.id = provider_item.recording_id
+              WHERE (MetadataFiles.provider IS NULL OR provider_item.provider = MetadataFiles.provider)
+                AND provider_item.entity_type = 'video'
+                AND provider_item.provider_id = MetadataFiles.provider_id
+              LIMIT 1
+            )
+          )
+      WHERE (provider_entity_type = 'video' OR library_slot = 'video')
+        AND provider_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM ProviderItems provider_item
+          JOIN Recordings recording ON recording.id = provider_item.recording_id
+          JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
+          WHERE (MetadataFiles.provider IS NULL OR provider_item.provider = MetadataFiles.provider)
+            AND provider_item.entity_type = 'video'
+            AND provider_item.provider_id = MetadataFiles.provider_id
+            AND CAST(managed_artist.id AS TEXT) <> CAST(MetadataFiles.artist_id AS TEXT)
+        );
+    `);
+  })();
 }
 
 export function initDatabase() {
@@ -1346,6 +1716,10 @@ export function initDatabase() {
   stampSchemaVersion();
   ensureCatalogForeignKeyIndexes();
   ensureCatalogForeignKeyTriggers();
+  ensureCurationForeignKeys();
+  ensureTrackSearchIndex();
+  ensureCatalogSearchIndex();
+  repairCanonicalVideoFileArtists();
 
   // ====================================================================
   // INDEXES

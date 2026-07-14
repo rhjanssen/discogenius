@@ -19,11 +19,13 @@ const router = Router();
 const SEARCH_TYPES = ["artists", "albums", "tracks", "videos"] as const;
 type SearchType = (typeof SEARCH_TYPES)[number];
 
-function escapeSqlLike(value: string): string {
-    return value
-        .replace(/\\/g, "\\\\")
-        .replace(/%/g, "\\%")
-        .replace(/_/g, "\\_");
+function toFtsPrefixQuery(value: string): string | null {
+    const tokens = value.normalize("NFKC").match(/[\p{L}\p{N}]+/gu) || [];
+    if (tokens.length === 0) return null;
+    return tokens
+        .slice(0, 8)
+        .map((token) => `"${token.replace(/"/g, '""')}"*`)
+        .join(" AND ");
 }
 
 function normalizeSearchTypes(input: unknown): SearchType[] {
@@ -119,18 +121,31 @@ router.get("/", async (req, res) => {
         const addedArtistIds = new Set<string>();
         const addedAlbumMbids = new Set<string>();
         const supplementalArtistImageCache = new Map<string, string | null>();
+        // Start the remote catalog request before synchronous SQLite work. The
+        // network round trip then overlaps local matching instead of making
+        // global search pay both costs serially.
+        const remoteSearchPromise = query.length >= 2 && (requestedTypeSet.has("artists") || requestedTypeSet.has("albums"))
+            ? catalogProviderRegistry.getActive().search(query, { limit })
+            : null;
 
         // 1. Local library search
         {
-            const escapedQuery = escapeSqlLike(query);
-            const like = `%${escapedQuery}%`;
-
             if (requestedTypeSet.has("artists")) {
+                const ftsQuery = toFtsPrefixQuery(query);
+                const matchedArtistIds = ftsQuery
+                    ? (db.prepare(`
+                        SELECT entity_id AS id
+                        FROM CatalogSearch
+                        WHERE CatalogSearch MATCH ? AND entity_type = 'artist'
+                        LIMIT ?
+                    `).all(ftsQuery, limit * 2) as Array<{ id: string }>).map((row) => row.id)
+                    : [];
+                const artistMarks = matchedArtistIds.map(() => "?").join(", ");
                 const localArtists = db
                     .prepare(
                         `SELECT id, mbid, name, COALESCE(picture, cover_image_url) AS picture, monitored AS monitor
                          FROM Artists current_artist
-                         WHERE name LIKE ? ESCAPE '\\'
+                         WHERE CAST(id AS TEXT) IN (${artistMarks || "NULL"})
                            AND NOT EXISTS (
                              SELECT 1
                              FROM Artists canonical_artist
@@ -143,7 +158,7 @@ router.get("/", async (req, res) => {
                            popularity DESC
                          LIMIT ?`
                     )
-                    .all(like, limit) as any[];
+                    .all(...matchedArtistIds, limit) as any[];
 
                 for (const row of localArtists) {
                     if (row.mbid) addedArtistMbids.add(row.mbid);
@@ -161,13 +176,15 @@ router.get("/", async (req, res) => {
             if (requestedTypeSet.has("albums")) {
                 // Two-phase like the tracks branch: bare title match first,
                 // slot/artist enrichment only for the survivors.
-                const matchedAlbumMbids = (db.prepare(
-                    `SELECT rg.mbid
-             FROM Albums rg
-             WHERE rg.title LIKE ? ESCAPE '\\'
-             ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
-             LIMIT ?`
-                ).all(like, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
+                const ftsQuery = toFtsPrefixQuery(query);
+                const matchedAlbumMbids = ftsQuery
+                    ? (db.prepare(`
+                        SELECT entity_id AS mbid
+                        FROM CatalogSearch
+                        WHERE CatalogSearch MATCH ? AND entity_type = 'album'
+                        LIMIT ?
+                    `).all(ftsQuery, limit) as Array<{ mbid: string }>).map((row) => row.mbid)
+                    : [];
                 const albumMarks = matchedAlbumMbids.map(() => "?").join(", ");
                 const localReleaseGroups = matchedAlbumMbids.length === 0 ? [] : db
                     .prepare(
@@ -225,14 +242,16 @@ router.get("/", async (req, res) => {
                 // Tracks — a 30s+ synchronous stall per keystroke. Group by
                 // recording so one song doesn't fill the results with a copy
                 // per edition.
-                const matchedTrackMbids = (db.prepare(
-                    `SELECT t.mbid
-             FROM Tracks t
-             WHERE t.title LIKE ? ESCAPE '\\'
-             GROUP BY COALESCE(t.recording_mbid, t.mbid)
-             ORDER BY t.title ASC, t.mbid ASC
-             LIMIT ?`
-                ).all(like, limit) as Array<{ mbid: string }>).map((row) => row.mbid);
+                const ftsQuery = toFtsPrefixQuery(query);
+                const matchedTrackMbids = ftsQuery
+                    ? (db.prepare(
+                        `SELECT track_mbid AS mbid
+                         FROM TrackSearch
+                         WHERE TrackSearch MATCH ?
+                         GROUP BY COALESCE(recording_mbid, track_mbid)
+                         LIMIT ?`
+                    ).all(ftsQuery, limit) as Array<{ mbid: string }>).map((row) => row.mbid)
+                    : [];
                 const trackMarks = matchedTrackMbids.map(() => "?").join(", ");
                 const localTracks = matchedTrackMbids.length === 0 ? [] : db
                     .prepare(
@@ -356,14 +375,15 @@ router.get("/", async (req, res) => {
                 // Two-phase like the tracks branch. Overfetch the bare title
                 // matches because the enrichment applies a managed-artist /
                 // provider-offer filter that can drop candidates.
-                const matchedVideoIds = (db.prepare(
-                    `SELECT recording.id
-             FROM Recordings recording
-             WHERE recording.is_video = 1
-               AND recording.title LIKE ? ESCAPE '\\'
-             ORDER BY (recording.release_date IS NULL) ASC, recording.release_date DESC, recording.title ASC, recording.id ASC
-             LIMIT ?`
-                ).all(like, limit * 4) as Array<{ id: number }>).map((row) => row.id);
+                const ftsQuery = toFtsPrefixQuery(query);
+                const matchedVideoIds = ftsQuery
+                    ? (db.prepare(`
+                        SELECT CAST(entity_id AS INTEGER) AS id
+                        FROM CatalogSearch
+                        WHERE CatalogSearch MATCH ? AND entity_type = 'video'
+                        LIMIT ?
+                    `).all(ftsQuery, limit * 4) as Array<{ id: number }>).map((row) => row.id)
+                    : [];
                 const videoMarks = matchedVideoIds.map(() => "?").join(", ");
                 const localVideos = matchedVideoIds.length === 0 ? [] : db
                     .prepare(
@@ -449,7 +469,7 @@ router.get("/", async (req, res) => {
 
         // 2. Remote catalog search (Servarr Metadata Server or local MusicBrainz)
         if (query.length >= 2 && (requestedTypeSet.has("artists") || requestedTypeSet.has("albums"))) {
-            const remoteItems = await catalogProviderRegistry.getActive().search(query, { limit });
+            const remoteItems = await remoteSearchPromise!;
             for (const artist of remoteItems.artists || []) {
                 if (requestedTypeSet.has("artists")) {
                     const mbid = artist.id;

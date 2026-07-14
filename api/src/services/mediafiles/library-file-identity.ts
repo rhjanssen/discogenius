@@ -154,14 +154,23 @@ function getProviderItem(provider: string | null, entityType: string, providerId
     return null;
   }
 
-  const providerClause = provider ? "provider = ? AND" : "";
+  const providerClause = provider ? "provider_item.provider = ? AND" : "";
   const params = provider ? [provider, entityType, id] : [entityType, id];
   return (db.prepare(`
-    SELECT provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-           track_mbid, recording_mbid, library_slot
-    FROM ProviderItems
-    WHERE ${providerClause} entity_type = ? AND provider_id = ?
-    ORDER BY updated_at DESC
+    SELECT
+      provider_item.provider,
+      provider_item.entity_type,
+      provider_item.provider_id,
+      COALESCE(provider_item.artist_mbid, recording.artist_mbid) AS artist_mbid,
+      provider_item.release_group_mbid,
+      provider_item.release_mbid,
+      provider_item.track_mbid,
+      COALESCE(provider_item.recording_mbid, recording.mbid) AS recording_mbid,
+      provider_item.library_slot
+    FROM ProviderItems provider_item
+    LEFT JOIN Recordings recording ON recording.id = provider_item.recording_id
+    WHERE ${providerClause} provider_item.entity_type = ? AND provider_item.provider_id = ?
+    ORDER BY provider_item.updated_at DESC
     LIMIT 1
   `).get(...params) as ProviderItemRow | undefined) ?? null;
 }

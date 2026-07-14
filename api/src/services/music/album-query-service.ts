@@ -22,44 +22,60 @@ function selectedProviderAlbumExpressionForFilter(libraryFilter: string): string
     return "COALESCE(stereo.selected_provider_id, spatial.selected_provider_id)";
 }
 
-function releaseGroupDownloadedPredicate(libraryFilter: string): string {
-    const selectedReleaseExpression = libraryFilter === "spatial"
-        ? "spatial.selected_release_mbid"
+function getFullyDownloadedReleaseGroupMbids(libraryFilter: string): string[] {
+    // Start from existing files, not from every missing track in the catalog.
+    // The former stays proportional to the user's library; the old nested
+    // NOT-EXISTS predicate walked millions of Tracks once per candidate album
+    // and could wedge the API for minutes when filtering for Not Downloaded.
+    const slotPredicate = libraryFilter === "spatial"
+        ? "AND rgs.slot = 'spatial'"
         : libraryFilter === "stereo"
-            ? "stereo.selected_release_mbid"
-            : "COALESCE(stereo.selected_release_mbid, spatial.selected_release_mbid)";
-    const slotFilter = libraryFilter === "spatial"
-        ? "AND lf.library_slot = 'spatial'"
-        : libraryFilter === "stereo"
-            ? "AND lf.library_slot = 'stereo'"
-            : "AND lf.library_slot IN ('stereo', 'spatial')";
-
-    return `
-  ${selectedReleaseExpression} IS NOT NULL
-  AND EXISTS (
-    SELECT 1
-    FROM Tracks t
-    WHERE t.release_mbid = ${selectedReleaseExpression}
-  )
-  AND NOT EXISTS (
-    SELECT 1
-    FROM Tracks t
-    WHERE t.release_mbid = ${selectedReleaseExpression}
-      AND NOT EXISTS (
-        SELECT 1
+            ? "AND rgs.slot = 'stereo'"
+            : "AND rgs.slot IN ('stereo', 'spatial')";
+    const candidates = db.prepare(`
+      WITH file_releases(library_slot, release_mbid) AS (
+        SELECT lf.library_slot, track.release_mbid
         FROM TrackFiles lf
-        WHERE (
-            lf.canonical_track_mbid = t.mbid
-            OR (
-              lf.canonical_track_mbid IS NULL
-              AND lf.canonical_recording_mbid = t.recording_mbid
-            )
-          )
-          AND lf.file_type = 'track'
-          ${slotFilter}
+        JOIN Tracks track ON track.id = lf.track_id
+        WHERE lf.file_type = 'track' AND lf.track_id IS NOT NULL
+
+        UNION
+
+        SELECT lf.library_slot, track.release_mbid
+        FROM TrackFiles lf
+        JOIN Tracks track ON track.mbid = lf.canonical_track_mbid
+        WHERE lf.file_type = 'track'
+          AND lf.track_id IS NULL
+          AND lf.canonical_track_mbid IS NOT NULL
+
+        UNION
+
+        SELECT lf.library_slot, track.release_mbid
+        FROM TrackFiles lf
+        JOIN Tracks track ON track.recording_mbid = lf.canonical_recording_mbid
+        WHERE lf.file_type = 'track'
+          AND lf.track_id IS NULL
+          AND lf.canonical_track_mbid IS NULL
+          AND lf.canonical_recording_mbid IS NOT NULL
       )
-  )
-`;
+      SELECT DISTINCT rgs.release_group_mbid
+      FROM file_releases file_release
+      JOIN ReleaseGroupSlots rgs
+        ON rgs.selected_release_mbid = file_release.release_mbid
+       AND rgs.slot = file_release.library_slot
+      WHERE rgs.selected_release_mbid IS NOT NULL
+        ${slotPredicate}
+    `).all() as Array<{ release_group_mbid: string }>;
+    if (candidates.length === 0) return [];
+
+    const slot = libraryFilter === "spatial" ? "spatial" : libraryFilter === "stereo" ? "stereo" : null;
+    const stats = getReleaseGroupDownloadStatsMap(
+        candidates.map((row) => row.release_group_mbid),
+        slot,
+    );
+    return candidates
+        .map((row) => String(row.release_group_mbid))
+        .filter((mbid) => stats.get(mbid)?.isDownloaded === true);
 }
 
 function sanitizeQualityTag(value: string | null | undefined, includeSpatial: boolean): string {
@@ -160,7 +176,7 @@ export interface AlbumListQuery {
     dir?: string;
 }
 
-function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpression: string): string {
+function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlbumExpression: string): string {
     return `
       SELECT
         rg.*,
@@ -189,27 +205,22 @@ function buildReleaseGroupSelect(whereClause: string, selectedProviderAlbumExpre
         spatial.match_status AS spatial_match_status,
         spatial.cover AS spatial_cover,
         ${releaseGroupPopularityExpression} AS popularity
-      FROM ArtistReleaseGroupCuration context
-      JOIN Artists managed_artist
-        ON managed_artist.mbid = context.source_artist_mbid
-       AND managed_artist.monitored = 1
-      JOIN Albums rg
-        ON rg.mbid = context.release_group_mbid
+      FROM Albums rg
       LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
       LEFT JOIN ReleaseGroupSlots stereo
-        ON stereo.release_group_mbid = rg.mbid
+        ON stereo.release_group_id = rg.id
        AND stereo.slot = 'stereo'
       LEFT JOIN ReleaseGroupSlots spatial
-        ON spatial.release_group_mbid = rg.mbid
+        ON spatial.release_group_id = rg.id
        AND spatial.slot = 'spatial'
       LEFT JOIN ProviderItems stereo_provider_item
         ON stereo_provider_item.provider = stereo.selected_provider
        AND stereo_provider_item.entity_type = 'album'
-       AND CAST(stereo_provider_item.provider_id AS TEXT) = CAST(stereo.selected_provider_id AS TEXT)
+       AND stereo_provider_item.provider_id = stereo.selected_provider_id
       LEFT JOIN ProviderItems spatial_provider_item
         ON spatial_provider_item.provider = spatial.selected_provider
        AND spatial_provider_item.entity_type = 'album'
-       AND CAST(spatial_provider_item.provider_id AS TEXT) = CAST(spatial.selected_provider_id AS TEXT)
+       AND spatial_provider_item.provider_id = spatial.selected_provider_id
       ${whereClause}
     `;
 }
@@ -261,13 +272,18 @@ export class AlbumQueryService {
         const downloadedFilter = input.downloaded;
         const libraryFilter = input.libraryFilter || "all";
         const selectedProviderAlbumExpression = selectedProviderAlbumExpressionForFilter(libraryFilter);
-        const selectedDownloadedPredicate = releaseGroupDownloadedPredicate(libraryFilter);
         const sortDir = (input.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
         const where: string[] = [
-            "context.included = 1",
-            "a.id IS NOT NULL",
+            `rg.id IN (
+              SELECT context.release_group_id
+              FROM ArtistReleaseGroupCuration context
+              WHERE context.included = 1
+                AND context.release_group_id IS NOT NULL
+                AND context.source_artist_mbid IN (SELECT mbid FROM Artists WHERE monitored = 1)
+            )`,
+            "rg.artist_mbid IN (SELECT mbid FROM Artists WHERE mbid IS NOT NULL)",
         ];
 
         if (search) {
@@ -284,9 +300,15 @@ export class AlbumQueryService {
         }
 
         if (downloadedFilter !== undefined) {
-            where.push(downloadedFilter
-                ? selectedDownloadedPredicate
-                : `NOT (${selectedDownloadedPredicate})`);
+            const downloadedReleaseGroupMbids = getFullyDownloadedReleaseGroupMbids(libraryFilter);
+            if (downloadedReleaseGroupMbids.length === 0) {
+                if (downloadedFilter) where.push("0 = 1");
+            } else {
+                const marks = downloadedReleaseGroupMbids.map(() => "?").join(", ");
+                where.push(`rg.mbid ${downloadedFilter ? "IN" : "NOT IN"} (${marks})`);
+                params.push(...downloadedReleaseGroupMbids);
+                countParams.push(...downloadedReleaseGroupMbids);
+            }
         }
 
         if (libraryFilter === "spatial") {
@@ -304,13 +326,37 @@ export class AlbumQueryService {
         }
 
         const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-        const query = `
-          ${buildReleaseGroupSelect(whereClause, selectedProviderAlbumExpression)}
-          GROUP BY rg.mbid
+        // Page the small identity set before enriching it with provider rows and
+        // large artwork payloads. Applying those joins to every curated album
+        // made a 50-row library page take several seconds on a mature catalog.
+        const candidatePopularityExpression = `MAX(
+          COALESCE(rg.popularity, 0),
+          COALESCE(stereo.popularity, 0),
+          COALESCE(spatial.popularity, 0)
+        )`;
+        const candidateQuery = `
+          SELECT rg.id, rg.mbid, ${candidatePopularityExpression} AS popularity
+          FROM Albums rg
+          LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+          LEFT JOIN ReleaseGroupSlots stereo
+            ON stereo.release_group_id = rg.id AND stereo.slot = 'stereo'
+          LEFT JOIN ReleaseGroupSlots spatial
+            ON spatial.release_group_id = rg.id AND spatial.slot = 'spatial'
+          ${whereClause}
           ${getReleaseGroupOrderBy(input.sort, sortDir)}
           LIMIT ? OFFSET ?
         `;
-        const rows = db.prepare(query).all(...params, limit, offset) as any[];
+        const candidates = db.prepare(candidateQuery).all(...params, limit, offset) as Array<{ id: number; mbid: string }>;
+        const candidateIds = candidates.map((row) => row.id);
+        const candidateMbids = candidates.map((row) => String(row.mbid));
+        const candidateMarks = candidateIds.map(() => "?").join(", ");
+        const detailRows = candidateMbids.length === 0 ? [] : db.prepare(`
+          ${buildReleaseGroupDetailsSelect(`WHERE rg.id IN (${candidateMarks})`, selectedProviderAlbumExpression)}
+        `).all(...candidateIds) as any[];
+        const detailByMbid = new Map(detailRows.map((row) => [String(row.mbid), row]));
+        const rows = candidateMbids
+            .map((mbid) => detailByMbid.get(mbid))
+            .filter((row): row is any => row != null);
         const releaseGroupMbids = rows
             .map((row) => row.mbid == null ? null : String(row.mbid))
             .filter((value): value is string => Boolean(value));
@@ -321,32 +367,15 @@ export class AlbumQueryService {
 
         const countQuery = `
           SELECT COUNT(*) AS count
-          FROM (
-            SELECT rg.mbid
-            FROM ArtistReleaseGroupCuration context
-            JOIN Artists managed_artist
-              ON managed_artist.mbid = context.source_artist_mbid
-             AND managed_artist.monitored = 1
-            JOIN Albums rg
-              ON rg.mbid = context.release_group_mbid
-            LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-            LEFT JOIN ReleaseGroupSlots stereo
-              ON stereo.release_group_mbid = rg.mbid
-             AND stereo.slot = 'stereo'
-            LEFT JOIN ReleaseGroupSlots spatial
-              ON spatial.release_group_mbid = rg.mbid
-             AND spatial.slot = 'spatial'
-            LEFT JOIN ProviderItems stereo_provider_item
-              ON stereo_provider_item.provider = stereo.selected_provider
-             AND stereo_provider_item.entity_type = 'album'
-             AND CAST(stereo_provider_item.provider_id AS TEXT) = CAST(stereo.selected_provider_id AS TEXT)
-            LEFT JOIN ProviderItems spatial_provider_item
-              ON spatial_provider_item.provider = spatial.selected_provider
-             AND spatial_provider_item.entity_type = 'album'
-             AND CAST(spatial_provider_item.provider_id AS TEXT) = CAST(spatial.selected_provider_id AS TEXT)
-            ${whereClause}
-            GROUP BY rg.mbid
-          ) counted
+          FROM Albums rg
+          LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+          LEFT JOIN ReleaseGroupSlots stereo
+            ON stereo.release_group_id = rg.id
+           AND stereo.slot = 'stereo'
+          LEFT JOIN ReleaseGroupSlots spatial
+            ON spatial.release_group_id = rg.id
+           AND spatial.slot = 'spatial'
+          ${whereClause}
         `;
         const { count } = db.prepare(countQuery).get(...countParams) as { count: number };
 

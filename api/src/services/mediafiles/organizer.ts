@@ -109,6 +109,22 @@ const firstGenre = (genresJson: string | null | undefined): string | null => {
 };
 
 export class OrganizerService {
+  private static resolveCanonicalVideoArtistId(provider: string, providerId: string): string | null {
+    const row = db.prepare(`
+      SELECT managed_artist.id
+      FROM ProviderItems provider_item
+      JOIN Recordings recording ON recording.id = provider_item.recording_id
+      JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
+      WHERE provider_item.provider = ?
+        AND provider_item.entity_type = 'video'
+        AND provider_item.provider_id = ?
+      ORDER BY CASE WHEN managed_artist.id = managed_artist.mbid THEN 0 ELSE 1 END
+      LIMIT 1
+    `).get(provider, providerId) as { id: string | number } | undefined;
+
+    return row?.id != null ? String(row.id) : null;
+  }
+
   private static readonly AUDIO_EXTENSIONS = new Set([
     ".flac",
     ".m4a",
@@ -2264,30 +2280,39 @@ export class OrganizerService {
         throw new Error(`[Organizer] Video ${providerId} missing valid artist_id`);
       }
 
-      const exists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(videoArtistId) as any;
-      if (!exists) {
-        try {
-          const a = await this.fetchProviderArtist(videoArtistId);
-          db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path) VALUES (?, ?, ?, ?, 0, ?)")
-            .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolderForPersistence({
-              artistId: videoArtistId,
-              artistName: a.name,
-            }));
-        } catch {
-          // ignore
-        }
-      }
-
       const { RefreshVideoService } = await import("../music/refresh-video-service.js");
+      const videoProvider = String(raw.provider || "tidal");
       RefreshVideoService.upsertArtistVideos(videoArtistId, [{
         ...videoData,
         provider_id: providerId,
-        provider: raw.provider || "tidal",
+        provider: videoProvider,
       }]);
+
+      // Provider video payloads identify the provider artist. Once the offer is
+      // mapped onto a canonical Recording, prefer that recording's managed
+      // MusicBrainz artist and its prescribed folder. Otherwise a legacy
+      // provider-only Artists row creates a second plain-name video directory.
+      const canonicalArtistId = this.resolveCanonicalVideoArtistId(videoProvider, providerId);
+      const resolvedVideoArtistId = canonicalArtistId ?? videoArtistId;
+      if (!canonicalArtistId) {
+        const exists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(videoArtistId) as any;
+        if (!exists) {
+          try {
+            const a = await this.fetchProviderArtist(videoArtistId);
+            db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path) VALUES (?, ?, ?, ?, 0, ?)")
+              .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolderForPersistence({
+                artistId: videoArtistId,
+                artistName: a.name,
+              }));
+          } catch {
+            // ignore
+          }
+        }
+      }
 
       const video: any = {
         id: providerId,
-        artist_id: videoArtistId,
+        artist_id: resolvedVideoArtistId,
         album_id: videoData.album_id || null,
         title: videoData.title,
         explicit: videoData.explicit ? 1 : 0,

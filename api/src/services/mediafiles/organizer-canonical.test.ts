@@ -11,11 +11,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../database.js");
 let organizerModule: typeof import("./organizer.js");
 let configModule: typeof import("../config/config.js");
+let identityModule: typeof import("./library-file-identity.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   organizerModule = await import("./organizer.js");
+  identityModule = await import("./library-file-identity.js");
   configModule = await import("../config/config.js");
 });
 
@@ -189,6 +191,127 @@ test("organizer returns no match when a staged provider id has no offer row", as
     null,
   );
   assert.equal(matches.size, 0);
+});
+
+test("video imports prefer the managed MusicBrainz artist over a provider-only artist", () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Canonical Artist");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, path) VALUES (?, ?, ?, ?)")
+    .run("managed-artist", "Canonical Artist", "artist-mbid", "Canonical Artist {mbid-artist-mbid}");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, path) VALUES (?, ?, ?)")
+    .run("12345", "Canonical Artist", "Canonical Artist");
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
+    VALUES (?, ?, ?, 1)
+  `).run("video-recording-mbid", "artist-mbid", "Canonical Video");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, recording_id, title, library_slot,
+      match_status, match_confidence
+    ) VALUES ('tidal', 'video', ?, ?, ?, 'video', 'verified', 1)
+  `).run("provider-video-1", Number(recording.lastInsertRowid), "Canonical Video");
+
+  const artistId = (organizerModule.OrganizerService as any)
+    .resolveCanonicalVideoArtistId("tidal", "provider-video-1");
+
+  assert.equal(artistId, "managed-artist");
+});
+
+test("video file identity inherits canonical recording and artist from the recording FK", () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Canonical Artist");
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
+    VALUES (?, ?, ?, 1)
+  `).run("video-recording-mbid", "artist-mbid", "Canonical Video");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, recording_id, title, library_slot,
+      match_status, match_confidence
+    ) VALUES ('tidal', 'video', ?, ?, ?, 'video', 'verified', 1)
+  `).run("provider-video-1", Number(recording.lastInsertRowid), "Canonical Video");
+
+  const identity = identityModule.resolveLibraryFileIdentity({
+    provider: "tidal",
+    providerEntityType: "video",
+    providerId: "provider-video-1",
+    mediaId: "provider-video-1",
+    fileType: "video",
+  });
+
+  assert.equal(identity.canonicalArtistMbid, "artist-mbid");
+  assert.equal(identity.canonicalRecordingMbid, "video-recording-mbid");
+  assert.equal(identity.librarySlot, "video");
+});
+
+test("database startup repairs legacy video files and sidecars to the canonical artist", () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Canonical Artist");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, path) VALUES (?, ?, ?, ?)")
+    .run("managed-artist", "Canonical Artist", "artist-mbid", "Canonical Artist {mbid-artist-mbid}");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, path) VALUES (?, ?, ?)")
+    .run("12345", "Canonical Artist", "Canonical Artist");
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
+    VALUES (?, ?, ?, 1)
+  `).run("video-recording-mbid", "artist-mbid", "Canonical Video");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, recording_id, title, library_slot,
+      match_status, match_confidence
+    ) VALUES ('tidal', 'video', ?, ?, ?, 'video', 'verified', 1)
+  `).run("provider-video-1", Number(recording.lastInsertRowid), "Canonical Video");
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, file_path, relative_path, library_root, filename, extension,
+      file_type, provider, provider_entity_type, provider_id, recording_id, library_slot
+    ) VALUES (?, ?, ?, ?, ?, ?, 'video', 'tidal', 'video', ?, ?, 'video')
+  `).run(
+    "12345",
+    path.join(tempDir, "Canonical Artist", "video.mp4"),
+    "Canonical Artist/video.mp4",
+    tempDir,
+    "video.mp4",
+    "mp4",
+    "provider-video-1",
+    Number(recording.lastInsertRowid),
+  );
+  dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension,
+      type, file_type, provider, provider_entity_type, provider_id, library_slot
+    ) VALUES (?, ?, ?, ?, ?, 'TrackMetadata', 'nfo', NULL, 'track', ?, 'video')
+  `).run(
+    "12345",
+    "Canonical Artist/video.jpg",
+    path.join(tempDir, "Canonical Artist", "video.jpg"),
+    tempDir,
+    "jpg",
+    "provider-video-1",
+  );
+
+  dbModule.initDatabase();
+
+  const file = dbModule.db.prepare(`
+    SELECT artist_id, canonical_artist_mbid, canonical_recording_mbid
+    FROM TrackFiles WHERE provider_id = ?
+  `).get("provider-video-1") as any;
+  const sidecar = dbModule.db.prepare(`
+    SELECT artist_id, provider, provider_entity_type, canonical_artist_mbid, canonical_recording_mbid
+    FROM MetadataFiles WHERE provider_id = ?
+  `).get("provider-video-1") as any;
+  assert.deepEqual(file, {
+    artist_id: "managed-artist",
+    canonical_artist_mbid: "artist-mbid",
+    canonical_recording_mbid: "video-recording-mbid",
+  });
+  assert.deepEqual(sidecar, {
+    artist_id: "managed-artist",
+    provider: "tidal",
+    provider_entity_type: "video",
+    canonical_artist_mbid: "artist-mbid",
+    canonical_recording_mbid: "video-recording-mbid",
+  });
 });
 
 test("metadata pruning removes artist pictures without legacy media_id column", async () => {

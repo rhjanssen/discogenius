@@ -229,6 +229,22 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", (
   assert.equal(trackedFile.needsRename, 0);
 });
 
+test("id-only renames avoid library-wide post-processing", () => {
+  const seeded = seedTrackedFile();
+  const unrelatedEmptyDir = path.join(configModule.Config.getVideoPath(), "Unrelated Artist", "Empty Album");
+  fs.mkdirSync(unrelatedEmptyDir, { recursive: true });
+  const trackedFile = dbModule.db.prepare("SELECT id FROM TrackFiles WHERE provider_id = ?")
+    .get("100") as { id: number };
+
+  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]);
+
+  assert.equal(result.renamed, 1);
+  assert.equal(result.cleanedDirectories, 0);
+  assert.equal(fs.existsSync(seeded.expectedPath), true);
+  assert.equal(fs.existsSync(seeded.sourceDir), false);
+  assert.equal(fs.existsSync(unrelatedEmptyDir), true);
+});
+
 test("RenameTrackFileService applies the same quality-token path shown in preview", () => {
   const config = configModule.readConfig();
   config.naming.album_track_path_single = "{albumTitle}/{QUALITY}/{trackNumber00} - {trackTitle}";

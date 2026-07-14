@@ -6,6 +6,20 @@ implementation, or release validation.
 
 Status: pending | in progress | done | revisit
 
+## Post-2.3.1 Performance Follow-ups
+
+- pending: Replace the remaining large-artist top-track ranking query with a
+  bounded/cached catalog projection. The 2.3.1 staged artist page makes the
+  identity header available in about 0.2s, but a 10-track slice can still take
+  roughly 5s on the current 2 GB catalog.
+- pending: Profile and bound artist-wide retag preview/status on a large library;
+  a live two-file check was correct but still took about 14s while catalog work
+  was active.
+- revisit: Housekeeping currently owns the exclusive command slot for its full
+  database optimization pass. Add granular progress/cancellation or split the
+  maintenance work if another large-catalog run confirms that user commands
+  wait unreasonably long behind it.
+
 ## 2.0.8 - Canonical Alignment Release
 
 Scope: canonical database alignment, monitoring download-cycle fix,

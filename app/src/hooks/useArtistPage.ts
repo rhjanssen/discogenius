@@ -94,6 +94,14 @@ export function useArtistPage(artistId: string | undefined) {
     return {
         ...summaryQuery,
         data,
+        // The identity response is intentionally fast. Render the artist
+        // header as soon as it arrives while the larger catalog sections load
+        // below it; callers use isContentLoading to suppress the empty state.
+        isLoading: summaryQuery.isLoading,
+        isContentLoading: (
+            summaryQuery.isSuccess
+            && (albumsQuery.isLoading || tracksQuery.isLoading || videosQuery.isLoading)
+        ),
         isFetching: summaryQuery.isFetching || albumsQuery.isFetching || tracksQuery.isFetching || videosQuery.isFetching,
         refetch: async () => {
             const [summary] = await Promise.all([

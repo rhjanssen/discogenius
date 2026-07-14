@@ -145,7 +145,12 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
             libraryRoot: job.payload.libraryRoot,
             fileTypes: job.payload.fileTypes,
         });
-    ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);
+    // An id-only rename does not change library counts. Passing undefined here
+    // used to trigger a full-library statistics rebuild after moving even one
+    // file, leaving RenameFiles stuck at 5% for minutes on large catalogs.
+    if (job.payload.artistId) {
+        ArtistStatisticsService.refresh([job.payload.artistId]);
+    }
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.cleanedDirectories} empty folder(s) cleaned`,

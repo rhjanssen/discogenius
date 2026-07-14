@@ -212,15 +212,15 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   },
   monitoring: {
     enable_active_monitoring: true,
-    monitor_new_artists: false,
-    remove_unmonitored_files: false,
+    monitor_new_artists: true,
+    remove_unmonitored_files: true,
   },
   quality: {
     audio_quality: "max",
     video_quality: "fhd",
     embed_cover: true,
     embed_lyrics: true,
-    upgrade_existing_files: false,
+    upgrade_existing_files: true,
     convert_video_mp4: true,
     extract_flac: true,
   },
@@ -241,20 +241,22 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_demo: true,
     include_spatial: false,
     include_videos: false,
-    require_provider_availability: false,
+    require_provider_availability: true,
   },
   path: {
     music_path: "/library/stereo-music",
     spatial_path: "/library/spatial-music",
     video_path: "/library/music-videos",
-    create_empty_artist_folders: false,
+    create_empty_artist_folders: true,
     video_folder_layout: "separated",
   },
   naming: {
     artist_folder: "{artistName} {mbid-{artistMbId}}",
     album_track_path_single: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}",
     album_track_path_multi: "{Album CleanTitle} ({Release Year})/{medium:0}{track:00} - {Track CleanTitle}",
-    video_file: "{Artist CleanName} - {Video CleanTitle} {{providerName}-{mediaId}}",
+    // The default "separated" layout already puts video files in per-artist
+    // folders, so the artist prefix in the filename is redundant.
+    video_file: "{Video CleanTitle} {{providerName}-{mediaId}}",
   },
   metadata: {
     save_album_cover: true,
@@ -269,7 +271,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     save_lyrics: true,
     save_nfo: true,
     embed_album_review: true,
-    enable_fingerprinting: false,
+    enable_fingerprinting: true,
     write_tidal_url: false,
     mark_explicit: true,
     upc_target: "BARCODE",
