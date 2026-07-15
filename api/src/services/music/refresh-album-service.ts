@@ -10,6 +10,7 @@ import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { ProviderArtistIdentityService, type ProviderArtistIdentityInput } from "../metadata/provider-artist-identity-service.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { upsertProviderReleaseMatch } from "./provider-matches.js";
+import { ArtistTopTrackService } from "./artist-top-track-service.js";
 
 type SimilarAlbumSeed = {
     albumId: string;
@@ -585,6 +586,19 @@ export class RefreshAlbumService {
             console.log(`[RefreshAlbumService] Skipping review refresh for album ${albumId} (fresh)`);
         }
 
+        const releaseGroup = db.prepare(`
+            SELECT release_group_mbid
+            FROM ProviderItems
+            WHERE entity_type = 'album'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+              AND release_group_mbid IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(albumId) as { release_group_mbid?: string | null } | undefined;
+        if (releaseGroup?.release_group_mbid) {
+            ArtistTopTrackService.rebuildForReleaseGroup(String(releaseGroup.release_group_mbid));
+        }
+
         console.log(`[RefreshAlbumService] refreshMetadata complete for ${albumId}`);
     }
 
@@ -774,8 +788,8 @@ export class RefreshAlbumService {
                 isrc, duration, track_number, volume_number, release_date, artist_mbid, release_group_mbid, release_mbid,
                 track_mbid, recording_mbid, library_slot, track_id, recording_id,
                 match_status, match_confidence, match_method, match_evidence, provider_artist_name, cover,
-                replay_gain, peak, bpm, musical_key, updated_at
-            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                popularity, replay_gain, peak, bpm, musical_key, updated_at
+            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 title = excluded.title,
@@ -801,6 +815,7 @@ export class RefreshAlbumService {
                 match_evidence = excluded.match_evidence,
                 provider_artist_name = excluded.provider_artist_name,
                 cover = COALESCE(excluded.cover, ProviderItems.cover),
+                popularity = COALESCE(excluded.popularity, ProviderItems.popularity),
                 replay_gain = COALESCE(excluded.replay_gain, ProviderItems.replay_gain),
                 peak = COALESCE(excluded.peak, ProviderItems.peak),
                 bpm = COALESCE(excluded.bpm, ProviderItems.bpm),
@@ -862,6 +877,7 @@ export class RefreshAlbumService {
                             }),
                             currentTrack.artist?.name || null,
                             null,
+                            positiveNumberOrNull(currentTrack.popularity),
                             finiteNumberOrNull(currentTrack.replay_gain),
                             finiteNumberOrNull(currentTrack.peak),
                             finiteNumberOrNull(currentTrack.bpm),

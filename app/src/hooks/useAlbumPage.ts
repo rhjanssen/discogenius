@@ -3,7 +3,6 @@ import type { Album } from '@/hooks/useLibrary';
 import { api } from '@/services/api';
 import { useDebouncedQueryInvalidation } from '@/hooks/useDebouncedQueryInvalidation';
 import {
-    ACTIVITY_REFRESH_EVENT,
     LIBRARY_UPDATED_EVENT,
     MONITOR_STATE_CHANGED_EVENT,
 } from '@/utils/appEvents';
@@ -35,7 +34,13 @@ export const albumPageQueryKey = (albumId: string | undefined) => ['albumPage', 
 export function useAlbumPage(albumId: string | undefined) {
     useDebouncedQueryInvalidation({
         queryKeys: [albumPageQueryKey(albumId)],
-        windowEvents: [ACTIVITY_REFRESH_EVENT, LIBRARY_UPDATED_EVENT, MONITOR_STATE_CHANGED_EVENT],
+        // Queue/activity changes are owned by the queue cache and its live SSE
+        // projection. Refetching the complete album page for every unrelated
+        // queued/started/completed job caused a request storm during initial
+        // library establishment. The page only needs durable library or
+        // monitor-state changes; local queue controls already update their own
+        // state optimistically.
+        windowEvents: [LIBRARY_UPDATED_EVENT, MONITOR_STATE_CHANGED_EVENT],
         enabled: Boolean(albumId),
         debounceMs: 400,
     });

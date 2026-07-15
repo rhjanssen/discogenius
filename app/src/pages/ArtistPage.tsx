@@ -381,8 +381,8 @@ const useStyles = makeStyles({
   },
 });
 
-const COLLAPSED_TOP_TRACK_COUNT = 5;
-const EXPANDED_TOP_TRACK_COUNT = 10;
+const COLLAPSED_TOP_TRACK_COUNT = 25;
+const EXPANDED_TOP_TRACK_COUNT = 100;
 // v2 discards the short-lived pre-release value that could be initialized from
 // the identity-only response before monitored content arrived.
 const ARTIST_FILTER_STORAGE_KEY = "discogenius_artist_filters_v2";
@@ -601,16 +601,10 @@ const ArtistPage = () => {
       }
     };
 
-    const handleActivityRefresh = () => {
-      refetchPage();
-    };
-
     window.addEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorChange as EventListener);
-    window.addEventListener(ACTIVITY_REFRESH_EVENT, handleActivityRefresh);
 
     return () => {
       window.removeEventListener(MONITOR_STATE_CHANGED_EVENT, handleMonitorChange as EventListener);
-      window.removeEventListener(ACTIVITY_REFRESH_EVENT, handleActivityRefresh);
     };
   }, [artistId, refetchPage]);
 

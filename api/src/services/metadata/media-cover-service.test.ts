@@ -77,6 +77,24 @@ test("provider artwork ids are not converted by core sync selectors", () => {
   assert.equal(artworkUrl, null);
 });
 
+test("provider artwork fallbacks only produce browser-renderable URLs", () => {
+  assert.equal(
+    mediaCoverServiceModule.renderableProviderArtworkUrl(
+      "11111111-1111-1111-1111-111111111111",
+      "tidal",
+    ),
+    "https://resources.tidal.com/images/11111111/1111/1111/1111/111111111111/320x320.jpg",
+  );
+  assert.equal(
+    mediaCoverServiceModule.renderableProviderArtworkUrl("/media-cover/Albums/album/cover.jpg", "tidal"),
+    "/media-cover/Albums/album/cover.jpg",
+  );
+  assert.equal(
+    mediaCoverServiceModule.renderableProviderArtworkUrl("opaque-provider-id", "other-provider"),
+    null,
+  );
+});
+
 test("Servarr Metadata Server album artwork wins over cached provider fallback artwork", () => {
   const albumMbid = "album-with-provider-fallback";
   const servarrMetadataUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/Servarr Metadata Server-cover.jpg";

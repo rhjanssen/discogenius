@@ -420,7 +420,10 @@ router.get("/:artistId/page", async (req, res) => {
       includeReleaseGroups: section === "all" || section === "summary" || section === "albums",
       includeTracks: section === "all" || section === "tracks",
       includeVideos: section === "all" || section === "videos",
-      includeStatistics: section !== "identity",
+      // Album/summary responses own the aggregate library statistics. Track
+      // and video sections are fetched in parallel and should not repeat the
+      // same artist-wide scans before returning their bounded content.
+      includeStatistics: section === "all" || section === "summary" || section === "albums",
     };
     let page = await ArtistQueryService.getArtistPage(req.params.artistId, pageOptions);
     

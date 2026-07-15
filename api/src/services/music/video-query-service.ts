@@ -172,20 +172,6 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
   `;
 }
 
-function getCanonicalVideoOrderBy(sort: SortableVideoField, dir: "ASC" | "DESC"): string {
-  switch (sort) {
-    case "name":
-      return ` ORDER BY canonical_video.title ${dir}, canonical_video.id ASC`;
-    case "popularity":
-      return ` ORDER BY COALESCE(canonical_video.popularity, 0) ${dir}, canonical_video.id ASC`;
-    case "scannedAt":
-      return ` ORDER BY (canonical_video.updated_at IS NULL) ASC, canonical_video.updated_at ${dir}, canonical_video.id ASC`;
-    case "releaseDate":
-    default:
-      return ` ORDER BY (canonical_video.release_date IS NULL) ASC, canonical_video.release_date ${dir}, canonical_video.id ASC`;
-  }
-}
-
 function buildCanonicalVideoWhere(input: ListVideosQuery): {
   whereClause: string;
   params: Array<string | number>;
@@ -195,17 +181,22 @@ function buildCanonicalVideoWhere(input: ListVideosQuery): {
 
   if (input.search) {
     const searchParam = `%${input.search}%`;
-    where.push("(recording.title LIKE ? OR artist.name LIKE ?)");
+    where.push(`(
+      recording.title LIKE ?
+      OR recording.artist_metadata_id IN (
+        SELECT search_artist.id FROM ArtistMetadata search_artist WHERE search_artist.name LIKE ?
+      )
+    )`);
     params.push(searchParam, searchParam);
   }
 
   if (input.monitored !== undefined) {
-    where.push("COALESCE(recording.monitored, 0) = ?");
+    where.push("recording.monitored = ?");
     params.push(input.monitored ? 1 : 0);
   }
 
   if (input.locked !== undefined) {
-    where.push("COALESCE(recording.monitored_lock, 0) = ?");
+    where.push("recording.monitored_lock = ?");
     params.push(input.locked ? 1 : 0);
   }
 
@@ -219,20 +210,56 @@ function listCanonicalVideos(input: ListVideosQuery): VideosListResponseContract
   const sort = normalizeSortField(input.sort);
   const dir = normalizeSortDirection(input.dir);
   const { whereClause, params } = buildCanonicalVideoWhere(input);
-  const selectSql = getCanonicalVideoSelectSql(whereClause);
-
-  const rows = db.prepare(`
-    SELECT *
-    FROM (${selectSql}) canonical_video
-    ${input.downloaded === undefined ? "" : `WHERE canonical_video.downloaded = ${input.downloaded ? 1 : 0}`}
-    ${getCanonicalVideoOrderBy(sort, dir)}
+  const downloadedPredicate = input.downloaded === undefined ? "" : `
+    AND ${input.downloaded ? "" : "NOT "}EXISTS (
+      SELECT 1
+      FROM TrackFiles candidate_file
+      WHERE candidate_file.file_type = 'video'
+        AND (
+          candidate_file.recording_id = recording.id
+          OR (
+            recording.mbid IS NOT NULL
+            AND candidate_file.canonical_recording_mbid = recording.mbid
+          )
+        )
+    )
+  `;
+  const baseWhere = `${whereClause} ${downloadedPredicate}`;
+  const candidateOrderBy = (() => {
+    switch (sort) {
+      case "name":
+        return `ORDER BY recording.title ${dir}, recording.id ASC`;
+      case "popularity":
+        return `ORDER BY COALESCE(recording.popularity, 0) ${dir}, recording.id ASC`;
+      case "scannedAt":
+        return `ORDER BY (recording.updated_at IS NULL) ASC, recording.updated_at ${dir}, recording.id ASC`;
+      case "releaseDate":
+      default:
+        return `ORDER BY (recording.release_date IS NULL) ASC, recording.release_date ${dir}, recording.id ASC`;
+    }
+  })();
+  const candidates = db.prepare(`
+    SELECT recording.id
+    FROM Recordings recording
+    ${baseWhere}
+    ${candidateOrderBy}
     LIMIT ? OFFSET ?
-  `).all(...params, input.limit, input.offset) as (VideoRow & { downloaded?: number })[];
+  `).all(...params, input.limit, input.offset) as Array<{ id: number }>;
+  const candidateIds = candidates.map((candidate) => candidate.id);
+  const candidateMarks = candidateIds.map(() => "?").join(", ");
+  const detailRows = candidateIds.length === 0 ? [] : db.prepare(`
+    SELECT *
+    FROM (${getCanonicalVideoSelectSql(`WHERE recording.is_video = 1 AND recording.id IN (${candidateMarks})`)}) canonical_video
+  `).all(...candidateIds) as (VideoRow & { downloaded?: number })[];
+  const detailById = new Map(detailRows.map((row) => [Number(row.id), row]));
+  const rows = candidates
+    .map((candidate) => detailById.get(candidate.id))
+    .filter((row): row is VideoRow & { downloaded?: number } => row != null);
 
   const countResult = db.prepare(`
     SELECT COUNT(*) AS total
-    FROM (${selectSql}) canonical_video
-    ${input.downloaded === undefined ? "" : `WHERE canonical_video.downloaded = ${input.downloaded ? 1 : 0}`}
+    FROM Recordings recording
+    ${baseWhere}
   `).get(...params) as { total: number };
 
   const items = rows.map((video) => mapVideoRow(video, Boolean(video.downloaded)));

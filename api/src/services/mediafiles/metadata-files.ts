@@ -85,7 +85,7 @@ type VideoProviderItemRow = {
 /**
  * Clean provider text by removing TIDAL-style [wimpLink] tags and normalizing line breaks.
  */
-function cleanProviderText(text: string): string {
+export function cleanProviderText(text: string): string {
     const normalized = text
         .replace(/\r\n/g, "\n")
         .replace(/<br\s*\/?>/gi, "\n");

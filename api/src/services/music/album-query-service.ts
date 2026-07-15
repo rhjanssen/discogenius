@@ -9,6 +9,8 @@ import type { AlbumContract, AlbumsListResponseContract } from "../../contracts/
 import type { AlbumPageContract } from "../../contracts/pages.js";
 import { getConfigSection } from "../config/config.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
+import { AlbumLibraryIndexService } from "./album-library-index-service.js";
+import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "../metadata/musicbrainz-artist-credit-service.js";
 const releaseGroupMonitoredExpression = `
         CASE WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1 ELSE 0 END
 `;
@@ -179,7 +181,14 @@ export interface AlbumListQuery {
 function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlbumExpression: string): string {
     return `
       SELECT
-        rg.*,
+        rg.id,
+        rg.mbid,
+        rg.artist_mbid,
+        rg.title,
+        rg.primary_type,
+        rg.first_release_date,
+        rg.images,
+        rg.popularity AS canonical_popularity,
         a.id AS local_artist_id,
         a.name AS local_artist_name,
         a.picture AS artist_picture,
@@ -196,11 +205,13 @@ function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlb
                 : "COALESCE(stereo.quality, spatial.quality)"} AS selected_quality,
         stereo.selected_provider AS stereo_provider,
         stereo.selected_provider_id AS stereo_provider_id,
+        stereo.selected_release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
         stereo.cover AS stereo_cover,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
+        spatial.selected_release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
         spatial.cover AS spatial_cover,
@@ -239,8 +250,27 @@ function getReleaseGroupOrderBy(sortParam: string | undefined, sortDir: "ASC" | 
     }
 }
 
-function normalizeReleaseGroupListRow(row: any, downloadedPercent: number, isDownloaded: boolean): AlbumContract {
-    const album = normalizeMusicBrainzReleaseGroupAlbum(row, null);
+function getAlbumLibraryIndexOrderBy(sortParam: string | undefined, sortDir: "ASC" | "DESC"): string {
+    switch (sortParam) {
+        case "name":
+            return ` ORDER BY library_album.title ${sortDir}, library_album.release_group_id ASC`;
+        case "scannedAt":
+            return ` ORDER BY (library_album.album_updated_at IS NULL) ASC, library_album.album_updated_at ${sortDir}, library_album.title ASC, library_album.release_group_id ASC`;
+        case "popularity":
+            return ` ORDER BY library_album.popularity ${sortDir}, library_album.title ASC, library_album.release_group_id ASC`;
+        case "releaseDate":
+        default:
+            return ` ORDER BY (library_album.first_release_date IS NULL) ASC, library_album.first_release_date ${sortDir}, library_album.title ASC, library_album.release_group_id ASC`;
+    }
+}
+
+function normalizeReleaseGroupListRow(
+    row: any,
+    downloadedPercent: number,
+    isDownloaded: boolean,
+    albumArtists?: CanonicalAlbumArtist[],
+): AlbumContract {
+    const album = normalizeMusicBrainzReleaseGroupAlbum(row, null, undefined, albumArtists);
     const monitored = Boolean(row.wanted);
     const includeSpatial = getConfigSection("filtering").include_spatial === true;
 
@@ -265,6 +295,10 @@ function normalizeReleaseGroupListRow(row: any, downloadedPercent: number, isDow
 
 export class AlbumQueryService {
     static listAlbums(input: AlbumListQuery): AlbumsListResponseContract {
+        if (AlbumLibraryIndexService.isReady()) {
+            return this.listAlbumsFromIndex(input);
+        }
+
         const limit = input.limit;
         const offset = input.offset;
         const search = input.search;
@@ -365,6 +399,8 @@ export class AlbumQueryService {
             libraryFilter === "spatial" ? "spatial" : libraryFilter === "stereo" ? "stereo" : null,
         );
 
+        const albumArtists = MusicBrainzArtistCreditService.getAlbumArtistsMap(releaseGroupMbids);
+
         const countQuery = `
           SELECT COUNT(*) AS count
           FROM Albums rg
@@ -387,6 +423,115 @@ export class AlbumQueryService {
                     row,
                     stats?.downloadedPercent ?? 0,
                     stats?.isDownloaded ?? false,
+                    releaseGroupMbid ? albumArtists.get(releaseGroupMbid) : undefined,
+                );
+            }),
+            total: count,
+            limit,
+            offset,
+            hasMore: offset + rows.length < count,
+        };
+    }
+
+    private static listAlbumsFromIndex(input: AlbumListQuery): AlbumsListResponseContract {
+        const limit = input.limit;
+        const offset = input.offset;
+        const libraryFilter = input.libraryFilter || "all";
+        const selectedProviderAlbumExpression = selectedProviderAlbumExpressionForFilter(libraryFilter);
+        const sortDir = (input.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+        const params: Array<string | number> = [];
+        const countParams: Array<string | number> = [];
+        const where = ["library_album.included = 1"];
+
+        if (input.search) {
+            where.push("(library_album.title LIKE ? OR artist.name LIKE ?)");
+            const searchParam = `%${input.search}%`;
+            params.push(searchParam, searchParam);
+            countParams.push(searchParam, searchParam);
+        }
+
+        if (input.monitored !== undefined) {
+            where.push("library_album.monitored = ?");
+            params.push(input.monitored ? 1 : 0);
+            countParams.push(input.monitored ? 1 : 0);
+        }
+
+        if (input.downloaded !== undefined) {
+            const downloadedReleaseGroupMbids = getFullyDownloadedReleaseGroupMbids(libraryFilter);
+            if (downloadedReleaseGroupMbids.length === 0) {
+                if (input.downloaded) where.push("0 = 1");
+            } else {
+                const marks = downloadedReleaseGroupMbids.map(() => "?").join(", ");
+                where.push(`album.mbid ${input.downloaded ? "IN" : "NOT IN"} (${marks})`);
+                params.push(...downloadedReleaseGroupMbids);
+                countParams.push(...downloadedReleaseGroupMbids);
+            }
+        }
+
+        if (input.locked !== undefined) {
+            where.push("library_album.monitored_lock = ?");
+            params.push(input.locked ? 1 : 0);
+            countParams.push(input.locked ? 1 : 0);
+        }
+
+        if (libraryFilter === "spatial") {
+            where.push(getConfigSection("filtering").include_spatial === true
+                ? "library_album.has_spatial_provider = 1"
+                : "0 = 1");
+        } else if (libraryFilter === "stereo") {
+            where.push("library_album.has_stereo_provider = 1");
+        }
+
+        const whereClause = `WHERE ${where.join(" AND ")}`;
+        // The projection is self-contained for the normal library view. Keep
+        // catalog joins out of the hot count/page path unless a filter truly
+        // needs a field that is not projected.
+        const fromClause = `
+          FROM AlbumLibraryIndex library_album
+          ${input.downloaded !== undefined ? "JOIN Albums album ON album.id = library_album.release_group_id" : ""}
+          ${input.search ? "LEFT JOIN Artists artist ON artist.mbid = library_album.artist_mbid" : ""}
+        `;
+        const candidates = db.prepare(`
+          SELECT library_album.release_group_id AS id
+          ${fromClause}
+          ${whereClause}
+          ${getAlbumLibraryIndexOrderBy(input.sort, sortDir)}
+          LIMIT ? OFFSET ?
+        `).all(...params, limit, offset) as Array<{ id: number }>;
+
+        const candidateIds = candidates.map((row) => row.id);
+        const candidateMarks = candidateIds.map(() => "?").join(", ");
+        const detailRows = candidateIds.length === 0 ? [] : db.prepare(`
+          ${buildReleaseGroupDetailsSelect(`WHERE rg.id IN (${candidateMarks})`, selectedProviderAlbumExpression)}
+        `).all(...candidateIds) as any[];
+        const detailById = new Map(detailRows.map((row) => [Number(row.id), row]));
+        const rows = candidates
+            .map((candidate) => detailById.get(candidate.id))
+            .filter((row): row is any => row != null);
+        const releaseGroupMbids = rows
+            .map((row) => row.mbid == null ? null : String(row.mbid))
+            .filter((value): value is string => Boolean(value));
+        const downloadStats = getReleaseGroupDownloadStatsMap(
+            releaseGroupMbids,
+            libraryFilter === "spatial" ? "spatial" : libraryFilter === "stereo" ? "stereo" : null,
+        );
+
+        const albumArtists = MusicBrainzArtistCreditService.getAlbumArtistsMap(releaseGroupMbids);
+        const count = Number((db.prepare(`
+          SELECT COUNT(*) AS count
+          ${fromClause}
+          ${whereClause}
+        `).get(...countParams) as { count?: number } | undefined)?.count || 0);
+
+        return {
+            items: rows.map((row) => {
+                const releaseGroupMbid = row.mbid == null ? null : String(row.mbid);
+                const stats = releaseGroupMbid ? downloadStats.get(releaseGroupMbid) : null;
+                return normalizeReleaseGroupListRow(
+                    row,
+                    stats?.downloadedPercent ?? 0,
+                    stats?.isDownloaded ?? false,
+                    releaseGroupMbid ? albumArtists.get(releaseGroupMbid) : undefined,
                 );
             }),
             total: count,

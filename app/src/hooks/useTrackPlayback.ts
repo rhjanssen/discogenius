@@ -2,6 +2,7 @@ import { useCallback, useRef, useState, type MouseEvent } from "react";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { isSpatialAudioQuality } from "@/utils/spatialAudio";
+import { selectTrackPlaybackSource } from "./trackPlaybackSource";
 
 interface PlayableTrackFile {
   id: number;
@@ -95,16 +96,11 @@ export function useTrackPlayback() {
   }, [getTrackFiles, isDownloadedTrack]);
 
   const shouldUseSignedPreview = useCallback((track: PlayableTrack, audioFileOverride?: PlayableTrackFile | null) => {
-    if (preferSignedStreamTrackIdsRef.current.has(track.id)) {
-      return true;
-    }
-
     const audioFile = audioFileOverride ?? getTrackAudioFile(track);
-    if (!audioFile) {
-      return true;
-    }
-
-    return false;
+    return selectTrackPlaybackSource({
+      hasLocalAudioFile: Boolean(audioFile),
+      forceProviderPreview: preferSignedStreamTrackIdsRef.current.has(track.id),
+    }) === "provider";
   }, [getTrackAudioFile]);
 
   const getPreviewPreferredQuality = useCallback((track: PlayableTrack) => {
@@ -214,6 +210,16 @@ export function useTrackPlayback() {
         await ensureSignedStreamUrl(track, getPreviewPreferredQuality(track));
       } catch (error) {
         console.error("Failed to get provider stream URL:", error);
+        if (audioFile) {
+          preferSignedStreamTrackIdsRef.current.delete(track.id);
+          setPlayingTrackId(track.id);
+          toast({
+            title: "Playback compatibility fallback",
+            description: "Switched to the local library stream",
+          });
+          return;
+        }
+
         toast({
           title: "Playback failed",
           description: "Could not get a preview stream from the provider",

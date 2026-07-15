@@ -431,7 +431,11 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
          FROM ProviderItems current_pi
          WHERE current_pi.provider = pm.provider
            AND current_pi.entity_type = 'album'
-           AND CAST(current_pi.provider_id AS TEXT) = CAST(pm.provider_item_id AS TEXT)
+           -- Both ids are canonical TEXT columns. Comparing them directly lets
+           -- SQLite use ProviderItems' (provider, entity_type, provider_id)
+           -- primary key instead of scanning/casting the offer table once for
+           -- every candidate edge.
+           AND current_pi.provider_id = pm.provider_item_id
            AND (
              current_pi.release_mbid IS NULL
              OR current_pi.release_mbid = pm.musicbrainz_release_mbid
@@ -441,7 +445,7 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
     LEFT JOIN ProviderItems pi
       ON pi.provider = pm.provider
      AND pi.entity_type = 'album'
-     AND CAST(pi.provider_id AS TEXT) = CAST(pm.provider_item_id AS TEXT)
+     AND pi.provider_id = pm.provider_item_id
     WHERE ar.release_group_mbid = ?
     ORDER BY
       (ar.date IS NULL),

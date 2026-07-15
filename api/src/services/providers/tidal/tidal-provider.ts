@@ -817,6 +817,7 @@ export class TidalProvider implements StreamingProvider {
       isrc: track.isrc || null,
       releaseDate: track.releaseDate || track.release_date || null,
       copyright: track.copyright || null,
+      popularity: track.popularity ?? null,
       quality: track.quality || track.audioQuality || qualityTags[0] || null,
       qualityTags,
       raw: track,

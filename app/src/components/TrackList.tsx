@@ -327,6 +327,11 @@ const canResolveProviderTrack = (track: TrackListItem) => {
     && (looksLikeMusicBrainzMbid(canonicalTrackMbid) || looksLikeMusicBrainzMbid(track.musicbrainz_recording_id)),
   );
 };
+const hasPlayableTrackSource = (track: TrackListItem, audioFile: unknown) => Boolean(
+  isDownloadedTrack(track)
+  || audioFile
+  || String(track.preview_provider_track_id || "").trim(),
+);
 
 const getDisplayNumber = (track: TrackListItem, index: number, numbering: TrackNumbering) => {
   if (numbering === "index") {
@@ -575,7 +580,7 @@ const TrackList = <T extends TrackListItem>({
   const renderCover = useCallback((track: T) => {
     const isPlaying = playingTrackId === track.id;
     const audioFile = getTrackAudioFile(track);
-    const canPlay = Boolean(isDownloadedTrack(track) || audioFile || canResolveProviderTrack(track));
+    const canPlay = hasPlayableTrackSource(track, audioFile);
     const coverUrl = getAlbumArtworkUrl(track);
     const renderableCoverUrl = coverUrl && !failedCoverUrls.has(coverUrl)
       ? renderableArtworkUrl(coverUrl)
@@ -647,7 +652,7 @@ const TrackList = <T extends TrackListItem>({
           render: (track, index) => {
             const isPlaying = playingTrackId === track.id;
             const audioFile = getTrackAudioFile(track);
-            const canPlay = Boolean(isDownloadedTrack(track) || audioFile || canResolveProviderTrack(track));
+            const canPlay = hasPlayableTrackSource(track, audioFile);
 
             return (
               <button

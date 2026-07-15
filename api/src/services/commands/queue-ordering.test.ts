@@ -438,9 +438,16 @@ test("download queue query resolves canonical track provider offers without Prov
     db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
         .run("artist-track", "Track Artist");
     db.prepare(`
-        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
-        VALUES (?, ?, ?, ?, ?)
-    `).run("rg-track", "artist-track", "Canonical Album", "album", "2024-01-01");
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, images)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+        "rg-track",
+        "artist-track",
+        "Canonical Album",
+        "album",
+        "2024-01-01",
+        JSON.stringify([{ coverType: "Cover", url: "https://images.example/canonical-track-cover.jpg" }]),
+    );
     db.prepare(`
         INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -489,7 +496,7 @@ test("download queue query resolves canonical track provider offers without Prov
     assert.equal(live.items[0]?.album_id, "rg-track");
     assert.equal(live.items[0]?.album_title, "Canonical Album");
     assert.equal(live.items[0]?.quality, "DOLBY_ATMOS");
-    assert.equal(live.items[0]?.cover, "track-cover");
+    assert.equal(live.items[0]?.cover, "/media-cover/Albums/rg-track/cover.jpg");
 
     const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
         artistId: "artist-track",

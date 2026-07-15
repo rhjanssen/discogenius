@@ -40,6 +40,11 @@ import { DownloadedTracksImportService } from '../mediafiles/downloaded-tracks-i
 import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-events.js';
 import { CommandWorkerPool } from '../commands/worker/command-worker-pool.js';
 import type { CacheInvalidateTarget } from '../commands/worker/command-worker-protocol.js';
+import {
+    albumCoverLocalUrl,
+    renderableProviderArtworkUrl,
+    videoCoverLocalUrl,
+} from '../metadata/media-cover-service.js';
 
 type DownloadCommand = DownloadTrackCommand | DownloadVideoCommand | DownloadAlbumCommand;
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
@@ -78,6 +83,7 @@ type CanonicalProviderOffer = {
     canonical_album_title?: string | null;
     canonical_track_title?: string | null;
     canonical_recording_title?: string | null;
+    canonical_recording_id?: number | null;
     artist_name?: string | null;
 };
 
@@ -589,6 +595,7 @@ export class DownloadProcessor {
                 rg.title AS canonical_album_title,
                 t.title AS canonical_track_title,
                 r.title AS canonical_recording_title,
+                r.id AS canonical_recording_id,
                 am.name AS artist_name
             FROM ProviderItems pi
             LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
@@ -697,11 +704,16 @@ export class DownloadProcessor {
                     : type === 'video'
                         ? canonicalOffer.canonical_recording_title
                         : canonicalOffer.canonical_track_title || canonicalOffer.canonical_recording_title;
-                const cover = fallbackCover
+                const providerCover = fallbackCover
                     ?? canonicalOffer.slot_cover
                     ?? canonicalOffer.provider_cover
                     ?? canonicalOffer.asset_id
                     ?? null;
+                const canonicalCover = type === 'video'
+                    ? videoCoverLocalUrl(canonicalOffer.canonical_recording_id)
+                    : albumCoverLocalUrl({ albumMbid: canonicalOffer.release_group_mbid });
+                const cover = canonicalCover
+                    ?? renderableProviderArtworkUrl(providerCover, canonicalOffer.provider);
 
                 return {
                     title: fallbackTitle || title || canonicalOffer.slot_provider_title || canonicalOffer.provider_title || 'Unknown',
@@ -717,13 +729,13 @@ export class DownloadProcessor {
             return {
                 title: fallbackTitle || 'Unknown',
                 artist: fallbackArtist || 'Unknown',
-                cover: fallbackCover,
+                cover: renderableProviderArtworkUrl(fallbackCover, payload?.provider),
             };
         } catch {
             return {
                 title: fallbackTitle || 'Unknown',
                 artist: fallbackArtist || 'Unknown',
-                cover: fallbackCover,
+                cover: renderableProviderArtworkUrl(fallbackCover, payload?.provider),
             };
         }
     }

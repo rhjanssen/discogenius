@@ -256,4 +256,40 @@ export class MusicBrainzArtistCreditService {
       ORDER BY aa.ord ASC
     `).all(releaseGroupMbid) as CanonicalAlbumArtist[];
   }
+
+  static getAlbumArtistsMap(releaseGroupMbids: string[]): Map<string, CanonicalAlbumArtist[]> {
+    const uniqueMbids = Array.from(new Set(releaseGroupMbids.filter(Boolean)));
+    if (uniqueMbids.length === 0) {
+      return new Map();
+    }
+
+    const marks = uniqueMbids.map(() => "?").join(", ");
+    const rows = db.prepare(`
+      SELECT
+        aa.release_group_mbid AS releaseGroupMbid,
+        aa.artist_mbid AS artistId,
+        aa.credited_name AS name,
+        aa.join_phrase AS joinPhrase,
+        a.picture,
+        a.cover_image_url AS coverImageUrl
+      FROM AlbumArtists aa
+      LEFT JOIN Artists a ON a.mbid = aa.artist_mbid
+      WHERE aa.release_group_mbid IN (${marks})
+      ORDER BY aa.release_group_mbid ASC, aa.ord ASC
+    `).all(...uniqueMbids) as Array<CanonicalAlbumArtist & { releaseGroupMbid: string }>;
+
+    const result = new Map<string, CanonicalAlbumArtist[]>();
+    for (const row of rows) {
+      const artists = result.get(row.releaseGroupMbid) ?? [];
+      artists.push({
+        artistId: row.artistId,
+        name: row.name,
+        joinPhrase: row.joinPhrase,
+        picture: row.picture,
+        coverImageUrl: row.coverImageUrl,
+      });
+      result.set(row.releaseGroupMbid, artists);
+    }
+    return result;
+  }
 }

@@ -6,6 +6,9 @@ import { OrganizerService } from "../mediafiles/organizer.js";
 import {CommandModel} from "./command-model.js";
 import {CommandNames} from "./command-names.js";
 import {CommandQueueManager} from "./command-queue-manager.js";
+import { ArtistTopTrackService } from "../music/artist-top-track-service.js";
+import { AlbumLibraryIndexService } from "../music/album-library-index-service.js";
+import { TrackLibraryIndexService } from "../music/track-library-index-service.js";
 
 export interface SchedulerJobDescriptionUpdate {
     progress?: number;
@@ -110,9 +113,38 @@ export async function runLowCouplingMaintenanceJob(
             return;
         }
         case CommandNames.UpdateLibraryMetadata: {
+            let indexedAlbums = 0;
+            let indexedTracks = 0;
+            if (AlbumLibraryIndexService.needsRebuild()) {
+                context.updateCommandDescription({
+                    progress: 1,
+                    description: 'Building album library index',
+                });
+                indexedAlbums = AlbumLibraryIndexService.rebuild().rows;
+            }
+
+            if (TrackLibraryIndexService.needsRebuild()) {
+                context.updateCommandDescription({
+                    progress: 2,
+                    description: 'Building track library index',
+                });
+                indexedTracks = TrackLibraryIndexService.rebuild().rows;
+            }
+
+            const summary = ArtistTopTrackService.rebuildMissingMonitoredArtists((progress) => {
+                const percent = progress.total > 0
+                    ? Math.min(99, Math.max(2, Math.round((progress.index / progress.total) * 100)))
+                    : 100;
+                context.updateCommandDescription({
+                    progress: percent,
+                    description: `Indexing top tracks (${progress.index}/${progress.total}: ${progress.artistName})`,
+                });
+            });
             context.updateCommandDescription({
                 progress: 100,
-                description: 'Library metadata updated',
+                description: indexedAlbums > 0 || indexedTracks > 0 || summary.artists > 0
+                    ? `Indexed ${indexedAlbums} album(s), ${indexedTracks} library track(s), and ${summary.rows} top track(s) for ${summary.artists} monitored artist(s)`
+                    : 'Library metadata index is current',
             });
             return;
         }

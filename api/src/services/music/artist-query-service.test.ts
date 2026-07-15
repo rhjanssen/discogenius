@@ -13,6 +13,7 @@ let artistQueryModule: typeof import("./artist-query-service.js");
 let mediaCoverServiceModule: typeof import("../metadata/media-cover-service.js");
 let servarrMetadataModule: typeof import("../metadata/servarr-metadata.js");
 let artistStatisticsModule: typeof import("./artist-statistics-service.js");
+let artistTopTrackModule: typeof import("./artist-top-track-service.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
@@ -21,6 +22,7 @@ before(async () => {
   mediaCoverServiceModule = await import("../metadata/media-cover-service.js");
   servarrMetadataModule = await import("../metadata/servarr-metadata.js");
   artistStatisticsModule = await import("./artist-statistics-service.js");
+  artistTopTrackModule = await import("./artist-top-track-service.js");
 });
 
 beforeEach(() => {
@@ -297,6 +299,142 @@ test("artist page top tracks collapse alternate quality rows into one provider-b
   assert.equal(topTracks[0].title, "Canonical Track");
   assert.equal(topTracks[0].preview_provider_track_id, "provider-track-1");
   assert.deepEqual(topTracks[0].qualityTags, ["LOSSLESS", "DOLBY_ATMOS"]);
+});
+
+test("artist page top tracks resolve provider previews through canonical MBIDs", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+
+  db.prepare(`
+    UPDATE ProviderItems
+    SET track_id = NULL, recording_id = NULL
+    WHERE provider_id = 'provider-track-1'
+  `).run();
+
+  const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
+    includeReleaseGroups: false,
+    includeTracks: true,
+    includeVideos: false,
+  });
+  const modules = (page?.rows || []).flatMap((row: any) => row.modules || []);
+  const topTracks = modules.find((module: any) => module.title === "Top Tracks")?.items || [];
+
+  assert.equal(topTracks.length, 1);
+  assert.equal(topTracks[0].preview_provider, "tidal");
+  assert.equal(topTracks[0].preview_provider_track_id, "provider-track-1");
+});
+
+test("artist top tracks prefer the default provider popularity and fall back to another provider", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+
+  db.prepare("UPDATE Recordings SET popularity = 99 WHERE id = 301").run();
+  db.prepare("UPDATE ProviderItems SET popularity = 5 WHERE provider = 'tidal' AND provider_id = 'provider-track-1'").run();
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, title, popularity,
+      library_slot, album_release_id, track_id, recording_id, match_status
+    ) VALUES (
+      'apple-music', 'track', 'apple-track-1', 'artist-mbid-1', 'release-group-mbid-1',
+      'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', 'Canonical Track', 90,
+      'stereo', 201, 401, 301, 'matched'
+    )
+  `).run();
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, foreign_recording_id, mbid, artist_mbid, title, length_ms, popularity, is_video, metadata_status
+    ) VALUES (302, 'recording-mbid-2', 'recording-mbid-2', 'artist-mbid-1', 'Provider Favorite', 190000, 10, 0, 'musicbrainz')
+  `).run();
+  db.prepare(`
+    INSERT INTO Tracks (
+      id, foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid,
+      medium_position, position, number, title, length_ms
+    ) VALUES (402, 'track-mbid-2', 'recording-mbid-2', 'track-mbid-2', 'release-mbid-1', 'recording-mbid-2', 1, 2, '2', 'Provider Favorite', 190000)
+  `).run();
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, title, popularity,
+      library_slot, album_release_id, track_id, recording_id, match_status
+    ) VALUES (
+      'tidal', 'track', 'provider-track-2', 'artist-mbid-1', 'release-group-mbid-1',
+      'release-mbid-1', 'track-mbid-2', 'recording-mbid-2', 'Provider Favorite', 80,
+      'stereo', 201, 402, 302, 'matched'
+    )
+  `).run();
+
+  const loadTopTracks = async () => {
+    const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
+      includeReleaseGroups: false,
+      includeTracks: true,
+      includeVideos: false,
+    });
+    return (page?.rows || [])
+      .flatMap((row: any) => row.modules || [])
+      .find((module: any) => module.title === "Top Tracks")?.items || [];
+  };
+
+  const defaultProviderTracks = await loadTopTracks();
+  assert.equal(defaultProviderTracks[0].title, "Provider Favorite");
+  assert.equal(defaultProviderTracks[0].popularity, 80);
+  assert.equal(defaultProviderTracks.find((track: any) => track.title === "Canonical Track")?.popularity, 5);
+
+  db.prepare("UPDATE ProviderItems SET popularity = NULL WHERE provider = 'tidal' AND provider_id = 'provider-track-1'").run();
+  artistTopTrackModule.ArtistTopTrackService.rebuildForArtist(artistId, "artist-mbid-1");
+  const fallbackProviderTracks = await loadTopTracks();
+  assert.equal(fallbackProviderTracks[0].title, "Canonical Track");
+  assert.equal(fallbackProviderTracks[0].popularity, 90);
+});
+
+test("artist top-track projection returns the indexed top 100 recordings", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+  const artistMetadata = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid-1'")
+    .get() as { id: number };
+
+  db.transaction(() => {
+    const insertRecording = db.prepare(`
+      INSERT INTO Recordings (
+        foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
+        title, length_ms, popularity, is_video, metadata_status
+      ) VALUES (?, ?, ?, 'artist-mbid-1', ?, 180000, ?, 0, 'musicbrainz')
+    `);
+    const insertTrack = db.prepare(`
+      INSERT INTO Tracks (
+        foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid,
+        medium_position, position, number, title, length_ms
+      ) VALUES (?, ?, ?, 'release-mbid-1', ?, 1, ?, ?, ?, 180000)
+    `);
+
+    for (let index = 1; index <= 120; index += 1) {
+      const recordingMbid = `ranked-recording-${index}`;
+      const trackMbid = `ranked-track-${index}`;
+      const title = `Ranked Track ${index}`;
+      insertRecording.run(recordingMbid, recordingMbid, artistMetadata.id, title, index);
+      insertTrack.run(trackMbid, recordingMbid, trackMbid, recordingMbid, index + 1, String(index + 1), title);
+    }
+  })();
+
+  const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
+    includeReleaseGroups: false,
+    includeTracks: true,
+    includeVideos: false,
+  });
+  const topTracks = (page?.rows || [])
+    .flatMap((row: any) => row.modules || [])
+    .find((module: any) => module.title === "Top Tracks")?.items || [];
+
+  assert.equal(topTracks.length, 100);
+  assert.equal(topTracks[0].title, "Ranked Track 120");
+  assert.equal(topTracks[99].title, "Ranked Track 21");
+  const projectionState = db.prepare(
+    "SELECT row_count FROM ArtistTopTrackProjectionState WHERE artist_metadata_id = ?",
+  ).get(artistMetadata.id) as { row_count: number } | undefined;
+  assert.equal(
+    projectionState?.row_count,
+    100,
+  );
 });
 
 test("artist list and album helper count canonical release groups and tracks", () => {

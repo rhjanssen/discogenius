@@ -14,6 +14,9 @@ let configModule: typeof import("../config/config.js");
 let curationServiceModule: typeof import("./curation-service.js");
 let downloadMissingServiceModule: typeof import("./download-missing-service.js");
 let albumQueryServiceModule: typeof import("./album-query-service.js");
+let albumLibraryIndexServiceModule: typeof import("./album-library-index-service.js");
+let trackLibraryIndexServiceModule: typeof import("./track-library-index-service.js");
+let trackQueryServiceModule: typeof import("./track-query-service.js");
 let queueModule: typeof import("../commands/command-queue-manager.js");
 
 function assertRetiredProviderCatalogTablesAbsent() {
@@ -60,6 +63,9 @@ before(async () => {
   curationServiceModule = await import("./curation-service.js");
   downloadMissingServiceModule = await import("./download-missing-service.js");
   albumQueryServiceModule = await import("./album-query-service.js");
+  albumLibraryIndexServiceModule = await import("./album-library-index-service.js");
+  trackLibraryIndexServiceModule = await import("./track-library-index-service.js");
+  trackQueryServiceModule = await import("./track-query-service.js");
   queueModule = await import("../commands/command-queue-manager.js");
 
   writeTestConfig();
@@ -796,6 +802,112 @@ test("Album read model exposes and filters canonical release-group slot locks", 
   assert.equal(locked.items.length, 1);
   assert.equal(locked.items[0].monitored_lock, true);
   assert.equal(unlocked.items.length, 0);
+});
+
+test("album library projection is maintained by catalog and slot writes and can be rebuilt", () => {
+  const { db } = dbModule;
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES ('artist-1', 'Queen', 'artist-mbid-1', 1)
+  `).run();
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-mbid-1', 'Queen')
+  `).run();
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, first_release_date, popularity)
+    VALUES ('rg-mbid-1', 'artist-mbid-1', 'A Night at the Opera', '1975-11-21', 95)
+  `).run();
+  db.prepare(`
+    INSERT INTO ArtistReleaseGroupCuration (source_artist_mbid, release_group_mbid, included)
+    VALUES ('artist-mbid-1', 'rg-mbid-1', 1)
+  `).run();
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, monitored_lock,
+      selected_provider, selected_provider_id
+    ) VALUES ('artist-mbid-1', 'rg-mbid-1', 'stereo', 1, 1, 'tidal', 'album-1')
+  `).run();
+
+  const projected = db.prepare(`
+    SELECT included, monitored, monitored_lock, has_stereo_provider, popularity
+    FROM AlbumLibraryIndex
+    WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'rg-mbid-1')
+  `).get() as Record<string, number>;
+  assert.deepEqual(projected, {
+    included: 1,
+    monitored: 1,
+    monitored_lock: 1,
+    has_stereo_provider: 1,
+    popularity: 95,
+  });
+
+  db.prepare("DELETE FROM AlbumLibraryProjectionState").run();
+  db.prepare("DELETE FROM AlbumLibraryIndex").run();
+  assert.equal(albumLibraryIndexServiceModule.AlbumLibraryIndexService.needsRebuild(), true);
+  assert.deepEqual(albumLibraryIndexServiceModule.AlbumLibraryIndexService.rebuild(), { rows: 1 });
+  assert.equal(albumLibraryIndexServiceModule.AlbumLibraryIndexService.isReady(), true);
+
+  const rebuilt = albumQueryServiceModule.AlbumQueryService.listAlbums({
+    limit: 10,
+    offset: 0,
+    monitored: true,
+    sort: "popularity",
+    dir: "desc",
+  });
+  assert.equal(rebuilt.total, 1);
+  assert.equal(rebuilt.items[0].title, "A Night at the Opera");
+});
+
+test("track library popularity paging follows indexed canonical recording popularity", () => {
+  const { db } = dbModule;
+
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES ('artist-1', 'Queen', 'artist-mbid-1', 1)").run();
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid-1', 'Queen')").run();
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES ('rg-mbid-1', 'artist-mbid-1', 'Album')").run();
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title)
+    VALUES ('release-mbid-1', 'rg-mbid-1', 'artist-mbid-1', 'Album')
+  `).run();
+  db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, popularity)
+    VALUES ('recording-low', 'artist-mbid-1', 'Low', 10),
+           ('recording-high', 'artist-mbid-1', 'High', 90)
+  `).run();
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, title)
+    VALUES ('track-low', 'release-mbid-1', 'recording-low', 1, 1, 'Low'),
+           ('track-high', 'release-mbid-1', 'recording-high', 1, 2, 'High')
+  `).run();
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid
+    ) VALUES ('artist-mbid-1', 'rg-mbid-1', 'stereo', 1, 'tidal', 'album-1', 'release-mbid-1')
+  `).run();
+
+  const projection = db.prepare(`
+    SELECT COUNT(*) AS total, MAX(popularity) AS max_popularity
+    FROM TrackLibraryIndex
+  `).get() as { total: number; max_popularity: number };
+  assert.deepEqual(projection, { total: 2, max_popularity: 90 });
+
+  db.prepare("DELETE FROM TrackLibraryProjectionState").run();
+  db.prepare("DELETE FROM TrackLibraryIndex").run();
+  assert.equal(trackLibraryIndexServiceModule.TrackLibraryIndexService.needsRebuild(), true);
+  assert.deepEqual(trackLibraryIndexServiceModule.TrackLibraryIndexService.rebuild(), { rows: 2 });
+
+  const result = trackQueryServiceModule.listTracks({
+    limit: 50,
+    offset: 0,
+    monitored: true,
+    sort: "popularity",
+    dir: "desc",
+  });
+
+  assert.equal(result.total, 2);
+  assert.deepEqual(result.items.map((track) => track.title), ["High", "Low"]);
 });
 
 test("Album track read model follows release-group wanted state", async () => {

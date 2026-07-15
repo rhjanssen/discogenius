@@ -105,6 +105,11 @@ router.get("/", async (req, res) => {
         const limit = Number.isNaN(parsedLimit) ? 20 : Math.min(Math.max(parsedLimit, 1), 200);
         const requestedTypes = normalizeSearchTypes(req.query.type);
         const requestedTypeSet = new Set(requestedTypes);
+        // Global search is a local-library navigation surface, matching
+        // Lidarr's library search. Remote discovery belongs to the dedicated
+        // artist/album lookup flows; callers can still opt in explicitly.
+        const includeRemoteCatalog = ["1", "true", "yes", "on"]
+            .includes(String(req.query.remote || "").trim().toLowerCase());
 
         if (!query || query.length < 2) {
             return res.status(400).json({ detail: "Query must be at least 2 characters" });
@@ -124,7 +129,9 @@ router.get("/", async (req, res) => {
         // Start the remote catalog request before synchronous SQLite work. The
         // network round trip then overlaps local matching instead of making
         // global search pay both costs serially.
-        const remoteSearchPromise = query.length >= 2 && (requestedTypeSet.has("artists") || requestedTypeSet.has("albums"))
+        const remoteSearchPromise = includeRemoteCatalog
+            && query.length >= 2
+            && (requestedTypeSet.has("artists") || requestedTypeSet.has("albums"))
             ? catalogProviderRegistry.getActive().search(query, { limit })
             : null;
 
@@ -468,7 +475,7 @@ router.get("/", async (req, res) => {
         }
 
         // 2. Remote catalog search (Servarr Metadata Server or local MusicBrainz)
-        if (query.length >= 2 && (requestedTypeSet.has("artists") || requestedTypeSet.has("albums"))) {
+        if (remoteSearchPromise) {
             const remoteItems = await remoteSearchPromise!;
             for (const artist of remoteItems.artists || []) {
                 if (requestedTypeSet.has("artists")) {

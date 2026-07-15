@@ -34,6 +34,7 @@ import {
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { upsertProviderReleaseMatch } from "./provider-matches.js";
+import { ArtistTopTrackService } from "./artist-top-track-service.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -1505,6 +1506,7 @@ export class RefreshArtistService {
             if (shouldRefreshArtistVideos) {
                 await this.refreshProviderVideos(connectedProviders, artistId, artistMbid, options);
             }
+            ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
             return;
         }
 
@@ -1513,6 +1515,7 @@ export class RefreshArtistService {
                 `[RefreshArtistService] Skipping provider catalog hydration for ${artistId} ` +
                 `(no providers connected)`,
             );
+            ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
             return;
         }
 
@@ -1784,6 +1787,7 @@ export class RefreshArtistService {
         if (totalSlotCounts.stereo > 0 || totalSlotCounts.spatial > 0) {
             console.log(`[RefreshArtistService] Selected provider offers for ${totalSlotCounts.stereo} stereo and ${totalSlotCounts.spatial} spatial release-group slots`);
         }
+        ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
     }
 
     private static async refreshProviderVideos(

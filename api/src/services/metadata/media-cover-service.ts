@@ -543,11 +543,6 @@ export function mapAlbumArtworkToLocalUrl(options: {
   providerCandidates?: ProviderArtworkCandidate[];
   includeExpectedProviderFallback?: boolean;
 }): string | null {
-  const existing = existingAlbumMediaCoverUrl(options.albumMbid);
-  if (existing) {
-    return existing;
-  }
-
   const canonicalSource = firstStoredImageUrl(
     options.servarrMetadataData?.images,
     preferredTypes("Cover", ["Cover"]),
@@ -566,7 +561,8 @@ export function mapAlbumArtworkToLocalUrl(options: {
   const providerSource = options.includeExpectedProviderFallback === false
     ? null
     : storedProviderFallback || providerArtworkIdFromCandidates(options.providerCandidates || [], "album");
-  return expectedMediaCoverUrl(options.albumMbid, "Album", "Cover", providerSource);
+  return expectedMediaCoverUrl(options.albumMbid, "Album", "Cover", providerSource)
+    || existingAlbumMediaCoverUrl(options.albumMbid);
 }
 
 export function mapArtistArtworkToLocalUrl(options: {
@@ -577,11 +573,6 @@ export function mapArtistArtworkToLocalUrl(options: {
   sourceUrls?: Array<string | null | undefined>;
 }): string | null {
   const types = preferredTypes(options.preferredCoverTypes, ["Poster", "Headshot", "Fanart"]);
-  const existing = existingArtistMediaCoverUrl(options.artistMbid, types);
-  if (existing) {
-    return existing;
-  }
-
   const storedSource = firstStoredImageUrl(options.servarrMetadataData?.images, types, true)
     || getServarrMetadataArtistImageUrl(options.servarrMetadataData, types);
   const explicitSource = options.sourceUrls?.map(normalizeArtworkUrl).find((url): url is string => Boolean(url));
@@ -591,7 +582,7 @@ export function mapArtistArtworkToLocalUrl(options: {
     "Artist",
     types[0] || "Poster",
     storedSource || explicitSource || providerSource,
-  );
+  ) || existingArtistMediaCoverUrl(options.artistMbid, types);
 }
 
 /**
@@ -641,6 +632,32 @@ export function normalizeArtworkUrl(value: unknown): string | null {
   }
   if (/^https?:\/\//i.test(url)) {
     return url;
+  }
+  return null;
+}
+
+const TIDAL_IMAGE_ASSET_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Convert provider artwork evidence into a browser-renderable fallback URL.
+ * Canonical pages and queues should prefer their local /media-cover URL; this
+ * is only the final fallback when no cached canonical cover is available.
+ */
+export function renderableProviderArtworkUrl(
+  value: unknown,
+  provider?: string | null,
+  size: number = 320,
+): string | null {
+  const text = textOrNull(value);
+  if (!text) {
+    return null;
+  }
+  if (/^(https?:\/\/|\/|data:|blob:)/i.test(text)) {
+    return text;
+  }
+  if (TIDAL_IMAGE_ASSET_RE.test(text) && (!provider || provider.toLowerCase() === "tidal")) {
+    const dimension = Math.max(80, Math.round(size));
+    return `https://resources.tidal.com/images/${text.replace(/-/g, "/")}/${dimension}x${dimension}.jpg`;
   }
   return null;
 }
@@ -882,9 +899,10 @@ export function videoCoverLocalUrl(videoId: string | number | null | undefined):
 export function albumCoverLocalUrl(options: {
   albumMbid?: string | null;
   images?: ServarrMetadataImageContainer | null;
+  skipStoredImageLookup?: boolean;
 }): string | null {
   let images = options.images;
-  if (!images && options.albumMbid) {
+  if (!images && options.albumMbid && options.skipStoredImageLookup !== true) {
     try {
       const row = db.prepare("SELECT images FROM Albums WHERE mbid = ?").get(options.albumMbid) as { images?: string | null } | undefined;
       images = imageContainerFromImagesColumn(row?.images);

@@ -36,9 +36,11 @@ test("download processor resolves canonical album provider offers without legacy
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-bastille", "Bastille");
   db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("rg-gmtf", "artist-bastille", "Give Me the Future", "album", "2022-02-04");
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date, images)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("rg-gmtf", "artist-bastille", "Give Me the Future", "album", "2022-02-04", JSON.stringify([
+    { coverType: "Cover", url: "https://coverartarchive.org/release/release-gmtf/front.jpg" },
+  ]));
   db.prepare(`
     INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -96,7 +98,7 @@ test("download processor resolves canonical album provider offers without legacy
   assert.deepEqual(processor.resolveDownloadMetadata("tidal-gmtf-expanded", "album", payload), {
     title: "Give Me the Future",
     artist: "Bastille",
-    cover: "slot-cover",
+    cover: "/media-cover/Albums/rg-gmtf/cover.jpg",
   });
   assert.equal(processor.resolveDownloadQuality("tidal-gmtf-expanded", "album", payload), "HIRES_LOSSLESS");
 });
@@ -109,9 +111,11 @@ test("download processor detects canonical track and video files without Provide
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-media", "Media Artist");
   db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
-    VALUES (?, ?, ?, ?)
-  `).run("rg-media", "artist-media", "Media Album", "album");
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, images)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("rg-media", "artist-media", "Media Album", "album", JSON.stringify([
+    { coverType: "Cover", url: "https://coverartarchive.org/release/release-media/front.jpg" },
+  ]));
   db.prepare(`
     INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -200,15 +204,16 @@ test("download processor detects canonical track and video files without Provide
   assert.deepEqual(processor.resolveDownloadMetadata("tidal-track", "track", { type: "track", providerId: "tidal-track" }), {
     title: "Canonical Track",
     artist: "Media Artist",
-    cover: "track-cover",
+    cover: "/media-cover/Albums/rg-media/cover.jpg",
   });
   assert.equal(processor.isCanonicalProviderItemDownloaded("tidal-track", "track", { type: "track", providerId: "tidal-track" }), true);
 
   assert.equal(processor.hasVideoMetadataReady("tidal-video", { type: "video", providerId: "tidal-video" }), true);
+  const videoRecordingId = (db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get("recording-video") as { id: number }).id;
   assert.deepEqual(processor.resolveDownloadMetadata("tidal-video", "video", { type: "video", providerId: "tidal-video" }), {
     title: "Canonical Video",
     artist: "Media Artist",
-    cover: "video-cover",
+    cover: `/media-cover/Videos/${videoRecordingId}/cover.jpg`,
   });
   assert.equal(processor.isCanonicalProviderItemDownloaded("tidal-video", "video", { type: "video", providerId: "tidal-video" }), true);
 });

@@ -43,6 +43,9 @@ test("fresh database initializes the current development baseline", () => {
     "commands", "scheduled_tasks", "quality_profiles",
     "history_events", "MediaCoverProxyCache",
     "ArtistStatistics",
+    "ArtistTopTracks", "ArtistTopTrackProjectionState",
+    "AlbumLibraryIndex", "AlbumLibraryProjectionState",
+    "TrackLibraryIndex", "TrackLibraryProjectionState",
   ];
 
   for (const tableName of coreTables) {
@@ -202,4 +205,15 @@ test("fresh TrackFiles schema keeps covering canonical indexes without redundant
   assert.ok(indexes.includes("idx_track_files_canonical_recording_type"));
   assert.equal(indexes.includes("idx_track_files_canonical_track"), false);
   assert.equal(indexes.includes("idx_track_files_canonical_recording"), false);
+});
+
+test("fresh Tracks schema avoids indexes covered by canonical composite keys", () => {
+  const indexes = tableIndexes("Tracks");
+
+  assert.ok(indexes.includes("idx_tracks_album_release_mbid"));
+  assert.ok(indexes.includes("idx_tracks_album_release_position"));
+  assert.ok(indexes.includes("idx_tracks_recording_release"));
+  assert.equal(indexes.includes("idx_tracks_recording_id"), false);
+  assert.equal(indexes.includes("idx_tracks_album_release_id"), false);
+  assert.equal(indexes.includes("idx_mb_tracks_release_position"), false);
 });

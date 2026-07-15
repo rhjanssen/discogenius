@@ -6,12 +6,7 @@ implementation, or release validation.
 
 Status: pending | in progress | done | revisit
 
-## Post-2.3.1 Performance Follow-ups
-
-- pending: Replace the remaining large-artist top-track ranking query with a
-  bounded/cached catalog projection. The 2.3.1 staged artist page makes the
-  identity header available in about 0.2s, but a 10-track slice can still take
-  roughly 5s on the current 2 GB catalog.
+## Post-2.3.2 Performance Follow-ups
 - pending: Profile and bound artist-wide retag preview/status on a large library;
   a live two-file check was correct but still took about 14s while catalog work
   was active.
@@ -373,6 +368,13 @@ the provider abstraction so a second provider can declare its own sources.
 - done (2026-07-01): Fixed Library track popularity sorting to use track-level
   recording/provider popularity evidence instead of artist popularity, with a
   route-level regression test.
+- done (2026-07-14): Fixed artist top-track ranking so an artist-wide score can
+  no longer flatten every recording into the same popularity tier. Ranking now
+  prefers the configured streaming provider's track score, falls through to
+  another connected provider when that score is absent, and finally uses the
+  canonical recording score. TIDAL refreshes now persist track popularity for
+  future rankings; the provider-priority ordering is ready to expand into a
+  user-configurable list when multiple catalog providers are supported.
 - done (2026-07-01): Reconciled the duplicate Library list/table rendering path.
   The Tracks tab now uses the shared DataGrid table engine through a track-specific
   column wrapper with inline playback row details, while Artists/Albums/Videos keep
@@ -1046,10 +1048,11 @@ remain planned, but are no longer the first 2.2 cut.
   stable while downloading/importing, failed provider-missing videos can be
   cleared, and no MusicBrainz-only video becomes monitored when provider
   availability is required.
-- pending (2.2.2): Fix the active queue artwork regression specifically for
-  active downloading/importing rows. Queued and history rows already carry cover
-  art; the active projection must preserve the same artwork source instead of
-  showing the video/album placeholder while the command is running.
+- done (2026-07-14): Fixed the active queue artwork regression. The live SSE
+  projection now receives the same canonical `/media-cover/...` URL used by
+  library, artist, and album views. Queue-specific provider artwork conversion
+  was removed; provider asset ids are resolved centrally only when no cached
+  canonical cover exists.
 - pending (2.2.2): Use the MusicBrainz full display title in queue album
   tracklists, including disambiguation/version text where MB exposes it. Do not
   substitute provider title/version unless the catalog identity is genuinely

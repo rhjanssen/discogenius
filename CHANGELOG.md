@@ -2,6 +2,47 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.3.2] - 2026-07-15
+
+### Added
+- Added maintained `ArtistTopTracks`, `AlbumLibraryIndex`, and
+  `TrackLibraryIndex` projections so top tracks and library album/track pages
+  page, filter, and sort compact indexed data instead of walking the full
+  MusicBrainz track catalog at request time.
+- Added partial video-library sort/filter indexes and regression coverage for
+  canonical video rows, provider offers, downloaded files, and legacy-row
+  exclusion.
+
+### Changed
+- Artist top tracks now rank provider-priority popularity after matching, keep
+  a durable top-100 set, and render 25 initially with an expandable full list.
+- Global search is local and indexed by default; remote catalog discovery is
+  explicit and remains available through lookup flows or `remote=true`.
+- Optional missing lyric downloads moved out of the synchronous media-import
+  loop into the durable library-metadata backfill. Provider-delivered sidecars
+  are still imported immediately.
+- Retired redundant multi-million-row track indexes whose keys were already
+  covered by unique or composite indexes.
+
+### Fixed
+- Fixed album, track, video, artist top-track, search, release-availability,
+  and queue reads that became multi-second or minute-long synchronous SQLite
+  scans on established libraries.
+- Fixed artist and album detail pages repeatedly refetching their complete
+  payload for unrelated queue activity while downloads were active.
+- Fixed artist and album preview controls using different provider identity
+  fallbacks. Downloaded files are now selected first on both surfaces, with a
+  browser-compatible provider preview used only when needed.
+- Fixed active queue cards using a separate artwork path; active, queued, and
+  history rows now resolve the same canonical cover renderer used by library
+  pages.
+- Fixed TIDAL artwork supplementation to retain origin/highest-resolution
+  assets, and discard generated proxies when they are not smaller than their
+  source.
+- Fixed provider-popularity supplementation, monitoring-cycle authority,
+  video import artist identity, canonical file linkage, expected paths, and
+  post-import tag application found during live download/import validation.
+
 ## [2.3.1] - 2026-07-14
 
 ### Added

@@ -3,7 +3,7 @@ import path from "path";
 import { execFileSync, execSync } from "child_process";
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
-import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveLyricsFile, saveVideoNfoFile } from "./metadata-files.js";
+import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveVideoNfoFile } from "./metadata-files.js";
 import { streamingProviderManager } from "../providers/index.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "../config/naming.js";
 import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
@@ -1649,10 +1649,12 @@ export class OrganizerService {
               fileType: "lyrics",
               quality: trackRow?.quality || album.quality,
             });
-            if (!fs.existsSync(lrcPath)) {
-              await saveLyricsFile(trackId, lrcPath);
-            }
-
+            // Import provider-downloaded lyric sidecars when present, but do
+            // not make the media import wait on one or more remote lyric
+            // lookups per track. Missing sidecars are fetched by the durable
+            // scheduled library-metadata backfill instead. On large albums the old
+            // inline fallback could hold the import phase for many minutes
+            // after every audio file was already safely organized.
             if (fs.existsSync(lrcPath)) {
               this.upsertLibraryFile({
                 artistId,
@@ -2073,10 +2075,10 @@ export class OrganizerService {
             fileType: "lyrics",
             quality: trackRow?.quality || album.quality,
           });
-          if (!fs.existsSync(lrcPath)) {
-            await saveLyricsFile(providerId, lrcPath);
-          }
-
+          // See the album path above: imports only relocate sidecars already
+          // delivered with the media. Network metadata enrichment is handled
+          // by the library-metadata backfill so a slow/missing lyric cannot block the
+          // download queue.
           if (fs.existsSync(lrcPath)) {
             this.upsertLibraryFile({
               artistId,

@@ -19,6 +19,7 @@ import { resolveStoredLibraryPath } from "./library-paths.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia } from "../extras/lyrics/lyric-service.js";
+import { cleanProviderText } from "./metadata-files.js";
 
 export function selectEmbeddedLyricsText(lyrics: { subtitles?: string | null; text?: string | null } | null | undefined): string {
   return lyrics?.subtitles || lyrics?.text || "";
@@ -121,6 +122,15 @@ export type RetagApplyResult = {
   skipped: number;
   missing: number;
   errors: Array<{ id: number; error: string }>;
+};
+
+type RetagApplyOptions = {
+  /**
+   * Permit provider/network lyric discovery while writing tags. Interactive
+   * maintenance keeps this enabled; the download-import path disables it so
+   * optional lyric misses cannot hold a completed media job for minutes.
+   */
+  includeExternalLyrics?: boolean;
 };
 
 export type RetagScopeOptions = {
@@ -1833,9 +1843,10 @@ export class AudioTagService {
       }
 
       if (config.embed_album_review && row.album_review_text) {
-        const reviewText = row.album_review_text.length > 4096
-          ? row.album_review_text.slice(0, 4093) + "..."
-          : row.album_review_text;
+        const portableReviewText = cleanProviderText(row.album_review_text);
+        const reviewText = portableReviewText.length > 4096
+          ? portableReviewText.slice(0, 4093) + "..."
+          : portableReviewText;
         tags.push({
           key: "comment",
           label: "Comment (Album Review)",
@@ -2062,7 +2073,7 @@ export class AudioTagService {
     };
   }
 
-  static async apply(ids: number[]): Promise<RetagApplyResult> {
+  static async apply(ids: number[], options: RetagApplyOptions = {}): Promise<RetagApplyResult> {
     const config = getConfigSection("metadata") as MetadataConfig;
     if (!isRetagMaintenanceEnabled(config)) {
       throw new Error("Enable fingerprinting, imported audio tag correction, or ReplayGain tagging before applying retag operations.");
@@ -2117,7 +2128,7 @@ export class AudioTagService {
       const desiredTagsArr = this.buildDesiredTags(enrichedRow, config);
 
       const quality = getConfigSection("quality");
-      if (quality.embed_lyrics && enrichedRow.file_provider_id) {
+      if (options.includeExternalLyrics !== false && quality.embed_lyrics && enrichedRow.file_provider_id) {
         const lyrics = await getLyricsForProviderMedia(enrichedRow.file_provider_id);
         if (lyrics) {
           const targetValue = selectEmbeddedLyricsText(lyrics);
@@ -2201,7 +2212,7 @@ export class AudioTagService {
         )
     `).all(...uniqueMediaIds, ...uniqueMediaIds, ...uniqueMediaIds) as Array<{ id: number }>;
 
-    return this.apply(libraryFileIds.map((row) => row.id));
+    return this.apply(libraryFileIds.map((row) => row.id), { includeExternalLyrics: false });
   }
 
   static async applyByQuery(options: RetagScopeOptions = {}): Promise<RetagApplyResult> {

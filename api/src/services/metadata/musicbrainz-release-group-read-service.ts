@@ -16,7 +16,7 @@ import {
 } from "./media-cover-service.js";
 import { resolveHydratedReleaseGroupArtwork } from "./release-group-artwork-service.js";
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
-import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
+import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "./musicbrainz-artist-credit-service.js";
 import { getConfigSection } from "../config/config.js";
 
 function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values: unknown[]): string | null {
@@ -352,13 +352,14 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
     releaseGroup: any,
     release: any | null,
     resolvedCoverUrl?: string | null,
+    preloadedAlbumArtists?: CanonicalAlbumArtist[],
 ): AlbumContract {
     const includeSpatial = getConfigSection("filtering").include_spatial === true;
     const primaryType = String(releaseGroup.primary_type || "Album").trim().toUpperCase();
     const fallbackArtistId = releaseGroup.local_artist_id == null
         ? String(releaseGroup.artist_mbid)
         : String(releaseGroup.local_artist_id);
-    const albumArtists = MusicBrainzArtistCreditService.getAlbumArtists(String(releaseGroup.mbid))
+    const albumArtists = (preloadedAlbumArtists ?? MusicBrainzArtistCreditService.getAlbumArtists(String(releaseGroup.mbid)))
         .map((artist) => ({
             id: artist.artistId,
             name: artist.name,

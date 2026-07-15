@@ -37,7 +37,7 @@ import videosRouter from "./routes/v1/video.js";
 import { closeAppLogging, initAppLogging } from "./services/config/app-logger.js";
 import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config/config.js";
 import { downloadProcessor } from "./services/download/download-processor.js";
-import { startMonitoring } from "./services/commands/scheduler.js";
+import { queueUpdateLibraryMetadata, startMonitoring } from "./services/commands/scheduler.js";
 import {
   getRuntimeDiagnosticsSnapshot,
   startRuntimeDiagnostics,
@@ -48,6 +48,10 @@ import { collectHealthDiagnosticsSnapshot } from "./services/commands/health.js"
 import { CommandExecutor } from "./services/commands/command-executor.js";
 import { CommandWorkerPool } from "./services/commands/worker/command-worker-pool.js";
 import { readIntEnv } from "./utils/env.js";
+import { ArtistTopTrackService } from "./services/music/artist-top-track-service.js";
+import { AlbumLibraryIndexService } from "./services/music/album-library-index-service.js";
+import { TrackLibraryIndexService } from "./services/music/track-library-index-service.js";
+import { CommandTrigger } from "./services/commands/command-trigger.js";
 
 function initializeAuthEnvironment() {
   ensureConfigExists();
@@ -342,6 +346,13 @@ const server = app.listen(port, () => {
     } else {
       try {
         CommandExecutor.start();
+        if (
+          AlbumLibraryIndexService.needsRebuild()
+          || TrackLibraryIndexService.needsRebuild()
+          || ArtistTopTrackService.countMissingMonitoredArtists() > 0
+        ) {
+          queueUpdateLibraryMetadata({ trigger: CommandTrigger.Scheduled });
+        }
       } catch (error) {
         console.error("Failed to start command executor:", error);
       }

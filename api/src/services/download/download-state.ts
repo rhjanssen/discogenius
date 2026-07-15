@@ -224,22 +224,24 @@ export function getAlbumDownloadStatsMap(albumIds: Array<string | number>): Map<
       SELECT
         sr.release_group_mbid AS album_id,
         COUNT(DISTINCT sr.slot || ':' || t.mbid) AS total_tracks,
-        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN sr.slot || ':' || t.mbid END) AS downloaded_tracks
+        COUNT(DISTINCT CASE
+          WHEN lf_track.id IS NOT NULL OR lf_recording.id IS NOT NULL
+          THEN sr.slot || ':' || t.mbid
+        END) AS downloaded_tracks
       FROM selected_releases sr
       LEFT JOIN Tracks t
         ON t.release_mbid = sr.release_mbid
       LEFT JOIN Recordings r
         ON r.mbid = t.recording_mbid
-      LEFT JOIN TrackFiles lf
-        ON (
-          lf.canonical_track_mbid = t.mbid
-          OR (
-            lf.canonical_track_mbid IS NULL
-            AND lf.canonical_recording_mbid = t.recording_mbid
-          )
-        )
-       AND lf.file_type = 'track'
-       AND lf.library_slot = sr.slot
+      LEFT JOIN TrackFiles lf_track
+        ON lf_track.canonical_track_mbid = t.mbid
+       AND lf_track.file_type = 'track'
+       AND lf_track.library_slot = sr.slot
+      LEFT JOIN TrackFiles lf_recording
+        ON lf_recording.canonical_recording_mbid = t.recording_mbid
+       AND lf_recording.canonical_track_mbid IS NULL
+       AND lf_recording.file_type = 'track'
+       AND lf_recording.library_slot = sr.slot
       WHERE COALESCE(r.is_video, 0) = 0
       GROUP BY sr.release_group_mbid
     `).all(...missing) as Array<{
@@ -310,20 +312,22 @@ export function getReleaseGroupDownloadStatsMap(
       SELECT
         sr.release_group_mbid,
         COUNT(DISTINCT sr.slot || ':' || t.mbid) AS total_tracks,
-        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN sr.slot || ':' || t.mbid END) AS downloaded_tracks
+        COUNT(DISTINCT CASE
+          WHEN lf_track.id IS NOT NULL OR lf_recording.id IS NOT NULL
+          THEN sr.slot || ':' || t.mbid
+        END) AS downloaded_tracks
       FROM selected_releases sr
       LEFT JOIN Tracks t
         ON t.release_mbid = sr.release_mbid
-      LEFT JOIN TrackFiles lf
-        ON (
-          lf.canonical_track_mbid = t.mbid
-          OR (
-            lf.canonical_track_mbid IS NULL
-            AND lf.canonical_recording_mbid = t.recording_mbid
-          )
-        )
-       AND lf.file_type = 'track'
-       AND lf.library_slot = sr.slot
+      LEFT JOIN TrackFiles lf_track
+        ON lf_track.canonical_track_mbid = t.mbid
+       AND lf_track.file_type = 'track'
+       AND lf_track.library_slot = sr.slot
+      LEFT JOIN TrackFiles lf_recording
+        ON lf_recording.canonical_recording_mbid = t.recording_mbid
+       AND lf_recording.canonical_track_mbid IS NULL
+       AND lf_recording.file_type = 'track'
+       AND lf_recording.library_slot = sr.slot
       GROUP BY sr.release_group_mbid
     `).all(...missing) as Array<{
       release_group_mbid: string;

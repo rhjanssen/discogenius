@@ -179,6 +179,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         setCurrentTime(0);
         setAudioDuration(0);
         setIsPlaying(false);
+        let isFallingBackFromHls = false;
 
         const onTimeUpdate = () => {
             if (!isDraggingRef.current) setCurrentTime(audio.currentTime);
@@ -188,6 +189,13 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         const onPlay = () => setIsPlaying(true);
         const onPause = () => setIsPlaying(false);
         const onError = () => {
+            // Destroying a failed MediaSource can emit an <audio> error. That
+            // belongs to the internal HLS -> progressive fallback, not to the
+            // track-level source fallback handled by the parent.
+            if (isFallingBackFromHls) {
+                return;
+            }
+
             if (playbackErrorHandledRef.current) {
                 return;
             }
@@ -212,13 +220,27 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
         let hls: Hls | null = null;
         if (useHlsSource && hlsSrc) {
-            hls = new Hls({ enableWorker: true });
+            hls = new Hls({
+                enableWorker: true,
+                // Provider segments can be cold on the first play while a
+                // catalog refresh is contending for resources. Hls.js's
+                // shorter defaults turned that temporary delay into a fatal
+                // error, even though the same preview worked moments later on
+                // the album page after its segments had warmed the cache.
+                manifestLoadingTimeOut: 60_000,
+                levelLoadingTimeOut: 60_000,
+                fragLoadingTimeOut: 60_000,
+                manifestLoadingMaxRetry: 2,
+                levelLoadingMaxRetry: 2,
+                fragLoadingMaxRetry: 2,
+            });
             hls.on(Hls.Events.ERROR, (_event, data) => {
                 if (!data.fatal) {
                     return;
                 }
                 // Progressive-only sources answer the playlist with 409; any
                 // other fatal error also drops us back to the proxied stream.
+                isFallingBackFromHls = true;
                 hls?.destroy();
                 setHlsFailed(true);
             });

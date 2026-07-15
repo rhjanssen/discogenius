@@ -22,6 +22,7 @@ import {
 } from "../metadata/media-cover-service.js";
 import { getConfigSection } from "../config/config.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
+import { ARTIST_TOP_TRACK_LIMIT, ArtistTopTrackService } from "./artist-top-track-service.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
 
@@ -1044,61 +1045,17 @@ export class ArtistQueryService {
         // MusicBrainz/Servarr Metadata Server has no similar-artist concept and Lidarr has no such
         // section, so the feature was removed during the provider-table retirement.
 
-        const topTracks = includeTracks ? db.prepare(`
-      -- Rank cheaply, materialize the <=10 survivors, then enrich the whole
-      -- set through indexed joins. Correlated provider/file lookups here used
-      -- to execute once per survivor and could still stall an artist page for
-      -- minutes even after the initial LIMIT.
-      WITH artist_rgs(id) AS (
-        SELECT id FROM Albums WHERE artist_mbid = ?
-      ),
-      artist_releases(id) AS (
-        SELECT DISTINCT slot.selected_album_release_id
-        FROM artist_rgs
-        JOIN ReleaseGroupSlots slot ON slot.release_group_id = artist_rgs.id
-        WHERE slot.selected_album_release_id IS NOT NULL
-        UNION
-        SELECT DISTINCT provider_track.album_release_id
-        FROM artist_rgs
-        JOIN Albums scoped_group ON scoped_group.id = artist_rgs.id
-        JOIN ProviderItems provider_track
-          ON provider_track.entity_type = 'track'
-         AND provider_track.release_group_mbid = scoped_group.mbid
-        WHERE provider_track.album_release_id IS NOT NULL
-      ),
-      dedup AS (
-        SELECT
-          track.id AS track_id,
-          track.mbid AS track_mbid,
-          COALESCE(rel.date, rg.first_release_date) AS release_date,
-          MAX(COALESCE(recording.popularity, 0), COALESCE(am.popularity, 0)) AS popularity,
-          ROW_NUMBER() OVER (
-            PARTITION BY COALESCE(track.recording_id, track.id)
-            ORDER BY
-              COALESCE(rel.date, rg.first_release_date) ASC,
-              track.id ASC
-          ) AS recording_rank
-        FROM Tracks track
-        JOIN AlbumReleases rel ON rel.id = track.album_release_id
-        JOIN Albums rg ON rg.id = rel.release_group_id
-        LEFT JOIN ArtistMetadata am ON am.id = rg.artist_metadata_id
-        LEFT JOIN Recordings recording ON recording.id = track.recording_id
-        WHERE track.album_release_id IN (SELECT id FROM artist_releases)
-          AND (
-            recording.artist_mbid = ?
-            OR rg.artist_mbid = ?
-          )
-      ),
-      top AS (
-        SELECT track_id, track_mbid, release_date, popularity
-        FROM dedup
-        WHERE recording_rank = 1
-        ORDER BY popularity DESC, release_date DESC, track_mbid ASC
-        LIMIT 10
-      ),
+        const topTrackIdentity = includeTracks
+            ? ArtistTopTrackService.ensureForArtist(artistId, String(artist.mbid || artistId))
+            : null;
+        const topTracks = includeTracks && topTrackIdentity ? db.prepare(`
+      -- Ranking is maintained off the page-read path in ArtistTopTracks. The
+      -- request only materializes and enriches a bounded top-100 integer-id
+      -- slice, so large discographies do not rescan/sort every edition track.
+      WITH
       top_tracks AS MATERIALIZED (
         SELECT
-          top.popularity,
+          projection.popularity,
           track.mbid AS id,
           track.id AS track_row_id,
           track.title,
@@ -1117,12 +1074,15 @@ export class ArtistQueryService {
           recording.length_ms AS recording_length_ms,
           recording.id AS recording_row_id,
           recording.credits AS recording_credits
-        FROM top
-        JOIN Tracks track ON track.id = top.track_id
+        FROM ArtistTopTracks projection INDEXED BY idx_artist_top_tracks_rank
+        JOIN Tracks track ON track.id = projection.track_id
         JOIN AlbumReleases release ON release.id = track.album_release_id
         JOIN Albums release_group ON release_group.id = release.release_group_id
         LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.id = release_group.artist_metadata_id
         LEFT JOIN Recordings recording ON recording.id = track.recording_id
+        WHERE projection.artist_metadata_id = ?
+        ORDER BY projection.rank
+        LIMIT ?
       ),
       provider_track_candidate_ids(track_id, provider_rowid) AS MATERIALIZED (
         SELECT top_tracks.id, provider_item.rowid
@@ -1131,6 +1091,18 @@ export class ArtistQueryService {
         WHERE top_tracks.recording_row_id IS NOT NULL
           AND provider_item.recording_id = top_tracks.recording_row_id
           AND provider_item.entity_type = 'track'
+        UNION
+        SELECT top_tracks.id, provider_item.rowid
+        FROM top_tracks
+        CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_entity_track
+        WHERE provider_item.entity_type = 'track'
+          AND provider_item.track_mbid = top_tracks.id
+        UNION
+        SELECT top_tracks.id, provider_item.rowid
+        FROM top_tracks
+        CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_entity_recording
+        WHERE provider_item.entity_type = 'track'
+          AND provider_item.recording_mbid = top_tracks.recording_mbid
       ),
       provider_tracks AS (
         SELECT
@@ -1161,11 +1133,11 @@ export class ArtistQueryService {
               CASE provider_item.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
               provider_item.updated_at DESC,
               provider_item.provider_id ASC
-          ) AS rank
+        ) AS rank
         FROM top_tracks
-        JOIN ProviderItems provider_item
-          ON provider_item.entity_type = 'album'
-         AND provider_item.release_group_mbid = top_tracks.release_group_mbid
+        CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_entity_release_group
+        WHERE provider_item.entity_type = 'album'
+          AND provider_item.release_group_mbid = top_tracks.release_group_mbid
       ),
       selected_slots AS (
         SELECT
@@ -1175,11 +1147,11 @@ export class ArtistQueryService {
           ROW_NUMBER() OVER (
             PARTITION BY top_tracks.id
             ORDER BY CASE slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
-          ) AS rank
+        ) AS rank
         FROM top_tracks
-        JOIN ReleaseGroupSlots slot
-          ON slot.release_group_mbid = top_tracks.release_group_mbid
-         AND slot.selected_release_mbid = top_tracks.release_mbid
+        CROSS JOIN ReleaseGroupSlots slot INDEXED BY idx_release_group_slots_group_release_slot
+        WHERE slot.release_group_mbid = top_tracks.release_group_mbid
+          AND slot.selected_release_mbid = top_tracks.release_mbid
       ),
       primary_files AS (
         SELECT
@@ -1197,10 +1169,10 @@ export class ArtistQueryService {
       quality_values(track_id, quality) AS (
         SELECT top_tracks.id, slot.quality
         FROM top_tracks
-        JOIN ReleaseGroupSlots slot
-          ON slot.release_group_mbid = top_tracks.release_group_mbid
-         AND slot.selected_release_mbid = top_tracks.release_mbid
-        WHERE slot.quality IS NOT NULL AND TRIM(slot.quality) != ''
+        CROSS JOIN ReleaseGroupSlots slot INDEXED BY idx_release_group_slots_group_release_slot
+        WHERE slot.release_group_mbid = top_tracks.release_group_mbid
+          AND slot.selected_release_mbid = top_tracks.release_mbid
+          AND slot.quality IS NOT NULL AND TRIM(slot.quality) != ''
         UNION
         SELECT candidates.track_id, provider_item.quality
         FROM provider_track_candidate_ids candidates
@@ -1222,9 +1194,9 @@ export class ArtistQueryService {
       monitored_groups AS (
         SELECT DISTINCT top_tracks.release_group_mbid
         FROM top_tracks
-        JOIN ReleaseGroupSlots slot
-          ON slot.release_group_mbid = top_tracks.release_group_mbid
-         AND slot.monitored = 1
+        CROSS JOIN ReleaseGroupSlots slot INDEXED BY idx_release_group_slots_group_release_slot
+        WHERE slot.release_group_mbid = top_tracks.release_group_mbid
+          AND slot.monitored = 1
       ),
       downloaded_tracks(track_id) AS (
         SELECT DISTINCT top_tracks.id
@@ -1281,11 +1253,7 @@ export class ArtistQueryService {
       LEFT JOIN monitored_groups ON monitored_groups.release_group_mbid = top_tracks.release_group_mbid
       LEFT JOIN downloaded_tracks ON downloaded_tracks.track_id = top_tracks.id
       ORDER BY popularity DESC, release_date DESC, id ASC
-    `).all(
-            String(artist.mbid || artistId),
-            String(artist.mbid || artistId),
-            String(artist.mbid || artistId),
-        ) as any[] : [];
+    `).all(topTrackIdentity.artistMetadataId, ARTIST_TOP_TRACK_LIMIT) as any[] : [];
 
         const releaseGroupDownloadStats = getReleaseGroupDownloadStatsMap(musicBrainzReleaseGroups.map((album) => album.mbid));
         const artistDownloadStats = includeStatistics
