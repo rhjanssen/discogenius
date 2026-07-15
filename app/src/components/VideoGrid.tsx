@@ -104,6 +104,8 @@ interface VideoGridProps {
     selectedIds: ReadonlySet<string>;
     onToggle: (video: Video, selected: boolean, shiftKey: boolean) => void;
   };
+  /** Right-click / long-press on a card: enter selection mode selecting this video. */
+  onSelectionIntent?: (video: Video) => void;
 }
 
 const formatDuration = (seconds: number): string => {
@@ -113,7 +115,7 @@ const formatDuration = (seconds: number): string => {
   return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 };
 
-const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, selection }: VideoGridProps) => {
+const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, selection, onSelectionIntent }: VideoGridProps) => {
   const styles = useStyles();
   const gridStyles = useGridStyles();
 
@@ -199,7 +201,9 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
                 label: `Select ${video.title}`,
                 onChange: (selected, shiftKey) => selection.onToggle(video, selected, shiftKey),
               } : undefined}
+              onSelectionIntent={onSelectionIntent ? () => onSelectionIntent(video) : undefined}
             />
+
           );
         })}
       </div>

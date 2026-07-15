@@ -4,6 +4,7 @@ import type { ProviderReleaseGroupMatch } from "../metadata/provider-release-gro
 import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-audio.js";
 import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from "./provider-track-matcher.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
+import { streamingProviderManager } from "../providers/index.js";
 import {
     upsertProviderReleaseMatch,
 } from "./provider-matches.js";
@@ -245,7 +246,11 @@ function sortCandidatesForSlot(slot: ReleaseGroupLibrarySlot, candidates: Provid
         if (qA !== qB) {
             return qB - qA;
         }
-        return b.score - a.score;
+        // Equal quality and score fall back to the user's provider preference
+        // order rather than whatever order the candidates were gathered in.
+        return b.score - a.score
+            || streamingProviderManager.getProviderPreferenceRank(a.provider)
+                - streamingProviderManager.getProviderPreferenceRank(b.provider);
     });
 }
 
@@ -493,6 +498,10 @@ function compareCoveragePlans(left: ReleaseCoveragePlan, right: ReleaseCoverageP
         || left.extraProviderTracks - right.extraProviderTracks
         || right.scoreTotal - left.scoreTotal
         || right.targetTracks.length - left.targetTracks.length
+        // Equal-merit plans from different providers fall back to the user's
+        // provider preference order, never the alphabetical provider id.
+        || streamingProviderManager.getProviderPreferenceRank(left.provider)
+            - streamingProviderManager.getProviderPreferenceRank(right.provider)
         || left.releaseMbid.localeCompare(right.releaseMbid)
         || left.provider.localeCompare(right.provider);
 }
@@ -722,7 +731,9 @@ export function selectReleaseGroupSlotAlbums(
         // 1. If there are no target tracks or no candidate track details, select the best candidate by score
         if (releaseTargets.length === 0 || !hasTrackDetails) {
             const standaloneCandidates = candidatesWithTracks.filter((candidate) => candidate.match.status !== "candidate");
-            standaloneCandidates.sort((a, b) => b.score - a.score);
+            standaloneCandidates.sort((a, b) => b.score - a.score
+                || streamingProviderManager.getProviderPreferenceRank(a.provider)
+                    - streamingProviderManager.getProviderPreferenceRank(b.provider));
             if (standaloneCandidates.length === 0) {
                 continue;
             }

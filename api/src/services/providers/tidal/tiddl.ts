@@ -204,10 +204,17 @@ export function mapVideoQualityToTiddl(quality?: string | null): TiddlVideoQuali
     if (normalized === "sd" || normalized === "hd" || normalized === "fhd") {
         return normalized;
     }
+    // TIDAL music videos top out at 1080p, so a 4K app setting clamps here.
+    if (normalized === "uhd") {
+        return "fhd";
+    }
 
     const configured = String(Config.getQualityConfig()?.video_quality || "fhd").toLowerCase();
     if (configured === "sd" || configured === "hd" || configured === "fhd") {
         return configured as TiddlVideoQuality;
+    }
+    if (configured === "uhd") {
+        return "fhd";
     }
     return "fhd";
 }

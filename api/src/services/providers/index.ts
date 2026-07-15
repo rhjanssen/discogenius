@@ -71,6 +71,41 @@ class StreamingProviderManager {
   getDefaultStreamingProvider(): StreamingProvider {
     return this.getStreamingProvider(this.getDefaultProviderId());
   }
+
+  /**
+   * User-ordered provider preference (first = most preferred). Configured via
+   * `streaming.provider_priority`; unknown ids are dropped and unlisted
+   * registered providers append in registration order. Without a configured
+   * list, the default provider leads and the rest follow registration order.
+   */
+  getProviderPriority(): string[] {
+    let configured: string[] = [];
+    try {
+      configured = (Config.getStreamingConfig().provider_priority || [])
+        .map((id) => String(id || "").trim())
+        .filter((id) => this.providers.has(id));
+    } catch {
+      configured = [];
+    }
+    const priority = [...new Set(configured)];
+    const defaultId = this.getDefaultProviderId();
+    if (!priority.includes(defaultId)) {
+      priority.push(defaultId);
+    }
+    for (const id of this.registrationOrder) {
+      if (!priority.includes(id)) {
+        priority.push(id);
+      }
+    }
+    return priority;
+  }
+
+  /** Rank for tie-breaks: lower = more preferred; unknown providers rank last. */
+  getProviderPreferenceRank(providerId: string): number {
+    const priority = this.getProviderPriority();
+    const index = priority.indexOf(String(providerId || "").trim());
+    return index === -1 ? priority.length : index;
+  }
 }
 
 export const streamingProviderManager = new StreamingProviderManager();

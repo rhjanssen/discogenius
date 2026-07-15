@@ -1,8 +1,16 @@
-import { readdirSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
+
+// Isolate tests from the developer's live runtime config (provider tokens,
+// config.toml). Real credentials in ./config must never change test results —
+// CI runs with an empty config directory and local runs must match it.
+if (!process.env.DISCOGENIUS_CONFIG_DIR?.trim()) {
+  process.env.DISCOGENIUS_CONFIG_DIR = mkdtempSync(join(tmpdir(), "discogenius-test-config-"));
+}
 const srcDir = join(root, "src");
 
 function collectTests(dir) {

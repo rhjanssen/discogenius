@@ -2,6 +2,52 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.4.0] - Unreleased
+
+### Added
+- Provider preference order: the Settings provider list is now reorderable
+  (drag or arrow buttons); the first provider is the default and wins
+  equal-quality/equal-coverage matching tie-breaks (`streaming.provider_priority`,
+  `PUT /api/v1/provider/priority`). Equal-merit offers no longer fall back to
+  alphabetical provider order.
+- Apple Music preview playback: track previews (30-second AAC clips) and
+  music-video previews now play in the browser through the same signed
+  streaming path as TIDAL.
+- Apple Music download provisioning: the image now bundles a static MP4Box
+  (GPAC 2.4) and Bento4 mp4decrypt, and the managed downloader config follows
+  the app's video-resolution setting. Download routing honors each slot's
+  selected provider instead of always dispatching to the default downloader.
+- 4K (2160p) music-video quality option. Resolutions no connected provider can
+  supply are greyed out; TIDAL requests clamp to 1080p while Apple Music can
+  fetch up to 4K.
+- Right-click or touch long-press on a library card enters selection mode with
+  that card selected.
+
+### Changed
+- Provider connection cards moved to a single priority-ordered list with a
+  Fluent details modal (status, capability summary, connect/disconnect) instead
+  of inline disclosure rows.
+- Provider capability copy is consistent across services (lossless ceiling,
+  Dolby Atmos, video resolution) — Apple Music now declares the same explicit
+  quality strings as TIDAL.
+- Dashboard queue/activity loading skeletons mirror the real Active/History
+  dual-column layout and follow the shared delayed-loading policy, as do the
+  unmapped-files table and import modal.
+- Import modal per-artist status icons use the Fluent colored icon family.
+
+### Fixed
+- Global search finds artists that are not in the library again (remote
+  canonical discovery was only enabled while the library was empty).
+- Apple Music hi-res albums are no longer reported as 16-bit: the provider now
+  takes the best `audioTraits` entry instead of the first (Apple lists traits
+  lowest-fidelity first).
+- The same music video from two providers now dedupes onto one canonical
+  recording with provider links from both; genuinely different uploads
+  (audio-only, lyric video, live) stay separate via variant classes and a
+  duration guard.
+- API tests are hermetic again: the runner isolates `DISCOGENIUS_CONFIG_DIR`
+  so live provider tokens in `./config` cannot change test results.
+
 ## [2.3.4] - 2026-07-15
 
 ### Added

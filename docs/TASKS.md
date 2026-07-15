@@ -6,6 +6,60 @@ implementation, or release validation.
 
 Status: pending | in progress | done | revisit
 
+## Post-2.4.0 Designs And Decisions (researched 2026-07-15)
+
+- pending (needs Robert, 5 minutes): Apple Music decryption wrapper login. The
+  full Apple pipeline is provisioned and verified up to key retrieval: static
+  MP4Box + mp4decrypt are in the image, the wrapper sidecar listens on
+  10020/20020, backend routing sends apple-selected slots to the Apple
+  downloader, and a live download reached "Decrypting… 6%" before the wrapper
+  rejected the key request ("Invalid CKC error") because its rootfs has no
+  authenticated Apple account. One-time fix (interactive, 2FA prompt):
+  `docker compose --profile apple-music run --rm -e args="-H 0.0.0.0 -M 20020 -L <appleId>:<password>" apple-music-wrapper`
+  then restart the normal sidecar. After that, retry any failed Apple download.
+- decided (research complete): Lidarr import-list monitoring granularity.
+  Lidarr's per-list `ShouldMonitor` is None | SpecificAlbum | EntireArtist
+  (`.ref_lidarr/src/NzbDrone.Core/ImportLists/ImportListDefinition.cs`); list
+  items that reference an album (playlist tracks are mapped track→album via
+  `MapAlbumReport`) add the ARTIST row with only that album in
+  `AddOptions.AlbumsToMonitor` when SpecificAlbum. Monitoring is always at
+  ALBUM granularity — Lidarr never monitors individual tracks.
+  RECOMMENDATION: support both, defaulting per import-source category —
+  followed-artists/library-artists → EntireArtist (artist-level intent),
+  playlist/favorite-tracks/mixes → SpecificAlbum-equivalent (monitor only the
+  release groups containing the listed tracks). Implementation sketch: the
+  import modal gains a Lidarr-style monitor selector; `ImportProviderArtists`
+  carries `monitorMode`; for the specific mode the intake pipeline records the
+  provider track→album evidence at import time and curation monitors only the
+  matched release groups (the provider-track materialization from 2.1.1 already
+  holds the mapping). Not implemented yet — needs the deferred-monitoring
+  reconciliation piece.
+- decided (research complete): Lidarr "manage" dialog port. Lidarr's artist page
+  opens four modals: OrganizePreview (rename), RetagPreview, InteractiveImport
+  (manage files scoped to the artist), and MonitoringOptions. Discogenius
+  already ports the first two (shared FileMaintenanceDialogs on artist/album
+  pages). Worth porting next: (1) artist-scoped Interactive Import — open the
+  existing Manual Import modal pre-filtered to the artist's folders instead of
+  only from the dashboard; (2) a MonitoringOptions modal (monitor all / future /
+  missing / existing / first / latest / none) which needs a backend bulk
+  monitor-strategy endpoint. Neither is a blocker; both are additive.
+- pending (designed): release/provider-offer selection UX on album and video
+  pages. Today the release switcher picks the MusicBrainz edition per slot but
+  the provider offer is implicit. Design: the switcher's release rows each list
+  their provider offers as selectable chips (provider mark + quality badge +
+  match-status tooltip); the selected chip is highlighted, and picking a chip on
+  another release both switches the release and the offer (one mutation — the
+  API already accepts provider + providerAlbumId in the slot-selection route).
+  Partial/composite coverage renders as a stacked chip ("2 sources") expanding
+  to per-track source rows. The video page gets the same pattern with one row
+  per provider video offer (provider mark + resolution + duration), using the
+  new cross-provider deduped recording's ProviderItems as the offer list.
+- pending: playlist SYNC (not just one-time import) management UI. The
+  reorderable provider list + details-modal pattern shipped in 2.4.0 leaves
+  room for a per-provider "Lists" tab in the details modal once recurring list
+  sync exists (Lidarr's ImportList model: per-list monitor option, exclusions,
+  scheduled sync).
+
 ## Post-2.3.3 Fluent UI And Metadata Follow-ups
 
 - pending: Finish keyboard interaction parity for DataGrid. Clickable rows need

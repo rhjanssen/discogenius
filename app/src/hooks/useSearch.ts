@@ -99,13 +99,15 @@ export const useSearch = () => {
 
         setIsSearching(true);
         try {
-            // Established libraries use the local indexes; the API automatically
-            // includes canonical artist/album discovery while the library is empty.
+            // Global search is also the add-new-artist discovery path, so it
+            // always asks the API to include remote canonical results; local
+            // index hits still return first in the merged response.
             const data: SearchResponseContract = await api.search(
                 query,
                 ['artists', 'albums', 'tracks', 'videos'],
                 10,
                 controller.signal,
+                { remote: true },
             );
 
             // Ignore stale responses from older requests.

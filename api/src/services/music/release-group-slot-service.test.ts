@@ -292,6 +292,50 @@ test("provider slot selection keeps stereo and Atmos offers on one MusicBrainz r
   );
 });
 
+test("equal-merit offers from two providers tie-break by provider preference, not alphabetically", () => {
+  const releaseGroupMbid = "rg-mbid-provider-tiebreak";
+  const releaseMbid = "release-mbid-provider-tiebreak";
+  const match = {
+    ...buildMatch(releaseGroupMbid, "apple-album-1"),
+    releaseMbid,
+  };
+
+  // "apple-music" sorts before "tidal" alphabetically; with the default
+  // provider preference (tidal first) the TIDAL offer must win the tie.
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "apple-music",
+      album: {
+        providerId: "apple-album-1",
+        title: "A Night at the Opera",
+        quality: "LOSSLESS",
+        trackCount: 12,
+        volumeCount: 1,
+      },
+      match,
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "tidal-album-1",
+        title: "A Night at the Opera",
+        quality: "LOSSLESS",
+        trackCount: 12,
+        volumeCount: 1,
+      },
+      match: {
+        ...match,
+        providerId: "tidal-album-1",
+      },
+    },
+  ], {});
+
+  const stereo = selections.find((selection) => selection.slot === "stereo");
+  assert.ok(stereo);
+  assert.equal(stereo?.provider, "tidal");
+  assert.equal(stereo?.album.providerId, "tidal-album-1");
+});
+
 test("provider slot selection links an Atmos-only release to both stereo and spatial slots", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-atmos-only";

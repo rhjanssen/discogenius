@@ -893,6 +893,13 @@ const Library = () => {
     setIsSelectionMode((current) => !current);
   }, []);
 
+  // Right-click / long-press on a card enters selection mode with that card
+  // selected, skipping the toolbar Select button.
+  const beginSelectionWith = useCallback((collection: { toggleItem: (id: string, selected: boolean, opts?: { range?: boolean }) => void }, id: string) => {
+    setIsSelectionMode(true);
+    collection.toggleItem(id, true);
+  }, []);
+
   const renderEmptyLibraryAction = () => (
     <Button
       appearance="secondary"
@@ -935,6 +942,7 @@ const Library = () => {
           label: `Select ${artist.name}`,
           onChange: (selected, shiftKey) => artistSelection.toggleItem(artist.id, selected, { range: shiftKey }),
         } : undefined}
+        onSelectionIntent={() => beginSelectionWith(artistSelection, artist.id)}
       />
     );
   };
@@ -1150,6 +1158,7 @@ const Library = () => {
           label: `Select ${album.title}`,
           onChange: (selected, shiftKey) => albumSelection.toggleItem(album.id, selected, { range: shiftKey }),
         } : undefined}
+        onSelectionIntent={() => beginSelectionWith(albumSelection, album.id)}
       />
     );
   };
@@ -2120,6 +2129,7 @@ const Library = () => {
                       selectedIds: new Set(videoSelection.selectedRowIds.map(String)),
                       onToggle: (video, selected, shiftKey) => videoSelection.toggleItem(video.id, selected, { range: shiftKey }),
                     } : undefined}
+                    onSelectionIntent={(video) => beginSelectionWith(videoSelection, String(video.id))}
                   />
                 ) : (
                   <DataGrid

@@ -19,6 +19,7 @@ import {
 import { EmptyState } from "@/components/ui/ContentState";
 import { ActivityListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { useActivityFeed } from "@/hooks/useActivityFeed";
+import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { useActivityInFlightFeed } from "@/hooks/useActivityInFlightFeed";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import type { ActivityJobContract as ActivityJob } from "@contracts/status";
@@ -322,12 +323,36 @@ const ActivityTab = ({
         && runningEntries.length === 0
         && queuedEntries.length === 0
         && historyEntries.length === 0;
+    // Shared delayed-loading policy: no skeleton flash for sub-second loads.
+    const showInitialSkeleton = useDelayedVisible(showInitialLoadingState);
     const hasActiveOrPendingEntries = runningEntries.length > 0 || queuedEntries.length > 0;
 
     if (showInitialLoadingState && !showUnavailableState) {
+        if (!showInitialSkeleton) {
+            return <div className={styles.tabSection} />;
+        }
+        // Mirror the real Active/History dual-column layout so the skeleton
+        // matches the predictable page structure (Fluent skeleton guidance).
         return (
             <div className={styles.tabSection}>
-                <ActivityListSkeleton rows={6} />
+                <div className={styles.queueColumnsWrapper}>
+                    <div className={styles.queueSection}>
+                        <div className={styles.queueSectionHeader}>
+                            <div className={styles.queueSectionHeading}>
+                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                            </div>
+                        </div>
+                        <ActivityListSkeleton rows={4} />
+                    </div>
+                    <div className={styles.queueSection}>
+                        <div className={styles.queueSectionHeader}>
+                            <div className={styles.queueSectionHeading}>
+                                <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
+                            </div>
+                        </div>
+                        <ActivityListSkeleton rows={4} />
+                    </div>
+                </div>
             </div>
         );
     }

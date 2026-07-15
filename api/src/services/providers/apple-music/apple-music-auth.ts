@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { CONFIG_DIR } from "../../config/config.js";
+import { CONFIG_DIR, Config } from "../../config/config.js";
 
 /**
  * Apple Music auth (tiddl-style credential handoff).
@@ -160,6 +160,20 @@ function yamlString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/** App video-quality setting → downloader mv-max height (Apple MVs go up to 4K). */
+function appleVideoMaxHeight(): number {
+  let configured = "fhd";
+  try {
+    configured = String(Config.getQualityConfig()?.video_quality || "fhd").toLowerCase();
+  } catch { /* config unavailable during early bootstrap — keep the default */ }
+  switch (configured) {
+    case "sd": return 480;
+    case "hd": return 720;
+    case "uhd": return 2160;
+    default: return 1080;
+  }
+}
+
 /**
  * Write the OSS downloader's config.yaml from the stored tokens — the same token
  * we use for the API. This is the single source of truth: authenticate once,
@@ -211,7 +225,7 @@ export function syncTokenToDownloader(token: AppleMusicAuthToken | null, downloa
     "use-songinfo-for-playlist: false",
     "dl-albumcover-for-playlist: false",
     "mv-audio-type: atmos",
-    "mv-max: 2160",
+    `mv-max: ${appleVideoMaxHeight()}`,
     "alac-fix: false",
     "convert-after-download: false",
     "ffmpeg-path: \"ffmpeg\"",

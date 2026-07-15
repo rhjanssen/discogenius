@@ -308,6 +308,7 @@ export type StreamingProviderStatus = {
     stereoQuality?: string;
     spatialQuality?: string;
     videoQuality?: string;
+    maxVideoResolution?: number;
   };
   management: {
     canAuthenticate: boolean;
@@ -504,8 +505,16 @@ class ApiClient {
     return this.request('/auth/status', {}, parseAuthStatusContract);
   }
 
-  async getStreamingProviders(): Promise<{ providers: StreamingProviderStatus[]; defaultProviderId: string }> {
+  async getStreamingProviders(): Promise<{ providers: StreamingProviderStatus[]; defaultProviderId: string; providerPriority?: string[] }> {
     return this.request('/provider');
+  }
+
+  /** Persist provider preference order; the first entry becomes the default provider. */
+  async updateProviderPriority(order: string[]): Promise<{ providerPriority: string[]; defaultProviderId: string }> {
+    return this.request('/provider/priority', {
+      method: 'PUT',
+      body: JSON.stringify({ order }),
+    });
   }
 
   async getProviderDiagnostics(providerId: string): Promise<ProviderDiagnosticsResponse> {
@@ -677,12 +686,16 @@ class ApiClient {
     types: string[] = ['artists', 'albums', 'tracks', 'videos'],
     limit: number = 10,
     signal?: AbortSignal,
+    options?: { remote?: boolean },
   ): Promise<SearchResponseContract> {
     const params = new URLSearchParams({
       query,
       type: types.join(','),
       limit: limit.toString(),
     });
+    if (options?.remote) {
+      params.set('remote', '1');
+    }
     return this.request(`/search?${params}`, { signal }, parseSearchResponseContract);
   }
 

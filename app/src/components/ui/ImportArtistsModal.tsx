@@ -22,22 +22,21 @@ import {
   AppsList24Regular as AppsList24RegularBase,
   ArrowLeft24Filled,
   ArrowLeft24Regular as ArrowLeft24RegularBase,
-  CheckmarkCircle24Filled,
+  CheckmarkCircle24Color,
   ChevronRight20Filled,
   ChevronRight20Regular as ChevronRight20RegularBase,
   Clock24Regular as Clock24RegularBase,
-  DismissCircle24Filled,
+  DismissCircle24Color,
   Heart24Filled,
   Heart24Regular as Heart24RegularBase,
   MusicNote224Filled,
   MusicNote224Regular as MusicNote224RegularBase,
   PeopleTeam24Filled,
   PeopleTeam24Regular as PeopleTeam24RegularBase,
-  QuestionCircle24Regular as QuestionCircle24RegularBase,
-  Warning24Filled,
+  QuestionCircle24Color,
+  Warning24Color,
   bundleIcon,
-  Clock24Filled,
-  QuestionCircle24Filled
+  Clock24Filled
 } from "@fluentui/react-icons";
 import { ProviderMark } from "@/components/ui/ProviderMark";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
@@ -57,7 +56,6 @@ const Clock24Regular = bundleIcon(Clock24Filled, Clock24RegularBase);
 const Heart24Regular = bundleIcon(Heart24Filled, Heart24RegularBase);
 const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
 const PeopleTeam24Regular = bundleIcon(PeopleTeam24Filled, PeopleTeam24RegularBase);
-const QuestionCircle24Regular = bundleIcon(QuestionCircle24Filled, QuestionCircle24RegularBase);
 
 interface ImportArtistsModalProps {
     open: boolean;
@@ -175,12 +173,13 @@ const useStyles = makeStyles({
 });
 
 function statusIcon(status: ArtistResultStatus, styles: ReturnType<typeof useStyles>) {
+    // Colored Fluent status icons match the queue/activity status icon family.
     switch (status) {
         case "running": return <Spinner size="extra-tiny" aria-label="Importing" />;
-        case "succeeded": return <CheckmarkCircle24Filled className={styles.success} />;
-        case "skipped": return <Warning24Filled className={styles.warning} />;
-        case "unmatched": return <QuestionCircle24Regular className={styles.warning} />;
-        case "failed": return <DismissCircle24Filled className={styles.error} />;
+        case "succeeded": return <CheckmarkCircle24Color />;
+        case "skipped": return <Warning24Color />;
+        case "unmatched": return <QuestionCircle24Color />;
+        case "failed": return <DismissCircle24Color />;
         default: return <Clock24Regular className={styles.pending} />;
     }
 }

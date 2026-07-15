@@ -4,16 +4,21 @@
 // renders as a plain image. Keys cover the hyphenated and underscored ids we
 // persist. Flag another provider `monochrome: true` if its asset is single-tone.
 
-export type ProviderMarkAsset = { src: string; monochrome: boolean };
+// `badgeFill: true` marks logos that carry their own coloured background
+// (Apple's red squircle, Spotify's green disc, YouTube Music's red disc):
+// inside a circular provider badge they should fill the whole circle instead
+// of floating as a small glyph. Glyph-style marks (TIDAL, Deezer, Amazon)
+// stay centred on the badge surface at glyph size.
+export type ProviderMarkAsset = { src: string; monochrome: boolean; badgeFill?: boolean };
 
 const PROVIDER_MARKS: Record<string, ProviderMarkAsset> = {
     tidal: { src: "/assets/images/tidal_icon.svg", monochrome: true },
-    apple: { src: "/assets/images/apple_music_icon.svg", monochrome: false },
-    apple_music: { src: "/assets/images/apple_music_icon.svg", monochrome: false },
-    "apple-music": { src: "/assets/images/apple_music_icon.svg", monochrome: false },
+    apple: { src: "/assets/images/apple_music_icon.svg", monochrome: false, badgeFill: true },
+    apple_music: { src: "/assets/images/apple_music_icon.svg", monochrome: false, badgeFill: true },
+    "apple-music": { src: "/assets/images/apple_music_icon.svg", monochrome: false, badgeFill: true },
     amazon: { src: "/assets/images/amazon_icon.svg", monochrome: false },
-    spotify: { src: "/assets/images/spotify_icon.svg", monochrome: false },
-    youtube: { src: "/assets/images/youtube_icon.svg", monochrome: false },
+    spotify: { src: "/assets/images/spotify_icon.svg", monochrome: false, badgeFill: true },
+    youtube: { src: "/assets/images/youtube_icon.svg", monochrome: false, badgeFill: true },
     deezer: { src: "/assets/images/deezer_icon.svg", monochrome: false },
 };
 

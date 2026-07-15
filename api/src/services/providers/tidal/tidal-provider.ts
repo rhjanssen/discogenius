@@ -212,6 +212,7 @@ export class TidalProvider implements StreamingProvider {
     stereoQuality: "Lossless up to 24-bit / 192 kHz",
     spatialQuality: "Dolby Atmos",
     videoQuality: "Up to 1080p",
+    maxVideoResolution: 1080,
   };
   readonly qualityMapping = tidalQualityMapping;
 

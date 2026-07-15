@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Config, updateConfig } from "../services/config/config.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import { getProviderDiagnostics } from "../services/providers/provider-diagnostics.js";
 import type { ProviderImportSelection } from "../services/providers/streaming-provider.js";
@@ -30,11 +31,41 @@ function serializeProvider(provider: ReturnType<typeof streamingProviderManager.
 
 router.get("/", (_, res) => {
   const defaultProvider = streamingProviderManager.getDefaultStreamingProvider();
+  const priority = streamingProviderManager.getProviderPriority();
+  const rank = (id: string) => {
+    const index = priority.indexOf(id);
+    return index === -1 ? priority.length : index;
+  };
   const providers = streamingProviderManager
     .getAllStreamingProviders()
-    .map((provider) => serializeProvider(provider, provider.id === defaultProvider.id));
+    .map((provider) => serializeProvider(provider, provider.id === defaultProvider.id))
+    .sort((left, right) => rank(left.id) - rank(right.id));
 
-  res.json({ providers, defaultProviderId: defaultProvider.id });
+  res.json({ providers, defaultProviderId: defaultProvider.id, providerPriority: priority });
+});
+
+// Persist the user's provider preference order. The first entry becomes the
+// default provider; matching tie-breaks use the full order.
+router.put("/priority", (req, res) => {
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body as { order?: unknown } : {};
+    const raw = Array.isArray(body.order) ? body.order.map((id) => String(id || "").trim()) : [];
+    const known = new Set(streamingProviderManager.getAllStreamingProviders().map((provider) => provider.id));
+    const order = [...new Set(raw)].filter((id) => known.has(id));
+    if (order.length === 0) {
+      return res.status(400).json({ detail: "order must contain at least one registered provider id" });
+    }
+
+    updateConfig("streaming", {
+      ...Config.getStreamingConfig(),
+      provider_priority: order,
+      default_provider: order[0],
+    });
+
+    res.json({ providerPriority: streamingProviderManager.getProviderPriority(), defaultProviderId: order[0] });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
 });
 
 router.get("/:providerId/diagnostics", async (req, res) => {

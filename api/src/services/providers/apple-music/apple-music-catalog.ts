@@ -41,6 +41,20 @@ function audioTraits(attributes: Record<string, unknown> | undefined): string[] 
   return Array.isArray(traits) ? traits.map((t) => String(t)) : [];
 }
 
+/**
+ * Apple lists `audioTraits` lowest-fidelity first (e.g. ["lossy-stereo",
+ * "lossless", "hi-res-lossless", "atmos"]), so the FIRST trait understates a
+ * hi-res album. The primary quality is the best stereo trait; Atmos/spatial
+ * availability stays visible through the full `qualityTags` list.
+ */
+function bestAppleAudioQuality(traits: string[]): string | null {
+  const set = new Set(traits.map((t) => t.toLowerCase()));
+  if (set.has("hi-res-lossless") || set.has("hires-lossless")) return "HIRES_LOSSLESS";
+  if (set.has("lossless")) return "LOSSLESS";
+  if (set.has("lossy-stereo")) return "HIGH";
+  return traits[0] || null;
+}
+
 export function mapAppleArtist(resource: AppleResource): ProviderArtist {
   const attrs = (resource.attributes ?? {}) as {
     name?: string;
@@ -93,7 +107,7 @@ export function mapAppleAlbum(resource: AppleResource): ProviderAlbum {
     explicit: attrs.contentRating ? attrs.contentRating === "explicit" : null,
     upc: attrs.upc || null,
     copyright: attrs.copyright || null,
-    quality: traits[0] || null,
+    quality: bestAppleAudioQuality(traits),
     qualityTags: traits,
     url: attrs.url,
     raw: resource,
@@ -142,7 +156,7 @@ export function mapAppleTrack(resource: AppleResource): ProviderTrack {
     isrc: attrs.isrc || null,
     releaseDate: attrs.releaseDate || null,
     copyright: attrs.copyright || null,
-    quality: traits[0] || null,
+    quality: bestAppleAudioQuality(traits),
     qualityTags: traits,
     raw: resource,
   };
@@ -243,6 +257,29 @@ export async function getAppleVideo(id: string, options: AppleMusicApiOptions = 
   const resource = first(res);
   if (!resource) throw new Error(`Apple Music video not found: ${id}`);
   return mapAppleVideo(resource);
+}
+
+function firstPreviewUrl(resource: AppleResource | null): { url: string; hlsUrl?: string } | null {
+  const previews = (resource?.attributes as { previews?: Array<{ url?: string; hlsUrl?: string }> } | undefined)?.previews;
+  const preview = Array.isArray(previews) ? previews.find((entry) => entry?.url || entry?.hlsUrl) : null;
+  if (!preview) return null;
+  return { url: String(preview.url || preview.hlsUrl || ""), hlsUrl: preview.hlsUrl ? String(preview.hlsUrl) : undefined };
+}
+
+/** 30-second catalog preview clip for a song (plain AAC m4a URL). */
+export async function getAppleTrackPreviewUrl(id: string, options: AppleMusicApiOptions = {}): Promise<string | null> {
+  const sf = storefrontFor(options.token);
+  const res = await appleMusicApiRequest<AppleDataResponse>(`/v1/catalog/${sf}/songs/${id}`, options);
+  const preview = firstPreviewUrl(first(res));
+  return preview?.url || null;
+}
+
+/** Preview clip for a music video (progressive mp4/m3u8 URL). */
+export async function getAppleVideoPreviewUrl(id: string, options: AppleMusicApiOptions = {}): Promise<string | null> {
+  const sf = storefrontFor(options.token);
+  const res = await appleMusicApiRequest<AppleDataResponse>(`/v1/catalog/${sf}/music-videos/${id}`, options);
+  const preview = firstPreviewUrl(first(res));
+  return preview?.hlsUrl || preview?.url || null;
 }
 
 interface AppleSearchResponse {

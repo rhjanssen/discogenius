@@ -30,6 +30,11 @@ export interface ProviderCapabilities {
   stereoQuality?: string;
   spatialQuality?: string;
   videoQuality?: string;
+  /**
+   * Maximum music-video height this provider can supply (e.g. 1080, 2160).
+   * Settings greys out resolution options no connected provider can satisfy.
+   */
+  maxVideoResolution?: number;
 }
 
 export type ProviderAuthKind = "oauth-device" | "developer-token" | "external" | "none";

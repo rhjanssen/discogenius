@@ -109,3 +109,47 @@ test("provider videos create canonical recordings and link to matching audio rec
   `).all() as Array<{ name: string }>;
   assert.deepEqual(retiredTables, []);
 });
+
+test("the same video from two providers dedupes onto one recording; different variants stay separate", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-video-dwyb",
+    title: "Don't Want You Back (feat. Kiesza)",
+    artist_name: "Bastille",
+    duration: 208,
+  }, {
+    provider: "tidal",
+    provider_id: "tidal-video-dwyb-audio",
+    title: "Don't Want You Back (Audio)",
+    artist_name: "Bastille",
+    duration: 209,
+  }]);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "apple-music",
+    provider_id: "apple-video-dwyb",
+    title: "Don't Want You Back (feat. Kiesza) (Official Video)",
+    artist_name: "Bastille",
+    duration: 208,
+  }]);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id, title FROM Recordings WHERE is_video = 1 ORDER BY id
+  `).all() as Array<{ id: number; title: string }>;
+  // One shared recording for the video proper, one for the audio upload.
+  assert.equal(videos.length, 2);
+
+  const offers = dbModule.db.prepare(`
+    SELECT provider, provider_id AS providerId, recording_id AS recordingId
+    FROM ProviderItems
+    WHERE entity_type = 'video'
+    ORDER BY provider, provider_id
+  `).all() as Array<{ provider: string; providerId: string; recordingId: number }>;
+
+  const tidalMain = offers.find((offer) => offer.providerId === "tidal-video-dwyb");
+  const appleMain = offers.find((offer) => offer.providerId === "apple-video-dwyb");
+  const tidalAudio = offers.find((offer) => offer.providerId === "tidal-video-dwyb-audio");
+  assert.ok(tidalMain && appleMain && tidalAudio);
+  assert.equal(appleMain?.recordingId, tidalMain?.recordingId);
+  assert.notEqual(tidalAudio?.recordingId, tidalMain?.recordingId);
+});

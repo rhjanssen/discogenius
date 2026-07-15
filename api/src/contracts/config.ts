@@ -17,7 +17,7 @@ export type AudioQualityValue = (typeof AUDIO_QUALITY_VALUES)[number];
 export const CATALOG_SOURCE_VALUES = ["servarr", "musicbrainz"] as const;
 export type CatalogSourceValue = (typeof CATALOG_SOURCE_VALUES)[number];
 
-export const VIDEO_QUALITY_VALUES = ["sd", "hd", "fhd"] as const;
+export const VIDEO_QUALITY_VALUES = ["sd", "hd", "fhd", "uhd"] as const;
 export type VideoQualityValue = (typeof VIDEO_QUALITY_VALUES)[number];
 
 export const UPC_TARGET_VALUES = ["UPC", "EAN", "BARCODE"] as const;

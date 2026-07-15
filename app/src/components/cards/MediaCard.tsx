@@ -76,6 +76,12 @@ export interface MediaCardProps {
         label: string;
         onChange: (selected: boolean, shiftKey: boolean) => void;
     };
+    /**
+     * Called on right-click or touch long-press while the collection is NOT in
+     * selection mode; the parent should enter selection mode and select this
+     * card. When `selection` is set, those gestures toggle the selection instead.
+     */
+    onSelectionIntent?: () => void;
 }
 
 export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
@@ -102,6 +108,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     downloadProgress,
     downloadError,
     selection,
+    onSelectionIntent,
     onClick,
 }) {
     const styles = useCardStyles();
@@ -111,6 +118,8 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     const [fallbackFailed, setFallbackFailed] = React.useState(false);
     const [imageLoaded, setImageLoaded] = React.useState(false);
     const isClickable = Boolean(onClick || to || selection);
+    const longPressTimer = React.useRef<number | null>(null);
+    const longPressFired = React.useRef(false);
     React.useEffect(() => {
         setImageFailed(false);
         setFallbackFailed(false);
@@ -118,6 +127,11 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     }, [imageUrl, fallbackImageUrl]);
 
     const handleClick = useCallback((event?: React.MouseEvent) => {
+        if (longPressFired.current) {
+            // The long-press already handled this gesture; swallow the tap click.
+            longPressFired.current = false;
+            return;
+        }
         if (selection) {
             selection.onChange(!selection.selected, Boolean(event?.shiftKey));
             return;
@@ -156,6 +170,46 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
         selection?.onChange(!selection.selected, event.shiftKey);
     }, [selection]);
 
+    // Right-click / touch long-press enter selection mode with this card
+    // selected (or toggle when selection mode is already active).
+    const handleContextMenu = useCallback((event: React.MouseEvent) => {
+        if (selection) {
+            event.preventDefault();
+            selection.onChange(!selection.selected, event.shiftKey);
+            return;
+        }
+        if (onSelectionIntent) {
+            event.preventDefault();
+            onSelectionIntent();
+        }
+    }, [selection, onSelectionIntent]);
+
+    const clearLongPress = useCallback(() => {
+        if (longPressTimer.current !== null) {
+            window.clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+    }, []);
+    const handlePointerDown = useCallback((event: React.PointerEvent) => {
+        if (event.pointerType !== "touch") return;
+        if (!onSelectionIntent && !selection) return;
+        longPressFired.current = false;
+        clearLongPress();
+        longPressTimer.current = window.setTimeout(() => {
+            longPressTimer.current = null;
+            longPressFired.current = true;
+            if (selection) {
+                selection.onChange(!selection.selected, false);
+            } else {
+                onSelectionIntent?.();
+            }
+        }, 500);
+    }, [clearLongPress, onSelectionIntent, selection]);
+    const handlePointerEnd = useCallback(() => {
+        clearLongPress();
+    }, [clearLongPress]);
+    React.useEffect(() => clearLongPress, [clearLongPress]);
+
     const previewClass = videoAspect ? styles.videoPreview : styles.cardPreview;
     const primaryImageUrl = imageUrl || null;
     const fallbackUrl = fallbackImageUrl && fallbackImageUrl !== primaryImageUrl ? fallbackImageUrl : null;
@@ -174,6 +228,12 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
             )}
             onClick={isClickable ? handleClick : undefined}
             onKeyDown={isClickable ? handleKeyDown : undefined}
+            onContextMenu={selection || onSelectionIntent ? handleContextMenu : undefined}
+            onPointerDown={selection || onSelectionIntent ? handlePointerDown : undefined}
+            onPointerUp={handlePointerEnd}
+            onPointerMove={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+            onPointerLeave={handlePointerEnd}
             role={selection ? "button" : to ? "link" : onClick ? "button" : undefined}
             tabIndex={isClickable ? 0 : undefined}
             aria-label={title}

@@ -24,9 +24,31 @@ RUN python3 -m venv /opt/tiddl-venv \
 # Upstream Apple Music downloader image is currently amd64-only and provides a
 # static Go binary at /usr/local/bin/apple-music-dl. Copying just that binary
 # avoids switching Discogenius' base image away from the Python runtime tiddl
-# depends on. MP4Box/wrapper provisioning remains separately diagnosed at
-# runtime because GPAC is not available in Debian Bookworm's default apt repo.
+# depends on.
 FROM ${APPLE_MUSIC_DOWNLOADER_IMAGE} AS apple_music_downloader
+
+# Debian bookworm ships no gpac package and the upstream downloader image's
+# MP4Box is dynamically linked against Ubuntu 26.04 (newer glibc), so build a
+# static MP4Box from a pinned GPAC release for the mux step of Apple downloads.
+FROM debian:bookworm-slim AS gpac_builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config git ca-certificates zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch v2.4.0 https://github.com/gpac/gpac.git /tmp/gpac \
+    && cd /tmp/gpac \
+    && ./configure --static-bin \
+    && make -j"$(nproc)" \
+    && strip bin/gcc/MP4Box
+
+# mp4decrypt (Bento4) is required for Apple music-video decryption. Official
+# prebuilt SDK, pinned.
+FROM debian:bookworm-slim AS bento4_fetcher
+ARG BENTO4_SDK_URL=https://www.bok.net/Bento4/binaries/Bento4-SDK-1-6-0-641.x86_64-unknown-linux.zip
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && curl -fsSL "$BENTO4_SDK_URL" -o /tmp/bento4.zip \
+    && unzip -q /tmp/bento4.zip -d /tmp/bento4 \
+    && install -m 0755 /tmp/bento4/*/bin/mp4decrypt /usr/local/bin/mp4decrypt \
+    && rm -rf /var/lib/apt/lists/* /tmp/bento4.zip
 
 # ==================== Builder Stage ====================
 FROM base AS builder
@@ -88,6 +110,10 @@ COPY --from=builder --chown=node:node /app/app/dist ./app/dist
 COPY --from=apple_music_downloader /usr/local/bin/apple-music-dl /usr/local/bin/apple-music-dl
 RUN chmod +x /usr/local/bin/apple-music-dl \
     && ln -sf /usr/local/bin/apple-music-dl /usr/local/bin/apple-music-downloader
+
+# MP4Box (static, built above) + mp4decrypt for Apple Music mux/decrypt steps.
+COPY --from=gpac_builder /tmp/gpac/bin/gcc/MP4Box /usr/local/bin/MP4Box
+COPY --from=bento4_fetcher /usr/local/bin/mp4decrypt /usr/local/bin/mp4decrypt
 
 # Copy source files needed at runtime (for ES modules)
 COPY --chown=node:node api/src ./api/src

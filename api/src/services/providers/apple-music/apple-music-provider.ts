@@ -10,6 +10,8 @@ import {
   ProviderSearchResults,
   ProviderTrack,
   ProviderVideo,
+  ProviderPlaybackInfo,
+  ProviderVideoPlaybackInfo,
   ProviderAuthStatus,
   ProviderDownloadOptions,
   ProviderCapabilities,
@@ -34,7 +36,9 @@ import {
   getAppleArtistAlbums,
   getAppleArtistVideos,
   getAppleTrack,
+  getAppleTrackPreviewUrl,
   getAppleVideo,
+  getAppleVideoPreviewUrl,
   renderAppleArtwork,
   searchApple,
 } from "./apple-music-catalog.js";
@@ -130,6 +134,13 @@ export class AppleMusicProvider implements StreamingProvider {
     editorialMetadata: true,
     providerIds: true,
     spatialFormats: ["DOLBY_ATMOS"],
+    // Display vocabulary matches the TIDAL manifest so capability cards read
+    // consistently: ALAC Hi-Res Lossless tops out at 24-bit / 192 kHz, spatial
+    // audio is Dolby Atmos, and music videos stream up to 1080p.
+    stereoQuality: "Lossless up to 24-bit / 192 kHz",
+    spatialQuality: "Dolby Atmos",
+    videoQuality: "Up to 4K (2160p)",
+    maxVideoResolution: 2160,
   };
   readonly qualityMapping = appleMusicQualityMapping;
 
@@ -200,6 +211,17 @@ export class AppleMusicProvider implements StreamingProvider {
 
   async getVideo(id: string | number): Promise<ProviderVideo> {
     return getAppleVideo(String(id), this.apiOptions());
+  }
+
+  /** Browser preview: Apple's public 30-second catalog clip (plain AAC m4a). */
+  async getPlaybackInfo(id: string | number): Promise<ProviderPlaybackInfo | null> {
+    const url = await getAppleTrackPreviewUrl(String(id), this.apiOptions());
+    return url ? { type: "bts", url } : null;
+  }
+
+  async getVideoPlaybackInfo(id: string | number): Promise<ProviderVideoPlaybackInfo | null> {
+    const url = await getAppleVideoPreviewUrl(String(id), this.apiOptions());
+    return url ? { url, contentType: url.includes(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp4" } : null;
   }
 
   async apiRequest<T = any>(endpoint: string, options?: AppleMusicApiOptions): Promise<T> {

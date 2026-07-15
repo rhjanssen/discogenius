@@ -22,6 +22,7 @@ import {
     DialogBody,
     DialogTitle,
     DialogContent,
+    DialogActions,
     Link,
 } from "@fluentui/react-components";
 import {
@@ -814,7 +815,9 @@ const SettingsPage = () => {
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
     const [importProviderId, setImportProviderId] = useState<string | null>(null);
-    const [expandedProviderIds, setExpandedProviderIds] = useState<Set<string>>(new Set());
+    const [detailsProviderId, setDetailsProviderId] = useState<string | null>(null);
+    const [draggingProviderId, setDraggingProviderId] = useState<string | null>(null);
+    const [savingProviderOrder, setSavingProviderOrder] = useState(false);
     const [namingHelpField, setNamingHelpField] = useState<NamingFieldKey | null>(null);
     const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfoContract | null>(null);
     const [renameStatus, setRenameStatus] = useState<NamingRenameStatus | null>(null);
@@ -1315,11 +1318,23 @@ const SettingsPage = () => {
         { value: 'max', label: 'Max', description: 'Hi-res FLAC up to 24-bit / 192 kHz' },
     ];
 
+    // Resolutions no connected provider can supply are shown greyed out. A
+    // provider without a declared ceiling is assumed to reach 1080p.
+    const maxConnectedVideoResolution = Math.max(
+        0,
+        ...(streamingProviders?.providers ?? [])
+            .filter((provider) => provider.authenticated && (provider.capabilities.videoDownloads || provider.capabilities.musicVideos))
+            .map((provider) => provider.capabilities.maxVideoResolution ?? 1080),
+    );
     const videoQualityOptions = [
-        { value: 'sd', label: 'SD (360p)', description: 'Lower bandwidth' },
-        { value: 'hd', label: 'HD (720p)', description: 'Balanced quality' },
-        { value: 'fhd', label: 'Full HD (1080p)', description: 'Best available video' },
-    ];
+        { value: 'sd', label: 'SD (360p)', description: 'Lower bandwidth', minResolution: 360 },
+        { value: 'hd', label: 'HD (720p)', description: 'Balanced quality', minResolution: 720 },
+        { value: 'fhd', label: 'Full HD (1080p)', description: 'Best available on most services', minResolution: 1080 },
+        { value: 'uhd', label: '4K (2160p)', description: 'Where the service offers it; others fall back to 1080p', minResolution: 2160 },
+    ].map((option) => ({
+        ...option,
+        disabled: maxConnectedVideoResolution > 0 && option.minResolution > maxConnectedVideoResolution,
+    }));
 
     const namingHelpMeta = namingHelpField ? NAMING_HELP[namingHelpField] : null;
     const isScanInProgress = checkingNow || monitoringStatus.checking || monitoringConfig?.checkInProgress;
@@ -1499,16 +1514,47 @@ const SettingsPage = () => {
         { key: "include_demo", title: "Demo" },
     ] as const;
 
-    const toggleProviderDetails = (providerId: string) => {
-        setExpandedProviderIds((previous) => {
-            const next = new Set(previous);
-            if (next.has(providerId)) {
-                next.delete(providerId);
-            } else {
-                next.add(providerId);
-            }
-            return next;
-        });
+    // The list order IS the provider preference: first = default provider and
+    // the winner of equal-quality matching tie-breaks.
+    const persistProviderOrder = async (orderedIds: string[]) => {
+        setSavingProviderOrder(true);
+        try {
+            await api.updateProviderPriority(orderedIds);
+            await refetchStreamingProviders();
+        } catch (error: any) {
+            toast({
+                title: "Failed to reorder providers",
+                description: error?.message || "Please try again",
+                variant: "destructive",
+            });
+        } finally {
+            setSavingProviderOrder(false);
+        }
+    };
+
+    const moveProvider = (providerId: string, direction: -1 | 1) => {
+        const ids = (streamingProviders?.providers ?? []).map((provider) => provider.id);
+        const from = ids.indexOf(providerId);
+        const to = from + direction;
+        if (from === -1 || to < 0 || to >= ids.length) return;
+        ids.splice(from, 1);
+        ids.splice(to, 0, providerId);
+        void persistProviderOrder(ids);
+    };
+
+    const dropProviderOn = (targetProviderId: string) => {
+        if (!draggingProviderId || draggingProviderId === targetProviderId) {
+            setDraggingProviderId(null);
+            return;
+        }
+        const ids = (streamingProviders?.providers ?? []).map((provider) => provider.id);
+        const from = ids.indexOf(draggingProviderId);
+        const to = ids.indexOf(targetProviderId);
+        setDraggingProviderId(null);
+        if (from === -1 || to === -1) return;
+        ids.splice(from, 1);
+        ids.splice(to, 0, draggingProviderId);
+        void persistProviderOrder(ids);
     };
 
     const getProviderCapabilitySummary = (provider: StreamingProviderStatus) => {
@@ -1604,17 +1650,19 @@ const SettingsPage = () => {
         </SettingsSection>
     );
 
+    const detailsProvider = (streamingProviders?.providers ?? []).find((provider) => provider.id === detailsProviderId) || null;
+
     const streamingProvidersSection = (
         <SettingsSection
             id="streaming-providers"
             title="Streaming Providers"
-            description="Connect the streaming services you download music and videos from."
+            description="Connect the services you download from. Drag to set the preference order — the first provider is the default and wins equal-quality matches."
             className={styles.section}
         >
             <div className={styles.card}>
                 {(() => {
                     const allProviders = streamingProviders?.providers ?? [];
-                    // Only connected services get a card; everything else is
+                    // Only connected services get a row; everything else is
                     // reachable through the always-visible "Add Provider" flow.
                     const activeProviders = allProviders.filter(p => p.authenticated);
 
@@ -1643,9 +1691,11 @@ const SettingsPage = () => {
                         );
                     }
 
+                    const reorderable = activeProviders.length > 1;
+
                     return (
                         <>
-                            {activeProviders.map((provider) => {
+                            {activeProviders.map((provider, index) => {
                                 const hasMark = Boolean(providerMarkFor(provider.id));
                                 const publiclyAvailable = provider.authenticated
                                     && !provider.management.canAuthenticate
@@ -1657,120 +1707,166 @@ const SettingsPage = () => {
                                         : "Not connected";
 
                                 return (
-                                    <React.Fragment key={provider.id}>
-                            <div className={styles.profileRow}>
-                                <div className={styles.providerStatusRow}>
-                                    <div className={styles.providerIconBox}>
-                                        {hasMark ? (
-                                            <ProviderMark provider={provider.id} size={30} />
-                                        ) : (
-                                            <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
-                                        )}
-                                    </div>
-                                    <div className={styles.profileDetails}>
-                                        <div className={styles.optionIconRow}>
-                                            <Text weight="semibold" size={400}>{provider.name}</Text>
-                                            <Badge appearance="filled" color={provider.authenticated ? "success" : "subtle"}>
-                                                {statusLabel}
-                                            </Badge>
-                                            {provider.isDefault ? (
-                                                <Badge appearance="tint" color="informative">Default</Badge>
-                                            ) : null}
-                                        </div>
-                                        {provider.id === "tidal" && accountSettings?.username ? (
-                                            <Caption1 className={styles.mutedText}>
-                                                Signed in as {accountSettings.fullName || accountSettings.username}
-                                            </Caption1>
-                                        ) : (
-                                            <Caption1 className={styles.mutedText}>
-                                                {provider.authenticated
-                                                    ? publiclyAvailable
-                                                        ? "Ready to search and browse."
-                                                        : "Ready to search, browse, and download."
-                                                    : "Connect to search, browse, and download."}
-                                            </Caption1>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className={styles.profileActions}>
-                                    {provider.management.canAuthenticate && !provider.authenticated ? (
-                                        <Button
-                                            appearance="primary"
-                                            className={styles.signOutButton}
-                                            onClick={() => navigate("/auth")}
-                                        >
-                                            Connect
-                                        </Button>
-                                    ) : null}
-                                    {provider.management.canDisconnect && provider.authenticated ? (
-                                        <Button
-                                            appearance="outline"
-                                            className={styles.signOutButton}
-                                            icon={<DoorArrowLeft24Regular />}
-                                            onClick={() => handleDisconnectProvider(provider.id, provider.name)}
-                                        >
-                                            Disconnect
-                                        </Button>
-                                    ) : null}
-                                    {provider.management.canImportArtists ? (
-                                        <Button
-                                            appearance="outline"
-                                            className={styles.signOutButton}
-                                            icon={<ArrowImport24Regular />}
-                                            onClick={() => setImportProviderId(provider.id)}
-                                            disabled={!provider.authenticated}
-                                        >
-                                            Import artists
-                                        </Button>
-                                    ) : null}
-                                    <Button
-                                        appearance="subtle"
-                                        className={styles.signOutButton}
-                                        icon={expandedProviderIds.has(provider.id) ? <ChevronUp24Regular /> : <ChevronDown24Regular />}
-                                        iconPosition="after"
-                                        onClick={() => toggleProviderDetails(provider.id)}
-                                        aria-expanded={expandedProviderIds.has(provider.id)}
+                                    <div
+                                        key={provider.id}
+                                        className={styles.profileRow}
+                                        draggable={reorderable && !savingProviderOrder}
+                                        onDragStart={() => setDraggingProviderId(provider.id)}
+                                        onDragEnd={() => setDraggingProviderId(null)}
+                                        onDragOver={(event) => { if (draggingProviderId) event.preventDefault(); }}
+                                        onDrop={() => dropProviderOn(provider.id)}
+                                        style={draggingProviderId === provider.id ? { opacity: 0.5 } : undefined}
                                     >
-                                        Details
+                                        <div className={styles.providerStatusRow}>
+                                            {reorderable ? (
+                                                <div style={{ display: 'flex', flexDirection: 'column' }} aria-label={`Reorder ${provider.name}`}>
+                                                    <Button
+                                                        appearance="subtle"
+                                                        size="small"
+                                                        icon={<ChevronUp24Regular />}
+                                                        aria-label={`Move ${provider.name} up`}
+                                                        disabled={savingProviderOrder || index === 0}
+                                                        onClick={() => moveProvider(provider.id, -1)}
+                                                    />
+                                                    <Button
+                                                        appearance="subtle"
+                                                        size="small"
+                                                        icon={<ChevronDown24Regular />}
+                                                        aria-label={`Move ${provider.name} down`}
+                                                        disabled={savingProviderOrder || index === activeProviders.length - 1}
+                                                        onClick={() => moveProvider(provider.id, 1)}
+                                                    />
+                                                </div>
+                                            ) : null}
+                                            <div className={styles.providerIconBox}>
+                                                {hasMark ? (
+                                                    <ProviderMark provider={provider.id} size={30} />
+                                                ) : (
+                                                    <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
+                                                )}
+                                            </div>
+                                            <div className={styles.profileDetails}>
+                                                <div className={styles.optionIconRow}>
+                                                    <Text weight="semibold" size={400}>{provider.name}</Text>
+                                                    <Badge appearance="filled" color={provider.authenticated ? "success" : "subtle"}>
+                                                        {statusLabel}
+                                                    </Badge>
+                                                    {provider.isDefault ? (
+                                                        <Badge appearance="tint" color="informative">Default</Badge>
+                                                    ) : null}
+                                                </div>
+                                                {provider.id === "tidal" && accountSettings?.username ? (
+                                                    <Caption1 className={styles.mutedText}>
+                                                        Signed in as {accountSettings.fullName || accountSettings.username}
+                                                    </Caption1>
+                                                ) : (
+                                                    <Caption1 className={styles.mutedText}>
+                                                        {provider.authenticated
+                                                            ? publiclyAvailable
+                                                                ? "Ready to search and browse."
+                                                                : "Ready to search, browse, and download."
+                                                            : "Connect to search, browse, and download."}
+                                                    </Caption1>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className={styles.profileActions}>
+                                            {provider.management.canImportArtists ? (
+                                                <Button
+                                                    appearance="outline"
+                                                    className={styles.signOutButton}
+                                                    icon={<ArrowImport24Regular />}
+                                                    onClick={() => setImportProviderId(provider.id)}
+                                                    disabled={!provider.authenticated}
+                                                >
+                                                    Import artists
+                                                </Button>
+                                            ) : null}
+                                            <Button
+                                                appearance="subtle"
+                                                className={styles.signOutButton}
+                                                onClick={() => setDetailsProviderId(provider.id)}
+                                            >
+                                                Details
+                                            </Button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            {activeProviders.length > 0 && (
+                                <div className={styles.profileRow} style={{ justifyContent: 'center' }}>
+                                    <Button
+                                        appearance="outline"
+                                        icon={<Open24Regular />}
+                                        onClick={() => navigate("/auth")}
+                                    >
+                                        Add Provider
                                     </Button>
                                 </div>
-                            </div>
-                            {expandedProviderIds.has(provider.id) ? (
-                                <div className={styles.providerActionRow}>
-                                    <div className={styles.rowContent}>
-                                        <div className={styles.capabilitySummaryGrid}>
-                                            {getProviderCapabilitySummary(provider).map((capability) => (
-                                                <div key={capability.label} className={styles.capabilitySummaryItem}>
-                                                    <Caption1 className={styles.mutedText}>{capability.label}</Caption1>
-                                                    <Text size={200} className={styles.capabilitySummaryValue}>{capability.value}</Text>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <Text size={200} className={styles.mutedText}>
-                                            For connection and download health, see{" "}
-                                            <Link onClick={() => navigate("/system/status")}>System Status</Link>.
-                                        </Text>
-                                    </div>
-                                </div>
-                            ) : null}
-                        </React.Fragment>
+                            )}
+                        </>
                     );
-                })}
-                {activeProviders.length > 0 && (
-                    <div className={styles.profileRow} style={{ justifyContent: 'center' }}>
-                        <Button
-                            appearance="outline"
-                            icon={<Open24Regular />}
-                            onClick={() => navigate("/auth")}
-                        >
-                            Add Provider
-                        </Button>
-                    </div>
-                )}
-                </>
-                );
                 })()}
             </div>
+
+            <Dialog open={detailsProvider !== null} onOpenChange={(_, data) => { if (!data.open) setDetailsProviderId(null); }}>
+                <DialogSurface>
+                    <DialogBody>
+                        <DialogTitle>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}>
+                                {detailsProvider && providerMarkFor(detailsProvider.id) ? (
+                                    <ProviderMark provider={detailsProvider.id} size={24} />
+                                ) : null}
+                                {detailsProvider?.name}
+                            </span>
+                        </DialogTitle>
+                        <DialogContent>
+                            {detailsProvider ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                    <div className={styles.optionIconRow}>
+                                        <Badge appearance="filled" color={detailsProvider.authenticated ? "success" : "subtle"}>
+                                            {detailsProvider.authenticated ? "Connected" : "Not connected"}
+                                        </Badge>
+                                        {detailsProvider.isDefault ? (
+                                            <Badge appearance="tint" color="informative">Default provider</Badge>
+                                        ) : null}
+                                    </div>
+                                    <div className={styles.capabilitySummaryGrid}>
+                                        {getProviderCapabilitySummary(detailsProvider).map((capability) => (
+                                            <div key={capability.label} className={styles.capabilitySummaryItem}>
+                                                <Caption1 className={styles.mutedText}>{capability.label}</Caption1>
+                                                <Text size={200} className={styles.capabilitySummaryValue}>{capability.value}</Text>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <Text size={200} className={styles.mutedText}>
+                                        For connection and download health, see{" "}
+                                        <Link onClick={() => { setDetailsProviderId(null); navigate("/system/status"); }}>System Status</Link>.
+                                    </Text>
+                                </div>
+                            ) : null}
+                        </DialogContent>
+                        <DialogActions>
+                            {detailsProvider?.management.canAuthenticate && !detailsProvider.authenticated ? (
+                                <Button appearance="primary" onClick={() => navigate("/auth")}>Connect</Button>
+                            ) : null}
+                            {detailsProvider?.management.canDisconnect && detailsProvider.authenticated ? (
+                                <Button
+                                    appearance="outline"
+                                    icon={<DoorArrowLeft24Regular />}
+                                    onClick={() => {
+                                        setDetailsProviderId(null);
+                                        handleDisconnectProvider(detailsProvider.id, detailsProvider.name);
+                                    }}
+                                >
+                                    Disconnect
+                                </Button>
+                            ) : null}
+                            <Button appearance="secondary" onClick={() => setDetailsProviderId(null)}>Close</Button>
+                        </DialogActions>
+                    </DialogBody>
+                </DialogSurface>
+            </Dialog>
         </SettingsSection>
     );
 
@@ -1863,7 +1959,7 @@ const SettingsPage = () => {
                         <RadioGroup
                             value={qualitySettings?.video_quality || 'fhd'}
                             onChange={(_, data) => updateQualitySettings({
-                                video_quality: data.value as "sd" | "hd" | "fhd"
+                                video_quality: data.value as "sd" | "hd" | "fhd" | "uhd"
                             })}
                             disabled={curationConfig?.include_videos === false}
                         >
@@ -1872,15 +1968,15 @@ const SettingsPage = () => {
                                     key={option.value}
                                     className={mergeClasses(
                                         styles.qualityOption,
-                                        curationConfig?.include_videos === false ? styles.qualityOptionDisabled : undefined
+                                        (curationConfig?.include_videos === false || option.disabled) ? styles.qualityOptionDisabled : undefined
                                     )}
                                     htmlFor={`video-quality-${option.value}`}
                                 >
-                                    <Radio value={option.value} id={`video-quality-${option.value}`} />
+                                    <Radio value={option.value} id={`video-quality-${option.value}`} disabled={option.disabled} />
                                     <div className={styles.qualityContent}>
                                         <Text weight="semibold">{option.label}</Text>
                                         <Text size={200} className={styles.mutedText}>
-                                            {option.description}
+                                            {option.disabled ? "No connected service offers this resolution" : option.description}
                                         </Text>
                                     </div>
                                 </label>

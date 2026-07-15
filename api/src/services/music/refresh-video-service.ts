@@ -397,6 +397,22 @@ function ensureProviderVideoRecording(input: {
         return musicBrainzRecordingId;
     }
 
+    // Cross-provider dedup: another provider may already have minted a
+    // provider-only recording for this same video (e.g. TIDAL and Apple Music
+    // both carry "Don't Want You Back (feat. Kiesza)"). Attach to it instead of
+    // creating a per-provider duplicate.
+    const providerRecordingId = artistMbid
+        ? findProviderOnlyVideoRecordingId(artistMbid, title, lengthMs)
+        : null;
+    if (providerRecordingId) {
+        db.prepare(`
+            UPDATE Recordings
+            SET length_ms = COALESCE(length_ms, ?), updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(lengthMs, providerRecordingId);
+        return providerRecordingId;
+    }
+
     const result = db.prepare(`
         INSERT INTO Recordings (
             artist_metadata_id, artist_mbid, title, artist_credit, length_ms,
@@ -419,6 +435,60 @@ function ensureProviderVideoRecording(input: {
  * "official / video / audio / feat …" decoration, so a provider upload maps onto
  * the canonical MB video instead of creating a duplicate provider-only recording.
  */
+/**
+ * A video's variant class distinguishes uploads that share one base title but
+ * are genuinely different assets: the music video proper vs an audio-only
+ * upload, a lyric video, a visualizer, or a live performance. Cross-provider
+ * dedup must only merge videos in the SAME class ("Living (Official Video)"
+ * never merges with "Living (Audio)").
+ */
+const VIDEO_VARIANT_CLASSES: Array<{ cls: string; re: RegExp }> = [
+    { cls: "audio", re: /\baudio\b/i },
+    { cls: "lyric", re: /\blyrics?\b/i },
+    { cls: "visualizer", re: /\bvisuali[sz]er\b/i },
+    { cls: "live", re: /\blive\b|\bperformance\b/i },
+];
+
+function videoVariantClass(title: string): string {
+    for (const { cls, re } of VIDEO_VARIANT_CLASSES) {
+        if (re.test(title)) return cls;
+    }
+    return "video";
+}
+
+/**
+ * Find an existing provider-only video recording for the artist that describes
+ * the SAME video from another provider: same comparable base title, same
+ * variant class, and a compatible duration (within 3 seconds; the closest
+ * duration wins when several qualify).
+ */
+function findProviderOnlyVideoRecordingId(artistMbid: string, title: string, lengthMs: number | null): number | null {
+    const base = videoComparableTitle(title);
+    if (!base) {
+        return null;
+    }
+    const variant = videoVariantClass(title);
+    const rows = db.prepare(`
+        SELECT id, title, length_ms
+        FROM Recordings
+        WHERE is_video = 1 AND mbid IS NULL AND artist_mbid = ?
+    `).all(artistMbid) as Array<{ id: number; title: string | null; length_ms: number | null }>;
+    const candidates = rows.filter((row) => {
+        const rowTitle = String(row.title || "");
+        if (videoComparableTitle(rowTitle) !== base) return false;
+        if (videoVariantClass(rowTitle) !== variant) return false;
+        if (row.length_ms != null && lengthMs != null && Math.abs(row.length_ms - lengthMs) > 3000) return false;
+        return true;
+    });
+    if (candidates.length === 0) {
+        return null;
+    }
+    candidates.sort((left, right) =>
+        Math.abs((left.length_ms ?? lengthMs ?? 0) - (lengthMs ?? 0))
+        - Math.abs((right.length_ms ?? lengthMs ?? 0) - (lengthMs ?? 0)));
+    return Number(candidates[0].id);
+}
+
 function findMusicBrainzVideoRecordingIdByTitle(artistMbid: string, title: string): number | null {
     // Reuse the shared recording-title comparison (same base title + compatible
     // significant version) so "Living (feat. Alex Clare) (Official Video)" unifies

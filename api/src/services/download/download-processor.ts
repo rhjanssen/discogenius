@@ -1539,7 +1539,10 @@ export class DownloadProcessor {
         const downloadPath = path.join(baseDownloadPath, `job_${commandId}`);
         this.currentDownloadPath = downloadPath;
 
-        const providerId = (payload as any).streamingSource || getDefaultStreamingSource();
+        // Download commands carry the slot's selected provider as `provider`
+        // (queue-route payloads may use `streamingSource`); only fall back to
+        // the default provider when neither is present.
+        const providerId = (payload as any).streamingSource || (payload as any).provider || getDefaultStreamingSource();
         const slot = (payload as any).slot || 'stereo';
         const capability = type === 'video' ? 'video' : (slot === 'spatial' ? 'spatial' : 'stereo');
 

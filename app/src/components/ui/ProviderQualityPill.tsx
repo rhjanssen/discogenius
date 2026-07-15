@@ -85,6 +85,13 @@ const useStyles = makeStyles({
     badge: {
         cursor: "default",
     },
+    // A mark with its own coloured background owns the full badge circle.
+    badgeFillMark: {
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+        ...shorthands.borderRadius(tokens.borderRadiusCircular),
+    },
     tooltipBody: {
         display: "flex",
         flexDirection: "column",
@@ -218,8 +225,12 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
 
     const renderProviderPill = (group: ProviderGroup, groupIndex: number) => {
         const providerName = providerDisplayName(group.provider);
-        const glyph = providerMarkFor(group.provider)
-            ? <ProviderMark provider={group.provider} size={glyphSize} tone="auto" />
+        const mark = providerMarkFor(group.provider);
+        // Marks that carry their own coloured background fill the whole badge
+        // circle; glyph marks stay centred on the tinted pill surface.
+        const fillsBadge = Boolean(mark?.badgeFill);
+        const glyph = mark
+            ? <ProviderMark provider={group.provider} size={fillsBadge ? diameter : glyphSize} tone="auto" className={fillsBadge ? styles.badgeFillMark : undefined} />
             : providerName.charAt(0);
 
         const tooltipLines = [
@@ -245,7 +256,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             >
                 <span
                     className={mergeClasses(styles.providerPill, groupIndex > 0 ? styles.groupGap : undefined)}
-                    style={{ width: `${diameter}px`, height: `${diameter}px`, ...pillStyle }}
+                    style={{ width: `${diameter}px`, height: `${diameter}px`, ...(fillsBadge ? { backgroundColor: "transparent" } : pillStyle) }}
                     aria-label={`${providerName} source`}
                 >
                     {glyph}

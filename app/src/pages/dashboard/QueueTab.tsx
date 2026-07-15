@@ -42,6 +42,7 @@ import {
   bundleIcon
 } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
+import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { useQueue } from "@/hooks/useQueue";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import type { QueueItemContract as QueueItem } from "@contracts/status";
@@ -1340,6 +1341,8 @@ const QueueTab = () => {
     const hasQueueRows = groupedDownloads.length > 0;
     const hasHistoryRows = queueHistoryItems.length > 0;
     const isInitialLoading = (loading && !hasQueueRows) || (!hasQueueRows && isQueueHistoryInitialLoading && !hasQueueRefreshError);
+    // Shared delayed-loading policy: no skeleton flash for sub-second loads.
+    const showInitialSkeleton = useDelayedVisible(isInitialLoading);
 
     const handleRetryQueueFeeds = async () => {
         await Promise.all([
@@ -1349,9 +1352,31 @@ const QueueTab = () => {
     };
 
     if (isInitialLoading) {
+        if (!showInitialSkeleton) {
+            return <div className={styles.tabSection} />;
+        }
+        // Mirror the real Active/History dual-column layout so the skeleton
+        // matches the predictable page structure (Fluent skeleton guidance).
         return (
             <div className={styles.tabSection}>
-                <QueueListSkeleton rows={6} />
+                <div className={styles.queueColumnsWrapper}>
+                    <section className={styles.queueSection} aria-label="Active">
+                        <div className={styles.queueSectionHeader}>
+                            <div className={styles.queueSectionHeading}>
+                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                            </div>
+                        </div>
+                        <QueueListSkeleton rows={4} />
+                    </section>
+                    <section className={styles.queueSection} aria-label="History">
+                        <div className={styles.queueSectionHeader}>
+                            <div className={styles.queueSectionHeading}>
+                                <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
+                            </div>
+                        </div>
+                        <QueueListSkeleton rows={4} />
+                    </section>
+                </div>
             </div>
         );
     }

@@ -36,6 +36,7 @@ import { MediaTypeBadge } from '@/components/ui/MediaTypeBadge';
 import { EmptyState } from '@/components/ui/ContentState';
 import { DataGridSkeleton } from '@/components/ui/LoadingSkeletons';
 import { glassButtonStyles, glassDangerButtonStyles, glassPrimaryButtonStyles } from '@/components/ui/glassButtonStyles';
+import { useDelayedVisible } from '@/hooks/useDelayedVisible';
 import { useGlobalEvents } from '@/hooks/useGlobalEvents';
 import { useSelectableCollection } from '@/hooks/useSelectableCollection';
 import { useToast } from '@/hooks/useToast';
@@ -633,6 +634,9 @@ const ManualImportTab = () => {
         },
     });
 
+    // Shared delayed-loading policy: no skeleton flash for sub-second loads.
+    const showLoadingSkeleton = useDelayedVisible(isLoading);
+
     const lastEvent = useGlobalEvents(['file.added', 'file.deleted']);
 
     useEffect(() => {
@@ -983,6 +987,9 @@ const ManualImportTab = () => {
     ]);
 
     if (isLoading) {
+        if (!showLoadingSkeleton) {
+            return <div className={styles.emptyState} />;
+        }
         return (
             <div className={styles.emptyState}>
                 <DataGridSkeleton

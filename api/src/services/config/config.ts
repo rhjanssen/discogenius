@@ -161,7 +161,7 @@ export interface AccountConfig {
 
 export interface QualityConfig {
   audio_quality: "low" | "normal" | "high" | "max";
-  video_quality: "sd" | "hd" | "fhd";
+  video_quality: "sd" | "hd" | "fhd" | "uhd";
   embed_cover: boolean;
   embed_lyrics: boolean;
   upgrade_existing_files: boolean;
@@ -177,6 +177,13 @@ export interface StreamingConfig {
    * registered provider.
    */
   default_provider?: string;
+  /**
+   * User-ordered provider preference (first = most preferred). Used as the
+   * tie-break when two providers offer equal-quality/equal-coverage matches.
+   * Unknown ids are ignored; providers missing from the list rank after the
+   * listed ones in registration order. When unset, the default provider leads.
+   */
+  provider_priority?: string[];
 }
 
 /**
@@ -407,7 +414,7 @@ function normalizeQualityConfig(raw?: Partial<QualityConfig>): QualityConfig {
     audio_quality: audioQuality === "low" || audioQuality === "normal" || audioQuality === "high" || audioQuality === "max"
       ? audioQuality
       : DEFAULT_CONFIG.quality.audio_quality,
-    video_quality: videoQuality === "sd" || videoQuality === "hd" || videoQuality === "fhd"
+    video_quality: videoQuality === "sd" || videoQuality === "hd" || videoQuality === "fhd" || videoQuality === "uhd"
       ? videoQuality
       : DEFAULT_CONFIG.quality.video_quality,
     embed_cover: raw?.embed_cover ?? DEFAULT_CONFIG.quality.embed_cover,
