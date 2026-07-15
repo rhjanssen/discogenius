@@ -9,12 +9,18 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { LockClosed24Regular } from "@fluentui/react-icons";
+import {
+  LockClosed24Regular as LockClosed24RegularBase,
+  LockClosed24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import { useToast } from "@/hooks/useToast";
 import {
   LOCALSTORAGE_APP_AUTH_REDIRECT_KEY,
   useAppAuth,
 } from "@/providers/appAuthContext";
+
+const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
 
 const useStyles = makeStyles({
   container: {

@@ -26,16 +26,26 @@ import {
 } from "@fluentui/react-components";
 import { MediaCard } from "@/components/cards/MediaCard";
 import {
-  ArrowDownload24Regular,
-  Eye24Regular,
-  EyeOff24Regular,
-  LockClosed24Regular,
-  LockOpen24Regular,
-  Info24Regular,
-  MusicNote224Regular,
-  ChevronDown16Regular,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  Eye24Regular as Eye24RegularBase,
+  EyeOff24Regular as EyeOff24RegularBase,
+  LockClosed24Regular as LockClosed24RegularBase,
+  LockOpen24Regular as LockOpen24RegularBase,
+  Info24Regular as Info24RegularBase,
+  MusicNote224Regular as MusicNote224RegularBase,
+  ChevronDown16Regular as ChevronDown16RegularBase,
   CheckmarkCircle16Filled,
-  FolderSync24Regular,
+  FolderSync24Regular as FolderSync24RegularBase,
+  ArrowDownload24Filled,
+  Eye24Filled,
+  EyeOff24Filled,
+  LockClosed24Filled,
+  LockOpen24Filled,
+  Info24Filled,
+  MusicNote224Filled,
+  ChevronDown16Filled,
+  FolderSync24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
@@ -57,6 +67,7 @@ import {
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import { useToast } from "@/hooks/useToast";
+import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
@@ -76,6 +87,16 @@ import {
   type RenamePreviewItem,
   type RetagPreviewItem,
 } from "@/components/mediafiles/FileMaintenanceDialogs";
+
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
+const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
+const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
+const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
+const Info24Regular = bundleIcon(Info24Filled, Info24RegularBase);
+const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
+const ChevronDown16Regular = bundleIcon(ChevronDown16Filled, ChevronDown16RegularBase);
+const FolderSync24Regular = bundleIcon(FolderSync24Filled, FolderSync24RegularBase);
 
 const useStyles = makeStyles({
   container: {
@@ -1243,6 +1264,13 @@ const AlbumPage = () => {
 
   /** Open track info dialog */
   const showIngestSkeleton = Boolean(activity?.scanning) && tracks.length === 0;
+  // Shared delayed-loading policy: don't flash the page skeleton for
+  // sub-second cached loads; known-long ingest syncs stay immediate.
+  const showPageSkeleton = useDelayedVisible(loading);
+
+  if (loading && !showPageSkeleton && !showIngestSkeleton) {
+    return null;
+  }
 
   if (loading || showIngestSkeleton) {
     return (

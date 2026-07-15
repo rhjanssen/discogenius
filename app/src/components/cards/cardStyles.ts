@@ -183,6 +183,39 @@ export const useCardStyles = makeStyles({
             top: tokens.spacingVerticalS,
         },
     },
+    qualityBadgeWithSelection: {
+        "@media (min-width: 768px)": {
+            top: "40px",
+        },
+    },
+
+    selectionIndicator: {
+        position: "absolute",
+        top: tokens.spacingVerticalS,
+        left: tokens.spacingHorizontalS,
+        zIndex: 4,
+        width: "24px",
+        height: "24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 0,
+        border: "none",
+        borderRadius: tokens.borderRadiusCircular,
+        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 82%, transparent)`,
+        color: tokens.colorNeutralForegroundInverted,
+        cursor: "pointer",
+        "&:hover": {
+            color: tokens.colorBrandForeground1,
+            backgroundColor: tokens.colorNeutralBackground1Hover,
+        },
+    },
+    selectionIndicatorSelected: {
+        color: tokens.colorBrandForeground1,
+        "&:hover": {
+            color: tokens.colorNeutralForegroundInverted,
+        },
+    },
 
     // Monitor indicator overlay (bottom-right of preview)
     monitorIndicator: {

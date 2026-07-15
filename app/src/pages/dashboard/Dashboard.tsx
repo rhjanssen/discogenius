@@ -17,20 +17,35 @@ import {
     makeStyles,
 } from "@fluentui/react-components";
 import {
-    ArrowSync24Regular,
-    ChevronDownRegular,
-    MoreHorizontal24Regular,
-    Play24Regular,
-    Pause24Regular,
-    MusicNote224Regular,
-    Person24Regular,
-    Album24Regular,
-    Video24Regular,
-    FolderSearch24Regular,
-    Filter24Regular,
-    ArrowSortDownLines24Regular,
-    ArrowDownload24Regular,
-    Warning24Regular,
+  ArrowSync24Regular as ArrowSync24RegularBase,
+  ChevronDownRegular as ChevronDownRegularBase,
+  MoreHorizontal24Regular as MoreHorizontal24RegularBase,
+  Play24Regular as Play24RegularBase,
+  Pause24Regular as Pause24RegularBase,
+  MusicNote224Regular as MusicNote224RegularBase,
+  Person24Regular as Person24RegularBase,
+  Album24Regular as Album24RegularBase,
+  Video24Regular as Video24RegularBase,
+  FolderSearch24Regular as FolderSearch24RegularBase,
+  Filter24Regular as Filter24RegularBase,
+  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  Warning24Regular as Warning24RegularBase,
+  ArrowSync24Filled,
+  ChevronDownFilled,
+  MoreHorizontal24Filled,
+  Play24Filled,
+  Pause24Filled,
+  MusicNote224Filled,
+  Person24Filled,
+  Album24Filled,
+  Video24Filled,
+  FolderSearch24Filled,
+  Filter24Filled,
+  ArrowSortDownLines24Filled,
+  ArrowDownload24Filled,
+  Warning24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
@@ -58,6 +73,21 @@ import {
     detailActionGlassButtonStyles,
     detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
+
+const ArrowSync24Regular = bundleIcon(ArrowSync24Filled, ArrowSync24RegularBase);
+const ChevronDownRegular = bundleIcon(ChevronDownFilled, ChevronDownRegularBase);
+const MoreHorizontal24Regular = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24RegularBase);
+const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
+const Pause24Regular = bundleIcon(Pause24Filled, Pause24RegularBase);
+const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
+const Person24Regular = bundleIcon(Person24Filled, Person24RegularBase);
+const Album24Regular = bundleIcon(Album24Filled, Album24RegularBase);
+const Video24Regular = bundleIcon(Video24Filled, Video24RegularBase);
+const FolderSearch24Regular = bundleIcon(FolderSearch24Filled, FolderSearch24RegularBase);
+const Filter24Regular = bundleIcon(Filter24Filled, Filter24RegularBase);
+const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const Warning24Regular = bundleIcon(Warning24Filled, Warning24RegularBase);
 
 const useStyles = makeStyles({
     container: {

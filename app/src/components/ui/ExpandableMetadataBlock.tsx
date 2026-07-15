@@ -1,6 +1,21 @@
 import type { ReactNode } from 'react';
-import { Button, Text, makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
-import { ChevronDown16Regular, ChevronUp16Regular } from '@fluentui/react-icons';
+import {
+  Button,
+  Text,
+  makeStyles,
+  mergeClasses,
+  tokens } from '@fluentui/react-components';
+import {
+  ChevronDown16Regular as ChevronDown16RegularBase,
+  ChevronUp16Regular as ChevronUp16RegularBase,
+  ChevronUp16Filled,
+  bundleIcon,
+  ChevronDown16Filled
+} from "@fluentui/react-icons";
+
+const ChevronDown16Regular = bundleIcon(ChevronDown16Filled, ChevronDown16RegularBase);
+
+const ChevronUp16Regular = bundleIcon(ChevronUp16Filled, ChevronUp16RegularBase);
 
 const useStyles = makeStyles({
     container: {

@@ -7,7 +7,14 @@ import {
   mergeClasses,
   tokens,
 } from "@fluentui/react-components";
-import { CheckmarkCircle16Regular, Play24Filled, Stop24Regular } from "@fluentui/react-icons";
+import {
+  CheckmarkCircle16Regular as CheckmarkCircle16RegularBase,
+  Play24Filled,
+  Stop24Regular as Stop24RegularBase,
+  CheckmarkCircle16Filled,
+  Stop24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import { api } from "@/services/api";
 import { DataGrid, useDataGridCellStyles, type DataGridColumn } from "@/components/DataGrid";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
@@ -21,6 +28,9 @@ import { formatDurationSeconds } from "@/utils/format";
 import { orderedQualityTags } from "@/utils/qualityTags";
 import { renderableArtworkUrl } from "@/utils/artwork";
 import type { TrackListItem } from "@/types/track-list";
+
+const CheckmarkCircle16Regular = bundleIcon(CheckmarkCircle16Filled, CheckmarkCircle16RegularBase);
+const Stop24Regular = bundleIcon(Stop24Filled, Stop24RegularBase);
 
 type TrackNumbering = "track" | "index";
 type TrackFiles = NonNullable<TrackListItem["files"]>;

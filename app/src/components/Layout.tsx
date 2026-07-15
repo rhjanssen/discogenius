@@ -9,9 +9,13 @@ import {
   mergeClasses,
 } from "@fluentui/react-components";
 import {
-  Settings24Regular,
-  DataUsage24Regular,
-  Library24Regular,
+  Settings24Regular as Settings24RegularBase,
+  DataUsage24Regular as DataUsage24RegularBase,
+  Library24Regular as Library24RegularBase,
+  Settings24Filled,
+  DataUsage24Filled,
+  Library24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 const logo = "/assets/images/logo.png";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
@@ -22,6 +26,10 @@ import { hexToRgb } from "@/ultrablur/color";
 import { OPEN_ACTIVITY_QUEUE_EVENT } from "@/utils/appEvents";
 import { useTheme } from "@/providers/themeContext";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+
+const Settings24Regular = bundleIcon(Settings24Filled, Settings24RegularBase);
+const DataUsage24Regular = bundleIcon(DataUsage24Filled, DataUsage24RegularBase);
+const Library24Regular = bundleIcon(Library24Filled, Library24RegularBase);
 
 function isStandaloneDisplayMode(): boolean {
   // iOS Safari uses `navigator.standalone`, other browsers support the media query.

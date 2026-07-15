@@ -1,8 +1,17 @@
 import React from "react";
 import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
-import { LockClosed24Regular, LockOpen24Regular } from "@fluentui/react-icons";
+import {
+  LockClosed24Regular as LockClosed24RegularBase,
+  LockOpen24Regular as LockOpen24RegularBase,
+  LockClosed24Filled,
+  LockOpen24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+
+const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
+const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
 
 
 interface LockToggleProps {

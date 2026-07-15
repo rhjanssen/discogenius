@@ -5,11 +5,24 @@
 import React, { memo, useCallback } from "react";
 import { Card, mergeClasses } from "@fluentui/react-components";
 import { useNavigate } from "react-router-dom";
-import { Eye16Regular, EyeOff16Regular } from "@fluentui/react-icons";
+import {
+  CheckmarkCircle24Filled,
+  Circle24Regular as Circle24RegularBase,
+  Eye16Regular as Eye16RegularBase,
+  EyeOff16Regular as EyeOff16RegularBase,
+  Circle24Filled,
+  Eye16Filled,
+  EyeOff16Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { DownloadOverlay } from "@/components/ui/DownloadOverlay";
 import { useCardStyles } from "./cardStyles";
+
+const Circle24Regular = bundleIcon(Circle24Filled, Circle24RegularBase);
+const Eye16Regular = bundleIcon(Eye16Filled, Eye16RegularBase);
+const EyeOff16Regular = bundleIcon(EyeOff16Filled, EyeOff16RegularBase);
 
 export interface MediaCardProps {
     /** Navigation path on click (optional if onClick is provided) */
@@ -57,6 +70,12 @@ export interface MediaCardProps {
     downloadProgress?: number;
     /** Download overlay error message */
     downloadError?: string;
+    /** Lidarr-style poster selection control shown while the parent collection is in selection mode. */
+    selection?: {
+        selected: boolean;
+        label: string;
+        onChange: (selected: boolean, shiftKey: boolean) => void;
+    };
 }
 
 export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
@@ -82,6 +101,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     downloadStatus,
     downloadProgress,
     downloadError,
+    selection,
     onClick,
 }) {
     const styles = useCardStyles();
@@ -90,28 +110,38 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     const [imageFailed, setImageFailed] = React.useState(false);
     const [fallbackFailed, setFallbackFailed] = React.useState(false);
     const [imageLoaded, setImageLoaded] = React.useState(false);
-    const isClickable = Boolean(onClick || to);
+    const isClickable = Boolean(onClick || to || selection);
     React.useEffect(() => {
         setImageFailed(false);
         setFallbackFailed(false);
         setImageLoaded(false);
     }, [imageUrl, fallbackImageUrl]);
 
-    const handleClick = useCallback(() => {
+    const handleClick = useCallback((event?: React.MouseEvent) => {
+        if (selection) {
+            selection.onChange(!selection.selected, Boolean(event?.shiftKey));
+            return;
+        }
         if (onClick) {
             onClick();
         } else if (to) {
             navigate(to);
         }
-    }, [navigate, to, onClick]);
+    }, [navigate, to, onClick, selection]);
 
     const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
+        if (selection) {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            selection.onChange(!selection.selected, event.shiftKey);
+            return;
+        }
         const activatesLink = Boolean(to) && event.key === "Enter";
         const activatesButton = !to && Boolean(onClick) && (event.key === "Enter" || event.key === " ");
         if (!activatesLink && !activatesButton) return;
         event.preventDefault();
         handleClick();
-    }, [handleClick, onClick, to]);
+    }, [handleClick, onClick, to, selection]);
 
     const handleMonitorClick = useCallback(
         (e: React.MouseEvent) => {
@@ -120,6 +150,11 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
         },
         [onMonitorToggle]
     );
+
+    const handleSelectionClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+        event.stopPropagation();
+        selection?.onChange(!selection.selected, event.shiftKey);
+    }, [selection]);
 
     const previewClass = videoAspect ? styles.videoPreview : styles.cardPreview;
     const primaryImageUrl = imageUrl || null;
@@ -139,7 +174,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
             )}
             onClick={isClickable ? handleClick : undefined}
             onKeyDown={isClickable ? handleKeyDown : undefined}
-            role={to ? "link" : onClick ? "button" : undefined}
+            role={selection ? "button" : to ? "link" : onClick ? "button" : undefined}
             tabIndex={isClickable ? 0 : undefined}
             aria-label={title}
         >
@@ -171,8 +206,20 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                     />
                 ) : null}
 
+                {selection ? (
+                    <button
+                        type="button"
+                        className={mergeClasses(styles.selectionIndicator, selection.selected && styles.selectionIndicatorSelected)}
+                        onClick={handleSelectionClick}
+                        aria-label={selection.label}
+                        aria-pressed={selection.selected}
+                    >
+                        {selection.selected ? <CheckmarkCircle24Filled /> : <Circle24Regular />}
+                    </button>
+                ) : null}
+
                 {(quality || qualityBadges) && (
-                    <div className={styles.qualityBadge}>
+                    <div className={mergeClasses(styles.qualityBadge, selection && styles.qualityBadgeWithSelection)}>
                         {qualityBadges ?? <QualityBadge quality={quality as string} size="small" />}
                     </div>
                 )}

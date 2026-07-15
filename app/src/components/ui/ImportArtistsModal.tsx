@@ -1,38 +1,74 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    Dialog,
-    DialogSurface,
-    DialogBody,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
+    Avatar,
+    Badge,
     Button,
-    Text,
-    Spinner,
-    ProgressBar,
+    Checkbox,
+    Dialog,
+    DialogActions,
+    DialogBody,
+    DialogContent,
+    DialogSurface,
+    DialogTitle,
     Field,
+    ProgressBar,
+    Spinner,
+    Text,
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
 import {
-    ArrowLeft24Regular,
-    ChevronRight20Regular,
-    PeopleTeam24Regular,
-    Heart24Regular,
-    MusicNote224Regular,
-    AppsList24Regular,
+  AppsList24Filled,
+  AppsList24Regular as AppsList24RegularBase,
+  ArrowLeft24Filled,
+  ArrowLeft24Regular as ArrowLeft24RegularBase,
+  CheckmarkCircle24Filled,
+  ChevronRight20Filled,
+  ChevronRight20Regular as ChevronRight20RegularBase,
+  Clock24Regular as Clock24RegularBase,
+  DismissCircle24Filled,
+  Heart24Filled,
+  Heart24Regular as Heart24RegularBase,
+  MusicNote224Filled,
+  MusicNote224Regular as MusicNote224RegularBase,
+  PeopleTeam24Filled,
+  PeopleTeam24Regular as PeopleTeam24RegularBase,
+  QuestionCircle24Regular as QuestionCircle24RegularBase,
+  Warning24Filled,
+  bundleIcon,
+  Clock24Filled,
+  QuestionCircle24Filled
 } from "@fluentui/react-icons";
-import { api, type ImportSource, type ImportSourceList } from "@/services/api";
+import { ProviderMark } from "@/components/ui/ProviderMark";
+import { useSelectableCollection } from "@/hooks/useSelectableCollection";
+import {
+    api,
+    type ImportPreviewArtist,
+    type ImportSource,
+    type ImportSourceList,
+    type ImportStreamHandle,
+    type StreamingProviderStatus,
+} from "@/services/api";
+
+const AppsList24Regular = bundleIcon(AppsList24Filled, AppsList24RegularBase);
+const ArrowLeft24Regular = bundleIcon(ArrowLeft24Filled, ArrowLeft24RegularBase);
+const ChevronRight20Regular = bundleIcon(ChevronRight20Filled, ChevronRight20RegularBase);
+const Clock24Regular = bundleIcon(Clock24Filled, Clock24RegularBase);
+const Heart24Regular = bundleIcon(Heart24Filled, Heart24RegularBase);
+const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
+const PeopleTeam24Regular = bundleIcon(PeopleTeam24Filled, PeopleTeam24RegularBase);
+const QuestionCircle24Regular = bundleIcon(QuestionCircle24Filled, QuestionCircle24RegularBase);
 
 interface ImportArtistsModalProps {
     open: boolean;
     onClose: () => void;
+    /** Settings can open a provider directly; Library intentionally omits this to show the provider picker. */
     providerId?: string | null;
-    /** Called after an import completes so the caller can refresh the library. */
     onImported?: () => void;
 }
 
-type Phase = "select-source" | "select-list" | "running" | "done";
+type Phase = "select-provider" | "select-source" | "select-list" | "preview" | "running" | "done";
+type ArtistResultStatus = "pending" | "running" | "succeeded" | "skipped" | "unmatched" | "failed";
 
 interface ImportProgress {
     total: number;
@@ -40,31 +76,59 @@ interface ImportProgress {
     added: number;
     monitoredExisting: number;
     skipped: number;
+    unmatched: number;
+    failed: number;
     currentName?: string;
     message?: string;
 }
 
+interface ImportProgressArtist extends ImportPreviewArtist {
+    status: ArtistResultStatus;
+    detail?: string;
+}
+
+const ArrowLeftIcon = ArrowLeft24Regular;
+const ChevronRightIcon = ChevronRight20Regular;
+const PeopleTeamIcon = PeopleTeam24Regular;
+const HeartIcon = Heart24Regular;
+const MusicNoteIcon = MusicNote224Regular;
+const AppsListIcon = AppsList24Regular;
+
 const CATEGORY_ICONS: Record<string, React.ReactElement> = {
-    "library-artists": <PeopleTeam24Regular />,
-    "followed-artists": <PeopleTeam24Regular />,
-    "favorite-tracks": <Heart24Regular />,
-    playlist: <AppsList24Regular />,
-    mix: <MusicNote224Regular />,
+    "library-artists": <PeopleTeamIcon />,
+    "followed-artists": <PeopleTeamIcon />,
+    "favorite-tracks": <HeartIcon />,
+    playlist: <AppsListIcon />,
+    mix: <MusicNoteIcon />,
 };
 
+const EMPTY_PROGRESS: ImportProgress = {
+    total: 0,
+    processed: 0,
+    added: 0,
+    monitoredExisting: 0,
+    skipped: 0,
+    unmatched: 0,
+    failed: 0,
+};
+
+const getPreviewArtistId = (artist: ImportPreviewArtist) => artist.providerId;
+
 const useStyles = makeStyles({
-    surface: { maxWidth: "560px", width: "calc(100vw - 32px)", maxHeight: "80vh" },
-    content: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalM, minHeight: "180px" },
+    surface: { maxWidth: "720px", width: "calc(100vw - 32px)", maxHeight: "88vh" },
+    content: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalM, minHeight: "220px" },
     sourceRow: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalM,
-        padding: tokens.spacingVerticalM,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        minHeight: "56px",
         borderRadius: tokens.borderRadiusMedium,
-        border: `1px solid ${tokens.colorNeutralStroke2}`,
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         cursor: "pointer",
         textAlign: "left",
         background: tokens.colorNeutralBackground1,
+        color: tokens.colorNeutralForeground1,
         width: "100%",
         "&:hover": { background: tokens.colorNeutralBackground1Hover },
         "&:disabled": { cursor: "not-allowed", opacity: 0.6 },
@@ -72,84 +136,224 @@ const useStyles = makeStyles({
     rowText: { display: "flex", flexDirection: "column", flex: 1, minWidth: 0 },
     rowTitle: { fontWeight: tokens.fontWeightSemibold },
     rowSubtitle: { color: tokens.colorNeutralForeground3, fontSize: tokens.fontSizeBase200 },
-    icon: { color: tokens.colorBrandForeground1, flexShrink: 0, display: "flex" },
+    icon: { color: tokens.colorBrandForeground1, flexShrink: 0 },
     thumb: { width: "40px", height: "40px", borderRadius: tokens.borderRadiusSmall, objectFit: "cover", flexShrink: 0 },
-    listScroll: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalXS, overflowY: "auto", maxHeight: "48vh" },
-    progressMeta: { display: "flex", justifyContent: "space-between", color: tokens.colorNeutralForeground3, fontSize: tokens.fontSizeBase200 },
-    counts: { display: "flex", gap: tokens.spacingHorizontalL, marginTop: tokens.spacingVerticalS },
-    countItem: { display: "flex", flexDirection: "column", alignItems: "center", flex: 1 },
-    countValue: { fontSize: tokens.fontSizeBase500, fontWeight: tokens.fontWeightSemibold },
-    countLabel: { color: tokens.colorNeutralForeground3, fontSize: tokens.fontSizeBase200 },
+    listScroll: { display: "flex", flexDirection: "column", gap: tokens.spacingVerticalXS, overflowY: "auto", maxHeight: "52vh" },
+    selectionToolbar: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: tokens.spacingHorizontalM,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        borderRadius: tokens.borderRadiusMedium,
+        backgroundColor: tokens.colorNeutralBackground3,
+    },
+    artistRow: {
+        display: "grid",
+        gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalS,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        borderRadius: tokens.borderRadiusMedium,
+        backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+    },
+    statusCell: { display: "flex", alignItems: "center", justifyContent: "center", width: "24px", minWidth: "24px" },
+    success: { color: tokens.colorPaletteGreenForeground2 },
+    warning: { color: tokens.colorPaletteYellowForeground1 },
+    error: { color: tokens.colorPaletteRedForeground2 },
+    pending: { color: tokens.colorNeutralForeground3 },
+    groupHeading: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingTop: tokens.spacingVerticalS,
+    },
+    progressMeta: { display: "flex", justifyContent: "space-between", gap: tokens.spacingHorizontalM, color: tokens.colorNeutralForeground3, fontSize: tokens.fontSizeBase200 },
+    counts: { display: "flex", gap: tokens.spacingHorizontalS, flexWrap: "wrap" },
+    countBadge: { flexShrink: 0 },
     empty: { color: tokens.colorNeutralForeground3, textAlign: "center", padding: tokens.spacingVerticalXXL },
 });
 
+function statusIcon(status: ArtistResultStatus, styles: ReturnType<typeof useStyles>) {
+    switch (status) {
+        case "running": return <Spinner size="extra-tiny" aria-label="Importing" />;
+        case "succeeded": return <CheckmarkCircle24Filled className={styles.success} />;
+        case "skipped": return <Warning24Filled className={styles.warning} />;
+        case "unmatched": return <QuestionCircle24Regular className={styles.warning} />;
+        case "failed": return <DismissCircle24Filled className={styles.error} />;
+        default: return <Clock24Regular className={styles.pending} />;
+    }
+}
+
 export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, onClose, providerId, onImported }) => {
     const styles = useStyles();
-    const [phase, setPhase] = useState<Phase>("select-source");
+    const [phase, setPhase] = useState<Phase>(providerId ? "select-source" : "select-provider");
+    const [providers, setProviders] = useState<StreamingProviderStatus[]>([]);
+    const [selectedProviderId, setSelectedProviderId] = useState<string | null>(providerId || null);
+    const [providerName, setProviderName] = useState<string | null>(null);
     const [sources, setSources] = useState<ImportSource[]>([]);
-    const [loadingSources, setLoadingSources] = useState(false);
-    const [sourcesError, setSourcesError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [activeSource, setActiveSource] = useState<ImportSource | null>(null);
-    const [progress, setProgress] = useState<ImportProgress>({ total: 0, processed: 0, added: 0, monitoredExisting: 0, skipped: 0 });
+    const [activeList, setActiveList] = useState<ImportSourceList | null>(null);
+    const [previewArtists, setPreviewArtists] = useState<ImportPreviewArtist[]>([]);
+    const [progressArtists, setProgressArtists] = useState<ImportProgressArtist[]>([]);
+    const [progress, setProgress] = useState<ImportProgress>(EMPTY_PROGRESS);
     const [runError, setRunError] = useState<string | null>(null);
-    const eventSourceRef = useRef<EventSource | null>(null);
+    const streamRef = useRef<ImportStreamHandle | null>(null);
+    const previewSelection = useSelectableCollection({ items: previewArtists, getItemId: getPreviewArtistId });
 
     const closeStream = useCallback(() => {
-        eventSourceRef.current?.close();
-        eventSourceRef.current = null;
+        streamRef.current?.close();
+        streamRef.current = null;
     }, []);
 
-    // Reset + (re)load sources whenever the modal opens.
+    const loadSources = useCallback(async (nextProviderId: string) => {
+        setLoading(true);
+        setLoadError(null);
+        try {
+            const response = await api.getImportSources(nextProviderId);
+            setSelectedProviderId(response.providerId);
+            setProviderName(response.providerName);
+            setSources(response.sources || []);
+            setPhase("select-source");
+        } catch (error: any) {
+            setLoadError(error?.message || "Failed to load import sources");
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
     useEffect(() => {
         if (!open) {
             closeStream();
             return;
         }
-        setPhase("select-source");
+        setPhase(providerId ? "select-source" : "select-provider");
+        setSelectedProviderId(providerId || null);
+        setProviderName(null);
+        setSources([]);
         setActiveSource(null);
+        setActiveList(null);
+        setPreviewArtists([]);
+        setProgressArtists([]);
+        setProgress(EMPTY_PROGRESS);
         setRunError(null);
-        setProgress({ total: 0, processed: 0, added: 0, monitoredExisting: 0, skipped: 0 });
-        setLoadingSources(true);
-        setSourcesError(null);
+        setLoadError(null);
+        previewSelection.clearSelection();
+
         let cancelled = false;
-        api.getImportSources(providerId)
-            .then((res) => { if (!cancelled) setSources(res.sources || []); })
-            .catch((err) => { if (!cancelled) setSourcesError(err?.message || "Failed to load import sources"); })
-            .finally(() => { if (!cancelled) setLoadingSources(false); });
+        if (providerId) {
+            void loadSources(providerId);
+        } else {
+            setLoading(true);
+            api.getStreamingProviders()
+                .then((response) => {
+                    if (cancelled) return;
+                    setProviders((response.providers || []).filter((provider) => provider.authenticated && provider.management?.canImportArtists));
+                })
+                .catch((error: any) => { if (!cancelled) setLoadError(error?.message || "Failed to load connected providers"); })
+                .finally(() => { if (!cancelled) setLoading(false); });
+        }
         return () => { cancelled = true; };
-    }, [open, providerId, closeStream]);
+        // The selection hook intentionally is not a reset trigger.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, providerId, closeStream, loadSources]);
 
     useEffect(() => () => closeStream(), [closeStream]);
 
-    const startImport = useCallback((source: ImportSource, list?: ImportSourceList) => {
+    useEffect(() => {
+        if (phase === "preview" && previewArtists.length > 0) {
+            previewSelection.selectAllVisible();
+        }
+        // Initialize once for each fetched preview, not after every checkbox change.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [phase, previewArtists]);
+
+    const openPreview = useCallback(async (source: ImportSource, list?: ImportSourceList) => {
+        if (!selectedProviderId) return;
+        setActiveSource(source);
+        setActiveList(list || null);
+        setPreviewArtists([]);
+        previewSelection.clearSelection();
+        setPhase("preview");
+        setLoading(true);
+        setLoadError(null);
+        try {
+            const response = await api.getImportPreview({
+                providerId: selectedProviderId,
+                category: source.category,
+                listId: list?.id,
+            });
+            setPreviewArtists(response.artists || []);
+        } catch (error: any) {
+            setLoadError(error?.message || "Failed to preview artists");
+        } finally {
+            setLoading(false);
+        }
+    }, [previewSelection, selectedProviderId]);
+
+    const updateProgressArtist = useCallback((providerArtistId: unknown, update: Partial<ImportProgressArtist>) => {
+        const id = String(providerArtistId || "");
+        setProgressArtists((items) => items.map((item) => item.providerId === id ? { ...item, ...update } : item));
+    }, []);
+
+    const startImport = useCallback(() => {
+        if (!activeSource || !selectedProviderId || previewSelection.selectedCount === 0) return;
+        const selected = previewSelection.selectedItems;
+        setProgressArtists(selected.map((artist) => ({ ...artist, status: "pending" })));
         setRunError(null);
-        setProgress({ total: 0, processed: 0, added: 0, monitoredExisting: 0, skipped: 0, message: "Starting…" });
+        setProgress({ ...EMPTY_PROGRESS, total: selected.length, message: "Starting…" });
         setPhase("running");
         closeStream();
-        eventSourceRef.current = api.createImportStream(
-            { category: source.category, listId: list?.id, label: list?.title || source.label, providerId },
+        streamRef.current = api.createImportStream(
+            {
+                category: activeSource.category,
+                listId: activeList?.id,
+                label: activeList?.title || activeSource.label,
+                providerId: selectedProviderId,
+                artistIds: selected.map((artist) => artist.providerId),
+            },
             (event, data) => {
+                const terminalItem = event === "artist-added" || event === "artist-updated" || event === "artist-skipped" || event === "artist-failed";
                 switch (event) {
                     case "status":
-                        setProgress((p) => ({ ...p, message: data.message }));
+                        setProgress((current) => ({ ...current, message: data.message }));
                         break;
                     case "total":
-                        setProgress((p) => ({ ...p, total: Number(data.total) || 0 }));
+                        setProgress((current) => ({ ...current, total: Number(data.total) || current.total }));
                         break;
                     case "artist-progress":
-                        setProgress((p) => ({ ...p, processed: Number(data.progress) || p.processed, currentName: data.name }));
+                        setProgress((current) => ({ ...current, currentName: data.name }));
+                        updateProgressArtist(data.provider_id, { status: "running" });
                         break;
                     case "artist-added":
-                        setProgress((p) => ({ ...p, added: Number(data.added) || p.added + 1 }));
+                        setProgress((current) => ({ ...current, added: Number(data.added) || current.added + 1 }));
+                        updateProgressArtist(data.provider_id, { status: "succeeded", detail: "Added to library" });
                         break;
                     case "artist-updated":
-                        setProgress((p) => ({ ...p, monitoredExisting: Number(data.updated) || p.monitoredExisting + 1 }));
+                        setProgress((current) => ({ ...current, monitoredExisting: Number(data.updated) || current.monitoredExisting + 1 }));
+                        updateProgressArtist(data.provider_id, { status: "succeeded", detail: "Already in library; monitoring enabled" });
                         break;
-                    case "artist-skipped":
-                        setProgress((p) => ({ ...p, skipped: Number(data.skipped) || p.skipped + 1 }));
+                    case "artist-skipped": {
+                        const unmatched = String(data.reason || "").startsWith("musicbrainz_");
+                        setProgress((current) => ({
+                            ...current,
+                            skipped: unmatched ? current.skipped : current.skipped + 1,
+                            unmatched: unmatched ? current.unmatched + 1 : current.unmatched,
+                        }));
+                        updateProgressArtist(data.provider_id, {
+                            status: unmatched ? "unmatched" : "skipped",
+                            detail: unmatched ? "No unambiguous MusicBrainz match" : "Already monitored",
+                        });
+                        break;
+                    }
+                    case "artist-failed":
+                        setProgress((current) => ({ ...current, failed: current.failed + 1 }));
+                        updateProgressArtist(data.provider_id, { status: "failed", detail: data.error || "Import failed" });
                         break;
                     case "complete":
-                        setProgress((p) => ({ ...p, message: data.message, processed: p.total || p.processed }));
+                        setProgress((current) => ({ ...current, message: data.message, processed: current.total }));
                         setPhase("done");
                         closeStream();
                         onImported?.();
@@ -160,68 +364,118 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
                         closeStream();
                         break;
                 }
+                if (terminalItem) {
+                    setProgress((current) => ({ ...current, processed: Math.min(current.total, current.processed + 1) }));
+                }
             },
-            (err) => {
-                setRunError(err.message || "Stream connection failed");
+            (error) => {
+                setRunError(error.message || "Stream connection failed");
                 setPhase("done");
                 closeStream();
             },
         );
-    }, [providerId, closeStream, onImported]);
+    }, [activeList, activeSource, closeStream, onImported, previewSelection.selectedCount, previewSelection.selectedItems, selectedProviderId, updateProgressArtist]);
 
     const handleSourceClick = (source: ImportSource) => {
-        if (source.requiresListSelection) {
-            setActiveSource(source);
-            setPhase("select-list");
-        } else {
-            startImport(source);
-        }
+        setActiveSource(source);
+        if (source.requiresListSelection) setPhase("select-list");
+        else void openPreview(source);
+    };
+
+    const goBack = () => {
+        setLoadError(null);
+        if (phase === "select-source" && !providerId) setPhase("select-provider");
+        else if (phase === "select-list") setPhase("select-source");
+        else if (phase === "preview") setPhase(activeSource?.requiresListSelection ? "select-list" : "select-source");
+    };
+
+    const renderProviderPicker = () => {
+        if (loading) return <div className={styles.empty}><Spinner label="Loading connected providers…" /></div>;
+        if (providers.length === 0) return <Text className={styles.empty}>No connected provider supports artist import.</Text>;
+        return providers.map((provider) => (
+            <button key={provider.id} className={styles.sourceRow} onClick={() => void loadSources(provider.id)}>
+                <ProviderMark provider={provider.id} size={28} />
+                <span className={styles.rowText}>
+                    <Text className={styles.rowTitle}>{provider.name}</Text>
+                    <Text className={styles.rowSubtitle}>Choose what to import from {provider.name}</Text>
+                </span>
+                <ChevronRightIcon className={styles.icon} />
+            </button>
+        ));
     };
 
     const renderSourceList = () => {
-        if (loadingSources) {
-            return <div className={styles.empty}><Spinner label="Loading import sources…" /></div>;
-        }
-        if (sourcesError) {
-            return <Text className={styles.empty}>{sourcesError}</Text>;
-        }
-        if (sources.length === 0) {
-            return <Text className={styles.empty}>No import sources available. Connect a streaming service first.</Text>;
-        }
+        if (loading) return <div className={styles.empty}><Spinner label="Loading import sources…" /></div>;
+        if (sources.length === 0) return <Text className={styles.empty}>No import sources are available for this provider.</Text>;
         return sources.map((source) => (
             <button key={source.category} className={styles.sourceRow} onClick={() => handleSourceClick(source)}>
-                <span className={styles.icon}>{CATEGORY_ICONS[source.category] ?? <AppsList24Regular />}</span>
+                <span className={styles.icon}>{CATEGORY_ICONS[source.category] ?? <AppsListIcon />}</span>
                 <span className={styles.rowText}>
                     <Text className={styles.rowTitle}>{source.label}</Text>
                     {source.description ? <Text className={styles.rowSubtitle}>{source.description}</Text> : null}
                 </span>
-                {source.requiresListSelection ? <ChevronRight20Regular className={styles.icon} /> : null}
+                <ChevronRightIcon className={styles.icon} />
             </button>
         ));
     };
 
     const renderListPicker = () => {
         const lists = activeSource?.lists ?? [];
-        if (lists.length === 0) {
-            return <Text className={styles.empty}>No {activeSource?.label.toLowerCase()} found.</Text>;
-        }
+        if (lists.length === 0) return <Text className={styles.empty}>No {activeSource?.label.toLowerCase()} found.</Text>;
+        return <div className={styles.listScroll}>{lists.map((list) => (
+            <button key={list.id} className={styles.sourceRow} onClick={() => activeSource && void openPreview(activeSource, list)}>
+                {list.image ? <img className={styles.thumb} src={list.image} alt="" /> : <Avatar name={list.title} shape="square" size={40} />}
+                <span className={styles.rowText}>
+                    <Text className={styles.rowTitle}>{list.title}</Text>
+                    {list.subtitle ? <Text className={styles.rowSubtitle}>{list.subtitle}</Text> : null}
+                </span>
+                <ChevronRightIcon className={styles.icon} />
+            </button>
+        ))}</div>;
+    };
+
+    const renderPreview = () => {
+        if (loading) return <div className={styles.empty}><Spinner label="Fetching artists…" /></div>;
+        if (previewArtists.length === 0) return <Text className={styles.empty}>No artists were found in this source.</Text>;
         return (
             <div className={styles.listScroll}>
-                {lists.map((list) => (
-                    <button key={list.id} className={styles.sourceRow} onClick={() => activeSource && startImport(activeSource, list)}>
-                        {list.image ? <img className={styles.thumb} src={list.image} alt="" /> : null}
-                        <span className={styles.rowText}>
-                            <Text className={styles.rowTitle}>{list.title}</Text>
-                            {list.subtitle ? <Text className={styles.rowSubtitle}>{list.subtitle}</Text> : null}
-                        </span>
-                    </button>
+                <div className={styles.selectionToolbar}>
+                    <Checkbox
+                        label="Select all artists"
+                        checked={previewSelection.allVisibleSelected ? true : previewSelection.someVisibleSelected ? "mixed" : false}
+                        onChange={(_, data) => data.checked === true ? previewSelection.selectAllVisible() : previewSelection.clearSelection()}
+                    />
+                    <Text size={200}>{previewSelection.selectedCount} of {previewArtists.length} selected</Text>
+                </div>
+                {previewArtists.map((artist) => (
+                    <div key={artist.providerId} className={styles.artistRow}>
+                        <Checkbox
+                            aria-label={`Select ${artist.name}`}
+                            checked={previewSelection.selectedRowIds.includes(artist.providerId)}
+                            onChange={(event, data) => previewSelection.toggleItem(artist.providerId, data.checked === true, {
+                                range: Boolean((event.nativeEvent as MouseEvent).shiftKey),
+                            })}
+                        />
+                        <Avatar name={artist.name} image={artist.picture ? { src: artist.picture } : undefined} size={32} />
+                        <span className={styles.rowText}><Text className={styles.rowTitle}>{artist.name}</Text></span>
+                    </div>
                 ))}
             </div>
         );
     };
 
+    const groupedProgress = useMemo(() => {
+        const order: ArtistResultStatus[] = phase === "done"
+            ? ["succeeded", "skipped", "unmatched", "failed", "running", "pending"]
+            : ["running", "pending", "succeeded", "skipped", "unmatched", "failed"];
+        return order.map((status) => ({ status, items: progressArtists.filter((artist) => artist.status === status) })).filter((group) => group.items.length > 0);
+    }, [phase, progressArtists]);
+
     const renderProgress = () => {
         const value = progress.total > 0 ? Math.min(1, progress.processed / progress.total) : undefined;
+        const labels: Record<ArtistResultStatus, string> = {
+            pending: "Waiting", running: "Importing", succeeded: "Succeeded", skipped: "Skipped", unmatched: "Not matched", failed: "Failed",
+        };
         return (
             <>
                 <Field validationMessage={runError || undefined} validationState={runError ? "error" : "none"}>
@@ -229,34 +483,69 @@ export const ImportArtistsModal: React.FC<ImportArtistsModalProps> = ({ open, on
                 </Field>
                 <div className={styles.progressMeta}>
                     <Text>{progress.currentName || progress.message || "Working…"}</Text>
-                    {progress.total > 0 ? <Text>{progress.processed}/{progress.total}</Text> : null}
+                    <Text>{progress.processed}/{progress.total}</Text>
                 </div>
                 <div className={styles.counts}>
-                    <div className={styles.countItem}><Text className={styles.countValue}>{progress.added}</Text><Text className={styles.countLabel}>Added</Text></div>
-                    <div className={styles.countItem}><Text className={styles.countValue}>{progress.monitoredExisting}</Text><Text className={styles.countLabel}>Already in library</Text></div>
-                    <div className={styles.countItem}><Text className={styles.countValue}>{progress.skipped}</Text><Text className={styles.countLabel}>Skipped</Text></div>
+                    <Badge className={styles.countBadge} appearance="outline" color="success">{progress.added + progress.monitoredExisting} succeeded</Badge>
+                    <Badge className={styles.countBadge} appearance="outline" color="warning">{progress.skipped} skipped</Badge>
+                    <Badge className={styles.countBadge} appearance="outline" color="warning">{progress.unmatched} not matched</Badge>
+                    <Badge className={styles.countBadge} appearance="outline" color="danger">{progress.failed} failed</Badge>
+                </div>
+                <div className={styles.listScroll}>
+                    {groupedProgress.map((group) => (
+                        <React.Fragment key={group.status}>
+                            <div className={styles.groupHeading}>
+                                <Text weight="semibold">{labels[group.status]}</Text>
+                                <Badge appearance="outline">{group.items.length}</Badge>
+                            </div>
+                            {group.items.map((artist) => (
+                                <div key={artist.providerId} className={styles.artistRow}>
+                                    <span className={styles.statusCell}>{statusIcon(artist.status, styles)}</span>
+                                    <Avatar name={artist.name} image={artist.picture ? { src: artist.picture } : undefined} size={32} />
+                                    <span className={styles.rowText}>
+                                        <Text className={styles.rowTitle}>{artist.name}</Text>
+                                        {artist.detail ? <Text className={styles.rowSubtitle}>{artist.detail}</Text> : null}
+                                    </span>
+                                </div>
+                            ))}
+                        </React.Fragment>
+                    ))}
                 </div>
             </>
         );
     };
 
-    const title = phase === "select-list" && activeSource ? activeSource.label : "Import artists";
+    const title = phase === "select-provider"
+        ? "Import artists"
+        : phase === "select-source"
+            ? `Import from ${providerName || "provider"}`
+            : phase === "select-list" && activeSource
+                ? activeSource.label
+                : phase === "preview"
+                    ? `Select artists from ${activeList?.title || activeSource?.label || "source"}`
+                    : `Importing from ${activeList?.title || activeSource?.label || providerName || "provider"}`;
+    const canGoBack = phase === "select-source" || phase === "select-list" || phase === "preview";
 
     return (
-        <Dialog open={open} onOpenChange={(_, d) => { if (!d.open) onClose(); }}>
+        <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) onClose(); }}>
             <DialogSurface className={styles.surface}>
                 <DialogBody>
                     <DialogTitle>{title}</DialogTitle>
                     <DialogContent className={styles.content}>
+                        {loadError ? <Field validationMessage={loadError} validationState="error" /> : null}
+                        {phase === "select-provider" && renderProviderPicker()}
                         {phase === "select-source" && renderSourceList()}
                         {phase === "select-list" && renderListPicker()}
+                        {phase === "preview" && renderPreview()}
                         {(phase === "running" || phase === "done") && renderProgress()}
                     </DialogContent>
                     <DialogActions>
-                        {phase === "select-list" ? (
-                            <Button appearance="secondary" icon={<ArrowLeft24Regular />} onClick={() => setPhase("select-source")}>Back</Button>
-                        ) : null}
-                        {phase === "done" ? (
+                        {canGoBack ? <Button appearance="secondary" icon={<ArrowLeftIcon />} onClick={goBack}>Back</Button> : null}
+                        {phase === "preview" ? (
+                            <Button appearance="primary" disabled={previewSelection.selectedCount === 0 || loading} onClick={startImport}>
+                                Import selected ({previewSelection.selectedCount})
+                            </Button>
+                        ) : phase === "done" ? (
                             <Button appearance="primary" onClick={onClose}>Done</Button>
                         ) : (
                             <Button appearance="secondary" onClick={onClose}>{phase === "running" ? "Run in background" : "Cancel"}</Button>

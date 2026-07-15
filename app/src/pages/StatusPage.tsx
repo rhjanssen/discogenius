@@ -16,9 +16,13 @@ import {
     type UnmatchedArtistTarget,
 } from "@/components/settings/UnmatchedArtistMatchDialog";
 import {
-    CheckmarkCircle16Regular,
-    ErrorCircle16Regular,
-    Warning16Regular,
+  CheckmarkCircle16Regular as CheckmarkCircle16RegularBase,
+  ErrorCircle16Regular as ErrorCircle16RegularBase,
+  Warning16Regular as Warning16RegularBase,
+  CheckmarkCircle16Filled,
+  ErrorCircle16Filled,
+  Warning16Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { api } from "@/services/api";
@@ -28,6 +32,10 @@ import type {
     HealthOverallStatusContract,
 } from "@contracts/system-status";
 import type { ProviderDiagnosticResult, ProviderDiagnosticsResponse, StreamingProviderStatus } from "@/services/api";
+
+const CheckmarkCircle16Regular = bundleIcon(CheckmarkCircle16Filled, CheckmarkCircle16RegularBase);
+const ErrorCircle16Regular = bundleIcon(ErrorCircle16Filled, ErrorCircle16RegularBase);
+const Warning16Regular = bundleIcon(Warning16Filled, Warning16RegularBase);
 
 const useStyles = makeStyles({
     container: {

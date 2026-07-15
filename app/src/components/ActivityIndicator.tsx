@@ -7,10 +7,16 @@ import {
     mergeClasses,
 } from "@fluentui/react-components";
 import {
-    ArrowDownload24Regular,
-    ErrorCircle24Regular,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  ErrorCircle24Regular as ErrorCircle24RegularBase,
+  ArrowDownload24Filled,
+  ErrorCircle24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { useStatusOverview } from "@/hooks/useStatusOverview";
+
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const ErrorCircle24Regular = bundleIcon(ErrorCircle24Filled, ErrorCircle24RegularBase);
 
 const useStyles = makeStyles({
     container: {

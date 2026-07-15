@@ -1,19 +1,35 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState } from 'react';
 import {
     Badge,
-    Button,
-    Text,
-    makeStyles,
-    mergeClasses,
-    tokens,
-} from '@fluentui/react-components';
+  Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Text,
+  makeStyles,
+  mergeClasses,
+  tokens,
+  } from '@fluentui/react-components';
 import {
-    Delete24Regular,
-    DocumentSearch24Regular,
-    Eye24Regular,
-    EyeOff24Regular,
-    Search24Regular,
-} from '@fluentui/react-icons';
+  Delete24Regular as Delete24RegularBase,
+  DocumentSearch24Regular as DocumentSearch24RegularBase,
+  Eye24Regular as Eye24RegularBase,
+  EyeOff24Regular as EyeOff24RegularBase,
+  Search24Regular as Search24RegularBase,
+  DocumentSearch24Filled,
+  Eye24Filled,
+  EyeOff24Filled,
+  Search24Filled,
+  bundleIcon,
+  Delete24Filled
+} from "@fluentui/react-icons";
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DataGrid, type DataGridColumn } from '@/components/DataGrid';
 import { MediaTypeBadge } from '@/components/ui/MediaTypeBadge';
@@ -26,6 +42,13 @@ import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
 import { isSpatialAudioQuality } from '@/utils/spatialAudio';
 import ManualImportModal from './ManualImportModal';
+
+const Delete24Regular = bundleIcon(Delete24Filled, Delete24RegularBase);
+
+const DocumentSearch24Regular = bundleIcon(DocumentSearch24Filled, DocumentSearch24RegularBase);
+const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
+const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
+const Search24Regular = bundleIcon(Search24Filled, Search24RegularBase);
 
 const GROUP_MIN_FILES = 2;
 const GROUP_MIN_RATIO = 0.6;
@@ -701,21 +724,37 @@ const ManualImportTab = () => {
         return `${label} ${sortDirection === 'asc' ? '↑' : '↓'}`;
     }, [sortDirection, sortKey]);
 
-    const confirmDelete = useCallback((count: number) => window.confirm(`Delete ${count} file${count === 1 ? '' : 's'} from disk?`), []);
+    // Fluent confirmation dialog state for the destructive disk delete; a
+    // single-file row deletes through the single-item mutation, everything
+    // else routes through the bulk mutation.
+    const [pendingDelete, setPendingDelete] = useState<{ single?: number; ids?: number[] } | null>(null);
+    const pendingDeleteCount = pendingDelete ? (pendingDelete.single !== undefined ? 1 : pendingDelete.ids?.length ?? 0) : 0;
+
+    const confirmPendingDelete = useCallback(() => {
+        if (!pendingDelete) return;
+        if (pendingDelete.single !== undefined) {
+            actionMutation.mutate({ id: pendingDelete.single, action: 'delete' });
+        } else if (pendingDelete.ids?.length) {
+            bulkActionMutation.mutate({ ids: pendingDelete.ids, action: 'delete' });
+        }
+        setPendingDelete(null);
+    }, [actionMutation, bulkActionMutation, pendingDelete]);
 
     const runBulkAction = useCallback((ids: number[], action: 'ignore' | 'unignore' | 'delete') => {
         if (ids.length === 0) {
             return;
         }
-        if (action === 'delete' && !confirmDelete(ids.length)) {
+        if (action === 'delete') {
+            setPendingDelete({ ids });
             return;
         }
         bulkActionMutation.mutate({ ids, action });
-    }, [bulkActionMutation, confirmDelete]);
+    }, [bulkActionMutation]);
 
     const runRowAction = useCallback((row: DisplayRow, action: 'ignore' | 'unignore' | 'delete') => {
         if (row.files.length === 1) {
-            if (action === 'delete' && !confirmDelete(1)) {
+            if (action === 'delete') {
+                setPendingDelete({ single: row.anchorFile.id });
                 return;
             }
             actionMutation.mutate({ id: row.anchorFile.id, action });
@@ -723,7 +762,7 @@ const ManualImportTab = () => {
         }
 
         runBulkAction(row.files.map((file) => file.id), action);
-    }, [actionMutation, confirmDelete, runBulkAction]);
+    }, [actionMutation, runBulkAction]);
 
     const getKindBadgeLabel = useCallback((row: DisplayRow) => {
         if (row.kind === 'group') {
@@ -1060,6 +1099,30 @@ const ManualImportTab = () => {
                 initialFile={manualImportFile}
                 allFiles={fileList}
             />
+
+            <Dialog open={pendingDelete !== null} onOpenChange={(_, data) => { if (!data.open) setPendingDelete(null); }}>
+                <DialogSurface>
+                    <DialogBody>
+                        <DialogTitle>Delete {pendingDeleteCount === 1 ? 'file' : `${pendingDeleteCount} files`} from disk?</DialogTitle>
+                        <DialogContent>
+                            This permanently removes the {pendingDeleteCount === 1 ? 'file' : 'files'} from the
+                            library folder. This cannot be undone.
+                        </DialogContent>
+                        <DialogActions>
+                            <Button appearance="secondary" onClick={() => setPendingDelete(null)}>Cancel</Button>
+                            <Button
+                                appearance="primary"
+                                className={styles.destructiveButton}
+                                icon={<Delete24Regular />}
+                                disabled={mutationPending}
+                                onClick={confirmPendingDelete}
+                            >
+                                Delete
+                            </Button>
+                        </DialogActions>
+                    </DialogBody>
+                </DialogSurface>
+            </Dialog>
         </div>
     );
 };

@@ -17,23 +17,43 @@ import {
   mergeClasses,
 } from "@fluentui/react-components";
 import {
-  ArrowSync24Regular,
-  Search24Regular,
-  ArrowDownload24Regular,
-  Eye24Regular,
-  EyeOff24Regular,
-  ChevronDownRegular,
-  Grid24Regular,
-  AppsListDetail24Regular,
-  Speaker224Regular,
-  ArrowSortUp24Regular,
-  ArrowSortDown24Regular,
-  ArrowSortDownLines24Regular,
-  ArrowImport24Regular,
-  MusicNote224Regular,
-  Person24Regular,
-  LockClosed24Regular,
-  LockOpen24Regular,
+  ArrowSync24Regular as ArrowSync24RegularBase,
+  Search24Regular as Search24RegularBase,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  Eye24Regular as Eye24RegularBase,
+  EyeOff24Regular as EyeOff24RegularBase,
+  ChevronDownRegular as ChevronDownRegularBase,
+  Grid24Regular as Grid24RegularBase,
+  AppsListDetail24Regular as AppsListDetail24RegularBase,
+  Speaker224Regular as Speaker224RegularBase,
+  ArrowSortUp24Regular as ArrowSortUp24RegularBase,
+  ArrowSortDown24Regular as ArrowSortDown24RegularBase,
+  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
+  ArrowImport24Regular as ArrowImport24RegularBase,
+  MusicNote224Regular as MusicNote224RegularBase,
+  Person24Regular as Person24RegularBase,
+  LockClosed24Regular as LockClosed24RegularBase,
+  LockOpen24Regular as LockOpen24RegularBase,
+  CheckmarkCircle24Filled,
+  CheckmarkCircle24Regular as CheckmarkCircle24RegularBase,
+  bundleIcon,
+  ArrowSync24Filled,
+  Search24Filled,
+  ArrowDownload24Filled,
+  Eye24Filled,
+  EyeOff24Filled,
+  ChevronDownFilled,
+  Grid24Filled,
+  AppsListDetail24Filled,
+  Speaker224Filled,
+  ArrowSortUp24Filled,
+  ArrowSortDown24Filled,
+  ArrowSortDownLines24Filled,
+  ArrowImport24Filled,
+  MusicNote224Filled,
+  Person24Filled,
+  LockClosed24Filled,
+  LockOpen24Filled
 } from "@fluentui/react-icons";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -58,6 +78,7 @@ import { useTracks } from "@/hooks/useTracks";
 import { useVideos } from "@/hooks/useVideos";
 import { useQueueDetails } from "@/hooks/useQueueDetails";
 import { useToast } from "@/hooks/useToast";
+import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { DataGrid, useDataGridCellStyles } from "@/components/DataGrid";
 import type { DataGridColumn } from "@/components/DataGrid";
@@ -76,6 +97,26 @@ import {
 } from "@/utils/appEvents";
 import { formatDurationSeconds } from "@/utils/format";
 import { CardGridSkeleton, DataGridSkeleton } from "@/components/ui/LoadingSkeletons";
+import { collectionContentInset } from "@/components/ui/sharedLayoutStyles";
+
+const ArrowSync24Regular = bundleIcon(ArrowSync24Filled, ArrowSync24RegularBase);
+const Search24Regular = bundleIcon(Search24Filled, Search24RegularBase);
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
+const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
+const ChevronDownRegular = bundleIcon(ChevronDownFilled, ChevronDownRegularBase);
+const Grid24Regular = bundleIcon(Grid24Filled, Grid24RegularBase);
+const AppsListDetail24Regular = bundleIcon(AppsListDetail24Filled, AppsListDetail24RegularBase);
+const Speaker224Regular = bundleIcon(Speaker224Filled, Speaker224RegularBase);
+const ArrowSortUp24Regular = bundleIcon(ArrowSortUp24Filled, ArrowSortUp24RegularBase);
+const ArrowSortDown24Regular = bundleIcon(ArrowSortDown24Filled, ArrowSortDown24RegularBase);
+const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
+const ArrowImport24Regular = bundleIcon(ArrowImport24Filled, ArrowImport24RegularBase);
+const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
+const Person24Regular = bundleIcon(Person24Filled, Person24RegularBase);
+const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
+const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
+const CheckmarkCircle24Regular = bundleIcon(CheckmarkCircle24Filled, CheckmarkCircle24RegularBase);
 
 const useStyles = makeStyles({
   container: {
@@ -166,10 +207,7 @@ const useStyles = makeStyles({
     },
   },
   contentPadding: {
-    padding: tokens.spacingHorizontalXXS,
-    "@media (min-width: 768px)": {
-      padding: tokens.spacingHorizontalS,
-    },
+    ...collectionContentInset,
   },
   pageBody: {
     display: "flex",
@@ -233,6 +271,7 @@ const LIBRARY_TABS = [
 
 const LIBRARY_SETTINGS_STORAGE_KEY = "discogenius_library_settings";
 const LIBRARY_SETTINGS_VERSION = 2;
+const SelectItemsIcon = CheckmarkCircle24Regular;
 
 function loadPersistedLibrarySettings() {
   try {
@@ -307,6 +346,7 @@ const Library = () => {
   const [statusFilters, setStatusFilters] = useState<StatusFilters>(
     persistedSettings?.statusFilters ?? defaultStatusFilters
   );
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
   const activeMonitoredCount = stats?.[selectedTab as "artists" | "albums" | "tracks" | "videos"]?.monitored;
   const effectiveStatusFilters = useMemo<StatusFilters>(() => (
     activeMonitoredCount === 0 && statusFilters.onlyMonitored && !statusFilters.onlyUnmonitored
@@ -457,14 +497,14 @@ const Library = () => {
   const clearVideoSelection = videoSelection.clearSelection;
 
   useEffect(() => {
-    if (viewMode !== "list") {
+    if (!isSelectionMode) {
       clearArtistSelection();
       clearAlbumSelection();
       clearTrackSelection();
       clearVideoSelection();
     }
   }, [
-    viewMode,
+    isSelectionMode,
     clearArtistSelection,
     clearAlbumSelection,
     clearTrackSelection,
@@ -835,6 +875,11 @@ const Library = () => {
     enabled: activeInfiniteScroll.itemCount > 0 && !activeInfiniteScroll.initialLoading,
   });
 
+  // Shared delayed-loading policy: skeletons only after the active tab's
+  // initial load persists past the grace window, never for sub-second
+  // cached responses.
+  const showLoadingSkeleton = useDelayedVisible(activeInfiniteScroll.initialLoading);
+
   const importableFollowedProviders = useMemo(
     () => (streamingProviders?.providers ?? []).filter((provider: StreamingProviderStatus) => (
       provider.authenticated && (provider.management?.canImportArtists || provider.capabilities.followedArtists)
@@ -843,6 +888,10 @@ const Library = () => {
   );
 
   const importProvider = importableFollowedProviders[0];
+
+  const toggleSelectionMode = useCallback(() => {
+    setIsSelectionMode((current) => !current);
+  }, []);
 
   const renderEmptyLibraryAction = () => (
     <Button
@@ -867,7 +916,7 @@ const Library = () => {
         imageUrl={imageUrl}
         alt={artist.name}
         title={artist.name}
-        subtitle={typeof albumCount === "number" ? `${albumCount} releases` : "Artist"}
+        subtitle={typeof albumCount === "number" ? `${albumCount} ${albumCount === 1 ? "release" : "releases"}` : "Artist"}
         monitored={artist.is_monitored}
         onMonitorToggle={() => toggleArtistMonitored(artist.id, !artist.is_monitored)}
         placeholder={
@@ -881,6 +930,11 @@ const Library = () => {
         downloadStatus={itemProgress?.state}
         downloadProgress={itemProgress?.progress}
         downloadError={itemProgress?.statusMessage}
+        selection={isSelectionMode ? {
+          selected: artistSelection.selectedRowIds.includes(artist.id),
+          label: `Select ${artist.name}`,
+          onChange: (selected, shiftKey) => artistSelection.toggleItem(artist.id, selected, { range: shiftKey }),
+        } : undefined}
       />
     );
   };
@@ -1012,13 +1066,13 @@ const Library = () => {
             },
             {
               key: "curate",
-              label: "Search missing",
+              label: "Curate artist",
               icon: <ArrowSortDownLines24Regular />,
               onClick: (event) => handleArtistCurate(event, artist),
             },
             {
               key: "download",
-              label: "Download monitored",
+              label: "Download missing",
               icon: <ArrowDownload24Regular />,
               onClick: (event) => handleArtistDownload(event, artist),
             },
@@ -1091,6 +1145,11 @@ const Library = () => {
         downloadStatus={itemProgress?.state}
         downloadProgress={itemProgress?.progress}
         downloadError={itemProgress?.statusMessage}
+        selection={isSelectionMode ? {
+          selected: albumSelection.selectedRowIds.includes(album.id),
+          label: `Select ${album.title}`,
+          onChange: (selected, shiftKey) => albumSelection.toggleItem(album.id, selected, { range: shiftKey }),
+        } : undefined}
       />
     );
   };
@@ -1361,15 +1420,17 @@ const Library = () => {
         <ImportArtistsModal
           open={importModalOpen}
           onClose={() => setImportModalOpen(false)}
-          providerId={importProvider?.id}
           onImported={() => fetchLibrary(undefined, { refreshStats: true })}
         />
       </>
     );
   }
 
-  // Helper to render loading state in content area
+  // Helper to render loading state in content area. Gated by the shared
+  // delayed-loading policy so sub-second cached loads render a blank pane
+  // instead of flashing skeleton rows.
   const renderLoadingContent = () => {
+    if (!showLoadingSkeleton) return null;
     switch (selectedTab) {
       case "tracks":
         return (
@@ -1510,16 +1571,11 @@ const Library = () => {
   );
 
   const renderSelectionBar = () => {
-    const selectionSurfaceVisible = selectedTab === "tracks" || viewMode === "list";
-    if (!selectionSurfaceVisible) {
+    if (!isSelectionMode) {
       return null;
     }
 
     if (selectedTab === "artists") {
-      if (artistSelection.selectedCount === 0) {
-        return null;
-      }
-
       return (
         <LibrarySelectionBar
           selectedCount={artistSelection.selectedCount}
@@ -1537,14 +1593,14 @@ const Library = () => {
             },
             {
               key: "curate",
-              label: "Search missing",
+              label: "Curate selected",
               icon: <ArrowSortDownLines24Regular />,
               onClick: queueSelectedArtistCurate,
               disabled: artistSelection.selectedCount === 0,
             },
             {
               key: "download",
-              label: "Download monitored",
+              label: "Download missing",
               icon: <ArrowDownload24Regular />,
               onClick: queueSelectedArtistDownload,
               disabled: artistSelection.selectedCount === 0,
@@ -1569,10 +1625,6 @@ const Library = () => {
     }
 
     if (selectedTab === "albums") {
-      if (albumSelection.selectedCount === 0) {
-        return null;
-      }
-
       return (
         <LibrarySelectionBar
           selectedCount={albumSelection.selectedCount}
@@ -1622,10 +1674,6 @@ const Library = () => {
     }
 
     if (selectedTab === "tracks") {
-      if (trackSelection.selectedCount === 0) {
-        return null;
-      }
-
       return (
         <LibrarySelectionBar
           selectedCount={trackSelection.selectedCount}
@@ -1675,10 +1723,6 @@ const Library = () => {
     }
 
     if (selectedTab === "videos") {
-      if (videoSelection.selectedCount === 0) {
-        return null;
-      }
-
       return (
         <LibrarySelectionBar
           selectedCount={videoSelection.selectedCount}
@@ -1742,7 +1786,7 @@ const Library = () => {
     topContent?: React.ReactNode;
   }) => (
     <div className={styles.tabPanel}>
-      {topContent ? <div>{topContent}</div> : null}
+      {topContent ? <div className={styles.contentPadding}>{topContent}</div> : null}
       <div className={mergeClasses(styles.tabScroller, styles.contentPadding)}>
         {children}
         <div ref={sentinelRef} className={styles.sentinel} />
@@ -1809,6 +1853,17 @@ const Library = () => {
                   <span className={styles.mobileHiddenLabel}>Import</span>
                 </Button>
               ) : null}
+              <Button
+                appearance="subtle"
+                icon={<SelectItemsIcon />}
+                onClick={toggleSelectionMode}
+                className={styles.menuButtonIconOnly}
+                title={isSelectionMode ? "Stop selecting" : `Select ${selectedTab}`}
+                aria-label={isSelectionMode ? "Stop selecting" : `Select ${selectedTab}`}
+                aria-pressed={isSelectionMode}
+              >
+                <span className={styles.mobileHiddenLabel}>{isSelectionMode ? "Done" : "Select"}</span>
+              </Button>
               {renderSortMenu()}
 
               <FilterMenu
@@ -1854,6 +1909,17 @@ const Library = () => {
                   <span className={styles.mobileHiddenLabel}>Import</span>
                 </Button>
               ) : null}
+              <Button
+                appearance="subtle"
+                icon={<SelectItemsIcon />}
+                onClick={toggleSelectionMode}
+                className={styles.menuButtonIconOnly}
+                title={isSelectionMode ? "Stop selecting" : `Select ${selectedTab}`}
+                aria-label={isSelectionMode ? "Stop selecting" : `Select ${selectedTab}`}
+                aria-pressed={isSelectionMode}
+              >
+                <span className={styles.mobileHiddenLabel}>{isSelectionMode ? "Done" : "Select"}</span>
+              </Button>
               {renderSortMenu()}
 
               <FilterMenu
@@ -1915,7 +1981,7 @@ const Library = () => {
                     items={artists}
                     getRowKey={(a: any) => a.id}
                     onRowClick={(a: any) => navigate(`/artist/${a.id}`)}
-                    selection={viewMode === 'list' ? {
+                    selection={isSelectionMode ? {
                       ...artistSelection.selection,
                       getSelectionLabel: (artist: any) => artist.name ? `Select ${artist.name}` : "Select artist",
                     } : undefined}
@@ -1955,7 +2021,7 @@ const Library = () => {
                     items={albums}
                     getRowKey={(a: any) => a.id}
                     onRowClick={(a: any) => navigate(`/album/${a.id}`)}
-                    selection={viewMode === 'list' ? {
+                    selection={isSelectionMode ? {
                       ...albumSelection.selection,
                       getSelectionLabel: (album: any) => album.title ? `Select ${album.title}` : "Select album",
                     } : undefined}
@@ -2002,10 +2068,10 @@ const Library = () => {
                   // The tracks tab is always a table (no grid toggle), so selection
                   // must always be available here — it isn't gated on viewMode like
                   // the grid/list tabs, where the persisted viewMode could be 'grid'.
-                  selection={{
+                  selection={isSelectionMode ? {
                     ...trackSelection.selection,
                     getSelectionLabel: (track: any) => track.title ? `Select ${track.title}` : "Select track",
-                  }}
+                  } : undefined}
                 />,
               })
             )}
@@ -2050,6 +2116,10 @@ const Library = () => {
                       });
                     }}
                     onOpenVideo={(video) => navigate(`/video/${video.id}`)}
+                    selection={isSelectionMode ? {
+                      selectedIds: new Set(videoSelection.selectedRowIds.map(String)),
+                      onToggle: (video, selected, shiftKey) => videoSelection.toggleItem(video.id, selected, { range: shiftKey }),
+                    } : undefined}
                   />
                 ) : (
                   <DataGrid
@@ -2057,7 +2127,7 @@ const Library = () => {
                     items={videos}
                     getRowKey={(v: any) => v.id}
                     onRowClick={(v: any) => navigate(`/video/${v.id}`)}
-                    selection={viewMode === 'list' ? {
+                    selection={isSelectionMode ? {
                       ...videoSelection.selection,
                       getSelectionLabel: (video: any) => video.title ? `Select ${video.title}` : "Select video",
                     } : undefined}
@@ -2072,7 +2142,6 @@ const Library = () => {
       <ImportArtistsModal
         open={importModalOpen}
         onClose={() => setImportModalOpen(false)}
-        providerId={importProvider?.id}
         onImported={() => fetchLibrary(undefined, { refreshStats: true })}
       />
     </div>

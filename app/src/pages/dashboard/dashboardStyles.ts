@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from "@fluentui/react-components";
+import { collectionRowPadding } from "@/components/ui/sharedLayoutStyles";
 
 export const useDashboardStyles = makeStyles({
     brandHeader: {
@@ -122,7 +123,7 @@ export const useDashboardStyles = makeStyles({
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalS,
-        padding: tokens.spacingHorizontalM,
+        padding: collectionRowPadding,
         borderRadius: tokens.borderRadiusMedium,
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground3} 70%, transparent)`,
@@ -205,7 +206,7 @@ export const useDashboardStyles = makeStyles({
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalM,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+        padding: `${tokens.spacingVerticalXS} ${collectionRowPadding}`,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 20%, transparent)`,
         cursor: "pointer",

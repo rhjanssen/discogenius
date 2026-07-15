@@ -13,7 +13,7 @@ import type { CommandHandler } from "./handler-context.js";
  * stream to relay.
  */
 export const handleImportProviderArtists: CommandHandler<"ImportProviderArtists"> = async (job, ctx) => {
-    const { providerId, importCategory, importListId, importLabel } = job.payload;
+    const { providerId, importCategory, importListId, importLabel, importArtistIds } = job.payload;
     const label = importLabel || importCategory;
 
     ctx.updateCommandDescription(job, {
@@ -24,6 +24,7 @@ export const handleImportProviderArtists: CommandHandler<"ImportProviderArtists"
     const summary = await FollowedArtistsImportService.importArtists({
         providerId,
         selection: { category: importCategory, listId: importListId },
+        providerArtistIds: importArtistIds,
         onEvent: (event) => {
             const { type, ...data } = event;
             appEvents.emit(AppEvent.IMPORT_ARTISTS_PROGRESS, {

@@ -7,14 +7,20 @@ import {
   Body1,
 } from "@fluentui/react-components";
 import {
-  ArrowDownload16Regular,
-  Play24Regular,
+  ArrowDownload16Regular as ArrowDownload16RegularBase,
+  Play24Regular as Play24RegularBase,
+  ArrowDownload16Filled,
+  Play24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { useGridStyles } from "@/components/cards/cardStyles";
 import { renderableArtworkUrl } from "@/utils/artwork";
 import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
+
+const ArrowDownload16Regular = bundleIcon(ArrowDownload16Filled, ArrowDownload16RegularBase);
+const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
 
 const useStyles = makeStyles({
   container: {
@@ -94,6 +100,10 @@ interface VideoGridProps {
   onToggleMonitor?: (video: Video) => void;
   onDownload?: (video: Video) => void;
   onOpenVideo?: (video: Video) => void;
+  selection?: {
+    selectedIds: ReadonlySet<string>;
+    onToggle: (video: Video, selected: boolean, shiftKey: boolean) => void;
+  };
 }
 
 const formatDuration = (seconds: number): string => {
@@ -103,7 +113,7 @@ const formatDuration = (seconds: number): string => {
   return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 };
 
-const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }: VideoGridProps) => {
+const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, selection }: VideoGridProps) => {
   const styles = useStyles();
   const gridStyles = useGridStyles();
 
@@ -184,6 +194,11 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo }
                   {formatDuration(video.duration)}
                 </Badge>
               )}
+              selection={selection ? {
+                selected: selection.selectedIds.has(String(video.id)),
+                label: `Select ${video.title}`,
+                onChange: (selected, shiftKey) => selection.onToggle(video, selected, shiftKey),
+              } : undefined}
             />
           );
         })}

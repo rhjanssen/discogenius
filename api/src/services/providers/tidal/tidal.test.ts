@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deriveQuality, mapTidalOpenApiTrack } from "./tidal.js";
+import {
+  deriveQuality,
+  extractImportListsFromPage,
+  mapTidalOpenApiTrack,
+  tidalSquareImageUrl,
+} from "./tidal.js";
 
 test("deriveQuality checks mediaMetadata.tags priority", () => {
   assert.equal(deriveQuality({ mediaMetadata: { tags: ["LOSSLESS", "HIRES_LOSSLESS", "DOLBY_ATMOS"] } }), "DOLBY_ATMOS");
@@ -44,4 +49,29 @@ test("bulk JSON:API tracks preserve artist identity and normalize copyright", ()
   assert.equal(row.copyright, "(P) Example Records");
   assert.equal(row.track_number, 21);
   assert.equal(row.duration, 185);
+});
+
+test("TIDAL import artwork converts playlist UUIDs and prefers page image URLs", () => {
+  assert.equal(
+    tidalSquareImageUrl("21824bc6-1cfd-44da-9f78-c400e83cf133"),
+    "https://resources.tidal.com/images/21824bc6/1cfd/44da/9f78/c400e83cf133/640x640.jpg",
+  );
+  const lists = extractImportListsFromPage({
+    rows: [{ modules: [{
+      title: "My Mixes",
+      pagedList: { items: [{
+        id: "mix-1",
+        title: "My Mix 1",
+        shortSubtitle: "Created by TIDAL",
+        images: { MEDIUM: { url: "https://images.tidal.com/mix-1" } },
+      }] },
+    }] }],
+  }, "Mix");
+
+  assert.deepEqual(lists, [{
+    id: "mix:mix-1",
+    title: "My Mix 1",
+    subtitle: "Created by TIDAL",
+    image: "https://images.tidal.com/mix-1",
+  }]);
 });

@@ -14,8 +14,20 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { ArrowRight16Regular, ArrowSortDownLines24Regular, Dismiss24Regular } from "@fluentui/react-icons";
+import {
+  ArrowRight16Regular as ArrowRight16RegularBase,
+  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
+  Dismiss24Regular as Dismiss24RegularBase,
+  ArrowRight16Filled,
+  ArrowSortDownLines24Filled,
+  Dismiss24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
+
+const ArrowRight16Regular = bundleIcon(ArrowRight16Filled, ArrowRight16RegularBase);
+const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
+const Dismiss24Regular = bundleIcon(Dismiss24Filled, Dismiss24RegularBase);
 
 export interface RenamePreviewItem {
   id: number;

@@ -479,6 +479,35 @@ test("artist list and album helper count canonical release groups and tracks", (
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 });
 
+test("artist list excludes unhydrated mbid-named shells until they gain library presence", () => {
+  seedCanonicalArtistPage();
+
+  const shellMbid = "0a1b2c3d-1111-2222-3333-444455556666";
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, library_origin, monitored)
+    VALUES (?, ?, ?, 'musicbrainz-credit', 0)
+  `).run(shellMbid, shellMbid, shellMbid);
+
+  const list = artistQueryModule.ArtistQueryService.listArtists({
+    limit: 50,
+    offset: 0,
+    includeDownloadStats: false,
+    includeCounts: false,
+  });
+  assert.equal(list.items.some((item: any) => item.id === shellMbid), false);
+
+  // Monitoring the shell makes it a managed artist again, so it must reappear
+  // even while the display name is still the MBID placeholder.
+  dbModule.db.prepare("UPDATE Artists SET monitored = 1 WHERE id = ?").run(shellMbid);
+  const monitoredList = artistQueryModule.ArtistQueryService.listArtists({
+    limit: 50,
+    offset: 0,
+    includeDownloadStats: false,
+    includeCounts: false,
+  });
+  assert.equal(monitoredList.items.some((item: any) => item.id === shellMbid), true);
+});
+
 test("artist page album cards prefer cached Servarr Metadata Server artwork over provider fallback", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;

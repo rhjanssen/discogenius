@@ -1280,6 +1280,28 @@ type TidalImportArtist = {
   popularity: number;
 };
 
+type TidalImportList = {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  image: string | null;
+};
+
+export function tidalSquareImageUrl(value: unknown, size = 640): string | null {
+  const image = String(value || "").trim();
+  if (!image) return null;
+  if (/^https?:\/\//i.test(image)) return image;
+  return `https://resources.tidal.com/images/${image.replace(/-/g, "/")}/${size}x${size}.jpg`;
+}
+
+function getTidalPageImage(item: any): string | null {
+  return item?.images?.MEDIUM?.url
+    || item?.images?.LARGE?.url
+    || item?.images?.SMALL?.url
+    || item?.graphic?.images?.find?.((image: any) => /^https?:\/\//i.test(String(image?.url || "")))?.url
+    || tidalSquareImageUrl(item?.image || item?.squareImage);
+}
+
 /**
  * Collapse a list of TIDAL track items (favorites/playlist/mix items, each
  * wrapped as `{ item: track }`) into distinct artists. Uses every credited
@@ -1327,7 +1349,7 @@ export async function getUserPlaylists() {
       id: playlist.uuid as string,
       title: playlist.title || "Untitled playlist",
       itemCount: playlist.numberOfTracks ?? null,
-      image: playlist.squareImage || playlist.image || null,
+      image: tidalSquareImageUrl(playlist.squareImage || playlist.image),
     }));
 }
 
@@ -1362,11 +1384,8 @@ export async function getMixArtists(mixId: string): Promise<TidalImportArtist[]>
  * v1 page API. Each entry's id is prefixed `mix:` or `playlist:` so the resolver
  * knows which endpoint to read its tracks from.
  */
-export async function getHomeImportLists(): Promise<Array<{ id: string; title: string; subtitle: string | null; image: string | null }>> {
-  const cc = getCountryCode();
-  const data = await tidalApiRequest(`/pages/home?countryCode=${cc}&deviceType=BROWSER`) as any;
-
-  const results: Array<{ id: string; title: string; subtitle: string | null; image: string | null }> = [];
+export function extractImportListsFromPage(data: any, defaultSubtitle: string): TidalImportList[] {
+  const results: TidalImportList[] = [];
   const seen = new Set<string>();
 
   for (const row of data?.rows || []) {
@@ -1374,7 +1393,6 @@ export async function getHomeImportLists(): Promise<Array<{ id: string; title: s
       const moduleTitle: string = module?.title || "";
       const items = module?.pagedList?.items || module?.items || [];
       for (const item of items) {
-        // A mix item carries a string `id`; a playlist carries a `uuid`.
         const isMix = typeof item?.id === "string" && !item?.uuid;
         const rawId = isMix ? item.id : item?.uuid;
         if (!rawId) continue;
@@ -1384,13 +1402,37 @@ export async function getHomeImportLists(): Promise<Array<{ id: string; title: s
         results.push({
           id: key,
           title: item.title || moduleTitle || "Untitled",
-          subtitle: isMix ? (item.subTitle || moduleTitle || "Mix") : (moduleTitle || "Playlist"),
-          image: item.image || item.squareImage || item.graphic?.images?.[0]?.url || null,
+          subtitle: isMix
+            ? (item.shortSubtitle || item.subTitle || item.description || moduleTitle || defaultSubtitle)
+            : (moduleTitle || "Playlist"),
+          image: getTidalPageImage(item),
         });
       }
     }
   }
+
   return results;
+}
+
+export async function getHomeImportLists(): Promise<TidalImportList[]> {
+  const cc = getCountryCode();
+  const [personalPage, homePage] = await Promise.all([
+    tidalApiRequest(`/pages/my_collection_my_mixes?countryCode=${cc}&deviceType=BROWSER`).catch((error) => {
+      console.warn("[TIDAL] Failed to fetch personalized mixes:", error);
+      return null;
+    }),
+    tidalApiRequest(`/pages/home?countryCode=${cc}&deviceType=BROWSER`).catch((error) => {
+      console.warn("[TIDAL] Failed to fetch home import lists:", error);
+      return null;
+    }),
+  ]);
+
+  const results = [
+    ...extractImportListsFromPage(personalPage, "Created by TIDAL"),
+    ...extractImportListsFromPage(homePage, "Mix"),
+  ];
+  const seen = new Set<string>();
+  return results.filter((item) => !seen.has(item.id) && Boolean(seen.add(item.id)));
 }
 
 /** Distinct artists for a home-screen entry id (`mix:…` or `playlist:…`). */

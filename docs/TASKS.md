@@ -6,27 +6,30 @@ implementation, or release validation.
 
 Status: pending | in progress | done | revisit
 
-## Post-2.3.2 Fluent UI And Metadata Follow-ups
+## Post-2.3.3 Fluent UI And Metadata Follow-ups
 
 - pending: Finish keyboard interaction parity for DataGrid. Clickable rows need
   focus/Enter handling, and pointer-resizable column separators need a keyboard
   resize path with current/min/max ARIA values. Shared MediaCards were fixed in
-  the current unreleased batch, but the table primitive needs a deliberate
+  2.3.3, but the table primitive needs a deliberate
   component-level change and regression coverage.
-- pending: Replace the remaining `window.confirm` destructive actions (notably
-  unmapped-file deletion) with Fluent UI confirmation dialogs so focus trapping,
-  labeling, keyboard dismissal, and destructive-action styling are consistent.
-- pending: Add a shared delayed-loading policy so skeletons are not flashed for
-  sub-second cached requests. Fluent guidance recommends skeletons for predictable
-  layouts expected to take longer than one second; use one labeled Spinner for
-  shorter/indeterminate waits and keep `aria-busy` on skeleton containers.
+- done (2026-07-15): Replaced the remaining `window.confirm` destructive action
+  (unmapped-file deletion, single and bulk) with a Fluent confirmation dialog
+  using the shared glass danger-button styling.
+- done (2026-07-15, first slice): Added the shared delayed-loading policy as
+  `useDelayedVisible` (300ms grace window) and applied it to the page-level
+  skeletons: Library tab initial loads and the Artist/Album detail-page
+  skeletons. Sub-second cached loads now render blank instead of flashing a
+  skeleton; known-long ingest syncs keep an immediate skeleton. Remaining
+  follow-up if wanted: dashboard queue/activity list skeletons and labeled
+  Spinner for short indeterminate waits.
 - pending: Remove the remaining unused provider-catalog/editorial surface
   (`getArtistCatalogPage`, similar-artist/album hooks, and any dead callers) after
   confirming no plugin compatibility dependency. Canonical acquisition should
   stay behind `CatalogProvider`; streaming providers should expose availability,
   download, artwork, and allowed tag supplements only.
 
-## Post-2.3.2 Performance Follow-ups
+## Post-2.3.3 Performance Follow-ups
 - pending: Profile and bound artist-wide retag preview/status on a large library;
   a live two-file check was correct but still took about 14s while catalog work
   was active.
@@ -1083,9 +1086,9 @@ remain planned, but are no longer the first 2.2 cut.
   duration, media number, and track number to typed columns or documented
   side tables; keep JSON only if a field is explicitly non-durable/non-queried,
   and prefer no JSON at all for fresh schema if practical.
-- pending (2.2.2): Polish Dashboard empty states: on mobile the combined
-  icon+heading cluster should be centered as a unit, with optional secondary
-  text omitted for compact queue/activity states.
+- done (2026-07-15): Dashboard compact empty states now center the icon+heading
+  cluster as a unit on mobile; secondary text was already omitted for compact
+  queue/activity states.
 - pending (2.2.2): Repair Unmapped Files detection and UI. Clearly named files
   should show title and duration when probeable; unmatched text must be
   provider-neutral ("No provider match" / "No streaming-provider match"), not
@@ -1111,9 +1114,10 @@ remain planned, but are no longer the first 2.2 cut.
   same import modal as the Library toolbar and Settings page. Extend TIDAL import
   sources to include "My Mix" style mixes/playlists from the TIDAL API with
   working artwork in the picker.
-- pending (2.2.2): Use Fluent colored failure icons matching the current colored
-  success icon family (for example `DismissCircle*Color`) for failed downloads
-  and review other useful Fluent colored icons without overusing them.
+- done (2026-07-15): Failed downloads use the Fluent colored
+  `DismissCircle24Color` icon in both the queue (already in place) and the
+  activity feed status icons, matching the colored success icon family. Other
+  surfaces keep monochrome icons on purpose to avoid overuse.
 - pending (2.2.2): Investigate incorrect provider-version matching for album
   `9aad95d9-0674-433b-ab50-2229c93d32b2`, where preview playback appears to
   select a remix instead of the original/radio edit. Fix release/provider offer

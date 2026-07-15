@@ -10,8 +10,14 @@ import {
   useIsOverflowItemVisible,
   useOverflowMenu,
 } from "@fluentui/react-components";
-import { MoreHorizontal24Regular } from "@fluentui/react-icons";
+import {
+  MoreHorizontal24Regular as MoreHorizontal24RegularBase,
+  MoreHorizontal24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+
+const MoreHorizontal24Regular = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24RegularBase);
 
 export interface OverflowAction {
   key: string;

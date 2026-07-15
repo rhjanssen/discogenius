@@ -15,13 +15,20 @@ import {
     tokens,
 } from "@fluentui/react-components";
 import {
-    ArrowDownload24Regular,
-    Eye24Regular,
-    EyeOff24Regular,
-    LockClosed24Regular,
-    LockOpen24Regular,
-    Play24Filled,
-    Video24Regular,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  Eye24Regular as Eye24RegularBase,
+  EyeOff24Regular as EyeOff24RegularBase,
+  LockClosed24Regular as LockClosed24RegularBase,
+  LockOpen24Regular as LockOpen24RegularBase,
+  Play24Filled,
+  Video24Regular as Video24RegularBase,
+  ArrowDownload24Filled,
+  Eye24Filled,
+  EyeOff24Filled,
+  LockClosed24Filled,
+  LockOpen24Filled,
+  Video24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
 import { renderableArtworkUrl } from "@/utils/artwork";
@@ -49,6 +56,13 @@ import {
     dispatchMonitorStateChanged,
     dispatchLibraryUpdated,
 } from "@/utils/appEvents";
+
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
+const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
+const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
+const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
+const Video24Regular = bundleIcon(Video24Filled, Video24RegularBase);
 
 /* ------------------------------------------------------------------ */
 /*  Styles                                                            */

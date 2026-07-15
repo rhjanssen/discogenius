@@ -14,20 +14,44 @@ import {
     mergeClasses,
 } from "@fluentui/react-components";
 import {
-    Filter24Regular,
-    Checkmark24Regular,
-    Circle24Regular,
-    Grid24Regular,
-    AppsListDetail24Regular,
-    Eye24Regular,
-    EyeOff24Regular,
-    LockClosed24Regular,
-    LockOpen24Regular,
-    ArrowDownload24Regular,
-    CloudArrowDown24Regular,
+  Filter24Regular as Filter24RegularBase,
+  Checkmark24Regular as Checkmark24RegularBase,
+  Circle24Regular as Circle24RegularBase,
+  Grid24Regular as Grid24RegularBase,
+  AppsListDetail24Regular as AppsListDetail24RegularBase,
+  Eye24Regular as Eye24RegularBase,
+  EyeOff24Regular as EyeOff24RegularBase,
+  LockClosed24Regular as LockClosed24RegularBase,
+  LockOpen24Regular as LockOpen24RegularBase,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  CloudArrowDown24Regular as CloudArrowDown24RegularBase,
+  Filter24Filled,
+  Checkmark24Filled,
+  Circle24Filled,
+  Grid24Filled,
+  AppsListDetail24Filled,
+  Eye24Filled,
+  EyeOff24Filled,
+  LockClosed24Filled,
+  LockOpen24Filled,
+  ArrowDownload24Filled,
+  CloudArrowDown24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import type { StatusFilters } from "@/utils/statusFilters";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+
+const Filter24Regular = bundleIcon(Filter24Filled, Filter24RegularBase);
+const Checkmark24Regular = bundleIcon(Checkmark24Filled, Checkmark24RegularBase);
+const Circle24Regular = bundleIcon(Circle24Filled, Circle24RegularBase);
+const Grid24Regular = bundleIcon(Grid24Filled, Grid24RegularBase);
+const AppsListDetail24Regular = bundleIcon(AppsListDetail24Filled, AppsListDetail24RegularBase);
+const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
+const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
+const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
+const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const CloudArrowDown24Regular = bundleIcon(CloudArrowDown24Filled, CloudArrowDown24RegularBase);
 
 interface FilterMenuProps {
     // Library type filter (single selection)

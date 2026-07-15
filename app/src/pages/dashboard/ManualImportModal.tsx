@@ -1,28 +1,34 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    Badge,
-    Button,
-    Checkbox,
-    Dialog,
-    DialogActions,
-    DialogBody,
-    DialogContent,
-    DialogSurface,
-    DialogTitle,
-    Input,
-    Select,
-    Spinner,
-    Table,
-    TableBody,
-    TableCell,
-    TableHeader,
-    TableHeaderCell,
-    TableRow,
-    Text,
-    makeStyles,
-    tokens,
-} from '@fluentui/react-components';
-import { ArrowImport24Regular, Search24Regular } from '@fluentui/react-icons';
+  Badge,
+  Button,
+  Checkbox,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Input,
+  Select,
+  Spinner,
+  Table,
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableHeaderCell,
+  TableRow,
+  Text,
+  makeStyles,
+  tokens,
+  } from '@fluentui/react-components';
+import {
+  ArrowImport24Regular as ArrowImport24RegularBase,
+  Search24Regular as Search24RegularBase,
+  Search24Filled,
+  bundleIcon,
+  ArrowImport24Filled
+} from "@fluentui/react-icons";
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import MediaCard from '@/components/cards/MediaCard';
 import { glassButtonStyles } from '@/components/ui/glassButtonStyles';
@@ -30,6 +36,10 @@ import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
 import { dispatchActivityRefresh } from '@/utils/appEvents';
 import { type UnmappedFile } from './ManualImportTab';
+
+const ArrowImport24Regular = bundleIcon(ArrowImport24Filled, ArrowImport24RegularBase);
+
+const Search24Regular = bundleIcon(Search24Filled, Search24RegularBase);
 
 const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'mkv', 'mov', 'webm', 'ts']);
 

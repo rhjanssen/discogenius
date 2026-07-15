@@ -10,11 +10,11 @@ import { RefreshArtistService } from "../music/refresh-artist-service.js";
 export type FollowedArtistsImportEvent =
     | { type: "status"; message: string }
     | { type: "total"; total: number }
-    | { type: "artist-progress"; name: string; progress: number; total: number }
+    | { type: "artist-progress"; name: string; provider_id: string; progress: number; total: number }
     | { type: "artist-added"; name: string; provider_id: string; progress: number; total: number; added: number }
     | { type: "artist-updated"; name: string; provider_id: string; progress: number; total: number; updated: number }
-    | { type: "artist-skipped"; name: string; progress: number; total: number; skipped: number; reason: string }
-    | { type: "error"; message: string; error: string };
+    | { type: "artist-skipped"; name: string; provider_id: string; progress: number; total: number; skipped: number; reason: string }
+    | { type: "artist-failed"; name: string; provider_id: string; progress: number; total: number; error: string };
 
 export interface FollowedArtistsImportSummary {
     success: boolean;
@@ -122,6 +122,7 @@ export class FollowedArtistsImportService {
     static async importArtists(options?: {
         providerId?: string | null;
         selection?: ProviderImportSelection;
+        providerArtistIds?: readonly string[];
         onEvent?: (event: FollowedArtistsImportEvent) => void;
     }): Promise<FollowedArtistsImportSummary> {
         const emit = options?.onEvent;
@@ -137,10 +138,31 @@ export class FollowedArtistsImportService {
             throw new Error(`Connect ${provider.name} before importing artists`);
         }
 
+        if (options?.providerArtistIds?.length === 0) {
+            return {
+                success: true,
+                providerId: provider.id,
+                providerName: provider.name,
+                total: 0,
+                added: 0,
+                updated: 0,
+                skipped: 0,
+                unmatched: 0,
+                failed: 0,
+                queued: 0,
+                message: "No artists selected",
+            };
+        }
+
         emit?.({ type: "status", message: `Fetching artists from ${provider.name}...` });
 
         const providerArtists = await provider.getArtistsForImportSource(selection);
-        const followedArtists = providerArtists.map(normalizeProviderArtist);
+        const selectedIds = options?.providerArtistIds
+            ? new Set(options.providerArtistIds.map(String))
+            : null;
+        const followedArtists = providerArtists
+            .filter((artist) => !selectedIds || selectedIds.has(String(artist.providerId)))
+            .map(normalizeProviderArtist);
 
         if (!followedArtists || followedArtists.length === 0) {
             return {
@@ -174,6 +196,7 @@ export class FollowedArtistsImportService {
             emit?.({
                 type: "artist-progress",
                 name: artist.name,
+                provider_id: artist.provider_id,
                 progress,
                 total: followedArtists.length,
             });
@@ -243,6 +266,7 @@ export class FollowedArtistsImportService {
                     emit?.({
                         type: "artist-skipped",
                         name: artist.name,
+                        provider_id: artist.provider_id,
                         progress,
                         total: followedArtists.length,
                         skipped: skippedCount + unmatchedCount,
@@ -256,6 +280,7 @@ export class FollowedArtistsImportService {
                     emit?.({
                         type: "artist-skipped",
                         name: artist.name,
+                        provider_id: artist.provider_id,
                         progress,
                         total: followedArtists.length,
                         skipped: skippedCount + unmatchedCount,
@@ -297,8 +322,11 @@ export class FollowedArtistsImportService {
                 failedCount += 1;
                 console.error(`Failed to import followed artist ${artist.name}:`, error);
                 emit?.({
-                    type: "error",
-                    message: `Failed to import followed artist ${artist.name}`,
+                    type: "artist-failed",
+                    name: artist.name,
+                    provider_id: artist.provider_id,
+                    progress,
+                    total: followedArtists.length,
                     error: error instanceof Error ? error.message : String(error),
                 });
             }

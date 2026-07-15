@@ -7,7 +7,14 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { ErrorCircle48Color, ArrowClockwise24Regular } from "@fluentui/react-icons";
+import {
+  ErrorCircle48Color,
+  ArrowClockwise24Regular as ArrowClockwise24RegularBase,
+  ArrowClockwise24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
+
+const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
 
 const useStyles = makeStyles({
   container: {

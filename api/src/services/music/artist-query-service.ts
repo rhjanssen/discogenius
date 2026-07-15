@@ -474,6 +474,16 @@ const duplicateProviderArtistPredicate = `NOT (
     )
 )`;
 
+// Credit/collaborator seeding can create artist rows knowing only the MBID
+// (name = mbid). Until a visit or refresh hydrates real display metadata they
+// carry nothing a library view can render, so keep them out of the listing —
+// Lidarr's index never lists non-managed artist shells either.
+const unhydratedArtistShellPredicate = `NOT (
+    a.name = CAST(a.mbid AS TEXT)
+    AND a.path IS NULL
+    AND COALESCE(a.monitored, 0) = 0
+)`;
+
 export class ArtistQueryService {
     static listArtists(input: ArtistListQuery): ArtistsListResponseContract {
         const limit = input.limit;
@@ -493,7 +503,7 @@ export class ArtistQueryService {
         let countQuery = "SELECT COUNT(*) as total FROM Artists a";
         const params: Array<string | number> = [];
         const countParams: Array<string | number> = [];
-        const where: string[] = [duplicateProviderArtistPredicate];
+        const where: string[] = [duplicateProviderArtistPredicate, unhydratedArtistShellPredicate];
 
         if (search) {
             where.push("a.name LIKE ?");

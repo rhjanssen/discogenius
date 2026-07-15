@@ -2,6 +2,49 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.3.4] - 2026-07-15
+
+### Added
+- Library artist import now starts with a connected-provider picker, previews
+  the provider artists before enqueueing, supports select-all and shift-range
+  selection, and reports per-artist progress with grouped success, skipped,
+  unmatched, and failed results.
+- Library cards now support Lidarr-style selection mode in grid and list views.
+
+### Changed
+- Fluent action icons now provide regular and filled variants throughout the
+  frontend so Fluent UI can apply its native hover/pressed icon treatment.
+- Library collections, selection surfaces, and queue rows share tokenized
+  content insets and symmetric row padding.
+- Library artist actions now use explicit `Curate` and `Download missing` copy.
+
+### Changed (UX polish)
+- Page-level loading skeletons (Library tabs, artist and album pages) now
+  follow a shared delayed-loading policy: sub-second cached loads render
+  without a skeleton flash, while slow loads still show the skeleton after a
+  short grace window.
+- Unmapped-file deletion now confirms through a Fluent dialog with destructive
+  styling instead of a browser `window.confirm` prompt.
+- Failed activity entries use the Fluent colored failure icon, matching the
+  queue's colored success/failure icon family.
+- Dashboard compact empty states center the icon and heading as a unit on
+  mobile.
+
+### Fixed
+- Library selection mode now toggles card selection when clicking anywhere on
+  a card, Lidarr-style, instead of navigating to the detail page.
+- Import-artists source rows no longer render a doubled chevron icon.
+- The library listing no longer shows unhydrated credit-seeded artist shells
+  whose display name is still a raw MusicBrainz ID; they reappear once
+  monitored or hydrated with real metadata.
+- TIDAL playlist and mix artwork is normalized into renderable image URLs, and
+  personalized My Mix entries are loaded from TIDAL's collection page alongside
+  home/editorial lists.
+- Provider imports no longer terminate their progress stream when one artist
+  fails; failures remain item-level while the rest of the selection continues.
+- Completed queue rows no longer reserve trailing action spacing when no action
+  is present.
+
 ## [2.3.3] - 2026-07-15
 
 ### Changed

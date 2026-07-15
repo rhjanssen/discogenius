@@ -15,18 +15,31 @@ import {
   mergeClasses,
 } from "@fluentui/react-components";
 import {
-  ArrowSync24Regular,
-  Eye24Regular,
-  EyeOff24Regular,
-  ArrowDownload24Regular,
-  LockClosed24Regular,
-  LockOpen24Regular,
-  Grid24Regular,
-  AppsListDetail24Regular,
-  Play24Regular,
-  Info24Regular,
-  ArrowSortDownLines24Regular,
-  FolderSync24Regular,
+  ArrowSync24Regular as ArrowSync24RegularBase,
+  Eye24Regular as Eye24RegularBase,
+  EyeOff24Regular as EyeOff24RegularBase,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  LockClosed24Regular as LockClosed24RegularBase,
+  LockOpen24Regular as LockOpen24RegularBase,
+  Grid24Regular as Grid24RegularBase,
+  AppsListDetail24Regular as AppsListDetail24RegularBase,
+  Play24Regular as Play24RegularBase,
+  Info24Regular as Info24RegularBase,
+  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
+  FolderSync24Regular as FolderSync24RegularBase,
+  ArrowSync24Filled,
+  Eye24Filled,
+  EyeOff24Filled,
+  ArrowDownload24Filled,
+  LockClosed24Filled,
+  LockOpen24Filled,
+  Grid24Filled,
+  AppsListDetail24Filled,
+  Play24Filled,
+  Info24Filled,
+  ArrowSortDownLines24Filled,
+  FolderSync24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
 import { useArtistPage } from "@/hooks/useArtistPage";
@@ -34,6 +47,7 @@ import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
+import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { renderableArtworkUrl } from "@/utils/artwork";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
@@ -80,6 +94,19 @@ import {
   getOptimisticMonitorState,
   type MonitorStateChangedDetail,
 } from "@/utils/appEvents";
+
+const ArrowSync24Regular = bundleIcon(ArrowSync24Filled, ArrowSync24RegularBase);
+const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
+const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
+const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
+const Grid24Regular = bundleIcon(Grid24Filled, Grid24RegularBase);
+const AppsListDetail24Regular = bundleIcon(AppsListDetail24Filled, AppsListDetail24RegularBase);
+const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
+const Info24Regular = bundleIcon(Info24Filled, Info24RegularBase);
+const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
+const FolderSync24Regular = bundleIcon(FolderSync24Filled, FolderSync24RegularBase);
 
 const useStyles = makeStyles({
   container: {
@@ -1453,6 +1480,14 @@ const ArtistPage = () => {
   )), [modules]);
 
   const showIngestSkeleton = Boolean(activity?.scanning) && (modules.length === 0 || !pageData?.artist?.last_scanned);
+  // Shared delayed-loading policy: sub-second cached loads render blank
+  // instead of flashing the full-page skeleton. Ingest syncs are known-long
+  // waits, so they keep an immediate skeleton.
+  const showPageSkeleton = useDelayedVisible(pageLoading);
+
+  if (pageLoading && !showPageSkeleton && !showIngestSkeleton) {
+    return null;
+  }
 
   if (pageLoading || showIngestSkeleton) {
     return (

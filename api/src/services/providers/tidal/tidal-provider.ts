@@ -729,10 +729,13 @@ export class TidalProvider implements StreamingProvider {
   }
 
   private mapProviderArtist(artist: any): ProviderArtist {
+    const picture = String(artist?.picture || "").trim();
     return {
       providerId: this.providerId(artist?.providerId, artist?.provider_id, artist?.id, artist?.tidal_id),
       name: artist?.name || artist?.artist_name || "Unknown Artist",
-      picture: artist?.picture || null,
+      picture: /^https?:\/\//i.test(picture)
+        ? picture
+        : this.tidalImageUrl("images", picture, "origin"),
       url: artist?.url,
       popularity: artist?.popularity ?? null,
       types: Array.isArray(artist?.artist_types) ? artist.artist_types : undefined,

@@ -17,9 +17,13 @@ import {
     mergeClasses,
 } from "@fluentui/react-components";
 import {
-    Add24Regular,
-    EyeOff24Regular,
-    ArrowDownload24Regular,
+  Add24Regular as Add24RegularBase,
+  EyeOff24Regular as EyeOff24RegularBase,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  Add24Filled,
+  EyeOff24Filled,
+  ArrowDownload24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { useSearch, SearchResultItem } from "@/hooks/useSearch";
 import { MediaCard } from "@/components/cards/MediaCard";
@@ -29,6 +33,10 @@ import { useToast } from "@/hooks/useToast";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
+
+const Add24Regular = bundleIcon(Add24Filled, Add24RegularBase);
+const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
 
 const searchBoxRadius = tokens.borderRadiusCircular;
 const searchUnderlineHeight = "4px";

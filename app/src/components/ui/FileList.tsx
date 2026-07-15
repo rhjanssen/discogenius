@@ -26,18 +26,36 @@ import {
 } from "@fluentui/react-components";
 import { tidalBadgeColor } from "@/theme/theme";
 import {
-    Document24Regular,
-    MusicNote124Regular,
-    Video24Regular,
-    Image24Regular,
-    Info24Regular,
-    ChevronDown16Regular,
-    ChevronUp16Regular,
-    Copy24Regular,
+  Document24Regular as Document24RegularBase,
+  MusicNote124Regular as MusicNote124RegularBase,
+  Video24Regular as Video24RegularBase,
+  Image24Regular as Image24RegularBase,
+  Info24Regular as Info24RegularBase,
+  ChevronDown16Regular as ChevronDown16RegularBase,
+  ChevronUp16Regular as ChevronUp16RegularBase,
+  Copy24Regular as Copy24RegularBase,
+  Document24Filled,
+  MusicNote124Filled,
+  Video24Filled,
+  Image24Filled,
+  Info24Filled,
+  ChevronDown16Filled,
+  ChevronUp16Filled,
+  Copy24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { useToast } from "@/hooks/useToast";
 import { isSpatialAudioQuality } from "@/utils/spatialAudio";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+
+const Document24Regular = bundleIcon(Document24Filled, Document24RegularBase);
+const MusicNote124Regular = bundleIcon(MusicNote124Filled, MusicNote124RegularBase);
+const Video24Regular = bundleIcon(Video24Filled, Video24RegularBase);
+const Image24Regular = bundleIcon(Image24Filled, Image24RegularBase);
+const Info24Regular = bundleIcon(Info24Filled, Info24RegularBase);
+const ChevronDown16Regular = bundleIcon(ChevronDown16Filled, ChevronDown16RegularBase);
+const ChevronUp16Regular = bundleIcon(ChevronUp16Filled, ChevronUp16RegularBase);
+const Copy24Regular = bundleIcon(Copy24Filled, Copy24RegularBase);
 
 export interface LibraryFile {
     id: number;

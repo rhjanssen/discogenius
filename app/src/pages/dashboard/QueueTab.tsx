@@ -16,19 +16,30 @@ import {
     tokens,
 } from "@fluentui/react-components";
 import {
-    CheckmarkCircle24Filled,
-    CheckmarkCircle24Color,
-    DismissCircle24Color,
-    ArrowClockwise24Regular,
-    Clock24Regular,
-    Delete24Regular,
-    MusicNote224Regular,
-    Video24Regular,
-    ArrowDownload24Regular,
-    ArrowUpload24Regular,
-    MoreHorizontal24Regular,
-    ArrowUp24Regular,
-    ArrowDown24Regular,
+  CheckmarkCircle24Filled,
+  CheckmarkCircle24Color,
+  DismissCircle24Color,
+  ArrowClockwise24Regular as ArrowClockwise24RegularBase,
+  Clock24Regular as Clock24RegularBase,
+  Delete24Regular as Delete24RegularBase,
+  MusicNote224Regular as MusicNote224RegularBase,
+  Video24Regular as Video24RegularBase,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  ArrowUpload24Regular as ArrowUpload24RegularBase,
+  MoreHorizontal24Regular as MoreHorizontal24RegularBase,
+  ArrowUp24Regular as ArrowUp24RegularBase,
+  ArrowDown24Regular as ArrowDown24RegularBase,
+  ArrowClockwise24Filled,
+  Clock24Filled,
+  Delete24Filled,
+  MusicNote224Filled,
+  Video24Filled,
+  ArrowDownload24Filled,
+  ArrowUpload24Filled,
+  MoreHorizontal24Filled,
+  ArrowUp24Filled,
+  ArrowDown24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
 import { useQueue } from "@/hooks/useQueue";
@@ -45,6 +56,17 @@ import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type { DownloadProgress } from "@/queue/queueProgress";
 import { useDashboardStyles } from "./dashboardStyles";
 import { formatRelativeTime } from "./dashboardUtils";
+
+const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
+const Clock24Regular = bundleIcon(Clock24Filled, Clock24RegularBase);
+const Delete24Regular = bundleIcon(Delete24Filled, Delete24RegularBase);
+const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
+const Video24Regular = bundleIcon(Video24Filled, Video24RegularBase);
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const ArrowUpload24Regular = bundleIcon(ArrowUpload24Filled, ArrowUpload24RegularBase);
+const MoreHorizontal24Regular = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24RegularBase);
+const ArrowUp24Regular = bundleIcon(ArrowUp24Filled, ArrowUp24RegularBase);
+const ArrowDown24Regular = bundleIcon(ArrowDown24Filled, ArrowDown24RegularBase);
 
 function normalizeTrackLabel(value?: string | null): string {
     return String(value || "")
@@ -1862,11 +1884,11 @@ const QueueTab = () => {
                                                 {renderHistoryStatusIndicator(styles, item.status, item.error)}
                                             </div>
                                         </div>
-                                        <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
-                                            {isFailed ? (
+                                        {isFailed ? (
+                                            <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
                                                 <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} onClick={() => retryItem(item.id)} title="Retry" />
-                                            ) : null}
-                                        </div>
+                                            </div>
+                                        ) : null}
                                     </div>
                                 );
                             })}

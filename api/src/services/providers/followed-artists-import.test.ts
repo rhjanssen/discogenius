@@ -102,6 +102,70 @@ test("followed artist import uses the requested streaming provider", async () =>
   assert.match(summary.message, /No followed artists found/);
 });
 
+test("provider artist import honors the ids selected in the preview", async () => {
+  let importSourceRequests = 0;
+  providersModule.streamingProviderManager.registerStreamingProvider({
+    id: "selected-import-test-provider",
+    name: "Selected Import Test provider",
+    capabilities: {
+      catalogSearch: false, artistCatalog: false, followedArtists: true,
+      audioPreviews: false, audioDownloads: false, lossyStereo: false,
+      losslessStereo: false, hiResStereo: false, spatialAudio: false,
+      lyrics: false, musicVideos: false, videoPreviews: false,
+      videoDownloads: false, artwork: false, editorialMetadata: false,
+      providerIds: true,
+    },
+    isAuthenticated: () => true,
+    getArtistsForImportSource: async () => {
+      importSourceRequests += 1;
+      return [
+        { providerId: "artist-a", name: "Artist A" },
+        { providerId: "artist-b", name: "Artist B" },
+      ];
+    },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => ({ providerId: "artist-a", name: "Artist A" }),
+    getArtistAlbums: async () => [],
+    getAlbum: async () => ({ providerId: "album-a", title: "Album A", artist: { providerId: "artist-a", name: "Artist A" } }),
+    getAlbumTracks: async () => [],
+    getTrack: async () => ({
+      providerId: "track-a", title: "Track A", duration: 1, trackNumber: 1,
+      artist: { providerId: "artist-a", name: "Artist A" },
+      album: { providerId: "album-a", title: "Album A", artist: { providerId: "artist-a", name: "Artist A" } },
+    }),
+    logout: () => {},
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: true,
+      remoteCatalogAvailable: false,
+      canAuthenticate: true,
+    }),
+  });
+
+  const summary = await importModule.FollowedArtistsImportService.importArtists({
+    providerId: "selected-import-test-provider",
+    selection: { category: "followed-artists" },
+    providerArtistIds: ["artist-not-selected"],
+  });
+
+  assert.equal(summary.total, 0);
+  assert.equal(summary.added, 0);
+
+  const emptySummary = await importModule.FollowedArtistsImportService.importArtists({
+    providerId: "selected-import-test-provider",
+    selection: { category: "followed-artists" },
+    providerArtistIds: [],
+  });
+
+  assert.equal(emptySummary.total, 0);
+  assert.equal(emptySummary.message, "No artists selected");
+  assert.equal(importSourceRequests, 1);
+});
+
 test("followed artist import reports added when metadata sync creates the artist row", async () => {
   const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
   const { RefreshArtistService } = await import("../music/refresh-artist-service.js");

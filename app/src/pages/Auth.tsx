@@ -16,12 +16,19 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
-  Door24Regular,
-  Open24Regular,
-  ArrowRight24Regular,
-  WeatherMoon24Regular,
-  WeatherSunny24Regular,
-  DesktopMac24Regular,
+  Door24Regular as Door24RegularBase,
+  Open24Regular as Open24RegularBase,
+  ArrowRight24Regular as ArrowRight24RegularBase,
+  WeatherMoon24Regular as WeatherMoon24RegularBase,
+  WeatherSunny24Regular as WeatherSunny24RegularBase,
+  DesktopMac24Regular as DesktopMac24RegularBase,
+  Door24Filled,
+  Open24Filled,
+  ArrowRight24Filled,
+  WeatherMoon24Filled,
+  WeatherSunny24Filled,
+  DesktopMac24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/providers/themeContext";
@@ -29,6 +36,13 @@ import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import type { AuthStatusContract } from "@contracts/auth";
 import { ProviderMark } from "@/components/ui/ProviderMark";
+
+const Door24Regular = bundleIcon(Door24Filled, Door24RegularBase);
+const Open24Regular = bundleIcon(Open24Filled, Open24RegularBase);
+const ArrowRight24Regular = bundleIcon(ArrowRight24Filled, ArrowRight24RegularBase);
+const WeatherMoon24Regular = bundleIcon(WeatherMoon24Filled, WeatherMoon24RegularBase);
+const WeatherSunny24Regular = bundleIcon(WeatherSunny24Filled, WeatherSunny24RegularBase);
+const DesktopMac24Regular = bundleIcon(DesktopMac24Filled, DesktopMac24RegularBase);
 const logo = "/assets/images/logo.png";
 
 const useStyles = makeStyles({

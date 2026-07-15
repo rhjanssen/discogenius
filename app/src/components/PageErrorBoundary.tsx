@@ -2,8 +2,14 @@ import { Component, ReactNode } from "react";
 import {
   Button,
 } from "@fluentui/react-components";
-import { ArrowClockwise24Regular } from "@fluentui/react-icons";
+import {
+  ArrowClockwise24Regular as ArrowClockwise24RegularBase,
+  ArrowClockwise24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import { ErrorState } from "@/components/ui/ContentState";
+
+const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
 
 interface Props {
   children: ReactNode;

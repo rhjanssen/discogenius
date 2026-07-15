@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { Button, Badge, makeStyles, mergeClasses, tokens, Tooltip } from "@fluentui/react-components";
 import { glassButtonStyles, glassPrimaryButtonStyles } from "@/components/ui/glassButtonStyles";
+import { collectionActionSurfacePadding } from "@/components/ui/sharedLayoutStyles";
 
 export interface LibrarySelectionAction {
   key: string;
@@ -28,7 +29,7 @@ const useStyles = makeStyles({
     justifyContent: "space-between",
     gap: tokens.spacingHorizontalS,
     flexWrap: "nowrap",
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    padding: collectionActionSurfacePadding,
     backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 72%, transparent)`,
     borderRadius: tokens.borderRadiusLarge,
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
@@ -36,7 +37,6 @@ const useStyles = makeStyles({
     WebkitBackdropFilter: "blur(18px)",
     "@media (min-width: 600px)": {
       gap: tokens.spacingHorizontalM,
-      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     },
   },
   meta: {

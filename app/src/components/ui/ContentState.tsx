@@ -121,7 +121,7 @@ const useStyles = makeStyles({
       paddingBottom: tokens.spacingVerticalM,
       paddingLeft: 0,
       paddingRight: 0,
-      justifyContent: "flex-start",
+      justifyContent: "center",
     },
   },
   emptyStateCompactMobileContainer: {

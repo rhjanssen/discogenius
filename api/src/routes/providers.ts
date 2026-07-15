@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { streamingProviderManager } from "../services/providers/index.js";
 import { getProviderDiagnostics } from "../services/providers/provider-diagnostics.js";
+import type { ProviderImportSelection } from "../services/providers/streaming-provider.js";
 
 const router = Router();
 
@@ -90,6 +91,43 @@ router.get("/import-sources", async (req, res) => {
     res.json({ providerId: provider.id, providerName: provider.name, sources });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
+  }
+});
+
+router.post("/import-preview", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const providerId = typeof body.providerId === "string" ? body.providerId : "";
+    const provider = providerId
+      ? streamingProviderManager.getStreamingProvider(providerId)
+      : streamingProviderManager.getDefaultStreamingProvider();
+    if (!provider.getArtistsForImportSource) {
+      return res.status(501).json({ detail: `${provider.name} does not support artist import` });
+    }
+    if (provider.isAuthenticated && !provider.isAuthenticated()) {
+      return res.status(409).json({ detail: `Connect ${provider.name} to import artists` });
+    }
+    const category = typeof body.category === "string" ? body.category : "";
+    const allowed = new Set(["library-artists", "followed-artists", "playlist", "favorite-tracks", "mix"]);
+    if (!allowed.has(category)) {
+      return res.status(400).json({ detail: `Unknown import category: ${category}` });
+    }
+    const listId = typeof body.listId === "string" ? body.listId : undefined;
+    const artists = await provider.getArtistsForImportSource({
+      category: category as ProviderImportSelection["category"],
+      listId,
+    });
+    res.json({
+      providerId: provider.id,
+      providerName: provider.name,
+      artists: artists.map((artist) => ({
+        providerId: artist.providerId,
+        name: artist.name,
+        picture: artist.picture ?? null,
+      })),
+    });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message || "Failed to preview provider artists" });
   }
 });
 

@@ -6,11 +6,15 @@ import {
     Text,
 } from "@fluentui/react-components";
 import {
-    ArrowClockwise24Regular,
-    CheckmarkCircle24Filled,
-    Clock24Regular,
-    DismissCircle24Filled,
-    Warning24Filled,
+  ArrowClockwise24Regular as ArrowClockwise24RegularBase,
+  CheckmarkCircle24Filled,
+  Clock24Regular as Clock24RegularBase,
+  DismissCircle24Color,
+  DismissCircle24Filled,
+  Warning24Filled,
+  ArrowClockwise24Filled,
+  Clock24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { EmptyState } from "@/components/ui/ContentState";
 import { ActivityListSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -27,6 +31,9 @@ import {
     getActivityTypeIcon,
     matchesActivityFilter,
 } from "./dashboardUtils";
+
+const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
+const Clock24Regular = bundleIcon(Clock24Filled, Clock24RegularBase);
 
 type ActivityTabProps = {
     activityFilter: string;
@@ -221,7 +228,8 @@ const ActivityTab = ({
             case "warning":
                 return <Warning24Filled className={styles.statusIconNeutral} />;
             case "error":
-                return <DismissCircle24Filled className={styles.statusIconError} />;
+                // Colored variant to match the queue's colored success/failure icon family.
+                return <DismissCircle24Color />;
             default:
                 return <Clock24Regular className={styles.statusIconNeutral} />;
         }

@@ -11,11 +11,17 @@ import {
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
-import { Dismiss24Regular } from "@fluentui/react-icons";
+import {
+  Dismiss24Regular as Dismiss24RegularBase,
+  Dismiss24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import { formatDurationSeconds } from "@/utils/format";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { api } from "@/services/api";
+
+const Dismiss24Regular = bundleIcon(Dismiss24Filled, Dismiss24RegularBase);
 
 export interface TrackFileInfo {
     id: number;

@@ -1,8 +1,17 @@
 import React from "react";
 import { Button, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
-import { Eye24Regular, EyeOff24Regular } from "@fluentui/react-icons";
+import {
+  Eye24Regular as Eye24RegularBase,
+  EyeOff24Regular as EyeOff24RegularBase,
+  Eye24Filled,
+  EyeOff24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { glassButtonStyles, glassPrimaryButtonStyles } from "@/components/ui/glassButtonStyles";
+
+const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
+const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
 
 interface MonitorButtonProps {
     id: string;

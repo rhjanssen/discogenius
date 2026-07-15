@@ -1,15 +1,31 @@
 import type { MouseEvent } from "react";
 import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import {
-  ArrowDownload24Regular,
-  Eye24Regular,
-  EyeOff24Regular,
-  Info24Regular,
-  LockClosed24Regular,
-  LockOpen24Regular,
-  Play24Regular,
+  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  Eye24Regular as Eye24RegularBase,
+  EyeOff24Regular as EyeOff24RegularBase,
+  Info24Regular as Info24RegularBase,
+  LockClosed24Regular as LockClosed24RegularBase,
+  LockOpen24Regular as LockOpen24RegularBase,
+  Play24Regular as Play24RegularBase,
   Stop24Filled,
+  ArrowDownload24Filled,
+  Eye24Filled,
+  EyeOff24Filled,
+  Info24Filled,
+  LockClosed24Filled,
+  LockOpen24Filled,
+  Play24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
+
+const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
+const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
+const Info24Regular = bundleIcon(Info24Filled, Info24RegularBase);
+const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
+const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
+const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
 
 interface TrackRowActionsProps {
   isPlaying?: boolean;

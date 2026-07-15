@@ -145,6 +145,22 @@ export interface ImportSourcesResponse {
   sources: ImportSource[];
 }
 
+export interface ImportPreviewArtist {
+  providerId: string;
+  name: string;
+  picture?: string | null;
+}
+
+export interface ImportPreviewResponse {
+  providerId: string;
+  providerName: string;
+  artists: ImportPreviewArtist[];
+}
+
+export interface ImportStreamHandle {
+  close: () => void;
+}
+
 // Business/resource endpoints are served under a single /api/v1 namespace
 // (Lidarr-style). A small set of infra/streaming endpoints stay un-versioned
 // under /api and must match the backend mounts in server.ts.
@@ -1430,60 +1446,80 @@ class ApiClient {
     return this.request(`/v1/provider/import-sources${query}`);
   }
 
+  async getImportPreview(selection: {
+    category: string;
+    listId?: string | null;
+    providerId?: string | null;
+  }): Promise<ImportPreviewResponse> {
+    return this.request('/v1/provider/import-preview', {
+      method: 'POST',
+      body: JSON.stringify(selection),
+    });
+  }
+
   // Streaming endpoints using Server-Sent Events (SSE)
   // General artist-import stream: enqueues the background ImportProviderArtists
   // command and relays its progress. `category` selects the source; `listId` is
   // required for playlist/mix sources.
   createImportStream(
-    selection: { category: string; listId?: string | null; label?: string | null; providerId?: string | null },
+    selection: {
+      category: string;
+      listId?: string | null;
+      label?: string | null;
+      providerId?: string | null;
+      artistIds?: string[];
+    },
     onEvent: (event: string, data: any) => void,
     onError?: (error: Error) => void,
-  ): EventSource {
-    let url = `${this.baseUrl}${API_V1_PREFIX}/artist/import-stream`;
-    const queryParams = new URLSearchParams();
-    queryParams.set('category', selection.category);
-    if (selection.listId) queryParams.set('listId', selection.listId);
-    if (selection.label) queryParams.set('label', selection.label);
-    if (selection.providerId) queryParams.set('providerId', selection.providerId);
-    if (this.authToken) queryParams.set('token', this.authToken);
-    const query = queryParams.toString();
-    if (query) url += `?${query}`;
-    return this.attachImportStreamListeners(createManagedEventSource(url), onEvent, onError);
-  }
+  ): ImportStreamHandle {
+    const controller = new AbortController();
+    const close = () => controller.abort();
 
-  private attachImportStreamListeners(
-    eventSource: EventSource,
-    onEvent: (event: string, data: any) => void,
-    onError?: (error: Error) => void,
-  ): EventSource {
-
-    // Set up event listeners for all event types
-    const eventTypes = ['status', 'total', 'artist-progress', 'artist-added', 'artist-updated', 'artist-skipped', 'complete', 'error'];
-
-    eventTypes.forEach(eventType => {
-      eventSource.addEventListener(eventType, (e: MessageEvent) => {
-        try {
-          const data = JSON.parse(e.data);
-          onEvent(eventType, data);
-        } catch (error) {
-          console.error(`Failed to parse SSE data for event ${eventType}:`, error);
-        }
+    void (async () => {
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      if (this.authToken) headers.set('Authorization', `Bearer ${this.authToken}`);
+      const response = await fetch(`${this.baseUrl}${API_V1_PREFIX}/artist/import-stream`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(selection),
+        signal: controller.signal,
       });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { detail?: string } | null;
+        throw new Error(body?.detail || `Import request failed (${response.status})`);
+      }
+      if (!response.body) throw new Error('Import progress stream is unavailable');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary >= 0) {
+          const block = buffer.slice(0, boundary).replace(/\r/g, '');
+          buffer = buffer.slice(boundary + 2);
+          const event = block.split('\n').find((line) => line.startsWith('event:'))?.slice(6).trim();
+          const dataText = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+          if (event && dataText) {
+            try {
+              onEvent(event, JSON.parse(dataText));
+            } catch (error) {
+              console.error(`Failed to parse import event ${event}:`, error);
+            }
+          }
+          boundary = buffer.indexOf('\n\n');
+        }
+        if (done) break;
+      }
+    })().catch((error) => {
+      if (!controller.signal.aborted) {
+        onError?.(error instanceof Error ? error : new Error(String(error)));
+      }
     });
 
-    eventSource.onerror = (error) => {
-      if (isExpectedEventSourceClose(eventSource)) {
-        return;
-      }
-
-      console.error('SSE error:', error);
-      if (onError) {
-        onError(new Error('Stream connection failed'));
-      }
-      eventSource.close();
-    };
-
-    return eventSource;
+    return { close };
   }
 
   createMonitoringCheckStream(onEvent: (event: string, data: any) => void, onError?: (error: Error) => void): EventSource {

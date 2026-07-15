@@ -25,18 +25,31 @@ import {
     Link,
 } from "@fluentui/react-components";
 import {
-    DoorArrowLeft24Regular,
-    ArrowImport24Regular,
-    WeatherMoon24Regular,
-    WeatherSunny24Regular,
-    DesktopMac24Regular,
-    ArrowSync24Regular,
-    ArrowSortDownLines24Regular,
-    QuestionCircle24Regular,
-    Dismiss24Regular,
-    Open24Regular,
-    ChevronDown24Regular,
-    ChevronUp24Regular,
+  DoorArrowLeft24Regular as DoorArrowLeft24RegularBase,
+  ArrowImport24Regular as ArrowImport24RegularBase,
+  WeatherMoon24Regular as WeatherMoon24RegularBase,
+  WeatherSunny24Regular as WeatherSunny24RegularBase,
+  DesktopMac24Regular as DesktopMac24RegularBase,
+  ArrowSync24Regular as ArrowSync24RegularBase,
+  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
+  QuestionCircle24Regular as QuestionCircle24RegularBase,
+  Dismiss24Regular as Dismiss24RegularBase,
+  Open24Regular as Open24RegularBase,
+  ChevronDown24Regular as ChevronDown24RegularBase,
+  ChevronUp24Regular as ChevronUp24RegularBase,
+  DoorArrowLeft24Filled,
+  ArrowImport24Filled,
+  WeatherMoon24Filled,
+  WeatherSunny24Filled,
+  DesktopMac24Filled,
+  ArrowSync24Filled,
+  ArrowSortDownLines24Filled,
+  QuestionCircle24Filled,
+  Dismiss24Filled,
+  Open24Filled,
+  ChevronDown24Filled,
+  ChevronUp24Filled,
+  bundleIcon
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
@@ -69,6 +82,19 @@ import type {
     NamingConfigContract,
 } from "@contracts/config";
 import type { AppReleaseInfoContract } from "@contracts/release";
+
+const DoorArrowLeft24Regular = bundleIcon(DoorArrowLeft24Filled, DoorArrowLeft24RegularBase);
+const ArrowImport24Regular = bundleIcon(ArrowImport24Filled, ArrowImport24RegularBase);
+const WeatherMoon24Regular = bundleIcon(WeatherMoon24Filled, WeatherMoon24RegularBase);
+const WeatherSunny24Regular = bundleIcon(WeatherSunny24Filled, WeatherSunny24RegularBase);
+const DesktopMac24Regular = bundleIcon(DesktopMac24Filled, DesktopMac24RegularBase);
+const ArrowSync24Regular = bundleIcon(ArrowSync24Filled, ArrowSync24RegularBase);
+const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
+const QuestionCircle24Regular = bundleIcon(QuestionCircle24Filled, QuestionCircle24RegularBase);
+const Dismiss24Regular = bundleIcon(Dismiss24Filled, Dismiss24RegularBase);
+const Open24Regular = bundleIcon(Open24Filled, Open24RegularBase);
+const ChevronDown24Regular = bundleIcon(ChevronDown24Filled, ChevronDown24RegularBase);
+const ChevronUp24Regular = bundleIcon(ChevronUp24Filled, ChevronUp24RegularBase);
 
 type NamingFieldKey =
     | "artist_folder"

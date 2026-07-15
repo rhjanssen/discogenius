@@ -270,6 +270,8 @@ export interface ImportProviderArtistsCommand extends CommandBodyCommon {
   importListId?: string;
   /** Human-readable label for progress/history (e.g. the playlist name). */
   importLabel?: string;
+  /** Provider artist ids selected in the import preview. Omitted means all source artists. */
+  importArtistIds?: string[];
 }
 
 export interface ImportUnmappedFilesCommand extends CommandBodyCommon {

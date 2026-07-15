@@ -5,10 +5,17 @@ import {
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
-import { Pause24Filled, Play24Regular } from "@fluentui/react-icons";
+import {
+  Pause24Filled,
+  Play24Regular as Play24RegularBase,
+  Play24Filled,
+  bundleIcon
+} from "@fluentui/react-icons";
 import Hls from "hls.js";
 import { formatDurationSeconds } from "@/utils/format";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+
+const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
 
 interface AudioPlayerProps {
     src: string;

@@ -181,11 +181,17 @@ async function streamArtistImport(req: any, res: any, selection: ProviderImportS
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
-  const providerId = typeof req.query.providerId === "string"
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const providerId = typeof body.providerId === "string"
+    ? body.providerId
+    : typeof req.query.providerId === "string"
     ? req.query.providerId
     : typeof req.query.provider === "string"
       ? req.query.provider
       : undefined;
+  const selectedArtistIds = Array.isArray(body.artistIds)
+    ? [...new Set(body.artistIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim()))].slice(0, 5000)
+    : undefined;
 
   sendEvent('status', { message: 'Queueing artist import…' });
   const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
@@ -197,6 +203,7 @@ async function streamArtistImport(req: any, res: any, selection: ProviderImportS
       importCategory: selection.category,
       importListId: selection.listId,
       importLabel: label,
+      importArtistIds: selectedArtistIds,
     } as ImportProviderArtistsCommand);
   } catch (error: any) {
     clearInterval(heartbeat);
@@ -241,7 +248,10 @@ async function streamArtistImport(req: any, res: any, selection: ProviderImportS
 
   appEvents.on(AppEvent.IMPORT_ARTISTS_PROGRESS, onProgress);
   appEvents.on(AppEvent.COMMAND_UPDATED, onCommand);
-  req.on('close', cleanup);
+  // Track the response socket, not the request body. A POST request's incoming
+  // stream closes as soon as its JSON body is consumed, while the SSE response
+  // must remain open for the whole background command.
+  res.on('close', cleanup);
 }
 
 const IMPORT_CATEGORIES = new Set(["library-artists", "followed-artists", "playlist", "favorite-tracks", "mix"]);
@@ -269,6 +279,18 @@ router.get("/import-stream", (req, res) => {
   }
   const listId = typeof req.query.listId === "string" ? req.query.listId : undefined;
   const label = typeof req.query.label === "string" ? req.query.label : undefined;
+  void streamArtistImport(req, res, { category: category as ProviderImportSelection["category"], listId }, label);
+});
+
+router.post("/import-stream", (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const category = typeof body.category === "string" ? body.category : "followed-artists";
+  if (!IMPORT_CATEGORIES.has(category)) {
+    res.status(400).json({ detail: `Unknown import category: ${category}` });
+    return;
+  }
+  const listId = typeof body.listId === "string" ? body.listId : undefined;
+  const label = typeof body.label === "string" ? body.label : undefined;
   void streamArtistImport(req, res, { category: category as ProviderImportSelection["category"], listId }, label);
 });
 
@@ -528,6 +550,9 @@ router.post("/import", async (req, res) => {
       importCategory: category as ImportProviderArtistsCommand["importCategory"],
       importListId: typeof body.listId === "string" ? body.listId : undefined,
       importLabel: typeof body.label === "string" ? body.label : undefined,
+      importArtistIds: Array.isArray(body.artistIds)
+        ? body.artistIds.filter((value): value is string => typeof value === "string").slice(0, 5000)
+        : undefined,
     } as ImportProviderArtistsCommand);
     if (commandId === -1) {
       return res.status(409).json({ detail: "Could not queue artist import" });
