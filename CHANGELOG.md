@@ -2,6 +2,42 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.3.3] - 2026-07-15
+
+### Changed
+- Artist pages now show five top tracks initially while retaining the expandable
+  indexed top-100 list.
+- Rename and retag previews now share Lidarr-style default selection, tri-state
+  select-all, shift-range selection, selected counts, and consistent change rows.
+- Queue, unmapped-file, library, rename, and retag selection now use the shared
+  Lidarr-style selection model, including select-all-visible and shift ranges.
+- Card, table, artist, and album loading skeletons now mirror their rendered
+  layouts more closely and follow Fluent UI loading/accessibility guidance.
+- Artist and album UI artwork caches now retain only 500px and 250px derivatives;
+  full-resolution originals are reserved for managed library directories. Video
+  artwork retains its 720p source alongside UI derivatives.
+
+### Fixed
+- Fresh spatial-audio and music-video imports now embed canonical MusicBrainz,
+  provider, and quality metadata before import completion.
+- Known spatial downloads no longer enter unnecessary fingerprinting, and
+  import-time tag application no longer performs optional lyric lookups.
+- Tag writing now handles database file extensions consistently and no longer
+  writes synthetic zero ReplayGain values when the provider supplied no value.
+- Video retag work now reports per-file progress and cooperatively honors
+  cancellation between files.
+- Download imports now refresh full provider track metadata before tagging so
+  ReplayGain, peak, and copyright omitted by bulk catalog responses are retained.
+- Provider track persistence now normalizes camel/snake-case supplement fields,
+  retains track copyright, and skips redundant import-time provider calls when
+  ReplayGain, peak, and copyright are already materialized.
+- Monitored-only remains the default library/artist preference, but falls back to
+  showing all content on tabs and artist pages that have no monitored items.
+- Shared media cards are keyboard-focusable and activate with native link/button
+  key semantics.
+- Fixed empty-library catalog search, the empty-state artist-import button, and
+  replaced search-flyout skeletons with a single progress indicator.
+
 ## [2.3.2] - 2026-07-15
 
 ### Added

@@ -105,6 +105,14 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
         }
     }, [navigate, to, onClick]);
 
+    const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
+        const activatesLink = Boolean(to) && event.key === "Enter";
+        const activatesButton = !to && Boolean(onClick) && (event.key === "Enter" || event.key === " ");
+        if (!activatesLink && !activatesButton) return;
+        event.preventDefault();
+        handleClick();
+    }, [handleClick, onClick, to]);
+
     const handleMonitorClick = useCallback(
         (e: React.MouseEvent) => {
             e.stopPropagation();
@@ -130,7 +138,9 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                 className
             )}
             onClick={isClickable ? handleClick : undefined}
-            role={isClickable ? "link" : undefined}
+            onKeyDown={isClickable ? handleKeyDown : undefined}
+            role={to ? "link" : onClick ? "button" : undefined}
+            tabIndex={isClickable ? 0 : undefined}
             aria-label={title}
         >
             <div className={previewClass}>

@@ -161,11 +161,13 @@ test("album track scan stores provider track offers linked to the selected canon
         volumeNumber: 1,
         isrc: "USABC240001",
         copyright: "(P) 2024 Track",
+        replayGain: -8.4,
+        peak: 0.97,
         popularity: 56,
         quality: "LOSSLESS",
         artist: { providerId: "fake-artist", name: "Bastille" },
-        // provider rows carry audio-normalization in `raw`; the scan homes it to
-        // the ProviderItems track offer (replay_gain is negative dB, peak a fraction).
+        // Raw provider payloads can use their own field casing. The normalized
+        // provider DTO above remains authoritative for loudness supplements.
         raw: {
           provider_id: "provider-track-1",
           title: "Track One",
@@ -176,8 +178,6 @@ test("album track scan stores provider track offers linked to the selected canon
           copyright: "(P) 2024 Track",
           popularity: 56,
           quality: "LOSSLESS",
-          replay_gain: -8.4,
-          peak: 0.97,
           artist_id: "fake-artist",
           artist_name: "Bastille",
         },
@@ -227,7 +227,7 @@ dbModule.db.prepare(`
   await refreshServiceModule.RefreshAlbumService.refreshTracks("provider-album-1", { resolveMusicBrainz: false });
 
   const offer = dbModule.db.prepare(`
-    SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method, isrc, popularity, replay_gain, peak
+    SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method, isrc, copyright, popularity, replay_gain, peak
     FROM ProviderItems
     WHERE provider = 'fake' AND entity_type = 'track' AND provider_id = 'provider-track-1'
   `).get() as any;
@@ -239,6 +239,7 @@ dbModule.db.prepare(`
   assert.equal(offer.library_slot, "stereo");
   assert.equal(offer.match_method, "selected-release-position");
   assert.equal(offer.isrc, "USABC240001");
+  assert.equal(offer.copyright, "(P) 2024 Track");
   assert.equal(offer.popularity, 56);
   // replay_gain/peak are provider-only facts and live on the ProviderItems
   // track offer, not the canonical MusicBrainz Recording.

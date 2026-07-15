@@ -2,7 +2,7 @@
  * Shared DataGrid component — configurable table/list view with sticky header,
  * responsive column hiding, row click, hover states, and optional row selection.
  */
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useRef } from "react";
 import {
     Checkbox,
     makeStyles,
@@ -327,6 +327,8 @@ function DataGridInner<T>(
         () => new Set(selectedRowIds),
         [selectedRowIds]
     );
+    const lastToggledRowIdRef = useRef<string | number | null>(null);
+    const pendingRangeSelectionRef = useRef(false);
 
     const selectableRowIds = useMemo(() => {
         if (!selection) {
@@ -362,18 +364,32 @@ function DataGridInner<T>(
         }
 
         selection.onSelectionChange(checked ? selectableRowIds : []);
+        lastToggledRowIdRef.current = null;
     }, [selectableRowIds, selection]);
 
-    const toggleRow = useCallback((rowId: string | number, checked: boolean) => {
+    const toggleRow = useCallback((rowId: string | number, checked: boolean, range: boolean) => {
         if (!selection) {
             return;
         }
 
-        const nextSelection = checked
-            ? Array.from(new Set([...selectedRowIds, rowId]))
-            : selectedRowIds.filter((currentRowId) => currentRowId !== rowId);
-        selection.onSelectionChange(nextSelection);
-    }, [selectedRowIds, selection]);
+        const currentIndex = selectableRowIds.indexOf(rowId);
+        const previousIndex = lastToggledRowIdRef.current == null
+            ? -1
+            : selectableRowIds.indexOf(lastToggledRowIdRef.current);
+        const affectedRowIds = range && currentIndex >= 0 && previousIndex >= 0
+            ? selectableRowIds.slice(Math.min(currentIndex, previousIndex), Math.max(currentIndex, previousIndex) + 1)
+            : [rowId];
+        const nextSelection = new Set(selectedRowIds);
+        for (const affectedRowId of affectedRowIds) {
+            if (checked) {
+                nextSelection.add(affectedRowId);
+            } else {
+                nextSelection.delete(affectedRowId);
+            }
+        }
+        selection.onSelectionChange(Array.from(nextSelection));
+        lastToggledRowIdRef.current = rowId;
+    }, [selectableRowIds, selectedRowIds, selection]);
 
     const beginColumnResize = useCallback((event: React.PointerEvent<HTMLSpanElement>, column: DataGridColumn<T>) => {
         if (!resizableColumns || isMobile) {
@@ -517,8 +533,16 @@ function DataGridInner<T>(
                                         checked={rowSelected}
                                         disabled={!(selection.isRowSelectable?.(item) ?? true)}
                                         aria-label={selection.getSelectionLabel?.(item) || `Select row ${index + 1}`}
-                                        onClick={(event) => event.stopPropagation()}
-                                        onChange={(_, data) => toggleRow(rowId, Boolean(data.checked))}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            pendingRangeSelectionRef.current = event.shiftKey;
+                                        }}
+                                        onChange={(event, data) => toggleRow(
+                                            rowId,
+                                            Boolean(data.checked),
+                                            pendingRangeSelectionRef.current
+                                                || Boolean((event.nativeEvent as MouseEvent).shiftKey),
+                                        )}
                                     />
                                 </div>
                             ) : null}

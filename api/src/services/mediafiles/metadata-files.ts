@@ -8,11 +8,11 @@ import {
     albumProviderArtworkCandidatesFromRow,
     imageContainerFromImagesColumn,
     getMediaCoverFilePathFromUrl,
+    getCoverArtArchiveReleaseGroupUrl,
+    getServarrMetadataAlbumImageUrl,
     getServarrMetadataArtistImageUrl,
     normalizeArtworkUrl,
     parseJsonObject,
-    resolveAlbumArtwork,
-    resolveArtistArtwork,
     resolveMediaCoverProxyUrl,
     type ProviderArtworkCandidate,
     type ServarrMetadataImageContainer,
@@ -610,20 +610,22 @@ export async function downloadAlbumCover(
 ): Promise<void> {
     const context = loadAlbumArtworkContext(albumId);
     let url = context
-        ? await resolveAlbumArtwork({
-            albumMbid: context.albumMbid,
-            servarrMetadataData: context.servarrMetadataData,
-            providerCandidates: context.providerCandidates,
-            size: resolution,
-        })
+        ? getServarrMetadataAlbumImageUrl(context.servarrMetadataData)
         : null;
 
     if (!url) {
+        const providerCandidate = (context?.providerCandidates || []).find(
+            (candidate) => candidate.provider && candidate.entityId,
+        );
         url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
             entityType: "album",
-            providerId: albumId,
+            providerId: providerCandidate?.entityId != null ? String(providerCandidate.entityId) : albumId,
+            imageId: providerCandidate?.imageId || null,
             size: resolution,
         }) ?? null;
+    }
+    if (!url) {
+        url = getCoverArtArchiveReleaseGroupUrl(context?.albumMbid);
     }
     await downloadProviderArtwork(url, outputPath, `album cover for ${albumId}`);
 }

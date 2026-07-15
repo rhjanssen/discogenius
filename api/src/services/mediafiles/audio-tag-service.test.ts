@@ -88,8 +88,8 @@ test("audio tag removal keys use format-specific metadata fields", () => {
   }];
 
   assert.deepEqual(AudioTagService.buildAudioTagRemovalKeys(tags, ".flac"), ["REPLAYGAIN_TRACK_GAIN"]);
-  assert.deepEqual(AudioTagService.buildAudioTagRemovalKeys(tags, ".mp3"), ["TXXX:REPLAYGAIN_TRACK_GAIN"]);
-  assert.deepEqual(AudioTagService.buildAudioTagRemovalKeys(tags, ".m4a"), ["----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN"]);
+  assert.deepEqual(AudioTagService.buildAudioTagRemovalKeys(tags, ".mp3"), ["TXXX:REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_GAIN"]);
+  assert.deepEqual(AudioTagService.buildAudioTagRemovalKeys(tags, ".m4a"), ["----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_GAIN"]);
 });
 
 test("audio tag writer emits Picard canonical barcode fields", () => {
@@ -190,6 +190,17 @@ test("buildAudioTagWriteMap maps tags correctly for M4A (.m4a)", () => {
     "----:com.apple.iTunes:MusicBrainz Album Type": "album; compilation",
     "----:com.apple.iTunes:MusicBrainz Album Release Country": "US",
   });
+});
+
+test("buildAudioTagWriteMap accepts database extensions without a leading dot", () => {
+  const tags: ManagedTag[] = [{
+    key: "musicbrainz_recordingid",
+    label: "MusicBrainz Recording ID",
+    ffmpegKey: "musicbrainz_recordingid",
+    targetValue: "recording-id",
+  }];
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, "m4a"), AudioTagService.buildAudioTagWriteMap(tags, ".m4a"));
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, "mp4"), AudioTagService.buildAudioTagWriteMap(tags, ".mp4"));
 });
 
 test("buildAudioTagWriteMap maps .opus like FLAC/Vorbis (Ogg-container Vorbis comments)", () => {

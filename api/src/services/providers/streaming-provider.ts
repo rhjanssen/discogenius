@@ -328,6 +328,8 @@ export interface ProviderTrack {
   isrc?: string | null;
   releaseDate?: string | null;
   copyright?: string | null;
+  replayGain?: number | null;
+  peak?: number | null;
   popularity?: number | null;
   quality?: string | null;
   qualityTags?: string[];

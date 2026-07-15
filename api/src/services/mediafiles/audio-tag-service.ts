@@ -173,7 +173,7 @@ function shouldSkipEmbeddedAudioTagWrite(row: RetagTrackRow): boolean {
   // confirmed live: `ffmpeg -formats` lists "ape" with demuxer support only) —
   // a stream-copy metadata rewrite has no container to write back into. APE
   // files still import/play fine; they just can't carry Discogenius's tags.
-  return String(row.extension || "").toLowerCase() === ".ape";
+  return String(row.extension || "").toLowerCase().replace(/^\./, "") === "ape";
 }
 
 function resolveTagPolicy(config: MetadataConfig): WriteAudioTagsPolicy {
@@ -298,6 +298,7 @@ function formatPositiveNumber(value: number | null | undefined): string | null {
 }
 
 function formatReplayGain(value: number | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
     return null;
@@ -308,6 +309,7 @@ function formatReplayGain(value: number | null | undefined): string | null {
 }
 
 function formatReplayPeak(value: number | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
     return null;
@@ -848,7 +850,8 @@ export class AudioTagService {
         COALESCE(
           canonical_recording.copyright,
           provider_recording.copyright,
-          provider_track.copyright
+          provider_track.copyright,
+          provider_album.copyright
         ) AS media_copyright,
         provider_track.replay_gain AS media_replay_gain,
         provider_track.peak AS media_peak,
@@ -1040,7 +1043,11 @@ export class AudioTagService {
 
   static buildAudioTagWriteMap(tags: ManagedTag[], extension?: string): Record<string, string> {
     const output: Record<string, string> = {};
-    const ext = String(extension || "").toLowerCase().trim();
+    const rawExtension = String(extension || "").toLowerCase().trim();
+    // TrackFiles stores extensions without a leading dot while direct callers
+    // generally pass path.extname(). Normalize both shapes so MP4/M4A freeform
+    // atoms, ID3 frames, and the APE safety guard use the intended mapping.
+    const ext = rawExtension && !rawExtension.startsWith(".") ? `.${rawExtension}` : rawExtension;
 
     // .opus is Ogg-container Vorbis comments, same scheme as FLAC/OGG
     // (matches Lidarr's Xiph tag-type handling, which covers Opus identically).
@@ -1238,10 +1245,15 @@ export class AudioTagService {
   }
 
   static buildAudioTagRemovalKeys(tags: ManagedTag[], extension?: string): string[] {
-    return Object.keys(this.buildAudioTagWriteMap(
+    const mappedKeys = Object.keys(this.buildAudioTagWriteMap(
       tags.map((tag) => ({ ...tag, targetValue: "__remove__" })),
       extension,
     ));
+    // Releases prior to 2.3.3 passed database extensions without a leading
+    // dot, causing generic ffmpeg keys to be written into MP4/M4A files rather
+    // than their mapped freeform atoms. Remove both shapes during repair.
+    const legacyKeys = tags.flatMap((tag) => [tag.ffmpegKey, ...(tag.aliases || [])]);
+    return Array.from(new Set([...mappedKeys, ...legacyKeys].map((key) => key.trim()).filter(Boolean)));
   }
 
   static buildManagedTagRemovals(config: MetadataConfig): ManagedTag[] {
@@ -1279,6 +1291,31 @@ export class AudioTagService {
           aliases: ["replaygain_track_peak"],
         },
       );
+    }
+    return removals;
+  }
+
+  private static buildRowManagedTagRemovals(row: RetagTrackRow, config: MetadataConfig): ManagedTag[] {
+    const removals = this.buildManagedTagRemovals(config);
+    if (config.embed_replaygain !== false) {
+      if (row.media_replay_gain === null || row.media_replay_gain === undefined) {
+        removals.push({
+          key: "replaygain_track_gain",
+          label: "ReplayGain Track Gain",
+          ffmpegKey: "REPLAYGAIN_TRACK_GAIN",
+          targetValue: "",
+          aliases: ["replaygain_track_gain"],
+        });
+      }
+      if (row.media_peak === null || row.media_peak === undefined) {
+        removals.push({
+          key: "replaygain_track_peak",
+          label: "ReplayGain Track Peak",
+          ffmpegKey: "REPLAYGAIN_TRACK_PEAK",
+          targetValue: "",
+          aliases: ["replaygain_track_peak"],
+        });
+      }
     }
     return removals;
   }
@@ -1382,12 +1419,10 @@ export class AudioTagService {
       }
     }
 
-    if (nextRow.media_mbid) {
-      const isSpatialOrVideo = nextRow.library_slot === "spatial" || nextRow.library_slot === "video";
-      if (!isSpatialOrVideo) {
-        return nextRow;
-      }
-    }
+    // Canonical imports already carry their MusicBrainz recording identity.
+    // Fingerprinting is only for unknown/mistagged files; attempting fpcalc on
+    // Atmos E-AC-3 can fail and used to hold the import finalizer at 94%.
+    if (nextRow.media_mbid) return nextRow;
 
     if (!config.enable_fingerprinting) {
       return nextRow;
@@ -1950,7 +1985,7 @@ export class AudioTagService {
       }
     }
 
-    const removals = this.buildManagedTagRemovals(config);
+    const removals = this.buildRowManagedTagRemovals(row, config);
     if (desiredTags.length === 0 && removals.length === 0) {
       return {
         id: row.id,
@@ -2119,7 +2154,9 @@ export class AudioTagService {
         continue;
       }
 
-      const preview = await this.evaluateRow(enrichedRow, config);
+      const preview = await this.evaluateRow(enrichedRow, config, {
+        includeExternalMetadata: options.includeExternalLyrics !== false,
+      });
       if (!preview.missing && preview.changes.length === 0) {
         result.skipped++;
         continue;
@@ -2145,7 +2182,7 @@ export class AudioTagService {
       }
 
       const desiredTags = this.buildAudioTagWriteMap(desiredTagsArr, enrichedRow.extension);
-      const removalKeys = this.buildAudioTagRemovalKeys(this.buildManagedTagRemovals(config), enrichedRow.extension);
+      const removalKeys = this.buildAudioTagRemovalKeys(this.buildRowManagedTagRemovals(enrichedRow, config), enrichedRow.extension);
 
       if (shouldSkipEmbeddedAudioTagWrite(enrichedRow)) {
         console.warn(`[Retag] Skipping embedded tag rewrite for ${resolvedPath}; ${enrichedRow.extension || "file"} ${enrichedRow.file_codec || "spatial"} is not safely writable with ffmpeg stream copy.`);

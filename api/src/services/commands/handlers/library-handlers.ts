@@ -1,7 +1,9 @@
+import { db } from "../../../database.js";
 import { DiskScanService } from "../../mediafiles/library-scan.js";
 import { MoveArtistService } from "../../mediafiles/move-artist-service.js";
 import { RenameTrackFileService } from "../../mediafiles/rename-track-file-service.js";
 import { AudioTagService } from "../../mediafiles/audio-tag-service.js";
+import { VideoTagService } from "../../mediafiles/video-tag-service.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
@@ -185,16 +187,50 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
 export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
         progress: 5,
-        description: 'Retag Files - applying audio tag plan',
+        description: 'Retag Files - applying media tag plan',
     });
-    const result = Array.isArray(job.payload.ids) && job.payload.ids.length > 0
-        ? await AudioTagService.apply(job.payload.ids)
-        : Array.isArray(job.payload.mediaIds) && job.payload.mediaIds.length > 0
+    let result;
+    if (Array.isArray(job.payload.ids) && job.payload.ids.length > 0) {
+        const marks = job.payload.ids.map(() => "?").join(",");
+        const videoIds = (db.prepare(`SELECT id FROM TrackFiles WHERE file_type = 'video' AND id IN (${marks})`).all(...job.payload.ids) as Array<{ id: number }>).map((row) => row.id);
+        const videoSet = new Set(videoIds);
+        const audioIds = job.payload.ids.filter((id) => !videoSet.has(id));
+        const emptyResult = { retagged: 0, skipped: 0, missing: 0, errors: [] as Array<{ id: number; error: string }> };
+        // A file-specific repair must remain local and deterministic. Missing
+        // lyrics are handled by the metadata backfill, not one network request
+        // per file while a RetagFiles command owns the worker.
+        const audioResult = audioIds.length > 0
+            ? await AudioTagService.apply(audioIds, { includeExternalLyrics: false })
+            : emptyResult;
+        const videoResult = { ...emptyResult, errors: [] as Array<{ id: number; error: string }> };
+        for (let index = 0; index < videoIds.length; index++) {
+            const status = (db.prepare("SELECT status FROM commands WHERE id = ?").get(job.id) as { status?: string } | undefined)?.status;
+            if (status === "cancelled") return;
+            ctx.updateCommandDescription(job, {
+                progress: 5 + Math.floor(((index + 1) / Math.max(videoIds.length, 1)) * 90),
+                description: `Retag Files - writing video ${index + 1}/${videoIds.length}`,
+            });
+            const itemResult = await VideoTagService.apply([videoIds[index]]);
+            videoResult.retagged += itemResult.retagged;
+            videoResult.skipped += itemResult.skipped;
+            videoResult.missing += itemResult.missing;
+            videoResult.errors.push(...itemResult.errors);
+            await ctx.yieldToEventLoop();
+        }
+        result = {
+            retagged: audioResult.retagged + videoResult.retagged,
+            skipped: audioResult.skipped + videoResult.skipped,
+            missing: audioResult.missing + videoResult.missing,
+            errors: [...audioResult.errors, ...videoResult.errors],
+        };
+    } else {
+        result = Array.isArray(job.payload.mediaIds) && job.payload.mediaIds.length > 0
             ? await AudioTagService.applyForMediaIds(job.payload.mediaIds)
             : await AudioTagService.applyByQuery({
                 artistId: job.payload.artistId,
                 albumId: job.payload.albumId,
             });
+    }
     ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);
     ctx.updateCommandDescription(job, {
         progress: 100,

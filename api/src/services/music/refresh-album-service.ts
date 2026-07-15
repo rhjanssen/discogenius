@@ -57,11 +57,10 @@ function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
 
 export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): any {
     const raw = providerTrack.raw;
-    if (raw && typeof raw === "object" && "provider_id" in raw) {
-        return raw;
-    }
+    const rawRow = raw && typeof raw === "object" ? raw as Record<string, any> : {};
 
     return {
+        ...rawRow,
         provider_id: providerTrack.providerId,
         title: providerTrack.title,
         duration: providerTrack.duration || 0,
@@ -72,17 +71,17 @@ export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): a
         explicit: false,
         quality: providerTrack.quality || "LOSSLESS",
         copyright: providerTrack.copyright || null,
-        replay_gain: (providerTrack as any).replay_gain ?? null,
-        peak: (providerTrack as any).peak ?? null,
-        bpm: (providerTrack as any).bpm ?? null,
-        musical_key: (providerTrack as any).musical_key ?? null,
+        replay_gain: providerTrack.replayGain ?? rawRow.replay_gain ?? rawRow.replayGain ?? null,
+        peak: providerTrack.peak ?? rawRow.peak ?? null,
+        bpm: rawRow.bpm ?? null,
+        musical_key: rawRow.musical_key ?? rawRow.musicalKey ?? null,
         artist_id: providerTrack.artist?.providerId || null,
         artist_name: providerTrack.artist?.name || "Unknown Artist",
         artists: Array.isArray(providerTrack.artists)
             ? providerTrack.artists.map(a => ({ id: a.providerId, name: a.name }))
             : (providerTrack.artist ? [{ id: providerTrack.artist.providerId, name: providerTrack.artist.name }] : []),
         url: providerTrack.url,
-        popularity: (providerTrack as any).popularity || 0,
+        popularity: providerTrack.popularity ?? rawRow.popularity ?? 0,
         release_date: providerTrack.releaseDate || null,
     };
 }
@@ -788,8 +787,8 @@ export class RefreshAlbumService {
                 isrc, duration, track_number, volume_number, release_date, artist_mbid, release_group_mbid, release_mbid,
                 track_mbid, recording_mbid, library_slot, track_id, recording_id,
                 match_status, match_confidence, match_method, match_evidence, provider_artist_name, cover,
-                popularity, replay_gain, peak, bpm, musical_key, updated_at
-            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                copyright, popularity, replay_gain, peak, bpm, musical_key, updated_at
+            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 title = excluded.title,
@@ -815,6 +814,7 @@ export class RefreshAlbumService {
                 match_evidence = excluded.match_evidence,
                 provider_artist_name = excluded.provider_artist_name,
                 cover = COALESCE(excluded.cover, ProviderItems.cover),
+                copyright = COALESCE(excluded.copyright, ProviderItems.copyright),
                 popularity = COALESCE(excluded.popularity, ProviderItems.popularity),
                 replay_gain = COALESCE(excluded.replay_gain, ProviderItems.replay_gain),
                 peak = COALESCE(excluded.peak, ProviderItems.peak),
@@ -877,6 +877,7 @@ export class RefreshAlbumService {
                             }),
                             currentTrack.artist?.name || null,
                             null,
+                            textOrNull(currentTrack.copyright),
                             positiveNumberOrNull(currentTrack.popularity),
                             finiteNumberOrNull(currentTrack.replay_gain),
                             finiteNumberOrNull(currentTrack.peak),

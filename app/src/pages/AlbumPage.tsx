@@ -1251,6 +1251,7 @@ const AlbumPage = () => {
         content="tracks"
         rows={8}
         className={styles.container}
+        actionWidths={["104px", "82px", "110px", "88px", "72px"]}
         label={showIngestSkeleton ? "Syncing album tracks from MusicBrainz..." : "Loading album details..."}
       />
     );

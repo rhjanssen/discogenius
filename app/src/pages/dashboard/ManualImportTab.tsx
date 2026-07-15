@@ -21,6 +21,7 @@ import { EmptyState } from '@/components/ui/ContentState';
 import { DataGridSkeleton } from '@/components/ui/LoadingSkeletons';
 import { glassButtonStyles, glassDangerButtonStyles, glassPrimaryButtonStyles } from '@/components/ui/glassButtonStyles';
 import { useGlobalEvents } from '@/hooks/useGlobalEvents';
+import { useSelectableCollection } from '@/hooks/useSelectableCollection';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
 import { isSpatialAudioQuality } from '@/utils/spatialAudio';
@@ -586,7 +587,6 @@ const ManualImportTab = () => {
     const [manualImportFile, setManualImportFile] = useState<UnmappedFile | null>(null);
     const [sortKey, setSortKey] = useState<SortKey>('created_at');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-    const [selectedRowIds, setSelectedRowIds] = useState<Array<string | number>>([]);
 
     const { data: files, isLoading } = useQuery<UnmappedFile[]>({
         queryKey: ['unmapped-files'],
@@ -618,30 +618,6 @@ const ManualImportTab = () => {
         }
     }, [lastEvent, queryClient]);
 
-    const actionMutation = useMutation({
-        mutationFn: (args: { id: number; action: 'ignore' | 'unignore' | 'delete' }) => api.actionUnmappedFile(args.id, args.action),
-        onSuccess: (data: any) => {
-            queryClient.invalidateQueries({ queryKey: ['unmapped-files'] });
-            setSelectedRowIds([]);
-            toast({ title: 'Success', description: data.message });
-        },
-        onError: (error: any) => {
-            toast({ title: 'Action failed', description: error.message, variant: 'destructive' });
-        },
-    });
-
-    const bulkActionMutation = useMutation({
-        mutationFn: (args: { ids: number[]; action: 'ignore' | 'unignore' | 'delete' }) => api.bulkActionUnmappedFiles(args.ids, args.action),
-        onSuccess: (data: any) => {
-            queryClient.invalidateQueries({ queryKey: ['unmapped-files'] });
-            setSelectedRowIds([]);
-            toast({ title: 'Success', description: data.message });
-        },
-        onError: (error: any) => {
-            toast({ title: 'Action failed', description: error.message, variant: 'destructive' });
-        },
-    });
-
     const fileList = Array.isArray(files) ? files : [];
     const visibleFiles = showIgnored ? fileList : fileList.filter((file) => !file.ignored);
 
@@ -663,15 +639,11 @@ const ManualImportTab = () => {
         return nextRows;
     }, [displayRows, sortDirection, sortKey]);
 
-    useEffect(() => {
-        const visibleIds = new Set<string | number>(sortedRows.map((row) => row.id));
-        setSelectedRowIds((current) => current.filter((id) => visibleIds.has(id)));
-    }, [sortedRows]);
-
-    const selectedRows = useMemo(() => {
-        const selected = new Set(selectedRowIds);
-        return sortedRows.filter((row) => selected.has(row.id));
-    }, [selectedRowIds, sortedRows]);
+    const rowSelection = useSelectableCollection({
+        items: sortedRows,
+        getItemId: (row: DisplayRow) => row.id,
+    });
+    const selectedRows = rowSelection.selectedItems;
 
     const selectedFiles = useMemo(() => {
         const selectedById = new Map<number, UnmappedFile>();
@@ -682,6 +654,30 @@ const ManualImportTab = () => {
         }
         return Array.from(selectedById.values());
     }, [selectedRows]);
+
+    const actionMutation = useMutation({
+        mutationFn: (args: { id: number; action: 'ignore' | 'unignore' | 'delete' }) => api.actionUnmappedFile(args.id, args.action),
+        onSuccess: (data: any) => {
+            queryClient.invalidateQueries({ queryKey: ['unmapped-files'] });
+            rowSelection.clearSelection();
+            toast({ title: 'Success', description: data.message });
+        },
+        onError: (error: any) => {
+            toast({ title: 'Action failed', description: error.message, variant: 'destructive' });
+        },
+    });
+
+    const bulkActionMutation = useMutation({
+        mutationFn: (args: { ids: number[]; action: 'ignore' | 'unignore' | 'delete' }) => api.bulkActionUnmappedFiles(args.ids, args.action),
+        onSuccess: (data: any) => {
+            queryClient.invalidateQueries({ queryKey: ['unmapped-files'] });
+            rowSelection.clearSelection();
+            toast({ title: 'Success', description: data.message });
+        },
+        onError: (error: any) => {
+            toast({ title: 'Action failed', description: error.message, variant: 'destructive' });
+        },
+    });
 
     const selectedFileIds = useMemo(() => selectedFiles.map((file) => file.id), [selectedFiles]);
     const selectedIgnoredCount = selectedFiles.filter((file) => file.ignored).length;
@@ -1050,8 +1046,7 @@ const ManualImportTab = () => {
                             getRowKey={(row) => row.id}
                             getRowClassName={(row) => row.ignored ? styles.rowIgnored : undefined}
                             selection={{
-                                selectedRowIds,
-                                onSelectionChange: setSelectedRowIds,
+                                ...rowSelection.selection,
                                 getSelectionLabel: (row) => `Select ${row.title}`,
                             }}
                         />

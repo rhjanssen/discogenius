@@ -984,6 +984,7 @@ const QueueTab = () => {
         items: pendingReorderGroups,
         getItemId: (group) => group.id,
     });
+    const pendingQueueRangeSelectionRef = useRef(false);
     const selectedPendingGroupIds = useMemo(
         () => pendingGroupSelection.selectedRowIds.map((groupId) => String(groupId)),
         [pendingGroupSelection.selectedRowIds],
@@ -1410,13 +1411,7 @@ const QueueTab = () => {
                                 const handleGroupClick = (e: ReactMouseEvent) => {
                                     if (isInteractiveElementTarget(e.target)) return;
                                     if (isSelectionMode && isPendingReorderable) {
-                                        pendingGroupSelection.setSelectedRowIds((current) => {
-                                            const currentIds = current.map((rowId) => String(rowId));
-                                            if (currentIds.includes(group.id)) {
-                                                return current.filter((rowId) => String(rowId) !== group.id);
-                                            }
-                                            return [...current, group.id];
-                                        });
+                                        pendingGroupSelection.toggleItem(group.id, !isGroupSelected, { range: e.shiftKey });
                                         return;
                                     }
                                     if (groupNavPath) navigate(groupNavPath);
@@ -1450,16 +1445,18 @@ const QueueTab = () => {
                                                         <Checkbox
                                                             aria-label={`Select ${group.title}`}
                                                             checked={isGroupSelected}
-                                                            onChange={(_, data) => {
-                                                                pendingGroupSelection.setSelectedRowIds((current) => {
-                                                                    const currentIds = current.map((rowId) => String(rowId));
-                                                                    if (data.checked) {
-                                                                        return currentIds.includes(group.id) ? current : [...current, group.id];
-                                                                    }
-
-                                                                    return current.filter((rowId) => String(rowId) !== group.id);
-                                                                });
+                                                            onClick={(event) => {
+                                                                stopQueueControlEvent(event);
+                                                                pendingQueueRangeSelectionRef.current = event.shiftKey;
                                                             }}
+                                                            onChange={(event, data) => pendingGroupSelection.toggleItem(
+                                                                group.id,
+                                                                data.checked === true,
+                                                                {
+                                                                    range: pendingQueueRangeSelectionRef.current
+                                                                        || Boolean((event.nativeEvent as MouseEvent).shiftKey),
+                                                                },
+                                                            )}
                                                         />
                                                     ) : null}
                                                     <div

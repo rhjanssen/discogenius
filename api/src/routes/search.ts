@@ -105,11 +105,12 @@ router.get("/", async (req, res) => {
         const limit = Number.isNaN(parsedLimit) ? 20 : Math.min(Math.max(parsedLimit, 1), 200);
         const requestedTypes = normalizeSearchTypes(req.query.type);
         const requestedTypeSet = new Set(requestedTypes);
-        // Global search is a local-library navigation surface, matching
-        // Lidarr's library search. Remote discovery belongs to the dedicated
-        // artist/album lookup flows; callers can still opt in explicitly.
-        const includeRemoteCatalog = ["1", "true", "yes", "on"]
+        const remoteRequested = ["1", "true", "yes", "on"]
             .includes(String(req.query.remote || "").trim().toLowerCase());
+        // Keep established-library search local and indexed, but give a fresh
+        // installation the same canonical discovery path as Lidarr's add flow.
+        const libraryIsEmpty = !db.prepare("SELECT 1 FROM Artists LIMIT 1").get();
+        const includeRemoteCatalog = remoteRequested || libraryIsEmpty;
 
         if (!query || query.length < 2) {
             return res.status(400).json({ detail: "Query must be at least 2 characters" });

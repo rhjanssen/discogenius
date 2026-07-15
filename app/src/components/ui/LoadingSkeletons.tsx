@@ -43,6 +43,7 @@ interface DataGridSkeletonProps {
   thumbnailColumns?: number[];
   circularThumbnailColumns?: number[];
   actionColumns?: number[];
+  actionsPerColumn?: number;
 }
 
 interface QueueListSkeletonProps {
@@ -68,6 +69,7 @@ interface DetailPageSkeletonProps {
   className?: string;
   cardsClassName?: string;
   label?: string;
+  actionWidths?: string[];
 }
 
 const useStyles = makeStyles({
@@ -243,29 +245,12 @@ const useStyles = makeStyles({
   mediaCardVideoWidePreview: {
     aspectRatio: "3 / 2",
   },
-  mediaBadgeLeft: {
+  mediaPreviewFill: {
     position: "absolute",
-    top: tokens.spacingVerticalS,
-    left: tokens.spacingHorizontalS,
-    width: "54px",
-    height: "20px",
-    borderRadius: tokens.borderRadiusCircular,
-  },
-  mediaBadgeRight: {
-    position: "absolute",
-    top: tokens.spacingVerticalS,
-    right: tokens.spacingHorizontalS,
-    width: "54px",
-    height: "20px",
-    borderRadius: tokens.borderRadiusCircular,
-  },
-  mediaBadgeBottom: {
-    position: "absolute",
-    bottom: tokens.spacingVerticalS,
-    right: tokens.spacingHorizontalS,
-    width: "24px",
-    height: "24px",
-    borderRadius: tokens.borderRadiusCircular,
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    borderRadius: tokens.borderRadiusNone,
   },
   mediaCardContent: {
     display: "flex",
@@ -284,12 +269,6 @@ const useStyles = makeStyles({
     height: "16px",
     width: "78%",
     borderRadius: tokens.borderRadiusSmall,
-  },
-  mediaCardPill: {
-    width: "20px",
-    height: "16px",
-    borderRadius: tokens.borderRadiusCircular,
-    flexShrink: 0,
   },
   mediaCardSubtitle: {
     height: "12px",
@@ -631,6 +610,12 @@ const useStyles = makeStyles({
     height: "34px",
     borderRadius: tokens.borderRadiusMedium,
   },
+  detailActionOptional: {
+    display: "none",
+    "@media (min-width: 768px)": {
+      display: "block",
+    },
+  },
   detailSection: {
     display: "flex",
     flexDirection: "column",
@@ -799,14 +784,11 @@ export function CardGridSkeleton({
         ) : (
           <div key={card} className={styles.mediaCard}>
             <div className={previewClassName}>
-              <SkeletonItem className={styles.mediaBadgeLeft} />
-              <SkeletonItem className={styles.mediaBadgeRight} />
-              <SkeletonItem className={styles.mediaBadgeBottom} />
+              <SkeletonItem className={styles.mediaPreviewFill} />
             </div>
             <div className={styles.mediaCardContent}>
               <div className={styles.mediaCardTitleRow}>
                 <SkeletonItem className={styles.mediaCardTitle} />
-                <SkeletonItem className={styles.mediaCardPill} />
               </div>
               <SkeletonItem className={styles.mediaCardSubtitle} />
             </div>
@@ -826,6 +808,7 @@ export function DataGridSkeleton({
   thumbnailColumns = [],
   circularThumbnailColumns = [],
   actionColumns = [],
+  actionsPerColumn = 1,
 }: DataGridSkeletonProps) {
   const styles = useStyles();
   const gridTemplateColumns = columnTemplate || `repeat(${Math.max(columns, 1)}, minmax(0, 1fr))`;
@@ -875,7 +858,7 @@ export function DataGridSkeleton({
             if (actionColumns.includes(column)) {
               return (
                 <div key={`cell-${row}-${column}`} className={styles.dataGridActionGroup}>
-                  {range(3).map((action) => (
+                  {range(actionsPerColumn).map((action) => (
                     <SkeletonItem key={action} className={styles.actionDot} />
                   ))}
                 </div>
@@ -970,6 +953,7 @@ export function DetailPageSkeleton({
   className,
   cardsClassName,
   label = "Loading page details...",
+  actionWidths = ["104px", "96px", "88px", "116px", "84px"],
 }: DetailPageSkeletonProps) {
   const styles = useStyles();
 
@@ -1012,9 +996,13 @@ export function DetailPageSkeleton({
                 </>
               )}
               <div className={styles.detailActions}>
-                <SkeletonItem className={styles.detailAction} style={{ width: "104px" }} />
-                <SkeletonItem className={styles.detailAction} style={{ width: "96px" }} />
-                <SkeletonItem className={styles.detailAction} style={{ width: "88px" }} />
+                {actionWidths.map((width, index) => (
+                  <SkeletonItem
+                    key={`${width}-${index}`}
+                    className={mergeClasses(styles.detailAction, index >= 3 ? styles.detailActionOptional : undefined)}
+                    style={{ width }}
+                  />
+                ))}
               </div>
             </div>
           </div>

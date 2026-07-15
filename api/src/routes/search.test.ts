@@ -159,3 +159,31 @@ test("local search returns canonical videos", async () => {
   assert.equal(res.body.results.videos[0].imageId, `/media-cover/Videos/${video.id}/cover.jpg`);
   assert.equal(res.body.results.videos[0].monitored, true);
 });
+
+test("empty-library search automatically includes canonical catalog discovery", async () => {
+  const { catalogProviderRegistry } = await import("../services/catalog/index.js");
+  const provider = catalogProviderRegistry.getActive();
+  const originalSearch = provider.search;
+  provider.search = async () => ({
+    artists: [{
+      id: "bastille-mbid",
+      artistname: "Bastille",
+      disambiguation: "British indie pop band",
+      Albums: [],
+      Images: [{ CoverType: "Poster", Url: "https://images.example/bastille.jpg" }],
+    }] as any,
+    releaseGroups: [],
+  });
+
+  try {
+    const res = createMockResponse();
+    await getSearchHandler()({ query: { query: "Bastille", type: "artists", limit: "10" } }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.results.artists.length, 1);
+    assert.equal(res.body.results.artists[0].id, "bastille-mbid");
+    assert.equal(res.body.results.artists[0].in_library, false);
+  } finally {
+    provider.search = originalSearch;
+  }
+});

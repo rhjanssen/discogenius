@@ -22,7 +22,6 @@ import {
     ArrowDownload24Regular,
 } from "@fluentui/react-icons";
 import { useSearch, SearchResultItem } from "@/hooks/useSearch";
-import { CardGridSkeleton, TrackListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { renderableArtworkUrl } from "@/utils/artwork";
 import { api } from "@/services/api";
@@ -723,33 +722,13 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
     const renderContent = () => {
         const hasResults = searchResults.artists.length > 0 || searchResults.albums.length > 0 || searchResults.tracks.length > 0 || searchResults.videos.length > 0;
 
-        const renderLoadingResults = () => {
-            switch (activeTab) {
-                case 'artists':
-                    return <CardGridSkeleton cards={6} variant="artistSearch" />;
-                case 'albums':
-                    return <CardGridSkeleton cards={6} />;
-                case 'tracks':
-                case 'videos':
-                case 'top':
-                default:
-                    return (
-                        <TrackListSkeleton
-                            rows={5}
-                            showCover
-                            showNumber={false}
-                            showArtist
-                            showQuality={false}
-                            showHeader={false}
-                            actions={2}
-                        />
-                    );
-            }
-        };
-
-        // When searching, keep showing the last library results and show a spinner indicator.
+        // Search is indeterminate; avoid implying a particular result shape.
         if (!hasResults && isSearching) {
-            return renderLoadingResults();
+            return (
+                <div className={styles.noResults}>
+                    <Spinner size="medium" label={searchActivityLabel} />
+                </div>
+            );
         }
 
         if (!hasResults) return renderEmpty();

@@ -6,6 +6,7 @@ import {
     updateArtistDownloadStatusFromMedia,
 } from "../download/download-state.js";
 import { AudioTagService } from "./audio-tag-service.js";
+import { VideoTagService } from "./video-tag-service.js";
 import { getDownloadWorkspacePath } from "../download/download-routing.js";
 import { getExistingLibraryMediaIds } from "../download/download-recovery.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
@@ -13,6 +14,7 @@ import {CommandModelOf} from "../commands/command-model.js";
 import {CommandNames} from "../commands/command-names.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
+import { ProviderTrackTagSupplementService } from "./provider-track-tag-supplement-service.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
@@ -375,6 +377,18 @@ export class DownloadedTracksImportService {
                 console.warn(`[ImportDownload] Metadata identity resolution failed for ${type} ${providerId}:`, error);
             }
 
+            try {
+                await ProviderTrackTagSupplementService.refresh({
+                    providerId: job.payload.provider || null,
+                    albumProviderIds: type === "album" ? providerId.split(";").filter(Boolean) : [],
+                    trackProviderIds: type === "track" ? [providerId] : [],
+                });
+            } catch (error) {
+                // Loudness/copyright are provider supplements. Their absence
+                // must not prevent importing otherwise valid media.
+                console.warn(`[ImportDownload] Failed to refresh provider tag supplements for ${type} ${providerId}:`, error);
+            }
+
             options.updateState({
                 progress: 94,
                 description: "ImportDownload: applying audio tag rules",
@@ -394,6 +408,21 @@ export class DownloadedTracksImportService {
                 }
             } catch (error) {
                 console.warn(`[ImportDownload] Failed to apply audio tag rules for ${type} ${providerId}:`, error);
+            }
+        }
+
+        if (type === "video" && organizeResult.processedTrackIds.length > 0) {
+            options.updateState({
+                progress: 94,
+                description: "ImportDownload: applying video tag rules",
+                currentFileNum: organizeResult.processedTrackIds.length,
+                totalFiles: organizeResult.totalTracksInStaging,
+                statusMessage: "Applying video tag rules",
+                state: "importing",
+            });
+            const retagResult = await VideoTagService.applyForProviderIds(organizeResult.processedTrackIds);
+            if (retagResult.errors.length > 0) {
+                console.warn(`[ImportDownload] Video tag rules completed with ${retagResult.errors.length} error(s) for ${providerId}:`, retagResult.errors);
             }
         }
 

@@ -307,6 +307,12 @@ const Library = () => {
   const [statusFilters, setStatusFilters] = useState<StatusFilters>(
     persistedSettings?.statusFilters ?? defaultStatusFilters
   );
+  const activeMonitoredCount = stats?.[selectedTab as "artists" | "albums" | "tracks" | "videos"]?.monitored;
+  const effectiveStatusFilters = useMemo<StatusFilters>(() => (
+    activeMonitoredCount === 0 && statusFilters.onlyMonitored && !statusFilters.onlyUnmonitored
+      ? { ...statusFilters, onlyMonitored: false }
+      : statusFilters
+  ), [activeMonitoredCount, statusFilters]);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(
     persistedSettings?.viewMode ?? 'grid'
   );
@@ -345,10 +351,10 @@ const Library = () => {
   };
 
   const monitoredFilter = useMemo(() => {
-    if (statusFilters.onlyMonitored && !statusFilters.onlyUnmonitored) return true;
-    if (!statusFilters.onlyMonitored && statusFilters.onlyUnmonitored) return false;
+    if (effectiveStatusFilters.onlyMonitored && !effectiveStatusFilters.onlyUnmonitored) return true;
+    if (!effectiveStatusFilters.onlyMonitored && effectiveStatusFilters.onlyUnmonitored) return false;
     return undefined;
-  }, [statusFilters]);
+  }, [effectiveStatusFilters]);
 
   const downloadedFilter = useMemo(() => {
     if (statusFilters.onlyDownloaded && !statusFilters.onlyNotDownloaded) return true;
@@ -1344,13 +1350,21 @@ const Library = () => {
     && !videosHasRefreshError
   ) {
     return (
-      <EmptyState
-        title="Your library is empty"
-        description="Add an artist from MusicBrainz, or import followed artists from a connected provider."
-        icon={<MusicNote224Regular />}
-        minHeight="320px"
-        actions={renderEmptyLibraryAction()}
-      />
+      <>
+        <EmptyState
+          title="Your library is empty"
+          description="Add an artist from MusicBrainz, or import followed artists from a connected provider."
+          icon={<MusicNote224Regular />}
+          minHeight="320px"
+          actions={renderEmptyLibraryAction()}
+        />
+        <ImportArtistsModal
+          open={importModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          providerId={importProvider?.id}
+          onImported={() => fetchLibrary(undefined, { refreshStats: true })}
+        />
+      </>
     );
   }
 
@@ -1800,7 +1814,7 @@ const Library = () => {
               <FilterMenu
                 libraryFilter={libraryFilter}
                 onLibraryFilterChange={setLibraryFilter}
-                statusFilters={statusFilters}
+                statusFilters={effectiveStatusFilters}
                 onStatusFiltersChange={setStatusFilters}
                 showDownloadFilter={showDownloadFilter}
                 showLockFilter={showLockFilter}
@@ -1845,7 +1859,7 @@ const Library = () => {
               <FilterMenu
                 libraryFilter={libraryFilter}
                 onLibraryFilterChange={setLibraryFilter}
-                statusFilters={statusFilters}
+                statusFilters={effectiveStatusFilters}
                 onStatusFiltersChange={setStatusFilters}
                 showDownloadFilter={showDownloadFilter}
                 showLockFilter={showLockFilter}

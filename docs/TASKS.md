@@ -6,6 +6,26 @@ implementation, or release validation.
 
 Status: pending | in progress | done | revisit
 
+## Post-2.3.2 Fluent UI And Metadata Follow-ups
+
+- pending: Finish keyboard interaction parity for DataGrid. Clickable rows need
+  focus/Enter handling, and pointer-resizable column separators need a keyboard
+  resize path with current/min/max ARIA values. Shared MediaCards were fixed in
+  the current unreleased batch, but the table primitive needs a deliberate
+  component-level change and regression coverage.
+- pending: Replace the remaining `window.confirm` destructive actions (notably
+  unmapped-file deletion) with Fluent UI confirmation dialogs so focus trapping,
+  labeling, keyboard dismissal, and destructive-action styling are consistent.
+- pending: Add a shared delayed-loading policy so skeletons are not flashed for
+  sub-second cached requests. Fluent guidance recommends skeletons for predictable
+  layouts expected to take longer than one second; use one labeled Spinner for
+  shorter/indeterminate waits and keep `aria-busy` on skeleton containers.
+- pending: Remove the remaining unused provider-catalog/editorial surface
+  (`getArtistCatalogPage`, similar-artist/album hooks, and any dead callers) after
+  confirming no plugin compatibility dependency. Canonical acquisition should
+  stay behind `CatalogProvider`; streaming providers should expose availability,
+  download, artwork, and allowed tag supplements only.
+
 ## Post-2.3.2 Performance Follow-ups
 - pending: Profile and bound artist-wide retag preview/status on a large library;
   a live two-file check was correct but still took about 14s while catalog work

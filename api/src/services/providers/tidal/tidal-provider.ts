@@ -245,7 +245,7 @@ export class TidalProvider implements StreamingProvider {
   }
 
   async getArtistAlbums(id: string | number): Promise<ProviderAlbum[]> {
-    return (await tidal.getArtistAlbums(String(id))).map((album: any) => this.mapAlbum(album));
+    return this.listArtistReleaseOffers(id);
   }
 
   async getArtistVideos(id: string | number): Promise<ProviderVideo[]> {
@@ -817,6 +817,8 @@ export class TidalProvider implements StreamingProvider {
       isrc: track.isrc || null,
       releaseDate: track.releaseDate || track.release_date || null,
       copyright: track.copyright || null,
+      replayGain: track.replayGain ?? track.replay_gain ?? null,
+      peak: track.peak ?? null,
       popularity: track.popularity ?? null,
       quality: track.quality || track.audioQuality || qualityTags[0] || null,
       qualityTags,

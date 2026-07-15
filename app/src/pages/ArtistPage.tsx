@@ -381,7 +381,7 @@ const useStyles = makeStyles({
   },
 });
 
-const COLLAPSED_TOP_TRACK_COUNT = 25;
+const COLLAPSED_TOP_TRACK_COUNT = 5;
 const EXPANDED_TOP_TRACK_COUNT = 100;
 // v2 discards the short-lived pre-release value that could be initialized from
 // the identity-only response before monitored content arrived.
@@ -493,7 +493,7 @@ const ArtistPage = () => {
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'stereo' | 'spatial' | 'video'>(() => (
     readArtistFilterPrefs(artistId)?.libraryFilter ?? 'all'
   ));
-  const [statusFilters, setStatusFilters] = useState<StatusFilters>(() => (
+  const [configuredStatusFilters, setStatusFilters] = useState<StatusFilters>(() => (
     readArtistFilterPrefs(artistId)?.statusFilters ?? { ...defaultStatusFilters, onlyMonitored: true }
   ));
   const [filterInitialized, setFilterInitialized] = useState(() => Boolean(readArtistFilterPrefs(artistId)));
@@ -512,12 +512,12 @@ const ArtistPage = () => {
     try {
       localStorage.setItem(ARTIST_FILTER_STORAGE_KEY, JSON.stringify({
         libraryFilter,
-        statusFilters,
+        statusFilters: configuredStatusFilters,
       }));
     } catch {
       // Filter persistence is a convenience only; ignore storage failures.
     }
-  }, [artistId, filterInitialized, libraryFilter, statusFilters]);
+  }, [artistId, configuredStatusFilters, filterInitialized, libraryFilter]);
 
   // Unified Artist Info - prefer pageData.artist since that's the canonical DB-backed artist payload
   const artistInfo = pageData?.artist;
@@ -561,26 +561,33 @@ const ArtistPage = () => {
     }
   }, [artistId, artistInfo?.is_monitored, monitorOverride]);
 
-  // Count monitored items from all modules to determine filter default
-  useEffect(() => {
-    if (filterInitialized || pageLoading || contentLoading || !pageData?.rows) return;
-
-    let monitoredCount = 0;
+  const monitoredItemCount = useMemo(() => {
+    if (!pageData?.rows) return undefined;
+    let count = 0;
     for (const row of pageData.rows) {
       for (const mod of row.modules || []) {
         const items = mod.pagedList?.items || mod.items || [];
         for (const item of items) {
-          if (item.is_monitored) {
-            monitoredCount++;
-          }
+          if (item.is_monitored) count += 1;
         }
       }
     }
+    return count;
+  }, [pageData?.rows]);
 
-    // If no monitored items, disable the monitored filter
-    if (monitoredCount === 0) {
-      setStatusFilters({ ...defaultStatusFilters, onlyMonitored: false });
-    }
+  // Keep the user's monitored preference, but do not turn an artist with no
+  // monitored content into an apparently empty page. The preference becomes
+  // effective automatically as soon as monitored content exists.
+  const statusFilters = useMemo<StatusFilters>(() => (
+    monitoredItemCount === 0
+      && configuredStatusFilters.onlyMonitored
+      && !configuredStatusFilters.onlyUnmonitored
+      ? { ...configuredStatusFilters, onlyMonitored: false }
+      : configuredStatusFilters
+  ), [configuredStatusFilters, monitoredItemCount]);
+
+  useEffect(() => {
+    if (filterInitialized || pageLoading || contentLoading || !pageData?.rows) return;
     setFilterInitialized(true);
   }, [pageData, filterInitialized, pageLoading, contentLoading]);
 
@@ -1456,6 +1463,7 @@ const ArtistPage = () => {
         cards={6}
         className={styles.container}
         cardsClassName={styles.grid}
+        actionWidths={["112px", "142px", "92px", "154px", "88px", "72px"]}
         label={showIngestSkeleton ? "Syncing artist details from MusicBrainz..." : "Loading artist details..."}
       />
     );
