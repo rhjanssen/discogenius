@@ -78,18 +78,54 @@ def get_artist_albums(api: YTMusic, artist_id: str) -> list[dict[str, Any]]:
     return albums
 
 
+# The artist "videos" section returns neither videoType nor duration, but we need
+# both: videoType to drop audio-only (ATV) and user-generated (UGC) entries, and
+# duration for the title+duration fingerprint that groups the SAME music video
+# across TIDAL/Apple/YouTube. get_song() supplies both. Capped and best-effort, so
+# a slow or rate-limited lookup degrades gracefully instead of failing a refresh.
+VIDEO_ENRICH_LIMIT = 40
+
+
+def enrich_videos(api: YTMusic, videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for video in videos[:VIDEO_ENRICH_LIMIT]:
+        if not isinstance(video, dict):
+            continue
+        if video.get("videoType") and video.get("duration_seconds"):
+            continue
+        video_id = video.get("videoId")
+        if not video_id:
+            continue
+        try:
+            details = api.get_song(str(video_id)).get("videoDetails") or {}
+        except Exception:
+            continue
+        if not isinstance(details, dict):
+            continue
+        if not video.get("videoType") and details.get("musicVideoType"):
+            video["videoType"] = details["musicVideoType"]
+        if not video.get("duration_seconds") and details.get("lengthSeconds") is not None:
+            try:
+                video["duration_seconds"] = int(details["lengthSeconds"])
+            except (TypeError, ValueError):
+                pass
+    return videos
+
+
 def get_artist_videos(api: YTMusic, artist_id: str) -> list[dict[str, Any]]:
     artist = api.get_artist(artist_id)
     section = artist.get("videos") if isinstance(artist, dict) else None
     videos = section_results(section)
     if videos:
-        return videos
+        return enrich_videos(api, videos)
     if isinstance(section, dict) and section.get("browseId"):
         playlist_id = str(section["browseId"])
         if playlist_id.startswith("VL"):
             playlist_id = playlist_id[2:]
         playlist = api.get_playlist(playlist_id, limit=None)
-        return section_results(playlist.get("tracks") if isinstance(playlist, dict) else None)
+        return enrich_videos(
+            api,
+            section_results(playlist.get("tracks") if isinstance(playlist, dict) else None),
+        )
     return []
 
 

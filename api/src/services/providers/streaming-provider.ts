@@ -374,6 +374,13 @@ export interface ProviderVideo {
   url?: string;
   isrc?: string | null;
   recordingMbid?: string | null;
+  /**
+   * Provider-native classification of the entry (e.g. YouTube Music's
+   * MUSIC_VIDEO_TYPE_OMV / _ATV / _UGC). Providers whose catalogs mix real music
+   * videos with audio-only uploads and user-generated content expose it so the
+   * provider adapter can filter; the core video pipeline stays provider-agnostic.
+   */
+  videoType?: string | null;
   raw?: unknown;
 }
 

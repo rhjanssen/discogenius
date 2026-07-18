@@ -188,6 +188,25 @@ export function mapYouTubeMusicTrack(
   };
 }
 
+/**
+ * YouTube Music tags every entry with a `videoType`:
+ *   OMV                   – Original Music Video (a real music video)
+ *   OFFICIAL_SOURCE_MUSIC – official video content (live sets, medleys)
+ *   ATV                   – audio-only "song" with a cover image, NOT a video
+ *   UGC                   – user-generated upload (fan videos, lyric rips)
+ * Only the first two are music videos. Without this filter an unauthenticated
+ * YouTube refresh injects lyric videos, fan uploads and audio-only tracks into
+ * the video library. Entries with no videoType are kept (older payloads omit it)
+ * so we never silently drop a legitimate video.
+ */
+export function isYouTubeMusicVideoType(videoType: string | null | undefined): boolean {
+  const normalized = String(videoType ?? "").trim().toUpperCase();
+  if (!normalized) return true;
+  if (normalized.includes("UGC")) return false;
+  if (normalized.includes("ATV")) return false;
+  return true;
+}
+
 export function mapYouTubeMusicVideo(rawValue: unknown, fallbackArtist?: ProviderArtist): ProviderVideo {
   const raw = record(rawValue);
   const videoDetails = record(raw.videoDetails);
@@ -208,6 +227,7 @@ export function mapYouTubeMusicVideo(rawValue: unknown, fallbackArtist?: Provide
     quality: "SOURCE",
     explicit: typeof merged.isExplicit === "boolean" ? merged.isExplicit : null,
     url: providerId ? `https://www.youtube.com/watch?v=${encodeURIComponent(providerId)}` : undefined,
+    videoType: text(merged.videoType, merged.musicVideoType) || null,
     raw: rawValue,
   };
 }
@@ -247,7 +267,7 @@ export class YouTubeMusicCatalog {
         .filter((track) => Boolean(track.providerId)),
       videos: (buckets.videos || [])
         .map((item) => mapYouTubeMusicVideo(item))
-        .filter((video) => Boolean(video.providerId)),
+        .filter((video) => Boolean(video.providerId) && isYouTubeMusicVideoType(video.videoType)),
     };
   }
 
@@ -272,7 +292,7 @@ export class YouTubeMusicCatalog {
     ]);
     return rawVideos
       .map((video) => mapYouTubeMusicVideo(video, artist))
-      .filter((video) => Boolean(video.providerId));
+      .filter((video) => Boolean(video.providerId) && isYouTubeMusicVideoType(video.videoType));
   }
 
   async getAlbum(id: string | number): Promise<ProviderAlbum> {
