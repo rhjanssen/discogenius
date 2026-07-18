@@ -111,7 +111,10 @@ export function useUltraBlur({
     // If it fails, fall back to theme defaults (no client-side extraction).
     const colorsUrl = `${apiBaseUrl}/services/ultrablur/colors?url=${encodeURIComponent(imageUrl)}`;
 
-    fetch(colorsUrl, { signal: currentAbortController.signal })
+    // High fetch priority: this tiny request paints the page background and
+    // must not queue behind the section queries and cover-image flood that
+    // start at the same time.
+    fetch(colorsUrl, { signal: currentAbortController.signal, priority: "high" } as RequestInit)
       .then(async (r) => {
         if (!r.ok) throw new Error(`UltraBlur colors service error: ${r.status}`);
         const data = await r.json();

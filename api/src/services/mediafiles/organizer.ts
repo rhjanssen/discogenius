@@ -10,7 +10,7 @@ import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForPersistence
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
 import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
-import { getDownloadWorkspacePath } from "../download/download-routing.js";
+import { getDefaultStreamingSource, getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
@@ -146,18 +146,26 @@ export class OrganizerService {
     ".ts",
   ]);
 
-  private static async fetchProviderArtist(artistId: string): Promise<any> {
-    const artist = await streamingProviderManager.getDefaultStreamingProvider().getArtist(artistId);
+  private static async fetchProviderArtist(artistId: string, providerId?: string | null): Promise<any> {
+    const provider = providerId
+      ? streamingProviderManager.getStreamingProvider(providerId)
+      : streamingProviderManager.getDefaultStreamingProvider();
+    const artist = await provider.getArtist(artistId);
     return artist?.raw || artist;
   }
 
-  private static async fetchProviderTrack(trackId: string): Promise<any> {
-    const track = await streamingProviderManager.getDefaultStreamingProvider().getTrack(trackId);
+  private static async fetchProviderTrack(trackId: string, providerId?: string | null): Promise<any> {
+    const provider = providerId
+      ? streamingProviderManager.getStreamingProvider(providerId)
+      : streamingProviderManager.getDefaultStreamingProvider();
+    const track = await provider.getTrack(trackId);
     return track?.raw || track;
   }
 
-  private static async fetchProviderVideo(videoId: string): Promise<any> {
-    const provider = streamingProviderManager.getDefaultStreamingProvider();
+  private static async fetchProviderVideo(videoId: string, providerId?: string | null): Promise<any> {
+    const provider = providerId
+      ? streamingProviderManager.getStreamingProvider(providerId)
+      : streamingProviderManager.getDefaultStreamingProvider();
     if (!provider.getVideo) {
       throw new Error(`${provider.name} does not support video metadata`);
     }
@@ -316,7 +324,7 @@ export class OrganizerService {
   }
 
   private static resolveCanonicalAlbumImportContext(raw: OrganizeRequest, providerAlbumId: string): CanonicalAlbumImportContext | null {
-    const provider = String(raw.provider || "").trim() || "tidal";
+    const provider = String(raw.provider || getDefaultStreamingSource()).trim() || getDefaultStreamingSource();
     const releaseGroupMbid = String(raw.releaseGroupMbid || raw.albumId || "").trim();
     const requestedSlot = String(raw.slot || "").trim().toLowerCase();
     const row = db.prepare(`
@@ -419,35 +427,34 @@ export class OrganizerService {
   }
 
   /**
-   * Match downloaded files to provider tracks by provider track id ONLY.
-   * tiddl stages files as `{provider_track_id}.ext`, and every downloadable
-   * track has a materialized ProviderItems track offer row keyed by
-   * `provider_id` (RefreshAlbumService.storeProviderTrackOffers, mapped to its
-   * canonical MB track by volume+position). No title/metadata/position fuzzing:
-   * the grabbed provider ids are the hard link. If rows are missing, force one
-   * tracklist refresh and retry.
+   * Match downloaded files to provider tracks. Provider-id basenames remain
+   * the authoritative fast path. The pinned Apple downloader hard-codes
+   * album-bundled video names as `NN. Title.mp4`, so those files get a narrow,
+   * provider-aware exact-title/position fallback against materialized VIDEO
+   * offers. Ambiguous names remain staged for manual recovery.
    */
   private static async matchAlbumFilesToTracks(
     albumId: string,
     files: string[],
-    _context?: CanonicalAlbumImportContext | null,
+    context?: CanonicalAlbumImportContext | null,
   ): Promise<Map<string, string>> {
     const albumIds = albumId.split(";").filter(Boolean);
     if (albumIds.length === 0) {
       return new Map();
     }
 
-    let providerTrackIds = this.loadProviderTrackIdSet(albumIds);
+    const provider = String(context?.provider || "").trim();
+    let providerTrackIds = this.loadProviderTrackIdSet(albumIds, provider);
     const refreshProviderTrackIds = async () => {
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
       for (const id of albumIds) {
         try {
-          await RefreshAlbumService.refreshTracks(id);
+          await RefreshAlbumService.refreshTracks(id, { provider: provider || undefined });
         } catch (error) {
           console.warn(`[Organizer] Failed to materialize provider track offers for album ${id}:`, error);
         }
       }
-      providerTrackIds = this.loadProviderTrackIdSet(albumIds);
+      providerTrackIds = this.loadProviderTrackIdSet(albumIds, provider);
     };
 
     if (providerTrackIds.size === 0) {
@@ -477,11 +484,237 @@ export class OrganizerService {
       await refreshProviderTrackIds();
       result = matchByProviderId();
     }
+
+    if (provider.toLowerCase() === "apple-music") {
+      const candidates = this.loadBundledVideoTrackCandidates(provider, albumIds);
+      const usedProviderIds = new Set(result.matched.values());
+      for (const filePath of files) {
+        if (result.matched.has(filePath) || !this.VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+          continue;
+        }
+
+        const baseName = path.basename(filePath, path.extname(filePath));
+        const filenameMatch = /^(\d+)\.\s+(.+)$/.exec(baseName);
+        if (!filenameMatch) {
+          continue;
+        }
+
+        const taskPosition = Number(filenameMatch[1]);
+        const normalizedTitle = this.normalizeBundledVideoTitle(filenameMatch[2]);
+        if (!normalizedTitle) {
+          continue;
+        }
+
+        const titleMatches = candidates.filter((candidate) =>
+          !usedProviderIds.has(candidate.provider_id)
+          && this.normalizeBundledVideoTitle(candidate.title) === normalizedTitle
+        );
+        const positionedMatches = titleMatches.filter((candidate) => candidate.track_number === taskPosition);
+        const matchedCandidate = positionedMatches.length === 1
+          ? positionedMatches[0]
+          : (positionedMatches.length === 0 && titleMatches.length === 1 ? titleMatches[0] : null);
+        if (!matchedCandidate) {
+          continue;
+        }
+
+        result.matched.set(filePath, matchedCandidate.provider_id);
+        usedProviderIds.add(matchedCandidate.provider_id);
+      }
+    }
     return result.matched;
   }
 
+  /**
+   * Import one album-bundled music video (providers like Apple Music append
+   * videos to deluxe/festival tracklists). Identity comes from the
+   * materialized provider track row (library_slot='video'), whose canonical
+   * link points at the release's video Recording — so the file lands in the
+   * video library (or inline, per layout) while keeping album/track identity,
+   * and the recording gains a provider VIDEO offer like any standalone video.
+   */
+  private static async importAlbumBundledVideoFile(params: {
+    src: string;
+    provider: string;
+    providerTrackId: string;
+    artistId: string;
+    artistName: string;
+    artistMbId: string | null;
+    artistFolder: string;
+    artistGenres?: string | null;
+    releaseGroupMbid: string | null;
+    videoRoot: string;
+  }): Promise<boolean> {
+    const row = db.prepare(`
+      SELECT title, duration, explicit, quality, recording_mbid, recording_id, artist_mbid, release_group_mbid
+      FROM ProviderItems
+      WHERE provider = ? AND entity_type = 'track'
+        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        AND library_slot = 'video'
+      LIMIT 1
+    `).get(params.provider, params.providerTrackId) as {
+      title?: string | null;
+      duration?: number | null;
+      explicit?: number | null;
+      quality?: string | null;
+      recording_mbid?: string | null;
+      recording_id?: number | null;
+      artist_mbid?: string | null;
+      release_group_mbid?: string | null;
+    } | undefined;
+    if (!row) {
+      return false;
+    }
+
+    const title = String(row.title || "Unknown Video");
+    const naming = getNamingConfig();
+    const videoNamingTemplate = path.join(params.artistFolder, naming.video_file);
+    const sourceMetrics = await parseAudioFile(params.src);
+    const sourceVideoQuality = deriveVideoQuality(sourceMetrics) ?? row.quality ?? null;
+    const destName = `${renderFileStem(naming.video_file, {
+      provider: params.provider,
+      artistName: params.artistName,
+      artistId: params.artistId,
+      artistMbId: params.artistMbId || "",
+      artistGenre: firstGenre(params.artistGenres),
+      trackId: params.providerTrackId,
+      videoId: params.providerTrackId,
+      videoTitle: title,
+      explicit: Number(row.explicit || 0) === 1,
+      quality: sourceVideoQuality,
+      codec: sourceMetrics.codec || null,
+      bitrate: sourceMetrics.bitrate || null,
+      sampleRate: sourceMetrics.sampleRate || null,
+      bitDepth: sourceMetrics.bitDepth || null,
+      channels: sourceMetrics.channels || null,
+    })}.mp4`;
+    const separatedDest = path.join(params.videoRoot, params.artistFolder, destName);
+    const inlineExpected = LibraryFilesService.computeExpectedPath({
+      id: -1,
+      artist_id: params.artistId as unknown as number,
+      album_id: (params.releaseGroupMbid || row.release_group_mbid || null) as unknown as number | null,
+      media_id: params.providerTrackId as unknown as number,
+      file_path: separatedDest,
+      relative_path: path.relative(params.videoRoot, separatedDest),
+      library_root: params.videoRoot,
+      file_type: "video",
+      extension: "mp4",
+      quality: sourceVideoQuality,
+    });
+    const dest = inlineExpected.expectedPath || separatedDest;
+    const organizedVideoRoot = this.resolveLibraryRoot(dest) || params.videoRoot;
+    this.ensureDir(path.dirname(dest));
+
+    if (path.extname(params.src).toLowerCase() !== ".mp4") {
+      const success = await convertToMp4(params.src, dest);
+      if (!success) {
+        throw new Error(`[Organizer] MP4 conversion failed for bundled video ${params.src}`);
+      }
+      try { fs.rmSync(params.src, { force: true }); } catch { /* stale source is harmless */ }
+    } else {
+      this.moveFileCrossDevice(params.src, dest);
+    }
+
+    const metrics = await parseAudioFile(dest);
+    const derivedVideoQuality = deriveVideoQuality(metrics) ?? row.quality ?? null;
+    const albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
+
+    db.transaction(() => {
+      // Surface the provider VIDEO offer on the canonical recording so the
+      // video library and video page list this source, deduped with any
+      // standalone upload of the same video (same recording).
+      db.prepare(`
+        INSERT INTO ProviderItems (
+          provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_mbid,
+          title, quality, duration, availability, library_slot, recording_id,
+          match_status, match_confidence, match_method, updated_at
+        ) VALUES (?, 'video', ?, NULL, ?, ?, ?, ?, ?, 'available', 'video', ?, 'matched', 0.9, 'album-bundled-track', CURRENT_TIMESTAMP)
+        ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
+          recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
+          recording_id = COALESCE(excluded.recording_id, ProviderItems.recording_id),
+          title = excluded.title,
+          quality = excluded.quality,
+          duration = excluded.duration,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(
+        params.provider,
+        params.providerTrackId,
+        row.artist_mbid || params.artistMbId || null,
+        row.recording_mbid || null,
+        title,
+        derivedVideoQuality,
+        row.duration || null,
+        row.recording_id || null,
+      );
+
+      const libraryFileId = this.upsertLibraryFile({
+        artistId: params.artistId,
+        albumId: albumIdForFile,
+        mediaId: params.providerTrackId,
+        filePath: dest,
+        libraryRoot: organizedVideoRoot,
+        fileType: "video",
+        quality: derivedVideoQuality,
+        namingTemplate: videoNamingTemplate,
+        expectedPath: dest,
+        bitDepth: metrics.bitDepth,
+        sampleRate: metrics.sampleRate,
+        bitrate: metrics.bitrate,
+        codec: metrics.codec,
+        channels: metrics.channels,
+      });
+
+      try {
+        recordHistoryEvent({
+          artistId: params.artistId,
+          albumId: albumIdForFile,
+          mediaId: params.providerTrackId,
+          libraryFileId,
+          eventType: HISTORY_EVENT_TYPES.TrackFileImported,
+          quality: derivedVideoQuality,
+          sourceTitle: title,
+          data: { importedPath: dest, bundledWithAlbum: true },
+        });
+      } catch (historyError) {
+        console.warn(`[Organizer] Failed to record bundled-video import history for ${params.providerTrackId}:`, historyError);
+      }
+    })();
+
+    return true;
+  }
+
+  private static normalizeBundledVideoTitle(value: unknown): string {
+    return String(value || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+  }
+
+  private static loadBundledVideoTrackCandidates(
+    provider: string,
+    albumIds: string[],
+  ): Array<{ provider_id: string; title: string; track_number: number | null }> {
+    if (!provider || albumIds.length === 0) {
+      return [];
+    }
+    const placeholders = albumIds.map(() => "?").join(", ");
+    return db.prepare(`
+      SELECT
+        CAST(provider_id AS TEXT) AS provider_id,
+        COALESCE(title, '') AS title,
+        track_number
+      FROM ProviderItems
+      WHERE provider = ?
+        AND entity_type = 'track'
+        AND library_slot = 'video'
+        AND provider_album_id IN (${placeholders})
+      ORDER BY volume_number ASC, track_number ASC, provider_id ASC
+    `).all(provider, ...albumIds) as Array<{ provider_id: string; title: string; track_number: number | null }>;
+  }
+
   /** Provider track ids that have a materialized offer row for the album(s). */
-  private static loadProviderTrackIdSet(albumIds: string[]): Set<string> {
+  private static loadProviderTrackIdSet(albumIds: string[], provider = ""): Set<string> {
     if (albumIds.length === 0) {
       return new Set();
     }
@@ -489,8 +722,10 @@ export class OrganizerService {
     const rows = db.prepare(`
       SELECT CAST(provider_id AS TEXT) AS provider_id
       FROM ProviderItems
-      WHERE entity_type = 'track' AND provider_album_id IN (${placeholders})
-    `).all(...albumIds) as Array<{ provider_id: string }>;
+      WHERE entity_type = 'track'
+        AND provider_album_id IN (${placeholders})
+        AND (? = '' OR provider = ?)
+    `).all(...albumIds, provider, provider) as Array<{ provider_id: string }>;
     return new Set(rows.map((row) => String(row.provider_id)));
   }
 
@@ -793,11 +1028,13 @@ export class OrganizerService {
     newFilePath: string,
     fileType: "track" | "video",
     librarySlot: string | null,
+    provider?: string | null,
   ) {
     const identity = resolveLibraryFileIdentity({
       mediaId,
       fileType,
       librarySlot,
+      provider,
     });
     if (!identity.provider || !identity.providerEntityType || !identity.providerId) {
       return;
@@ -1302,7 +1539,10 @@ export class OrganizerService {
       throw new Error("Missing tidal id for organizer");
     }
 
-    const downloadPath = raw.downloadPath || getDownloadWorkspacePath(type as OrganizeType, providerId);
+    const streamingProviderId = String(raw.provider || getDefaultStreamingSource()).trim() || getDefaultStreamingSource();
+    const downloadPath = raw.downloadPath
+      ? validateDownloadWorkspacePath(raw.downloadPath)
+      : getDownloadWorkspacePath(type as OrganizeType, providerId, streamingProviderId);
     const onProgress = raw.onProgress;
     const metadataConfig = Config.getMetadataConfig();
 
@@ -1317,7 +1557,7 @@ export class OrganizerService {
       if (albumIds.length === 0) throw new Error("Missing tidal id");
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
       for (const albumIdVal of albumIds) {
-        await RefreshAlbumService.refreshMetadata(albumIdVal);
+        await RefreshAlbumService.refreshMetadata(albumIdVal, { provider: streamingProviderId });
       }
 
       const album = db.prepare(`
@@ -1328,10 +1568,12 @@ export class OrganizerService {
           quality,
           NULL AS num_volumes
         FROM ProviderItems
-        WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        WHERE provider = ?
+          AND entity_type = 'album'
+          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
         ORDER BY updated_at DESC
         LIMIT 1
-      `).get(albumIds[0]) as any;
+      `).get(streamingProviderId, albumIds[0]) as any;
       if (!album) throw new Error(`Album ${albumIds[0]} offer not found in ProviderItems after scan`);
 
       const canonicalContext = this.resolveCanonicalAlbumImportContext(raw, albumIds[0]);
@@ -1485,7 +1727,7 @@ export class OrganizerService {
           fileType: "track",
           quality: trackRow.quality || album.quality,
           libraryRoot: targetRoot,
-          provider: canonicalContext?.provider || raw.provider || "tidal",
+          provider: canonicalContext?.provider || raw.provider || getDefaultStreamingSource(),
           providerEntityType: "track",
           providerId: trackId,
           librarySlot: canonicalContext?.slot || (isSpatial ? "spatial" : "stereo"),
@@ -1633,7 +1875,13 @@ export class OrganizerService {
           }
 
           if (mediaIdStr) {
-            this.cleanupOldMediaFiles(mediaIdStr, destFile, "track", canonicalIdentity.librarySlot ?? null);
+            this.cleanupOldMediaFiles(
+              mediaIdStr,
+              destFile,
+              "track",
+              canonicalIdentity.librarySlot ?? null,
+              canonicalIdentity.provider,
+            );
             this.cleanupSiblingMediaVariants(destFile, "track");
           }
         })();
@@ -1722,19 +1970,27 @@ export class OrganizerService {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.artist_picture_resolution (which only caps
         // the UI's cached display thumbnail — see media-cover-service.ts).
-        await downloadArtistPicture(artistId, "origin", artistPicPath);
-        if (fs.existsSync(artistPicPath)) {
-          this.upsertLibraryFile({
-            artistId,
-            albumId: null,
-            mediaId: null,
-            filePath: artistPicPath,
-            libraryRoot: targetRoot,
-            fileType: "cover",
-            quality: null,
-            namingTemplate: null,
-            expectedPath: artistPicPath,
-          });
+        // Artwork is a backfillable sidecar: its fetch must NEVER fail an import
+        // whose audio is already organized + tracked. The default provider may
+        // not even carry this album (e.g. an Apple-only id), and the scheduled
+        // library-metadata backfill retries missing artwork later.
+        try {
+          await downloadArtistPicture(artistId, "origin", artistPicPath);
+          if (fs.existsSync(artistPicPath)) {
+            this.upsertLibraryFile({
+              artistId,
+              albumId: null,
+              mediaId: null,
+              filePath: artistPicPath,
+              libraryRoot: targetRoot,
+              fileType: "cover",
+              quality: null,
+              namingTemplate: null,
+              expectedPath: artistPicPath,
+            });
+          }
+        } catch (error) {
+          console.warn(`[Organizer] Failed to fetch artist picture for ${artistId}; import already complete:`, error);
         }
       }
 
@@ -1752,19 +2008,27 @@ export class OrganizerService {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.album_cover_resolution (which only caps the
         // UI's cached display thumbnail — see media-cover-service.ts).
-        await downloadAlbumCover(albumIds[0], "origin", albumCoverPath);
-        if (fs.existsSync(albumCoverPath)) {
-          this.upsertLibraryFile({
-            artistId,
-            albumId: albumIds[0],
-            mediaId: null,
-            filePath: albumCoverPath,
-            libraryRoot: targetRoot,
-            fileType: "cover",
-            quality: null,
-            namingTemplate: null,
-            expectedPath: albumCoverPath,
-          });
+        // A cover fetch must never fail an import whose audio is already tracked:
+        // downloadAlbumCover falls back to the DEFAULT provider, which for a
+        // non-default-provider album id (e.g. an Apple-only album) 404s with
+        // "Album [<id>] not found". Swallow it — the backfill retries later.
+        try {
+          await downloadAlbumCover(albumIds[0], "origin", albumCoverPath);
+          if (fs.existsSync(albumCoverPath)) {
+            this.upsertLibraryFile({
+              artistId,
+              albumId: albumIds[0],
+              mediaId: null,
+              filePath: albumCoverPath,
+              libraryRoot: targetRoot,
+              fileType: "cover",
+              quality: null,
+              namingTemplate: null,
+              expectedPath: albumCoverPath,
+            });
+          }
+        } catch (error) {
+          console.warn(`[Organizer] Failed to fetch album cover for ${albumIds[0]}; import already complete:`, error);
         }
       }
 
@@ -1783,19 +2047,25 @@ export class OrganizerService {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.album_cover_resolution (which only caps the
         // UI's cached display thumbnail — see media-cover-service.ts).
-        await downloadAlbumVideoCover(String(album.video_cover), "origin", albumVideoCoverPath);
-        if (fs.existsSync(albumVideoCoverPath)) {
-          this.upsertLibraryFile({
-            artistId,
-            albumId: albumIds[0],
-            mediaId: null,
-            filePath: albumVideoCoverPath,
-            libraryRoot: targetRoot,
-            fileType: "video_cover",
-            quality: null,
-            namingTemplate: null,
-            expectedPath: albumVideoCoverPath,
-          });
+        // Same rule as the still cover: an animated-cover fetch failure must not
+        // fail an already-tracked import.
+        try {
+          await downloadAlbumVideoCover(String(album.video_cover), "origin", albumVideoCoverPath);
+          if (fs.existsSync(albumVideoCoverPath)) {
+            this.upsertLibraryFile({
+              artistId,
+              albumId: albumIds[0],
+              mediaId: null,
+              filePath: albumVideoCoverPath,
+              libraryRoot: targetRoot,
+              fileType: "video_cover",
+              quality: null,
+              namingTemplate: null,
+              expectedPath: albumVideoCoverPath,
+            });
+          }
+        } catch (error) {
+          console.warn(`[Organizer] Failed to fetch album video cover for ${albumIds[0]}; import already complete:`, error);
         }
       }
 
@@ -1837,13 +2107,46 @@ export class OrganizerService {
         }
       }
 
+      // Album-bundled music videos: providers like Apple Music append videos
+      // to the tracklist, staged as <providerId>.mp4 next to the audio files.
+      const bundledVideoIds: string[] = [];
+      const videoFiles = files.filter((file) => this.VIDEO_EXTENSIONS.has(path.extname(file).toLowerCase()));
+      if (videoFiles.length > 0) {
+        const matchedVideoIdsByFile = await this.matchAlbumFilesToTracks(providerId, videoFiles, canonicalContext);
+        for (const [srcFile, bundledTrackId] of matchedVideoIdsByFile) {
+          try {
+            const imported = await this.importAlbumBundledVideoFile({
+              src: srcFile,
+              provider: canonicalContext?.provider || String(raw.provider || getDefaultStreamingSource()),
+              providerTrackId: bundledTrackId,
+              artistId,
+              artistName: resolvedArtistName,
+              artistMbId: artistMbId || null,
+              artistFolder,
+              artistGenres: artistContext.artistGenre ?? null,
+              releaseGroupMbid: canonicalContext?.releaseGroupMbid || album.mb_release_group_id || null,
+              videoRoot,
+            });
+            if (imported) {
+              bundledVideoIds.push(bundledTrackId);
+            } else {
+              console.warn(`[Organizer] Bundled file ${srcFile} matched provider id ${bundledTrackId} but has no video track row; skipping.`);
+            }
+          } catch (error) {
+            console.warn(`[Organizer] Failed to import bundled video ${bundledTrackId} for album ${providerId}:`, error);
+          }
+        }
+      }
+
       let expectedTracks = 0;
       try {
         const placeholders = albumIds.map(() => '?').join(', ');
         expectedTracks = Number((db.prepare(`
           SELECT COUNT(*) as count FROM ProviderItems
-          WHERE entity_type = 'track' AND provider_album_id IN (${placeholders})
-        `).get(...albumIds) as { count?: number } | undefined)?.count || 0);
+          WHERE provider = ?
+            AND entity_type = 'track'
+            AND provider_album_id IN (${placeholders})
+        `).get(streamingProviderId, ...albumIds) as { count?: number } | undefined)?.count || 0);
       } catch (error) {
         console.warn("[Organizer] Failed to query expected track count from ProviderItems:", error);
       }
@@ -1851,7 +2154,7 @@ export class OrganizerService {
       return {
         type: "album",
         providerId,
-        processedTrackIds: destFiles.map((file) => file.trackId),
+        processedTrackIds: [...destFiles.map((file) => file.trackId), ...bundledVideoIds],
         totalTracksInStaging: files.length,
         expectedTracks,
       };
@@ -1867,7 +2170,7 @@ export class OrganizerService {
         throw new Error(`[Organizer] Could not locate downloaded file for track ${providerId} in ${downloadPath}`);
       }
 
-      const trackData = await this.fetchProviderTrack(providerId);
+      const trackData = await this.fetchProviderTrack(providerId, streamingProviderId);
       onProgress?.({
         phase: "importing",
         currentFileNum: 0,
@@ -1880,7 +2183,7 @@ export class OrganizerService {
 
       // Ensure album + tracks in DB for naming and to locate track metadata.
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
-      await RefreshAlbumService.refreshMetadata(albumId);
+      await RefreshAlbumService.refreshMetadata(albumId, { provider: streamingProviderId });
 
       const album = db.prepare(`
         SELECT
@@ -1890,10 +2193,12 @@ export class OrganizerService {
           quality, title, version, release_date,
           NULL AS num_volumes, NULL AS type, NULL AS mb_primary
         FROM ProviderItems
-        WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        WHERE provider = ?
+          AND entity_type = 'album'
+          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
         ORDER BY updated_at DESC
         LIMIT 1
-      `).get(albumId) as any;
+      `).get(streamingProviderId, albumId) as any;
       if (!album) throw new Error(`Album ${albumId} offer not found in ProviderItems after scan`);
 
       const trackRow = db.prepare(`
@@ -1906,10 +2211,12 @@ export class OrganizerService {
           CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number,
           CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER) AS volume_number
         FROM ProviderItems
-        WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        WHERE provider = ?
+          AND entity_type = 'track'
+          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
         ORDER BY updated_at DESC
         LIMIT 1
-      `).get(providerId) as any;
+      `).get(streamingProviderId, providerId) as any;
       if (!trackRow) throw new Error(`Track ${providerId} offer not found in ProviderItems after scan`);
 
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
@@ -2016,6 +2323,9 @@ export class OrganizerService {
         libraryRoot: targetRoot,
         fileType: "track",
         quality: derivedQuality,
+        provider: streamingProviderId,
+        providerEntityType: "track",
+        providerId,
       });
 
       // Batch all per-track DB writes in a single transaction (Lidarr-style).
@@ -2037,6 +2347,15 @@ export class OrganizerService {
           codec: metrics.codec,
           channels: metrics.channels,
           duration: metrics.duration,
+          provider: trackIdentity.provider,
+          providerEntityType: trackIdentity.providerEntityType,
+          providerId: trackIdentity.providerId,
+          librarySlot: trackIdentity.librarySlot,
+          canonicalArtistMbid: trackIdentity.canonicalArtistMbid,
+          canonicalReleaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid,
+          canonicalReleaseMbid: trackIdentity.canonicalReleaseMbid,
+          canonicalTrackMbid: trackIdentity.canonicalTrackMbid,
+          canonicalRecordingMbid: trackIdentity.canonicalRecordingMbid,
           fingerprint: fileFingerprint
         });
         importedTrackFileId = libraryFileId;
@@ -2060,7 +2379,7 @@ export class OrganizerService {
 
         // Keep the track branch aligned with album/video organization so quality
         // changes replace the previous file instead of leaving duplicates behind.
-        this.cleanupOldMediaFiles(providerId, dest, "track", trackIdentity.librarySlot ?? null);
+        this.cleanupOldMediaFiles(providerId, dest, "track", trackIdentity.librarySlot ?? null, streamingProviderId);
         this.cleanupSiblingMediaVariants(dest, "track");
       })();
 
@@ -2123,19 +2442,27 @@ export class OrganizerService {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.artist_picture_resolution (which only caps
         // the UI's cached display thumbnail — see media-cover-service.ts).
-        await downloadArtistPicture(artistId, "origin", artistPicPath);
-        if (fs.existsSync(artistPicPath)) {
-          this.upsertLibraryFile({
-            artistId,
-            albumId: null,
-            mediaId: null,
-            filePath: artistPicPath,
-            libraryRoot: targetRoot,
-            fileType: "cover",
-            quality: null,
-            namingTemplate: null,
-            expectedPath: artistPicPath,
-          });
+        // Artwork is a backfillable sidecar: its fetch must NEVER fail an import
+        // whose audio is already organized + tracked. The default provider may
+        // not even carry this album (e.g. an Apple-only id), and the scheduled
+        // library-metadata backfill retries missing artwork later.
+        try {
+          await downloadArtistPicture(artistId, "origin", artistPicPath);
+          if (fs.existsSync(artistPicPath)) {
+            this.upsertLibraryFile({
+              artistId,
+              albumId: null,
+              mediaId: null,
+              filePath: artistPicPath,
+              libraryRoot: targetRoot,
+              fileType: "cover",
+              quality: null,
+              namingTemplate: null,
+              expectedPath: artistPicPath,
+            });
+          }
+        } catch (error) {
+          console.warn(`[Organizer] Failed to fetch artist picture for ${artistId}; import already complete:`, error);
         }
       }
 
@@ -2274,7 +2601,7 @@ export class OrganizerService {
 
       // Ensure the video is in the canonical graph: a Recordings(is_video=1) row +
       // a ProviderItems video offer, via RefreshVideoService — no legacy ProviderMedia.
-      const videoData = await this.fetchProviderVideo(providerId);
+      const videoData = await this.fetchProviderVideo(providerId, streamingProviderId);
       let fetchedVideoData: any | null = videoData;
 
       const videoArtistId = videoData.artist_id ? String(videoData.artist_id) : null;
@@ -2283,7 +2610,7 @@ export class OrganizerService {
       }
 
       const { RefreshVideoService } = await import("../music/refresh-video-service.js");
-      const videoProvider = String(raw.provider || "tidal");
+      const videoProvider = String(raw.provider || getDefaultStreamingSource());
       RefreshVideoService.upsertArtistVideos(videoArtistId, [{
         ...videoData,
         provider_id: providerId,
@@ -2300,7 +2627,7 @@ export class OrganizerService {
         const exists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(videoArtistId) as any;
         if (!exists) {
           try {
-            const a = await this.fetchProviderArtist(videoArtistId);
+            const a = await this.fetchProviderArtist(videoArtistId, streamingProviderId);
             db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path) VALUES (?, ?, ?, ?, 0, ?)")
               .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolderForPersistence({
                 artistId: videoArtistId,
@@ -2340,7 +2667,7 @@ export class OrganizerService {
       const artistMbId = existingArtist?.mbid ? String(existingArtist.mbid) : "";
       let artistPath = String(existingArtist?.path || "").trim();
       if (!artistName) {
-        const remoteArtist = await this.fetchProviderArtist(artistId);
+        const remoteArtist = await this.fetchProviderArtist(artistId, streamingProviderId);
         const fetchedArtistName = remoteArtist.name || "Unknown Artist";
         artistName = fetchedArtistName;
         artistPath = resolveArtistFolderForPersistence({
@@ -2367,7 +2694,7 @@ export class OrganizerService {
       const sourceMetrics = await parseAudioFile(src);
       const sourceVideoQuality = deriveVideoQuality(sourceMetrics) ?? video.quality ?? null;
       const separatedDestName = `${renderFileStem(naming.video_file, {
-        provider: "tidal",
+        provider: videoProvider,
         artistName: resolvedArtistName,
         artistId,
         artistMbId,
@@ -2416,6 +2743,17 @@ export class OrganizerService {
       // Analyze file quality/resolution from the actual downloaded file.
       const metrics = await parseAudioFile(dest);
       const derivedVideoQuality = deriveVideoQuality(metrics) ?? video.quality ?? null;
+      const videoIdentity = resolveLibraryFileIdentity({
+        artistId,
+        albumId: video.album_id ? String(video.album_id) : null,
+        mediaId: providerId,
+        libraryRoot: organizedVideoRoot,
+        fileType: "video",
+        quality: derivedVideoQuality,
+        provider: videoProvider,
+        providerEntityType: "video",
+        providerId,
+      });
 
       // Batch all per-video DB writes in a single transaction (Lidarr-style).
       db.transaction(() => {
@@ -2433,7 +2771,16 @@ export class OrganizerService {
           sampleRate: metrics.sampleRate,
           bitrate: metrics.bitrate,
           codec: metrics.codec,
-          channels: metrics.channels
+          channels: metrics.channels,
+          provider: videoIdentity.provider,
+          providerEntityType: videoIdentity.providerEntityType,
+          providerId: videoIdentity.providerId,
+          librarySlot: videoIdentity.librarySlot,
+          canonicalArtistMbid: videoIdentity.canonicalArtistMbid,
+          canonicalReleaseGroupMbid: videoIdentity.canonicalReleaseGroupMbid,
+          canonicalReleaseMbid: videoIdentity.canonicalReleaseMbid,
+          canonicalTrackMbid: videoIdentity.canonicalTrackMbid,
+          canonicalRecordingMbid: videoIdentity.canonicalRecordingMbid,
         });
 
         try {
@@ -2454,15 +2801,7 @@ export class OrganizerService {
         }
 
         // Clean up any other old files for this video (handles extension changes beyond .ts → .mp4)
-        const videoIdentity = resolveLibraryFileIdentity({
-          artistId,
-          albumId: video.album_id ? String(video.album_id) : null,
-          mediaId: providerId,
-          libraryRoot: organizedVideoRoot,
-          fileType: "video",
-          quality: derivedVideoQuality,
-        });
-        this.cleanupOldMediaFiles(providerId, dest, "video", videoIdentity.librarySlot ?? null);
+        this.cleanupOldMediaFiles(providerId, dest, "video", videoIdentity.librarySlot ?? null, videoProvider);
         this.cleanupSiblingMediaVariants(dest, "video");
       })();
 
@@ -2484,7 +2823,7 @@ export class OrganizerService {
         let coverId = video.cover ? String(video.cover) : (fetchedVideoData?.image_id || null);
         if (!coverId) {
           try {
-            fetchedVideoData = fetchedVideoData ?? await this.fetchProviderVideo(providerId);
+            fetchedVideoData = fetchedVideoData ?? await this.fetchProviderVideo(providerId, streamingProviderId);
             coverId = fetchedVideoData?.image_id || null;
             if (coverId) {
               // Home the cover onto the canonical video Recording (via its offer's
@@ -2493,11 +2832,13 @@ export class OrganizerService {
                 UPDATE Recordings SET cover_image_id = COALESCE(?, cover_image_id), updated_at = CURRENT_TIMESTAMP
                 WHERE id = (
                   SELECT recording_id FROM ProviderItems
-                  WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                  WHERE provider = ?
+                    AND entity_type = 'video'
+                    AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
                     AND recording_id IS NOT NULL
                   LIMIT 1
                 )
-              `).run(coverId, providerId);
+              `).run(coverId, videoProvider, providerId);
               video.cover = coverId;
             }
           } catch {

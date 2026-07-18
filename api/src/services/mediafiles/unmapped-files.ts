@@ -5,7 +5,7 @@ import { UnmappedFileRepository, type UnmappedFile } from "../../repositories/me
 import { IdentificationService, type AlbumCandidateMatch } from "./identification-service.js";
 import { ImportDecisionEngine } from "../import-decision/engine.js";
 import type { ImportDecisionMode } from "../import-decision/types.js";
-import type { LocalFile, LocalGroup, TidalMatch } from "./import-types.js";
+import type { LocalFile, LocalGroup, ProviderMatch } from "./import-types.js";
 import { ImportService } from "./import-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 
@@ -142,7 +142,7 @@ export class UnmappedFilesService {
     async findBestAlbumCandidate(
         files: UnmappedFile[],
         mode: ImportDecisionMode = "ExistingFiles"
-    ): Promise<TidalMatch | null> {
+    ): Promise<ProviderMatch | null> {
         if (files.length === 0) return null;
         if (files.some((file) => file.library_root === "videos")) {
             return this.findBestVideoCandidate(files, mode);
@@ -156,7 +156,7 @@ export class UnmappedFilesService {
     private async findBestVideoCandidate(
         files: UnmappedFile[],
         mode: ImportDecisionMode = "ExistingFiles",
-    ): Promise<TidalMatch | null> {
+    ): Promise<ProviderMatch | null> {
         const group = this.buildLocalGroup(files);
         const matches = await this.importService.findMatchesForGroup(group, "video", mode);
         const top = matches[0];
@@ -220,12 +220,12 @@ export class UnmappedFilesService {
         files: UnmappedFile[],
         candidate: AlbumCandidateMatch,
         options: {
-            matchType: TidalMatch["matchType"];
+            matchType: ProviderMatch["matchType"];
             directCandidateCount?: number;
             strongFingerprintCandidateCount?: number;
             mode?: ImportDecisionMode;
         },
-    ): TidalMatch {
+    ): ProviderMatch {
         const group = this.buildLocalGroup(files);
         const evaluatedMatch = ImportDecisionEngine.evaluateSingleMatch({
             group,
@@ -255,7 +255,7 @@ export class UnmappedFilesService {
         files: UnmappedFile[],
         preferredArtist: string | null,
         mode: ImportDecisionMode = "ExistingFiles",
-    ): Promise<TidalMatch | null> {
+    ): Promise<ProviderMatch | null> {
         const { generateFingerprint, lookupAcoustId, lookupMusicBrainzRecording } = await import("./fingerprint.js");
         const candidateAlbums = new Map<string, any>();
         const seenQueries = new Set<string>();

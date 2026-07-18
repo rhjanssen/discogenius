@@ -19,6 +19,7 @@ import type { ProviderPlaybackInfo, ProviderVideoPlaybackInfo } from "../service
 import { authMiddleware } from "../middleware/auth.js";
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from "../services/metadata/provider-track-resolver.js";
 import { materializeSegmentedPlayback, parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
+import { isKnownProviderVideoOffer, resolvePreferredVideoOffer, resolveVideoOfferForProvider } from "../services/music/video-offer-resolver.js";
 import { db } from "../database.js";
 
 const streamPipeline = promisify(pipeline);
@@ -111,12 +112,17 @@ router.get("/stream/sign/:trackId", authMiddleware, async (req: Request, res: Re
                 provider: providerId,
                 slot: String(req.query.slot ?? "").trim() || null,
             });
-            if (!resolved) {
+            if (resolved) {
+                providerId = resolved.provider;
+                trackId = resolved.providerTrackId;
+                quality = quality ?? normalizePlaybackQuality(resolved.quality);
+            } else if (looksLikeMusicBrainzMbid(trackId)) {
+                // Canonical-only requests have nothing else to play.
                 return res.status(409).json({ error: "provider track match not found" });
             }
-            providerId = resolved.provider;
-            trackId = resolved.providerTrackId;
-            quality = quality ?? normalizePlaybackQuality(resolved.quality);
+            // Otherwise the caller already supplied a direct provider track id
+            // (e.g. artist top tracks carrying the provider's own popularity
+            // evidence) — play that even when no canonical match edge exists.
         }
     } catch (error: any) {
         return res.status(404).json({ error: error?.message || "provider not found" });
@@ -386,19 +392,27 @@ router.get("/video/sign/:videoId", authMiddleware, async (req: Request, res: Res
     } catch (error: any) {
         return res.status(404).json({ error: error?.message || "provider not found" });
     }
+    // Accept canonical recording references (row id or MBID) and resolve them
+    // to a concrete provider offer: prefer the requested provider's own offer,
+    // else fall back to the preference-ordered provider that has one (a video
+    // may exist on only one provider after cross-provider dedup).
+    let providerVideoId = videoId;
+    if (!isKnownProviderVideoOffer(provider.id, videoId)) {
+        const offer = resolveVideoOfferForProvider(provider.id, videoId)
+            ?? resolvePreferredVideoOffer(videoId);
+        if (offer) {
+            if (offer.provider !== provider.id) {
+                try {
+                    provider = resolvePlaybackProvider(offer.provider);
+                } catch (error: any) {
+                    return res.status(404).json({ error: error?.message || "provider not found" });
+                }
+            }
+            providerVideoId = offer.providerId;
+        }
+    }
     if (!provider.getVideoPlaybackInfo) {
         return res.status(501).json({ error: `${provider.name} does not support video preview` });
-    }
-
-    // Accept canonical recording ids and resolve them to the provider's video id.
-    let providerVideoId = videoId;
-    if (!looksLikeMusicBrainzMbid(videoId)) {
-        const row = db.prepare(
-            "SELECT provider_id FROM ProviderItems WHERE entity_type = 'video' AND recording_id = ? AND provider = ? LIMIT 1",
-        ).get(videoId, provider.id) as { provider_id?: string | number | null } | undefined;
-        if (row?.provider_id != null) {
-            providerVideoId = String(row.provider_id);
-        }
     }
 
     try {

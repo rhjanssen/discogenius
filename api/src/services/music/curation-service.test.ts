@@ -330,6 +330,60 @@ const queued = await downloadMissingServiceModule.DownloadMissingService.queueMo
   assertRetiredProviderCatalogTablesAbsent();
 });
 
+test("DownloadMissing keeps distinct video variants separate when one sibling is imported", async () => {
+  const { db } = dbModule;
+  writeTestConfig({ filtering: { include_videos: true } });
+
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)")
+    .run("artist-1", "Bastille", "artist-mbid-1");
+  db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (?, ?, ?)")
+    .run(101, "artist-mbid-1", "Bastille");
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
+      title, length_ms, is_video, metadata_status, monitored
+    ) VALUES
+      (501, 'video-official', 'video-official', 101, 'artist-mbid-1',
+       'Pompeii', 232000, 1, 'musicbrainz', 1),
+      (502, 'video-lyric', 'video-lyric', 101, 'artist-mbid-1',
+       'Pompeii (Lyric Video)', 214000, 1, 'provider_only', 1)
+  `).run();
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid,
+      title, quality, artist_metadata_id, recording_id, availability
+    ) VALUES
+      ('tidal', 'video', 'tidal-pompeii-official', 'artist-mbid-1', 'video-official',
+       'Pompeii', 'MP4_1080P', 101, 501, 'available'),
+      ('apple-music', 'video', 'apple-pompeii-lyric', 'artist-mbid-1', 'video-lyric',
+       'Pompeii (Lyric Video)', 'MP4_1080P', 101, 502, 'available')
+  `).run();
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_recording_mbid, recording_id,
+      provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (
+      'artist-1', 'video-official', 501,
+      'tidal', 'video', 'tidal-pompeii-official', 'video',
+      'C:/Videos/Pompeii.mp4', 'Pompeii.mp4', 'C:/Videos',
+      'Pompeii.mp4', '.mp4', 'video'
+    )
+  `).run();
+
+  const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
+  assert.equal(queued.videos, 1);
+
+  const jobs = db.prepare(`
+    SELECT ref_id AS refId, payload
+    FROM commands
+    WHERE name = ?
+  `).all(queueModule.CommandNames.DownloadVideo) as Array<{ refId: string; payload: string }>;
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].refId, "recording:502:video");
+  assert.equal(JSON.parse(jobs[0].payload).providerId, "apple-pompeii-lyric");
+});
+
 test("CurationService queues spatial slot when only the stereo selected release is imported", async () => {
   const { db } = dbModule;
 

@@ -1,6 +1,7 @@
 import { db } from "../../database.js";
 import type { VideoContract, VideosListResponseContract } from "../../contracts/catalog.js";
-import type { VideoDetailContract } from "../../contracts/media.js";
+import type { VideoAlbumRefContract, VideoDetailContract, VideoProviderOfferContract } from "../../contracts/media.js";
+import { streamingProviderManager } from "../providers/index.js";
 import { videoCoverLocalUrl } from "../metadata/media-cover-service.js";
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
@@ -293,10 +294,104 @@ export function getVideoDetail(videoId: string): VideoDetailContract | null {
   `).get(recordingId) as (VideoRow & { downloaded?: number }) | undefined;
 
   if (canonicalRow) {
-    return mapVideoDetail(canonicalRow, Boolean(canonicalRow.downloaded));
+    const detail = mapVideoDetail(canonicalRow, Boolean(canonicalRow.downloaded));
+    detail.offers = getVideoProviderOffers(recordingId);
+    detail.albums = getVideoAlbumRefs(recordingId);
+    return detail;
   }
 
   return null;
+}
+
+/** All provider VIDEO offers for the canonical recording, preference-ordered. */
+function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract[] {
+  const rows = db.prepare(`
+    SELECT pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality, pi.provider_url AS url
+    FROM ProviderItems pi
+    WHERE pi.entity_type = 'video'
+      -- availability is stored as text ('available') or NULL for live offers,
+      -- never the integer 1 — testing it against 1 silently dropped every video
+      -- offer and broke both preview and download (the TIDAL-only regression).
+      -- Include anything not explicitly marked unavailable so both the 'available'
+      -- string and any legacy truthy value survive.
+      AND (pi.availability IS NULL
+           OR LOWER(CAST(pi.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
+      AND (
+        CAST(pi.recording_id AS TEXT) = CAST(? AS TEXT)
+        OR pi.recording_mbid = (SELECT mbid FROM Recordings WHERE CAST(id AS TEXT) = CAST(? AS TEXT) AND mbid IS NOT NULL)
+      )
+  `).all(recordingId, recordingId) as Array<{ provider: string; provider_id: string; quality: string | null; url: string | null }>;
+  rows.sort((a, b) =>
+    streamingProviderManager.getProviderPreferenceRank(a.provider)
+    - streamingProviderManager.getProviderPreferenceRank(b.provider));
+  return rows.map((row) => {
+    let canPreview = false;
+    let canDownload = false;
+    try {
+      const capabilities = streamingProviderManager.getStreamingProvider(row.provider).capabilities;
+      canPreview = capabilities.videoPreviews;
+      canDownload = capabilities.videoDownloads;
+    } catch {
+      // Preserve stale offer provenance for display, but never advertise
+      // actions until that provider is registered again.
+    }
+    return {
+      provider: row.provider,
+      provider_id: row.provider_id,
+      quality: row.quality ?? null,
+      url: row.url ?? null,
+      available: true,
+      can_preview: canPreview,
+      can_download: canDownload,
+    };
+  });
+}
+
+/**
+ * Albums (release groups) this video appears on: canonical release VIDEO
+ * tracks pointing at the recording, plus provider album linkage on the video
+ * offers themselves (Apple bundles MVs inside albums).
+ */
+function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
+  const rows = db.prepare(`
+    SELECT DISTINCT a.mbid AS id, a.title, a.cover_image_id AS cover_id
+    FROM Albums a
+    WHERE a.mbid IN (
+      SELECT ar.release_group_mbid
+      FROM Tracks t
+      JOIN AlbumReleases ar
+        ON ar.id = t.album_release_id
+        OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+      WHERE CAST(t.recording_id AS TEXT) = CAST(? AS TEXT)
+        OR t.recording_mbid = (SELECT mbid FROM Recordings WHERE CAST(id AS TEXT) = CAST(? AS TEXT) AND mbid IS NOT NULL)
+
+      UNION
+
+      SELECT v.release_group_mbid
+      FROM ProviderItems v
+      WHERE v.entity_type = 'video'
+        AND CAST(v.recording_id AS TEXT) = CAST(? AS TEXT)
+        AND v.release_group_mbid IS NOT NULL
+
+      UNION
+
+      SELECT alb.release_group_mbid
+      FROM ProviderItems v
+      JOIN ProviderItems alb
+        ON alb.entity_type = 'album'
+        AND alb.provider = v.provider
+        AND CAST(alb.provider_id AS TEXT) = CAST(v.provider_album_id AS TEXT)
+      WHERE v.entity_type = 'video'
+        AND CAST(v.recording_id AS TEXT) = CAST(? AS TEXT)
+        AND v.provider_album_id IS NOT NULL
+        AND alb.release_group_mbid IS NOT NULL
+    )
+  `).all(recordingId, recordingId, recordingId, recordingId) as Array<{ id: string; title: string; cover_id: string | null }>;
+  return rows.map((row) => ({
+    id: String(row.id),
+    title: row.title,
+    cover_id: row.cover_id ?? null,
+  }));
 }
 
 function resolveVideoRecordingId(videoId: string): string | null {

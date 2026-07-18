@@ -25,6 +25,23 @@ function isLikelyProviderId(value: string): boolean {
   return /^\d{5,}$/.test(value.trim()) || /^pl\.[\w-]+$/.test(value.trim());
 }
 
+// The decryption wrapper returns EOF / CKC / sign-in errors when the Apple Music
+// session behind it has expired or been rejected — the downloader surfaces that
+// as cryptic strings like "Error reading response from device: EOF". Translate
+// those into one actionable instruction instead of leaking the raw wrapper text.
+const APPLE_SESSION_FAILURE_PATTERN =
+  /reading response from device|device:\s*eof|\bckc\b|sign[\s-]?in|unauthor|invalid.*(?:token|session|user)|forbidden|\b401\b|\b403\b/i;
+
+export function describeAppleDownloaderFailure(code: number | null, errorDetail: string): string {
+  const detail = (errorDetail || "").trim();
+  if (APPLE_SESSION_FAILURE_PATTERN.test(detail)) {
+    return "Apple Music decryption failed — the wrapper session has expired or was rejected. "
+      + "Re-authenticate Apple Music from the Auth page and enter your Apple ID 2FA code promptly "
+      + `(the wrapper only waits ~60s).${detail ? ` [downloader: ${detail}]` : ""}`;
+  }
+  return `apple-music-downloader exited with code ${code}${detail ? `: ${detail}` : ""}`;
+}
+
 export function resolveAppleMusicProviderStorefront(): string {
   return loadStoredAppleMusicToken()?.storefront || resolveAppleStorefront();
 }
@@ -172,7 +189,22 @@ export function parseAppleDownloaderProgressLine(
     };
   }
 
-  if (/Unavailable|Invalid media-user-token|Failed|Error|Exception/i.test(cleanLine)) {
+  // Final summary banner ("======= [✔] Completed: 1/1 | [⚠] Warnings: 0 |
+  // [✖] Errors: 0 ======="): only a nonzero error count is a failure — the
+  // banner itself must not trip the generic error regex below.
+  const summaryMatch = cleanLine.match(/Completed:\s*(\d+)\s*\/\s*(\d+).*Errors:\s*(\d+)/i);
+  if (summaryMatch) {
+    const errorCount = Number(summaryMatch[3]);
+    return {
+      currentFileNum: current?.currentFileNum,
+      totalFiles: current?.totalFiles,
+      trackStatus: errorCount > 0 ? "error" : "completed",
+      statusMessage: cleanLine,
+      isError: errorCount > 0 ? true : undefined,
+    };
+  }
+
+  if (/Unavailable|Invalid media-user-token|Failed|Error|Exception/i.test(cleanLine) && !/lyric|lrc/i.test(cleanLine)) {
     return {
       currentFileNum: current?.currentFileNum,
       totalFiles: current?.totalFiles,
@@ -258,12 +290,25 @@ export class AppleMusicBackend implements DownloadBackend {
     const args: string[] = [];
     if (request.entityType === "video") {
       args.push("--mv-audio-type", "atmos");
-    } else if (request.entityType === "track") {
-      args.push("--song");
-    } else if (request.quality && /atmos|spatial/i.test(request.quality)) {
-      args.push("--atmos");
-    } else if (request.quality && /hi.?res/i.test(request.quality)) {
-      args.push("--alac-max", "192000");
+    } else {
+      // Resource scope and audio mode are independent upstream flags. In
+      // particular, a single song still needs --atmos/--aac when its selected
+      // library slot requests that variant.
+      if (request.entityType === "track") {
+        args.push("--song");
+      }
+
+      const quality = String(request.quality || "").trim();
+      if (request.slot === "spatial" || /atmos|spatial/i.test(quality)) {
+        args.push("--atmos");
+      } else if (/hi.?res/i.test(quality)) {
+        args.push("--alac-max", "192000");
+      } else if (/^(low|lossy(?:[_ -]stereo)?|aac)$/i.test(quality)) {
+        // Only genuinely-lossy requests get AAC 256. "high"/"standard" are NOT
+        // listed: our HIGH tier means 16-bit lossless, so an ambiguous label must
+        // fall through to the default ALAC (lossless) branch, never lossy AAC.
+        args.push("--aac");
+      }
     }
     args.push(url);
     return args;
@@ -276,7 +321,13 @@ export class AppleMusicBackend implements DownloadBackend {
     span: { completed: number; total: number },
   ): Promise<void> {
     const args = this.buildArgs(providerId, request);
-    const cp = spawn(getAppleMusicDownloaderBinary(), args, { cwd: APPLE_MUSIC_DOWNLOADER_DIR });
+    // stdin must be closed: on any item error the binary prompts
+    // "press Enter to try again" and would block a headless slot forever
+    // waiting for input. With stdin at EOF it moves on instead.
+    const cp = spawn(getAppleMusicDownloaderBinary(), args, {
+      cwd: APPLE_MUSIC_DOWNLOADER_DIR,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
 
     if (options.signal) {
       if (options.signal.aborted) {
@@ -358,7 +409,7 @@ export class AppleMusicBackend implements DownloadBackend {
           });
           resolve();
         } else {
-          reject(new Error(`apple-music-downloader exited with code ${code}${errorDetail ? `: ${errorDetail}` : ""}`));
+          reject(new Error(describeAppleDownloaderFailure(code, errorDetail)));
         }
       });
       cp.on("error", (err: Error) => reject(err));

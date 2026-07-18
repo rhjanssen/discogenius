@@ -56,6 +56,8 @@ router.get("/", (req, res) => {
       downloaded: downloadedFilter,
       locked: lockedFilter,
       libraryFilter: req.query.library_filter as string | undefined,
+      provider: req.query.provider as string | undefined,
+      qualityTier: req.query.quality_tier as string | undefined,
       sort: req.query.sort as string | undefined,
       dir: req.query.dir as string | undefined,
     }));

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { api } from "@/services/api";
+import { api, type StreamingProviderStatus } from "@/services/api";
 import {
+  Badge,
   Button,
   Field,
   Input,
@@ -345,6 +346,12 @@ const useStyles = makeStyles({
     width: '100%',
     maxWidth: '560px',
   },
+  maskedTextarea: {
+    // Chromium supports password-style masking for multiline credential
+    // blobs while preserving paste and vertical resize behavior.
+    WebkitTextSecurity: 'disc',
+    minHeight: '96px',
+  },
   manualTokenInstructions: {
     display: 'flex',
     flexDirection: 'column',
@@ -372,6 +379,37 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     justifyContent: 'space-between',
     flexWrap: 'wrap',
+  },
+  credentialStatus: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+    flexWrap: 'wrap',
+  },
+  setupNotes: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXS,
+    padding: tokens.spacingVerticalM,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1) 52%, transparent)',
+    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, var(--colorNeutralStroke1) 42%, transparent)`,
+    color: tokens.colorNeutralForeground2,
+    textAlign: 'left',
+  },
+  setupNotesList: {
+    margin: 0,
+    paddingLeft: tokens.spacingHorizontalXL,
+    display: 'grid',
+    gap: tokens.spacingVerticalXS,
+  },
+  inlineError: {
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorPaletteRedBackground1,
+    color: tokens.colorPaletteRedForeground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorPaletteRedBorder1}`,
+    textAlign: 'left',
   },
   tidalButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
@@ -409,6 +447,26 @@ const useStyles = makeStyles({
   },
 });
 
+const getAppleCredentialValidationError = (
+  mediaUserToken: string,
+  appleId: string,
+  applePassword: string,
+  hasStoredMediaUserToken: boolean,
+): string | null => {
+  const hasAppleId = Boolean(appleId.trim());
+  const hasApplePassword = Boolean(applePassword.trim());
+
+  if (hasAppleId !== hasApplePassword) {
+    return "Enter both the Apple ID and Apple ID password to authenticate the decryption wrapper.";
+  }
+
+  if (!mediaUserToken.trim() && !hasStoredMediaUserToken && !(hasAppleId && hasApplePassword)) {
+    return "Paste the media-user-token from music.apple.com before connecting Apple Music.";
+  }
+
+  return null;
+};
+
 const Auth = () => {
   const styles = useStyles();
   const queryClient = useQueryClient();
@@ -417,16 +475,31 @@ const Auth = () => {
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatusContract | null>(null);
-  const [manualProvider, setManualProvider] = useState<"apple-music" | null>(null);
-  const [appleDeveloperToken, setAppleDeveloperToken] = useState("");
+  const [manualProvider, setManualProvider] = useState<string | null>(null);
+  const [streamingProviders, setStreamingProviders] = useState<StreamingProviderStatus[]>([]);
+  const [providersLoading, setProvidersLoading] = useState(true);
+  const [providersError, setProvidersError] = useState<string | null>(null);
+  const [credentialValues, setCredentialValues] = useState<Record<string, string>>({});
+  const [credentialError, setCredentialError] = useState<string | null>(null);
   const [appleMediaUserToken, setAppleMediaUserToken] = useState("");
-  const [appleStorefront, setAppleStorefront] = useState("us");
+  const [appleWrapperAppleId, setAppleWrapperAppleId] = useState("");
+  const [appleWrapperApplePassword, setAppleWrapperApplePassword] = useState("");
   const [savingCredentials, setSavingCredentials] = useState(false);
+  const [wrapperLoginActive, setWrapperLoginActive] = useState(false);
+  const [wrapperStatus, setWrapperStatus] = useState<{ status: string; message: string }>({ status: "idle", message: "" });
+  const [wrapper2faCode, setWrapper2faCode] = useState("");
+  const [submitting2fa, setSubmitting2fa] = useState(false);
+  const wrapperPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const refreshPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const devicePollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
   const navigate = useNavigate();
   const location = useLocation();
+  const authNavigationState = location.state as {
+    mode?: "add-provider";
+    from?: { pathname?: string; search?: string; hash?: string };
+  } | null;
+  const isAddingProvider = authNavigationState?.mode === "add-provider";
   const { toast } = useToast();
   const { theme, setTheme, setBrandKeyColor } = useTheme();
   const { setArtwork, colors, isDarkMode } = useUltraBlurContext();
@@ -441,8 +514,7 @@ const Auth = () => {
   }, []);
 
   const navigateAfterAuth = useCallback(() => {
-    const state = location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null;
-    const from = state?.from;
+    const from = authNavigationState?.from;
     const pathname = typeof from?.pathname === "string" ? from.pathname : "/";
 
     if (!pathname.startsWith("/") || pathname === "/auth") {
@@ -453,18 +525,37 @@ const Auth = () => {
     const search = typeof from?.search === "string" ? from.search : "";
     const hash = typeof from?.hash === "string" ? from.hash : "";
     navigate(`${pathname}${search}${hash}`, { replace: true });
-  }, [location.state, navigate]);
+  }, [authNavigationState, navigate]);
 
   const refreshProviderAuthStatusCache = useCallback((status: AuthStatusContract) => {
     queryClient.setQueryData(["providerAuthStatus"], status);
     void queryClient.invalidateQueries({ queryKey: ["providerAuthStatus"] });
   }, [queryClient]);
 
+  const loadStreamingProviders = useCallback(async () => {
+    setProvidersLoading(true);
+    setProvidersError(null);
+    try {
+      const registry = await api.getStreamingProviders();
+      if (!isMountedRef.current) return;
+      setStreamingProviders(registry.providers);
+    } catch (error: any) {
+      if (!isMountedRef.current) return;
+      setProvidersError(error?.message || "Could not load the registered streaming providers.");
+    } finally {
+      if (isMountedRef.current) setProvidersLoading(false);
+    }
+  }, []);
+
   // Clear artwork and brand color on auth page (use logo colors)
   useEffect(() => {
     setArtwork(undefined);
     setBrandKeyColor(null);
   }, [setArtwork, setBrandKeyColor]);
+
+  useEffect(() => {
+    void loadStreamingProviders();
+  }, [loadStreamingProviders]);
 
   useEffect(() => {
     const checkExistingConnection = async () => {
@@ -514,6 +605,10 @@ const Auth = () => {
       if (devicePollTimeoutRef.current) {
         clearTimeout(devicePollTimeoutRef.current);
         devicePollTimeoutRef.current = null;
+      }
+      if (wrapperPollRef.current) {
+        clearInterval(wrapperPollRef.current);
+        wrapperPollRef.current = null;
       }
     };
   }, []);
@@ -780,30 +875,180 @@ const Auth = () => {
     }
   };
 
-  const saveAppleCredentials = async () => {
-    if (!appleMediaUserToken.trim()) {
+  const startWrapperPolling = () => {
+    if (wrapperPollRef.current) {
+      clearInterval(wrapperPollRef.current);
+    }
+
+    wrapperPollRef.current = setInterval(async () => {
+      try {
+        const data = await api.getAppleWrapperStatus();
+        if (!isMountedRef.current) return;
+        setWrapperStatus(data);
+
+        if (data.status === "success") {
+          clearInterval(wrapperPollRef.current!);
+          wrapperPollRef.current = null;
+          toast({
+            title: "Wrapper Authenticated",
+            description: "Decryption wrapper is ready.",
+          });
+          setTimeout(() => {
+            setWrapperLoginActive(false);
+            navigateAfterAuth();
+          }, 2000);
+        } else if (data.status === "failed") {
+          clearInterval(wrapperPollRef.current!);
+          wrapperPollRef.current = null;
+          setWrapperLoginActive(false);
+          toast({
+            title: "Wrapper Login Failed",
+            description: data.message,
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        console.error("Error polling wrapper status:", error);
+      }
+    }, 2000);
+  };
+
+  const submitApple2fa = async () => {
+    if (!wrapper2faCode.trim() || wrapper2faCode.trim().length !== 6) {
       toast({
-        title: "Apple Music token required",
-        description: "Paste the media-user-token from music.apple.com.",
+        title: "Invalid code",
+        description: "Please enter a valid 6-digit verification code.",
         variant: "destructive",
       });
       return;
     }
+    setSubmitting2fa(true);
+    try {
+      await api.submitAppleWrapper2fa(wrapper2faCode.trim());
+      setWrapper2faCode("");
+      // Optimistically show loading state so the UI updates immediately
+      setWrapperStatus({ status: "logging_in", message: "Verifying 2FA code with Apple..." });
+      toast({
+        title: "Code submitted",
+        description: "Authenticating with Apple...",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to submit code",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting2fa(false);
+    }
+  };
+
+  const selectedProvider = streamingProviders.find((provider) => provider.id === manualProvider) ?? null;
+
+  const openCredentialProvider = (provider: StreamingProviderStatus) => {
+    setCredentialError(null);
+    setCredentialValues(Object.fromEntries(
+      (provider.manifest?.auth.credentialFields ?? []).map((field) => [field.key, ""]),
+    ));
+    setManualProvider(provider.id);
+  };
+
+  const saveGenericProviderCredentials = async () => {
+    if (!selectedProvider || selectedProvider.id === "apple-music") return;
+
+    const fields = selectedProvider.manifest?.auth.credentialFields ?? [];
+    const missing = fields.filter((field) => field.required && !credentialValues[field.key]?.trim());
+    if (missing.length > 0) {
+      const message = `Enter ${missing.map((field) => field.label).join(", ")} before connecting.`;
+      setCredentialError(message);
+      return;
+    }
+
+    setSavingCredentials(true);
+    setCredentialError(null);
+    try {
+      const credentials = Object.fromEntries(
+        fields.map((field) => [field.key, credentialValues[field.key]?.trim() ?? ""]),
+      );
+      const result = await api.saveProviderCredentials(selectedProvider.id, credentials);
+      setStreamingProviders((providers) => providers.map((provider) => (
+        provider.id === selectedProvider.id
+          ? { ...provider, authenticated: Boolean(result.status.connected) }
+          : provider
+      )));
+
+      const aggregateStatus = await api.getAuthStatus().catch(() => result.status);
+      setAuthStatus(aggregateStatus);
+      refreshProviderAuthStatusCache(aggregateStatus);
+      toast({
+        title: `${selectedProvider.name} ${result.status.connected ? "connected" : "credentials saved"}`,
+        description: result.status.message || "Provider credentials were saved successfully.",
+      });
+      setCredentialValues({});
+      setManualProvider(null);
+      void loadStreamingProviders();
+    } catch (error: any) {
+      const message = error?.message || `Could not save ${selectedProvider.name} credentials.`;
+      setCredentialError(message);
+      toast({
+        title: `${selectedProvider.name} connection failed`,
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setSavingCredentials(false);
+    }
+  };
+
+  const saveAppleCredentials = async () => {
+    const mediaUserToken = appleMediaUserToken.trim();
+    const appleId = appleWrapperAppleId.trim();
+    const applePassword = appleWrapperApplePassword.trim();
+    const hasAppleId = Boolean(appleId);
+    const hasApplePassword = Boolean(applePassword);
+    const hasStoredMediaUserToken = Boolean(selectedProvider?.authenticated);
+    const validationError = getAppleCredentialValidationError(
+      mediaUserToken,
+      appleId,
+      applePassword,
+      hasStoredMediaUserToken,
+    );
+
+    if (validationError) {
+      setCredentialError(validationError);
+      return;
+    }
+
+    setCredentialError(null);
     setSavingCredentials(true);
     try {
-      const result: any = await api.saveProviderCredentials("apple-music", {
-        developerToken: appleDeveloperToken.trim(),
-        mediaUserToken: appleMediaUserToken.trim(),
-        storefront: appleStorefront.trim().toLowerCase() || "us",
-      });
-      const status = result?.status || await api.getAuthStatus();
-      setAuthStatus(status);
-      refreshProviderAuthStatusCache(status);
-      toast({
-        title: "Apple Music connected",
-        description: "Catalog access and import sources are now available.",
-      });
-      navigateAfterAuth();
+      if (mediaUserToken) {
+        const result: any = await api.saveProviderCredentials("apple-music", {
+          developerToken: "",
+          mediaUserToken,
+          storefront: "",
+        });
+        const status = result?.status || await api.getAuthStatus();
+        setAuthStatus(status);
+        refreshProviderAuthStatusCache(status);
+      }
+
+      // Wrapper decryption login is separate from catalog credentials: the
+      // Apple ID + password go straight to the wrapper sidecar and are never
+      // stored by Discogenius.
+      if (hasAppleId && hasApplePassword) {
+        await api.runAppleWrapperLogin(appleId, applePassword);
+        setAppleWrapperApplePassword("");
+        setWrapperLoginActive(true);
+        setWrapperStatus({ status: "logging_in", message: "Login request sent to the decryption wrapper..." });
+        startWrapperPolling();
+      } else {
+        toast({
+          title: mediaUserToken ? "Apple Music connected" : "Apple Music already connected",
+          description: "Catalog access and import sources are available.",
+        });
+        navigateAfterAuth();
+      }
     } catch (error: any) {
       toast({
         title: "Apple Music connection failed",
@@ -815,27 +1060,32 @@ const Auth = () => {
     }
   };
 
-  const providerButtons = [{
-    key: "tidal",
-    name: "TIDAL",
-    className: styles.tidalButton,
-    available: true,
-    onClick: connectTidal,
-  }, {
-    key: "apple",
-    name: "Apple Music",
-    className: styles.appleButton,
-    available: true,
-    onClick: () => setManualProvider("apple-music"),
-  }, {
-    key: "amazon", name: "Amazon Music", className: styles.amazonButton, available: false,
-  }, {
-    key: "spotify", name: "Spotify", className: styles.spotifyButton, available: false,
-  }, {
-    key: "youtube", name: "YouTube Music", className: styles.youtubeButton, available: false,
-  }, {
-    key: "deezer", name: "Deezer", className: styles.deezerButton, available: false,
-  }];
+  const selectProvider = (provider: StreamingProviderStatus) => {
+    if (provider.id === "tidal") {
+      void connectTidal();
+      return;
+    }
+    if (provider.id === "apple-music") {
+      setCredentialError(null);
+      setManualProvider(provider.id);
+      return;
+    }
+    if (provider.manifest?.auth.credentialFields?.length || provider.management.canAuthenticate) {
+      openCredentialProvider(provider);
+      return;
+    }
+    toast({
+      title: `${provider.name} cannot be connected here`,
+      description: "This provider does not expose an app-managed connection method.",
+    });
+  };
+
+  const selectedCredentialFields = selectedProvider?.manifest?.auth.credentialFields ?? [];
+  const selectedSetupNotes = [...new Set(
+    (selectedProvider?.manifest?.downloadBackends ?? []).flatMap((backend) => (
+      backend.setupNote ? [backend.setupNote] : []
+    )),
+  )];
 
   return (
     <>
@@ -870,9 +1120,13 @@ const Auth = () => {
                 <img src={logo} alt="Discogenius" className={styles.logo} />
               </div>
               <div className={styles.leftCopy}>
-                <Text as="h1" className={styles.brandTitle}>Welcome to Discogenius</Text>
+                <Text as="h1" className={styles.brandTitle}>
+                  {isAddingProvider ? "Add a streaming provider" : "Welcome to Discogenius"}
+                </Text>
                 <Body1 className={styles.leftBody}>
-                  Connect a streaming service to enable downloading, or skip for now and add your wanted artists first.
+                  {isAddingProvider
+                    ? "Connect another service, then return to Settings to choose its priority and capabilities."
+                    : "Connect a streaming service to enable downloading, or skip for now and add your wanted artists first."}
                 </Body1>
               </div>
             </div>
@@ -896,11 +1150,57 @@ const Auth = () => {
               {!connecting && !userCode && !refreshing && (
                 <div className={styles.providerCard} data-test="dsp-button-list">
                   {manualProvider === "apple-music" ? (
-                    <div className={styles.credentialForm}>
+                    wrapperLoginActive ? (
+                      <div className={styles.credentialForm}>
+                        <div className={styles.providerHeader}>
+                          <Text weight="semibold" className={styles.providerBadge}>Apple ID Verification</Text>
+                          <Body1 className={styles.stateBody}>
+                            {wrapperStatus.message || "Authenticating with Apple..."}
+                          </Body1>
+                        </div>
+
+                        {wrapperStatus.status === "waiting_for_2fa" ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
+                            <Field label="Verification Code" hint="Enter the 2FA code sent to your Apple device.">
+                              <Input
+                                value={wrapper2faCode}
+                                maxLength={6}
+                                placeholder="123456"
+                                onChange={(_, data) => setWrapper2faCode(data.value)}
+                                disabled={submitting2fa}
+                              />
+                            </Field>
+                            <Button appearance="primary" onClick={submitApple2fa} disabled={submitting2fa}>
+                              {submitting2fa ? "Submitting..." : "Submit Code"}
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className={styles.waitingText} style={{ marginTop: '20px' }}>
+                            <Spinner size="tiny" />
+                            <Text size={200}>{wrapperStatus.message || "Checking status..."}</Text>
+                          </div>
+                        )}
+
+                        <div className={styles.credentialActions} style={{ marginTop: '20px' }}>
+                          <Button appearance="subtle" onClick={() => {
+                            if (wrapperPollRef.current) {
+                              clearInterval(wrapperPollRef.current);
+                              wrapperPollRef.current = null;
+                            }
+                            setWrapperLoginActive(false);
+                          }} disabled={submitting2fa}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={styles.credentialForm}>
                       <div className={styles.providerHeader}>
                         <Text weight="semibold" className={styles.providerBadge}>Apple Music credentials</Text>
                         <Body1 className={styles.stateBody}>
-                          Paste the media-user-token from music.apple.com. Discogenius stores it under the Apple Music provider config and syncs it into the downloader config.
+                          {selectedProvider?.authenticated
+                            ? "A media-user-token is already stored. Leave the token field blank to keep it, or paste a replacement. Apple ID and password can be used on their own to re-authenticate the decryption wrapper."
+                            : "Paste the media-user-token from music.apple.com. Discogenius stores it under the Apple Music provider config and syncs it into the downloader config."}
                         </Body1>
                       </div>
                       <div className={styles.manualTokenInstructions}>
@@ -923,32 +1223,56 @@ const Auth = () => {
                           Open Apple Music
                         </Button>
                       </div>
-                      <Field label="Bearer/developer token" hint="Optional. Leave empty to let Discogenius resolve the Apple Music web bearer token like the downloader.">
-                        <Textarea
-                          value={appleDeveloperToken}
-                          onChange={(_, data) => setAppleDeveloperToken(data.value)}
-                          resize="vertical"
-                          disabled={savingCredentials}
-                        />
-                      </Field>
-                      <Field label="Media user token" required hint="Cookie value named media-user-token from music.apple.com.">
-                        <Textarea
-                          value={appleMediaUserToken}
-                          onChange={(_, data) => setAppleMediaUserToken(data.value)}
-                          resize="vertical"
-                          disabled={savingCredentials}
-                        />
-                      </Field>
-                      <Field label="Storefront" hint="Two-letter country code, for example us, gb, nl, or jp.">
+                      <Field
+                        label="Media user token"
+                        required={!selectedProvider?.authenticated}
+                        hint={selectedProvider?.authenticated
+                          ? "A token is already stored. Leave blank to keep it, or paste a replacement."
+                          : "Cookie value named media-user-token from music.apple.com."}
+                      >
                         <Input
-                          value={appleStorefront}
-                          maxLength={2}
-                          onChange={(_, data) => setAppleStorefront(data.value)}
+                          type="password"
+                          autoComplete="off"
+                          value={appleMediaUserToken}
+                          onChange={(_, data) => {
+                            setAppleMediaUserToken(data.value);
+                            if (credentialError) setCredentialError(null);
+                          }}
                           disabled={savingCredentials}
                         />
                       </Field>
+                      <Field label="Apple ID" hint="Required for lossless ALAC and music video downloads. Optional for standard lossy AAC.">
+                        <Input
+                          value={appleWrapperAppleId}
+                          placeholder="email@example.com"
+                          onChange={(_, data) => {
+                            setAppleWrapperAppleId(data.value);
+                            if (credentialError) setCredentialError(null);
+                          }}
+                          disabled={savingCredentials}
+                        />
+                      </Field>
+                      <Field label="Apple ID Password" hint="The password for your Apple ID account.">
+                        <Input
+                          value={appleWrapperApplePassword}
+                          type="password"
+                          onChange={(_, data) => {
+                            setAppleWrapperApplePassword(data.value);
+                            if (credentialError) setCredentialError(null);
+                          }}
+                          disabled={savingCredentials}
+                        />
+                      </Field>
+                      {credentialError ? (
+                        <div className={styles.inlineError} role="alert">
+                          <Text size={200}>{credentialError}</Text>
+                        </div>
+                      ) : null}
                       <div className={styles.credentialActions}>
-                        <Button appearance="subtle" onClick={() => setManualProvider(null)} disabled={savingCredentials}>
+                        <Button appearance="subtle" onClick={() => {
+                          setCredentialError(null);
+                          setManualProvider(null);
+                        }} disabled={savingCredentials}>
                           Back
                         </Button>
                         <Button appearance="primary" onClick={saveAppleCredentials} disabled={savingCredentials}>
@@ -956,31 +1280,148 @@ const Auth = () => {
                         </Button>
                       </div>
                     </div>
+                    )
+                  ) : selectedProvider ? (
+                    <div className={styles.credentialForm} data-testid="provider-credential-form">
+                      <div className={styles.providerHeader}>
+                        <div className={styles.credentialStatus}>
+                          <ProviderMark provider={selectedProvider.id} size={28} />
+                          <Text weight="semibold">{selectedProvider.manifest?.displayName || selectedProvider.name}</Text>
+                          <Badge
+                            appearance="tint"
+                            color={selectedProvider.authenticated ? "success" : "subtle"}
+                          >
+                            {selectedProvider.authenticated ? "Connected" : "Not connected"}
+                          </Badge>
+                        </div>
+                        <Body1 className={styles.stateBody}>
+                          Enter the provider credentials below. Secret values stay masked and are stored in the provider&apos;s own configuration directory.
+                        </Body1>
+                      </div>
+
+                      {selectedSetupNotes.length > 0 ? (
+                        <div className={styles.setupNotes}>
+                          <Text weight="semibold" size={200}>Setup requirements</Text>
+                          <ul className={styles.setupNotesList}>
+                            {selectedSetupNotes.map((note) => <li key={note}><Text size={200}>{note}</Text></li>)}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {selectedCredentialFields.length === 0 ? (
+                        <Text size={200} className={styles.stateBody}>
+                          This provider does not require credentials for public catalog access.
+                        </Text>
+                      ) : selectedCredentialFields.map((field) => (
+                        <Field
+                          key={field.key}
+                          label={field.label}
+                          required={field.required}
+                          hint={field.helpText}
+                        >
+                          {field.multiline ? (
+                            <Textarea
+                              className={field.secret ? styles.maskedTextarea : undefined}
+                              value={credentialValues[field.key] ?? ""}
+                              resize="vertical"
+                              disabled={savingCredentials}
+                              onChange={(_, data) => {
+                                setCredentialValues((values) => ({ ...values, [field.key]: data.value }));
+                                if (credentialError) setCredentialError(null);
+                              }}
+                            />
+                          ) : (
+                            <Input
+                              type={field.secret ? "password" : "text"}
+                              value={credentialValues[field.key] ?? ""}
+                              autoComplete={field.secret ? "off" : undefined}
+                              disabled={savingCredentials}
+                              onChange={(_, data) => {
+                                setCredentialValues((values) => ({ ...values, [field.key]: data.value }));
+                                if (credentialError) setCredentialError(null);
+                              }}
+                            />
+                          )}
+                        </Field>
+                      ))}
+
+                      {credentialError ? (
+                        <div className={styles.inlineError} role="alert">
+                          <Text size={200}>{credentialError}</Text>
+                        </div>
+                      ) : null}
+
+                      <div className={styles.credentialActions}>
+                        <Button
+                          appearance="subtle"
+                          onClick={() => {
+                            setCredentialError(null);
+                            setCredentialValues({});
+                            setManualProvider(null);
+                          }}
+                          disabled={savingCredentials}
+                        >
+                          Back
+                        </Button>
+                        <Button
+                          appearance="primary"
+                          onClick={saveGenericProviderCredentials}
+                          disabled={savingCredentials}
+                        >
+                          {savingCredentials ? "Saving..." : selectedProvider.authenticated ? "Update credentials" : "Save and connect"}
+                        </Button>
+                      </div>
+                    </div>
                   ) : (
                     <>
                       <div className={styles.providerHeader}>
                         <Text weight="semibold" className={styles.providerBadge}>Streaming service</Text>
+                        <Body1 className={styles.stateBody}>
+                          Choose one of the providers registered by Discogenius.
+                        </Body1>
                       </div>
 
                       <div className={styles.providerButtonList}>
-                        {providerButtons.map((providerButton) => (
+                        {providersLoading ? (
+                          <div className={styles.waitingText}>
+                            <Spinner size="tiny" />
+                            <Text size={200}>Loading providers...</Text>
+                          </div>
+                        ) : providersError ? (
+                          <div className={styles.credentialForm}>
+                            <div className={styles.inlineError} role="alert">
+                              <Text size={200}>{providersError}</Text>
+                            </div>
+                            <Button appearance="outline" onClick={() => void loadStreamingProviders()}>
+                              Retry
+                            </Button>
+                          </div>
+                        ) : streamingProviders.length === 0 ? (
+                          <Text size={200} className={styles.stateBody}>No streaming providers are registered.</Text>
+                        ) : streamingProviders.map((provider) => (
                           <Button
-                            key={providerButton.key}
+                            key={provider.id}
                             appearance="outline"
-                            disabled={!providerButton.available}
-                            onClick={providerButton.available ? providerButton.onClick : undefined}
-                            className={mergeClasses(styles.providerButton, providerButton.className, styles.actionButton)}
+                            disabled={!provider.management.canAuthenticate}
+                            onClick={() => selectProvider(provider)}
+                            className={mergeClasses(styles.providerButton, styles.actionButton)}
                             size="large"
                             icon={
                               <div className={styles.providerIconPanel}>
-                                <ProviderMark provider={providerButton.key} size={28} />
+                                <ProviderMark provider={provider.id} size={28} />
                               </div>
                             }
                             iconPosition="before"
                           >
                             <div className={styles.providerButtonContent}>
-                              <span className={styles.providerButtonText}>{providerButton.name}</span>
-                              {providerButton.available ? <ArrowRight24Regular /> : <span className={styles.providerSoonTag}>Soon</span>}
+                              <span className={styles.providerButtonText}>{provider.manifest?.displayName || provider.name}</span>
+                              {provider.authenticated ? (
+                                <Badge appearance="tint" color="success">Connected</Badge>
+                              ) : provider.management.canAuthenticate ? (
+                                <ArrowRight24Regular />
+                              ) : (
+                                <span className={styles.providerSoonTag}>Unavailable</span>
+                              )}
                             </div>
                           </Button>
                         ))}
@@ -996,7 +1437,7 @@ const Auth = () => {
                       className={styles.skipButton}
                       icon={<Door24Regular />}
                     >
-                      Skip for now
+                      {isAddingProvider ? "Back to Settings" : "Skip for now"}
                     </Button>
                   </div>
                 </div>

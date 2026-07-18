@@ -24,7 +24,11 @@ import { appleMusicQualityMapping } from "./apple-music-quality.js";
 import {
   AppleMusicAuthToken,
   clearStoredAppleMusicToken,
+  ensureWrapperEntrypointScript,
+  getWrapperLoginStatus,
   loadStoredAppleMusicToken,
+  startWrapperLogin,
+  submitWrapper2fa,
   resolveAppleStorefront,
   saveStoredAppleMusicToken,
   syncTokenToDownloader,
@@ -50,6 +54,23 @@ import {
   getAppleMusicDownloaderCapabilitySnapshot,
   resolveAppleMusicProviderStorefront,
 } from "./apple-music-backend.js";
+
+export function appleMusicOfferSupportsSlot(
+  album: Pick<ProviderAlbum, "quality" | "qualityTags">,
+  slot: ProviderReleaseGroupSearch["slot"],
+): boolean {
+  if (slot === "video") {
+    return false;
+  }
+
+  const tags = album.qualityTags?.length
+    ? album.qualityTags
+    : (album.quality ? [album.quality] : []);
+  const neutral = appleMusicQualityMapping.toNeutral(tags);
+  return slot === "spatial"
+    ? (neutral.spatial?.length ?? 0) > 0
+    : neutral.audio !== null;
+}
 
 export class AppleMusicProvider implements StreamingProvider {
   readonly id = "apple-music";
@@ -125,7 +146,9 @@ export class AppleMusicProvider implements StreamingProvider {
     losslessStereo: true,
     hiResStereo: true,
     spatialAudio: true,
-    // Apple Music API does not expose time-synced lyrics to third-party tokens.
+    // The Apple Music catalog API does not expose a supported lyrics resource.
+    // Downloader-supplied sidecars can still be imported, but the provider must
+    // not advertise or synthesize TTML as LRC content.
     lyrics: false,
     musicVideos: true,
     videoPreviews: true,
@@ -188,11 +211,11 @@ export class AppleMusicProvider implements StreamingProvider {
     const searchText = `${query.artistName} ${query.releaseGroupTitle}`.trim();
     const results = await searchApple(searchText, ["albums"], 25, this.apiOptions());
     const albums = results.albums;
-    if (query.slot === "spatial") {
-      return albums.filter((album) => this.isSpatial(album.qualityTags));
-    }
-    if (query.slot === "stereo") {
-      return albums.filter((album) => !this.isSpatial(album.qualityTags));
+    if (query.slot === "spatial" || query.slot === "stereo") {
+      // Apple exposes stereo and Atmos as separate streams of the same catalog
+      // resource. An Atmos-capable album therefore remains a valid candidate
+      // for the stereo slot when its traits also advertise a stereo tier.
+      return albums.filter((album) => appleMusicOfferSupportsSlot(album, query.slot));
     }
     return albums;
   }
@@ -258,22 +281,29 @@ export class AppleMusicProvider implements StreamingProvider {
     const developerToken = String(credentials.developerToken || credentials.developer_token || "").trim();
     const mediaUserToken = String(credentials.mediaUserToken || credentials.media_user_token || "").trim();
     const storefront = String(credentials.storefront || "").trim().toLowerCase();
+    const validator = credentials.validator as ((token: AppleMusicAuthToken) => Promise<{ storefront?: string }>) | undefined;
     if (!mediaUserToken) {
       throw new Error("Apple Music media user token is required.");
     }
     if (storefront && !/^[a-z]{2}$/.test(storefront)) {
       throw new Error("Apple Music storefront must be a two-letter country code.");
     }
+    // Note: wrapper Apple ID credentials are deliberately NOT part of saved
+    // credentials — they flow through the dedicated wrapper-login route and
+    // are never persisted.
     const token: AppleMusicAuthToken = {
       developer_token: developerToken || undefined,
       media_user_token: mediaUserToken,
       storefront: storefront || resolveAppleStorefront(),
     };
-    const validation = await validateAppleMusicCredentials(token);
-    saveStoredAppleMusicToken({
+    const validation = validator
+      ? await validator(token)
+      : await validateAppleMusicCredentials(token);
+    const savedToken = {
       ...token,
       storefront: storefront || validation.storefront || token.storefront,
-    });
+    };
+    saveStoredAppleMusicToken(savedToken);
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatus> {
@@ -363,7 +393,8 @@ export class AppleMusicProvider implements StreamingProvider {
         kind: "download-backend",
         status: downloadStatus,
         message: requiredReady && videoReady
-          ? "Apple Music downloader, MP4Box, mp4decrypt, and wrapper ports are ready."
+          ? "Apple Music downloader, MP4Box, mp4decrypt, and wrapper ports are ready. "
+            + "If downloads still fail with an 'Invalid CKC' decryption error, save the wrapper Apple ID/password in the Apple Music auth form, then retry the connection; Discogenius will use those credentials for the one-time wrapper login and prompt for any 2FA challenge."
           : requiredReady
             ? "Apple Music audio downloads are ready, but mp4decrypt is missing for music videos."
             : `Apple Music downloader provisioning is incomplete: missing ${missingPrerequisites.join(", ")}.`,
@@ -425,16 +456,31 @@ export class AppleMusicProvider implements StreamingProvider {
 
   async syncCredentials(): Promise<void> {
     syncTokenToDownloader(loadStoredAppleMusicToken());
+    // Provision the wrapper sidecar's supervisor entrypoint (mounted by
+    // compose) so fresh deployments and script fixes work without the repo.
+    ensureWrapperEntrypointScript();
+  }
+
+  /** Decryption-wrapper login handshake (generic downloader-login contract). */
+  startDownloaderLogin(credentials: Record<string, string>): void {
+    startWrapperLogin({
+      appleId: String(credentials.appleId || credentials.username || ""),
+      password: String(credentials.password || ""),
+    });
+  }
+
+  getDownloaderLoginStatus(): { status: string; message: string } {
+    return getWrapperLoginStatus();
+  }
+
+  submitDownloaderLoginCode(code: string): void {
+    submitWrapper2fa(code);
   }
 
   async syncSettings(_downloadPath?: string): Promise<void> {
     // Apple downloader settings are derived from credentials (config.yaml);
     // per-job paths are passed as CLI args, so there is no global settings sync.
     syncTokenToDownloader(loadStoredAppleMusicToken());
-  }
-
-  private isSpatial(tags: string[] = []): boolean {
-    return this.qualityMapping.toNeutral(tags).spatial!.length > 0;
   }
 
   private resizeArtwork(coverUrl: string, size: number): string {

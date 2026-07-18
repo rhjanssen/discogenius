@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { AlbumRefreshLevel } from "./scan-types.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-refresh-album-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -251,6 +252,45 @@ dbModule.db.prepare(`
   assert.equal(recording.copyright, "(P) 2024 Track");
   assert.equal(recording.popularity, 56);
   assert.equal(recording.isrcs, null);
+});
+
+test("album refresh level does not borrow tracks from a colliding provider ID", () => {
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const releaseGroupMbid = "55555555-5555-4555-8555-555555555555";
+  const releaseMbid = "66666666-6666-4666-8666-666666666666";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, review_text)
+    VALUES (?, ?, 'Canonical Album', 'album', '')
+  `).run(releaseGroupMbid, artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status)
+    VALUES (?, ?, ?, 'Canonical Album', 'Official')
+  `).run(releaseMbid, releaseGroupMbid, artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid,
+      release_group_mbid, release_mbid, title, library_slot
+    ) VALUES
+      ('tidal', 'album', '42', NULL, ?, ?, ?, 'Tidal Album', 'stereo'),
+      ('apple-music', 'album', '42', NULL, ?, ?, ?, 'Apple Album', 'stereo'),
+      ('tidal', 'track', 'tidal-track', '42', ?, ?, ?, 'Tidal Track', 'stereo')
+  `).run(
+    artistMbid, releaseGroupMbid, releaseMbid,
+    artistMbid, releaseGroupMbid, releaseMbid,
+    artistMbid, releaseGroupMbid, releaseMbid,
+  );
+
+  assert.equal(
+    refreshServiceModule.RefreshAlbumService.getRefreshLevel("42", "tidal"),
+    AlbumRefreshLevel.METADATA,
+  );
+  assert.equal(
+    refreshServiceModule.RefreshAlbumService.getRefreshLevel("42", "apple-music"),
+    AlbumRefreshLevel.OFFER,
+  );
 });
 
 

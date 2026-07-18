@@ -21,7 +21,11 @@ import path from 'path';
 import {
     getDownloadWorkspacePath,
     getDefaultStreamingSource,
-} from './download-routing.js';
+} from '../download/download-routing.js';
+import {
+    isKnownProviderVideoOffer,
+    resolvePreferredVideoOffer,
+} from '../music/video-offer-resolver.js';
 import { MediaSeedService } from '../music/media-seed-service.js';
 import { RefreshAlbumService } from "../music/refresh-album-service.js";
 import { AlbumQueryService } from "../music/album-query-service.js";
@@ -499,12 +503,19 @@ export class DownloadProcessor {
         return this.pickString(record[key]);
     }
 
+    private resolvePayloadProvider(payload?: DownloadCommand): string {
+        return this.pickString((payload as Record<string, unknown> | undefined)?.streamingSource)
+            || this.pickString(payload?.provider)
+            || getDefaultStreamingSource();
+    }
+
     private resolveCanonicalProviderOffer(
         providerId: string,
         type: DownloadJobType,
         payload?: DownloadCommand,
     ): CanonicalProviderOffer | null {
         const entityType = type === 'album' ? 'album' : type === 'video' ? 'video' : 'track';
+        const provider = this.resolvePayloadProvider(payload);
         const releaseGroupMbid = this.pickString(payload?.releaseGroupMbid);
         const slot = this.pickString(payload?.slot) || 'stereo';
 
@@ -538,12 +549,13 @@ export class DownloadProcessor {
                   ON rg.mbid = COALESCE(pi.release_group_mbid, rgs.release_group_mbid)
                 LEFT JOIN ArtistMetadata am
                   ON am.mbid = COALESCE(pi.artist_mbid, rgs.artist_mbid, rg.artist_mbid)
-                WHERE pi.provider_id = ?
+                WHERE pi.provider = ?
+                  AND pi.provider_id = ?
                   AND pi.entity_type = 'album'
                   AND (? IS NULL OR pi.release_group_mbid = ?)
                 ORDER BY CASE WHEN rgs.slot = ? THEN 0 ELSE 1 END, pi.updated_at DESC
                 LIMIT 1
-            `).get(slot, slot, providerId, releaseGroupMbid, releaseGroupMbid, slot) as CanonicalProviderOffer | undefined;
+            `).get(slot, slot, provider, providerId, releaseGroupMbid, releaseGroupMbid, slot) as CanonicalProviderOffer | undefined;
 
             if (row) return row;
 
@@ -567,10 +579,11 @@ export class DownloadProcessor {
                     LEFT JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
                     LEFT JOIN ArtistMetadata am ON am.mbid = COALESCE(rgs.artist_mbid, rg.artist_mbid)
                     WHERE rgs.release_group_mbid = ?
+                      AND rgs.selected_provider = ?
                       AND rgs.selected_provider_id = ?
                       AND rgs.slot = ?
                     LIMIT 1
-                `).get(releaseGroupMbid, providerId, slot) as CanonicalProviderOffer | undefined;
+                `).get(releaseGroupMbid, provider, providerId, slot) as CanonicalProviderOffer | undefined;
                 return slotRow ?? null;
             }
 
@@ -602,11 +615,12 @@ export class DownloadProcessor {
             LEFT JOIN Tracks t ON t.mbid = pi.track_mbid
             LEFT JOIN Recordings r ON r.mbid = pi.recording_mbid
             LEFT JOIN ArtistMetadata am ON am.mbid = pi.artist_mbid
-            WHERE pi.provider_id = ?
+            WHERE pi.provider = ?
+              AND pi.provider_id = ?
               AND pi.entity_type = ?
             ORDER BY pi.updated_at DESC
             LIMIT 1
-        `).get(providerId, entityType) as CanonicalProviderOffer | undefined;
+        `).get(provider, providerId, entityType) as CanonicalProviderOffer | undefined;
         return row ?? null;
     }
 
@@ -655,6 +669,7 @@ export class DownloadProcessor {
                         await RefreshAlbumService.refreshMetadata(subAlbumId, {
                             includeSimilarAlbums: false,
                             seedSimilarAlbums: false,
+                            provider: (payload as any)?.streamingSource || payload?.provider,
                         });
                     }
                 }
@@ -668,6 +683,7 @@ export class DownloadProcessor {
                         seedSimilarArtists: false,
                         includeSimilarAlbums: false,
                         seedSimilarAlbums: false,
+                        provider: (payload as any)?.streamingSource || payload?.provider,
                     });
                 }
                 return;
@@ -679,6 +695,7 @@ export class DownloadProcessor {
                         seedSimilarArtists: false,
                         includeSimilarAlbums: false,
                         seedSimilarAlbums: false,
+                        provider: (payload as any)?.streamingSource || (payload as any)?.provider || undefined,
                     });
                 }
                 return;
@@ -1217,7 +1234,7 @@ export class DownloadProcessor {
         this.processing = true;
         this.cancelCurrentDownload = false;
         this.currentJobId = job.id;
-        const providerId = String(
+        let providerId = String(
             (job.payload as DownloadCommand | undefined)?.providerId
             || job.payload?.providerId
             || job.ref_id
@@ -1264,6 +1281,28 @@ export class DownloadProcessor {
             this.scheduleNext();
             return;
         }
+        // Video references dedupe across providers, so payloads (including
+        // retried ones persisted before an offer existed) may carry a canonical
+        // Recordings id instead of a provider catalog id. Resolve to the
+        // preferred provider's VIDEO offer before seeding or downloading.
+        if (type === 'video') {
+            const payloadProvider = (payload as any)?.streamingSource || (payload as any)?.provider || null;
+            if (!isKnownProviderVideoOffer(payloadProvider, providerId)) {
+                const offer = resolvePreferredVideoOffer(providerId);
+                if (offer) {
+                    console.log(`[DOWNLOAD-PROCESSOR] Resolved video reference ${providerId} to ${offer.provider} offer ${offer.providerId}`);
+                    providerId = offer.providerId;
+                    payload = {
+                        ...((payload as DownloadCommand) || {}),
+                        provider: offer.provider,
+                        streamingSource: offer.provider,
+                        providerId: offer.providerId,
+                    } as unknown as DownloadOrImportCommand;
+                    this.currentProviderId = providerId;
+                }
+            }
+        }
+
         let resolved = {
             title: payload?.title || 'Unknown',
             artist: payload?.artist || 'Unknown',
@@ -1339,12 +1378,14 @@ export class DownloadProcessor {
                                 version,
                                 CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number
                             FROM ProviderItems
-                            WHERE entity_type = 'track' AND provider_album_id = ?
+                            WHERE provider = ?
+                              AND entity_type = 'track'
+                              AND provider_album_id = ?
                             ORDER BY
                                 CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER),
                                 CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER),
                                 provider_id
-                        `).all(providerId) as Array<{ provider_id: string; title: string | null; version: string | null; track_number: number | null }>;
+                        `).all(this.resolvePayloadProvider(payload), providerId) as Array<{ provider_id: string; title: string | null; version: string | null; track_number: number | null }>;
 
                         initialTracks = providerRows.map((row) => ({
                             title: formatTrackDisplayTitle(row.title, row.version),
@@ -1514,8 +1555,13 @@ export class DownloadProcessor {
                 });
             }
 
-            // Cleanup failed downloads so the next attempt gets a clean item workspace.
-            await this.cleanupDownloadSourcePath();
+            // Keep the workspace across retries so the downloader resumes and
+            // skips already-completed items; only a permanently failed job
+            // (retries exhausted) gets its workspace cleaned up.
+            const jobAttempts = CommandQueueManager.get(job.id)?.attempts ?? job.attempts;
+            if (jobAttempts >= MAX_RETRY_ATTEMPTS) {
+                await this.cleanupDownloadSourcePath();
+            }
         } finally {
             this.processing = false;
             this.currentAbortController = undefined;
@@ -1535,14 +1581,13 @@ export class DownloadProcessor {
         type: DownloadJobType,
         payload: DownloadCommand
     ): Promise<void> {
-        const baseDownloadPath = getDownloadWorkspacePath(type, id);
-        const downloadPath = path.join(baseDownloadPath, `job_${commandId}`);
-        this.currentDownloadPath = downloadPath;
-
         // Download commands carry the slot's selected provider as `provider`
         // (queue-route payloads may use `streamingSource`); only fall back to
         // the default provider when neither is present.
         const providerId = (payload as any).streamingSource || (payload as any).provider || getDefaultStreamingSource();
+        const baseDownloadPath = getDownloadWorkspacePath(type, id, providerId);
+        const downloadPath = path.join(baseDownloadPath, `job_${commandId}`);
+        this.currentDownloadPath = downloadPath;
         const slot = (payload as any).slot || 'stereo';
         const capability = type === 'video' ? 'video' : (slot === 'spatial' ? 'spatial' : 'stereo');
 
@@ -1598,6 +1643,7 @@ export class DownloadProcessor {
                 providerId: id,
                 downloadPath,
                 quality: payload.quality,
+                slot,
             }, {
                 signal,
                 onProgress,

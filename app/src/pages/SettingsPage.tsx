@@ -773,9 +773,35 @@ interface RetagPreviewResponse {
 
 type NamingPreviewResponse = Awaited<ReturnType<typeof api.previewNamingConfig>>;
 
+const reorderConnectedProviderIds = (
+    providers: Array<Pick<StreamingProviderStatus, "id" | "authenticated">>,
+    providerId: string,
+    direction: -1 | 1,
+): string[] | null => {
+    const connectedIds = providers
+        .filter((provider) => provider.authenticated)
+        .map((provider) => provider.id);
+    const connectedIndex = connectedIds.indexOf(providerId);
+    const targetProviderId = connectedIds[connectedIndex + direction];
+    if (connectedIndex === -1 || !targetProviderId) return null;
+
+    const ids = providers.map((provider) => provider.id);
+    const from = ids.indexOf(providerId);
+    const to = ids.indexOf(targetProviderId);
+    const fromId = ids[from];
+    const toId = ids[to];
+    if (!fromId || !toId) return null;
+    ids[from] = toId;
+    ids[to] = fromId;
+    return ids;
+};
+
 const SettingsPage = () => {
     const styles = useStyles();
     const navigate = useNavigate();
+    const openProviderAuth = () => navigate("/auth", {
+        state: { mode: "add-provider", from: { pathname: "/settings" } },
+    });
     const { toast } = useToast();
     const appVersion = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
     const {
@@ -795,6 +821,9 @@ const SettingsPage = () => {
     const {
         data: streamingProviders,
         isLoading: providersLoading,
+        isError: providersLoadFailed,
+        error: providersLoadError,
+        isFetching: providersFetching,
         refetch: refetchStreamingProviders,
     } = useQuery({
         queryKey: ["streamingProviders"],
@@ -1312,10 +1341,10 @@ const SettingsPage = () => {
     }
 
     const qualityOptions = [
-        { value: 'low', label: 'Low', description: 'AAC 96 kbps' },
-        { value: 'normal', label: 'Normal', description: 'AAC 320 kbps' },
-        { value: 'high', label: 'High', description: 'FLAC 16-bit / 44.1 kHz' },
-        { value: 'max', label: 'Max', description: 'Hi-res FLAC up to 24-bit / 192 kHz' },
+        { value: 'low', label: 'Low', description: 'Economy AAC (~96 kbps)' },
+        { value: 'normal', label: 'Normal', description: 'High-Quality AAC (256-320 kbps)' },
+        { value: 'high', label: 'High', description: 'Lossless CD Quality (16-bit / 44.1 kHz FLAC/ALAC)' },
+        { value: 'max', label: 'Max', description: 'Hi-Res Lossless (up to 24-bit / 192 kHz FLAC/ALAC)' },
     ];
 
     // Resolutions no connected provider can supply are shown greyed out. A
@@ -1533,12 +1562,12 @@ const SettingsPage = () => {
     };
 
     const moveProvider = (providerId: string, direction: -1 | 1) => {
-        const ids = (streamingProviders?.providers ?? []).map((provider) => provider.id);
-        const from = ids.indexOf(providerId);
-        const to = from + direction;
-        if (from === -1 || to < 0 || to >= ids.length) return;
-        ids.splice(from, 1);
-        ids.splice(to, 0, providerId);
+        const providers = streamingProviders?.providers ?? [];
+        // Swap the two connected providers in their full registry slots. This
+        // keeps every disconnected provider in the persisted priority list
+        // while still making one button press visibly move by one connected row.
+        const ids = reorderConnectedProviderIds(providers, providerId, direction);
+        if (!ids) return;
         void persistProviderOrder(ids);
     };
 
@@ -1666,6 +1695,28 @@ const SettingsPage = () => {
                     // reachable through the always-visible "Add Provider" flow.
                     const activeProviders = allProviders.filter(p => p.authenticated);
 
+                    if (providersLoadFailed) {
+                        return (
+                            <ErrorState
+                                minHeight="220px"
+                                title="Streaming providers unavailable"
+                                error={providersLoadError instanceof Error
+                                    ? providersLoadError
+                                    : "Discogenius could not load the provider registry."}
+                                actions={(
+                                    <Button
+                                        appearance="outline"
+                                        icon={providersFetching ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                                        disabled={providersFetching}
+                                        onClick={() => { void refetchStreamingProviders(); }}
+                                    >
+                                        Retry
+                                    </Button>
+                                )}
+                            />
+                        );
+                    }
+
                     if (activeProviders.length === 0 && !providersLoading) {
                         return (
                             <div className={styles.profileRow} style={{ justifyContent: 'center', padding: '32px 16px' }}>
@@ -1680,7 +1731,7 @@ const SettingsPage = () => {
                                     </div>
                                     <Button
                                         appearance="primary"
-                                        onClick={() => navigate("/auth")}
+                                        onClick={openProviderAuth}
                                         size="large"
                                         icon={<Open24Regular />}
                                     >
@@ -1798,7 +1849,7 @@ const SettingsPage = () => {
                                     <Button
                                         appearance="outline"
                                         icon={<Open24Regular />}
-                                        onClick={() => navigate("/auth")}
+                                        onClick={openProviderAuth}
                                     >
                                         Add Provider
                                     </Button>
@@ -1848,7 +1899,7 @@ const SettingsPage = () => {
                         </DialogContent>
                         <DialogActions>
                             {detailsProvider?.management.canAuthenticate && !detailsProvider.authenticated ? (
-                                <Button appearance="primary" onClick={() => navigate("/auth")}>Connect</Button>
+                                <Button appearance="primary" onClick={openProviderAuth}>Connect</Button>
                             ) : null}
                             {detailsProvider?.management.canDisconnect && detailsProvider.authenticated ? (
                                 <Button

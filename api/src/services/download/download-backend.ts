@@ -4,6 +4,8 @@ export interface DownloadRequest {
     providerId: string;
     downloadPath: string;
     quality?: string | null;
+    /** The library variant selected by curation; one provider offer may serve more than one slot. */
+    slot?: "stereo" | "spatial" | "video" | string;
 }
 
 export interface DownloadProgress {

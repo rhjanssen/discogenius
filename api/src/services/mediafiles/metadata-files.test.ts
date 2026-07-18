@@ -312,6 +312,54 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
     assert.equal(linked?.target_foreign_recording_id, "recording-atmos");
 });
 
+test("lyrics lookup scopes equal provider track IDs to the requested provider", async () => {
+    seedMusicBrainzMetadata();
+    dbModule.db.prepare(`
+        INSERT INTO Recordings(mbid, artist_mbid, title, length_ms)
+        VALUES('apple-recording-300', 'artist-mbid-100', 'Apple Collision Track', 181000)
+    `).run();
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems(
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+            release_mbid, recording_mbid, title, quality, duration, library_slot
+        ) VALUES(
+            'apple-music', 'track', '300', 'artist-mbid-100', 'release-group-mbid-200',
+            'album-mbid-200', 'apple-recording-300', 'Apple Collision Track',
+            'HIRES_LOSSLESS', 181, 'stereo'
+        )
+    `).run();
+
+    const appleLyricsPath = path.join(tempDir, "apple-collision.lrc");
+    fs.writeFileSync(appleLyricsPath, "[00:02.00]apple provider lyric", "utf-8");
+    dbModule.db.prepare(`
+        INSERT INTO LyricFiles(
+            artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+            canonical_recording_mbid, provider, provider_entity_type, provider_id,
+            library_slot, file_path, relative_path, library_root, extension,
+            quality, expected_path
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "100",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "apple-recording-300",
+        "apple-music",
+        "track",
+        "300",
+        "stereo",
+        appleLyricsPath,
+        path.basename(appleLyricsPath),
+        tempDir,
+        "lrc",
+        "HIRES_LOSSLESS",
+        appleLyricsPath,
+    );
+
+    const lyrics = await metadataFilesModule.getTrackLyrics("300", "apple-music");
+    assert.equal(lyrics?.subtitles, "[00:02.00]apple provider lyric");
+    assert.equal(lyrics?.provider, "apple-music");
+});
+
 test("album NFO uses the selected canonical release for a composite provider slot", async () => {
     seedMusicBrainzMetadata();
     dbModule.db.prepare("UPDATE Albums SET title = ? WHERE mbid = ?")

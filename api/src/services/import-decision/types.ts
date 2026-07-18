@@ -1,11 +1,11 @@
-import type { LocalGroup, TidalMatch } from "../mediafiles/import-types.js";
+import type { LocalGroup, ProviderMatch } from "../mediafiles/import-types.js";
 
 export type ImportDecisionMode = "ExistingFiles" | "NewDownload";
 
 export interface ImportDecisionContext {
     group: LocalGroup;
-    match: TidalMatch;
-    sortedMatches: TidalMatch[];
+    match: ProviderMatch;
+    sortedMatches: ProviderMatch[];
     mode: ImportDecisionMode;
     existingConflictPath: string | null;
     hasMetadataSignal: boolean;

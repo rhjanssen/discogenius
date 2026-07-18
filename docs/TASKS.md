@@ -6,17 +6,96 @@ implementation, or release validation.
 
 Status: pending | in progress | done | revisit
 
-## Post-2.4.0 Designs And Decisions (researched 2026-07-15)
+## 2.4.0 Live Provider Validation Requiring Robert
 
-- pending (needs Robert, 5 minutes): Apple Music decryption wrapper login. The
-  full Apple pipeline is provisioned and verified up to key retrieval: static
-  MP4Box + mp4decrypt are in the image, the wrapper sidecar listens on
-  10020/20020, backend routing sends apple-selected slots to the Apple
-  downloader, and a live download reached "Decrypting… 6%" before the wrapper
-  rejected the key request ("Invalid CKC error") because its rootfs has no
-  authenticated Apple account. One-time fix (interactive, 2FA prompt):
-  `docker compose --profile apple-music run --rm -e args="-H 0.0.0.0 -M 20020 -L <appleId>:<password>" apple-music-wrapper`
-  then restart the normal sidecar. After that, retry any failed Apple download.
+The provider plugins, diagnostics, queue routing, and offline contract tests can
+be completed without service secrets. These final entitlement/authenticated
+flows require Robert after the rebuilt Docker image is running:
+
+- pending (needs Robert): Re-authenticate the Apple decryption wrapper through
+  the Auth page (Apple ID, password, then 2FA) so its rootfs can serve keys on
+  ports 10020/20020. Then validate one stereo/hi-res track, one Dolby Atmos
+  track, one standalone video, and one album-bundled video end to end. Apple
+  catalog lyrics are intentionally unsupported and upstream downloader lyric
+  embedding remains disabled because it crashes on tracks without TTML.
+- pending (needs Robert): Enter a Spotify for Developers client ID and client
+  secret, then provide Netscape-format Spotify cookies only for the optional
+  Votify path. Smoke-test catalog/preview behavior and one lossy-stereo
+  download/import while complying with Spotify's terms; lossless, spatial, and
+  video are not expected capabilities.
+- pending (needs Robert): Add YouTube Music browser-header JSON and cookies to
+  validate account library/favorite/playlist imports and an
+  authenticated/restricted `yt-dlp` audio and video download. Public
+  `ytmusicapi` catalog access remains separately testable without credentials.
+- pending (needs Robert): Supply a Deezer `arl` cookie and validate one
+  Streamrip MP3/FLAC download/import. Public Deezer catalog search and previews
+  do not require the ARL and should be smoke-tested separately.
+- pending (needs Robert): Supply an access token for the compatible unofficial
+  Amazon Music API (and a non-default API base URL if applicable), then validate
+  catalog evidence and one entitled stereo/lossless download. Also validate
+  hi-res and Dolby Atmos only if Robert's account tier, region, and the external
+  service expose those formats; Amazon's official Web API remains closed beta.
+
+## Post-2.4.0 Designs And Decisions (researched 2026-07-15/16)
+
+- pending (next release, from live ffprobe review 2026-07-16): metadata
+  tagging correctness pass vs Lidarr/Picard conventions and Plex/Jellyfin/Kodi
+  pickup. Concrete defects observed on freshly imported TIDAL FLACs:
+  (1) `RELEASECOUNTRY` is written as a JSON array string (`["XW"]`) instead of
+  a plain country code (same on M4A "Album Release Country") — fix the tag
+  writer's serialization; (2) no musical-key tag is written even though
+  `ProviderItems.musical_key` is populated — write `INITIALKEY` (Vorbis/ID3
+  TKEY, iTunes `----:initialkey`); (3) ReplayGain values are wrong:
+  `REPLAYGAIN_TRACK_PEAK: 1.000000` constants on FLAC and `+0.00 dB`/`0.000000`
+  placeholders on spatial M4A — only write RG tags when the provider supplied
+  real values, and never write peak=1.0/0.0 defaults; (4) lyrics are missing
+  entirely (no embedded lyrics, no .lrc sidecars) despite `embed_lyrics`
+  being on and lyrics existing (e.g. Give Me the Future) — trace the tiddl
+  lyric flow end-to-end; (5) audit MP4 music-video tag embedding (what can be
+  written: title/artist/MB ids/cover) — nothing is verified today; (6) verify
+  Windows-visible fields (BPM populated but Explorer shows empty — Explorer
+  reads WM/ID3 fields, likely fine to ignore for FLAC).
+- pending (next release): cover art source consistency. The embedded cover and
+  the saved `cover.jpg` sidecar come from the PROVIDER (tiddl embeds its own
+  fetch) while the UI shows the canonical Servarr/CAA image. Add a
+  `metadata.album_cover_source` (and artist equivalent) preference
+  (canonical-first default) and make ALL surfaces follow it: the sidecar
+  writer already can (canonical-first resolver exists); embedded covers need
+  our own post-import embed step (ffmpeg attached_pic remux) since tiddl only
+  embeds provider art — or disable tiddl's embed and always embed ourselves.
+
+- pending: Replace the tidal-shaped `health.ts` `backends.tiddl` response used
+  by the Docker healthcheck and StatusPage with a backend-id-keyed projection
+  sourced from provider diagnostics. Continue splitting the large
+  `organizer.ts`, `tiddl.ts`, and `SettingsPage.tsx` modules alongside focused
+  feature work rather than in one rewrite.
+
+- pending (measured 2026-07-16, the top post-release priority): initial intake
+  throughput. On the live 514-monitored-artist import, completed commands
+  average `RefreshArtist` 269s (max 2471s) and `MatchArtistProviders` 162s per
+  artist; `CurateArtist` 16s and `RescanFolders` 3.5s are noise. With 357
+  refreshes still queued on 3 workers that is ~9 hours of intake — the
+  slowness Robert observed. The dominant cost is per-release-group detail
+  fetching from the hosted Servarr metadata server inside RefreshArtist.
+  Recommended attack order: (1) skip RG-detail hydration for release groups the
+  user's release-type filters exclude (live/demo/remix… when unchecked) and for
+  non-candidate secondary types; (2) hydrate details lazily for RGs that failed
+  the cheap-metadata provider-match narrowing (2.3.1) instead of all; (3) only
+  then consider raising the default worker count. In MB-local mode the same
+  pass reads Postgres and is far cheaper — mention that in the docs as the
+  recommended mode for very large imports.
+- pending (designed 2026-07-16): Finish support for music videos used as album
+  tracks ("video albums", e.g. Ariana Grande
+  `485d3241-ef02-49a4-88df-a03eaa86d9cd`). MusicBrainz
+  models these as release groups whose tracks reference video recordings
+  (`Recordings.is_video=1` reached via Tracks like any audio row), so the data
+  is already present. Remaining work: render those video tracks in the album
+  tracklist with a video glyph and preview action, attach provider VIDEO offers
+  to album-scoped canonical video recordings (recording MBID direct, otherwise
+  title/variant/duration evidence), and expose the resulting offers per release.
+  Cross-provider grouping, standalone video offer chips, and album-bundled
+  Apple video import are already in the 2.4.0 changelog. No schema change is
+  expected.
 - decided (research complete): Lidarr import-list monitoring granularity.
   Lidarr's per-list `ShouldMonitor` is None | SpecificAlbum | EntireArtist
   (`.ref_lidarr/src/NzbDrone.Core/ImportLists/ImportListDefinition.cs`); list
@@ -43,17 +122,6 @@ Status: pending | in progress | done | revisit
   only from the dashboard; (2) a MonitoringOptions modal (monitor all / future /
   missing / existing / first / latest / none) which needs a backend bulk
   monitor-strategy endpoint. Neither is a blocker; both are additive.
-- pending (designed): release/provider-offer selection UX on album and video
-  pages. Today the release switcher picks the MusicBrainz edition per slot but
-  the provider offer is implicit. Design: the switcher's release rows each list
-  their provider offers as selectable chips (provider mark + quality badge +
-  match-status tooltip); the selected chip is highlighted, and picking a chip on
-  another release both switches the release and the offer (one mutation — the
-  API already accepts provider + providerAlbumId in the slot-selection route).
-  Partial/composite coverage renders as a stacked chip ("2 sources") expanding
-  to per-track source rows. The video page gets the same pattern with one row
-  per provider video offer (provider mark + resolution + duration), using the
-  new cross-provider deduped recording's ProviderItems as the offer list.
 - pending: playlist SYNC (not just one-time import) management UI. The
   reorderable provider list + details-modal pattern shipped in 2.4.0 leaves
   room for a per-provider "Lists" tab in the details modal once recurring list
@@ -686,10 +754,6 @@ area.
   "Spatial / Dolby Atmos", and "Music videos". Lower-level capabilities (lyrics,
   artwork, ReplayGain, codecs) live in the card's "Details" disclosure, not as
   chips.
-- pending: Add multi-provider selection/switching UX once the second provider is
-  real. The UI should distinguish default provider, enabled providers, provider
-  capability gaps, and per-library-type availability without duplicating raw
-  provider config fields.
 - done (2026-07-01): Simplified metadata embedding settings to match Lidarr's
   mental model: one main audio-tag writing control backed by
   `write_audio_tags_policy`, separate sidecar sections for artwork/NFO/lyrics/
@@ -967,9 +1031,10 @@ cheap queue/stats reads, and the queue-card/boot UX polish from the 2.1.1 arc.
 
 ## 2.2 - Streaming Provider Expansion
 
-Scope: 2.2.0 currently focuses on local MusicBrainz catalog mode and the
-download/import simplification that it unlocks. Additional streaming providers
-remain planned, but are no longer the first 2.2 cut.
+Scope: local MusicBrainz catalog mode and the provider-neutral download/import
+foundation shipped across the 2.2 line. Amazon Music, Spotify, YouTube / YouTube
+Music, and Deezer implementation moved into 2.4.0; only their credentialed live
+validation remains in the checklist at the top of this file.
 
 - done (2026-07-04): Local MusicBrainz-docker mode now has a runtime
   `PostgresMusicBrainzCatalogProvider` that reads the MusicBrainz Postgres
@@ -1088,17 +1153,6 @@ remain planned, but are no longer the first 2.2 cut.
   TIDAL files. Full WSL `yarn ci` passed afterward: lint, API build, app
   typecheck, 456 API tests, and production builds.
 
-- pending (2.2.2): Finish the Apple Music provider and bring it to TIDAL parity:
-  live Apple credentials validation using Robert's account, catalog/search smoke
-  tests against the real API, import-source smoke tests, MP4Box/wrapper runtime
-  provisioning around the packaged `zhaarey/apple-music-downloader` CLI, real
-  lossless/spatial/video download validation, live progress parser confirmation,
-  lyrics/artwork sidecar behavior, and provider evidence capture during live
-  refresh/import.
-- pending (2.2.2): Complete the remaining provider-plugin contract beyond the offline
-  Apple slice: catalog/offers edge cases, download progress event semantics,
-  lyrics/artwork hooks, and quality mapping semantics validated against a live
-  second provider.
 - done (2026-07-05): Stabilized the persistent-deployment TIDAL path for the
   2.2.1 release. Queue live progress now accepts the
   backend's `commandId` events as `jobId` and the backend emits both names;
@@ -1159,11 +1213,6 @@ remain planned, but are no longer the first 2.2 cut.
 - pending (2.2.2): Diagnose missing release year for Bakermat's "The Spirit" in
   both Servarr Metadata Server mode and local MusicBrainz (`192.168.1.100`) and
   fix the catalog mapping or UI fallback so known release years render.
-- pending (2.2.2): Debug Bakermat video downloads such as
-  `/video/193` "Living (feat. Alex Clare) (Official Video)": a playable preview
-  and thumbnail are not sufficient; download availability must be based on a
-  real provider item, and failures should report actionable provider-neutral
-  status.
 - pending (2.2.2): Fix the Library empty-state import button so it opens the
   same import modal as the Library toolbar and Settings page. Extend TIDAL import
   sources to include "My Mix" style mixes/playlists from the TIDAL API with
@@ -1181,14 +1230,6 @@ remain planned, but are no longer the first 2.2 cut.
   `{artistName} {mbid-{artistMbId}}` folder used for managed music files, and
   album sidecars should follow the album folder template as well. Validate
   against local test roots and the persistent SMB shares when available.
-- pending (2.2.2/2.3.0): Research YouTube Music downloader/catalog options and
-  implement the provider if a viable downloader path is found. The provider must
-  speak the shared core plugin contract without schema-specific exceptions.
-- pending (2.2.2/2.3.0): Research Amazon Music, Spotify, and Deezer provider
-  feasibility. Implement only if the catalog API + downloader path is simple and
-  robust enough for this release; otherwise document the intended downloader,
-  catalog/import APIs, auth requirements, and plugin-contract implications for
-  a later provider release.
 - schema outlook (2.2.1): No database schema change is expected for this
   stabilization slice. The current schema already has the provider-neutral
   surfaces needed for additional streaming services (`ProviderItems`,
@@ -1197,12 +1238,6 @@ remain planned, but are no longer the first 2.2 cut.
   not need new provider tables; the likely future DB changes, if any, are
   narrow indexes/materialized read helpers found by measurement, not new
   provider-shadow catalog columns.
-- pending (2.2.1+): Add at least one more provider candidate after Apple Music as a proof
-  of the plugin contract. Candidate selection should be based on available
-  download backend viability, not catalog-only browsing. Current research points
-  to YouTube Music via `ytmusicapi` for catalog/user-library reads and `yubal`
-  / `yt-dlp` as the downloader reference because it exercises lossy audio and
-  higher-resolution video without new schema.
 - pending (2.2.2): Audit and trim the API test suite. The release gate now runs
   460 API tests and is still useful for schema/provider/download regressions,
   but too many tests duplicate broad behavior or lock in transitional details.

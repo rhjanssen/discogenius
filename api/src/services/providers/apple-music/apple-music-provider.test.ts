@@ -1,17 +1,14 @@
+import "./setup-test-env.js";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-apple-music-"));
-process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
-process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
-
 import type { FetchLike } from "./apple-music-api.js";
 import { validateAppleMusicCredentials } from "./apple-music-api.js";
 import type { AppleMusicAuthToken } from "./apple-music-auth.js";
-import { buildAppleMusicApiHeaders } from "./apple-music-auth.js";
+import { APPLE_MUSIC_DOWNLOADER_CONFIG, buildAppleMusicApiHeaders, loadStoredAppleMusicToken, syncTokenToDownloader } from "./apple-music-auth.js";
 import {
   getAppleAlbum,
   getAppleAlbumTracks,
@@ -24,6 +21,7 @@ import {
 } from "./apple-music-catalog.js";
 import {
   AppleMusicBackend,
+  describeAppleDownloaderFailure,
   describeAppleDownloaderMissingPrerequisites,
   getAppleMusicDownloaderCapabilitySnapshot,
   getAppleMusicDownloaderBinary,
@@ -32,6 +30,23 @@ import {
 import { fixtureFor } from "./apple-music-fixtures.js";
 import { getAppleArtistsForImportSource, getAppleImportSources } from "./apple-music-library.js";
 import { appleMusicQualityMapping } from "./apple-music-quality.js";
+
+test("describeAppleDownloaderFailure maps decryption/session errors to a re-auth instruction", () => {
+  const eof = describeAppleDownloaderFailure(1, "Error reading response from device: EOF");
+  assert.match(eof, /Re-authenticate Apple Music/i);
+  assert.match(eof, /2FA/);
+  // The raw downloader detail is preserved for debugging.
+  assert.match(eof, /reading response from device/i);
+
+  assert.match(describeAppleDownloaderFailure(1, "CKC error"), /Re-authenticate Apple Music/i);
+  assert.match(describeAppleDownloaderFailure(1, "sign-in required"), /Re-authenticate Apple Music/i);
+});
+
+test("describeAppleDownloaderFailure leaves unrelated errors as the raw exit message", () => {
+  const other = describeAppleDownloaderFailure(1, "track not available in storefront");
+  assert.match(other, /exited with code 1/);
+  assert.doesNotMatch(other, /Re-authenticate/i);
+});
 
 const TEST_TOKEN: AppleMusicAuthToken = {
   developer_token: "dev-token",
@@ -99,6 +114,18 @@ test("artist albums returns all offers including spatial", async () => {
   assert.ok(spatial, "should include the Atmos album");
 });
 
+test("an Apple Atmos offer remains eligible for its separate stereo stream", async () => {
+  const { appleMusicOfferSupportsSlot } = await import("./apple-music-provider.js");
+  const album = (await getAppleArtistAlbums("1419227", opts()))
+    .find((candidate) => candidate.providerId === "1500000000");
+
+  assert.ok(album);
+  assert.deepEqual(album.qualityTags, ["hi-res-lossless", "atmos"]);
+  assert.equal(appleMusicOfferSupportsSlot(album, "stereo"), true);
+  assert.equal(appleMusicOfferSupportsSlot(album, "spatial"), true);
+  assert.equal(appleMusicOfferSupportsSlot(album, "video"), false);
+});
+
 test("search routes Apple result buckets into neutral search results", async () => {
   const results = await searchApple("bastille", ["artists", "albums", "tracks", "videos"], 10, opts());
   assert.equal(results.artists.length, 1);
@@ -143,6 +170,8 @@ test("provider exposes core capability descriptor and conforms to interface", as
   // Detailed capabilities feature-gate the settings UI.
   assert.equal(provider.capabilities.catalogSearch, true);
   assert.equal(provider.capabilities.spatialAudio, true);
+  assert.equal(provider.capabilities.lyrics, false);
+  assert.equal("getLyrics" in provider, false);
   assert.equal(provider.capabilities.followedArtists, false);
   assert.deepEqual(provider.manifest.imports.supported, ["library-artists", "playlist"]);
   assert.equal(provider.manifest.integration.catalogSource, "official-api");
@@ -174,6 +203,55 @@ test("Apple import sources expose library artists and playlists through the comm
 test("Apple credential validation probes the user's storefront", async () => {
   const validation = await validateAppleMusicCredentials(TEST_TOKEN, { fetchImpl: fixtureFetch });
   assert.equal(validation.storefront, "us");
+});
+
+test("Apple downloader config stays headless-safe and follows the app's lyric setting", () => {
+  syncTokenToDownloader({ media_user_token: "user-token", storefront: "us" });
+  const content = fs.readFileSync(APPLE_MUSIC_DOWNLOADER_CONFIG, "utf-8");
+  // Upstream only prints "press Enter to try again" when this is false. With
+  // stdin closed that prompt reads EOF and immediately retries forever, so a
+  // headless run must exit and let the Discogenius queue own bounded retries.
+  assert.match(content, /exit-on-error: true/);
+  assert.doesNotMatch(content, /lrc-type:/);
+  // embed-lrc MUST stay false: upstream apple-music-dl panics (nil TTML) on
+  // tracks without lyrics, aborting the whole album download.
+  assert.match(content, /embed-lrc: false/);
+  assert.match(content, /save-lrc-file: false/);
+  assert.doesNotMatch(content, /mv-file-format:/);
+});
+
+test("Apple provider saveCredentials never persists wrapper Apple account fields", async () => {
+  const { appleMusicStreamingProvider } = await import("./apple-music-provider.js");
+  const originalEnv = process.env.APPLE_MUSIC_USER_TOKEN;
+  const originalDevEnv = process.env.APPLE_MUSIC_DEVELOPER_TOKEN;
+  delete process.env.APPLE_MUSIC_USER_TOKEN;
+  delete process.env.APPLE_MUSIC_DEVELOPER_TOKEN;
+  try {
+    // Even if a caller passes wrapper account fields, they must not reach disk:
+    // the wrapper login flows through the transient trigger-file channel only.
+    await appleMusicStreamingProvider.saveCredentials({
+      mediaUserToken: "user-token",
+      storefront: "us",
+      wrapperAppleId: "test@example.com",
+      wrapperApplePassword: "super-secret",
+      validator: async () => ({ storefront: "us" }),
+    });
+    const token = loadStoredAppleMusicToken();
+    assert.equal(token?.media_user_token, "user-token");
+    assert.equal((token as unknown as Record<string, unknown> | null)?.wrapper_apple_id, undefined);
+    assert.equal((token as unknown as Record<string, unknown> | null)?.wrapper_apple_password, undefined);
+  } finally {
+    if (originalEnv == null) {
+      delete process.env.APPLE_MUSIC_USER_TOKEN;
+    } else {
+      process.env.APPLE_MUSIC_USER_TOKEN = originalEnv;
+    }
+    if (originalDevEnv == null) {
+      delete process.env.APPLE_MUSIC_DEVELOPER_TOKEN;
+    } else {
+      process.env.APPLE_MUSIC_DEVELOPER_TOKEN = originalDevEnv;
+    }
+  }
 });
 
 test("Apple web bearer token auto-resolution is cached across API header builds", async () => {
@@ -265,8 +343,46 @@ test("Apple downloader backend builds provider-id based tool invocations", () =>
         entityType: "track",
         providerId: "1440904918",
         downloadPath: "/downloads/job",
+        slot: "spatial",
+        quality: "LOSSLESS",
+      }),
+      ["--song", "--atmos", "https://music.apple.com/us/song/1440904918"],
+    );
+    // A genuinely-lossy request downloads AAC 256 (Apple's lossy floor).
+    assert.deepEqual(
+      backend.buildArgs("1440904918", {
+        provider: "apple-music",
+        entityType: "track",
+        providerId: "1440904918",
+        downloadPath: "/downloads/job",
+        slot: "stereo",
+        quality: "LOSSY_STEREO",
+      }),
+      ["--song", "--aac", "https://music.apple.com/us/song/1440904918"],
+    );
+    // "HIGH" is our LOSSLESS tier name, NOT a lossy label: it must fall through
+    // to the default ALAC-lossless branch, never lossy AAC.
+    assert.deepEqual(
+      backend.buildArgs("1440904918", {
+        provider: "apple-music",
+        entityType: "track",
+        providerId: "1440904918",
+        downloadPath: "/downloads/job",
+        slot: "stereo",
+        quality: "HIGH",
       }),
       ["--song", "https://music.apple.com/us/song/1440904918"],
+    );
+    assert.deepEqual(
+      backend.buildArgs("1440904918", {
+        provider: "apple-music",
+        entityType: "track",
+        providerId: "1440904918",
+        downloadPath: "/downloads/job",
+        slot: "stereo",
+        quality: "HIRES_LOSSLESS",
+      }),
+      ["--song", "--alac-max", "192000", "https://music.apple.com/us/song/1440904918"],
     );
     assert.deepEqual(
       backend.buildArgs("1452310551", {
@@ -354,6 +470,20 @@ test("Apple downloader progress parser extracts track counts and provider ids fr
   });
   assert.equal(errorLine?.trackStatus, "error");
   assert.equal(errorLine?.isError, true);
+
+  // The success banner contains the word "Errors" and must NOT be treated as
+  // a failure — misparsing it once failed completed downloads, whose cleanup
+  // then deleted the finished files.
+  const successBanner = parseAppleDownloaderProgressLine(
+    "=======  [✔ ] Completed: 1/1  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 0  =======",
+  );
+  assert.equal(successBanner?.isError, undefined);
+  assert.equal(successBanner?.trackStatus, "completed");
+
+  const failureBanner = parseAppleDownloaderProgressLine(
+    "=======  [✔ ] Completed: 0/1  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 1  =======",
+  );
+  assert.equal(failureBanner?.isError, true);
 });
 
 test("Apple downloader readiness snapshot exposes provisioning facts", async () => {

@@ -734,13 +734,13 @@ export async function downloadVideoThumbnail(
  * @param trackId - Tidal track ID
  * @returns Lyrics object with text and subtitles (LRC format)
  */
-export async function getTrackLyrics(trackId: string): Promise<{
+export async function getTrackLyrics(trackId: string, provider?: string | null): Promise<{
     text: string;
     subtitles: string;
     provider: string;
     matchType?: string;
 } | null> {
-    return getLyricsForProviderMedia(trackId);
+    return getLyricsForProviderMedia(trackId, provider);
 }
 
 /**
@@ -750,9 +750,10 @@ export async function getTrackLyrics(trackId: string): Promise<{
  */
 export async function saveLyricsFile(
     trackId: string,
-    outputPath: string
+    outputPath: string,
+    provider?: string | null,
 ): Promise<void> {
-    const lyrics = await getTrackLyrics(trackId);
+    const lyrics = await getTrackLyrics(trackId, provider);
 
     const content = lyrics?.subtitles || lyrics?.text || "";
     if (!content) {

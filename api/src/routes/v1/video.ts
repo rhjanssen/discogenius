@@ -7,6 +7,7 @@ import { getVideoDetail, listVideos } from "../../services/music/video-query-ser
 import {
   getObjectBody,
   getOptionalBoolean,
+  getOptionalString,
   getRequiredIdentifier,
   isRequestValidationError,
   rejectUnknownKeys,
@@ -82,17 +83,19 @@ router.post("/", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
     const providerId = getRequiredIdentifier(body, "id");
+    const provider = getOptionalString(body, "provider");
 
     const commandId = await runWithAsyncBusyRetry(
       () => CommandQueueManager.push(
         CommandNames.SeedVideo,
         {
           providerId,
+          provider,
           monitorArtist: true,
           monitorVideo: true,
           description: `Add video ${providerId}`,
         },
-        providerId,
+        provider ? `${provider}:${providerId}` : providerId,
         1,
         CommandTrigger.Manual,
       ),

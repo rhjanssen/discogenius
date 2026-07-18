@@ -46,6 +46,81 @@ test("bulk provider tracklists are accepted only when the album is complete", ()
   assert.equal(refreshServiceModule.completeBulkTrackList(24, complete), complete);
 });
 
+test("artist metadata seeding queries the explicitly requested provider", async () => {
+  const providerId = "provider-choice-test";
+  let fetchedArtistId: string | null = null;
+  providersModule.streamingProviderManager.registerStreamingProvider({
+    id: providerId,
+    name: "Provider Choice Test",
+    capabilities: {
+      catalogSearch: true,
+      artistCatalog: true,
+      followedArtists: false,
+      audioPreviews: false,
+      audioDownloads: false,
+      lossyStereo: false,
+      losslessStereo: false,
+      hiResStereo: false,
+      spatialAudio: false,
+      lyrics: false,
+      musicVideos: false,
+      videoPreviews: false,
+      videoDownloads: false,
+      artwork: false,
+      editorialMetadata: false,
+      providerIds: true,
+    },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async (id) => {
+      fetchedArtistId = String(id);
+      return { providerId: String(id), name: "Bastille" };
+    },
+    getArtistAlbums: async () => [],
+    getAlbum: async () => { throw new Error("not used"); },
+    getAlbumTracks: async () => [],
+    getTrack: async () => { throw new Error("not used"); },
+    getAuthStatus: async () => ({
+      connected: false,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 0,
+      canAccessShell: false,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: false,
+    }),
+  });
+
+  const identityModule = await import("../metadata/provider-artist-identity-service.js");
+  const originalResolve = identityModule.ProviderArtistIdentityService.resolve;
+  const originalStore = identityModule.ProviderArtistIdentityService.store;
+  const originalUpsert = refreshServiceModule.RefreshArtistService.upsertMusicBrainzArtist;
+  (identityModule.ProviderArtistIdentityService as any).resolve = async (selectedProvider: string) => ({
+    providerId: "42",
+    provider: selectedProvider,
+    mbid: "7808accb-6395-4b25-858c-678bbb73896b",
+    status: "verified",
+    confidence: 1,
+    method: "test",
+    evidence: {},
+  });
+  (identityModule.ProviderArtistIdentityService as any).store = () => undefined;
+  (refreshServiceModule.RefreshArtistService as any).upsertMusicBrainzArtist = async () => "42";
+
+  try {
+    await refreshServiceModule.RefreshArtistService.refreshArtistMetadata("42", {
+      provider: providerId,
+      forceUpdate: true,
+    });
+  } finally {
+    (identityModule.ProviderArtistIdentityService as any).resolve = originalResolve;
+    (identityModule.ProviderArtistIdentityService as any).store = originalStore;
+    (refreshServiceModule.RefreshArtistService as any).upsertMusicBrainzArtist = originalUpsert;
+  }
+
+  assert.equal(fetchedArtistId, "42");
+});
+
 test("unmatched provider offers retain discovery provenance without claiming canonical ownership", () => {
   const artistMbid = "artist-mbid-bastille";
   const album = {
@@ -329,11 +404,11 @@ test("matched provider offers persist the best compatible MusicBrainz release ve
   assert.equal(row.match_status, "verified");
 });
 
-test("fresh artist provider matching still hydrates missing video offers", async () => {
+test("public remote catalog hydrates missing video offers without provider authentication", async () => {
   const artistMbid = "11111111-1111-4111-8111-111111111111";
   const providerArtistId = "fake-video-artist";
   let videoFetches = 0;
-  let fakeProviderEnabled = true;
+  let fakeProviderEnabled = false;
 
   providersModule.streamingProviderManager.registerStreamingProvider({
     id: "fake-video-provider",
@@ -431,7 +506,7 @@ test("fresh artist provider matching still hydrates missing video offers", async
   assert.ok(row.recording_id);
 });
 
-test("stored matched provider offers rebuild release-group slot selections without broad hydration", () => {
+test("stored matched multi-capability provider offers rebuild stereo and spatial slots without broad hydration", () => {
   const artistMbid = "artist-mbid-bastille";
   const releaseGroupMbid = "release-group-gmtf";
   const releaseMbid = "release-gmtf-expanded";
@@ -467,7 +542,7 @@ test("stored matched provider offers rebuild release-group slot selections witho
       match_status, match_confidence, match_method, match_evidence
     ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "tidal",
+    "apple-music",
     providerAlbumId,
     "Give Me The Future + Dreams Of The Past",
     "HIRES_LOSSLESS",
@@ -491,6 +566,7 @@ test("stored matched provider offers rebuild release-group slot selections witho
       targetTrackCount: 27,
       providerVolumeCount: 3,
       targetVolumeCount: 3,
+      providerQualityTags: ["hi-res-lossless", "atmos"],
       matchedReleaseMbid: releaseMbid,
       availableReleaseMbids: [releaseMbid],
     })
@@ -499,23 +575,47 @@ test("stored matched provider offers rebuild release-group slot selections witho
   const counts = (refreshServiceModule.RefreshArtistService as any)
     .syncProviderSelectionsFromStoredOffers(artistMbid);
 
-  assert.deepEqual(counts, { stereo: 1, spatial: 0 });
+  assert.deepEqual(counts, { stereo: 1, spatial: 1 });
 
-  const slot = dbModule.db.prepare(`
-    SELECT selected_provider, selected_provider_id, selected_release_mbid, match_status
+  const slots = dbModule.db.prepare(`
+    SELECT slot, selected_provider, selected_provider_id, selected_release_mbid, quality, match_status
     FROM ReleaseGroupSlots
-    WHERE release_group_mbid = ? AND slot = 'stereo'
-  `).get(releaseGroupMbid) as {
+    WHERE release_group_mbid = ?
+    ORDER BY slot
+  `).all(releaseGroupMbid) as Array<{
+    slot: string;
     selected_provider: string | null;
     selected_provider_id: string | null;
     selected_release_mbid: string | null;
+    quality: string | null;
     match_status: string | null;
-  };
+  }>;
 
-  assert.equal(slot.selected_provider, "tidal");
-  assert.equal(slot.selected_provider_id, providerAlbumId);
-  assert.equal(slot.selected_release_mbid, releaseMbid);
-  assert.equal(slot.match_status, "verified");
+  assert.deepEqual(slots.map((slot) => ({
+    slot: slot.slot,
+    provider: slot.selected_provider,
+    providerId: slot.selected_provider_id,
+    releaseMbid: slot.selected_release_mbid,
+    quality: slot.quality,
+    status: slot.match_status,
+  })), [
+    {
+      slot: "spatial",
+      provider: "apple-music",
+      providerId: providerAlbumId,
+      releaseMbid,
+      quality: "DOLBY_ATMOS",
+      status: "verified",
+    },
+    {
+      slot: "stereo",
+      provider: "apple-music",
+      providerId: providerAlbumId,
+      releaseMbid,
+      quality: "HIRES_LOSSLESS",
+      status: "verified",
+    },
+  ]);
 });
 
 test("stored matched provider offers repair an unmatched slot for a representative release", () => {

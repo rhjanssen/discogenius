@@ -174,8 +174,46 @@ export interface AlbumListQuery {
     downloaded?: boolean;
     locked?: boolean;
     libraryFilter?: string;
+    /** Filter to albums whose selected offer is from this provider (e.g. "tidal"). */
+    provider?: string;
+    /** Filter to albums whose selected offer is in this quality tier (MAX/HIGH/NORMAL/LOW). */
+    qualityTier?: string;
     sort?: string;
     dir?: string;
+}
+
+/**
+ * SQL predicate that matches a stored raw quality string against one of the four
+ * neutral badge tiers — the DB keeps provider-native strings (HIRES_LOSSLESS,
+ * LOSSLESS, YOUTUBE_LOSSY, …), so this mirrors the client `stereoQualityTier`
+ * mapping in SQL. The column name is code-controlled (never user input) and the
+ * tier is validated against the enum, so no values are interpolated unsafely.
+ */
+function qualityTierSqlCondition(qualityColumn: string, tier: string): string | null {
+    const q = `UPPER(COALESCE(${qualityColumn}, ''))`;
+    const HIRES = `(${q} LIKE '%HIRES%' OR ${q} LIKE '%HI_RES%' OR ${q} LIKE '%MQA%' OR ${q} LIKE '%MASTER%')`;
+    const LOSSLESS = `(${q} LIKE '%LOSSLESS%' OR ${q} LIKE '%FLAC%' OR ${q} LIKE '%ALAC%')`;
+    const LOW = `(${q} = 'LOW' OR ${q} LIKE '%_96%' OR ${q} LIKE '%_128%' OR ${q} LIKE '%_64%' OR ${q} LIKE '%YOUTUBE_LOSSY%')`;
+    switch (tier.toUpperCase()) {
+        case "MAX":
+            return HIRES;
+        case "HIGH":
+            return `(${LOSSLESS} AND NOT ${HIRES})`;
+        case "LOW":
+            return `(${LOW} AND NOT ${HIRES} AND NOT ${LOSSLESS})`;
+        case "NORMAL":
+            return `(${q} != '' AND NOT ${HIRES} AND NOT ${LOSSLESS} AND NOT ${LOW}`
+                + ` AND ${q} NOT LIKE '%ATMOS%' AND ${q} NOT LIKE '%SPATIAL%' AND ${q} NOT LIKE '%360%')`;
+        default:
+            return null;
+    }
+}
+
+/** Slot aliases (ReleaseGroupSlots) the provider/quality filter should test for a given library filter. */
+function filterSlotAliases(libraryFilter: string): string[] {
+    if (libraryFilter === "spatial") return ["spatial"];
+    if (libraryFilter === "stereo") return ["stereo"];
+    return ["stereo", "spatial"];
 }
 
 function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlbumExpression: string): string {
@@ -295,7 +333,11 @@ function normalizeReleaseGroupListRow(
 
 export class AlbumQueryService {
     static listAlbums(input: AlbumListQuery): AlbumsListResponseContract {
-        if (AlbumLibraryIndexService.isReady()) {
+        // The materialized index has no provider/quality columns, so provider- or
+        // quality-tier-filtered queries (the less common case) use the direct
+        // ReleaseGroupSlots query below, which already joins those rows.
+        const hasProviderQualityFilter = Boolean(String(input.provider || "").trim() || String(input.qualityTier || "").trim());
+        if (AlbumLibraryIndexService.isReady() && !hasProviderQualityFilter) {
             return this.listAlbumsFromIndex(input);
         }
 
@@ -357,6 +399,27 @@ export class AlbumQueryService {
             where.push(`${releaseGroupMonitoredLockedExpression} = 1`);
         } else if (input.locked === false) {
             where.push(`${releaseGroupMonitoredLockedExpression} = 0`);
+        }
+
+        const providerFilter = String(input.provider || "").trim();
+        const qualityTierFilter = String(input.qualityTier || "").trim();
+        const slotAliases = filterSlotAliases(libraryFilter);
+        if (providerFilter) {
+            where.push(`(${slotAliases.map((alias) => `${alias}.selected_provider = ?`).join(" OR ")})`);
+            for (const _ of slotAliases) {
+                params.push(providerFilter);
+                countParams.push(providerFilter);
+            }
+        }
+        if (qualityTierFilter) {
+            const tierConditions = slotAliases
+                .map((alias) => qualityTierSqlCondition(`${alias}.quality`, qualityTierFilter))
+                .filter((condition): condition is string => condition != null);
+            // A recognised tier with no matching slot expression matches nothing;
+            // an unrecognised tier is ignored (no condition added).
+            if (tierConditions.length > 0) {
+                where.push(`(${tierConditions.join(" OR ")})`);
+            }
         }
 
         const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";

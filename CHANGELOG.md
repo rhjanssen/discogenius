@@ -5,6 +5,79 @@ All notable changes to this project are documented in this file.
 ## [2.4.0] - Unreleased
 
 ### Added
+- Amazon Music provider plugin: catalog, availability, artwork, lyrics when the
+  external service supplies them, lossless/hi-res and Dolby Atmos quality
+  mapping, and a non-interactive `amazon-music==1.7.7` download bridge. Amazon's
+  official Web API is still closed beta, so this integration explicitly uses
+  an unofficial external API/token and supports an alternate compatible API
+  base URL.
+- Spotify provider plugin: official Web API catalog/search via client
+  credentials, artwork and Spotify-supplied previews, plus an optional
+  `votify[librespot]==1.9.9` cookie-backed lossy-stereo downloader. Lossless,
+  spatial audio, and video are not advertised, and operators remain
+  responsible for complying with Spotify's terms.
+- YouTube / YouTube Music provider plugin: public catalog, artist releases,
+  videos, and lossy audio/video downloads through `ytmusicapi` + `yt-dlp`.
+  Optional browser-header JSON and cookies enable account-library import
+  sources and restricted/authenticated media without making public catalog use
+  require a login.
+- Deezer provider plugin: public Deezer API catalog/search and previews without
+  authentication, plus MP3/FLAC downloads through Streamrip when the user
+  supplies a Deezer ARL cookie.
+- Provider authentication is manifest-driven: the Auth UI renders each
+  plugin's declared credential fields and help text while retaining TIDAL's
+  device login and Apple Music's wrapper login/2FA workflow.
+- The Docker image bundles each third-party provider runtime in an isolated,
+  pinned virtual environment (`ytmusicapi`/`yt-dlp`, Streamrip,
+  `amazon-music`, and Votify) so conflicting Python dependencies cannot change
+  another provider's behavior. Provider diagnostics report credentials and
+  backend readiness separately.
+- Release switcher offer chips: each release row on the album page lists every
+  matched provider offer as a selectable chip (provider mark, quality, match
+  tooltip, hybrid indicator), so the user picks both the MusicBrainz edition
+  AND which provider source fills the slot. The availability payload now
+  reports the currently selected offer per slot.
+- Apple Music download diagnostics explain the one-time wrapper Apple ID login
+  when decryption fails with an "Invalid CKC" error.
+- Album-bundled music videos (Apple Music deluxe/festival editions) download
+  and import as first-class videos: they map onto the release's canonical
+  video tracks, land in the video library with video naming, and register a
+  provider video offer on the same recording standalone uploads dedupe to.
+- Provider-plugin boundary hardening: generic downloader-login auth routes,
+  provider-neutral import decision types, default-provider fallbacks instead
+  of hardcoded TIDAL, and removal of dead TIDAL quality tables from core.
+- Fully self-contained Apple Music wrapper login from the Auth page: the
+  Apple ID and password are handed to the decryption sidecar through the
+  shared config volume (no docker socket, no credentials in compose files) and
+  are never persisted by Discogenius; the 2FA code is submitted from the same
+  page. Discogenius provisions the sidecar's supervisor entrypoint at boot, so
+  fresh headless deployments work without the repo checked out.
+
+### Fixed (Apple Music downloads)
+- One Apple catalog album can now fill both stereo and spatial slots: Atmos
+  availability no longer hides the album from stereo matching, and its
+  lossless/hi-res and Dolby Atmos traits remain attached to the stored offers.
+  Track downloads compose `--song` with the selected slot's `--atmos`, `--aac`,
+  or hi-res ALAC arguments instead of dropping the quality choice.
+- Album-bundled Apple videos whose downloader filenames contain a track number
+  and title instead of an Apple resource id are matched deterministically to
+  same-provider album VIDEO rows by position/title. Ambiguous files remain in
+  staging rather than being attached to the wrong canonical video.
+- The Apple downloader can no longer hang a download slot on errors: it is
+  spawned with stdin closed and `exit-on-error` enabled, so failures return to
+  Discogenius's bounded, resumable queue retry policy instead of entering the
+  upstream interactive retry loop (which spins forever when stdin is at EOF).
+  Lyric embedding stays force-disabled because the upstream binary
+  crashes (nil TTML) on tracks without lyrics — both constraints are pinned by
+  tests.
+- Apple Music no longer advertises catalog lyrics: the supported catalog API
+  does not expose a lyrics resource, and raw TTML is not synthesized as LRC.
+- The wrapper supervisor survives failed logins (previously a failed login
+  attempt terminated the sidecar) and restarts the decryption server after
+  login attempts.
+- Provider credential saves never store the wrapper Apple ID or password in
+  token.json (regression from an intermediate implementation; existing token
+  files are scrubbed on next save).
 - Provider preference order: the Settings provider list is now reorderable
   (drag or arrow buttons); the first provider is the default and wins
   equal-quality/equal-coverage matching tie-breaks (`streaming.provider_priority`,
@@ -23,6 +96,13 @@ All notable changes to this project are documented in this file.
 - Right-click or touch long-press on a library card enters selection mode with
   that card selected.
 
+### Added (video pages)
+- The video page lists every provider offer for the video as selectable chips
+  (provider mark, quality, tooltip with a link to the provider's public video
+  page); the selection drives both preview playback and download.
+- Videos that appear on an album (e.g. Apple Music bundled music videos) link
+  to that album from the video page.
+
 ### Changed
 - Provider connection cards moved to a single priority-ordered list with a
   Fluent details modal (status, capability summary, connect/disconnect) instead
@@ -36,6 +116,21 @@ All notable changes to this project are documented in this file.
 - Import modal per-artist status icons use the Fluent colored icon family.
 
 ### Fixed
+- Provider resource lookups in the download processor are keyed by the full
+  `(provider, entity type, provider id)` identity, including album-track and
+  selected-slot fallbacks. Equal numeric ids from TIDAL and Apple Music can no
+  longer resolve to each other's catalog or download rows.
+- Provider resource IDs and persisted import paths are confined to the
+  configured download root before any backend creates, renames, imports, or
+  cleans files. Amazon output IDs receive the same containment checks.
+- Provider credential handling is hardened: Deezer disconnect removes the
+  Streamrip ARL copy, YouTube drops cross-domain cookies from browser exports,
+  Spotify/Amazon auth probes have bounded deadlines, and Amazon custom API
+  bases reject redirects, embedded credentials, private DNS targets, and
+  cleartext public endpoints unless private self-hosting is explicitly enabled.
+- Live Deezer album payloads that omit `track_position` now preserve their
+  authoritative array order, avoiding a whole release being matched as track
+  number zero.
 - Global search finds artists that are not in the library again (remote
   canonical discovery was only enabled while the library was empty).
 - Apple Music hi-res albums are no longer reported as 16-bit: the provider now
@@ -44,9 +139,38 @@ All notable changes to this project are documented in this file.
 - The same music video from two providers now dedupes onto one canonical
   recording with provider links from both; genuinely different uploads
   (audio-only, lyric video, live) stay separate via variant classes and a
-  duration guard.
+  duration guard. A parenthetical qualifier one provider omits (TIDAL
+  "SAVE MY SOUL" vs Apple `SAVE MY SOUL ("FROM ALL SIDES" Tour)`, identical
+  durations) no longer defeats the match, and every video refresh retro-merges
+  duplicate recordings that predate the current rules, repointing offers and
+  files to the surviving recording.
+- Video offer actions now respect provider capabilities: unavailable offers
+  are hidden, download-only YouTube offers do not break Play when a TIDAL or
+  Apple preview exists, and the player/offer controls are keyboard-accessible
+  Fluent UI controls. Unknown-quality offers remain selectable.
+- Video downloads no longer fail with "Resource not found": deduped videos are
+  referenced by canonical recording id, which the queue, the download
+  processor (including retries of previously-failed payloads), and the preview
+  signing route now resolve to the preference-ranked provider's actual video
+  offer instead of sending the internal id to a provider API. Apple-only
+  videos preview and download standalone as a result — both paths previously
+  hardcoded TIDAL.
+- Video metadata seeding queries the provider that owns the resolved offer
+  rather than always the default provider.
+- Download Missing queues one job per canonical video recording (rather than
+  one per normalized base title), scopes installed-file checks to the owning
+  provider, and resolves the exact selected offer before falling back to
+  provider preference. Official, lyric, audio-only, visualizer, and live
+  variants therefore remain independently downloadable without duplicate jobs
+  for equivalent cross-provider offers.
 - API tests are hermetic again: the runner isolates `DISCOGENIUS_CONFIG_DIR`
   so live provider tokens in `./config` cannot change test results.
+- Artist top-track previews play again: the playback signing route no longer
+  rejects tracks that carry a direct provider track id when no canonical match
+  edge exists for that provider.
+- The playing track row no longer shows doubled stop icons (a bundled filled +
+  regular icon pair was force-displayed by a style override) and the track
+  number no longer shines through the stop overlay.
 
 ## [2.3.4] - 2026-07-15
 

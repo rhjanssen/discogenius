@@ -106,6 +106,8 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
   const [albumDownloadedFilter, setAlbumDownloadedFilter] = useState<boolean | undefined>(initialSettings.albumDownloadedFilter);
   const [albumLockedFilter, setAlbumLockedFilter] = useState<boolean | undefined>(initialSettings.albumLockedFilter);
   const [albumLibraryFilter, setAlbumLibraryFilter] = useState<LibraryFilter>(initialSettings.albumLibraryFilter);
+  const [albumProviderFilter, setAlbumProviderFilter] = useState<string | undefined>(undefined);
+  const [albumQualityTierFilter, setAlbumQualityTierFilter] = useState<string | undefined>(undefined);
   const [listSort, setListSort] = useState<{ sort: SortKey; dir: SortDir }>(initialSettings.sort);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const activeTab = options?.activeTab ?? "artists";
@@ -126,6 +128,8 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     downloaded: albumDownloadedFilter,
     locked: albumLockedFilter,
     libraryFilter: albumLibraryFilter,
+    provider: albumProviderFilter,
+    qualityTier: albumQualityTierFilter,
     sort: listSort.sort,
     dir: listSort.dir,
     search: searchQuery,
@@ -319,6 +323,10 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     setAlbumDownloadFilter: setAlbumDownloadedFilter,
     setAlbumLockFilter: setAlbumLockedFilter,
     setAlbumQualityFilter: setAlbumLibraryFilter,
+    albumProviderFilter,
+    setAlbumProviderFilter,
+    albumQualityTierFilter,
+    setAlbumQualityTierFilter,
     setSortOptions,
     setSearchQuery,
     syncArtist,

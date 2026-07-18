@@ -309,6 +309,15 @@ const server = app.listen(port, () => {
     console.error("Failed to start token refresh:", error);
   });
 
+  // Sync provider credentials into their downloader configs and provision the
+  // Apple wrapper sidecar's entrypoint script (compose mounts it from /config,
+  // so it must exist before the sidecar can start on a fresh install).
+  import("./services/providers/index.js").then(({ streamingProviderManager }) =>
+    streamingProviderManager.syncProviderCredentials(),
+  ).catch((error) => {
+    console.error("Failed to sync provider credentials at boot:", error);
+  });
+
   scheduleStartupMaintenance();
 
   // Always start the off-thread command worker pool (Lidarr's CommandExecutor spawns

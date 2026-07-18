@@ -21,25 +21,36 @@ function parseEntityId(value: unknown): string {
   return id;
 }
 
-async function resolveEntity(entityType: MetadataIdentityEntityType, entityId: string, force: boolean) {
+function parseOptionalProvider(value: unknown): string | undefined {
+  const provider = String(value || "").trim();
+  return provider || undefined;
+}
+
+async function resolveEntity(
+  entityType: MetadataIdentityEntityType,
+  entityId: string,
+  force: boolean,
+  provider?: string,
+) {
   if (entityType === "artist") {
     return MetadataIdentityService.resolveArtist(entityId, { force });
   }
   if (entityType === "album") {
-    return MetadataIdentityService.resolveAlbum(entityId, { force });
+    return MetadataIdentityService.resolveAlbum(entityId, { force, provider });
   }
   if (entityType === "track") {
-    return MetadataIdentityService.resolveTrack(entityId, { force });
+    return MetadataIdentityService.resolveTrack(entityId, { force, provider });
   }
 
-  return MetadataIdentityService.markVideoKnown(entityId);
+  return MetadataIdentityService.markVideoKnown(entityId, { provider });
 }
 
 router.get("/status", (req, res) => {
   try {
     const entityType = parseEntityType(req.query.entityType);
     const entityId = parseEntityId(req.query.entityId);
-    res.json(MetadataIdentityService.getStatus(entityType, entityId));
+    const provider = parseOptionalProvider(req.query.provider);
+    res.json(MetadataIdentityService.getStatus(entityType, entityId, { provider }));
   } catch (error: any) {
     res.status(400).json({ detail: error.message });
   }
@@ -50,7 +61,8 @@ router.post("/resolve", async (req, res) => {
     const entityType = parseEntityType(req.body?.entityType);
     const entityId = parseEntityId(req.body?.entityId);
     const force = Boolean(req.body?.force);
-    res.json(await resolveEntity(entityType, entityId, force));
+    const provider = parseOptionalProvider(req.body?.provider);
+    res.json(await resolveEntity(entityType, entityId, force, provider));
   } catch (error: any) {
     res.status(400).json({ detail: error.message });
   }

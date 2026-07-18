@@ -1970,7 +1970,7 @@ export class AudioTagService {
 
     const quality = getConfigSection("quality");
     if (options.includeExternalMetadata !== false && quality.embed_lyrics && row.file_provider_id) {
-      const lyrics = await getLyricsForProviderMedia(row.file_provider_id);
+      const lyrics = await getLyricsForProviderMedia(row.file_provider_id, row.file_provider);
       if (lyrics) {
         const targetValue = selectEmbeddedLyricsText(lyrics);
         if (targetValue) {
@@ -2166,7 +2166,7 @@ export class AudioTagService {
 
       const quality = getConfigSection("quality");
       if (options.includeExternalLyrics !== false && quality.embed_lyrics && enrichedRow.file_provider_id) {
-        const lyrics = await getLyricsForProviderMedia(enrichedRow.file_provider_id);
+        const lyrics = await getLyricsForProviderMedia(enrichedRow.file_provider_id, enrichedRow.file_provider);
         if (lyrics) {
           const targetValue = selectEmbeddedLyricsText(lyrics);
           if (targetValue) {

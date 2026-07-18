@@ -96,6 +96,7 @@ export function shouldRefreshAlbum(options: {
 export function shouldRefreshTrackSet(options: {
   albumId: string | number;
   fallbackLastScanned?: string | null;
+  provider?: string | null;
 }): boolean {
   const row = db.prepare(`
     SELECT
@@ -115,7 +116,12 @@ export function shouldRefreshTrackSet(options: {
     LEFT JOIN Albums album ON album.mbid = COALESCE(album_item.release_group_mbid, release.release_group_mbid)
     WHERE album_item.entity_type = 'album'
       AND album_item.provider_id = ?
-  `).get(String(options.albumId)) as {
+      AND (? IS NULL OR album_item.provider = ?)
+  `).get(
+    String(options.albumId),
+    options.provider || null,
+    options.provider || null,
+  ) as {
     total_tracks?: number;
     missing_scans?: number;
     oldest_scan?: string | null;

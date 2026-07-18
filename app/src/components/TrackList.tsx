@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Avatar,
   Text,
+  Tooltip,
   makeStyles,
   mergeClasses,
   tokens,
@@ -13,6 +14,7 @@ import {
   Stop24Regular as Stop24RegularBase,
   CheckmarkCircle16Filled,
   Stop24Filled,
+  ArrowDownload16Regular,
   bundleIcon
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
@@ -108,6 +110,13 @@ const useStyles = makeStyles({
     transitionDuration: tokens.durationFaster,
     transitionTimingFunction: tokens.curveEasyEase,
   },
+  // While the row is playing the stop overlay owns the cell; the underlying
+  // track number must not shine through the icon.
+  numberButtonPlaying: {
+    "& [data-track-number]": {
+      opacity: 0,
+    },
+  },
   playOverlay: {
     position: "absolute",
     inset: 0,
@@ -123,9 +132,10 @@ const useStyles = makeStyles({
   playOverlayActive: {
     opacity: 1,
   },
+  // No display override here: these icons are bundleIcon pairs, and forcing
+  // `display` would reveal BOTH the filled and regular variants at once.
   playIcon: {
     fontSize: "20px",
-    display: "block",
   },
   titleCell: {
     display: "flex",
@@ -255,11 +265,14 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalXXS,
     minWidth: 0,
   },
-  fileQualityLabel: {
+  fileQualityIcon: {
     color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase100,
-    lineHeight: tokens.lineHeightBase100,
+    fontSize: "12px",
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
   },
+
   durationText: {
     color: tokens.colorNeutralForeground3,
     fontVariantNumeric: "tabular-nums",
@@ -667,7 +680,7 @@ const TrackList = <T extends TrackListItem>({
             return (
               <button
                 type="button"
-                className={styles.numberButton}
+                className={mergeClasses(styles.numberButton, isPlaying ? styles.numberButtonPlaying : undefined)}
                 disabled={!canPlay}
                 aria-label={canPlay ? (isPlaying ? "Stop track" : "Play track") : undefined}
                 onClick={canPlay
@@ -766,12 +779,17 @@ const TrackList = <T extends TrackListItem>({
                 ))}
               </div>
               {showFileQuality ? (
-                <div className={styles.fileQualityRow}>
-                  <Text as="span" className={styles.fileQualityLabel}>File</Text>
-                  {fileQualityTags.map((quality) => (
-                    <QualityBadge key={`file-${quality}`} quality={quality} size="small" />
-                  ))}
-                </div>
+                <Tooltip
+                  content="Quality of the downloaded file (differs from the provider offer above)"
+                  relationship="label"
+                >
+                  <div className={styles.fileQualityRow} aria-label="Downloaded file quality">
+                    <ArrowDownload16Regular className={styles.fileQualityIcon} aria-hidden="true" />
+                    {fileQualityTags.map((quality) => (
+                      <QualityBadge key={`file-${quality}`} quality={quality} size="small" />
+                    ))}
+                  </div>
+                </Tooltip>
               ) : null}
             </div>
           );
@@ -876,10 +894,11 @@ const TrackList = <T extends TrackListItem>({
     styles.checkIcon,
     styles.durationText,
     styles.emptyCheck,
-    styles.fileQualityLabel,
+    styles.fileQualityIcon,
     styles.fileQualityRow,
     styles.linkText,
     styles.numberButton,
+    styles.numberButtonPlaying,
     styles.numberText,
     styles.playIcon,
     styles.playOverlay,

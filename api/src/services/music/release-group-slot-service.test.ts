@@ -292,6 +292,51 @@ test("provider slot selection keeps stereo and Atmos offers on one MusicBrainz r
   );
 });
 
+test("one Apple album offer materializes separate hi-res stereo and Atmos slot selections", () => {
+  const releaseGroupMbid = "rg-mbid-apple-multi-capability";
+  const releaseMbid = "release-mbid-apple-multi-capability";
+  const providerId = "apple-album-multi-capability";
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([{
+    provider: "apple-music",
+    album: {
+      providerId,
+      title: "Give Me the Future",
+      quality: "HIRES_LOSSLESS",
+      qualityTags: ["lossy-stereo", "lossless", "hi-res-lossless", "atmos"],
+      trackCount: 13,
+      volumeCount: 1,
+    },
+    match: {
+      ...buildMatch(releaseGroupMbid, providerId),
+      releaseMbid,
+    },
+  }], { includeSpatial: true });
+
+  assert.deepEqual(
+    selections.map((selection) => ({
+      slot: selection.slot,
+      provider: selection.provider,
+      providerId: selection.album.providerId,
+      quality: selection.album.quality,
+    })),
+    [
+      {
+        slot: "spatial",
+        provider: "apple-music",
+        providerId,
+        quality: "DOLBY_ATMOS",
+      },
+      {
+        slot: "stereo",
+        provider: "apple-music",
+        providerId,
+        quality: "HIRES_LOSSLESS",
+      },
+    ],
+  );
+});
+
 test("equal-merit offers from two providers tie-break by provider preference, not alphabetically", () => {
   const releaseGroupMbid = "rg-mbid-provider-tiebreak";
   const releaseMbid = "release-mbid-provider-tiebreak";

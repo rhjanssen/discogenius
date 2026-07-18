@@ -3,6 +3,7 @@ import { Badge, makeStyles, mergeClasses, tokens } from "@fluentui/react-compone
 import { tidalBadgeColor, tidalBadgeColorLight } from "@/theme/theme";
 import { useTheme } from "@/providers/themeContext";
 import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
+import { isVideoResolutionQuality, qualityDescription, stereoQualityTier, videoResolutionLabel } from "@/utils/qualityTier";
 
 // Standard quality values we store in DB (no underscore in HIRES)
 export type AudioQuality = string;
@@ -116,6 +117,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
                 className={mergeClasses(styles.base, styles.atmos, sizeClass, className)}
                 style={{ backgroundColor: transparentHex(palette.SpatialBackground, badgeAlpha) }}
                 aria-label="Dolby Atmos"
+                title={qualityDescription(quality)}
             >
                 <span
                     aria-hidden="true"
@@ -136,21 +138,32 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
     let badgeText = quality;
 
     if (isSpatialAudioQuality(normalizedQuality)) {
+        // Non-Atmos spatial (Sony 360RA, generic surround).
         backgroundColor = transparentHex(palette.SpatialBackground, badgeAlpha);
         color = palette.SpatialText;
         badgeText = "Spatial";
-    } else if (normalizedQuality === "HIRES_LOSSLESS") {
-        backgroundColor = transparentHex(palette.YellowBackground, badgeAlpha);
-        color = palette.YellowText;
-        badgeText = "MAX";
-    } else if (normalizedQuality === "LOSSLESS") {
-        backgroundColor = transparentHex(palette.TealBackground, badgeAlpha);
-        color = palette.TealText;
-        badgeText = "HIGH";
-    } else if (normalizedQuality?.includes("HIGH")) {
-        badgeText = "High";
-    } else if (normalizedQuality?.startsWith("MP4_")) {
-        badgeText = normalizedQuality.replace("MP4_", "").toLowerCase();
+    } else if (isVideoResolutionQuality(normalizedQuality)) {
+        // Music-video offers carry a resolution, not an audio fidelity tier.
+        badgeText = videoResolutionLabel(normalizedQuality);
+    } else {
+        // Every provider's raw stereo quality collapses onto MAX / HIGH /
+        // NORMAL / LOW so a lossy YouTube offer reads the same as a lossy Apple
+        // one instead of leaking "YOUTUBE_LOSSY" / "FLAC" / "AAC" verbatim.
+        const tier = stereoQualityTier(normalizedQuality);
+        badgeText = tier;
+        if (tier === "MAX") {
+            backgroundColor = transparentHex(palette.YellowBackground, badgeAlpha);
+            color = palette.YellowText;
+        } else if (tier === "HIGH") {
+            backgroundColor = transparentHex(palette.TealBackground, badgeAlpha);
+            color = palette.TealText;
+        } else if (tier === "LOW") {
+            // A dimmer neutral than NORMAL so the fidelity order reads
+            // gold(MAX) > teal(HIGH) > neutral(NORMAL) > muted(LOW).
+            backgroundColor = `color-mix(in srgb, ${tokens.colorNeutralForeground4} 10%, transparent)`;
+            color = tokens.colorNeutralForeground4;
+        }
+        // NORMAL keeps the default neutral tint set above.
     }
 
     return (
@@ -160,6 +173,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
             size={size}
             className={mergeClasses(styles.base, styles.label, sizeClass, className)}
             style={{ backgroundColor, color }}
+            title={qualityDescription(quality)}
         >
             <span className={styles.textLabel}>{badgeText}</span>
         </Badge>

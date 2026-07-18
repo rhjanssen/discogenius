@@ -515,20 +515,19 @@ const useStyles = makeStyles({
   },
   releaseAvailability: {
     display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: tokens.spacingVerticalXS,
+  },
+  slotOfferRow: {
+    display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
     flexWrap: "wrap",
   },
-  releaseSlotActions: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    gap: tokens.spacingHorizontalS,
-    flexWrap: "wrap",
-    "@media (min-width: 820px)": {
-      justifyContent: "flex-end",
-      flexWrap: "nowrap",
-    },
+  slotOfferLabel: {
+    color: tokens.colorNeutralForeground3,
+    minWidth: "52px",
   },
   unavailableText: {
     color: tokens.colorNeutralForeground3,
@@ -584,14 +583,6 @@ function activeSwitchableSlots(includeSpatial: boolean): SwitchableSlot[] {
 
 function slotLabel(slot: SwitchableSlot): string {
   return slot === "spatial" ? "Spatial" : "Stereo";
-}
-
-function providerDisplayName(provider?: string | null): string {
-  const normalized = String(provider || "").trim().toLowerCase();
-  if (!normalized) return "Provider";
-  if (normalized === "tidal") return "TIDAL";
-  if (normalized.startsWith("apple")) return "Apple Music";
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 function releaseYear(date?: string | null): string | null {
@@ -653,16 +644,35 @@ function isSpatialQuality(quality?: string | null): boolean {
   return normalized.includes("ATMOS") || normalized.includes("SPATIAL") || normalized.includes("360");
 }
 
-function chooseAvailabilityForSlot(
+/** Normalized provider-album id set comparison ("id1;id2" composites included). */
+function sameProviderAlbumSelection(left: string | null | undefined, right: string | null | undefined): boolean {
+  const split = (value: string | null | undefined) => String(value || "")
+    .split(/[;+]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .sort();
+  const a = split(left);
+  const b = split(right);
+  return a.length > 0 && a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+/** All of a release's offers that can fill the given slot, deduped per provider album set. */
+function offersForSlot(
   release: ReleaseGroupAvailability["releases"][number],
   slot: SwitchableSlot,
-): ReleaseGroupAvailability["releases"][number]["availability"][number] | null {
-  const exact = release.availability.find((offer) => String(offer.librarySlot || "").toLowerCase() === slot);
-  if (exact) return exact;
-  if (slot === "spatial") {
-    return release.availability.find((offer) => isSpatialQuality(offer.quality)) ?? null;
+): Array<ReleaseGroupAvailability["releases"][number]["availability"][number]> {
+  const exact = release.availability.filter((offer) => String(offer.librarySlot || "").toLowerCase() === slot);
+  const pool = exact.length > 0
+    ? exact
+    : release.availability.filter((offer) => slot === "spatial" ? isSpatialQuality(offer.quality) : !isSpatialQuality(offer.quality));
+  const deduped = new Map<string, ReleaseGroupAvailability["releases"][number]["availability"][number]>();
+  for (const offer of pool) {
+    const key = `${offer.provider || ""}|${String(offer.providerAlbumId || "")}`;
+    if (!deduped.has(key)) {
+      deduped.set(key, offer);
+    }
   }
-  return release.availability.find((offer) => !isSpatialQuality(offer.quality)) ?? release.availability[0] ?? null;
+  return Array.from(deduped.values());
 }
 
 function sortReleasesForSwitcher(
@@ -758,38 +768,55 @@ function ReleaseSwitcher({
                   <Text size={100}>{release.releaseMbid}</Text>
                 </Tooltip>
               </div>
+              {/* One row per slot: every matched provider offer renders as the
+                  same provider-pill + quality-badge unit the album header uses,
+                  but selectable — the user picks BOTH the edition and the source. */}
               <div className={styles.releaseAvailability}>
-                {providerOffers.length > 0 ? (
-                  <ProviderQualityRow offers={providerOffers} size="small" />
-                ) : (
+                {providerOffers.length === 0 ? (
                   <Text size={200} className={styles.unavailableText}>No matched provider offer</Text>
-                )}
+                ) : slots.map((slot) => {
+                  const slotOffers = offersForSlot(release, slot);
+                  if (slotOffers.length === 0) {
+                    return null;
+                  }
+                  const releaseSelectedForSlot = availability.selectedReleaseBySlot[slot] === release.releaseMbid;
+                  const selectedOffer = availability.selectedOfferBySlot?.[slot];
+                  const rowOffers: ProviderQualityOffer[] = slotOffers.map((offer) => ({
+                    slot,
+                    quality: offer.quality,
+                    provider: offer.provider,
+                    matchStatus: offer.status,
+                    matchKind: offer.matchKind,
+                    coverageSummary: offer.coverageSummary,
+                    providerAlbumId: offer.providerAlbumId,
+                    providerAlbumIds: offer.providerAlbumIds,
+                    selectedReleaseMbid: release.releaseMbid,
+                    explicit: offer.explicit,
+                  }));
+                  const pending = pendingSelectionKey === `${slot}:${release.releaseMbid}`;
+                  return (
+                    <div key={slot} className={styles.slotOfferRow}>
+                      <Text size={200} className={styles.slotOfferLabel}>
+                        {pending ? "Saving..." : slotLabel(slot)}
+                      </Text>
+                      <ProviderQualityRow
+                        offers={rowOffers}
+                        size="small"
+                        onSelectOffer={pendingSelectionKey ? undefined : (picked) => {
+                          const source = slotOffers.find((offer) =>
+                            offer.provider === picked.provider
+                            && sameProviderAlbumSelection(offer.providerAlbumId, picked.providerAlbumId));
+                          if (source) {
+                            onSelect(slot, release.releaseMbid, source);
+                          }
+                        }}
+                        selectedOfferAlbumId={releaseSelectedForSlot ? selectedOffer?.providerAlbumId ?? null : null}
+                        selectedOfferProvider={releaseSelectedForSlot ? selectedOffer?.provider ?? null : null}
+                      />
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-            <div className={styles.releaseSlotActions}>
-              {slots.map((slot) => {
-                const offer = chooseAvailabilityForSlot(release, slot);
-                const selected = availability.selectedReleaseBySlot[slot] === release.releaseMbid;
-                const pending = pendingSelectionKey === `${slot}:${release.releaseMbid}`;
-                const disabled = !offer || selected || Boolean(pendingSelectionKey);
-                const providerName = providerDisplayName(offer?.provider);
-                const buttonLabel = selected ? `${slotLabel(slot)} selected` : `Use for ${slotLabel(slot)}`;
-                const offerLabel = offer?.matchKind === "composite"
-                  ? `${buttonLabel} from ${providerName} hybrid coverage`
-                  : `${buttonLabel} from ${providerName}`;
-                return (
-                  <Button
-                    key={slot}
-                    size="small"
-                    appearance={selected ? "primary" : "secondary"}
-                    disabled={disabled}
-                    onClick={() => offer ? onSelect(slot, release.releaseMbid, offer) : undefined}
-                    title={offer ? offerLabel : `No ${slotLabel(slot).toLowerCase()} offer for this release`}
-                  >
-                    {pending ? "Saving..." : buttonLabel}
-                  </Button>
-                );
-              })}
             </div>
           </Card>
         );

@@ -2,7 +2,7 @@ import fs from "fs";
 import { db } from "../../database.js";
 import type { ImportDownloadCommand } from "../commands/command-bodies.js";
 import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
-import { getDownloadWorkspacePath, type DownloadMediaType } from "./download-routing.js";
+import { getDownloadWorkspacePath, validateDownloadWorkspacePath, type DownloadMediaType } from "./download-routing.js";
 import {CommandNames} from "../commands/command-names.js";
 import {type CommandModel} from "../commands/command-queue-manager.js";
 
@@ -19,8 +19,10 @@ function isImportDownloadJob(job: CommandModel): job is CommandModel & { type: t
 export function getExistingLibraryMediaIds(
     type: DownloadMediaType,
     providerId: string,
+    provider?: string | null,
 ): string[] {
     const albumIds = providerId.split(";").filter(Boolean);
+    const normalizedProvider = String(provider || "").trim() || null;
     const rows = type === 'album'
         ? (albumIds.length > 0
             ? db.prepare(`
@@ -35,12 +37,16 @@ export function getExistingLibraryMediaIds(
                     LEFT JOIN ProviderItems pi
                       ON pi.provider_id = input.provider_id
                      AND pi.entity_type = 'album'
+                     AND (? IS NULL OR pi.provider = ?)
                     LEFT JOIN ReleaseGroupSlots rgs
-                      ON rgs.selected_provider_id = input.provider_id
-                      OR (
-                        pi.release_group_mbid IS NOT NULL
-                        AND rgs.release_group_mbid = pi.release_group_mbid
+                      ON (
+                        rgs.selected_provider_id = input.provider_id
+                        OR (
+                          pi.release_group_mbid IS NOT NULL
+                          AND rgs.release_group_mbid = pi.release_group_mbid
+                        )
                       )
+                     AND (? IS NULL OR rgs.selected_provider = ?)
                     WHERE COALESCE(pi.release_mbid, rgs.selected_release_mbid) IS NOT NULL
                 )
                 SELECT
@@ -59,7 +65,13 @@ export function getExistingLibraryMediaIds(
                   )
                  AND lf.file_type = 'track'
                  AND lf.library_slot = sr.library_slot
-            `).all(...albumIds) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>
+            `).all(
+                ...albumIds,
+                normalizedProvider,
+                normalizedProvider,
+                normalizedProvider,
+                normalizedProvider,
+            ) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>
             : [])
         : db.prepare(`
                 SELECT
@@ -74,10 +86,13 @@ export function getExistingLibraryMediaIds(
                  AND lf.file_type = ?
                 WHERE pi.provider_id = ?
                   AND pi.entity_type = ?
+                  AND (? IS NULL OR pi.provider = ?)
             `).all(
             type === 'video' ? 'video' : 'track',
             providerId,
             type === 'video' ? 'video' : 'track',
+            normalizedProvider,
+            normalizedProvider,
         ) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>;
 
     return rows
@@ -108,10 +123,12 @@ export function shouldQueueRedownloadForFailedImport(job: CommandModel): boolean
         return true;
     }
 
-    const downloadPath = job.payload.path || getDownloadWorkspacePath(mediaType, providerId);
+    const downloadPath = job.payload.path
+        ? validateDownloadWorkspacePath(job.payload.path)
+        : getDownloadWorkspacePath(mediaType, providerId, job.payload.provider);
     if (fs.existsSync(downloadPath)) {
         return false;
     }
 
-    return getExistingLibraryMediaIds(mediaType, providerId).length === 0;
+    return getExistingLibraryMediaIds(mediaType, providerId, job.payload.provider).length === 0;
 }

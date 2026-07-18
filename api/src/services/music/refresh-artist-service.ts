@@ -38,6 +38,17 @@ import { ArtistTopTrackService } from "./artist-top-track-service.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * Providers whose music-video catalog is treated as a CORE metadata source —
+ * always consulted for video discovery, exactly like MusicBrainz/Servarr, even
+ * when the user has not connected that provider's download plugin. YouTube is
+ * the canonical public music-video catalog; downloading or previewing one of its
+ * videos still requires the YouTube Music plugin to be configured.
+ */
+function isCoreVideoCatalogProvider(providerId: string): boolean {
+    return String(providerId || "").trim().toLowerCase() === "youtube-music";
+}
+
 function artistCatalogFingerprint(artistMbid: string | null): string | null {
     if (!artistMbid) return null;
     const artist = db.prepare("SELECT content_hash FROM ArtistMetadata WHERE mbid = ?")
@@ -63,6 +74,11 @@ function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId:
         return {
             ...raw,
             provider_id: String((raw as any).provider_id),
+            qualityTags: Array.isArray(providerAlbum.qualityTags)
+                ? providerAlbum.qualityTags
+                : Array.isArray((raw as any).qualityTags)
+                    ? (raw as any).qualityTags
+                    : [],
         };
     }
 
@@ -85,6 +101,7 @@ function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId:
         version: providerAlbum.version || null,
         explicit: providerAlbum.explicit || false,
         quality: providerAlbum.quality || "LOSSLESS",
+        qualityTags: Array.isArray(providerAlbum.qualityTags) ? providerAlbum.qualityTags : [],
         url: providerAlbum.url || null,
         popularity: 0,
         copyright: providerAlbum.copyright || null,
@@ -796,7 +813,10 @@ export class RefreshArtistService {
                     match?.status || "unmatched",
                     match?.confidence ?? null,
                     match?.method || null,
-                    match ? JSON.stringify(match.evidence) : null,
+                    match ? JSON.stringify({
+                        ...match.evidence,
+                        providerQualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
+                    }) : null,
                     album.cover || null,
                     artistMbid,
                 );
@@ -921,11 +941,12 @@ export class RefreshArtistService {
         if (albumProviderIds.length > 0) {
             const placeholders = albumProviderIds.map(() => "?").join(",");
             const trackRows = db.prepare(`
-                SELECT provider_album_id, provider_id, title, version, isrc, duration, track_number, volume_number, track_mbid, recording_mbid
+                SELECT provider, provider_album_id, provider_id, title, version, isrc, duration, track_number, volume_number, track_mbid, recording_mbid
                 FROM ProviderItems
                 WHERE entity_type = 'track'
                   AND provider_album_id IN (${placeholders})
             `).all(...albumProviderIds) as Array<{
+                provider: string;
                 provider_album_id: string | null;
                 provider_id: string | null;
                 title: string | null;
@@ -938,10 +959,11 @@ export class RefreshArtistService {
                 recording_mbid: string | null;
             }>;
             for (const track of trackRows) {
-                const key = String(track.provider_album_id || "");
-                if (!key) {
+                const providerAlbumId = String(track.provider_album_id || "");
+                if (!providerAlbumId) {
                     continue;
                 }
+                const key = `${track.provider}:${providerAlbumId}`;
                 const list = tracksByAlbum.get(key) || [];
                 list.push({
                     mbid: track.track_mbid || track.recording_mbid || null,
@@ -987,10 +1009,13 @@ export class RefreshArtistService {
                     version: row.version || null,
                     releaseDate: row.release_date || null,
                     quality: row.quality || null,
+                    qualityTags: Array.isArray(evidence.providerQualityTags)
+                        ? evidence.providerQualityTags.map((tag: unknown) => String(tag))
+                        : [],
                     explicit: row.explicit,
                     trackCount: providerTrackCount > 0 ? providerTrackCount : null,
                     volumeCount: providerVolumeCount > 0 ? providerVolumeCount : null,
-                    tracks: tracksByAlbum.get(providerId) || [],
+                    tracks: tracksByAlbum.get(`${row.provider}:${providerId}`) || [],
                 },
                 match: {
                     providerId,
@@ -1265,8 +1290,16 @@ export class RefreshArtistService {
 
         const shouldMonitor = options.monitorArtist === true ? true : (existing?.monitored || false);
         const shouldMonitorInt = shouldMonitor ? 1 : 0;
-        const provider = streamingProviderManager.getDefaultStreamingProvider();
-        const providerAuthenticated = provider.isAuthenticated ? provider.isAuthenticated() : true;
+        const provider = options.provider
+            ? streamingProviderManager.getStreamingProvider(options.provider)
+            : streamingProviderManager.getDefaultStreamingProvider();
+        let providerCatalogAvailable = true;
+        try {
+            providerCatalogAvailable = Boolean((await provider.getAuthStatus()).remoteCatalogAvailable);
+        } catch (error) {
+            providerCatalogAvailable = provider.isAuthenticated ? provider.isAuthenticated() : false;
+            console.warn(`[RefreshArtistService] Failed to read ${provider.name} catalog status:`, error);
+        }
 
         if (isMusicBrainzMbid(artistId) && (!existing || existing.mbid === artistId || String(existing.id) === artistId)) {
             await this.upsertMusicBrainzArtist(artistId, options);
@@ -1274,7 +1307,7 @@ export class RefreshArtistService {
             return;
         }
 
-        if (existing?.mbid && !providerAuthenticated) {
+        if (existing?.mbid && !providerCatalogAvailable) {
             await this.upsertMusicBrainzArtist(String(existing.mbid), {
                 ...options,
                 monitorArtist: options.monitorArtist === true ? true : Boolean(existing.monitored),
@@ -1354,7 +1387,9 @@ export class RefreshArtistService {
         }
 
         try {
-            const provider = streamingProviderManager.getDefaultStreamingProvider();
+            const provider = options.provider
+                ? streamingProviderManager.getStreamingProvider(options.provider)
+                : streamingProviderManager.getDefaultStreamingProvider();
             const bioText = await provider.getArtistBio?.(artistId);
 
             if (bioText !== null && bioText !== undefined) {
@@ -1491,7 +1526,38 @@ export class RefreshArtistService {
         shouldHydrateCatalog: boolean,
     ): Promise<void> {
         const providers = streamingProviderManager.getAllStreamingProviders();
-        const connectedProviders = providers.filter((p) => p.isAuthenticated ? p.isAuthenticated() : true);
+        const providerStatuses = await Promise.all(providers.map(async (provider) => {
+            try {
+                const status = await provider.getAuthStatus();
+                return { provider, status };
+            } catch (error) {
+                console.warn(`[RefreshArtistService] Failed to read ${provider.name} catalog status:`, error);
+                return null;
+            }
+        }));
+        const resolvedStatuses = providerStatuses.filter(
+            (entry): entry is NonNullable<typeof entry> => entry !== null,
+        );
+
+        // Album/track OFFERS only come from plugins the user actually connected.
+        // Deezer and YouTube Music expose a PUBLIC catalog (remoteCatalogAvailable
+        // is true with no credentials), so keying off that injected offers for
+        // providers the user never added in Settings.
+        const connectedProviders = resolvedStatuses
+            .filter((entry) => entry.status.connected)
+            .map((entry) => entry.provider);
+
+        // Music-video CATALOG is a core, always-on metadata source (like
+        // MusicBrainz/Servarr): YouTube keeps contributing video metadata even
+        // when its download plugin is not configured. Downloading/previewing that
+        // video still requires the corresponding plugin.
+        const videoCatalogProviders = resolvedStatuses
+            .filter((entry) => entry.status.connected
+                || (entry.status.remoteCatalogAvailable && isCoreVideoCatalogProvider(entry.provider.id)))
+            .map((entry) => entry.provider);
+        const videoOnlyProviders = videoCatalogProviders.filter(
+            (provider) => !connectedProviders.some((connected) => connected.id === provider.id),
+        );
 
         if (!shouldHydrateCatalog) {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
@@ -1504,7 +1570,7 @@ export class RefreshArtistService {
                 options.forceUpdate === true ||
                 shouldRefreshVideos({ artistId });
             if (shouldRefreshArtistVideos) {
-                await this.refreshProviderVideos(connectedProviders, artistId, artistMbid, options);
+                await this.refreshProviderVideos(videoCatalogProviders, artistId, artistMbid, options);
             }
             ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
             return;
@@ -1515,6 +1581,11 @@ export class RefreshArtistService {
                 `[RefreshArtistService] Skipping provider catalog hydration for ${artistId} ` +
                 `(no providers connected)`,
             );
+            // Video discovery is core metadata, so it still runs with no audio
+            // plugin connected (e.g. YouTube's public music-video catalog).
+            if (videoCatalogProviders.length > 0) {
+                await this.refreshProviderVideos(videoCatalogProviders, artistId, artistMbid, options);
+            }
             ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
             return;
         }
@@ -1526,6 +1597,20 @@ export class RefreshArtistService {
         }> = [];
         const refreshedProviders = new Set<string>();
         let totalAlbumsCount = 0;
+
+        // Core video-catalog providers that are NOT connected for audio still
+        // contribute music-video metadata (YouTube's public catalog). They are
+        // deliberately excluded from the album/offer hydration loop below.
+        for (const provider of videoOnlyProviders) {
+            try {
+                const providerArtistIds = await this.resolveProviderArtistIds(provider, artistId, artistMbid);
+                if (providerArtistIds.length > 0) {
+                    await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
+                }
+            } catch (err) {
+                console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
+            }
+        }
 
         for (const provider of connectedProviders) {
             const providerArtistIds = await this.resolveProviderArtistIds(provider, artistId, artistMbid);
@@ -1739,6 +1824,7 @@ export class RefreshArtistService {
                                 version: album.version ?? null,
                                 releaseDate: album.release_date ?? null,
                                 quality: album.quality ?? null,
+                                qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
                                 explicit: album.explicit ?? null,
                                 trackCount: album.num_tracks ?? null,
                                 volumeCount: album.num_volumes ?? null,

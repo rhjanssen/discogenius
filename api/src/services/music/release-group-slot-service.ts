@@ -17,6 +17,7 @@ export type ProviderAlbumSlotCandidate = {
     version?: string | null;
     releaseDate?: string | null;
     quality?: string | null;
+    qualityTags?: string[];
     explicit?: boolean | number | null;
     trackCount?: number | null;
     volumeCount?: number | null;
@@ -85,8 +86,55 @@ export function isSpatialQualityTag(quality?: string | null): boolean {
     return isSpatialAudioQuality(quality);
 }
 
-function slotForQuality(quality?: string | null): ReleaseGroupLibrarySlot {
-    return isSpatialQualityTag(quality) ? "spatial" : "stereo";
+function qualityTagsForAlbum(album: ProviderAlbumSlotCandidate): string[] {
+    const raw = objectRecord(album.raw);
+    const values = album.qualityTags
+        ?? (Array.isArray(raw.qualityTags) ? raw.qualityTags : undefined)
+        ?? (Array.isArray(raw.quality_tags) ? raw.quality_tags : undefined)
+        ?? [];
+    return values.map((value) => String(value)).filter(Boolean);
+}
+
+function bestStereoQualityFromTags(tags: string[]): string | null {
+    const normalized = new Set(tags.map(normalizeQualityTag));
+    if (normalized.has("HIRES_LOSSLESS") || normalized.has("HI_RES_LOSSLESS")) return "HIRES_LOSSLESS";
+    if (normalized.has("LOSSLESS")) return "LOSSLESS";
+    if (normalized.has("LOSSY_STEREO") || normalized.has("LOSSY") || normalized.has("AAC") || normalized.has("HIGH")) return "HIGH";
+    if (normalized.has("LOW")) return "LOW";
+    return null;
+}
+
+function slotVariantsForAlbum(
+    album: ProviderAlbumSlotCandidate,
+    includeSpatial: boolean,
+): Array<{ slot: ReleaseGroupLibrarySlot; album: ProviderAlbumSlotCandidate }> {
+    const qualityTags = qualityTagsForAlbum(album);
+    const scalarIsSpatial = isSpatialQualityTag(album.quality);
+    const hasSpatial = scalarIsSpatial || qualityTags.some(isSpatialQualityTag);
+    const stereoQuality = !scalarIsSpatial && album.quality
+        ? album.quality
+        : bestStereoQualityFromTags(qualityTags);
+    const variants: Array<{ slot: ReleaseGroupLibrarySlot; album: ProviderAlbumSlotCandidate }> = [];
+
+    if (stereoQuality) {
+        variants.push({
+            slot: "stereo",
+            album: { ...album, quality: stereoQuality, qualityTags },
+        });
+    }
+    if (includeSpatial && hasSpatial) {
+        variants.push({
+            slot: "spatial",
+            album: { ...album, quality: "DOLBY_ATMOS", qualityTags },
+        });
+    }
+
+    // Keep the historical default for unclassified provider offers: a catalog
+    // album with no quality metadata is still a stereo candidate.
+    if (variants.length === 0 && !hasSpatial) {
+        variants.push({ slot: "stereo", album: { ...album, qualityTags } });
+    }
+    return variants;
 }
 
 function qualityScore(slot: ReleaseGroupLibrarySlot, quality?: string | null): number {
@@ -651,20 +699,17 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        const slot = slotForQuality(album.quality);
-        if (slot === "spatial" && !includeSpatial) {
-            continue;
-        }
+        for (const variant of slotVariantsForAlbum(album, includeSpatial)) {
+            const score = scoreCandidate(variant.album, match, variant.slot, preferExplicit);
+            const key = `${match.releaseGroup.mbid}:${variant.slot}`;
 
-        const score = scoreCandidate(album, match, slot, preferExplicit);
-        const key = `${match.releaseGroup.mbid}:${slot}`;
-        
-        let list = candidatesByGroupAndSlot.get(key);
-        if (!list) {
-            list = [];
-            candidatesByGroupAndSlot.set(key, list);
+            let list = candidatesByGroupAndSlot.get(key);
+            if (!list) {
+                list = [];
+                candidatesByGroupAndSlot.set(key, list);
+            }
+            list.push({ provider, album: variant.album, match, score });
         }
-        list.push({ provider, album, match, score });
     }
 
     for (const [key, groupCandidates] of candidatesByGroupAndSlot.entries()) {

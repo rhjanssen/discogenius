@@ -1,6 +1,7 @@
 import { db } from "../../database.js";
+import { streamingProviderManager } from "../providers/index.js";
 import type { RefreshOptions } from "./scan-types.js";
-import { baseComparableTitle, sameRecordingTitle, videoComparableTitle } from "../mediafiles/import-matching-utils.js";
+import { videoComparableTitle } from "../mediafiles/import-matching-utils.js";
 
 type AudioRecordingVideoMatch = {
     id: number;
@@ -352,13 +353,52 @@ function ensureProviderVideoRecording(input: {
         return getRecordingIdByForeignId(recordingMbid);
     }
 
+    // Prefer a compatible canonical MusicBrainz video even when this provider
+    // item was linked to a provider-only row by an older refresh. Video titles
+    // need asset-aware comparison here: the shared audio-title matcher treats
+    // "Official Video", "Lyric Video", and "Performance" as decoration and
+    // would collapse genuinely different uploads onto one recording.
+    const musicBrainzRecordingId = artistMbid
+        ? findMusicBrainzVideoRecordingIdByTitle(artistMbid, title, lengthMs)
+        : null;
+    if (musicBrainzRecordingId) {
+        db.prepare(`
+            UPDATE Recordings
+            SET length_ms = COALESCE(length_ms, ?), updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(lengthMs, musicBrainzRecordingId);
+        return musicBrainzRecordingId;
+    }
+
+    if (input.existingRecordingId) {
+        const existing = db.prepare(`
+            SELECT id, title, length_ms
+            FROM Recordings
+            WHERE id = ? AND is_video = 1
+        `).get(input.existingRecordingId) as {
+            id: number;
+            title: string | null;
+            length_ms: number | null;
+        } | undefined;
+
+        // Existing links are evidence, not an identity override. Revalidate
+        // them so a refresh can split legacy canonical overmerges rather than
+        // keeping every old provider item pinned to the wrong recording.
+        if (!existing || !sameProviderVideo(title, lengthMs, String(existing.title || ""), existing.length_ms)) {
+            input.existingRecordingId = null;
+        }
+    }
+
     if (input.existingRecordingId) {
         db.prepare(`
             UPDATE Recordings
             SET
                 artist_metadata_id = COALESCE(artist_metadata_id, ?),
                 artist_mbid = COALESCE(artist_mbid, ?),
-                title = COALESCE(NULLIF(?, ''), title),
+                title = CASE
+                    WHEN mbid IS NULL THEN COALESCE(NULLIF(?, ''), title)
+                    ELSE title
+                END,
                 artist_credit = COALESCE(artist_credit, ?),
                 length_ms = COALESCE(?, length_ms),
                 is_video = 1,
@@ -377,24 +417,6 @@ function ensureProviderVideoRecording(input: {
             input.existingRecordingId,
         );
         return input.existingRecordingId;
-    }
-
-    // No provider MBID and no prior match: before minting a new provider-only
-    // recording, attach to an existing MusicBrainz video recording for this
-    // artist with the same comparable title (e.g. MB "Living" ↔ TIDAL "Living
-    // (feat. Alex Clare) (Official Video)"). Otherwise the canonical MB video and
-    // its streaming source stay split — the MB video has no downloadable offer
-    // and the provider video is an orphan.
-    const musicBrainzRecordingId = artistMbid
-        ? findMusicBrainzVideoRecordingIdByTitle(artistMbid, title)
-        : null;
-    if (musicBrainzRecordingId) {
-        db.prepare(`
-            UPDATE Recordings
-            SET length_ms = COALESCE(length_ms, ?), updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        `).run(lengthMs, musicBrainzRecordingId);
-        return musicBrainzRecordingId;
     }
 
     // Cross-provider dedup: another provider may already have minted a
@@ -457,29 +479,79 @@ function videoVariantClass(title: string): string {
 }
 
 /**
+ * Title with parenthetical/bracketed qualifiers removed entirely, e.g.
+ * `SAVE MY SOUL ("FROM ALL SIDES" Tour)` → `save my soul`. Used for the
+ * qualifier-tolerant dedup fallback where one provider labels a variant the
+ * other leaves unlabeled.
+ */
+function videoCoreTitle(title: string): string {
+    return videoComparableTitle(String(title || "").replace(/\([^)]*\)|\[[^\]]*\]/g, " "));
+}
+
+/**
+ * Whether two provider video entries describe the SAME video. Two passes:
+ * 1. Exact comparable base title + same variant class (duration only rejects
+ *    when both sides are known and differ by >3s).
+ * 2. Qualifier-tolerant fallback: identical core titles (all parenthetical
+ *    qualifiers stripped) where at most one side carries a variant label and
+ *    BOTH durations are known and within 3s. Catches TIDAL "SAVE MY SOUL"
+ *    (256s) vs Apple `SAVE MY SOUL ("FROM ALL SIDES" Tour)` (256s) without
+ *    merging "X (Audio)" with "X (Lyric Video)" or a 4-minute video with a
+ *    9-minute live cut.
+ */
+function sameProviderVideo(
+    titleA: string,
+    lengthMsA: number | null,
+    titleB: string,
+    lengthMsB: number | null,
+): boolean {
+    const baseA = videoComparableTitle(titleA);
+    const baseB = videoComparableTitle(titleB);
+    if (!baseA || !baseB) {
+        return false;
+    }
+    const clsA = videoVariantClass(titleA);
+    const clsB = videoVariantClass(titleB);
+    const durationsKnown = lengthMsA != null && lengthMsB != null;
+    const durationsClose = durationsKnown && Math.abs((lengthMsA as number) - (lengthMsB as number)) <= 3000;
+    if (baseA === baseB && clsA === clsB) {
+        return !durationsKnown || durationsClose;
+    }
+    const coreA = videoCoreTitle(titleA);
+    const coreB = videoCoreTitle(titleB);
+    if (!coreA || coreA !== coreB) {
+        return false;
+    }
+    if (!durationsClose) {
+        return false;
+    }
+    if (clsA === clsB) {
+        return true;
+    }
+    // An explicit lyric/audio/visualizer/live marker identifies a different
+    // asset class even when its duration happens to match the ordinary video.
+    // Cross-provider grouping is conservative when only one provider labels
+    // the variant; exact same-class labels still merge above.
+    return false;
+}
+
+/**
  * Find an existing provider-only video recording for the artist that describes
  * the SAME video from another provider: same comparable base title, same
  * variant class, and a compatible duration (within 3 seconds; the closest
  * duration wins when several qualify).
  */
 function findProviderOnlyVideoRecordingId(artistMbid: string, title: string, lengthMs: number | null): number | null {
-    const base = videoComparableTitle(title);
-    if (!base) {
+    if (!videoComparableTitle(title)) {
         return null;
     }
-    const variant = videoVariantClass(title);
     const rows = db.prepare(`
         SELECT id, title, length_ms
         FROM Recordings
         WHERE is_video = 1 AND mbid IS NULL AND artist_mbid = ?
     `).all(artistMbid) as Array<{ id: number; title: string | null; length_ms: number | null }>;
-    const candidates = rows.filter((row) => {
-        const rowTitle = String(row.title || "");
-        if (videoComparableTitle(rowTitle) !== base) return false;
-        if (videoVariantClass(rowTitle) !== variant) return false;
-        if (row.length_ms != null && lengthMs != null && Math.abs(row.length_ms - lengthMs) > 3000) return false;
-        return true;
-    });
+    const candidates = rows.filter((row) =>
+        sameProviderVideo(title, lengthMs, String(row.title || ""), row.length_ms));
     if (candidates.length === 0) {
         return null;
     }
@@ -489,25 +561,211 @@ function findProviderOnlyVideoRecordingId(artistMbid: string, title: string, len
     return Number(candidates[0].id);
 }
 
-function findMusicBrainzVideoRecordingIdByTitle(artistMbid: string, title: string): number | null {
-    // Reuse the shared recording-title comparison (same base title + compatible
-    // significant version) so "Living (feat. Alex Clare) (Official Video)" unifies
-    // with the canonical MB "Living", while a genuinely different version (e.g. a
-    // live cut) is not force-merged. One definition, shared with track matching.
-    if (!baseComparableTitle(title)) {
+/**
+ * Heal duplicate provider-only video recordings for an artist. New provider
+ * items only run dedup when they have no recording yet — items that minted a
+ * duplicate before dedup existed (or before the qualifier-tolerant rule) keep
+ * it forever, so every video refresh sweeps the artist and merges recordings
+ * that now qualify as the same video (references repoint to the kept row).
+ */
+function dedupeProviderOnlyVideoRecordings(artistMbid: string): number {
+    const rows = db.prepare(`
+        SELECT id, title, length_ms
+        FROM Recordings
+        WHERE is_video = 1 AND mbid IS NULL AND artist_mbid = ?
+        ORDER BY id
+    `).all(artistMbid) as Array<{ id: number; title: string | null; length_ms: number | null }>;
+    let merged = 0;
+    const kept: Array<{ id: number; title: string; length_ms: number | null }> = [];
+    for (const row of rows) {
+        const title = String(row.title || "");
+        const target = kept.find((k) => sameProviderVideo(k.title, k.length_ms, title, row.length_ms));
+        if (!target) {
+            kept.push({ id: row.id, title, length_ms: row.length_ms });
+            continue;
+        }
+        db.prepare(`UPDATE ProviderItems SET recording_id = ? WHERE recording_id = ?`).run(target.id, row.id);
+        db.prepare(`UPDATE TrackFiles SET recording_id = ? WHERE recording_id = ?`).run(target.id, row.id);
+        db.prepare(`UPDATE OR IGNORE RecordingRelations SET source_recording_id = ? WHERE source_recording_id = ?`).run(target.id, row.id);
+        db.prepare(`UPDATE OR IGNORE RecordingRelations SET target_recording_id = ? WHERE target_recording_id = ?`).run(target.id, row.id);
+        db.prepare(`DELETE FROM RecordingRelations WHERE source_recording_id = ? OR target_recording_id = ?`).run(row.id, row.id);
+        db.prepare(`
+            UPDATE Recordings
+            SET length_ms = COALESCE(length_ms, (SELECT length_ms FROM Recordings WHERE id = ?)),
+                cover_image_id = COALESCE(cover_image_id, (SELECT cover_image_id FROM Recordings WHERE id = ?)),
+                cover_image_url = COALESCE(cover_image_url, (SELECT cover_image_url FROM Recordings WHERE id = ?)),
+                release_date = COALESCE(release_date, (SELECT release_date FROM Recordings WHERE id = ?)),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(row.id, row.id, row.id, row.id, target.id);
+        db.prepare(`DELETE FROM Recordings WHERE id = ?`).run(row.id);
+        merged += 1;
+    }
+    return merged;
+}
+
+function findMusicBrainzVideoRecordingIdByTitle(
+    artistMbid: string,
+    title: string,
+    lengthMs: number | null,
+): number | null {
+    if (!videoComparableTitle(title)) {
         return null;
     }
     const rows = db.prepare(`
-        SELECT id, title
+        SELECT id, title, length_ms
         FROM Recordings
         WHERE is_video = 1 AND mbid IS NOT NULL AND artist_mbid = ?
-    `).all(artistMbid) as Array<{ id: number; title: string | null }>;
-    for (const row of rows) {
-        if (sameRecordingTitle(title, row.title)) {
-            return Number(row.id);
-        }
+    `).all(artistMbid) as Array<{ id: number; title: string | null; length_ms: number | null }>;
+    const candidates = rows.filter((row) =>
+        sameProviderVideo(title, lengthMs, String(row.title || ""), row.length_ms));
+    if (candidates.length === 0) {
+        return null;
     }
-    return null;
+    candidates.sort((left, right) => {
+        const leftDelta = lengthMs != null && left.length_ms != null
+            ? Math.abs(left.length_ms - lengthMs)
+            : Number.MAX_SAFE_INTEGER;
+        const rightDelta = lengthMs != null && right.length_ms != null
+            ? Math.abs(right.length_ms - lengthMs)
+            : Number.MAX_SAFE_INTEGER;
+        return leftDelta - rightDelta || left.id - right.id;
+    });
+    return Number(candidates[0].id);
+}
+
+/**
+ * Re-evaluate every provider video for an artist, not only offers returned by
+ * the current provider refresh. This heals legacy rows where lyric/live/audio
+ * variants were attached to one canonical MusicBrainz recording, and also
+ * promotes old provider-only rows when a compatible canonical recording has
+ * since appeared.
+ */
+function repairProviderVideoRecordingAssignments(artistMbid: string): number {
+    const rows = db.prepare(`
+        SELECT
+            provider_item.provider,
+            provider_item.provider_id,
+            provider_item.provider_album_id,
+            provider_item.recording_mbid,
+            provider_item.title,
+            provider_item.duration,
+            provider_item.release_date,
+            provider_item.provider_url,
+            provider_item.asset_id,
+            provider_item.recording_id,
+            COALESCE(provider_item.artist_mbid, recording.artist_mbid) AS artist_mbid
+        FROM ProviderItems provider_item
+        JOIN Recordings recording ON recording.id = provider_item.recording_id
+        WHERE provider_item.entity_type = 'video'
+          AND recording.artist_mbid = ?
+        ORDER BY provider_item.provider, provider_item.provider_id
+    `).all(artistMbid) as Array<{
+        provider: string;
+        provider_id: string;
+        provider_album_id: string | null;
+        recording_mbid: string | null;
+        title: string | null;
+        duration: number | null;
+        release_date: string | null;
+        provider_url: string | null;
+        asset_id: string | null;
+        recording_id: number;
+        artist_mbid: string | null;
+    }>;
+
+    const updateProviderItem = db.prepare(`
+        UPDATE ProviderItems
+        SET recording_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE provider = ? AND entity_type = 'video' AND provider_id = ?
+    `);
+    const updateTrackFiles = db.prepare(`
+        UPDATE TrackFiles
+        SET recording_id = ?,
+            canonical_recording_mbid = (SELECT mbid FROM Recordings WHERE id = ?)
+        WHERE provider = ?
+          AND (provider_entity_type = 'video' OR library_slot = 'video')
+          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+    `);
+    const copyAudioRelations = db.prepare(`
+        INSERT OR IGNORE INTO RecordingRelations (
+            source_recording_id, target_recording_id, source_foreign_recording_id,
+            target_foreign_recording_id, relation_type, source, confidence, data, updated_at
+        )
+        SELECT
+            ?, target_recording_id,
+            (SELECT mbid FROM Recordings WHERE id = ?),
+            target_foreign_recording_id, relation_type, source, confidence, data,
+            CURRENT_TIMESTAMP
+        FROM RecordingRelations
+        WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+    `);
+    const inheritMonitoredState = db.prepare(`
+        UPDATE Recordings
+        SET monitored = CASE
+                WHEN monitored_lock = 1 THEN monitored
+                WHEN (SELECT monitored FROM Recordings WHERE id = ?) = 1 THEN 1
+                ELSE monitored
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `);
+
+    let repaired = 0;
+    for (const row of rows) {
+        // A missing provider title cannot safely disprove the existing link.
+        // Leave sparse legacy offers untouched until a provider refresh fills
+        // their metadata rather than splitting them into "Unknown Video" rows.
+        if (!nullableText(row.title)) {
+            continue;
+        }
+        const targetRecordingId = ensureProviderVideoRecording({
+            video: {
+                provider: row.provider,
+                provider_id: row.provider_id,
+                album_id: row.provider_album_id,
+                recording_mbid: row.recording_mbid,
+                artist_mbid: row.artist_mbid,
+                title: row.title,
+                duration: row.duration,
+                release_date: row.release_date,
+                url: row.provider_url,
+                image_id: row.asset_id,
+            },
+            artistMbid: row.artist_mbid ?? artistMbid,
+            existingRecordingId: row.recording_id,
+        });
+        if (!targetRecordingId || targetRecordingId === row.recording_id) {
+            continue;
+        }
+
+        copyAudioRelations.run(targetRecordingId, targetRecordingId, row.recording_id);
+        inheritMonitoredState.run(row.recording_id, targetRecordingId);
+        updateProviderItem.run(targetRecordingId, row.provider, row.provider_id);
+        updateTrackFiles.run(targetRecordingId, targetRecordingId, row.provider, row.provider_id);
+        repaired += 1;
+    }
+    return repaired;
+}
+
+function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string): number {
+    const rows = db.prepare(`
+        SELECT recording.id
+        FROM Recordings recording
+        WHERE recording.is_video = 1
+          AND recording.mbid IS NULL
+          AND recording.artist_mbid = ?
+          AND recording.monitored_lock = 0
+          AND NOT EXISTS (SELECT 1 FROM ProviderItems item WHERE item.recording_id = recording.id)
+          AND NOT EXISTS (SELECT 1 FROM TrackFiles file WHERE file.recording_id = recording.id)
+          AND NOT EXISTS (SELECT 1 FROM Tracks track WHERE track.recording_id = recording.id)
+    `).all(artistMbid) as Array<{ id: number }>;
+    for (const row of rows) {
+        db.prepare(`DELETE FROM RecordingRelations WHERE source_recording_id = ? OR target_recording_id = ?`)
+            .run(row.id, row.id);
+        db.prepare(`DELETE FROM Recordings WHERE id = ?`).run(row.id);
+    }
+    return rows.length;
 }
 
 export class RefreshVideoService {
@@ -568,8 +826,9 @@ export class RefreshVideoService {
             }
             return rows;
         };
+        const canonicalArtistMbid = getArtistMusicBrainzId(artistId);
         const preparedVideos = videos.map((video) => {
-            const artistMbid = String(video.artist_mbid || video.mb_artist_mbid || "").trim() || getArtistMusicBrainzId(artistId);
+            const artistMbid = String(video.artist_mbid || video.mb_artist_mbid || "").trim() || canonicalArtistMbid;
             return {
                 video,
                 artistMbid,
@@ -579,7 +838,7 @@ export class RefreshVideoService {
 
         db.transaction(() => {
             for (const { video, artistMbid, audioMatch } of preparedVideos) {
-                const provider = String(video.provider || video._provider || "tidal");
+                const provider = String(video.provider || video._provider || streamingProviderManager.getDefaultProviderId());
                 const existingProviderItem = selectProviderItem.get(provider, String(video.provider_id)) as { recording_id?: number | null } | undefined;
                 const identity = buildVideoIdentity(video);
                 const recordingMbid = String(video.mbid || video.recording_mbid || "").trim() || null;
@@ -626,8 +885,27 @@ export class RefreshVideoService {
                     JSON.stringify(identity.evidence)
                 );
             }
+
+            const sweptArtists = new Set<string>();
+            const normalizedCanonicalArtistMbid = nullableText(canonicalArtistMbid);
+            if (normalizedCanonicalArtistMbid) {
+                sweptArtists.add(normalizedCanonicalArtistMbid);
+            }
+            for (const { artistMbid } of preparedVideos) {
+                const normalized = nullableText(artistMbid);
+                if (normalized) sweptArtists.add(normalized);
+            }
+            for (const normalized of sweptArtists) {
+                const repaired = repairProviderVideoRecordingAssignments(normalized);
+                if (repaired > 0) {
+                    console.log(`[RefreshVideoService] Repaired ${repaired} provider video recording assignment(s) for artist ${normalized}`);
+                }
+                const merged = dedupeProviderOnlyVideoRecordings(normalized);
+                if (merged > 0) {
+                    console.log(`[RefreshVideoService] Merged ${merged} duplicate provider-only video recording(s) for artist ${normalized}`);
+                }
+                deleteOrphanProviderOnlyVideoRecordings(normalized);
+            }
         })();
     }
 }
-
-

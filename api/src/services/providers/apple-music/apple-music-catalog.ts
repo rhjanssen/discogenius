@@ -38,7 +38,10 @@ export function renderAppleArtwork(artwork: AppleArtwork | undefined | null, siz
 
 function audioTraits(attributes: Record<string, unknown> | undefined): string[] {
   const traits = (attributes as { audioTraits?: unknown })?.audioTraits;
-  return Array.isArray(traits) ? traits.map((t) => String(t)) : [];
+  if (Array.isArray(traits)) return traits.map((t) => String(t));
+  const variants = (attributes as { audioVariants?: unknown })?.audioVariants;
+  if (Array.isArray(variants)) return variants.map((v) => String(v));
+  return [];
 }
 
 /**
@@ -158,6 +161,10 @@ export function mapAppleTrack(resource: AppleResource): ProviderTrack {
     copyright: attrs.copyright || null,
     quality: bestAppleAudioQuality(traits),
     qualityTags: traits,
+    // Apple bundles music videos into album tracklists (type "music-videos"
+    // resources between the "songs"); flag them so the import pipeline treats
+    // the file as a video while keeping its album/track identity.
+    isVideo: resource.type === "music-videos" || undefined,
     raw: resource,
   };
 }
@@ -211,7 +218,7 @@ export async function getAppleArtist(id: string, options: AppleMusicApiOptions =
 export async function getAppleArtistAlbums(id: string, options: AppleMusicApiOptions = {}): Promise<ProviderAlbum[]> {
   const sf = storefrontFor(options.token);
   const res = await appleMusicApiRequest<AppleDataResponse>(
-    `/v1/catalog/${sf}/artists/${id}/albums?limit=100`,
+    `/v1/catalog/${sf}/artists/${id}/albums?limit=100&extend=audioVariants`,
     options,
   );
   return (res.data ?? []).map(mapAppleAlbum);
@@ -228,7 +235,7 @@ export async function getAppleArtistVideos(id: string, options: AppleMusicApiOpt
 
 export async function getAppleAlbum(id: string, options: AppleMusicApiOptions = {}): Promise<ProviderAlbum> {
   const sf = storefrontFor(options.token);
-  const res = await appleMusicApiRequest<AppleDataResponse>(`/v1/catalog/${sf}/albums/${id}`, options);
+  const res = await appleMusicApiRequest<AppleDataResponse>(`/v1/catalog/${sf}/albums/${id}?extend=audioVariants`, options);
   const resource = first(res);
   if (!resource) throw new Error(`Apple Music album not found: ${id}`);
   return mapAppleAlbum(resource);
@@ -237,7 +244,7 @@ export async function getAppleAlbum(id: string, options: AppleMusicApiOptions = 
 export async function getAppleAlbumTracks(id: string, options: AppleMusicApiOptions = {}): Promise<ProviderTrack[]> {
   const sf = storefrontFor(options.token);
   const res = await appleMusicApiRequest<AppleDataResponse>(
-    `/v1/catalog/${sf}/albums/${id}/tracks`,
+    `/v1/catalog/${sf}/albums/${id}/tracks?extend=audioVariants`,
     options,
   );
   return (res.data ?? []).map(mapAppleTrack);
@@ -245,7 +252,7 @@ export async function getAppleAlbumTracks(id: string, options: AppleMusicApiOpti
 
 export async function getAppleTrack(id: string, options: AppleMusicApiOptions = {}): Promise<ProviderTrack> {
   const sf = storefrontFor(options.token);
-  const res = await appleMusicApiRequest<AppleDataResponse>(`/v1/catalog/${sf}/songs/${id}`, options);
+  const res = await appleMusicApiRequest<AppleDataResponse>(`/v1/catalog/${sf}/songs/${id}?extend=audioVariants`, options);
   const resource = first(res);
   if (!resource) throw new Error(`Apple Music track not found: ${id}`);
   return mapAppleTrack(resource);
@@ -309,7 +316,7 @@ export async function searchApple(
   const term = encodeURIComponent(query);
   const typesParam = appleTypes.length ? appleTypes.join(",") : "artists,albums,songs,music-videos";
   const res = await appleMusicApiRequest<AppleSearchResponse>(
-    `/v1/catalog/${sf}/search?term=${term}&types=${typesParam}&limit=${limit}`,
+    `/v1/catalog/${sf}/search?term=${term}&types=${typesParam}&limit=${limit}&extend=audioVariants`,
     options,
   );
   const results = res.results ?? {};

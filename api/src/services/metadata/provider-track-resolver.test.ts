@@ -108,6 +108,22 @@ test("canonical provider track resolution splits combined provider album selecti
   assert.deepEqual(providerCalls, ["album-a", "album-b"]);
   assert.equal(resolved?.providerAlbumId, "album-b");
   assert.equal(resolved?.providerTrackId, "track-b");
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, quality, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid-1", "rg-mbid-1", "spatial", 1, "test-provider", "album-a;album-b", "DOLBY_ATMOS", "verified");
+  providerCalls.length = 0;
+  const spatialResolved = await resolverModule.resolveProviderTrackForCanonicalTrack({
+    releaseGroupMbid: "rg-mbid-1",
+    canonicalTrackMbid: "track-mbid-2",
+    slot: "spatial",
+  });
+
+  assert.deepEqual(providerCalls, ["album-a", "album-b"]);
+  assert.equal(spatialResolved?.slot, "spatial");
+  assert.equal(spatialResolved?.quality, "DOLBY_ATMOS");
 });
 
 test("canonical provider track resolution includes provider version text while matching", async () => {

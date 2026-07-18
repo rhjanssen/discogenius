@@ -256,6 +256,7 @@ export type StreamingProviderStatus = {
         label: string;
         secret?: boolean;
         required?: boolean;
+        multiline?: boolean;
         helpText?: string;
       }>;
     };
@@ -474,10 +475,32 @@ class ApiClient {
     return this.request(`/auth/device-login${suffix}`, { method: 'POST' });
   }
 
-  async saveProviderCredentials(provider: string, credentials: Record<string, unknown>) {
+  async saveProviderCredentials(
+    provider: string,
+    credentials: Record<string, unknown>,
+  ): Promise<{ success: boolean; provider: string; status: AuthStatusContract }> {
     return this.request('/auth/credentials', {
       method: 'POST',
       body: JSON.stringify({ provider, credentials }),
+    });
+  }
+
+  /** Hand Apple ID credentials to the decryption wrapper (transient — never stored). */
+  async runAppleWrapperLogin(appleId: string, password: string) {
+    return this.request('/auth/apple-music/downloader-login', {
+      method: 'POST',
+      body: JSON.stringify({ appleId, password }),
+    });
+  }
+
+  async getAppleWrapperStatus(): Promise<{ status: string; message: string }> {
+    return this.request('/auth/apple-music/downloader-login/status');
+  }
+
+  async submitAppleWrapper2fa(code: string) {
+    return this.request('/auth/apple-music/downloader-login/code', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
     });
   }
 
@@ -806,6 +829,8 @@ class ApiClient {
     downloaded?: boolean;
     locked?: boolean;
     library_filter?: string;
+    provider?: string;
+    quality_tier?: string;
     sort?: string;
     dir?: 'asc' | 'desc';
     timeoutMs?: number | null;
@@ -819,6 +844,8 @@ class ApiClient {
     if (params?.downloaded !== undefined) queryParams.set('downloaded', params.downloaded ? 'true' : 'false');
     if (params?.locked !== undefined) queryParams.set('locked', params.locked ? 'true' : 'false');
     if (params?.library_filter) queryParams.set('library_filter', params.library_filter);
+    if (params?.provider) queryParams.set('provider', params.provider);
+    if (params?.quality_tier) queryParams.set('quality_tier', params.quality_tier);
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();

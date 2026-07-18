@@ -40,9 +40,17 @@ services:
   apple-music-wrapper:
     image: ghcr.io/itouakirai/wrapper:x86
     profiles: ["apple-music"]
+    # Shares the discogenius network namespace. If the discogenius container is
+    # RECREATED (not just restarted), recreate this one too — otherwise it stays
+    # attached to the dead namespace and ports 10020/20020 become unreachable:
+    #   docker compose up -d --force-recreate apple-music-wrapper
     network_mode: "service:discogenius"
-    environment:
-      - args=-M 20020 -H 0.0.0.0
+    entrypoint: ["/bin/bash", "/app/wrapper-entrypoint.sh"]
+    # Discogenius provisions the mounted entrypoint script at boot, so start
+    # after it (and restart until the file exists on very first boot).
+    depends_on:
+      - discogenius
     volumes:
       - ./config/providers/apple-music/wrapper-rootfs/data:/app/rootfs/data
+      - ./config/providers/apple-music/wrapper-entrypoint.sh:/app/wrapper-entrypoint.sh
     restart: unless-stopped

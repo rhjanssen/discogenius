@@ -32,6 +32,8 @@ export interface ReleaseAvailabilityProvider {
   confidence: number | null;
   matchKind?: "direct" | "composite";
   coverageSummary?: string | null;
+  /** Whether this provider edition is the explicit cut (null when unknown/composite). */
+  explicit?: boolean | null;
 }
 
 export interface ReleaseAvailability {
@@ -52,6 +54,8 @@ export interface ReleaseGroupAvailability {
   releaseGroupMbid: string;
   /** slot name -> selected release MBID (from ReleaseGroupSlots). */
   selectedReleaseBySlot: Record<string, string | null>;
+  /** slot name -> the provider offer that currently fills the slot. */
+  selectedOfferBySlot: Record<string, { provider: string | null; providerAlbumId: string | null }>;
   releases: ReleaseAvailability[];
 }
 
@@ -417,7 +421,8 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       pm.confidence       AS confidence,
       pm.evidence         AS evidence,
       pi.quality          AS quality,
-      pi.library_slot     AS library_slot
+      pi.library_slot     AS library_slot,
+      pi.explicit         AS explicit
     FROM AlbumReleases ar
     LEFT JOIN ProviderItemMatches pm
       ON pm.provider_item_type = 'album'
@@ -487,6 +492,7 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
     evidence: string | null;
     quality: string | null;
     library_slot: string | null;
+    explicit: number | null;
   }>;
 
   const byRelease = new Map<string, ReleaseAvailability>();
@@ -531,6 +537,9 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
           confidence: r.confidence,
           matchKind: "composite",
           coverageSummary: parsed.coverageSummary != null ? String(parsed.coverageSummary) : null,
+          // A composite spans multiple provider albums, so a single explicit
+          // flag is not meaningful.
+          explicit: null,
         });
       } else {
         rel.availability.push({
@@ -541,14 +550,78 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
           status: r.status,
           confidence: r.confidence,
           matchKind: "direct",
+          explicit: r.explicit == null ? null : Boolean(r.explicit),
         });
       }
     }
   }
 
-  // Composite offers carry their quality in evidence, not a joinable ProviderItems
-  // row, so the SQL quality ordering can't see them. Re-order each release's offers
-  // by slot then quality so the badge order is deterministic across direct + composite.
+  const slotRows = db.prepare(`
+    SELECT slot, selected_release_mbid, selected_provider, selected_provider_id, quality
+    FROM ReleaseGroupSlots WHERE release_group_mbid = ?
+  `).all(releaseGroupMbid) as Array<{
+    slot: string;
+    selected_release_mbid: string | null;
+    selected_provider: string | null;
+    selected_provider_id: string | null;
+    quality: string | null;
+  }>;
+  const selectedReleaseBySlot: Record<string, string | null> = {};
+  const selectedOfferBySlot: Record<string, { provider: string | null; providerAlbumId: string | null }> = {};
+  for (const s of slotRows) {
+    selectedReleaseBySlot[s.slot] = s.selected_release_mbid ?? null;
+    selectedOfferBySlot[s.slot] = {
+      provider: s.selected_provider ?? null,
+      providerAlbumId: s.selected_provider_id ?? null,
+    };
+  }
+
+  // Multi-format provider albums (Apple/Amazon bundle stereo + Atmos in a SINGLE
+  // album id) are persisted as one ProviderItems row under one library_slot, so
+  // the direct join above only surfaces that one slot. TIDAL, by contrast, ships
+  // a separate album id per format so each shows up on its own. The per-slot
+  // ReleaseGroupSlots selection is the source of truth for which album fills each
+  // slot; surface any selected offer the join missed so a release's Atmos offer
+  // never disappears from the switcher just because the same album also serves
+  // stereo (the "header says Apple Atmos but the list only shows TIDAL" bug).
+  const lookupExplicit = db.prepare(`
+    SELECT explicit FROM ProviderItems
+    WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
+  `);
+  for (const s of slotRows) {
+    const releaseMbid = s.selected_release_mbid;
+    const provider = s.selected_provider;
+    const providerAlbumId = s.selected_provider_id;
+    if (!releaseMbid || !provider || !providerAlbumId) continue;
+    const rel = byRelease.get(releaseMbid);
+    if (!rel) continue;
+    const albumIds = splitProviderAlbumIds(providerAlbumId);
+    const isComposite = albumIds.length > 1;
+    const alreadyPresent = rel.availability.some((offer) =>
+      String(offer.provider).toLowerCase() === provider.toLowerCase()
+      && (offer.librarySlot || "") === s.slot
+      && sameProviderAlbumSet(offer.providerAlbumId, providerAlbumId));
+    if (alreadyPresent) continue;
+    const explicit = isComposite
+      ? null
+      : (lookupExplicit.get(provider, providerAlbumId) as { explicit: number | null } | undefined)?.explicit ?? null;
+    rel.availability.push({
+      provider,
+      providerAlbumId: isComposite ? joinProviderAlbumIds(albumIds) : providerAlbumId,
+      providerAlbumIds: isComposite ? albumIds : undefined,
+      quality: s.quality,
+      librarySlot: s.slot,
+      status: "verified",
+      confidence: 1,
+      matchKind: isComposite ? "composite" : "direct",
+      explicit: explicit == null ? null : Boolean(explicit),
+    });
+  }
+
+  // Composite and slot-derived offers carry their quality outside a joinable
+  // ProviderItems row, so the SQL quality ordering can't see them. Re-order each
+  // release's offers by slot then quality so the badge order is deterministic
+  // across direct, composite and slot-derived offers.
   const slotRank = (slot: string | null): number =>
     slot === "stereo" ? 0 : slot === "spatial" ? 1 : slot === "video" ? 2 : 9;
   const qualityRank = (quality: string | null): number => {
@@ -568,15 +641,10 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       || String(a.providerAlbumId || "").localeCompare(String(b.providerAlbumId || "")));
   }
 
-  const slotRows = db.prepare(`
-    SELECT slot, selected_release_mbid FROM ReleaseGroupSlots WHERE release_group_mbid = ?
-  `).all(releaseGroupMbid) as Array<{ slot: string; selected_release_mbid: string | null }>;
-  const selectedReleaseBySlot: Record<string, string | null> = {};
-  for (const s of slotRows) selectedReleaseBySlot[s.slot] = s.selected_release_mbid ?? null;
-
   return {
     releaseGroupMbid,
     selectedReleaseBySlot,
+    selectedOfferBySlot,
     releases: Array.from(byRelease.values()),
   };
 }

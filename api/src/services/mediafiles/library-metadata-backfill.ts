@@ -451,6 +451,7 @@ class LibraryMetadataBackfillService {
         FROM TrackFiles lf
         LEFT JOIN ProviderItems pi
           ON pi.entity_type = 'track'
+         AND (lf.provider IS NULL OR pi.provider = lf.provider)
          AND (
             (
               lf.provider_id IS NOT NULL
@@ -474,7 +475,11 @@ class LibraryMetadataBackfillService {
           SELECT 1 FROM LyricFiles lyric
           WHERE lyric.library_slot IS track.library_slot
             AND (
-              (lyric.provider_entity_type = 'track' AND CAST(lyric.provider_id AS TEXT) = CAST(track.provider_id AS TEXT))
+              (
+                lyric.provider_entity_type = 'track'
+                AND CAST(lyric.provider_id AS TEXT) = CAST(track.provider_id AS TEXT)
+                AND (lyric.provider IS NULL OR lyric.provider = track.provider)
+              )
               OR (
                 track.canonical_recording_mbid IS NOT NULL
                 AND lyric.canonical_recording_mbid = track.canonical_recording_mbid
@@ -527,7 +532,7 @@ class LibraryMetadataBackfillService {
             }
 
             try {
-                await saveLyricsFile(String(track.provider_id), lrcPath);
+                await saveLyricsFile(String(track.provider_id), lrcPath, track.provider);
                 if (fs.existsSync(lrcPath)) {
                     this.upsertLibraryFile({
                         artistId,

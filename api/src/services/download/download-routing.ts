@@ -1,6 +1,7 @@
 import path from "path";
 import { Config } from "../config/config.js";
 import { streamingProviderManager } from "../providers/index.js";
+import { assertPathInsideRoot, assertSafeDownloadResourceId } from "./download-path-safety.js";
 
 export type StreamingSourceId = string;
 export type DownloadMediaType = "album" | "track" | "video";
@@ -22,14 +23,30 @@ export function getDefaultStreamingSource(): StreamingSourceId {
 export function getDownloadWorkspacePath(
     type: DownloadMediaType,
     sourceId: string,
-    streamingSource: StreamingSourceId = getDefaultStreamingSource(),
+    streamingSource?: StreamingSourceId,
 ): string {
-    const provider = streamingProviderManager.getStreamingProvider(streamingSource);
-    if (!provider) {
-        throw new Error(`Unsupported streaming source: ${streamingSource}`);
+    const safeSourceId = assertSafeDownloadResourceId(sourceId);
+    const downloadRoot = Config.getDownloadPath();
+    // New jobs namespace staging by provider so equal catalog IDs cannot share
+    // or delete each other's resumable workspace. Keeping the provider optional
+    // preserves the legacy path for persisted jobs created before this change.
+    if (streamingSource) {
+        streamingProviderManager.getStreamingProvider(streamingSource);
+        return assertPathInsideRoot(
+            downloadRoot,
+            path.join(downloadRoot, DOWNLOAD_FOLDERS[type], streamingSource, safeSourceId),
+        );
     }
 
-    return path.join(Config.getDownloadPath(), DOWNLOAD_FOLDERS[type], sourceId);
+    return assertPathInsideRoot(
+        downloadRoot,
+        path.join(downloadRoot, DOWNLOAD_FOLDERS[type], safeSourceId),
+    );
+}
+
+/** Validate a persisted/import payload path before reading or cleaning it. */
+export function validateDownloadWorkspacePath(candidate: string): string {
+    return assertPathInsideRoot(Config.getDownloadPath(), candidate);
 }
 
 export function buildStreamingMediaUrl(

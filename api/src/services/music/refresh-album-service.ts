@@ -83,6 +83,9 @@ export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): a
         url: providerTrack.url,
         popularity: providerTrack.popularity ?? rawRow.popularity ?? 0,
         release_date: providerTrack.releaseDate || null,
+        // Album-bundled music videos (Apple deluxe/festival editions) keep
+        // their tracklist position but flow through the video import path.
+        is_video: providerTrack.isVideo ? 1 : 0,
     };
 }
 
@@ -264,11 +267,17 @@ export class RefreshAlbumService {
         `).run(serializedCredits, providerId, trackProviderId, providerId, trackProviderId);
     }
 
-    private static resolveProviderForAlbum(albumId: string): any {
+    private static resolveProviderForAlbum(albumId: string, requestedProviderId?: string | null): any {
+        const normalizedProviderId = String(requestedProviderId || "").trim();
+        if (normalizedProviderId) {
+            return streamingProviderManager.getStreamingProvider(normalizedProviderId);
+        }
+
         const itemRow = db.prepare(`
             SELECT provider
             FROM ProviderItems
             WHERE entity_type = 'album' AND provider_id = ?
+            ORDER BY updated_at DESC
             LIMIT 1
         `).get(albumId) as { provider?: string } | undefined;
         if (itemRow?.provider) {
@@ -373,17 +382,20 @@ export class RefreshAlbumService {
         return localArtistId;
     }
 
-    static getRefreshLevel(albumId: string): AlbumRefreshLevel {
+    static getRefreshLevel(albumId: string, requestedProviderId?: string | null): AlbumRefreshLevel {
         // Refresh state is read from the canonical graph + the album's ProviderItems
         // offer now: offer exists = OFFER, review + tracks = METADATA, and
         // per-track credits homed onto Recordings = DETAILS.
+        const provider = this.resolveProviderForAlbum(albumId, requestedProviderId);
         const offer = db.prepare(`
             SELECT release_group_mbid, release_mbid
             FROM ProviderItems
-            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            WHERE provider = ?
+              AND entity_type = 'album'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
             ORDER BY updated_at DESC
             LIMIT 1
-        `).get(albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
+        `).get(provider.id, albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
 
         if (!offer) {
             return AlbumRefreshLevel.NONE;
@@ -406,8 +418,8 @@ export class RefreshAlbumService {
             : null;
         const trackCount = Number((db.prepare(`
             SELECT COUNT(*) AS c FROM ProviderItems
-            WHERE entity_type = 'track' AND provider_album_id = ?
-        `).get(albumId) as { c?: number } | undefined)?.c || 0);
+            WHERE provider = ? AND entity_type = 'track' AND provider_album_id = ?
+        `).get(provider.id, albumId) as { c?: number } | undefined)?.c || 0);
         if (reviewText !== null && reviewText !== undefined && trackCount > 0) {
             return AlbumRefreshLevel.METADATA;
         }
@@ -422,6 +434,7 @@ export class RefreshAlbumService {
         options: RefreshOptions = {},
     ): Promise<void> {
         console.log(`[RefreshAlbumService] refreshOffer for ${albumId}`);
+        const provider = this.resolveProviderForAlbum(albumId, options.provider);
 
         // Freshness is the album offer's updated_at (the offer is the provider
         // catalog now); the canonical link comes from release_(group_)mbid on it.
@@ -434,10 +447,12 @@ export class RefreshAlbumService {
             FROM ProviderItems pi
             LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
             LEFT JOIN Albums album ON album.mbid = COALESCE(pi.release_group_mbid, release.release_group_mbid)
-            WHERE pi.entity_type = 'album' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+            WHERE pi.provider = ?
+              AND pi.entity_type = 'album'
+              AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
             ORDER BY pi.updated_at DESC
             LIMIT 1
-        `).get(albumId) as any;
+        `).get(provider.id, albumId) as any;
         const shouldRefreshAlbum =
             !existingRow ||
             options.forceUpdate === true ||
@@ -448,13 +463,15 @@ export class RefreshAlbumService {
 
         if (existingRow && !shouldRefreshAlbum) {
             if (!existingRow.mbid || !existingRow.mb_release_group_id || options.forceUpdate === true) {
-                await MetadataIdentityService.resolveAlbum(albumId, { force: options.forceUpdate === true });
+                await MetadataIdentityService.resolveAlbum(albumId, {
+                    force: options.forceUpdate === true,
+                    provider: provider.id,
+                });
             }
             console.log(`[RefreshAlbumService] refreshOffer skipped for ${albumId} (fresh)`);
             return;
         }
 
-        const provider = this.resolveProviderForAlbum(albumId);
         const albumData = providerAlbumToAlbumMetadataRow(await provider.getAlbum(albumId));
         const forceUpdate = options.forceUpdate === true;
         void moduleOverride;
@@ -467,7 +484,7 @@ export class RefreshAlbumService {
         // No legacy ProviderAlbums row anymore — provider album facts live on the
         // ProviderItems offer (written by the artist scan / upsertArtistAlbum), and
         // allowed supplements are homed onto the canonical Albums/AlbumReleases rows.
-        await MetadataIdentityService.resolveAlbum(albumId, { force: forceUpdate });
+        await MetadataIdentityService.resolveAlbum(albumId, { force: forceUpdate, provider: provider.id });
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
         this.storeCanonicalAlbumSupplements({
             releaseGroupMbid: canonicalLink.releaseGroupMbid,
@@ -477,8 +494,10 @@ export class RefreshAlbumService {
         // Advance the offer freshness so adaptive refresh policy sees this scan.
         db.prepare(`
             UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
-            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        `).run(albumId);
+            WHERE provider = ?
+              AND entity_type = 'album'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        `).run(provider.id, albumId);
 
         const includeSimilar = options.includeSimilarAlbums !== false || options.seedSimilarAlbums === true;
         const similarAlbums = includeSimilar
@@ -494,10 +513,12 @@ export class RefreshAlbumService {
                         monitorArtist: false,
                         includeSimilarArtists: false,
                         seedSimilarArtists: false,
+                        provider: provider.id,
                     });
                     await this.refreshMetadata(similar.albumId, {
                         includeSimilarAlbums: false,
                         seedSimilarAlbums: false,
+                        provider: provider.id,
                     });
                 } catch (error) {
                     console.warn(`[RefreshAlbumService] Failed to seed similar album ${similar.albumId}:`, error);
@@ -510,6 +531,7 @@ export class RefreshAlbumService {
 
     static async refreshMetadata(albumId: string, options: RefreshOptions = {}): Promise<void> {
         console.log(`[RefreshAlbumService] refreshMetadata for ${albumId}`);
+        const provider = this.resolveProviderForAlbum(albumId, options.provider);
 
         const existing = db.prepare(`
             SELECT
@@ -519,10 +541,12 @@ export class RefreshAlbumService {
             FROM ProviderItems pi
             LEFT JOIN Albums a ON a.mbid = pi.release_group_mbid
             LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
-            WHERE pi.entity_type = 'album' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+            WHERE pi.provider = ?
+              AND pi.entity_type = 'album'
+              AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
             ORDER BY pi.updated_at DESC
             LIMIT 1
-        `).get(albumId) as any;
+        `).get(provider.id, albumId) as any;
         const shouldRefreshAlbumMeta =
             options.forceUpdate === true ||
             !existing ||
@@ -532,7 +556,7 @@ export class RefreshAlbumService {
             });
 
         if (shouldRefreshAlbumMeta) {
-            await this.refreshOffer(albumId, undefined, undefined, options);
+            await this.refreshOffer(albumId, undefined, undefined, { ...options, provider: provider.id });
         } else {
             console.log(`[RefreshAlbumService] Skipping album metadata refresh for ${albumId} (fresh)`);
         }
@@ -542,9 +566,10 @@ export class RefreshAlbumService {
             shouldRefreshTrackSet({
                 albumId,
                 fallbackLastScanned: existing?.last_scanned,
+                provider: provider.id,
             });
         if (shouldRefreshTrackList) {
-            await this.refreshTracks(albumId);
+            await this.refreshTracks(albumId, { provider: provider.id });
         } else {
             console.log(`[RefreshAlbumService] Skipping track refresh for album ${albumId} (fresh)`);
         }
@@ -556,7 +581,6 @@ export class RefreshAlbumService {
 
         if (shouldRefreshReview) {
             try {
-                const provider = this.resolveProviderForAlbum(albumId);
                 const reviewText = await provider.getAlbumReview?.(albumId);
                 const reviewLastUpdated = new Date().toISOString();
 
@@ -588,12 +612,13 @@ export class RefreshAlbumService {
         const releaseGroup = db.prepare(`
             SELECT release_group_mbid
             FROM ProviderItems
-            WHERE entity_type = 'album'
+            WHERE provider = ?
+              AND entity_type = 'album'
               AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
               AND release_group_mbid IS NOT NULL
             ORDER BY updated_at DESC
             LIMIT 1
-        `).get(albumId) as { release_group_mbid?: string | null } | undefined;
+        `).get(provider.id, albumId) as { release_group_mbid?: string | null } | undefined;
         if (releaseGroup?.release_group_mbid) {
             ArtistTopTrackService.rebuildForReleaseGroup(String(releaseGroup.release_group_mbid));
         }
@@ -603,17 +628,17 @@ export class RefreshAlbumService {
 
     static async refreshDetails(albumId: string, options: RefreshOptions = {}): Promise<void> {
         console.log(`[RefreshAlbumService] refreshDetails for ${albumId}`);
+        const provider = this.resolveProviderForAlbum(albumId, options.provider);
 
-        const currentLevel = this.getRefreshLevel(albumId);
+        const currentLevel = this.getRefreshLevel(albumId, provider.id);
         if (options.forceUpdate || currentLevel < AlbumRefreshLevel.METADATA) {
             console.log(`[RefreshAlbumService] Album ${albumId} refreshing metadata (force=${options.forceUpdate === true})`);
-            await this.refreshMetadata(albumId, options);
+            await this.refreshMetadata(albumId, { ...options, provider: provider.id });
         }
 
         // Album-level credits had no canonical home and nothing reads them; only
         // per-track credits are kept (homed onto the canonical Recordings below).
         try {
-            const provider = this.resolveProviderForAlbum(albumId);
             const trackCreditsMap = provider.getAlbumTrackCredits
                 ? await provider.getAlbumTrackCredits(albumId)
                 : new Map<string, any[]>();
@@ -631,20 +656,21 @@ export class RefreshAlbumService {
         // Advance offer freshness for this detail refresh.
         db.prepare(`
             UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
-            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        `).run(albumId);
+            WHERE provider = ?
+              AND entity_type = 'album'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        `).run(provider.id, albumId);
 
         console.log(`[RefreshAlbumService] refreshDetails complete for ${albumId}`);
     }
 
     static async refreshTracks(
         albumId: string,
-        options: { resolveMusicBrainz?: boolean } = {},
+        options: Pick<RefreshOptions, "resolveMusicBrainz" | "provider"> = {},
     ): Promise<void> {
         // Track identity is mapped by position during this scan; `resolveMusicBrainz`
         // is accepted but unused.
-        void options;
-        const provider = this.resolveProviderForAlbum(albumId);
+        const provider = this.resolveProviderForAlbum(albumId, options.provider);
         const tracks = (await provider.getAlbumTracks(albumId))
             .map(providerTrackToTrackMetadataRow);
         console.log(`[RefreshAlbumService] Fetched ${tracks.length} tracks for album ${albumId}`);
@@ -652,10 +678,12 @@ export class RefreshAlbumService {
         const album = db.prepare(`
             SELECT artist_mbid AS artist_id
             FROM ProviderItems
-            WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            WHERE provider = ?
+              AND entity_type = 'album'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
             ORDER BY updated_at DESC
             LIMIT 1
-        `).get(albumId) as any;
+        `).get(provider.id, albumId) as any;
         if (!album) {
             console.warn(`[RefreshAlbumService] Album offer ${albumId} not found, skipping tracks`);
             return;
@@ -781,6 +809,23 @@ export class RefreshAlbumService {
               AND COALESCE(r.is_video, 0) = 0
             LIMIT 1
         `);
+        // Album-bundled music videos map against the release's VIDEO tracks:
+        // MusicBrainz models them as regular tracklist entries whose recording
+        // is a video, so position-based identity works the same way.
+        const selectCanonicalVideoTrackByPosition = db.prepare(`
+            SELECT
+                t.id AS track_id,
+                t.mbid AS track_mbid,
+                t.recording_mbid,
+                r.id AS recording_id
+            FROM Tracks t
+            LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+            WHERE t.release_mbid = ?
+              AND t.medium_position = ?
+              AND t.position = ?
+              AND COALESCE(r.is_video, 0) = 1
+            LIMIT 1
+        `);
         const upsertProviderTrackOffer = db.prepare(`
             INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, provider_album_id, title, version, explicit, quality,
@@ -834,8 +879,11 @@ export class RefreshAlbumService {
                 db.transaction(() => {
                     for (const currentTrack of trackBatch) {
                         const releaseMbid = String(selectedRelease?.release_mbid || "").trim();
+                        const selectByPosition = currentTrack.is_video
+                            ? selectCanonicalVideoTrackByPosition
+                            : selectCanonicalTrackByPosition;
                         const canonicalTrack = releaseMbid
-                            ? selectCanonicalTrackByPosition.get(
+                            ? selectByPosition.get(
                                 releaseMbid,
                                 Number(currentTrack.volume_number || 1),
                                 Number(currentTrack.track_number || 0),
@@ -864,7 +912,9 @@ export class RefreshAlbumService {
                             releaseMbid || null,
                             canonicalTrack?.track_mbid || null,
                             canonicalTrack?.recording_mbid || null,
-                            selectedRelease?.library_slot || getProviderLibrarySlot(currentTrack.quality || selectedRelease?.quality),
+                            currentTrack.is_video
+                                ? "video"
+                                : selectedRelease?.library_slot || getProviderLibrarySlot(currentTrack.quality || selectedRelease?.quality),
                             canonicalTrack?.track_id || null,
                             canonicalTrack?.recording_id || null,
                             canonicalTrack?.track_mbid ? "matched" : "pending",
@@ -900,6 +950,7 @@ export class RefreshAlbumService {
         options: RefreshOptions,
     ): Promise<boolean> {
         const forceUpdate = options.forceUpdate === true;
+        const providerId = String(options.provider || "tidal").trim() || "tidal";
         const primaryProviderArtistId = album.artist_id;
         const releaseGroupMatch = (album as { _mb_release_group_match?: ProviderReleaseGroupMatch })._mb_release_group_match || null;
         const matchedReleaseGroup = releaseGroupMatch?.status !== "unmatched" ? releaseGroupMatch?.releaseGroup : null;
@@ -921,10 +972,10 @@ export class RefreshAlbumService {
         // relations are canonical (AlbumArtists, from Servarr Metadata Server).
         const offerExisted = db.prepare(`
             SELECT 1 FROM ProviderItems
-            WHERE provider = 'tidal' AND entity_type = 'album'
+            WHERE provider = ? AND entity_type = 'album'
               AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
             LIMIT 1
-        `).get(album.provider_id) as any;
+        `).get(providerId, album.provider_id) as any;
         void albumModuleMap;
         void scanningArtistId;
 
@@ -935,7 +986,7 @@ export class RefreshAlbumService {
                 provider, entity_type, provider_id, title, version, explicit, quality, type,
                 upc, duration, volume_count, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
                 match_status, match_confidence, match_method, match_evidence, cover, updated_at
-            ) VALUES ('tidal', 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
                 version = excluded.version,
@@ -957,6 +1008,7 @@ export class RefreshAlbumService {
                 cover = excluded.cover,
                 updated_at = CURRENT_TIMESTAMP
         `).run(
+            providerId,
             String(album.provider_id),
             album.title || null,
             album.version || null,
@@ -995,7 +1047,7 @@ export class RefreshAlbumService {
         // The ProviderItems offer write above is unchanged.
         if (matchedReleaseMbid) {
             upsertProviderReleaseMatch({
-                provider: "tidal",
+                provider: providerId,
                 providerId: String(album.provider_id),
                 providerAlbumId: String(album.provider_id),
                 releaseMbid: matchedReleaseMbid,
@@ -1015,6 +1067,7 @@ export class RefreshAlbumService {
         if (options.resolveMusicBrainz !== false) {
             await MetadataIdentityService.resolveAlbum(String(album.provider_id), {
                 force: forceUpdate,
+                provider: providerId,
             });
         }
 

@@ -8,6 +8,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
     Button,
     Badge,
+    Link,
+    Spinner,
     Text,
     Title1,
     mergeClasses,
@@ -33,6 +35,13 @@ import {
 import { api } from "@/services/api";
 import { renderableArtworkUrl } from "@/utils/artwork";
 import { formatDurationSeconds } from "@/utils/format";
+import {
+    selectVideoDownloadOffer,
+    selectVideoOffer,
+    selectVideoPreviewOffer,
+    videoOfferSelectionKey,
+    videoQueueTarget,
+} from "@/utils/videoOffers";
 import { useToast } from "@/hooks/useToast";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
@@ -42,6 +51,7 @@ import type { Artist } from "@/hooks/useLibrary";
 import type { LibraryFilesListResponseContract, VideoDetailContract } from "@contracts/media";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { ProviderQualityRow, type ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
 import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { ErrorState } from "@/components/ui/ContentState";
 
@@ -96,6 +106,22 @@ const useStyles = makeStyles({
         flexShrink: 0,
         boxShadow: tokens.shadow16,
     },
+    playSurface: {
+        width: "100%",
+        height: "100%",
+        minWidth: 0,
+        padding: 0,
+        border: 0,
+        borderRadius: 0,
+        display: "flex",
+        position: "relative",
+        overflow: "hidden",
+        backgroundColor: "transparent",
+        ":focus-visible": {
+            outline: `3px solid ${tokens.colorStrokeFocus2}`,
+            outlineOffset: "-3px",
+        },
+    },
     thumbnailImage: {
         width: "100%",
         height: "100%",
@@ -120,6 +146,7 @@ const useStyles = makeStyles({
         opacity: 0.8,
         transition: "opacity 0.2s ease",
         cursor: "pointer",
+        pointerEvents: "none",
         ":hover": {
             opacity: 1,
         }
@@ -225,6 +252,12 @@ const useStyles = makeStyles({
     fileBadge: {
         fontSize: tokens.fontSizeBase200,
     },
+    loadingState: {
+        minHeight: "320px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+    },
 });
 
 /* ------------------------------------------------------------------ */
@@ -253,6 +286,7 @@ const VideoPage = () => {
 
     const [isPlaying, setIsPlaying] = useState(false);
     const [remoteStreamUrl, setRemoteStreamUrl] = useState<string | null>(null);
+    const [selectedOfferKey, setSelectedOfferKey] = useState<string | null>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const hlsRef = useRef<{ destroy: () => void } | null>(null);
 
@@ -330,18 +364,49 @@ const VideoPage = () => {
         },
     });
 
+    // Provider offers for this canonical video, preference-ordered by the
+    // server. The user can switch which provider serves preview + download.
+    const isDownloaded = Boolean(video?.is_downloaded ?? video?.downloaded);
+    const offers = video?.offers ?? [];
+    const selectedOffer = selectVideoOffer(offers, selectedOfferKey);
+    const previewOffer = selectVideoPreviewOffer(offers, selectedOfferKey);
+    const downloadOffer = selectVideoDownloadOffer(offers, selectedOfferKey);
+
+    const handleSelectOffer = (offer: ProviderQualityOffer) => {
+        setSelectedOfferKey(videoOfferSelectionKey(offer.provider, offer.providerAlbumId));
+        // A remote preview streams from the previously selected provider;
+        // drop it so the next play uses the new selection.
+        if (remoteStreamUrl) {
+            setRemoteStreamUrl(null);
+            setIsPlaying(false);
+        }
+    };
+
     const handleDownload = async () => {
-        await addToQueue(null, "video", videoId!, {
+        if (!downloadOffer) {
+            toast({
+                title: "Download unavailable",
+                description: "No available provider offer supports video downloads.",
+                variant: "destructive",
+            });
+            return;
+        }
+        // The third argument becomes the request's providerId after API payload
+        // normalization, so pass the selected provider offer rather than the
+        // canonical Recordings id. Otherwise api.addToQueue overwrites the
+        // payload's selected providerId and the server silently picks a default.
+        const queueTarget = videoQueueTarget(videoId!, downloadOffer);
+        await addToQueue(null, "video", queueTarget.providerId, {
             successTitle: "Download queued",
             successDescription: video?.title || "Video",
             payload: {
-                provider: "tidal",
-                providerId: videoId!,
+                provider: queueTarget.provider,
+                providerId: queueTarget.providerId,
                 title: video?.title ?? null,
                 artist: video?.artist_name ?? null,
                 artistId: video?.artist_id ?? null,
                 cover: video?.cover ?? video?.cover_id ?? null,
-                quality: video?.quality ?? null,
+                quality: downloadOffer.quality ?? video?.quality ?? null,
             },
         });
     };
@@ -349,7 +414,13 @@ const VideoPage = () => {
     const handlePlayClick = async () => {
         try {
             if (!isDownloaded) {
-                const signedUrl = await api.signVideoPreviewStream(videoId!, { provider: "tidal" });
+                if (!previewOffer) {
+                    throw new Error("No available provider offer supports remote video previews.");
+                }
+                const signedUrl = await api.signVideoPreviewStream(
+                    previewOffer.provider_id ?? videoId!,
+                    { provider: previewOffer.provider },
+                );
                 setRemoteStreamUrl(signedUrl);
             }
 
@@ -365,7 +436,6 @@ const VideoPage = () => {
 
     const isMonitored = Boolean(video?.is_monitored);
     const isLocked = Boolean(video?.monitored_lock);
-    const isDownloaded = Boolean(video?.is_downloaded ?? video?.downloaded);
     const year = video?.release_date ? new Date(video.release_date).getFullYear() : null;
     const videoErrorDescription = error instanceof Error && error.message === "Video not found"
         ? "This video doesn't exist in your library."
@@ -459,7 +529,11 @@ const VideoPage = () => {
     }, [isDownloaded, isPlaying, remoteStreamUrl, toast]);
 
     if (isVideoLoading) {
-        return null;
+        return (
+            <div className={mergeClasses(styles.stateShell, styles.loadingState)} role="status" aria-live="polite">
+                <Spinner label="Loading video…" labelPosition="below" />
+            </div>
+        );
     }
 
     if (error || !video) {
@@ -481,18 +555,24 @@ const VideoPage = () => {
                 {/* Player Wrapper directly at top */}
                 <div className={styles.playerWrapper}>
                     {!isPlaying ? (
-                        <>
+                        <Button
+                            appearance="transparent"
+                            className={styles.playSurface}
+                            onClick={handlePlayClick}
+                            disabled={!isDownloaded && !previewOffer}
+                            aria-label={isDownloaded || previewOffer ? `Play ${video.title}` : `Preview unavailable for ${video.title}`}
+                        >
                             {coverUrl ? (
-                                <img src={coverUrl} alt={video.title} className={styles.thumbnailImage} onClick={handlePlayClick} />
+                                <img src={coverUrl} alt="" aria-hidden="true" className={styles.thumbnailImage} />
                             ) : (
-                                <div className={styles.thumbnailPlaceholder} onClick={handlePlayClick}>
+                                <div className={styles.thumbnailPlaceholder} aria-hidden="true">
                                     <Video24Regular style={{ width: 64, height: 64 }} />
                                 </div>
                             )}
-                            <div className={styles.playOverlay} onClick={handlePlayClick}>
+                            <div className={styles.playOverlay} aria-hidden="true">
                                 <Play24Filled style={{ width: 64, height: 64, color: "#fff" }} />
                             </div>
-                        </>
+                        </Button>
                     ) : (
                         <video
                             ref={videoRef}
@@ -533,9 +613,33 @@ const VideoPage = () => {
                                 )}
                                 <Text>{formatDurationSeconds(video.duration)}</Text>
                                 <Text>•</Text>
-                                {video.quality && (
+                                {offers.length > 0 ? (
+                                    <ProviderQualityRow
+                                        offers={offers.map((offer): ProviderQualityOffer => ({
+                                            slot: "video",
+                                            quality: offer.quality,
+                                            provider: offer.provider,
+                                            providerAlbumId: offer.provider_id,
+                                            available: offer.available,
+                                            canPreview: offer.can_preview,
+                                            canDownload: offer.can_download,
+                                        }))}
+                                        size="small"
+                                        onSelectOffer={handleSelectOffer}
+                                        selectedOfferAlbumId={selectedOffer?.provider_id ?? null}
+                                        selectedOfferProvider={selectedOffer?.provider ?? null}
+                                    />
+                                ) : video.quality ? (
                                     <QualityBadge quality={video.quality} size="small" />
-                                )}
+                                ) : null}
+                                {(video.albums ?? []).map((album) => (
+                                    <span key={album.id}>
+                                        <Text>•</Text>{" "}
+                                        <Link onClick={() => navigate(`/album/${album.id}`)}>
+                                            From {album.title}
+                                        </Link>
+                                    </span>
+                                ))}
                                 {isDownloaded && videoFile && (
                                     <>
                                         <Text>•</Text>
@@ -580,6 +684,8 @@ const VideoPage = () => {
                                     appearance="subtle"
                                     icon={<ArrowDownload24Regular />}
                                     onClick={handleDownload}
+                                    disabled={!downloadOffer}
+                                    title={downloadOffer ? "Download from the selected provider" : "No provider offer supports video downloads"}
                                     className={mergeClasses(styles.actionButton, styles.transparentButton)}
                                 >
                                     Download

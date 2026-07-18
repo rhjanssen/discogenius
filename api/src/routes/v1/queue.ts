@@ -7,10 +7,12 @@ import {CommandQueueManager} from "../../services/commands/command-queue-manager
 import { downloadProcessor } from '../../services/download/download-processor.js';
 import { downloadEvents } from '../../services/download/download-events.js';
 import { authMiddleware } from '../../middleware/auth.js';
-import { buildStreamingMediaUrl, parseStreamingUrl, type DownloadMediaType } from '../../services/download/download-routing.js';
+import { buildStreamingMediaUrl, getDefaultStreamingSource, parseStreamingUrl, type DownloadMediaType } from '../../services/download/download-routing.js';
+import { assertSafeDownloadResourceId } from '../../services/download/download-path-safety.js';
 import { shouldQueueRedownloadForFailedImport } from '../../services/download/download-recovery.js';
 import { DownloadQueueQueryService } from '../../services/download/download-queue-query-service.js';
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from '../../services/metadata/provider-track-resolver.js';
+import { resolvePreferredVideoOffer, resolveRequestedVideoOffer } from '../../services/music/video-offer-resolver.js';
 import { CurationService } from '../../services/music/curation-service.js';
 import { queueDownloadMissingPass } from '../../services/commands/scheduler.js';
 import { ACTIVITY_FILTERS, getActivityPage } from '../../services/commands/command-history.js';
@@ -203,7 +205,8 @@ router.post('/', async (req: Request, res: Response) => {
     let canonicalTrackMbid = getQueueRequestString(body.canonicalTrackMbid);
     const canonicalRecordingMbid = getQueueRequestString(body.canonicalRecordingMbid);
     let resolvedProviderId = requestedProviderId ?? parsedUrl?.sourceId ?? null;
-    let resolvedProvider = getQueueRequestString(body.provider) ?? parsedUrl?.streamingSource ?? 'tidal';
+    const requestedProvider = getQueueRequestString(body.provider) ?? parsedUrl?.streamingSource ?? null;
+    let resolvedProvider = requestedProvider ?? getDefaultStreamingSource();
     let resolvedSlot = getQueueRequestString(body.slot);
     let resolvedQuality = getQueueRequestString(body.quality);
 
@@ -233,6 +236,26 @@ router.post('/', async (req: Request, res: Response) => {
       resolvedQuality = resolvedQuality ?? resolvedTrack.quality;
     }
 
+    // A selected UI offer is an explicit (provider, providerId) pair and must
+    // survive queueing unchanged. Only fall back to canonical-recording
+    // resolution when that exact provider offer does not exist; provider ids
+    // and integer Recordings ids can legitimately contain the same digits.
+    if (contentType === 'video' && resolvedProviderId) {
+      const offer = requestedProvider
+        ? resolveRequestedVideoOffer(resolvedProvider, resolvedProviderId)
+        : resolvePreferredVideoOffer(resolvedProviderId);
+      if (offer) {
+        resolvedProvider = offer.provider;
+        resolvedProviderId = offer.providerId;
+        resolvedQuality = resolvedQuality ?? offer.quality;
+      } else {
+        return res.status(409).json({
+          error: 'provider match missing',
+          message: 'This video is not matched to a provider video offer yet.',
+        });
+      }
+    }
+
     if (!url && !requestedProviderId && !resolvedProviderId) {
       return res.status(400).json({
         error: 'Either url, providerId, or a resolvable canonical track is required',
@@ -241,6 +264,15 @@ router.post('/', async (req: Request, res: Response) => {
 
     if (!resolvedProviderId) {
       return res.status(400).json({ error: 'Unable to determine providerId' });
+    }
+
+    try {
+      resolvedProviderId = assertSafeDownloadResourceId(resolvedProviderId);
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid providerId',
+        message: error instanceof Error ? error.message : 'Provider resource ID is unsafe.',
+      });
     }
 
     const payload = {

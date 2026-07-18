@@ -35,7 +35,7 @@ import type {
     LocalFile,
     LocalGroup,
     RootFolderImportProgressEvent,
-    TidalMatch,
+    ProviderMatch,
 } from "./import-types.js";
 
 export type {
@@ -44,7 +44,7 @@ export type {
     LocalFile,
     LocalGroup,
     RootFolderImportProgressEvent,
-    TidalMatch,
+    ProviderMatch,
 } from "./import-types.js";
 import { extractReleaseGroup } from "./import-matching-utils.js";
 
@@ -280,7 +280,7 @@ export class ImportService {
         group: LocalGroup,
         context: "music" | "spatial" | "video" = "music",
         mode: ImportDecisionMode = "NewDownload",
-    ): Promise<TidalMatch[]> {
+    ): Promise<ProviderMatch[]> {
         return importMatcherService.findMatchesForGroup(group, context, mode);
     }
 
@@ -511,11 +511,11 @@ export class ImportService {
             const explicitSidecarTargets = new Map<string, string>();
 
             if (match.itemType === "video") {
-                const tidalVideo = match.item;
-                const videoId = tidalVideo?.id?.toString?.() ?? tidalVideo?.provider_id?.toString?.();
+                const providerVideo = match.item;
+                const videoId = providerVideo?.id?.toString?.() ?? providerVideo?.provider_id?.toString?.();
                 if (!videoId) continue;
 
-                let videoData = tidalVideo;
+                let videoData = providerVideo;
                 try {
                     const providerVideo = await streamingProviderManager.getDefaultStreamingProvider().getVideo?.(videoId);
                     if (providerVideo) {
@@ -526,15 +526,15 @@ export class ImportService {
                 }
 
                 const artistId = videoData.artist_id
-                    || tidalVideo.artist?.id?.toString?.()
-                    || tidalVideo.artists?.[0]?.id?.toString?.();
+                    || providerVideo.artist?.id?.toString?.()
+                    || providerVideo.artists?.[0]?.id?.toString?.();
                 if (!artistId) continue;
 
                 const artistName = videoData.artist_name
-                    || tidalVideo.artist?.name
-                    || tidalVideo.artists?.[0]?.name
+                    || providerVideo.artist?.name
+                    || providerVideo.artists?.[0]?.name
                     || "Unknown Artist";
-                const artistPicture = tidalVideo.artist?.picture || tidalVideo.artists?.[0]?.picture || null;
+                const artistPicture = providerVideo.artist?.picture || providerVideo.artists?.[0]?.picture || null;
                 const artistPopularity = videoData.popularity || 0;
                 const resolvedArtistFolder = resolveArtistFolderForPersistence({
                     artistId,
@@ -560,8 +560,8 @@ export class ImportService {
                 RefreshVideoService.upsertArtistVideos(artistId, [{
                     ...videoData,
                     provider_id: videoId,
-                    title: videoData.title || tidalVideo.title || "Unknown Video",
-                    quality: videoData.quality || tidalVideo.quality || "MP4_1080P",
+                    title: videoData.title || providerVideo.title || "Unknown Video",
+                    quality: videoData.quality || providerVideo.quality || "MP4_1080P",
                     provider: streamingProviderManager.getDefaultStreamingProvider().id,
                 }]);
                 if (monitorValue) {
@@ -584,10 +584,10 @@ export class ImportService {
 	                    artistName,
 	                    artistMbId: artistRow?.mbid || null,
 	                    artistId,
-	                    videoTitle: videoData.title || tidalVideo.title || "Unknown Video",
+	                    videoTitle: videoData.title || providerVideo.title || "Unknown Video",
 	                    trackId: videoId,
 	                    videoId,
-	                    quality: videoData.quality || tidalVideo.quality || "MP4_1080P",
+	                    quality: videoData.quality || providerVideo.quality || "MP4_1080P",
 	                });
 
                 for (const file of candidate.group.files) {
@@ -680,8 +680,8 @@ export class ImportService {
                 continue;
             }
 
-            const tidalAlbum = match.item;
-            const albumId = tidalAlbum?.id?.toString?.() ?? tidalAlbum?.provider_id?.toString?.();
+            const providerAlbum = match.item;
+            const albumId = providerAlbum?.id?.toString?.() ?? providerAlbum?.provider_id?.toString?.();
             if (!albumId) continue;
 
             try {
@@ -702,14 +702,14 @@ export class ImportService {
             if (!albumRow) continue;
 
             const artistId = String(albumRow.artist_id
-                || tidalAlbum.artist?.id?.toString?.()
-                || tidalAlbum.artists?.[0]?.id?.toString?.()
+                || providerAlbum.artist?.id?.toString?.()
+                || providerAlbum.artists?.[0]?.id?.toString?.()
                 || "");
             if (!artistId) continue;
 
-            const artistName = tidalAlbum.artist?.name || tidalAlbum.artists?.[0]?.name || "Unknown Artist";
-            const artistPicture = tidalAlbum.artist?.picture || tidalAlbum.artists?.[0]?.picture || null;
-            const artistPopularity = tidalAlbum.popularity || 0;
+            const artistName = providerAlbum.artist?.name || providerAlbum.artists?.[0]?.name || "Unknown Artist";
+            const artistPicture = providerAlbum.artist?.picture || providerAlbum.artists?.[0]?.picture || null;
+            const artistPopularity = providerAlbum.popularity || 0;
                 const resolvedArtistFolder = resolveArtistFolderForPersistence({
                     artistId,
                     artistName,

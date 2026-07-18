@@ -110,6 +110,8 @@ export interface ReleaseAvailabilityProviderContract {
   confidence: number | null;
   matchKind?: "direct" | "composite";
   coverageSummary?: string | null;
+  /** Whether this provider edition is the explicit cut (null when unknown/composite). */
+  explicit?: boolean | null;
 }
 
 export interface ReleaseAvailabilityContract {
@@ -129,7 +131,25 @@ export interface ReleaseAvailabilityContract {
 export interface ReleaseGroupAvailabilityContract {
   releaseGroupMbid: string;
   selectedReleaseBySlot: Record<string, string | null>;
+  /** slot name -> the provider offer that currently fills the slot. */
+  selectedOfferBySlot?: Record<string, { provider: string | null; providerAlbumId: string | null }>;
   releases: ReleaseAvailabilityContract[];
+}
+
+export interface VideoProviderOfferContract {
+  provider: string;
+  provider_id: string;
+  quality?: string | null;
+  url?: string | null;
+  available: boolean;
+  can_preview: boolean;
+  can_download: boolean;
+}
+
+export interface VideoAlbumRefContract {
+  id: string;
+  title: string;
+  cover_id?: string | null;
 }
 
 export interface VideoDetailContract {
@@ -149,6 +169,10 @@ export interface VideoDetailContract {
   monitored_lock: boolean;
   downloaded: boolean;
   is_downloaded: boolean;
+  /** All provider VIDEO offers for this canonical recording, preference-ordered. */
+  offers?: VideoProviderOfferContract[];
+  /** Albums (release groups) this video appears on, e.g. Apple bundled MVs. */
+  albums?: VideoAlbumRefContract[];
 }
 
 export interface VideoUpdateContract {
@@ -306,6 +330,7 @@ function parseReleaseAvailabilityProviderContract(value: unknown, indexLabel: st
     confidence: expectOptionalNumber(record.confidence, `${indexLabel}.confidence`) ?? null,
     matchKind: record.matchKind === undefined ? undefined : record.matchKind === "composite" ? "composite" : "direct",
     coverageSummary: expectNullableString(record.coverageSummary, `${indexLabel}.coverageSummary`) ?? null,
+    explicit: record.explicit == null ? null : Boolean(record.explicit),
   };
 }
 
@@ -336,9 +361,23 @@ export function parseReleaseGroupAvailabilityContract(value: unknown): ReleaseGr
     selectedReleaseBySlot[slot] = releaseMbid === null ? null : String(releaseMbid);
   }
 
+  let selectedOfferBySlot: ReleaseGroupAvailabilityContract["selectedOfferBySlot"];
+  if (record.selectedOfferBySlot !== undefined && record.selectedOfferBySlot !== null) {
+    const offerRecord = expectRecord(record.selectedOfferBySlot, "releaseAvailability.selectedOfferBySlot");
+    selectedOfferBySlot = {};
+    for (const [slot, offer] of Object.entries(offerRecord)) {
+      const parsed = expectRecord(offer, `releaseAvailability.selectedOfferBySlot.${slot}`);
+      selectedOfferBySlot[slot] = {
+        provider: parsed.provider == null ? null : String(parsed.provider),
+        providerAlbumId: parsed.providerAlbumId == null ? null : String(parsed.providerAlbumId),
+      };
+    }
+  }
+
   return {
     releaseGroupMbid: expectString(record.releaseGroupMbid, "releaseAvailability.releaseGroupMbid"),
     selectedReleaseBySlot,
+    selectedOfferBySlot,
     releases: expectArray(record.releases, "releaseAvailability.releases", parseReleaseAvailabilityContract),
   };
 }
@@ -362,5 +401,33 @@ export function parseVideoDetailContract(value: unknown): VideoDetailContract {
     monitored_lock: expectOptionalBoolean(record.monitored_lock, "video.monitored_lock") ?? false,
     downloaded: expectBoolean(record.downloaded, "video.downloaded"),
     is_downloaded: expectBoolean(record.is_downloaded, "video.is_downloaded"),
+    offers: record.offers === undefined
+      ? undefined
+      : expectArray(record.offers, "video.offers", (item, index) => parseVideoProviderOfferContract(item, `video.offers[${index}]`)),
+    albums: record.albums === undefined
+      ? undefined
+      : expectArray(record.albums, "video.albums", (item, index) => parseVideoAlbumRefContract(item, `video.albums[${index}]`)),
+  };
+}
+
+function parseVideoProviderOfferContract(value: unknown, indexLabel: string): VideoProviderOfferContract {
+  const record = expectRecord(value, indexLabel);
+  return {
+    provider: expectString(record.provider, `${indexLabel}.provider`),
+    provider_id: expectString(record.provider_id, `${indexLabel}.provider_id`),
+    quality: expectNullableString(record.quality, `${indexLabel}.quality`),
+    url: expectNullableString(record.url, `${indexLabel}.url`),
+    available: expectOptionalBoolean(record.available, `${indexLabel}.available`) ?? true,
+    can_preview: expectOptionalBoolean(record.can_preview, `${indexLabel}.can_preview`) ?? true,
+    can_download: expectOptionalBoolean(record.can_download, `${indexLabel}.can_download`) ?? true,
+  };
+}
+
+function parseVideoAlbumRefContract(value: unknown, indexLabel: string): VideoAlbumRefContract {
+  const record = expectRecord(value, indexLabel);
+  return {
+    id: expectString(record.id, `${indexLabel}.id`),
+    title: expectString(record.title, `${indexLabel}.title`),
+    cover_id: expectNullableString(record.cover_id, `${indexLabel}.cover_id`),
   };
 }

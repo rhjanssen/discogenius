@@ -53,10 +53,24 @@ const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
 const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
 const CloudArrowDown24Regular = bundleIcon(CloudArrowDown24Filled, CloudArrowDown24RegularBase);
 
+export interface ProviderFilterOption {
+    id: string;
+    name: string;
+}
+
 interface FilterMenuProps {
     // Library type filter (single selection)
     libraryFilter?: 'all' | 'stereo' | 'spatial' | 'video';
     onLibraryFilterChange?: (filter: 'all' | 'stereo' | 'spatial' | 'video') => void;
+
+    // Provider filter (single selection; undefined = all providers)
+    providerFilter?: string;
+    onProviderFilterChange?: (provider: string | undefined) => void;
+    providerOptions?: ProviderFilterOption[];
+
+    // Quality-tier filter (single selection; undefined = all qualities)
+    qualityTierFilter?: string;
+    onQualityTierFilterChange?: (tier: string | undefined) => void;
 
     // Status filters
     statusFilters?: StatusFilters;
@@ -93,9 +107,16 @@ const useStyles = makeStyles({
     },
 });
 
+const QUALITY_TIER_OPTIONS = ['MAX', 'HIGH', 'NORMAL', 'LOW'] as const;
+
 const FilterMenu = ({
     libraryFilter,
     onLibraryFilterChange,
+    providerFilter,
+    onProviderFilterChange,
+    providerOptions,
+    qualityTierFilter,
+    onQualityTierFilterChange,
     statusFilters,
     onStatusFiltersChange,
     viewMode,
@@ -116,6 +137,8 @@ const FilterMenu = ({
     } as const;
 
     const hasLibraryFilter = libraryFilter !== undefined && onLibraryFilterChange;
+    const hasProviderFilter = Boolean(onProviderFilterChange && (providerOptions?.length ?? 0) > 0);
+    const hasQualityFilter = Boolean(onQualityTierFilterChange);
     const hasStatusFilters = statusFilters !== undefined && onStatusFiltersChange;
     const hasViewMode = viewMode !== undefined && onViewModeChange;
 
@@ -161,6 +184,8 @@ const FilterMenu = ({
     const activeFilterCount = (() => {
         let count = 0;
         if (libraryFilter && libraryFilter !== 'all') count++;
+        if (providerFilter) count++;
+        if (qualityTierFilter) count++;
         if (statusFilters) {
             if (statusFilters.onlyMonitored) count++;
             if (statusFilters.onlyUnmonitored) count++;
@@ -230,6 +255,56 @@ const FilterMenu = ({
                             >
                                 Videos Only
                             </MenuItem>
+                            <MenuDivider />
+                        </>
+                    )}
+
+                    {/* Provider Filter */}
+                    {hasProviderFilter && (
+                        <>
+                            <Text style={sectionLabelStyle}>
+                                PROVIDER
+                            </Text>
+                            <MenuItem
+                                onClick={() => onProviderFilterChange?.(undefined)}
+                                icon={!providerFilter ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                            >
+                                All Providers
+                            </MenuItem>
+                            {providerOptions?.map((option) => (
+                                <MenuItem
+                                    key={option.id}
+                                    onClick={() => onProviderFilterChange?.(option.id)}
+                                    icon={providerFilter === option.id ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                >
+                                    {option.name}
+                                </MenuItem>
+                            ))}
+                            <MenuDivider />
+                        </>
+                    )}
+
+                    {/* Quality Filter */}
+                    {hasQualityFilter && (
+                        <>
+                            <Text style={sectionLabelStyle}>
+                                QUALITY
+                            </Text>
+                            <MenuItem
+                                onClick={() => onQualityTierFilterChange?.(undefined)}
+                                icon={!qualityTierFilter ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                            >
+                                All Qualities
+                            </MenuItem>
+                            {QUALITY_TIER_OPTIONS.map((tier) => (
+                                <MenuItem
+                                    key={tier}
+                                    onClick={() => onQualityTierFilterChange?.(tier)}
+                                    icon={qualityTierFilter === tier ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                >
+                                    {tier}
+                                </MenuItem>
+                            ))}
                             <MenuDivider />
                         </>
                     )}

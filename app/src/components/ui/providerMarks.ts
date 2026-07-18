@@ -17,8 +17,12 @@ const PROVIDER_MARKS: Record<string, ProviderMarkAsset> = {
     apple_music: { src: "/assets/images/apple_music_icon.svg", monochrome: false, badgeFill: true },
     "apple-music": { src: "/assets/images/apple_music_icon.svg", monochrome: false, badgeFill: true },
     amazon: { src: "/assets/images/amazon_icon.svg", monochrome: false },
+    amazon_music: { src: "/assets/images/amazon_icon.svg", monochrome: false },
+    "amazon-music": { src: "/assets/images/amazon_icon.svg", monochrome: false },
     spotify: { src: "/assets/images/spotify_icon.svg", monochrome: false, badgeFill: true },
     youtube: { src: "/assets/images/youtube_icon.svg", monochrome: false, badgeFill: true },
+    youtube_music: { src: "/assets/images/youtube_icon.svg", monochrome: false, badgeFill: true },
+    "youtube-music": { src: "/assets/images/youtube_icon.svg", monochrome: false, badgeFill: true },
     deezer: { src: "/assets/images/deezer_icon.svg", monochrome: false },
 };
 
@@ -29,4 +33,41 @@ export function providerKey(provider?: string | null): string {
 export function providerMarkFor(provider?: string | null): ProviderMarkAsset | undefined {
     const key = providerKey(provider);
     return PROVIDER_MARKS[key] || PROVIDER_MARKS[key.replace(/-/g, "_")];
+}
+
+/**
+ * Public web URL for a provider album id, for "open on the streaming service"
+ * links. Apple uses the geo redirect host so the user's storefront resolves
+ * client-side. Returns null for providers without a stable public album URL.
+ */
+export function providerAlbumUrl(provider: string | null | undefined, albumId: string): string | null {
+    const id = String(albumId || "").trim();
+    if (!id) return null;
+    const key = providerKey(provider);
+    if (key === "tidal") return `https://tidal.com/browse/album/${encodeURIComponent(id)}`;
+    if (key.startsWith("apple")) return `https://geo.music.apple.com/album/${encodeURIComponent(id)}`;
+    if (key === "amazon-music" || key === "amazon_music" || key === "amazon") {
+        return `https://music.amazon.com/albums/${encodeURIComponent(id)}`;
+    }
+    if (key === "spotify") return `https://open.spotify.com/album/${encodeURIComponent(id)}`;
+    if (key === "youtube-music" || key === "youtube_music" || key === "youtube") {
+        return /^(?:OLAK5uy_|PL|RD)/u.test(id)
+            ? `https://music.youtube.com/playlist?list=${encodeURIComponent(id)}`
+            : `https://music.youtube.com/browse/${encodeURIComponent(id)}`;
+    }
+    if (key === "deezer") return `https://www.deezer.com/album/${encodeURIComponent(id)}`;
+    return null;
+}
+
+/** Public web URL for a provider music-video id (same contract as providerAlbumUrl). */
+export function providerVideoUrl(provider: string | null | undefined, videoId: string): string | null {
+    const id = String(videoId || "").trim();
+    if (!id) return null;
+    const key = providerKey(provider);
+    if (key === "tidal") return `https://tidal.com/browse/video/${encodeURIComponent(id)}`;
+    if (key.startsWith("apple")) return `https://geo.music.apple.com/music-video/${encodeURIComponent(id)}`;
+    if (key === "youtube-music" || key === "youtube_music" || key === "youtube") {
+        return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+    }
+    return null;
 }

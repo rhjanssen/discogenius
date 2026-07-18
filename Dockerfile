@@ -21,6 +21,29 @@ RUN python3 -m venv /opt/tiddl-venv \
     && /opt/tiddl-venv/bin/pip install --no-cache-dir tiddl==3.4.3 \
     && ln -s /opt/tiddl-venv/bin/tiddl /usr/local/bin/tiddl
 
+# Keep every third-party provider runtime isolated. Their dependency graphs
+# intentionally overlap at incompatible versions (notably Pillow, Rich and
+# protobuf), so installing them into one environment would make builds depend
+# on pip's resolver order.
+RUN python3 -m venv /opt/ytmusic-venv \
+    && /opt/ytmusic-venv/bin/pip install --no-cache-dir \
+        ytmusicapi==1.12.1 yt-dlp==2026.7.4 \
+    && /opt/ytmusic-venv/bin/pip check
+
+RUN python3 -m venv /opt/streamrip-venv \
+    && /opt/streamrip-venv/bin/pip install --no-cache-dir streamrip==2.1.0 \
+    && /opt/streamrip-venv/bin/pip check
+
+RUN python3 -m venv /opt/amazon-music-venv \
+    && /opt/amazon-music-venv/bin/pip install --no-cache-dir amazon-music==1.7.7 \
+    && /opt/amazon-music-venv/bin/pip check
+
+RUN python3 -m venv /opt/votify-venv \
+    && /opt/votify-venv/bin/pip install --no-cache-dir 'votify[librespot]==1.9.9' \
+    && /opt/votify-venv/bin/pip check \
+    && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python \
+        /opt/votify-venv/bin/python -c 'import librespot, pyogg, votify'
+
 # Upstream Apple Music downloader image is currently amd64-only and provides a
 # static Go binary at /usr/local/bin/apple-music-dl. Copying just that binary
 # avoids switching Discogenius' base image away from the Python runtime tiddl
@@ -31,10 +54,16 @@ FROM ${APPLE_MUSIC_DOWNLOADER_IMAGE} AS apple_music_downloader
 # MP4Box is dynamically linked against Ubuntu 26.04 (newer glibc), so build a
 # static MP4Box from a pinned GPAC release for the mux step of Apple downloads.
 FROM debian:bookworm-slim AS gpac_builder
+ARG GPAC_ARCHIVE_URL=https://github.com/gpac/gpac/archive/refs/tags/v2.4.0.tar.gz
+ARG GPAC_ARCHIVE_SHA256=99c8c994d5364b963d18eff24af2576b38d38b3460df27d451248982ea16157a
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential pkg-config git ca-certificates zlib1g-dev \
+    build-essential pkg-config curl ca-certificates zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
-RUN git clone --depth 1 --branch v2.4.0 https://github.com/gpac/gpac.git /tmp/gpac \
+RUN curl -fsSL "$GPAC_ARCHIVE_URL" -o /tmp/gpac.tar.gz \
+    && echo "$GPAC_ARCHIVE_SHA256  /tmp/gpac.tar.gz" | sha256sum -c - \
+    && mkdir -p /tmp/gpac \
+    && tar -xzf /tmp/gpac.tar.gz --strip-components=1 -C /tmp/gpac \
+    && rm /tmp/gpac.tar.gz \
     && cd /tmp/gpac \
     && ./configure --static-bin \
     && make -j"$(nproc)" \
@@ -134,6 +163,16 @@ ENV DOCKER=true
 # /config/.tiddl into this location automatically.
 ENV TIDDL_PATH=/config/providers/tidal/.tiddl
 ENV APPLE_MUSIC_DL_BIN=apple-music-dl
+ENV YTMUSICAPI_PYTHON_BIN=/opt/ytmusic-venv/bin/python
+ENV YT_DLP_BIN=/opt/ytmusic-venv/bin/yt-dlp
+ENV STREAMRIP_BIN=/opt/streamrip-venv/bin/rip
+ENV AMAZON_MUSIC_PYTHON=/opt/amazon-music-venv/bin/python
+ENV SPOTIFY_VOTIFY_BIN=/opt/votify-venv/bin/votify
+# Votify 1.9.9's librespot extra currently resolves old generated protobuf
+# descriptors alongside protobuf 6 (required by pywidevine). Protobuf's
+# documented compatibility implementation keeps that upstream combination
+# importable until librespot republishes its generated descriptors.
+ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 
 # Declare volumes for persistent data
 VOLUME ["/config", "/downloads", "/library"]

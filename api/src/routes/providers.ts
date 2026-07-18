@@ -2,23 +2,35 @@ import { Router } from "express";
 import { Config, updateConfig } from "../services/config/config.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import { getProviderDiagnostics } from "../services/providers/provider-diagnostics.js";
-import type { ProviderImportSelection } from "../services/providers/streaming-provider.js";
+import { providerSupportsAppAuthentication } from "../services/providers/provider-auth-support.js";
+import type { ProviderImportSelection, StreamingProvider } from "../services/providers/streaming-provider.js";
 
 const router = Router();
 
-function serializeProvider(provider: ReturnType<typeof streamingProviderManager.getDefaultStreamingProvider>, isDefault: boolean) {
-  const authenticated = provider.isAuthenticated ? provider.isAuthenticated() : false;
+export async function serializeProvider(provider: StreamingProvider, isDefault: boolean) {
+  const locallyAuthenticated = provider.isAuthenticated ? provider.isAuthenticated() : false;
+  let authenticated = locallyAuthenticated;
+  let remoteCatalogAvailable = locallyAuthenticated;
+
+  try {
+    const authStatus = await provider.getAuthStatus();
+    authenticated = authStatus.connected;
+    remoteCatalogAvailable = authStatus.remoteCatalogAvailable;
+  } catch {
+    // A provider status probe should not make the complete registry unavailable.
+    // Keep the synchronous local state as a conservative fallback.
+  }
 
   return {
     id: provider.id,
     name: provider.name,
     isDefault,
     authenticated,
-    remoteCatalogAvailable: authenticated,
+    remoteCatalogAvailable,
     manifest: provider.manifest,
     capabilities: provider.capabilities,
     management: {
-      canAuthenticate: Boolean(provider.manifest?.auth.managedByApp && provider.startDeviceLogin),
+      canAuthenticate: providerSupportsAppAuthentication(provider),
       canDisconnect: Boolean(provider.logout),
       canImportArtists: Boolean(provider.listImportSources && provider.getArtistsForImportSource),
       canPreviewTracks: provider.capabilities.audioPreviews && Boolean(provider.getPlaybackInfo),
@@ -29,19 +41,24 @@ function serializeProvider(provider: ReturnType<typeof streamingProviderManager.
   };
 }
 
-router.get("/", (_, res) => {
-  const defaultProvider = streamingProviderManager.getDefaultStreamingProvider();
-  const priority = streamingProviderManager.getProviderPriority();
-  const rank = (id: string) => {
-    const index = priority.indexOf(id);
-    return index === -1 ? priority.length : index;
-  };
-  const providers = streamingProviderManager
-    .getAllStreamingProviders()
-    .map((provider) => serializeProvider(provider, provider.id === defaultProvider.id))
-    .sort((left, right) => rank(left.id) - rank(right.id));
+router.get("/", async (_, res) => {
+  try {
+    const defaultProvider = streamingProviderManager.getDefaultStreamingProvider();
+    const priority = streamingProviderManager.getProviderPriority();
+    const rank = (id: string) => {
+      const index = priority.indexOf(id);
+      return index === -1 ? priority.length : index;
+    };
+    const providers = (await Promise.all(
+      streamingProviderManager
+        .getAllStreamingProviders()
+        .map((provider) => serializeProvider(provider, provider.id === defaultProvider.id)),
+    )).sort((left, right) => rank(left.id) - rank(right.id));
 
-  res.json({ providers, defaultProviderId: defaultProvider.id, providerPriority: priority });
+    res.json({ providers, defaultProviderId: defaultProvider.id, providerPriority: priority });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message || "Unable to load provider registry" });
+  }
 });
 
 // Persist the user's provider preference order. The first entry becomes the

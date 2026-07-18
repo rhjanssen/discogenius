@@ -11,7 +11,7 @@ import type {
     ImportCandidate,
     LocalGroup,
     RootFolderImportProgressEvent,
-    TidalMatch,
+    ProviderMatch,
 } from "./import-types.js";
 
 type DirectGroupIdentifiers = {
@@ -78,7 +78,7 @@ export class ImportMatcherService {
         group: LocalGroup,
         context: "music" | "spatial" | "video" = "music",
         mode: ImportDecisionMode = "NewDownload",
-    ): Promise<TidalMatch[]> {
+    ): Promise<ProviderMatch[]> {
         return this.matchGroup(group, context, mode);
     }
 
@@ -664,8 +664,8 @@ export class ImportMatcherService {
         evidence?: MatchEvidenceSignals,
         albumEvidence?: Map<string, AlbumMatchEvidence>,
         mode: ImportDecisionMode = "NewDownload"
-    ): TidalMatch[] {
-        const validMatches: TidalMatch[] = [];
+    ): ProviderMatch[] {
+        const validMatches: ProviderMatch[] = [];
 
         for (const candidate of candidates) {
             const candidateId = this.getCandidateKey(candidate);
@@ -680,7 +680,7 @@ export class ImportMatcherService {
                     ? this.calculateVideoScore(group, candidate)
                     : this.calculateScore(group, candidate, context);
 
-            let matchType: TidalMatch["matchType"] = score > 0.9 ? "exact" : "fuzzy";
+            let matchType: ProviderMatch["matchType"] = score > 0.9 ? "exact" : "fuzzy";
 
             if (candidateId && evidence?.directCandidateIds?.has(candidateId)) {
                 score = Math.max(score, 0.9);
@@ -811,11 +811,11 @@ export class ImportMatcherService {
 
     private applyAutoImportPolicy(
         group: LocalGroup,
-        matches: TidalMatch[],
+        matches: ProviderMatch[],
         itemType: "album" | "video",
         evidence?: MatchEvidenceSignals,
         mode: ImportDecisionMode = "NewDownload",
-    ): TidalMatch[] {
+    ): ProviderMatch[] {
         return ImportDecisionEngine.evaluateMatches({
             group,
             matches,
@@ -930,7 +930,7 @@ export class ImportMatcherService {
         group: LocalGroup,
         context: "music" | "spatial" | "video",
         mode: ImportDecisionMode = "NewDownload"
-    ): Promise<TidalMatch[]> {
+    ): Promise<ProviderMatch[]> {
         const { artist, album } = group.commonTags;
         const directIdentifiers = this.collectDirectIdentifiers(group);
         const directCandidates = await this.getDirectIdentifierCandidates(directIdentifiers, context);

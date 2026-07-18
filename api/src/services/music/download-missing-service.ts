@@ -2,13 +2,12 @@ import { db } from "../../database.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
-import { LibraryFilesService, resolvePlexVideoSuffix } from "../mediafiles/library-files.js";
-import { baseComparableTitle } from "../mediafiles/import-matching-utils.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { queueTrackAcquisitionPlan } from "./release-group-acquisition-plan.js";
+import { streamingProviderManager } from "../providers/index.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -273,14 +272,24 @@ export class DownloadMissingService {
         }
 
         if (allowVideos) {
-            const hasImportedVideoFile = (recordingMbidColumn: string, providerIdColumn: string) => `
+            const hasImportedVideoFile = (
+                recordingIdColumn: string,
+                recordingMbidColumn: string,
+                providerColumn: string,
+                providerIdColumn: string,
+            ) => `
                 EXISTS (
                     SELECT 1
                     FROM TrackFiles lf
                     WHERE lf.file_type = 'video'
                       AND (
-                        (lf.canonical_recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = ${recordingMbidColumn})
-                        OR (lf.provider_entity_type = 'video' AND CAST(lf.provider_id AS TEXT) = CAST(${providerIdColumn} AS TEXT))
+                        lf.recording_id = ${recordingIdColumn}
+                        OR (lf.canonical_recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = ${recordingMbidColumn})
+                        OR (
+                            lf.provider_entity_type = 'video'
+                            AND lf.provider = ${providerColumn}
+                            AND CAST(lf.provider_id AS TEXT) = CAST(${providerIdColumn} AS TEXT)
+                        )
                       )
                 )
             `;
@@ -308,7 +317,7 @@ export class DownloadMissingService {
                 WHERE r.is_video = 1
                   AND r.monitored = 1
                   AND pi.provider_id IS NOT NULL
-                  AND NOT ${hasImportedVideoFile('r.mbid', 'pi.provider_id')}
+                  AND NOT ${hasImportedVideoFile('r.id', 'r.mbid', 'pi.provider', 'pi.provider_id')}
             `;
             const videoParams: any[] = [];
             if (artistId) {
@@ -331,72 +340,36 @@ export class DownloadMissingService {
 
             const videos = db.prepare(videosQuery).all(...videoParams) as any[];
 
-            const videoTypeRank: Record<string, number> = {
-                "-video": 0,
-                "-lyrics": 1,
-                "-live": 2,
-                "-concert": 3,
-                "-behindthescenes": 4,
-                "-interview": 5,
-            };
-            const videoGroupKey = (artistMbid: unknown, title: unknown) => {
-                const base = baseComparableTitle(String(title || "")) || String(title || "").trim().toLowerCase();
-                return `${String(artistMbid || "")}:${base}`;
-            };
+            // One job per canonical video recording. Distinct lyric/live/audio
+            // variants intentionally have distinct recording ids after video
+            // clustering, so title-based grouping here would collapse them all
+            // over again. Within one recording, choose the highest-priority
+            // provider deterministically while preserving canonical title order.
+            const offersByRecording = new Map<string, Array<{ video: any; index: number }>>();
+            videos.forEach((video, index) => {
+                const recordingId = String(video.recording_id || "");
+                if (!recordingId) return;
+                const offers = offersByRecording.get(recordingId) ?? [];
+                offers.push({ video, index });
+                offersByRecording.set(recordingId, offers);
+            });
+            const preferredVideos = Array.from(offersByRecording.values()).map((offers) => {
+                offers.sort((left, right) =>
+                    streamingProviderManager.getProviderPreferenceRank(String(left.video.provider || ""))
+                    - streamingProviderManager.getProviderPreferenceRank(String(right.video.provider || ""))
+                    || left.index - right.index);
+                return offers[0].video;
+            });
 
-            const importedVideoGroups = new Set<string>(
-                (db.prepare(`
-                    SELECT r.artist_mbid AS artist_mbid, r.title AS title
-                    FROM TrackFiles lf
-                    JOIN Recordings r
-                      ON (lf.canonical_recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = r.mbid)
-                      OR (lf.provider_entity_type = 'video' AND EXISTS (
-                            SELECT 1 FROM ProviderItems pv
-                            WHERE pv.entity_type = 'video'
-                              AND CAST(pv.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-                              AND pv.recording_id = r.id
-                          ))
-                    WHERE lf.file_type = 'video' AND r.is_video = 1
-                `).all() as Array<{ artist_mbid: string | null; title: string | null }>)
-                    .map((row) => videoGroupKey(row.artist_mbid, row.title)),
-            );
-
-            const rankedVideos = videos
-                .map((video, index) => ({
-                    video,
-                    index,
-                    groupKey: videoGroupKey(video.artist_mbid, video.video_title),
-                    typeRank: videoTypeRank[resolvePlexVideoSuffix(video.video_title)] ?? 9,
-                    // Audio-only uploads ("… (Audio)") are not the music video — when
-                    // a song has both, keep the actual video. (Was previously lost:
-                    // "(Audio)" sorted before "(Official Video)" alphabetically.)
-                    audioRank: /\(\s*audio\s*\)|\baudio[\s-]*only\b/i.test(String(video.video_title || "")) ? 1 : 0,
-                    // Prefer the labelled "Official …" cut. The old regex escaped the
-                    // word boundaries (\\b) so it matched a literal "\bofficial\b" and
-                    // never fired.
-                    officialRank: /\bofficial\b/i.test(String(video.video_title || "")) ? 0 : 1,
-                }))
-                .sort((left, right) =>
-                    left.groupKey.localeCompare(right.groupKey)
-                    || left.typeRank - right.typeRank
-                    || left.audioRank - right.audioRank
-                    || left.officialRank - right.officialRank
-                    || left.index - right.index,
-                );
-
-            const queuedRecordings = new Set<string>();
-            const queuedGroups = new Set<string>();
-            for (const { video, groupKey } of rankedVideos) {
+            for (const video of preferredVideos) {
                 if (!hasBatchCapacity()) {
                     break;
                 }
                 const recordingId = String(video.recording_id || "");
                 const providerId = String(video.provider_id || "");
                 const queueRefId = recordingId ? `recording:${recordingId}:video` : `provider:${providerId}:video`;
-                if (!recordingId || !providerId || queuedRecordings.has(recordingId)) continue;
-                if (queuedGroups.has(groupKey) || importedVideoGroups.has(groupKey)) continue;
+                if (!recordingId || !providerId) continue;
                 if (hasBufferedJob([CommandNames.DownloadVideo, CommandNames.ImportDownload], queueRefId)) {
-                    queuedGroups.add(groupKey);
                     continue;
                 }
 
@@ -418,8 +391,6 @@ export class DownloadMissingService {
                     artists: [artistName],
                     description: `${title} by ${artistName}`,
                 }, queueRefId);
-                queuedRecordings.add(recordingId);
-                queuedGroups.add(groupKey);
                 videoJobs++;
             }
         }

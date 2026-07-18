@@ -141,6 +141,38 @@ test("track-set refresh policy reads canonical ProviderItems without legacy medi
   assert.equal(refreshPolicyModule.shouldRefreshTrackSet({ albumId: "provider-album" }), true);
 });
 
+test("track-set refresh policy scopes equal album IDs to the requested provider", () => {
+  seedArtist();
+  seedAlbum("release-group-mbid", "release-mbid", dateDaysAgo(120));
+  insertProviderItem({
+    provider: "tidal",
+    entity_type: "album",
+    provider_id: "42",
+    title: "Tidal album",
+  });
+  insertProviderItem({
+    provider: "tidal",
+    entity_type: "track",
+    provider_id: "tidal-track",
+    updated_at: daysAgo(1),
+  });
+  insertProviderItem({
+    provider: "apple-music",
+    entity_type: "album",
+    provider_id: "42",
+    title: "Apple album",
+  });
+
+  assert.equal(
+    refreshPolicyModule.shouldRefreshTrackSet({ albumId: "42", provider: "tidal" }),
+    false,
+  );
+  assert.equal(
+    refreshPolicyModule.shouldRefreshTrackSet({ albumId: "42", provider: "apple-music" }),
+    true,
+  );
+});
+
 test("video refresh policy reads canonical ProviderItems for the artist", () => {
   seedArtist();
   insertProviderItem({

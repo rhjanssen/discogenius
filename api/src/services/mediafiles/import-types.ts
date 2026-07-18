@@ -27,7 +27,7 @@ export interface LocalGroup {
 
 export interface ImportCandidate {
     group: LocalGroup;
-    matches: TidalMatch[];
+    matches: ProviderMatch[];
 }
 
 /**
@@ -42,7 +42,7 @@ export interface ImportRejection {
     type: RejectionType;
 }
 
-export interface TidalMatch {
+export interface ProviderMatch {
     item: any;
     itemType: "album" | "video";
     score: number;

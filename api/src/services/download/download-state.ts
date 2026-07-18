@@ -669,7 +669,7 @@ export function updateArtistDownloadStatusFromAlbum(albumId: string): void {
   }
 }
 
-export function updateArtistDownloadStatusFromMedia(mediaId: string): void {
+export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: string | null): void {
   if (!mediaId) return;
 
   invalidateMediaDownloadState(mediaId);
@@ -683,6 +683,7 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string): void {
     LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
     WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
       AND pi.entity_type IN ('track', 'video')
+      AND (? IS NULL OR pi.provider = ?)
     UNION
     SELECT DISTINCT
       CAST(a.id AS TEXT) AS artist_id,
@@ -701,7 +702,15 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string): void {
     LEFT JOIN Artists a ON a.mbid = recording.artist_mbid
     WHERE recording.mbid = ?
        OR CAST(recording.id AS TEXT) = CAST(? AS TEXT)
-  `).all(mediaId, mediaId, mediaId, mediaId, mediaId) as Array<{
+  `).all(
+    mediaId,
+    provider || null,
+    provider || null,
+    mediaId,
+    mediaId,
+    mediaId,
+    mediaId,
+  ) as Array<{
     artist_id?: string | null;
     release_group_mbid?: string | null;
   }>;

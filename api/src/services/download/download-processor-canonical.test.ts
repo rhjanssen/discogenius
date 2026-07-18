@@ -218,3 +218,69 @@ test("download processor detects canonical track and video files without Provide
   assert.equal(processor.isCanonicalProviderItemDownloaded("tidal-video", "video", { type: "video", providerId: "tidal-video" }), true);
 });
 
+test("download processor scopes provider offers when services reuse the same resource id", () => {
+  const processor = new DownloadProcessor() as any;
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-apple', 'Apple Artist'), ('artist-tidal', 'TIDAL Artist')
+  `).run();
+  db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES
+      ('artist-apple', 'artist-apple', 'Apple Artist'),
+      ('artist-tidal', 'artist-tidal', 'TIDAL Artist')
+  `).run();
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES
+      ('rg-apple', 'artist-apple', 'Apple Album', 'album'),
+      ('rg-tidal', 'artist-tidal', 'TIDAL Album', 'album')
+  `).run();
+  db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
+    VALUES
+      ('recording-apple', 'artist-apple', 'Apple Track', 0),
+      ('recording-tidal', 'artist-tidal', 'TIDAL Track', 0)
+  `).run();
+
+  // Provider IDs are not globally unique. Make the TIDAL rows newer so the
+  // former provider-less ORDER BY deterministically picked the wrong service.
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      recording_mbid, title, quality, updated_at
+    ) VALUES
+      ('apple-music', 'album', '42', 'artist-apple', 'rg-apple', NULL, 'Apple Album', 'HIRES_LOSSLESS', '2000-01-01 00:00:00'),
+      ('tidal', 'album', '42', 'artist-tidal', 'rg-tidal', NULL, 'TIDAL Album', 'LOSSLESS', '2099-01-01 00:00:00'),
+      ('apple-music', 'track', '7', 'artist-apple', 'rg-apple', 'recording-apple', 'Apple provider track', 'HIRES_LOSSLESS', '2000-01-01 00:00:00'),
+      ('tidal', 'track', '7', 'artist-tidal', 'rg-tidal', 'recording-tidal', 'TIDAL provider track', 'LOSSLESS', '2099-01-01 00:00:00')
+  `).run();
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_recording_mbid, provider, provider_entity_type,
+      provider_id, library_slot, file_path, relative_path, library_root,
+      filename, extension, file_type
+    ) VALUES (
+      'artist-tidal', 'recording-tidal', 'tidal', 'track',
+      '7', 'stereo', 'C:/Music/tidal.flac', 'tidal.flac', 'C:/Music',
+      'tidal.flac', 'flac', 'track'
+    )
+  `).run();
+
+  const appleAlbumPayload = { type: "album", provider: "apple-music", providerId: "42" };
+  const appleTrackPayload = { type: "track", provider: "apple-music", providerId: "7" };
+  const tidalTrackPayload = { type: "track", provider: "tidal", providerId: "7" };
+
+  assert.equal(processor.resolveCanonicalProviderOffer("42", "album", appleAlbumPayload)?.provider, "apple-music");
+  assert.equal(processor.resolveCanonicalProviderOffer("7", "track", appleTrackPayload)?.provider, "apple-music");
+  assert.deepEqual(processor.resolveDownloadMetadata("7", "track", appleTrackPayload), {
+    title: "Apple Track",
+    artist: "Apple Artist",
+    cover: null,
+  });
+  assert.equal(processor.resolveDownloadQuality("7", "track", appleTrackPayload), "HIRES_LOSSLESS");
+  assert.equal(processor.isCanonicalProviderItemDownloaded("7", "track", appleTrackPayload), false);
+  assert.equal(processor.isCanonicalProviderItemDownloaded("7", "track", tidalTrackPayload), true);
+});
+

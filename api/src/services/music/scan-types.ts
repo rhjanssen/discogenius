@@ -25,6 +25,12 @@ export interface RefreshOptions {
      * queued units; direct callers leave it unset and keep inline matching.
      */
     deferProviderMatching?: boolean;
+    /**
+     * Provider module that sourced the item being seeded/refreshed. Seeding a
+     * cross-provider item (e.g. a video offer resolved to a non-default
+     * provider) must query that provider's catalog, not the default one.
+     */
+    provider?: string;
     progress?: (event: ArtistScanProgressEvent) => void;
 }
 

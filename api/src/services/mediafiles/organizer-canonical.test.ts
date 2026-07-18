@@ -180,6 +180,51 @@ test("organizer matches provider-id staging filenames to materialized provider t
   assert.equal(row?.canonical_recording_mbid, "recording-1");
 });
 
+test("organizer deterministically maps Apple album-bundled video filenames to provider ids", async () => {
+  const insertOffer = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, title,
+      track_number, volume_number, library_slot, match_status
+    ) VALUES (?, 'track', ?, ?, ?, ?, 1, 'video', 'matched')
+  `);
+  insertOffer.run("apple-music", "1445311105", "1445311094", "Bad Blood (Live)", 6);
+  insertOffer.run("apple-music", "1445311108", "1445311094", "Pompeii (Live)", 7);
+  // The same provider album id in another provider must not enter Apple's
+  // fallback candidate set.
+  insertOffer.run("tidal", "tidal-video-collision", "1445311094", "Bad Blood (Live)", 6);
+
+  const badBlood = path.join(tempDir, "1445311094", "06. Bad Blood (Live).mp4");
+  const pompeii = path.join(tempDir, "1445311094", "07. Pompeii (Live).mp4");
+  const matches = await (organizerModule.OrganizerService as any).matchAlbumFilesToTracks(
+    "1445311094",
+    [badBlood, pompeii],
+    { provider: "apple-music", slot: "stereo" },
+  );
+
+  assert.equal(matches.get(badBlood), "1445311105");
+  assert.equal(matches.get(pompeii), "1445311108");
+});
+
+test("organizer leaves ambiguous Apple bundled-video titles staged", async () => {
+  const insertOffer = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, title,
+      track_number, volume_number, library_slot, match_status
+    ) VALUES ('apple-music', 'track', ?, 'apple-ambiguous-album', 'Intro', 8, 1, 'video', 'matched')
+  `);
+  insertOffer.run("apple-intro-a");
+  insertOffer.run("apple-intro-b");
+
+  const stagedFile = path.join(tempDir, "apple-ambiguous-album", "08. Intro.mp4");
+  const matches = await (organizerModule.OrganizerService as any).matchAlbumFilesToTracks(
+    "apple-ambiguous-album",
+    [stagedFile],
+    { provider: "apple-music", slot: "stereo" },
+  );
+
+  assert.equal(matches.has(stagedFile), false);
+});
+
 test("organizer returns no match when a staged provider id has no offer row", async () => {
   // No materialized track row and no live provider in the unit env → the
   // force-refresh path fails softly and matching returns empty (recoverable),

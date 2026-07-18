@@ -6,7 +6,10 @@ import type { RefreshOptions } from "./scan-types.js";
 
 export class MediaSeedService {
     static async seedTrack(trackId: string, options: RefreshOptions = {}) {
-        const providerTrack = await streamingProviderManager.getDefaultStreamingProvider().getTrack(trackId);
+        const providerClient = options.provider
+            ? streamingProviderManager.getStreamingProvider(options.provider)
+            : streamingProviderManager.getDefaultStreamingProvider();
+        const providerTrack = await providerClient.getTrack(trackId);
         const trackData = (providerTrack.raw && typeof providerTrack.raw === "object")
             ? providerTrack.raw as any
             : providerTrack as any;
@@ -19,12 +22,14 @@ export class MediaSeedService {
 
         await RefreshArtistService.refreshArtistMetadata(artistId, {
             ...options,
+            provider: providerClient.id,
             includeSimilarArtists: false,
             seedSimilarArtists: false,
         });
 
         await RefreshAlbumService.refreshMetadata(albumId, {
             ...options,
+            provider: providerClient.id,
             includeSimilarAlbums: false,
             seedSimilarAlbums: false,
         });
@@ -33,13 +38,19 @@ export class MediaSeedService {
     }
 
     static async seedVideo(videoId: string, options: RefreshOptions = {}) {
-        const providerVideo = await streamingProviderManager.getDefaultStreamingProvider().getVideo?.(videoId);
+        const providerClient = options.provider
+            ? streamingProviderManager.getStreamingProvider(options.provider)
+            : streamingProviderManager.getDefaultStreamingProvider();
+        const providerVideo = await providerClient.getVideo?.(videoId);
         if (!providerVideo) {
             throw new Error(`Video ${videoId} not found`);
         }
         const videoData = (providerVideo.raw && typeof providerVideo.raw === "object")
             ? providerVideo.raw as any
             : providerVideo as any;
+        // upsertArtistVideos attributes rows to `video.provider` (defaulting to
+        // the default provider) — stamp the catalog that actually served this.
+        videoData.provider = videoData.provider || providerClient.id;
         const artistId = videoData.artist_id?.toString?.() ?? String(videoData.artist_id ?? "");
         const albumId = videoData.album_id?.toString?.() ?? String(videoData.album_id ?? "");
 
@@ -49,6 +60,7 @@ export class MediaSeedService {
 
         await RefreshArtistService.refreshArtistMetadata(artistId, {
             ...options,
+            provider: providerClient.id,
             includeSimilarArtists: false,
             seedSimilarArtists: false,
         });
@@ -56,6 +68,7 @@ export class MediaSeedService {
         if (albumId) {
             await RefreshAlbumService.refreshOffer(albumId, artistId, undefined, {
                 ...options,
+                provider: providerClient.id,
                 includeSimilarAlbums: false,
                 seedSimilarAlbums: false,
             });

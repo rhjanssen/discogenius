@@ -5,6 +5,11 @@ import { normalizeComparableText, stringSimilarity } from "../mediafiles/import-
 export type MetadataIdentityEntityType = "artist" | "album" | "track" | "video";
 export type MetadataIdentityStatus = "pending" | "verified" | "ambiguous" | "unmatched" | "error";
 
+export type MetadataIdentityOptions = {
+    force?: boolean;
+    provider?: string | null;
+};
+
 export type MetadataIdentityResult = {
     entityType: MetadataIdentityEntityType;
     entityId: string;
@@ -51,7 +56,12 @@ function normalizeText(value: unknown): string {
     return normalizeComparableText(String(value || ""));
 }
 
-function recordIdentityStatus(result: MetadataIdentityResult): void {
+function identityStatusStorageId(entityId: string, provider?: string | null): string {
+    const normalizedProvider = String(provider || "").trim();
+    return normalizedProvider ? `${normalizedProvider}:${entityId}` : entityId;
+}
+
+function recordIdentityStatus(result: MetadataIdentityResult, provider?: string | null): void {
     db.prepare(`
         INSERT INTO metadata_identity_status (
             entity_type, entity_id, status, confidence, method, message, data, updated_at
@@ -65,7 +75,7 @@ function recordIdentityStatus(result: MetadataIdentityResult): void {
             updated_at = CURRENT_TIMESTAMP
     `).run(
         result.entityType,
-        result.entityId,
+        identityStatusStorageId(result.entityId, provider),
         result.status,
         result.confidence,
         result.method,
@@ -121,12 +131,16 @@ async function searchMusicBrainzArtists(name: string): Promise<MusicBrainzArtist
  * fingerprinting only matters for unknown *local* imports, a separate file path).
  */
 export class MetadataIdentityService {
-    static getStatus(entityType: MetadataIdentityEntityType, entityId: string): MetadataIdentityResult | null {
+    static getStatus(
+        entityType: MetadataIdentityEntityType,
+        entityId: string,
+        options: Pick<MetadataIdentityOptions, "provider"> = {},
+    ): MetadataIdentityResult | null {
         const row = db.prepare(`
             SELECT entity_type, entity_id, status, confidence, method, message, data
             FROM metadata_identity_status
             WHERE entity_type = ? AND entity_id = ?
-        `).get(entityType, entityId) as {
+        `).get(entityType, identityStatusStorageId(entityId, options.provider)) as {
             entity_type: MetadataIdentityEntityType;
             entity_id: string;
             status: MetadataIdentityStatus;
@@ -140,7 +154,7 @@ export class MetadataIdentityService {
 
         return {
             entityType: row.entity_type,
-            entityId: row.entity_id,
+            entityId,
             status: row.status,
             confidence: Number(row.confidence || 0),
             method: row.method || "unknown",
@@ -206,8 +220,7 @@ export class MetadataIdentityService {
      * The matching itself (provider album → release group) already happened in the
      * scan; we no longer re-derive it or write provider catalog rows.
      */
-    static async resolveAlbum(albumId: string, options: { force?: boolean } = {}): Promise<MetadataIdentityResult> {
-        void options;
+    static async resolveAlbum(albumId: string, options: MetadataIdentityOptions = {}): Promise<MetadataIdentityResult> {
         const offer = db.prepare(`
             SELECT
                 a.provider_id AS id,
@@ -216,14 +229,16 @@ export class MetadataIdentityService {
                 a.artist_mbid AS artist_mbid,
                 a.title AS title
             FROM ProviderItems a
-            WHERE a.entity_type = 'album' AND CAST(a.provider_id AS TEXT) = CAST(? AS TEXT)
+            WHERE a.entity_type = 'album'
+              AND CAST(a.provider_id AS TEXT) = CAST(? AS TEXT)
+              AND (? IS NULL OR a.provider = ?)
             ORDER BY a.updated_at DESC
             LIMIT 1
-        `).get(albumId) as ProviderAlbumOffer | undefined;
+        `).get(albumId, options.provider || null, options.provider || null) as ProviderAlbumOffer | undefined;
 
         if (!offer) {
             const result = this.result("album", albumId, "error", 0, "local-row", "Album offer is not in the Discogenius database");
-            recordIdentityStatus(result);
+            recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -246,7 +261,7 @@ export class MetadataIdentityService {
                 releaseId: offer.release_mbid,
                 releaseGroupId: offer.release_group_mbid,
             });
-            recordIdentityStatus(result);
+            recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -258,7 +273,7 @@ export class MetadataIdentityService {
             "canonical-catalog-only",
             "provider offer has not been matched to the canonical MusicBrainz catalog",
         );
-        recordIdentityStatus(result);
+        recordIdentityStatus(result, options.provider);
         return result;
     }
 
@@ -267,22 +282,23 @@ export class MetadataIdentityService {
      * Tracks are mapped to canonical recordings by position during the scan, so
      * there is no per-track MusicBrainz search here anymore.
      */
-    static async resolveTrack(mediaId: string, options: { force?: boolean } = {}): Promise<MetadataIdentityResult> {
-        void options;
+    static async resolveTrack(mediaId: string, options: MetadataIdentityOptions = {}): Promise<MetadataIdentityResult> {
         const offer = db.prepare(`
             SELECT
                 a.provider_id AS id,
                 a.recording_mbid AS recording_mbid,
                 a.recording_id AS recording_id
             FROM ProviderItems a
-            WHERE a.entity_type = 'track' AND CAST(a.provider_id AS TEXT) = CAST(? AS TEXT)
+            WHERE a.entity_type = 'track'
+              AND CAST(a.provider_id AS TEXT) = CAST(? AS TEXT)
+              AND (? IS NULL OR a.provider = ?)
             ORDER BY a.updated_at DESC
             LIMIT 1
-        `).get(mediaId) as ProviderTrackOffer | undefined;
+        `).get(mediaId, options.provider || null, options.provider || null) as ProviderTrackOffer | undefined;
 
         if (!offer) {
             const result = this.result("track", mediaId, "error", 0, "local-row", "Track offer is not in the Discogenius database");
-            recordIdentityStatus(result);
+            recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -290,7 +306,7 @@ export class MetadataIdentityService {
             const result = this.result("track", mediaId, "verified", 1, "provider-items-canonical-link", undefined, {
                 recordingId: offer.recording_mbid,
             });
-            recordIdentityStatus(result);
+            recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -304,30 +320,35 @@ export class MetadataIdentityService {
                 "track maps to a provisional local recording without a MusicBrainz ID",
                 { recordingId: offer.recording_id },
             );
-            recordIdentityStatus(result);
+            recordIdentityStatus(result, options.provider);
             return result;
         }
 
         const result = this.result("track", mediaId, "unmatched", 0, "track-lookup", "No canonical recording linked to this provider track");
-        recordIdentityStatus(result);
+        recordIdentityStatus(result, options.provider);
         return result;
     }
 
-    static markVideoKnown(videoId: string): MetadataIdentityResult {
+    static markVideoKnown(
+        videoId: string,
+        options: Pick<MetadataIdentityOptions, "provider"> = {},
+    ): MetadataIdentityResult {
         const offer = db.prepare(`
             SELECT recording_mbid, recording_id
             FROM ProviderItems
-            WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            WHERE entity_type = 'video'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+              AND (? IS NULL OR provider = ?)
             ORDER BY updated_at DESC
             LIMIT 1
-        `).get(videoId) as { recording_mbid?: string | null; recording_id?: number | null } | undefined;
+        `).get(videoId, options.provider || null, options.provider || null) as { recording_mbid?: string | null; recording_id?: number | null } | undefined;
 
         const recordingMbid = String(offer?.recording_mbid || "").trim();
         if (recordingMbid) {
             const result = this.result("video", videoId, "verified", 1, "musicbrainz-recording", undefined, {
                 recordingId: recordingMbid,
             });
-            recordIdentityStatus(result);
+            recordIdentityStatus(result, options.provider);
             return result;
         }
 
@@ -342,7 +363,7 @@ export class MetadataIdentityService {
                 : "No matching MusicBrainz video recording has been linked yet",
             offer?.recording_id ? { recordingId: offer.recording_id } : undefined,
         );
-        recordIdentityStatus(result);
+        recordIdentityStatus(result, options.provider);
         return result;
     }
 

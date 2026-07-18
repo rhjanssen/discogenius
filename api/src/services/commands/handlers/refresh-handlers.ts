@@ -149,6 +149,7 @@ export const handleRefreshAlbum: CommandHandler<"RefreshAlbum"> = async (job) =>
         forceUpdate: Boolean(job.payload?.forceUpdate),
         includeSimilarAlbums: false,
         seedSimilarAlbums: false,
+        provider: job.payload.provider,
     });
 };
 
@@ -221,16 +222,23 @@ export const handleSeedVideo: CommandHandler<"SeedVideo"> = async (job, ctx) => 
 
     await MediaSeedService.seedVideo(providerId, {
         monitorArtist: job.payload.monitorArtist ?? true,
+        provider: job.payload.provider,
     });
 
     if (job.payload.monitorVideo !== false) {
         const providerItem = db.prepare(`
             SELECT recording_id AS recordingId
             FROM ProviderItems
-            WHERE entity_type = 'video' AND provider_id = ?
+            WHERE entity_type = 'video'
+              AND provider_id = ?
+              AND (? IS NULL OR provider = ?)
             ORDER BY updated_at DESC
             LIMIT 1
-        `).get(providerId) as { recordingId?: number | null } | undefined;
+        `).get(
+            providerId,
+            job.payload.provider || null,
+            job.payload.provider || null,
+        ) as { recordingId?: number | null } | undefined;
 
         if (providerItem?.recordingId) {
             db.prepare(`

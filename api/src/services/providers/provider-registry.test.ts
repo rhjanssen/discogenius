@@ -36,12 +36,18 @@ test("registry resolves the active provider from config, not a hardcoded id", as
   assert.equal(streamingProviderManager.getDefaultProviderId(), "tidal");
 });
 
-test("registry exposes both built-in providers", async () => {
+test("registry exposes every built-in provider", async () => {
   const { streamingProviderManager } = await import("./index.js");
   const providers = streamingProviderManager.getAllStreamingProviders();
   const ids = providers.map((p) => p.id);
-  assert.ok(ids.includes("tidal"));
-  assert.ok(ids.includes("apple-music"));
+  assert.deepEqual(ids, [
+    "tidal",
+    "apple-music",
+    "amazon-music",
+    "spotify",
+    "youtube-music",
+    "deezer",
+  ]);
 
   for (const provider of providers) {
     assert.ok(provider.manifest, `${provider.id} should expose a provider manifest`);

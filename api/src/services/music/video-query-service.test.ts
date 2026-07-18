@@ -20,6 +20,9 @@ before(async () => {
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
+  dbModule.db.prepare("DELETE FROM Tracks").run();
+  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+  dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
@@ -56,14 +59,25 @@ test("video list and detail use canonical video recordings with provider offers"
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality, duration, release_date, provider_url, match_status, match_confidence
+      title, quality, duration, release_date, provider_url, match_status, match_confidence, availability
     )
     VALUES (
       'tidal', 'video', 'provider-video-1', 'artist-mbid', ?,
       'Canonical Video', 'FHD', 215, '2024-01-02',
-      'https://tidal.com/browse/video/provider-video-1', 'verified', 0.99
+      'https://tidal.com/browse/video/provider-video-1', 'verified', 0.99, 1
     )
   `).run(recording.id);
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_id,
+      title, quality, duration, availability
+    ) VALUES
+      ('youtube-music', 'video', 'yt-video-01', 'artist-mbid', ?,
+       'Canonical Video', NULL, 215, 1),
+      ('apple-music', 'video', 'unavailable-video', 'artist-mbid', ?,
+       'Canonical Video', '4K', 215, 0)
+  `).run(recording.id, recording.id);
 
   const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
 
@@ -84,6 +98,23 @@ test("video list and detail use canonical video recordings with provider offers"
   assert.equal(detail?.artist_id, "artist-mbid");
   assert.equal(detail?.duration, 215);
   assert.equal(detail?.cover_art_url, `/media-cover/Videos/${recording.id}/cover.jpg`);
+  assert.deepEqual(detail?.offers, [{
+    provider: "tidal",
+    provider_id: "provider-video-1",
+    quality: "FHD",
+    url: "https://tidal.com/browse/video/provider-video-1",
+    available: true,
+    can_preview: true,
+    can_download: true,
+  }, {
+    provider: "youtube-music",
+    provider_id: "yt-video-01",
+    quality: null,
+    url: null,
+    available: true,
+    can_preview: false,
+    can_download: true,
+  }]);
 });
 
 test("video list and detail ignore legacy provider-media-only video rows", () => {
@@ -94,4 +125,49 @@ const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
   assert.equal(list.total, 0);
   assert.equal(list.items.length, 0);
   assert.equal(videoQueryModule.getVideoDetail("legacy-video-1"), null);
+});
+
+test("video detail resolves its provider album by composite provider identity", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-mbid', 'Video Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('artist-mbid', 'artist-mbid', 'Video Artist')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES
+      ('rg-apple', 'artist-mbid', 'Apple Album', 'album'),
+      ('rg-tidal', 'artist-mbid', 'TIDAL Album', 'album')
+  `).run();
+
+  // Provider resource IDs are only stable within a provider. Both services can
+  // legitimately expose album "42"; the video belongs to Apple's offer.
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid, title
+    ) VALUES
+      ('apple-music', 'album', '42', 'artist-mbid', 'rg-apple', 'Apple Album'),
+      ('tidal', 'album', '42', 'artist-mbid', 'rg-tidal', 'TIDAL Album')
+  `).run();
+
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('apple-video-99', ?, 'artist-mbid', 'Canonical Video', 1, 'provider_only')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid,
+      recording_id, title, quality
+    ) VALUES ('apple-music', 'video', '99', '42', 'artist-mbid', ?, 'Canonical Video', 'FHD')
+  `).run(recording.id);
+
+  const detail = videoQueryModule.getVideoDetail(String(recording.id));
+
+  assert.deepEqual(detail?.albums, [{ id: "rg-apple", title: "Apple Album", cover_id: null }]);
 });

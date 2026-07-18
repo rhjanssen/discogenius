@@ -25,6 +25,8 @@ type UseAlbumsOptions = {
   downloaded?: boolean;
   locked?: boolean;
   libraryFilter?: "all" | "stereo" | "spatial" | "video";
+  provider?: string;
+  qualityTier?: string;
   sort?: string;
   dir?: "asc" | "desc";
   search?: string;
@@ -47,6 +49,8 @@ const albumsQueryKey = (options: UseAlbumsOptions) => [
     downloaded: options.downloaded,
     locked: options.locked,
     libraryFilter: options.libraryFilter ?? "all",
+    provider: options.provider ?? "",
+    qualityTier: options.qualityTier ?? "",
     sort: options.sort ?? null,
     dir: options.dir ?? null,
     search: options.search ?? "",
@@ -95,6 +99,8 @@ export const useAlbums = (options?: UseAlbumsOptions) => {
         library_filter: (options?.libraryFilter ?? "all") === "video"
           ? "all"
           : (options?.libraryFilter ?? "all"),
+        provider: options?.provider || undefined,
+        quality_tier: options?.qualityTier || undefined,
         sort: options?.sort,
         dir: options?.dir,
         search: options?.search,

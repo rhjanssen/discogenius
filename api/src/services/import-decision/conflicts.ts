@@ -2,7 +2,7 @@ import fs from "fs";
 import { db } from "../../database.js";
 import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 import { normalizeResolvedPath } from "../mediafiles/path-utils.js";
-import type { LocalGroup, TidalMatch } from "../mediafiles/import-types.js";
+import type { LocalGroup, ProviderMatch } from "../mediafiles/import-types.js";
 
 type LibraryRow = {
     file_path: string;
@@ -10,7 +10,7 @@ type LibraryRow = {
     library_root: string | null;
 };
 
-export function getExistingImportedMediaConflictPath(group: LocalGroup, match: TidalMatch): string | null {
+export function getExistingImportedMediaConflictPath(group: LocalGroup, match: ProviderMatch): string | null {
     const currentGroupPaths = new Set(group.files.map((file) => normalizeResolvedPath(file.path)));
     const rows: LibraryRow[] = [];
 

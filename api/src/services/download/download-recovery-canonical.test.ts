@@ -114,3 +114,41 @@ test("failed imports with re-download hint queue a fresh download even when work
 
   assert.equal(shouldRedownload, true);
 });
+
+test("download recovery scopes equal video IDs to the command provider", () => {
+  const tidalPath = path.join(tempDir, "library", "videos", "tidal.mp4");
+  const applePath = path.join(tempDir, "library", "videos", "apple.mp4");
+  fs.mkdirSync(path.dirname(tidalPath), { recursive: true });
+  fs.writeFileSync(tidalPath, "tidal-video");
+  fs.writeFileSync(applePath, "apple-video");
+
+  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-local", "Artist", "artist-mbid");
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Artist");
+  db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
+    VALUES
+      ('tidal-recording', 'artist-mbid', 'Tidal video', 1),
+      ('apple-recording', 'artist-mbid', 'Apple video', 1)
+  `).run();
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid, title, library_slot
+    ) VALUES
+      ('tidal', 'video', '99', 'artist-mbid', 'tidal-recording', 'Tidal video', 'video'),
+      ('apple-music', 'video', '99', 'artist-mbid', 'apple-recording', 'Apple video', 'video')
+  `).run();
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_recording_mbid,
+      provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES
+      ('artist-local', 'artist-mbid', 'tidal-recording', 'tidal', 'video', '99', 'video', ?, 'tidal.mp4', ?, 'tidal.mp4', 'mp4', 'video'),
+      ('artist-local', 'artist-mbid', 'apple-recording', 'apple-music', 'video', '99', 'video', ?, 'apple.mp4', ?, 'apple.mp4', 'mp4', 'video')
+  `).run(tidalPath, path.dirname(tidalPath), applePath, path.dirname(applePath));
+
+  assert.deepEqual(getExistingLibraryMediaIds("video", "99", "tidal"), ["tidal-recording"]);
+  assert.deepEqual(getExistingLibraryMediaIds("video", "99", "apple-music"), ["apple-recording"]);
+});

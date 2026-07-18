@@ -49,6 +49,10 @@ export function useArtistPage(artistId: string | undefined) {
         retry: 1,
     });
 
+    // Tracks and videos wait for the albums section: the page reads top-down
+    // (header → albums → tracks → videos), so later sections must not flash in
+    // above a still-loading library, and the freed connections let the header
+    // artwork + ultrablur colors resolve first.
     const tracksQuery = useQuery<any>({
         queryKey: ["artistPage", artistId, "tracks"],
         queryFn: async ({ signal }) => api.getArtistPage(artistId!, {
@@ -56,7 +60,7 @@ export function useArtistPage(artistId: string | undefined) {
             signal,
             timeoutMs: 60_000,
         }),
-        enabled: Boolean(artistId) && summaryQuery.isSuccess,
+        enabled: Boolean(artistId) && albumsQuery.isSuccess,
         refetchOnWindowFocus: false,
         staleTime: 30_000,
         retry: 1,
@@ -69,7 +73,7 @@ export function useArtistPage(artistId: string | undefined) {
             signal,
             timeoutMs: 60_000,
         }),
-        enabled: Boolean(artistId) && summaryQuery.isSuccess,
+        enabled: Boolean(artistId) && albumsQuery.isSuccess,
         refetchOnWindowFocus: false,
         staleTime: 30_000,
         retry: 1,

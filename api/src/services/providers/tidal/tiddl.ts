@@ -251,7 +251,7 @@ export function syncTiddlSettings(): void {
     const quality = Config.getQualityConfig();
     const videoQuality = mapVideoQualityToTiddl(quality?.video_quality);
     const embedCover = quality?.embed_cover !== false;
-    const embedLyrics = quality?.embed_lyrics !== false;
+    const embedLyrics = false;
 
     const lines = [
         "# Managed by Discogenius. Manual edits are overwritten on settings sync.",

@@ -378,8 +378,8 @@ function lyricCandidateFile(candidate: LyricCandidateRow): LyricFileRow {
   };
 }
 
-async function fetchProviderLyrics(providerMediaId: string): Promise<ProviderLyrics | null> {
-  const provider = streamingProviderManager.getDefaultStreamingProvider();
+async function fetchProviderLyrics(providerId: string, providerMediaId: string): Promise<ProviderLyrics | null> {
+  const provider = streamingProviderManager.getStreamingProvider(providerId);
   try {
     const lyrics = await provider.getLyrics?.(providerMediaId) ?? null;
     if (!lyrics?.subtitles && !lyrics?.text) {
@@ -422,8 +422,12 @@ function recordSharedLyricsRelation(provider: string, media: ProviderTrackLyrics
   );
 }
 
-export async function getLyricsForProviderMedia(providerMediaId: string | number): Promise<ResolvedLyrics | null> {
-  const provider = streamingProviderManager.getDefaultStreamingProvider().id;
+export async function getLyricsForProviderMedia(
+  providerMediaId: string | number,
+  requestedProvider?: string | null,
+): Promise<ResolvedLyrics | null> {
+  const provider = String(requestedProvider || "").trim()
+    || streamingProviderManager.getDefaultStreamingProvider().id;
   const media = loadProviderTrack(provider, providerMediaId);
   if (!media) {
     return null;
@@ -445,7 +449,7 @@ export async function getLyricsForProviderMedia(providerMediaId: string | number
     return cachedCounterpartLyrics;
   }
 
-  const exactLyrics = await fetchProviderLyrics(media.id);
+  const exactLyrics = await fetchProviderLyrics(provider, media.id);
   if (exactLyrics) {
     return providerLyricsToResolved(provider, exactLyrics, "exact", media.id);
   }
@@ -461,7 +465,7 @@ export async function getLyricsForProviderMedia(providerMediaId: string | number
       return candidateFileLyrics;
     }
 
-    const candidateLyrics = await fetchProviderLyrics(candidate.id);
+    const candidateLyrics = await fetchProviderLyrics(provider, candidate.id);
     if (candidateLyrics) {
       recordSharedLyricsRelation(provider, media, candidate);
       return providerLyricsToResolved(provider, candidateLyrics, "shared_from_related_recording", candidate.id);

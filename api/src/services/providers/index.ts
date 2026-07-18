@@ -1,6 +1,10 @@
 import type { StreamingProvider } from "./streaming-provider.js";
 import { tidalStreamingProvider } from "./tidal/tidal-provider.js";
 import { appleMusicStreamingProvider } from "./apple-music/apple-music-provider.js";
+import { amazonMusicStreamingProvider } from "./amazon-music/amazon-music-provider.js";
+import { deezerStreamingProvider } from "./deezer/deezer-provider.js";
+import { spotifyStreamingProvider } from "./spotify/spotify-provider.js";
+import { youtubeMusicStreamingProvider } from "./youtube-music/youtube-music-provider.js";
 import { Config } from "../config/config.js";
 
 const FALLBACK_DEFAULT_PROVIDER_ID = "tidal";
@@ -12,6 +16,10 @@ class StreamingProviderManager {
   constructor() {
     this.registerStreamingProvider(tidalStreamingProvider);
     this.registerStreamingProvider(appleMusicStreamingProvider);
+    this.registerStreamingProvider(amazonMusicStreamingProvider);
+    this.registerStreamingProvider(spotifyStreamingProvider);
+    this.registerStreamingProvider(youtubeMusicStreamingProvider);
+    this.registerStreamingProvider(deezerStreamingProvider);
   }
 
   registerStreamingProvider(provider: StreamingProvider): void {

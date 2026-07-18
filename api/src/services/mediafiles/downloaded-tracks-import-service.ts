@@ -7,7 +7,7 @@ import {
 } from "../download/download-state.js";
 import { AudioTagService } from "./audio-tag-service.js";
 import { VideoTagService } from "./video-tag-service.js";
-import { getDownloadWorkspacePath } from "../download/download-routing.js";
+import { getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
 import { getExistingLibraryMediaIds } from "../download/download-recovery.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import {CommandModelOf} from "../commands/command-model.js";
@@ -97,13 +97,17 @@ function workspaceContainsMediaFiles(dir: string): boolean {
     return false;
 }
 
-function recoverExistingLibraryImport(type: string, providerId: string): OrganizeResult | null {
-    const recoveredMediaIds = getExistingLibraryMediaIds(type as any, providerId);
+function recoverExistingLibraryImport(
+    type: string,
+    providerId: string,
+    provider?: string | null,
+): OrganizeResult | null {
+    const recoveredMediaIds = getExistingLibraryMediaIds(type as any, providerId, provider);
     if (recoveredMediaIds.length === 0) {
         return null;
     }
 
-    const expectedTracks = resolveExpectedRecoveredTracks(type, providerId, recoveredMediaIds.length);
+    const expectedTracks = resolveExpectedRecoveredTracks(type, providerId, recoveredMediaIds.length, provider);
     return {
         type,
         providerId,
@@ -113,7 +117,11 @@ function recoverExistingLibraryImport(type: string, providerId: string): Organiz
     } as OrganizeResult;
 }
 
-function resolveImportHistoryContext(type: string, providerId: string): ImportHistoryContext {
+function resolveImportHistoryContext(
+    type: string,
+    providerId: string,
+    provider?: string | null,
+): ImportHistoryContext {
     const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
     const firstProviderId = providerId.split(";").filter(Boolean)[0] || providerId;
     const row = db.prepare(`
@@ -126,9 +134,15 @@ function resolveImportHistoryContext(type: string, providerId: string): ImportHi
         LEFT JOIN Artists artist ON artist.mbid = pi.artist_mbid
         WHERE pi.provider_id = ?
           AND pi.entity_type = ?
+          AND (? IS NULL OR pi.provider = ?)
         ORDER BY pi.updated_at DESC
         LIMIT 1
-    `).get(firstProviderId, entityType) as ImportHistoryContextRow | undefined;
+    `).get(
+        firstProviderId,
+        entityType,
+        provider || null,
+        provider || null,
+    ) as ImportHistoryContextRow | undefined;
 
     return {
         artistId: row?.artist_id ?? null,
@@ -138,7 +152,7 @@ function resolveImportHistoryContext(type: string, providerId: string): ImportHi
     };
 }
 
-function resolveAffectedArtistId(type: string, providerId: string): string | null {
+function resolveAffectedArtistId(type: string, providerId: string, provider?: string | null): string | null {
     const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
     const firstProviderId = providerId.split(";").filter(Boolean)[0] || providerId;
     const row = db.prepare(`
@@ -147,13 +161,24 @@ function resolveAffectedArtistId(type: string, providerId: string): string | nul
         LEFT JOIN Artists artist ON artist.mbid = pi.artist_mbid
         WHERE pi.provider_id = ?
           AND pi.entity_type = ?
+          AND (? IS NULL OR pi.provider = ?)
         ORDER BY pi.updated_at DESC
         LIMIT 1
-    `).get(firstProviderId, entityType) as { artist_id?: string | null } | undefined;
+    `).get(
+        firstProviderId,
+        entityType,
+        provider || null,
+        provider || null,
+    ) as { artist_id?: string | null } | undefined;
     return row?.artist_id ?? null;
 }
 
-function resolveExpectedRecoveredTracks(type: string, providerId: string, fallbackCount: number): number {
+function resolveExpectedRecoveredTracks(
+    type: string,
+    providerId: string,
+    fallbackCount: number,
+    provider?: string | null,
+): number {
     if (type !== "album") {
         return Math.max(1, fallbackCount);
     }
@@ -173,12 +198,16 @@ function resolveExpectedRecoveredTracks(type: string, providerId: string, fallba
             LEFT JOIN ProviderItems pi
               ON pi.provider_id = input.provider_id
              AND pi.entity_type = 'album'
+             AND (? IS NULL OR pi.provider = ?)
             LEFT JOIN ReleaseGroupSlots rgs
-              ON rgs.selected_provider_id = input.provider_id
-              OR (
-                pi.release_group_mbid IS NOT NULL
-                AND rgs.release_group_mbid = pi.release_group_mbid
+              ON (
+                rgs.selected_provider_id = input.provider_id
+                OR (
+                  pi.release_group_mbid IS NOT NULL
+                  AND rgs.release_group_mbid = pi.release_group_mbid
+                )
               )
+             AND (? IS NULL OR rgs.selected_provider = ?)
             WHERE COALESCE(pi.release_mbid, rgs.selected_release_mbid) IS NOT NULL
         )
         SELECT COUNT(DISTINCT track.mbid) AS count
@@ -186,12 +215,23 @@ function resolveExpectedRecoveredTracks(type: string, providerId: string, fallba
         JOIN Tracks track ON track.release_mbid = sr.release_mbid
         LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
         WHERE COALESCE(recording.is_video, 0) = 0
-    `).get(...albumIds) as { count?: number } | undefined;
+    `).get(
+        ...albumIds,
+        provider || null,
+        provider || null,
+        provider || null,
+        provider || null,
+    ) as { count?: number } | undefined;
 
     return Number(row?.count || fallbackCount);
 }
 
-function reconcileImportedDownload(type: string, providerId: string, organizeResult: OrganizeResult) {
+function reconcileImportedDownload(
+    type: string,
+    providerId: string,
+    organizeResult: OrganizeResult,
+    provider?: string | null,
+) {
     if (type === "album") {
         const processedIds = organizeResult.processedTrackIds;
         if (processedIds.length === 0) {
@@ -205,13 +245,24 @@ function reconcileImportedDownload(type: string, providerId: string, organizeRes
 
         const albumIds = providerId.split(";").filter(Boolean);
         for (const albumId of albumIds) {
-            updateAlbumDownloadStatus(String(albumId));
+            const row = db.prepare(`
+                SELECT release_group_mbid
+                FROM ProviderItems
+                WHERE entity_type = 'album'
+                  AND provider_id = ?
+                  AND (? IS NULL OR provider = ?)
+                ORDER BY updated_at DESC
+                LIMIT 1
+            `).get(albumId, provider || null, provider || null) as {
+                release_group_mbid?: string | null;
+            } | undefined;
+            updateAlbumDownloadStatus(String(row?.release_group_mbid || albumId));
         }
         return;
     }
 
     if (type === "video") {
-        updateArtistDownloadStatusFromMedia(String(providerId));
+        updateArtistDownloadStatusFromMedia(String(providerId), provider);
         return;
     }
 
@@ -220,13 +271,14 @@ function reconcileImportedDownload(type: string, providerId: string, organizeRes
         FROM ProviderItems
         WHERE provider_id = ?
           AND entity_type = 'track'
+          AND (? IS NULL OR provider = ?)
         ORDER BY updated_at DESC
         LIMIT 1
-    `).get(providerId) as { release_group_mbid?: string | null } | undefined;
+    `).get(providerId, provider || null, provider || null) as { release_group_mbid?: string | null } | undefined;
     if (row?.release_group_mbid) {
         updateAlbumDownloadStatus(row.release_group_mbid);
     } else {
-        updateArtistDownloadStatusFromMedia(String(providerId));
+        updateArtistDownloadStatusFromMedia(String(providerId), provider);
     }
 }
 
@@ -238,6 +290,7 @@ export class DownloadedTracksImportService {
         },
     ): Promise<void> {
     const { type, providerId, resolved, originalJobId, path: payloadPath } = job.payload;
+    const provider = String(job.payload.provider || "").trim() || null;
 
     if (!type || !providerId) {
         throw new Error("ImportDownload job is missing the type or provider ID required to finish import.");
@@ -247,7 +300,9 @@ export class DownloadedTracksImportService {
         throw new Error(`ImportDownload job has unsupported media type: ${type}`);
     }
 
-    const downloadPath = payloadPath || getDownloadWorkspacePath(type, providerId);
+    const downloadPath = payloadPath
+        ? validateDownloadWorkspacePath(payloadPath)
+        : getDownloadWorkspacePath(type, providerId, provider || undefined);
     let shouldCleanupDownloadPath = false;
 
     options.updateState({
@@ -261,7 +316,7 @@ export class DownloadedTracksImportService {
         let organizeResult: OrganizeResult;
         const workspaceHasMedia = workspaceContainsMediaFiles(downloadPath);
         if (!workspaceHasMedia) {
-            const recovered = recoverExistingLibraryImport(type, providerId);
+            const recovered = recoverExistingLibraryImport(type, providerId, provider);
             if (!recovered) {
                 throw new Error(`Import files for ${type} ${providerId} are no longer available. Re-download the item to retry import.`);
             }
@@ -324,9 +379,9 @@ export class DownloadedTracksImportService {
             state: "importing",
         });
 
-        reconcileImportedDownload(type, providerId, organizeResult);
+        reconcileImportedDownload(type, providerId, organizeResult, provider);
 
-        const affectedArtistId = resolveAffectedArtistId(type, providerId);
+        const affectedArtistId = resolveAffectedArtistId(type, providerId, provider);
         if (affectedArtistId) {
             options.updateState({
                 progress: 82,
@@ -365,13 +420,13 @@ export class DownloadedTracksImportService {
                     const albumIds = providerId.split(";").filter(Boolean);
                     for (const albumId of albumIds) {
                         try {
-                            await MetadataIdentityService.resolveAlbum(albumId);
+                            await MetadataIdentityService.resolveAlbum(albumId, { provider });
                         } catch (err) {
                             console.warn(`[ImportDownload] Metadata identity resolution failed for album ${albumId}:`, err);
                         }
                     }
                 } else {
-                    await MetadataIdentityService.resolveTrack(providerId);
+                    await MetadataIdentityService.resolveTrack(providerId, { provider });
                 }
             } catch (error) {
                 console.warn(`[ImportDownload] Metadata identity resolution failed for ${type} ${providerId}:`, error);
@@ -420,13 +475,16 @@ export class DownloadedTracksImportService {
                 statusMessage: "Applying video tag rules",
                 state: "importing",
             });
-            const retagResult = await VideoTagService.applyForProviderIds(organizeResult.processedTrackIds);
+            const retagResult = await VideoTagService.applyForProviderIds(
+                organizeResult.processedTrackIds,
+                provider,
+            );
             if (retagResult.errors.length > 0) {
                 console.warn(`[ImportDownload] Video tag rules completed with ${retagResult.errors.length} error(s) for ${providerId}:`, retagResult.errors);
             }
         }
 
-        const historyContext = resolveImportHistoryContext(type, providerId);
+        const historyContext = resolveImportHistoryContext(type, providerId, provider);
         try {
             recordHistoryEvent({
                 artistId: historyContext.artistId,
@@ -485,7 +543,7 @@ export class DownloadedTracksImportService {
 
         shouldCleanupDownloadPath = true;
     } catch (error) {
-        const historyContext = resolveImportHistoryContext(type, providerId);
+        const historyContext = resolveImportHistoryContext(type, providerId, provider);
         const message = error instanceof Error ? error.message : String(error);
         try {
             recordHistoryEvent({

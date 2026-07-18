@@ -1,4 +1,5 @@
 import { downloadBackendRegistry } from "../download/download-backend.js";
+import { providerSupportsAppAuthentication } from "./provider-auth-support.js";
 import type {
   ProviderAuthStatus,
   ProviderDiagnosticKind,
@@ -18,7 +19,7 @@ async function readAuthStatus(provider: StreamingProvider): Promise<ProviderAuth
       canAccessShell: true,
       canAccessLocalLibrary: true,
       remoteCatalogAvailable: false,
-      canAuthenticate: Boolean(provider.manifest?.auth.managedByApp && provider.startDeviceLogin),
+      canAuthenticate: providerSupportsAppAuthentication(provider),
       message: error instanceof Error ? error.message : "Unable to read provider authentication status.",
     };
   }

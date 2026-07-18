@@ -113,11 +113,19 @@ export class VideoTagService {
     return this.applyRows(this.getRows(`file.id IN (${marks})`, uniqueIds));
   }
 
-  static async applyForProviderIds(providerIds: Array<string | number>): Promise<RetagApplyResult> {
+  static async applyForProviderIds(
+    providerIds: Array<string | number>,
+    provider?: string | null,
+  ): Promise<RetagApplyResult> {
     const ids = Array.from(new Set(providerIds.map(String).map((value) => value.trim()).filter(Boolean)));
     if (ids.length === 0) return { retagged: 0, skipped: 0, missing: 0, errors: [] };
     const marks = ids.map(() => "?").join(",");
-    return this.applyRows(this.getRows(`file.provider_id IN (${marks})`, ids));
+    const normalizedProvider = String(provider || "").trim();
+    const providerFilter = normalizedProvider ? " AND file.provider = ?" : "";
+    return this.applyRows(this.getRows(
+      `file.provider_id IN (${marks})${providerFilter}`,
+      normalizedProvider ? [...ids, normalizedProvider] : ids,
+    ));
   }
 
   private static async applyRows(rows: VideoTagRow[]): Promise<RetagApplyResult> {

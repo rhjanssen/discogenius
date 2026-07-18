@@ -321,6 +321,10 @@ const Library = () => {
     setAlbumDownloadFilter,
     setAlbumLockFilter,
     setAlbumQualityFilter,
+    albumProviderFilter,
+    setAlbumProviderFilter,
+    albumQualityTierFilter,
+    setAlbumQualityTierFilter,
     setSortOptions,
     artistsIsPopulated,
     albumsIsPopulated,
@@ -884,6 +888,16 @@ const Library = () => {
     () => (streamingProviders?.providers ?? []).filter((provider: StreamingProviderStatus) => (
       provider.authenticated && (provider.management?.canImportArtists || provider.capabilities.followedArtists)
     )),
+    [streamingProviders],
+  );
+
+  // Provider options for the album library filter — every provider that can
+  // supply catalog offers, so the user can narrow the library to one source.
+  const providerFilterOptions = useMemo(
+    () => (streamingProviders?.providers ?? []).map((provider: StreamingProviderStatus) => ({
+      id: provider.id,
+      name: provider.name,
+    })),
     [streamingProviders],
   );
 
@@ -1878,6 +1892,11 @@ const Library = () => {
               <FilterMenu
                 libraryFilter={libraryFilter}
                 onLibraryFilterChange={setLibraryFilter}
+                providerFilter={selectedTab === 'albums' ? albumProviderFilter : undefined}
+                onProviderFilterChange={selectedTab === 'albums' ? setAlbumProviderFilter : undefined}
+                providerOptions={selectedTab === 'albums' ? providerFilterOptions : undefined}
+                qualityTierFilter={selectedTab === 'albums' ? albumQualityTierFilter : undefined}
+                onQualityTierFilterChange={selectedTab === 'albums' ? setAlbumQualityTierFilter : undefined}
                 statusFilters={effectiveStatusFilters}
                 onStatusFiltersChange={setStatusFilters}
                 showDownloadFilter={showDownloadFilter}
@@ -1934,6 +1953,11 @@ const Library = () => {
               <FilterMenu
                 libraryFilter={libraryFilter}
                 onLibraryFilterChange={setLibraryFilter}
+                providerFilter={selectedTab === 'albums' ? albumProviderFilter : undefined}
+                onProviderFilterChange={selectedTab === 'albums' ? setAlbumProviderFilter : undefined}
+                providerOptions={selectedTab === 'albums' ? providerFilterOptions : undefined}
+                qualityTierFilter={selectedTab === 'albums' ? albumQualityTierFilter : undefined}
+                onQualityTierFilterChange={selectedTab === 'albums' ? setAlbumQualityTierFilter : undefined}
                 statusFilters={effectiveStatusFilters}
                 onStatusFiltersChange={setStatusFilters}
                 showDownloadFilter={showDownloadFilter}

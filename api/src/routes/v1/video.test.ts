@@ -91,8 +91,34 @@ test("video add queues provider seeding instead of running inline", async () => 
 
   const payload = JSON.parse(command.payload);
   assert.equal(payload.providerId, "provider-video-1");
+  assert.equal(payload.provider, undefined);
   assert.equal(payload.monitorArtist, true);
   assert.equal(payload.monitorVideo, true);
+});
+
+test("video add carries provider identity into the command and dedupe key", async () => {
+  const handler = getPostHandler("/");
+  const res = createMockResponse();
+
+  await handler({
+    body: {
+      id: "42",
+      provider: "apple-music",
+    },
+  }, res);
+
+  assert.equal(res.statusCode, 202);
+  const command = dbModule.db.prepare(`
+    SELECT ref_id, payload
+    FROM commands
+    ORDER BY id DESC
+    LIMIT 1
+  `).get() as { ref_id: string | null; payload: string };
+  const payload = JSON.parse(command.payload);
+
+  assert.equal(command.ref_id, "apple-music:42");
+  assert.equal(payload.providerId, "42");
+  assert.equal(payload.provider, "apple-music");
 });
 
 test("video detail does not seed unknown provider ids from GET", async () => {

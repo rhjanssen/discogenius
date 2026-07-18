@@ -56,6 +56,8 @@ export interface ProviderManifest {
       label: string;
       secret?: boolean;
       required?: boolean;
+      /** Render long structured credentials (headers/cookies) as a resizable field. */
+      multiline?: boolean;
       helpText?: string;
     }>;
   };
@@ -137,6 +139,17 @@ export interface StreamingProvider {
   
   logout?(): void | Promise<void>;
   saveCredentials?(credentials: Record<string, unknown>): Promise<void> | void;
+
+  /**
+   * Optional external-downloader login handshake (e.g. Apple Music's
+   * decryption wrapper). Credentials are transient — the provider must never
+   * persist them. Status uses the shared vocabulary
+   * idle | logging_in | waiting_for_code | success | failed (providers may
+   * refine the message text).
+   */
+  startDownloaderLogin?(credentials: Record<string, string>): void | Promise<void>;
+  getDownloaderLoginStatus?(): { status: string; message: string };
+  submitDownloaderLoginCode?(code: string): void | Promise<void>;
   loadToken?(): any;
   refreshProviderToken?(): Promise<void>;
   shouldRefreshToken?(): boolean;
@@ -338,6 +351,13 @@ export interface ProviderTrack {
   popularity?: number | null;
   quality?: string | null;
   qualityTags?: string[];
+  /**
+   * True when this album-tracklist entry is a music video (providers like
+   * Apple Music bundle videos at the end of deluxe/festival editions). The
+   * import pipeline routes such tracks through the video path — video file
+   * type, video library placement — while keeping their album/track identity.
+   */
+  isVideo?: boolean;
   raw?: unknown;
 }
 

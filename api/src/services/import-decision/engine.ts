@@ -1,4 +1,4 @@
-import type { LocalGroup, TidalMatch } from "../mediafiles/import-types.js";
+import type { LocalGroup, ProviderMatch } from "../mediafiles/import-types.js";
 import { getExistingImportedMediaConflictPath } from "./conflicts.js";
 import type { ImportDecisionContext, ImportDecisionMode, ImportDecisionSpecification } from "./types.js";
 
@@ -17,7 +17,7 @@ function normalizeComparableText(value?: string | null): string {
         .trim();
 }
 
-function getComparableScore(match: TidalMatch, mode: ImportDecisionMode): number {
+function getComparableScore(match: ProviderMatch, mode: ImportDecisionMode): number {
     if (match.itemType === "album" && mode === "ExistingFiles") {
         return match.closeMatchScore ?? match.score;
     }
@@ -25,7 +25,7 @@ function getComparableScore(match: TidalMatch, mode: ImportDecisionMode): number
     return match.score;
 }
 
-function getComparableConfidence(match: TidalMatch, mode: ImportDecisionMode): number {
+function getComparableConfidence(match: ProviderMatch, mode: ImportDecisionMode): number {
     if (match.itemType === "album" && mode === "ExistingFiles") {
         return match.closeMatchConfidence ?? match.confidence ?? 0;
     }
@@ -203,11 +203,11 @@ export class ImportDecisionEngine {
 
     static evaluateMatches(params: {
         group: LocalGroup;
-        matches: TidalMatch[];
+        matches: ProviderMatch[];
         mode?: ImportDecisionMode;
         directCandidateCount?: number;
         strongFingerprintCandidateCount?: number;
-    }): TidalMatch[] {
+    }): ProviderMatch[] {
         const mode = params.mode ?? "NewDownload";
         const sorted = [...params.matches].sort((left, right) => {
             return getComparableScore(right, mode) - getComparableScore(left, mode);
@@ -254,11 +254,11 @@ export class ImportDecisionEngine {
 
     static evaluateSingleMatch(params: {
         group: LocalGroup;
-        match: TidalMatch;
+        match: ProviderMatch;
         mode?: ImportDecisionMode;
         directCandidateCount?: number;
         strongFingerprintCandidateCount?: number;
-    }): TidalMatch {
+    }): ProviderMatch {
         return this.evaluateMatches({
             group: params.group,
             matches: [params.match],

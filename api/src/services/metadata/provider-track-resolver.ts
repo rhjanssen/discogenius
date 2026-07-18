@@ -233,7 +233,13 @@ export async function resolveProviderTrackForCanonicalTrack(input: {
                     providerTrackId: String(providerTrack.providerId),
                     providerAlbumId: selection.providerAlbumId,
                     slot: selection.slot,
-                    quality: providerTrack.quality || selection.quality,
+                    // Apple exposes stereo and Atmos as variants of one track
+                    // resource, whose catalog scalar quality describes stereo.
+                    // The selected release-group slot is authoritative for the
+                    // acquisition mode.
+                    quality: selection.slot.toLowerCase() === "spatial"
+                        ? selection.quality || "DOLBY_ATMOS"
+                        : providerTrack.quality || selection.quality,
                     score,
                 };
             }
