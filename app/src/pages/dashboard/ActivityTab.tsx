@@ -230,7 +230,7 @@ const ActivityTab = ({
                 return <Warning24Filled className={styles.statusIconNeutral} />;
             case "error":
                 // Colored variant to match the queue's colored success/failure icon family.
-                return <DismissCircle24Color />;
+                return <DismissCircle24Color className={styles.statusIconError} />;
             default:
                 return <Clock24Regular className={styles.statusIconNeutral} />;
         }

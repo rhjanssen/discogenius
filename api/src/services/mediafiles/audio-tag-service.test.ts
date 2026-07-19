@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AudioTagService, selectEmbeddedLyricsText, type ManagedTag } from "./audio-tag-service.js";
+import {
+  AudioTagService,
+  buildEmbeddedLyricsManagedTag,
+  selectEmbeddedLyricsText,
+  type ManagedTag,
+} from "./audio-tag-service.js";
 
 test("embedded lyrics prefer synced subtitles with plain text fallback", () => {
   assert.equal(selectEmbeddedLyricsText({
@@ -12,6 +17,10 @@ test("embedded lyrics prefer synced subtitles with plain text fallback", () => {
     subtitles: "",
     text: "Plain line",
   }), "Plain line");
+  assert.equal(selectEmbeddedLyricsText({
+    subtitles: "Timestamp-free subtitle field",
+    text: "Canonical plain line",
+  }), "Canonical plain line");
 });
 
 test("audio tag writer expands Lidarr-compatible total aliases", () => {
@@ -189,6 +198,33 @@ test("buildAudioTagWriteMap maps tags correctly for M4A (.m4a)", () => {
     "----:com.apple.iTunes:MusicBrainz Track Id": "rec-id",
     "----:com.apple.iTunes:MusicBrainz Album Type": "album; compilation",
     "----:com.apple.iTunes:MusicBrainz Album Release Country": "US",
+  });
+});
+
+test("resolved sidecar lyrics become the managed embedded-lyrics tag", () => {
+  assert.deepEqual(buildEmbeddedLyricsManagedTag({
+    subtitles: "[00:01.00]Synced line",
+    text: "Plain line",
+  }), {
+    key: "lyrics",
+    label: "Lyrics",
+    ffmpegKey: "lyrics-eng",
+    targetValue: "[00:01.00]Synced line",
+    aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
+  });
+  assert.equal(buildEmbeddedLyricsManagedTag(null), null);
+});
+
+test("plain txt sidecar lyrics remain plain when reused for the embedded tag", () => {
+  assert.deepEqual(buildEmbeddedLyricsManagedTag({
+    subtitles: "",
+    text: "Plain line without a timestamp",
+  }), {
+    key: "lyrics",
+    label: "Lyrics",
+    ffmpegKey: "lyrics-eng",
+    targetValue: "Plain line without a timestamp",
+    aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
   });
 });
 

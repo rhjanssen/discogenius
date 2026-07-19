@@ -92,6 +92,40 @@ test("a single provider album can hold multiple candidate release matches", () =
   assert.equal(count, 2);
 });
 
+test("getReleaseGroupAvailability expands dual-capability Apple albums into stereo and spatial offers", () => {
+  const { db } = dbModule;
+  seedReleaseGroup();
+  db.prepare(`INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, quality, library_slot,
+      release_group_mbid, release_mbid, match_evidence, explicit
+    ) VALUES (
+      'apple-music', 'album', 'apple-dual', 'HIRES_LOSSLESS', 'stereo',
+      'rg-1', 'rel-stereo', ?, 1
+    )`).run(JSON.stringify({
+    providerQualityTags: ["lossy-stereo", "lossless", "hi-res-lossless", "atmos"],
+  }));
+  providerMatches.upsertProviderReleaseMatch({
+    provider: "apple-music",
+    providerId: "apple-dual",
+    releaseMbid: "rel-stereo",
+    status: "verified",
+    confidence: 1,
+  });
+
+  const result = providerMatches.getReleaseGroupAvailability("rg-1");
+  const stereo = result.releases.find((r) => r.releaseMbid === "rel-stereo");
+  assert.ok(stereo);
+  assert.deepEqual(
+    stereo.availability
+      .filter((offer) => offer.provider === "apple-music")
+      .map((offer) => `${offer.librarySlot}:${offer.quality}:${offer.providerAlbumId}`),
+    [
+      "stereo:HIRES_LOSSLESS:apple-dual",
+      "spatial:DOLBY_ATMOS:apple-dual",
+    ],
+  );
+});
+
 test("getReleaseGroupAvailability reports per-release provider availability and current selection", () => {
   const { db } = dbModule;
   seedReleaseGroup();

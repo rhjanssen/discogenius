@@ -105,6 +105,64 @@ function filenameForCover(coverType: string, extension: string, height?: number 
   return `${normalizedCoverType(coverType)}${suffix}${safeExtension}`;
 }
 
+function sourceMarkerPath(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string): string {
+  return path.join(mediaCoverFolder(entityId, coverEntity), `.${normalizedCoverType(coverType)}.source.json`);
+}
+
+function cachedSourceMatches(
+  entityId: string | number,
+  coverEntity: MediaCoverEntity,
+  coverType: string,
+  sourceUrl: string,
+): boolean {
+  try {
+    const marker = JSON.parse(fs.readFileSync(sourceMarkerPath(entityId, coverEntity, coverType), "utf-8"));
+    return marker?.url === sourceUrl && marker?.preference === configuredArtworkPreference();
+  } catch {
+    return false;
+  }
+}
+
+function clearCachedCoverVariant(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string): void {
+  const folder = mediaCoverFolder(entityId, coverEntity);
+  for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
+    for (const height of [null, ...MEDIA_COVER_DEFAULT_HEIGHTS]) {
+      try { fs.rmSync(path.join(folder, filenameForCover(coverType, extension, height)), { force: true }); } catch { /* absent */ }
+    }
+  }
+  try { fs.rmSync(sourceMarkerPath(entityId, coverEntity, coverType), { force: true }); } catch { /* absent */ }
+}
+
+function writeSourceMarker(
+  entityId: string | number,
+  coverEntity: MediaCoverEntity,
+  coverType: string,
+  sourceUrl: string,
+): void {
+  try {
+    fs.writeFileSync(
+      sourceMarkerPath(entityId, coverEntity, coverType),
+      JSON.stringify({ url: sourceUrl, preference: configuredArtworkPreference() }),
+      "utf-8",
+    );
+  } catch {
+    // The image remains usable; the next request may refresh it once more.
+  }
+}
+
+export function isArtworkPreferenceCacheCurrent(
+  entityId: string | number,
+  coverEntity: "Album" | "Artist",
+  coverType: string,
+): boolean {
+  try {
+    const marker = JSON.parse(fs.readFileSync(sourceMarkerPath(entityId, coverEntity, coverType), "utf-8"));
+    return marker?.preference === configuredArtworkPreference();
+  } catch {
+    return false;
+  }
+}
+
 function getMediaCoverPath(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string, extension: string, height?: number | null): string {
   return path.join(mediaCoverFolder(entityId, coverEntity), filenameForCover(coverType, extension, height));
 }
@@ -251,7 +309,12 @@ export async function ensureCachedMediaCover(options: {
   }
 
   const existing = existingMediaCover(options.entityId, options.coverEntity, options.coverType);
-  if (existing) {
+  // Videos have no user-selectable artwork source. Album and artist images do,
+  // so a source marker lets a preference change replace an older cached image.
+  if (existing && (
+    options.coverEntity === "Video"
+    || cachedSourceMatches(options.entityId, options.coverEntity, options.coverType, sourceUrl)
+  )) {
     return existing.url;
   }
 
@@ -268,6 +331,11 @@ export async function ensureCachedMediaCover(options: {
     });
 
     if (!response.ok) {
+      // Keep the previous cache file as a last-resort display fallback, but do
+      // not mark it as though it came from the source that just failed. The
+      // resolver must be able to continue to its next candidate (for example
+      // CAA after a dead metadata URL), and a later request should retry this
+      // source rather than treating stale artwork as current.
       return null;
     }
 
@@ -277,6 +345,7 @@ export async function ensureCachedMediaCover(options: {
     fs.mkdirSync(folder, { recursive: true });
 
     const originalBuffer = Buffer.from(await response.arrayBuffer());
+    clearCachedCoverVariant(options.entityId, options.coverEntity, options.coverType);
     writeResizedMediaCovers(originalBuffer, options.entityId, options.coverEntity, options.coverType, extension);
 
     if (options.coverEntity === "Video") {
@@ -292,7 +361,11 @@ export async function ensureCachedMediaCover(options: {
     for (const candidateExtension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
       try { fs.unlinkSync(getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, candidateExtension)); } catch { /* absent */ }
     }
-    return existingMediaCover(options.entityId, options.coverEntity, options.coverType)?.url ?? null;
+    const cached = existingMediaCover(options.entityId, options.coverEntity, options.coverType)?.url ?? null;
+    if (cached) {
+      writeSourceMarker(options.entityId, options.coverEntity, options.coverType, sourceUrl);
+    }
+    return cached;
   } catch (error) {
     console.warn("[MediaCoverService] Failed to cache artwork:", (error as Error).message);
     return null;
@@ -305,7 +378,8 @@ export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
     return null;
   }
 
-  const parts = text.split("/").map((part) => decodeURIComponent(part));
+  const pathname = text.split(/[?#]/, 1)[0];
+  const parts = pathname.split("/").map((part) => decodeURIComponent(part));
   if (parts.length < 4) {
     return null;
   }
@@ -548,32 +622,54 @@ function expectedMediaCoverUrl(
   return getMediaCoverUrl(entityId, coverEntity, coverType, extensionForImage(null, normalizedSource));
 }
 
+function firstStoredProviderFallbackUrl(
+  images: ServarrMetadataImage[] | undefined | null,
+  coverTypes: string[],
+): string | null {
+  const providerImages = images?.filter((image) => isProviderFallbackImage(image as Record<string, any>));
+  return firstStoredImageUrl(providerImages, coverTypes, true);
+}
+
+export function configuredArtworkPreference(): "canonical" | "provider" {
+  try {
+    return getConfigSection("metadata")?.artwork_preference === "provider" ? "provider" : "canonical";
+  } catch {
+    return "canonical";
+  }
+}
+
+function withArtworkPreferenceRevision(url: string | null): string | null {
+  if (!url || !url.startsWith("/media-cover/")) {
+    return url;
+  }
+  const preference = configuredArtworkPreference();
+  return `${url}${url.includes("?") ? "&" : "?"}source=${preference}`;
+}
+
 export function mapAlbumArtworkToLocalUrl(options: {
   albumMbid?: string | null;
   servarrMetadataData?: ServarrMetadataImageContainer | null;
   providerCandidates?: ProviderArtworkCandidate[];
   includeExpectedProviderFallback?: boolean;
 }): string | null {
+  const coverTypes = preferredTypes("Cover", ["Cover"]);
+  const allImages = getServarrMetadataImages(options.servarrMetadataData);
+  const canonicalImages = allImages.filter((image) => !isProviderFallbackImage(image as Record<string, any>));
   const canonicalSource = firstStoredImageUrl(
-    options.servarrMetadataData?.images,
-    preferredTypes("Cover", ["Cover"]),
+    canonicalImages,
+    coverTypes,
     false,
-  ) || getServarrMetadataAlbumImageUrl(options.servarrMetadataData);
-  const canonicalUrl = expectedMediaCoverUrl(options.albumMbid, "Album", "Cover", canonicalSource);
-  if (canonicalUrl) {
-    return canonicalUrl;
-  }
-
-  const storedProviderFallback = firstStoredImageUrl(
-    options.servarrMetadataData?.images,
-    preferredTypes("Cover", ["Cover"]),
-    true,
-  );
+  ) || getServarrMetadataAlbumImageUrl({ images: canonicalImages });
+  const storedProviderFallback = firstStoredProviderFallbackUrl(allImages, coverTypes);
   const providerSource = options.includeExpectedProviderFallback === false
     ? null
     : storedProviderFallback || providerArtworkIdFromCandidates(options.providerCandidates || [], "album");
-  return expectedMediaCoverUrl(options.albumMbid, "Album", "Cover", providerSource)
-    || existingAlbumMediaCoverUrl(options.albumMbid);
+  const canonicalUrl = expectedMediaCoverUrl(options.albumMbid, "Album", "Cover", canonicalSource);
+  const providerUrl = expectedMediaCoverUrl(options.albumMbid, "Album", "Cover", providerSource);
+  const selected = configuredArtworkPreference() === "provider"
+    ? providerUrl || canonicalUrl
+    : canonicalUrl || providerUrl;
+  return withArtworkPreferenceRevision(selected || existingAlbumMediaCoverUrl(options.albumMbid));
 }
 
 export function mapArtistArtworkToLocalUrl(options: {
@@ -584,16 +680,29 @@ export function mapArtistArtworkToLocalUrl(options: {
   sourceUrls?: Array<string | null | undefined>;
 }): string | null {
   const types = preferredTypes(options.preferredCoverTypes, ["Poster", "Headshot", "Fanart"]);
-  const storedSource = firstStoredImageUrl(options.servarrMetadataData?.images, types, true)
-    || getServarrMetadataArtistImageUrl(options.servarrMetadataData, types);
+  const allImages = getServarrMetadataImages(options.servarrMetadataData);
+  const canonicalImages = allImages.filter((image) => !isProviderFallbackImage(image as Record<string, any>));
+  const canonicalSource = firstStoredImageUrl(canonicalImages, types, false)
+    || getServarrMetadataArtistImageUrl({ images: canonicalImages }, types);
+  const storedProviderSource = firstStoredProviderFallbackUrl(allImages, types);
   const explicitSource = options.sourceUrls?.map(normalizeArtworkUrl).find((url): url is string => Boolean(url));
   const providerSource = providerArtworkIdFromCandidates(options.providerCandidates || [], "artist");
-  return expectedMediaCoverUrl(
+  const canonicalUrl = expectedMediaCoverUrl(
     options.artistMbid,
     "Artist",
     types[0] || "Poster",
-    storedSource || explicitSource || providerSource,
-  ) || existingArtistMediaCoverUrl(options.artistMbid, types);
+    canonicalSource || explicitSource,
+  );
+  const providerUrl = expectedMediaCoverUrl(
+    options.artistMbid,
+    "Artist",
+    types[0] || "Poster",
+    storedProviderSource || providerSource,
+  );
+  const selected = configuredArtworkPreference() === "provider"
+    ? providerUrl || canonicalUrl
+    : canonicalUrl || providerUrl;
+  return withArtworkPreferenceRevision(selected || existingArtistMediaCoverUrl(options.artistMbid, types));
 }
 
 /**
@@ -1007,11 +1116,7 @@ export async function resolveAlbumArtwork(options: {
   providerCandidates?: ProviderArtworkCandidate[];
   size?: string | number | null;
 }): Promise<string | null> {
-  const localCoverUrl = existingAlbumMediaCoverUrl(options.albumMbid);
-  if (localCoverUrl) {
-    return localCoverUrl;
-  }
-
+  let storedCanonicalUrl: string | null = null;
   let storedProviderFallbackUrl: string | null = null;
   if (options.albumMbid) {
     try {
@@ -1019,20 +1124,14 @@ export async function resolveAlbumArtwork(options: {
       if (row?.images) {
         const dbImages = JSON.parse(row.images);
         const preferredCoverTypes = ["Cover", "Poster"];
-        const storedCanonicalUrl = chooseImageFromStoredList(dbImages, preferredCoverTypes, {
+        storedCanonicalUrl = chooseImageFromStoredList(dbImages, preferredCoverTypes, {
           includeProviderFallbacks: false,
           proxy: false,
         });
-        if (storedCanonicalUrl) {
-          const cached = await ensureCachedMediaCover({
-            entityId: options.albumMbid,
-            coverEntity: "Album",
-            coverType: "Cover",
-            sourceUrl: storedCanonicalUrl,
-          });
-          if (cached) return cached;
-        }
-        storedProviderFallbackUrl = chooseImageFromStoredList(dbImages, preferredCoverTypes, {
+        const providerImages = Array.isArray(dbImages)
+          ? dbImages.filter((image) => isProviderFallbackImage(image))
+          : [];
+        storedProviderFallbackUrl = chooseImageFromStoredList(providerImages, preferredCoverTypes, {
           includeProviderFallbacks: true,
           proxy: false,
         });
@@ -1042,58 +1141,106 @@ export async function resolveAlbumArtwork(options: {
     }
   }
 
-  const servarrMetadataUrl = getServarrMetadataAlbumImageUrl(options.servarrMetadataData);
-  if (servarrMetadataUrl) {
-    const cached = await ensureCachedMediaCover({
-      entityId: options.albumMbid,
-      coverEntity: "Album",
-      coverType: "Cover",
-      sourceUrl: servarrMetadataUrl,
-    });
-    if (cached) return cached;
-  }
+  const explicitCanonicalImages = getServarrMetadataImages(options.servarrMetadataData)
+    .filter((image) => !isProviderFallbackImage(image as Record<string, any>));
+  const servarrMetadataUrl = getServarrMetadataAlbumImageUrl({ images: explicitCanonicalImages });
 
-  const coverArtArchiveUrl = getCoverArtArchiveReleaseGroupUrl(options.albumMbid);
-  if (coverArtArchiveUrl) {
-    const cached = await ensureCachedMediaCover({
+  const cacheSource = async (sourceUrl: string | null): Promise<string | null> => sourceUrl
+    ? ensureCachedMediaCover({
       entityId: options.albumMbid,
       coverEntity: "Album",
       coverType: "Cover",
-      sourceUrl: coverArtArchiveUrl,
-    });
-    if (cached) return cached;
-  }
-  if (storedProviderFallbackUrl) {
-    const cached = await ensureCachedMediaCover({
-      entityId: options.albumMbid,
-      coverEntity: "Album",
-      coverType: "Cover",
-      sourceUrl: storedProviderFallbackUrl,
-    });
-    if (cached) return cached;
-  }
+      sourceUrl,
+    })
+    : null;
 
-  const providerUrl = await resolveProviderArtworkUrl(
-    options.providerCandidates || [],
-    "album",
-    // Fetch the origin image as the cached source — writeResizedMediaCovers
-    // derives the UI proxies from it, the same flow Servarr/CAA artwork uses.
-    // (A configured pixel size here produced invalid TIDAL URLs: 1200x1200
-    // 403s; only fixed square sizes or "origin" exist.)
-    options.size ?? "origin",
-  );
-  if (providerUrl) {
-    persistResolvedFallbackArtwork("Albums", options.albumMbid, "Cover", providerUrl);
-    const cached = await ensureCachedMediaCover({
-      entityId: options.albumMbid,
-      coverEntity: "Album",
-      coverType: "Cover",
-      sourceUrl: providerUrl,
-    });
-    if (cached) return cached;
-  }
+  const resolveCanonical = async (): Promise<string | null> => {
+    for (const sourceUrl of [
+      storedCanonicalUrl,
+      servarrMetadataUrl,
+      getCoverArtArchiveReleaseGroupUrl(options.albumMbid),
+    ]) {
+      const cached = await cacheSource(sourceUrl);
+      if (cached) return cached;
+    }
+    return null;
+  };
 
-  return null;
+  const resolveProvider = async (): Promise<string | null> => {
+    const providerUrl = await resolveProviderArtworkUrl(
+      [...(options.providerCandidates || []), ...loadAlbumProviderArtworkCandidates(options.albumMbid)],
+      "album",
+      // Fetch the origin image as the cached source; local derivatives serve UI.
+      options.size ?? "origin",
+    );
+    if (providerUrl) {
+      persistResolvedFallbackArtwork("Albums", options.albumMbid, "Cover", providerUrl);
+      const cached = await cacheSource(providerUrl);
+      if (cached) return cached;
+    }
+    return cacheSource(storedProviderFallbackUrl);
+  };
+
+  const resolved = configuredArtworkPreference() === "provider"
+    ? await resolveProvider() || await resolveCanonical()
+    : await resolveCanonical() || await resolveProvider();
+  return resolved || existingAlbumMediaCoverUrl(options.albumMbid);
+}
+
+/**
+ * Reconstruct album artwork candidates from persisted provider offers. This is
+ * intentionally independent of Albums.images: changing the artwork preference
+ * or losing the local cache must still allow the lazy media-cover route to fetch
+ * the selected provider artwork while canonical images remain stored.
+ */
+export function loadAlbumProviderArtworkCandidates(albumMbid?: string | null): ProviderArtworkCandidate[] {
+  const mbid = textOrNull(albumMbid);
+  if (!mbid) return [];
+
+  type ArtworkRow = {
+    provider?: string | null;
+    provider_id?: string | null;
+    asset_id?: string | null;
+    cover?: string | null;
+  };
+
+  try {
+    const matchedRows = db.prepare(`
+      SELECT provider, provider_id, asset_id, cover
+      FROM ProviderItems
+      WHERE entity_type = 'album'
+        AND release_group_mbid = ?
+      ORDER BY COALESCE(match_confidence, 0) DESC, updated_at DESC
+      LIMIT 8
+    `).all(mbid) as ArtworkRow[];
+    const selectedRows = db.prepare(`
+      SELECT item.provider, item.provider_id, item.asset_id, item.cover
+      FROM ReleaseGroupSlots slot
+      JOIN ProviderItems item
+        ON item.provider = slot.selected_provider
+       AND item.entity_type = 'album'
+       AND CAST(item.provider_id AS TEXT) = CAST(slot.selected_provider_id AS TEXT)
+      WHERE slot.release_group_mbid = ?
+      ORDER BY COALESCE(item.match_confidence, 0) DESC, item.updated_at DESC
+      LIMIT 8
+    `).all(mbid) as ArtworkRow[];
+
+    const seen = new Set<string>();
+    const candidates: ProviderArtworkCandidate[] = [];
+    for (const row of [...selectedRows, ...matchedRows]) {
+      const provider = textOrNull(row.provider);
+      const entityId = textOrNull(row.provider_id);
+      const imageId = textOrNull(row.asset_id, row.cover);
+      if (!provider && !entityId && !imageId) continue;
+      const key = `${provider || ""}\u0000${entityId || ""}\u0000${imageId || ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      candidates.push({ provider, entityId, imageId });
+    }
+    return candidates;
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -1138,83 +1285,71 @@ export async function resolveArtistArtwork(options: {
   preferredCoverTypes?: string | string[];
   size?: string | number | null;
 }): Promise<string | null> {
-  const localCoverUrl = existingArtistMediaCoverUrl(options.artistMbid, options.preferredCoverTypes);
-  if (localCoverUrl) {
-    return localCoverUrl;
-  }
   const types = preferredTypes(options.preferredCoverTypes, ["Poster", "Headshot", "Fanart"]);
   const coverTypeForCache = types[0] || "Poster";
+  let storedCanonicalUrl: string | null = null;
+  let storedProviderFallbackUrl: string | null = null;
 
   if (options.artistMbid) {
     try {
       const row = db.prepare("SELECT images FROM ArtistMetadata WHERE mbid = ?").get(options.artistMbid) as { images?: string | null } | undefined;
       if (row?.images) {
         const dbImages = JSON.parse(row.images);
-        if (Array.isArray(dbImages) && dbImages.length > 0) {
-          const types = preferredTypes(options.preferredCoverTypes, ["Poster", "Headshot", "Fanart"]);
-          for (const coverType of types) {
-            const match = dbImages.find(img => String(img.coverType || "").trim().toLowerCase() === coverType.toLowerCase());
-            if (match?.url) {
-              const url = normalizeArtworkUrl(match.url);
-              if (url) {
-                const cached = await ensureCachedMediaCover({
-                  entityId: options.artistMbid,
-                  coverEntity: "Artist",
-                  coverType: coverTypeForCache,
-                  sourceUrl: url,
-                });
-                if (cached) return cached;
-              }
-            }
-          }
-          const fallback = dbImages[0]?.url;
-          if (fallback) {
-            const url = normalizeArtworkUrl(fallback);
-            if (url) {
-              const cached = await ensureCachedMediaCover({
-                entityId: options.artistMbid,
-                coverEntity: "Artist",
-                coverType: coverTypeForCache,
-                sourceUrl: url,
-              });
-              if (cached) return cached;
-            }
-          }
-        }
+        storedCanonicalUrl = chooseImageFromStoredList(dbImages, types, {
+          includeProviderFallbacks: false,
+          proxy: false,
+        });
+        const providerImages = Array.isArray(dbImages)
+          ? dbImages.filter((image) => isProviderFallbackImage(image))
+          : [];
+        storedProviderFallbackUrl = chooseImageFromStoredList(providerImages, types, {
+          includeProviderFallbacks: true,
+          proxy: false,
+        });
       }
     } catch (error) {
       console.warn("[MediaCoverService] Failed to resolve artist artwork from database:", error);
     }
   }
 
-  const servarrMetadataUrl = getServarrMetadataArtistImageUrl(options.servarrMetadataData, options.preferredCoverTypes);
-  if (servarrMetadataUrl) {
-    const cached = await ensureCachedMediaCover({
+  const explicitCanonicalImages = getServarrMetadataImages(options.servarrMetadataData)
+    .filter((image) => !isProviderFallbackImage(image as Record<string, any>));
+  const servarrMetadataUrl = getServarrMetadataArtistImageUrl({ images: explicitCanonicalImages }, types);
+  const cacheSource = async (sourceUrl: string | null): Promise<string | null> => sourceUrl
+    ? ensureCachedMediaCover({
       entityId: options.artistMbid,
       coverEntity: "Artist",
       coverType: coverTypeForCache,
-      sourceUrl: servarrMetadataUrl,
-    });
-    if (cached) return cached;
-  }
+      sourceUrl,
+    })
+    : null;
 
-  const providerUrl = await resolveProviderArtworkUrl(
-    [...(options.providerCandidates || []), ...loadArtistProviderArtworkCandidates(options.artistMbid)],
-    "artist",
-    options.size ?? configuredArtistPictureResolution(),
-  );
-  if (providerUrl) {
-    persistResolvedFallbackArtwork("ArtistMetadata", options.artistMbid, "Headshot", providerUrl);
-    const cached = await ensureCachedMediaCover({
-      entityId: options.artistMbid,
-      coverEntity: "Artist",
-      coverType: coverTypeForCache,
-      sourceUrl: providerUrl,
-    });
-    if (cached) return cached;
-  }
+  const resolveCanonical = async (): Promise<string | null> => {
+    for (const sourceUrl of [storedCanonicalUrl, servarrMetadataUrl]) {
+      const cached = await cacheSource(sourceUrl);
+      if (cached) return cached;
+    }
+    return null;
+  };
 
-  return null;
+  const resolveProvider = async (): Promise<string | null> => {
+    const providerUrl = await resolveProviderArtworkUrl(
+      [...(options.providerCandidates || []), ...loadArtistProviderArtworkCandidates(options.artistMbid)],
+      "artist",
+      options.size ?? configuredArtistPictureResolution(),
+    );
+    if (providerUrl) {
+      persistResolvedFallbackArtwork("ArtistMetadata", options.artistMbid, "Headshot", providerUrl);
+      const cached = await cacheSource(providerUrl);
+      if (cached) return cached;
+    }
+    return cacheSource(storedProviderFallbackUrl);
+  };
+
+  const resolved = configuredArtworkPreference() === "provider"
+    ? await resolveProvider() || await resolveCanonical()
+    : await resolveCanonical() || await resolveProvider();
+  return resolved || existingArtistMediaCoverUrl(options.artistMbid, types);
 }
 
 export async function resolveVideoArtwork(options: {

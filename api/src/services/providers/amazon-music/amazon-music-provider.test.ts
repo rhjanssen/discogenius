@@ -10,6 +10,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.AMAZON_MUSIC_PYTHON = "python-amazon-test";
 
 const { AmazonMusicProvider } = await import("./amazon-music-provider.js");
+const { amazonMusicQualityMapping } = await import("./amazon-music-quality.js");
 const {
   AmazonMusicBackend,
   amazonProgressForLine,
@@ -83,6 +84,15 @@ test("Amazon Music maps search and multi-axis quality without inventing provider
   assert.equal(result.tracks[0].duration, 210);
   assert.equal(result.tracks[0].isrc, "GBUM72400001");
   assert.deepEqual(result.videos, []);
+});
+
+test("Amazon Music maps the downloader's concrete HD/UHD quality identifiers", () => {
+  assert.equal(amazonMusicQualityMapping.toNeutralAudio("HD_44"), "lossless");
+  assert.equal(amazonMusicQualityMapping.toNeutralAudio("UHD_192"), "hires-lossless");
+  assert.deepEqual(
+    amazonMusicQualityMapping.toNeutral(["HD_44", "SPATIAL_ATMOS_HIGH_EC-3"]),
+    { audio: "lossless", spatial: ["atmos"] },
+  );
 });
 
 test("Amazon Music keeps missing or unrecognized quality evidence neutral", async () => {

@@ -14,11 +14,13 @@ let historyEventsModule: typeof import("../services/commands/history-events.js")
 let tasksRouter: typeof import("./v1/queue.js").default;
 let activityRouter: typeof import("./v1/history.js").default;
 let statusRouter: typeof import("./status.js").default;
+let downloadProcessorModule: typeof import("../services/download/download-processor.js");
 
 before(async () => {
     dbModule = await import("../database.js");
     queueModule = await import("../services/commands/command-queue-manager.js");
     historyEventsModule = await import("../services/commands/history-events.js");
+    downloadProcessorModule = await import("../services/download/download-processor.js");
     tasksRouter = (await import("./v1/queue.js")).default;
     activityRouter = (await import("./v1/history.js")).default;
     statusRouter = (await import("./status.js")).default;
@@ -62,6 +64,79 @@ function getGetHandler(router: any, pathName: string): (req: any, res: any) => v
     assert.ok(layer, `Expected GET handler for path ${pathName}`);
     return layer.route.stack[0].handle;
 }
+
+function getRouteHandler(router: any, method: string, pathName: string): (req: any, res: any) => Promise<void> {
+    const layer = router.stack.find((entry: any) => entry.route?.path === pathName && entry.route?.methods?.[method]);
+    assert.ok(layer, `Expected ${method.toUpperCase()} handler for path ${pathName}`);
+    return layer.route.stack[0].handle;
+}
+
+test("queue reorder accepts the frontend jobIds contract and changes effective execution order", async () => {
+    const first = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadTrack,
+        { providerId: "route-first", type: "track" },
+        "route-first",
+        100,
+        1,
+    );
+    const second = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadTrack,
+        { providerId: "route-second", type: "track" },
+        "route-second",
+        0,
+        0,
+    );
+
+    const handler = getRouteHandler(tasksRouter as any, "post", "/reorder");
+    const response = createMockResponse();
+    await handler({ body: { jobIds: [first], afterJobId: second } }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(
+        queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
+            queueModule.DOWNLOAD_COMMAND_NAMES,
+            ["queued"],
+            10,
+            0,
+            { orderBy: "execution" },
+        ).map((job) => job.id),
+        [second, first],
+    );
+});
+
+test("deleting a started download asks the worker to cancel it without pausing the queue", async () => {
+    const commandId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadTrack,
+        { providerId: "active-delete", type: "track" },
+        "active-delete",
+    );
+    queueModule.CommandQueueManager.markProcessing(commandId);
+
+    const processor = downloadProcessorModule.downloadProcessor;
+    const originalCancelJob = processor.cancelJob;
+    const originalPause = processor.pause;
+    const cancelledIds: number[] = [];
+    processor.cancelJob = async (id: number) => {
+        cancelledIds.push(id);
+        queueModule.CommandQueueManager.cancel(id);
+    };
+    processor.pause = async () => {
+        throw new Error("delete must not pause the whole queue");
+    };
+
+    try {
+        const handler = getRouteHandler(tasksRouter as any, "delete", "/:id");
+        const response = createMockResponse();
+        await handler({ params: { id: String(commandId) } }, response);
+
+        assert.equal(response.statusCode, 200);
+        assert.deepEqual(cancelledIds, [commandId]);
+        assert.equal(queueModule.CommandQueueManager.get(commandId), null);
+    } finally {
+        processor.cancelJob = originalCancelJob;
+        processor.pause = originalPause;
+    }
+});
 
 test("/api/tasks defaults to queued+started+completed+failed+cancelled and supports explicit status override", () => {
     const pendingId = queueModule.CommandQueueManager.push(queueModule.CommandNames.RefreshAlbum, { albumId: "album-pending" }, "album-pending");

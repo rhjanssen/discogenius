@@ -62,6 +62,8 @@ export interface AlbumTrackContract {
   volume_number: number;
   quality: string;
   qualityTags?: string[];
+  /** Selected remote offers that make this canonical release track available. */
+  remoteOffers?: TrackRemoteOfferContract[];
   artist_name?: string;
   artist_credits?: Array<{ id: string; name: string; join_phrase: string }>;
   album_title?: string;
@@ -77,6 +79,13 @@ export interface AlbumTrackContract {
   explicit?: boolean;
   album_id?: string | null;
   files: LibraryFileContract[];
+}
+
+export interface TrackRemoteOfferContract {
+  slot: string;
+  provider: string;
+  providerAlbumId: string;
+  quality: string | null;
 }
 
 export interface SimilarAlbumContract {
@@ -250,6 +259,18 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
       ? undefined
       : expectArray(record.qualityTags, `${label}.qualityTags`, (quality, qualityIndex) =>
           expectString(quality, `${label}.qualityTags[${qualityIndex}]`)),
+    remoteOffers: record.remoteOffers === undefined
+      ? undefined
+      : expectArray(record.remoteOffers, `${label}.remoteOffers`, (offer, offerIndex) => {
+          const offerLabel = `${label}.remoteOffers[${offerIndex}]`;
+          const offerRecord = expectRecord(offer, offerLabel);
+          return {
+            slot: expectString(offerRecord.slot, `${offerLabel}.slot`),
+            provider: expectString(offerRecord.provider, `${offerLabel}.provider`),
+            providerAlbumId: expectString(offerRecord.providerAlbumId, `${offerLabel}.providerAlbumId`),
+            quality: expectNullableString(offerRecord.quality, `${offerLabel}.quality`) ?? null,
+          };
+        }),
     artist_name: expectOptionalString(record.artist_name, `${label}.artist_name`),
     artist_credits: record.artist_credits === undefined
       ? undefined

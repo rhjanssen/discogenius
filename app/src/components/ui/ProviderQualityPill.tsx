@@ -173,9 +173,9 @@ const useStyles = makeStyles({
         color: tokens.colorBrandForeground1,
     },
     // The standard "explicit" square (Apple/Spotify style) — a compact neutral
-    // "E" that distinguishes an explicit edition from an otherwise-identical
-    // clean one on the same MusicBrainz release (the "two identical MAX badges"
-    // case). Clean editions render nothing, so the marker's presence is the tell.
+    // edition marker that distinguishes otherwise-identical explicit and clean
+    // cuts on the same MusicBrainz release (the "two identical MAX badges"
+    // case). Both states render, so absence means genuinely unknown metadata.
     explicitMark: {
         display: "inline-flex",
         alignItems: "center",
@@ -447,8 +447,10 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
 
         const badge = <QualityBadge quality={offer.quality || "Unknown"} size={size} className={styles.badge} />;
         const explicitMark = offer.explicit === true
-            ? <span className={styles.explicitMark} aria-hidden="true" title="Explicit">E</span>
-            : null;
+            ? <span className={styles.explicitMark} aria-hidden="true" title="Explicit edition">E</span>
+            : offer.explicit === false
+                ? <span className={styles.explicitMark} aria-hidden="true" title="Clean edition">C</span>
+                : null;
 
         return (
             <Tooltip

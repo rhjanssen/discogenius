@@ -47,6 +47,7 @@ export type {
     ProviderMatch,
 } from "./import-types.js";
 import { extractReleaseGroup } from "./import-matching-utils.js";
+import { LYRIC_SIDECAR_EXTENSIONS } from "../extras/lyrics/lyric-sidecar.js";
 
 export class ImportService {
     private candidates: ImportCandidate[] = [];
@@ -833,7 +834,12 @@ export class ImportService {
 
                     const releaseGroup = extractReleaseGroup(file.name);
                     const fingerprint = await calculateFingerprint(file.path);
-                    collectSiblingSidecarTargets(file.path, expectedPath, [".lrc"], explicitSidecarTargets);
+                    collectSiblingSidecarTargets(
+                        file.path,
+                        expectedPath,
+                        [...LYRIC_SIDECAR_EXTENSIONS],
+                        explicitSidecarTargets,
+                    );
 
                     const stats = await fs.promises.stat(file.path);
 

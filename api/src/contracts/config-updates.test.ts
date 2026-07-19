@@ -78,9 +78,11 @@ test("config update parsers return only validated partial updates", () => {
   });
 
   const metadataUpdate = parseMetadataConfigUpdate({
+    artwork_preference: "provider",
     write_audio_tags_policy: "new_files",
     enable_fingerprinting: false,
   }, {
+    artwork_preference: "canonical",
     save_album_cover: true,
     album_cover_name: "cover.jpg",
     album_cover_resolution: "origin",
@@ -101,6 +103,7 @@ test("config update parsers return only validated partial updates", () => {
     embed_replaygain: true,
   });
   assert.deepEqual(metadataUpdate, {
+    artwork_preference: "provider",
     write_audio_tags_policy: "new_files",
     enable_fingerprinting: false,
   });
@@ -150,6 +153,7 @@ test("config update parsers reject unsupported keys and invalid values", () => {
     parseMetadataConfigUpdate({
       write_audio_tags_policy: "sync",
     }, {
+      artwork_preference: "canonical",
       save_album_cover: true,
       album_cover_name: "cover.jpg",
       album_cover_resolution: "origin",

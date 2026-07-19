@@ -1114,8 +1114,9 @@ export class LibraryFilesService {
         spatialRoot: getCurrentLibraryRootPath("spatial"),
       });
       const trackPath = path.join(libraryRootPath, artistFolder, `${relativeTrackPath}.${ext}`);
-      const lrcPath = trackPath.replace(new RegExp(`${path.extname(trackPath)}$`), ".lrc");
-      return { expectedPath: lrcPath };
+      const lyricExtension = String(row.extension || "lrc").toLowerCase() === "txt" ? ".txt" : ".lrc";
+      const lyricPath = trackPath.replace(new RegExp(`${path.extname(trackPath)}$`), lyricExtension);
+      return { expectedPath: lyricPath };
     }
 
     return { expectedPath: null, reason: `unsupported_file_type:${row.file_type}` };

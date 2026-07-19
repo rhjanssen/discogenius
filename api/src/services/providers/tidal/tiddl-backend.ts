@@ -201,7 +201,10 @@ export class TiddlBackend implements DownloadBackend {
         const wrapperScript = getTiddlProgressWrapperScript();
         const command = wrapperScript ? getTiddlPythonBinary() : getTiddlBinary();
         const commandArgs = wrapperScript ? [wrapperScript, ...args] : args;
-        const cp = spawn(command, commandArgs, { env: buildTiddlEnv() });
+        const cp = spawn(command, commandArgs, { 
+            env: buildTiddlEnv(),
+            shell: process.platform === "win32"
+        });
 
         if (options.signal) {
             if (options.signal.aborted) {

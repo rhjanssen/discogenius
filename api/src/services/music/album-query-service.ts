@@ -11,6 +11,7 @@ import { getConfigSection } from "../config/config.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { AlbumLibraryIndexService } from "./album-library-index-service.js";
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "../metadata/musicbrainz-artist-credit-service.js";
+import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
 const releaseGroupMonitoredExpression = `
         CASE WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1 ELSE 0 END
 `;
@@ -180,33 +181,6 @@ export interface AlbumListQuery {
     qualityTier?: string;
     sort?: string;
     dir?: string;
-}
-
-/**
- * SQL predicate that matches a stored raw quality string against one of the four
- * neutral badge tiers — the DB keeps provider-native strings (HIRES_LOSSLESS,
- * LOSSLESS, YOUTUBE_LOSSY, …), so this mirrors the client `stereoQualityTier`
- * mapping in SQL. The column name is code-controlled (never user input) and the
- * tier is validated against the enum, so no values are interpolated unsafely.
- */
-function qualityTierSqlCondition(qualityColumn: string, tier: string): string | null {
-    const q = `UPPER(COALESCE(${qualityColumn}, ''))`;
-    const HIRES = `(${q} LIKE '%HIRES%' OR ${q} LIKE '%HI_RES%' OR ${q} LIKE '%MQA%' OR ${q} LIKE '%MASTER%')`;
-    const LOSSLESS = `(${q} LIKE '%LOSSLESS%' OR ${q} LIKE '%FLAC%' OR ${q} LIKE '%ALAC%')`;
-    const LOW = `(${q} = 'LOW' OR ${q} LIKE '%_96%' OR ${q} LIKE '%_128%' OR ${q} LIKE '%_64%' OR ${q} LIKE '%YOUTUBE_LOSSY%')`;
-    switch (tier.toUpperCase()) {
-        case "MAX":
-            return HIRES;
-        case "HIGH":
-            return `(${LOSSLESS} AND NOT ${HIRES})`;
-        case "LOW":
-            return `(${LOW} AND NOT ${HIRES} AND NOT ${LOSSLESS})`;
-        case "NORMAL":
-            return `(${q} != '' AND NOT ${HIRES} AND NOT ${LOSSLESS} AND NOT ${LOW}`
-                + ` AND ${q} NOT LIKE '%ATMOS%' AND ${q} NOT LIKE '%SPATIAL%' AND ${q} NOT LIKE '%360%')`;
-        default:
-            return null;
-    }
 }
 
 /** Slot aliases (ReleaseGroupSlots) the provider/quality filter should test for a given library filter. */
@@ -404,21 +378,38 @@ export class AlbumQueryService {
         const providerFilter = String(input.provider || "").trim();
         const qualityTierFilter = String(input.qualityTier || "").trim();
         const slotAliases = filterSlotAliases(libraryFilter);
-        if (providerFilter) {
-            where.push(`(${slotAliases.map((alias) => `${alias}.selected_provider = ?`).join(" OR ")})`);
-            for (const _ of slotAliases) {
+        const tierConditions = qualityTierFilter
+            ? slotAliases
+                .map((alias) => ({
+                    alias,
+                    condition: qualityTierSqlCondition(`${alias}.quality`, qualityTierFilter),
+                }))
+                .filter((entry): entry is { alias: string; condition: string } => entry.condition != null)
+            : [];
+
+        if (providerFilter && tierConditions.length > 0) {
+            // Provider and quality describe one offer. Keep both predicates on
+            // the same slot so an Apple Atmos offer cannot combine with a TIDAL
+            // MAX stereo offer and incorrectly satisfy Apple + MAX.
+            where.push(`(${tierConditions
+                .map(({ alias, condition }) => `(${alias}.selected_provider = ? AND ${condition})`)
+                .join(" OR ")})`);
+            for (const _ of tierConditions) {
                 params.push(providerFilter);
                 countParams.push(providerFilter);
             }
-        }
-        if (qualityTierFilter) {
-            const tierConditions = slotAliases
-                .map((alias) => qualityTierSqlCondition(`${alias}.quality`, qualityTierFilter))
-                .filter((condition): condition is string => condition != null);
-            // A recognised tier with no matching slot expression matches nothing;
-            // an unrecognised tier is ignored (no condition added).
+        } else {
+            if (providerFilter) {
+                where.push(`(${slotAliases.map((alias) => `${alias}.selected_provider = ?`).join(" OR ")})`);
+                for (const _ of slotAliases) {
+                    params.push(providerFilter);
+                    countParams.push(providerFilter);
+                }
+            }
+            // A recognised tier with no matching slot expression matches
+            // nothing; an unrecognised tier is ignored.
             if (tierConditions.length > 0) {
-                where.push(`(${tierConditions.join(" OR ")})`);
+                where.push(`(${tierConditions.map(({ condition }) => condition).join(" OR ")})`);
             }
         }
 

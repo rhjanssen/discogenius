@@ -58,6 +58,7 @@ import {
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
+import { ProviderMark } from "@/components/ui/ProviderMark";
 import { DownloadedBadge, NotScannedBadge } from "@/components/ui/StatusBadges";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
 import { MediaCard } from "@/components/cards/MediaCard";
@@ -90,6 +91,7 @@ import { useTheme } from "@/providers/themeContext";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { api, type StreamingProviderStatus } from "@/services/api";
 import { renderableArtworkUrl } from "@/utils/artwork";
+import { orderedQualityTags } from "@/utils/qualityTags";
 import {
   dispatchActivityRefresh,
   dispatchLibraryUpdated,
@@ -117,6 +119,25 @@ const Person24Regular = bundleIcon(Person24Filled, Person24RegularBase);
 const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
 const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
 const CheckmarkCircle24Regular = bundleIcon(CheckmarkCircle24Filled, CheckmarkCircle24RegularBase);
+
+const downloadableVideoOffer = (video: any): { provider: string; providerId: string } | null => {
+  const provider = String(video?.provider || "").trim();
+  const providerId = String(video?.provider_id ?? video?.providerId ?? "").trim();
+  return provider && providerId ? { provider, providerId } : null;
+};
+
+const groupedVideoOffers = (video: any): Array<{ provider: string; providerId: string; quality: string | null }> => {
+  if (!Array.isArray(video?.provider_offers)) return [];
+  const deduped = new Map<string, { provider: string; providerId: string; quality: string | null }>();
+  for (const candidate of video.provider_offers) {
+    const provider = String(candidate?.provider || "").trim();
+    const providerId = String(candidate?.provider_id ?? candidate?.providerId ?? "").trim();
+    const quality = String(candidate?.quality || "").trim() || null;
+    if (!provider || !providerId) continue;
+    deduped.set(`${provider}\u0000${providerId}\u0000${quality || ""}`, { provider, providerId, quality });
+  }
+  return [...deduped.values()];
+};
 
 const useStyles = makeStyles({
   container: {
@@ -427,6 +448,8 @@ const Library = () => {
     downloaded: downloadedFilter,
     locked: lockedFilter,
     libraryFilter,
+    provider: albumProviderFilter,
+    qualityTier: albumQualityTierFilter,
     sort: sortBy,
     dir: sortDirection,
     enabled: selectedTab === 'tracks',
@@ -447,6 +470,7 @@ const Library = () => {
     monitored: monitoredFilter,
     downloaded: downloadedFilter,
     locked: lockedFilter,
+    provider: albumProviderFilter,
     sort: sortBy,
     dir: sortDirection,
     enabled: selectedTab === 'videos',
@@ -741,24 +765,25 @@ const Library = () => {
   const queueSelectedVideoDownload = async () => {
     const queueableVideos = videoSelection.selectedItems.filter((video: any) => {
       const isDownloaded = video.is_downloaded ?? video.downloaded;
-      return !isDownloaded;
+      return !isDownloaded && downloadableVideoOffer(video) != null;
     });
 
     if (queueableVideos.length === 0) {
       toast({
         title: "No downloadable videos selected",
-        description: "All selected videos are already downloaded.",
+        description: "Selected videos are already downloaded or have no downloadable provider offer.",
       });
       videoSelection.clearSelection();
       return;
     }
 
     const { succeeded, failed } = await runSelectionActionWithConcurrency(queueableVideos, async (video: any) => {
-      const providerVideoId = String(video.provider_id ?? video.providerId ?? video.id ?? "").trim();
-      await addToQueue(null, "video", providerVideoId, {
+      const offer = downloadableVideoOffer(video);
+      if (!offer) throw new Error("No downloadable provider offer");
+      await addToQueue(null, "video", offer.providerId, {
         payload: {
-          provider: video.provider ?? "tidal",
-          providerId: providerVideoId,
+          provider: offer.provider,
+          providerId: offer.providerId,
           title: video.title,
           artist: video.artist_name,
           albumId: video.album_id,
@@ -1341,6 +1366,50 @@ const Library = () => {
       ),
     },
     {
+      key: "provider",
+      header: "Provider",
+      width: "96px",
+      minWidth: 900,
+      render: (video: any) => {
+        const offers = groupedVideoOffers(video);
+        const rawProviders: unknown[] = offers.length > 0
+          ? offers.map((offer) => offer.provider)
+          : Array.isArray(video.providers) && video.providers.length > 0
+            ? video.providers
+            : [video.provider];
+        const providers = [...new Set<string>(rawProviders
+          .filter((provider): provider is string => typeof provider === "string" && provider.length > 0))];
+        return providers.length > 0 ? (
+          <div style={{ display: "flex", gap: tokens.spacingHorizontalXS }} aria-label={`Available from ${providers.join(", ")}`}>
+            {providers.map((provider) => <ProviderMark key={provider} provider={provider} size={18} />)}
+          </div>
+        ) : <Text size={200}>—</Text>;
+      },
+    },
+    {
+      key: "quality",
+      header: "Available",
+      width: "96px",
+      minWidth: 768,
+      render: (video: any) => {
+        const offerQualities = groupedVideoOffers(video)
+          .map((offer) => offer.quality)
+          .filter((quality): quality is string => Boolean(quality));
+        const qualities = orderedQualityTags({
+          qualityTags: offerQualities.length > 0
+            ? offerQualities
+            : video.quality
+              ? [String(video.quality)]
+              : [],
+        });
+        return qualities.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: tokens.spacingHorizontalXXS }}>
+            {qualities.map((quality) => <QualityBadge key={quality} quality={quality} size="small" />)}
+          </div>
+        ) : <Text size={200}>—</Text>;
+      },
+    },
+    {
       key: "duration",
       header: "Duration",
       width: "70px",
@@ -1363,6 +1432,7 @@ const Library = () => {
       align: "right",
       render: (video: any) => {
         const isLocked = Boolean(video.monitored_lock);
+        const downloadOffer = downloadableVideoOffer(video);
         return (
           <LibraryRowActions
             actions={[
@@ -1372,11 +1442,11 @@ const Library = () => {
                 icon: <ArrowDownload24Regular />,
                 onClick: (event) => {
                   event.stopPropagation();
-                  const providerVideoId = String(video.provider_id ?? video.providerId ?? video.id ?? "").trim();
-                  void addToQueue(null, "video", providerVideoId, {
+                  if (!downloadOffer) return;
+                  void addToQueue(null, "video", downloadOffer.providerId, {
                     payload: {
-                      provider: video.provider ?? "tidal",
-                      providerId: providerVideoId,
+                      provider: downloadOffer.provider,
+                      providerId: downloadOffer.providerId,
                       title: video.title,
                       artist: video.artist_name,
                       cover: video.cover ?? video.cover_id ?? null,
@@ -1384,7 +1454,7 @@ const Library = () => {
                     },
                   });
                 },
-                hidden: (video.is_downloaded ?? video.downloaded) ? true : false,
+                hidden: Boolean(video.is_downloaded ?? video.downloaded) || !downloadOffer,
               },
               {
                 key: "monitor",
@@ -1892,11 +1962,11 @@ const Library = () => {
               <FilterMenu
                 libraryFilter={libraryFilter}
                 onLibraryFilterChange={setLibraryFilter}
-                providerFilter={selectedTab === 'albums' ? albumProviderFilter : undefined}
-                onProviderFilterChange={selectedTab === 'albums' ? setAlbumProviderFilter : undefined}
-                providerOptions={selectedTab === 'albums' ? providerFilterOptions : undefined}
-                qualityTierFilter={selectedTab === 'albums' ? albumQualityTierFilter : undefined}
-                onQualityTierFilterChange={selectedTab === 'albums' ? setAlbumQualityTierFilter : undefined}
+                providerFilter={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? albumProviderFilter : undefined}
+                onProviderFilterChange={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? setAlbumProviderFilter : undefined}
+                providerOptions={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? providerFilterOptions : undefined}
+                qualityTierFilter={selectedTab === 'albums' || selectedTab === 'tracks' ? albumQualityTierFilter : undefined}
+                onQualityTierFilterChange={selectedTab === 'albums' || selectedTab === 'tracks' ? setAlbumQualityTierFilter : undefined}
                 statusFilters={effectiveStatusFilters}
                 onStatusFiltersChange={setStatusFilters}
                 showDownloadFilter={showDownloadFilter}
@@ -1953,11 +2023,11 @@ const Library = () => {
               <FilterMenu
                 libraryFilter={libraryFilter}
                 onLibraryFilterChange={setLibraryFilter}
-                providerFilter={selectedTab === 'albums' ? albumProviderFilter : undefined}
-                onProviderFilterChange={selectedTab === 'albums' ? setAlbumProviderFilter : undefined}
-                providerOptions={selectedTab === 'albums' ? providerFilterOptions : undefined}
-                qualityTierFilter={selectedTab === 'albums' ? albumQualityTierFilter : undefined}
-                onQualityTierFilterChange={selectedTab === 'albums' ? setAlbumQualityTierFilter : undefined}
+                providerFilter={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? albumProviderFilter : undefined}
+                onProviderFilterChange={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? setAlbumProviderFilter : undefined}
+                providerOptions={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? providerFilterOptions : undefined}
+                qualityTierFilter={selectedTab === 'albums' || selectedTab === 'tracks' ? albumQualityTierFilter : undefined}
+                onQualityTierFilterChange={selectedTab === 'albums' || selectedTab === 'tracks' ? setAlbumQualityTierFilter : undefined}
                 statusFilters={effectiveStatusFilters}
                 onStatusFiltersChange={setStatusFilters}
                 showDownloadFilter={showDownloadFilter}
@@ -2052,6 +2122,7 @@ const Library = () => {
                   <DataGrid
                     columns={albumColumns}
                     items={albums}
+                    sharedColumns
                     getRowKey={(a: any) => a.id}
                     onRowClick={(a: any) => navigate(`/album/${a.id}`)}
                     selection={isSelectionMode ? {
@@ -2089,6 +2160,7 @@ const Library = () => {
                   showCover
                   showArtist
                   showAlbum
+                  showLocalQuality
                   showDownloadedColumn
                   disableStickyHeader={false}
                   onDownloadTrack={handleDownloadTrack}
@@ -2136,11 +2208,12 @@ const Library = () => {
                     loading={videosLoading}
                     onToggleMonitor={(video) => toggleVideoMonitor(video.id, !video.is_monitored)}
                     onDownload={(video) => {
-                      const providerVideoId = String((video as any).provider_id ?? (video as any).providerId ?? video.id ?? "").trim();
-                      void addToQueue(null, "video", providerVideoId, {
+                      const offer = downloadableVideoOffer(video);
+                      if (!offer) return;
+                      void addToQueue(null, "video", offer.providerId, {
                         payload: {
-                          provider: (video as any).provider ?? "tidal",
-                          providerId: providerVideoId,
+                          provider: offer.provider,
+                          providerId: offer.providerId,
                           title: video.title,
                           artist: (video as any).artist_name,
                           cover: (video as any).cover ?? (video as any).cover_id ?? null,
@@ -2160,6 +2233,7 @@ const Library = () => {
                     columns={videoColumns}
                     items={videos}
                     getRowKey={(v: any) => v.id}
+                    sharedColumns
                     onRowClick={(v: any) => navigate(`/video/${v.id}`)}
                     selection={isSelectionMode ? {
                       ...videoSelection.selection,

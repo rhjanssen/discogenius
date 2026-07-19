@@ -57,6 +57,7 @@ import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type { DownloadProgress } from "@/queue/queueProgress";
 import { useDashboardStyles } from "./dashboardStyles";
 import { formatRelativeTime } from "./dashboardUtils";
+import { ProviderMark } from "@/components/ui/ProviderMark";
 
 const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
 const Clock24Regular = bundleIcon(Clock24Filled, Clock24RegularBase);
@@ -1537,6 +1538,7 @@ const QueueTab = () => {
                                                     <div className={mergeClasses(styles.downloadArtistMetaRow, styles.downloadArtistMetaRowInline)}>
                                                         <Text className={styles.downloadArtist} truncate>{group.artist}</Text>
                                                         <div className={mergeClasses(styles.downloadBadgeRow, styles.downloadBadgeRowInline)}>
+                                                            {firstItem?.providerId ? <ProviderMark provider={firstItem.providerId} size={16} /> : null}
                                                             {group.quality ? <QualityBadge quality={group.quality} size="small" /> : null}
                                                             <MediaTypeBadge kind={group.type === 'video' ? 'video' : group.type === 'album' ? 'album' : 'track'} size="small" />
                                                         </div>
@@ -1892,6 +1894,7 @@ const QueueTab = () => {
                                                         <Text className={styles.downloadArtist} truncate>{row.subtitle}</Text>
                                                     ) : null}
                                                     <div className={mergeClasses(styles.downloadBadgeRow, styles.downloadBadgeRowInline)}>
+                                                        {item.providerId ? <ProviderMark provider={item.providerId} size={16} /> : null}
                                                         {row.quality ? <QualityBadge quality={row.quality} size="small" /> : null}
                                                         {row.mediaBadge ? (
                                                             <MediaTypeBadge kind={row.mediaBadge.kind} label={row.mediaBadge.label} size="small" />

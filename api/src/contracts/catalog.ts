@@ -91,6 +91,13 @@ export interface VideoContract {
   version?: string | null;
   explicit?: boolean;
   quality?: string | null;
+  /** Preferred provider offer for preview/download from a grouped video row. */
+  provider?: string | null;
+  provider_id?: string | null;
+  /** Every provider contributing an offer to this canonical video. */
+  providers?: string[];
+  /** Provider-specific offers retained after canonical cross-provider grouping. */
+  provider_offers?: VideoListProviderOfferContract[];
   cover?: string | null;
   cover_id?: string | null;
   cover_art_url?: string | null;
@@ -104,6 +111,12 @@ export interface VideoContract {
   is_downloaded: boolean;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface VideoListProviderOfferContract {
+  provider: string;
+  provider_id: string;
+  quality: string | null;
 }
 
 export interface LibraryStatsBucketContract {
@@ -258,6 +271,23 @@ function parseVideoContract(value: unknown, index: number): VideoContract {
     version: expectNullableString(record.version, `${label}.version`),
     explicit: expectOptionalBoolean(record.explicit, `${label}.explicit`),
     quality: expectNullableString(record.quality, `${label}.quality`),
+    provider: expectNullableString(record.provider, `${label}.provider`) ?? null,
+    provider_id: expectNullableString(record.provider_id, `${label}.provider_id`) ?? null,
+    providers: record.providers === undefined
+      ? undefined
+      : expectArray(record.providers, `${label}.providers`, (provider, providerIndex) =>
+          expectString(provider, `${label}.providers[${providerIndex}]`)),
+    provider_offers: record.provider_offers === undefined
+      ? undefined
+      : expectArray(record.provider_offers, `${label}.provider_offers`, (offer, offerIndex) => {
+          const offerLabel = `${label}.provider_offers[${offerIndex}]`;
+          const offerRecord = expectRecord(offer, offerLabel);
+          return {
+            provider: expectString(offerRecord.provider, `${offerLabel}.provider`),
+            provider_id: expectString(offerRecord.provider_id, `${offerLabel}.provider_id`),
+            quality: expectNullableString(offerRecord.quality, `${offerLabel}.quality`) ?? null,
+          };
+        }),
     cover: expectNullableString(record.cover, `${label}.cover`),
     cover_id: expectNullableString(record.cover_id, `${label}.cover_id`),
     cover_art_url: expectNullableString(record.cover_art_url, `${label}.cover_art_url`),

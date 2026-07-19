@@ -5,6 +5,10 @@ import { streamingProviderManager } from "../providers/index.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia } from "../extras/lyrics/lyric-service.js";
 import {
+    classifyLyricsForSidecar,
+    lyricSidecarPath,
+} from "../extras/lyrics/lyric-sidecar.js";
+import {
     albumProviderArtworkCandidatesFromRow,
     imageContainerFromImagesColumn,
     getMediaCoverFilePathFromUrl,
@@ -13,6 +17,8 @@ import {
     getServarrMetadataArtistImageUrl,
     normalizeArtworkUrl,
     parseJsonObject,
+    configuredArtworkPreference,
+    resolveProviderArtworkUrl,
     resolveMediaCoverProxyUrl,
     type ProviderArtworkCandidate,
     type ServarrMetadataImageContainer,
@@ -426,10 +432,10 @@ async function downloadProviderArtwork(
     url: string | null | undefined,
     outputPath: string,
     label: string,
-): Promise<void> {
+): Promise<boolean> {
     if (!url) {
         console.log(`ℹ️ [METADATA] No ${label} available, skipping.`);
-        return;
+        return false;
     }
 
     const localFilePath = getMediaCoverFilePathFromUrl(url);
@@ -437,13 +443,13 @@ async function downloadProviderArtwork(
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
         fs.copyFileSync(localFilePath, outputPath);
         console.log(`✅ [METADATA] ${label} copied from MediaCover cache: ${outputPath}`);
-        return;
+        return true;
     }
 
     const fetchUrl = resolveMediaCoverProxyUrl(url);
     if (!fetchUrl) {
         console.log(`⚠️ [METADATA] Invalid ${label} URL: ${url}`);
-        return;
+        return false;
     }
 
     console.log(`📥 [METADATA] Downloading ${label}: ${fetchUrl}`);
@@ -455,11 +461,11 @@ async function downloadProviderArtwork(
         response = await fetch(fetchUrl, { signal: AbortSignal.timeout(30_000) });
     } catch (error) {
         console.warn(`⚠️ [METADATA] Failed to download ${label}: ${(error as Error).message}`);
-        return;
+        return false;
     }
     if (!response.ok) {
         console.log(`⚠️ [METADATA] Failed to download ${label}: ${response.statusText}`);
-        return;
+        return false;
     }
 
     const buffer = await response.arrayBuffer();
@@ -467,6 +473,24 @@ async function downloadProviderArtwork(
     fs.writeFileSync(outputPath, Buffer.from(buffer));
 
     console.log(`✅ [METADATA] ${label} saved: ${outputPath}`);
+    return true;
+}
+
+function artworkImagesByOrigin(
+    container: ServarrMetadataImageContainer | null | undefined,
+    origin: "canonical" | "provider",
+): ServarrMetadataImageContainer {
+    const images = Array.isArray(container?.images)
+        ? container.images
+        : Array.isArray(container?.Images)
+            ? container.Images
+            : [];
+    return {
+        images: images.filter((image) => {
+            const source = String((image as any).source || (image as any).Source || "").trim().toLowerCase();
+            return origin === "provider" ? source === "provider-fallback" : source !== "provider-fallback";
+        }),
+    };
 }
 
 function loadResolvedArtistArtwork(artistId: string): string | null {
@@ -481,7 +505,7 @@ function loadResolvedArtistArtwork(artistId: string): string | null {
     return typeof resolved === "string" && (/^https?:\/\//i.test(resolved) || resolved.startsWith("/media-cover/")) ? resolved : null;
 }
 
-function loadAlbumArtworkContext(albumId: string): {
+function loadAlbumArtworkContext(albumId: string, provider?: string | null): {
     albumMbid: string | null;
     servarrMetadataData: ServarrMetadataImageContainer | null;
     providerCandidates: ProviderArtworkCandidate[];
@@ -513,10 +537,16 @@ function loadAlbumArtworkContext(albumId: string): {
           ON spatial.release_group_mbid = rg.mbid
          AND spatial.slot = 'spatial'
         WHERE pi.entity_type = 'album'
-          AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-        ORDER BY pi.updated_at DESC
+          AND (
+            CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+            OR pi.release_group_mbid = ?
+            OR pi.release_mbid = ?
+          )
+          AND (? = '' OR pi.provider = ?)
+        ORDER BY CASE WHEN CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT) THEN 0 ELSE 1 END,
+                 pi.updated_at DESC
         LIMIT 1
-    `).get(albumId) as Record<string, any> | undefined;
+    `).get(albumId, albumId, albumId, String(provider || ""), String(provider || ""), albumId) as Record<string, any> | undefined;
 
     if (!row) {
         return null;
@@ -606,28 +636,30 @@ function loadArtistArtworkContext(artistId: string): {
 export async function downloadAlbumCover(
     albumId: string,
     resolution: 80 | 160 | 250 | 320 | 500 | 640 | 1200 | 1280 | 'origin',
-    outputPath: string
+    outputPath: string,
+    options: { provider?: string | null } = {},
 ): Promise<void> {
-    const context = loadAlbumArtworkContext(albumId);
-    let url = context
-        ? getServarrMetadataAlbumImageUrl(context.servarrMetadataData)
-        : null;
+    const context = loadAlbumArtworkContext(albumId, options.provider);
+    const providerCandidates = context?.providerCandidates?.length
+        ? context.providerCandidates
+        : [{ provider: options.provider || streamingProviderManager.getDefaultProviderId(), entityId: albumId }];
+    const canonicalUrl = getServarrMetadataAlbumImageUrl(
+        artworkImagesByOrigin(context?.servarrMetadataData, "canonical"),
+    );
+    const storedProviderUrl = getServarrMetadataAlbumImageUrl(
+        artworkImagesByOrigin(context?.servarrMetadataData, "provider"),
+    );
+    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "album", resolution);
+    const coverArtArchiveUrl = getCoverArtArchiveReleaseGroupUrl(context?.albumMbid);
+    const candidates = configuredArtworkPreference() === "provider"
+        ? [providerUrl, storedProviderUrl, canonicalUrl, coverArtArchiveUrl]
+        : [canonicalUrl, coverArtArchiveUrl, providerUrl, storedProviderUrl];
 
-    if (!url) {
-        const providerCandidate = (context?.providerCandidates || []).find(
-            (candidate) => candidate.provider && candidate.entityId,
-        );
-        url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
-            entityType: "album",
-            providerId: providerCandidate?.entityId != null ? String(providerCandidate.entityId) : albumId,
-            imageId: providerCandidate?.imageId || null,
-            size: resolution,
-        }) ?? null;
+    for (const url of Array.from(new Set(candidates.filter((candidate): candidate is string => Boolean(candidate))))) {
+        if (await downloadProviderArtwork(url, outputPath, `album cover for ${albumId}`)) {
+            return;
+        }
     }
-    if (!url) {
-        url = getCoverArtArchiveReleaseGroupUrl(context?.albumMbid);
-    }
-    await downloadProviderArtwork(url, outputPath, `album cover for ${albumId}`);
 }
 
 /**
@@ -671,41 +703,28 @@ export async function downloadArtistPicture(
 ): Promise<void> {
     const context = loadArtistArtworkContext(artistId);
     const preferredCoverTypes = ["Poster", "Headshot", "Fanart"];
+    const providerCandidates = context?.providerCandidates?.length
+        ? context.providerCandidates
+        : [{ provider: streamingProviderManager.getDefaultProviderId(), entityId: artistId }];
+    const canonicalUrl = getServarrMetadataArtistImageUrl(
+        artworkImagesByOrigin(context?.servarrMetadataData, "canonical"),
+        preferredCoverTypes,
+    );
+    const storedProviderUrl = getServarrMetadataArtistImageUrl(
+        artworkImagesByOrigin(context?.servarrMetadataData, "provider"),
+        preferredCoverTypes,
+    );
+    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "artist", resolution);
+    const resolvedRowUrl = loadResolvedArtistArtwork(artistId);
+    const candidates = configuredArtworkPreference() === "provider"
+        ? [providerUrl, storedProviderUrl, canonicalUrl, resolvedRowUrl]
+        : [canonicalUrl, providerUrl, storedProviderUrl, resolvedRowUrl];
 
-    // Source first: the catalog metadata images (ArtistMetadata.images — MusicBrainz
-    // in MB mode, Servarr in Servarr mode). Resolve the remote origin URL and
-    // download it directly so the on-disk picture is full resolution, not a resized
-    // media-cover proxy copy. (resolveArtistArtwork returns a proxy URL sized for the
-    // UI; the on-disk sidecar wants the original.)
-    let sourceUrl: string | null | undefined = context
-        ? getServarrMetadataArtistImageUrl(context.servarrMetadataData, preferredCoverTypes)
-        : null;
-
-    // Streaming provider fallback: only reached when the catalog carried no artist
-    // image. Use the resolved provider artist id from the context when available —
-    // the raw artistId is the MBID in MB mode, which the provider cannot resolve.
-    if (!sourceUrl) {
-        const providerCandidate = (context?.providerCandidates || []).find(
-            (candidate) => candidate.provider && candidate.entityId,
-        );
-        try {
-            sourceUrl = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
-                entityType: "artist",
-                providerId: providerCandidate?.entityId != null ? String(providerCandidate.entityId) : artistId,
-                size: resolution,
-            });
-        } catch (error) {
-            console.warn(`⚠️ [METADATA] Failed to resolve provider artist picture for ${artistId}: ${(error as Error).message}`);
+    for (const sourceUrl of Array.from(new Set(candidates.filter((candidate): candidate is string => Boolean(candidate))))) {
+        if (await downloadProviderArtwork(sourceUrl, outputPath, `artist picture for ${artistId}`)) {
+            return;
         }
     }
-
-    // Last resort: a URL already cached on the artist row (may be a media-cover
-    // proxy path, which downloadProviderArtwork copies from the local cache).
-    if (!sourceUrl) {
-        sourceUrl = loadResolvedArtistArtwork(artistId);
-    }
-
-    await downloadProviderArtwork(sourceUrl, outputPath, `artist picture for ${artistId}`);
 }
 
 /**
@@ -718,14 +737,15 @@ export async function downloadArtistPicture(
 export async function downloadVideoThumbnail(
     imageId: string,
     resolution: VideoThumbnailResolution,
-    outputPath: string
+    outputPath: string,
+    context: { provider?: string | null; providerId?: string | number | null } = {},
 ): Promise<void> {
     const normalizedResolution = normalizeVideoThumbnailResolution(resolution);
-    const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
-        entityType: "video",
+    const url = await resolveProviderArtworkUrl([{
+        provider: context.provider || streamingProviderManager.getDefaultProviderId(),
+        entityId: context.providerId,
         imageId,
-        size: normalizedResolution,
-    });
+    }], "video", normalizedResolution);
     await downloadProviderArtwork(url, outputPath, "video thumbnail");
 }
 
@@ -744,26 +764,31 @@ export async function getTrackLyrics(trackId: string, provider?: string | null):
 }
 
 /**
- * Save synchronized lyrics to .lrc file
+ * Save synchronized lyrics to `.lrc`, or unsynchronized lyrics to the
+ * Lidarr-compatible plain `.txt` sidecar format.
  * @param trackId - Tidal track ID
- * @param outputPath - Full path where to save the .lrc file
+ * @param outputPath - Adjacent lyric path (its extension is replaced when the
+ * provider only supplies plain lyrics)
+ * @returns The actual sidecar path written
  */
 export async function saveLyricsFile(
     trackId: string,
     outputPath: string,
     provider?: string | null,
-): Promise<void> {
+): Promise<string> {
     const lyrics = await getTrackLyrics(trackId, provider);
-
-    const content = lyrics?.subtitles || lyrics?.text || "";
-    if (!content) {
+    const classified = classifyLyricsForSidecar(lyrics);
+    if (!classified) {
         throw new Error(`No lyrics available for track ${trackId}`);
     }
 
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, content, 'utf-8');
+    const actualPath = lyricSidecarPath(outputPath, classified.extension);
 
-    console.log(`✅ [METADATA] Lyrics saved: ${outputPath}`);
+    fs.mkdirSync(path.dirname(actualPath), { recursive: true });
+    fs.writeFileSync(actualPath, `${classified.content}\n`, 'utf-8');
+
+    console.log(`✅ [METADATA] Lyrics saved: ${actualPath}`);
+    return actualPath;
 }
 
 /**

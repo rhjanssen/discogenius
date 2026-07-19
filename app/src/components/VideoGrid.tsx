@@ -5,6 +5,7 @@ import {
   Button,
   Title3,
   Body1,
+  Tooltip,
 } from "@fluentui/react-components";
 import {
   ArrowDownload16Regular as ArrowDownload16RegularBase,
@@ -18,6 +19,9 @@ import { useGridStyles } from "@/components/cards/cardStyles";
 import { renderableArtworkUrl } from "@/utils/artwork";
 import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
+import { QualityBadge } from "@/components/ui/QualityBadge";
+import { ProviderMark } from "@/components/ui/ProviderMark";
+import { qualityDisplayKey } from "@/utils/qualityTags";
 
 const ArrowDownload16Regular = bundleIcon(ArrowDownload16Filled, ArrowDownload16RegularBase);
 const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
@@ -71,7 +75,24 @@ const useStyles = makeStyles({
     width: "48px",
     height: "48px",
   },
+  offerBadges: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXXS,
+  },
+  offerPair: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
+  },
 });
+
+export interface VideoProviderOffer {
+  provider: string;
+  provider_id: string;
+  quality: string | null;
+}
 
 export interface Video {
   id: string;
@@ -81,6 +102,10 @@ export interface Video {
   version?: string | null;
   explicit?: boolean;
   quality?: string | null;
+  provider?: string | null;
+  provider_id?: string | null;
+  providers?: string[];
+  provider_offers?: VideoProviderOffer[];
   cover?: string | null;
   cover_id?: string | null;
   cover_art_url?: string | null;
@@ -157,6 +182,21 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
           const imageUrl = renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id);
           const year = video.release_date ? new Date(video.release_date).getFullYear() : null;
           const subtitle = [video.artist_name || "Unknown Artist", year || ""].filter(Boolean).join(" · ");
+          const providerOffers = Array.from(new Map((video.provider_offers || [])
+            .filter((offer) => offer?.provider && offer?.provider_id)
+            // One display token per provider/quality; multiple ids for the same
+            // grouped rendition must not recreate the old badge explosion.
+            .map((offer) => [
+              `${offer.provider}\u0000${offer.quality ? qualityDisplayKey(offer.quality) : "unknown"}`,
+              offer,
+            ])).values());
+          const providers = [...new Set((providerOffers.length > 0
+            ? providerOffers.map((offer) => offer.provider)
+            : (video.providers?.length ? video.providers : [video.provider]))
+            .filter((provider): provider is string => Boolean(provider)))];
+          const providerLabel = providerOffers.length > 0
+            ? providerOffers.map((offer) => `${offer.provider}${offer.quality ? ` · ${offer.quality}` : ""}`).join(", ")
+            : providers.join(", ");
 
           return (
             <MediaCard
@@ -166,6 +206,23 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
               title={video.title}
               subtitle={subtitle}
               explicit={video.explicit}
+              qualityBadges={(providers.length > 0 || video.quality) ? (
+                <Tooltip content={providerLabel ? `Available from ${providerLabel}` : "Available video quality"} relationship="description">
+                  <div className={styles.offerBadges} aria-label={providerLabel ? `Available from ${providerLabel}` : undefined}>
+                    {providerOffers.length > 0
+                      ? providerOffers.map((offer) => (
+                          <span className={styles.offerPair} key={`${offer.provider}-${offer.provider_id}-${offer.quality || "unknown"}`}>
+                            <ProviderMark provider={offer.provider} size={16} />
+                            {offer.quality ? <QualityBadge quality={offer.quality} size="small" /> : null}
+                          </span>
+                        ))
+                      : <>
+                          {providers.map((provider) => <ProviderMark key={provider} provider={provider} size={16} />)}
+                          {video.quality ? <QualityBadge quality={video.quality} size="small" /> : null}
+                        </>}
+                  </div>
+                </Tooltip>
+              ) : undefined}
               monitored={video.is_monitored}
               monitoringLocked={Boolean(video.monitored_lock)}
               videoAspect
@@ -178,7 +235,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
               )}
               statusBadge={video.is_downloaded ? (
                 <DownloadedBadge />
-              ) : onDownload ? (
+              ) : onDownload && video.provider && video.provider_id ? (
                 <Button
                   appearance="subtle"
                   icon={<ArrowDownload16Regular />}

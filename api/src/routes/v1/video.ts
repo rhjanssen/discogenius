@@ -46,6 +46,7 @@ router.get("/", (req, res) => {
     const monitoredFilter = parseOptionalQueryBoolean(req.query.monitored);
     const downloadedFilter = parseOptionalQueryBoolean(req.query.downloaded);
     const lockedFilter = parseOptionalQueryBoolean(req.query.locked);
+    const providerFilter = req.query.provider as string | undefined;
 
     const sortParam = (req.query.sort as string | undefined) || 'releaseDate';
     const dirParam = (req.query.dir as string | undefined) || 'desc';
@@ -57,6 +58,7 @@ router.get("/", (req, res) => {
       monitored: monitoredFilter,
       downloaded: downloadedFilter,
       locked: lockedFilter,
+      provider: providerFilter,
       sort: sortParam,
       dir: sortDir,
     }));

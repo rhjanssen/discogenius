@@ -14,7 +14,6 @@ import {
   Stop24Regular as Stop24RegularBase,
   CheckmarkCircle16Filled,
   Stop24Filled,
-  ArrowDownload16Regular,
   bundleIcon
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
@@ -22,6 +21,8 @@ import { DataGrid, useDataGridCellStyles, type DataGridColumn } from "@/componen
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { ProviderMark } from "@/components/ui/ProviderMark";
+import { providerMarkFor } from "@/components/ui/providerMarks";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import { TrackRowActions } from "@/components/tracks/TrackRowActions";
 import { useTrackPlayback } from "@/hooks/useTrackPlayback";
@@ -50,6 +51,9 @@ interface TrackListProps<T extends TrackListItem = TrackListItem> {
   showArtist?: boolean;
   showAlbum?: boolean;
   showQuality?: boolean;
+  showProviderColumn?: boolean;
+  showLocalQuality?: boolean;
+  /** @deprecated Use showLocalQuality; retained for existing album call sites. */
   showFileQualityDifferences?: boolean;
   showVolumeHeaders?: boolean;
   showDownloadedColumn?: boolean;
@@ -251,26 +255,27 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalXXS,
     minWidth: 0,
   },
-  qualityStack: {
+  providerContent: {
     display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    gap: tokens.spacingVerticalXXS,
-    minWidth: 0,
-  },
-  fileQualityRow: {
-    display: "flex",
-    flexWrap: "nowrap",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: tokens.spacingHorizontalXXS,
     minWidth: 0,
   },
-  fileQualityIcon: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: "12px",
-    flexShrink: 0,
+  providerFallback: {
     display: "inline-flex",
     alignItems: "center",
+    justifyContent: "center",
+    width: "18px",
+    height: "18px",
+    borderRadius: tokens.borderRadiusCircular,
+    backgroundColor: tokens.colorNeutralBackground4,
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase100,
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  emptyValue: {
+    color: tokens.colorNeutralForeground3,
   },
 
   durationText: {
@@ -324,17 +329,44 @@ const getAlbumArtworkUrl = (track: TrackListItem) =>
 const getDisplayTitle = (track: TrackListItem) =>
   track.version ? `${track.title} (${track.version})` : track.title;
 const getQualityTags = (track: TrackListItem): string[] => orderedQualityTags(track);
+const getRemoteQualityTags = (track: TrackListItem): string[] => {
+  const remoteQualities = (track.remoteOffers || [])
+    .map((offer) => offer.quality)
+    .filter((quality): quality is string => Boolean(String(quality || "").trim()));
+  return remoteQualities.length > 0
+    ? orderedQualityTags({ qualityTags: remoteQualities })
+    : getQualityTags(track);
+};
+const getRemoteProviders = (track: TrackListItem): string[] => {
+  const values = (track.remoteOffers || []).map((offer) => offer.provider);
+  if (values.length === 0 && track.preview_provider) values.push(track.preview_provider);
+  const seen = new Set<string>();
+  return values.map((provider) => String(provider || "").trim()).filter((provider) => {
+    const key = provider.toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+const providerDisplayName = (provider: string) => ({
+  tidal: "TIDAL",
+  apple: "Apple Music",
+  apple_music: "Apple Music",
+  "apple-music": "Apple Music",
+  amazon: "Amazon Music",
+  amazon_music: "Amazon Music",
+  "amazon-music": "Amazon Music",
+  spotify: "Spotify",
+  youtube: "YouTube Music",
+  youtube_music: "YouTube Music",
+  "youtube-music": "YouTube Music",
+  deezer: "Deezer",
+} as Record<string, string>)[provider.toLowerCase()] || provider;
 const getFileQualityTags = (files: TrackFiles): string[] => orderedQualityTags({
   qualityTags: files
     .filter((file) => String(file.file_type || "track") === "track")
     .map((file) => file.quality),
 });
-const qualityTagsDiffer = (left: string[], right: string[]) => {
-  const normalize = (values: string[]) => values.map((value) => value.toUpperCase()).sort();
-  const leftValues = normalize(left);
-  const rightValues = normalize(right);
-  return leftValues.length !== rightValues.length || leftValues.some((value, index) => value !== rightValues[index]);
-};
 const isDownloadedTrack = (track: TrackListItem) => Boolean(track.is_downloaded ?? track.downloaded);
 const looksLikeMusicBrainzMbid = (value: string | null | undefined) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
@@ -384,6 +416,8 @@ const TrackList = <T extends TrackListItem>({
   showArtist = false,
   showAlbum = false,
   showQuality = true,
+  showProviderColumn = showQuality,
+  showLocalQuality,
   showFileQualityDifferences = false,
   showVolumeHeaders = false,
   showDownloadedColumn = false,
@@ -399,6 +433,7 @@ const TrackList = <T extends TrackListItem>({
 }: TrackListProps<T>) => {
   const styles = useStyles();
   const dgCell = useDataGridCellStyles();
+  const shouldShowLocalQuality = showLocalQuality ?? showFileQualityDifferences;
   const navigate = useNavigate();
   const {
     getPlaybackSrc,
@@ -758,39 +793,62 @@ const TrackList = <T extends TrackListItem>({
       });
     }
 
+    if (showQuality && showProviderColumn) {
+      trackColumns.push({
+        key: "provider",
+        header: "Provider",
+        width: "88px",
+        minWidth: 900,
+        render: (track) => {
+          const providers = getRemoteProviders(track);
+          if (providers.length === 0) {
+            return <span className={styles.emptyValue}>—</span>;
+          }
+          const names = providers.map(providerDisplayName).join(", ");
+          return (
+            <Tooltip content={`Available from ${names}`} relationship="description">
+              <div className={styles.providerContent} aria-label={`Available from ${names}`}>
+                {providers.map((provider) => providerMarkFor(provider)
+                  ? <ProviderMark key={provider} provider={provider} size={18} />
+                  : <span key={provider} className={styles.providerFallback}>{provider.slice(0, 1).toUpperCase()}</span>)}
+              </div>
+            </Tooltip>
+          );
+        },
+      });
+    }
+
     if (showQuality) {
       trackColumns.push({
-        key: "quality",
-        // Sized to its widest badge cluster (max-content). This stays aligned
-        // because the grid uses subgrid (sharedColumns), so the column resolves
-        // once across every row instead of per-row.
-        header: "Quality",
-        width: "max-content",
+        key: "availableQuality",
+        header: "Available",
+        width: "120px",
         render: (track) => {
-          const providerQualityTags = getQualityTags(track);
-          const fileQualityTags = showFileQualityDifferences ? getFileQualityTags(getTrackFiles(track)) : [];
-          const showFileQuality = fileQualityTags.length > 0 && qualityTagsDiffer(providerQualityTags, fileQualityTags);
-
+          const providerQualityTags = getRemoteQualityTags(track);
           return (
-            <div className={styles.qualityStack}>
-              <div className={styles.qualityContent}>
-                {providerQualityTags.map((quality) => (
-                  <QualityBadge key={quality} quality={quality} size="small" />
-                ))}
-              </div>
-              {showFileQuality ? (
-                <Tooltip
-                  content="Quality of the downloaded file (differs from the provider offer above)"
-                  relationship="label"
-                >
-                  <div className={styles.fileQualityRow} aria-label="Downloaded file quality">
-                    <ArrowDownload16Regular className={styles.fileQualityIcon} aria-hidden="true" />
-                    {fileQualityTags.map((quality) => (
-                      <QualityBadge key={`file-${quality}`} quality={quality} size="small" />
-                    ))}
-                  </div>
-                </Tooltip>
-              ) : null}
+            <div className={styles.qualityContent} aria-label="Selected provider quality">
+              {providerQualityTags.length > 0
+                ? providerQualityTags.map((quality) => <QualityBadge key={quality} quality={quality} size="small" />)
+                : <span className={styles.emptyValue}>—</span>}
+            </div>
+          );
+        },
+      });
+    }
+
+    if (shouldShowLocalQuality) {
+      trackColumns.push({
+        key: "localQuality",
+        header: "Local",
+        width: "112px",
+        minWidth: 768,
+        render: (track) => {
+          const fileQualityTags = getFileQualityTags(getTrackFiles(track));
+          return (
+            <div className={styles.qualityContent} aria-label="Downloaded file quality">
+              {fileQualityTags.length > 0
+                ? fileQualityTags.map((quality) => <QualityBadge key={quality} quality={quality} size="small" />)
+                : <span className={styles.emptyValue}>—</span>}
             </div>
           );
         },
@@ -801,7 +859,7 @@ const TrackList = <T extends TrackListItem>({
       key: "duration",
       header: "Duration",
       // Content-sized and left-aligned, like the other columns.
-      width: "max-content",
+      width: "72px",
       render: (track) => (
         <Text size={200} className={styles.durationText}>
           {formatDurationSeconds(track.duration)}
@@ -888,14 +946,14 @@ const TrackList = <T extends TrackListItem>({
     showArtist,
     showCover,
     showDownloadedColumn,
-    showFileQualityDifferences,
+    shouldShowLocalQuality,
     showQuality,
+    showProviderColumn,
     styles.actionCellContent,
     styles.checkIcon,
     styles.durationText,
     styles.emptyCheck,
-    styles.fileQualityIcon,
-    styles.fileQualityRow,
+    styles.emptyValue,
     styles.linkText,
     styles.numberButton,
     styles.numberButtonPlaying,
@@ -903,8 +961,9 @@ const TrackList = <T extends TrackListItem>({
     styles.playIcon,
     styles.playOverlay,
     styles.playOverlayActive,
+    styles.providerContent,
+    styles.providerFallback,
     styles.qualityContent,
-    styles.qualityStack,
     toggleTrackPlayback,
   ]);
 
@@ -967,10 +1026,9 @@ const TrackList = <T extends TrackListItem>({
         renderRowDetail={renderRowDetail}
         getRowClassName={(track) => playingTrackId === track.id ? styles.rowPlaying : undefined}
         disableStickyHeader={disableStickyHeader}
-        // Bounded track lists (album / top-tracks) render every row, so subgrid
-        // keeps content-sized columns aligned. Skip it for the virtualized
-        // full-page variant (where not all rows are in the DOM).
-        sharedColumns={disableStickyHeader}
+        // One grid owns every column track, so the header and every loaded row
+        // stay aligned even when provider/quality badge counts differ.
+        sharedColumns
       />
 
       {infoTrack ? (

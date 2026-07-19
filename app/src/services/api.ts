@@ -917,6 +917,8 @@ class ApiClient {
     downloaded?: boolean;
     locked?: boolean;
     library_filter?: string;
+    provider?: string;
+    quality_tier?: string;
     sort?: string;
     dir?: 'asc' | 'desc';
     timeoutMs?: number | null;
@@ -930,6 +932,8 @@ class ApiClient {
     if (params?.downloaded !== undefined) queryParams.set('downloaded', params.downloaded ? 'true' : 'false');
     if (params?.locked !== undefined) queryParams.set('locked', params.locked ? 'true' : 'false');
     if (params?.library_filter) queryParams.set('library_filter', params.library_filter);
+    if (params?.provider) queryParams.set('provider', params.provider);
+    if (params?.quality_tier) queryParams.set('quality_tier', params.quality_tier);
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();
@@ -972,6 +976,7 @@ class ApiClient {
     monitored?: boolean;
     downloaded?: boolean;
     locked?: boolean;
+    provider?: string;
     sort?: string;
     dir?: 'asc' | 'desc';
     timeoutMs?: number | null;
@@ -984,6 +989,7 @@ class ApiClient {
     if (params?.monitored !== undefined) queryParams.set('monitored', params.monitored ? 'true' : 'false');
     if (params?.downloaded !== undefined) queryParams.set('downloaded', params.downloaded ? 'true' : 'false');
     if (params?.locked !== undefined) queryParams.set('locked', params.locked ? 'true' : 'false');
+    if (params?.provider) queryParams.set('provider', params.provider);
     if (params?.sort) queryParams.set('sort', params.sort);
     if (params?.dir) queryParams.set('dir', params.dir);
     const query = queryParams.toString();

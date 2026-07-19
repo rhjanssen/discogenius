@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { isMainThread } from "node:worker_threads";
-import { DB_PATH } from "./services/config/config.js";
+import { DB_PATH } from "./services/config/bootstrap.js";
 import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
 
 let _db: Database.Database | null = null;
@@ -540,6 +540,8 @@ function ensureTrackFileForeignKeyTriggers(): void {
         (SELECT id FROM Recordings WHERE mbid = NEW.canonical_recording_mbid),
         (SELECT pi.recording_id FROM ProviderItems pi
            WHERE pi.entity_type = 'video'
+             AND NEW.file_type = 'video'
+             AND pi.provider = NEW.provider
              AND CAST(pi.provider_id AS TEXT) = CAST(NEW.provider_id AS TEXT)
              AND pi.recording_id IS NOT NULL
            LIMIT 1)
@@ -547,16 +549,89 @@ function ensureTrackFileForeignKeyTriggers(): void {
     WHERE id = NEW.id;
   `;
   db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_trackfiles_canonical_fks_ai
+    -- Recreate these derived-FK triggers so existing installations receive
+    -- provider-identity fixes without requiring a schema-version bump.
+    DROP TRIGGER IF EXISTS trg_trackfiles_canonical_fks_ai;
+    DROP TRIGGER IF EXISTS trg_trackfiles_canonical_fks_au;
+
+    CREATE TRIGGER trg_trackfiles_canonical_fks_ai
     AFTER INSERT ON TrackFiles
     BEGIN ${body} END;
-  `);
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_trackfiles_canonical_fks_au
+    CREATE TRIGGER trg_trackfiles_canonical_fks_au
     AFTER UPDATE OF canonical_release_group_mbid, canonical_release_mbid,
-                    canonical_track_mbid, canonical_recording_mbid, provider_id
+                    canonical_track_mbid, canonical_recording_mbid, provider,
+                    provider_id, file_type
     ON TrackFiles
     BEGIN ${body} END;
+
+    -- Older trigger revisions matched videos by provider_id alone. Repair a
+    -- mismatched link only when the file's full provider identity now resolves
+    -- to an authoritative video offer on a different canonical recording.
+    UPDATE TrackFiles
+    SET recording_id = (
+          SELECT pi.recording_id
+          FROM ProviderItems pi
+          WHERE pi.entity_type = 'video'
+            AND pi.provider = TrackFiles.provider
+            AND CAST(pi.provider_id AS TEXT) = CAST(TrackFiles.provider_id AS TEXT)
+            AND pi.recording_id IS NOT NULL
+          ORDER BY COALESCE(pi.match_confidence, 0) DESC, pi.updated_at DESC
+          LIMIT 1
+        ),
+        canonical_recording_mbid = (
+          SELECT recording.mbid
+          FROM ProviderItems pi
+          JOIN Recordings recording ON recording.id = pi.recording_id
+          WHERE pi.entity_type = 'video'
+            AND pi.provider = TrackFiles.provider
+            AND CAST(pi.provider_id AS TEXT) = CAST(TrackFiles.provider_id AS TEXT)
+            AND pi.recording_id IS NOT NULL
+          ORDER BY COALESCE(pi.match_confidence, 0) DESC, pi.updated_at DESC
+          LIMIT 1
+        ),
+        canonical_artist_mbid = COALESCE((
+          SELECT recording.artist_mbid
+          FROM ProviderItems pi
+          JOIN Recordings recording ON recording.id = pi.recording_id
+          WHERE pi.entity_type = 'video'
+            AND pi.provider = TrackFiles.provider
+            AND CAST(pi.provider_id AS TEXT) = CAST(TrackFiles.provider_id AS TEXT)
+            AND pi.recording_id IS NOT NULL
+          ORDER BY COALESCE(pi.match_confidence, 0) DESC, pi.updated_at DESC
+          LIMIT 1
+        ), canonical_artist_mbid)
+    WHERE file_type = 'video'
+      AND provider IS NOT NULL
+      AND provider_id IS NOT NULL
+      -- Provider identity is only a repair source for legacy/unresolved rows.
+      -- A resolvable canonical MBID remains authoritative even when a provider
+      -- offer currently points at a different recording.
+      AND (
+        canonical_recording_mbid IS NULL
+        OR NOT EXISTS (
+          SELECT 1
+          FROM Recordings canonical_recording
+          WHERE canonical_recording.mbid = TrackFiles.canonical_recording_mbid
+        )
+      )
+      AND recording_id IS NOT (
+        SELECT pi.recording_id
+        FROM ProviderItems pi
+        WHERE pi.entity_type = 'video'
+          AND pi.provider = TrackFiles.provider
+          AND CAST(pi.provider_id AS TEXT) = CAST(TrackFiles.provider_id AS TEXT)
+          AND pi.recording_id IS NOT NULL
+        ORDER BY COALESCE(pi.match_confidence, 0) DESC, pi.updated_at DESC
+        LIMIT 1
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM ProviderItems pi
+        WHERE pi.entity_type = 'video'
+          AND pi.provider = TrackFiles.provider
+          AND CAST(pi.provider_id AS TEXT) = CAST(TrackFiles.provider_id AS TEXT)
+          AND pi.recording_id IS NOT NULL
+      );
   `);
 }
 

@@ -179,6 +179,7 @@ export function mapAppleVideo(resource: AppleResource): ProviderVideo {
     contentRating?: string;
     url?: string;
     isrc?: string;
+    has4K?: boolean;
   };
   const artistResource = resource.relationships?.artists?.data?.[0];
   const artist: ProviderArtist = artistResource
@@ -194,6 +195,10 @@ export function mapAppleVideo(resource: AppleResource): ProviderVideo {
     explicit: attrs.contentRating ? attrs.contentRating === "explicit" : null,
     url: attrs.url,
     isrc: attrs.isrc || null,
+    // Apple exposes this per music-video resource. Do not invent a 1080p
+    // quality when it is false; the imported file is probed for its actual
+    // resolution after download.
+    quality: attrs.has4K === true ? "MP4_2160P" : null,
     raw: resource,
   };
 }

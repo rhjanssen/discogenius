@@ -17,7 +17,8 @@ All notable changes to this project are documented in this file.
   spatial audio, and video are not advertised, and operators remain
   responsible for complying with Spotify's terms.
 - YouTube / YouTube Music provider plugin: public catalog, artist releases,
-  videos, and lossy audio/video downloads through `ytmusicapi` + `yt-dlp`.
+  videos, synchronized lyrics, and lossy audio/video downloads through
+  `ytmusicapi` + `yt-dlp`.
   Optional browser-header JSON and cookies enable account-library import
   sources and restricted/authenticated media without making public catalog use
   require a login.
@@ -90,9 +91,10 @@ All notable changes to this project are documented in this file.
   (GPAC 2.4) and Bento4 mp4decrypt, and the managed downloader config follows
   the app's video-resolution setting. Download routing honors each slot's
   selected provider instead of always dispatching to the default downloader.
-- 4K (2160p) music-video quality option. Resolutions no connected provider can
-  supply are greyed out; TIDAL requests clamp to 1080p while Apple Music can
-  fetch up to 4K.
+- 4K (2160p) music-video quality option. Every resolution remains selectable
+  and falls back to the provider's best available rendition; TIDAL requests
+  clamp to 1080p while Apple Music passes the chosen ceiling per job and
+  recognizes catalog videos marked as 4K-capable.
 - Right-click or touch long-press on a library card enters selection mode with
   that card selected.
 
@@ -104,6 +106,24 @@ All notable changes to this project are documented in this file.
   to that album from the video page.
 
 ### Changed
+- Library track rows now use one shared Fluent grid with fixed Provider,
+  Available, and Local quality columns, so headers and rows stay aligned and a
+  downloaded file's measured quality is no longer confused with the selected
+  remote offer. Provider and neutral MAX/HIGH/NORMAL/LOW filters now apply to
+  tracks as well as albums; provider filters also apply to grouped videos.
+- Provider-native quality strings collapse to one semantic badge per neutral
+  tier (with video resolutions kept as resolutions), preventing equivalent
+  MAX/lossless/lossy labels from producing badge stacks. Album release offers
+  expose clean/explicit state and use a Fluent selected surface/checkmark
+  instead of an ambiguous outline.
+- Canonical artwork is the default across UI caches, saved cover sidecars, and
+  embedded audio artwork. Settings can opt into provider-first artwork; both
+  modes retain the other source as fallback, with Cover Art Archive in the
+  canonical album path and Servarr/Fanart-derived artist imagery where present.
+- Provider-specific download backends remain the architecture of record rather
+  than adding OrpheusDL beneath Discogenius's existing plugin/queue layer.
+  `spotDL` is not used as a Spotify downloader because its audio comes from
+  YouTube; the per-provider feasibility and revisit criteria are documented.
 - Provider connection cards moved to a single priority-ordered list with a
   Fluent details modal (status, capability summary, connect/disconnect) instead
   of inline disclosure rows.
@@ -116,6 +136,46 @@ All notable changes to this project are documented in this file.
 - Import modal per-artist status icons use the Fluent colored icon family.
 
 ### Fixed
+- Apple Music video downloads now pass `--mv-max` per job from the app's video
+  quality setting (including 4K/2160p), matching the managed downloader config.
+- Dual-capability Apple/Amazon albums (stereo + Atmos on one album id) now
+  advertise a spatial offer in the release switcher from stored quality tags,
+  and album refresh preserves those tags instead of wiping them.
+- Fresh installs default Spatial audio and Music Videos on; Settings exposes
+  preferred artwork source (canonical vs streaming service) and embed-video-
+  thumbnail. Queue status icons are smaller; Activity icons are consistently
+  larger; library video list columns share one grid alignment.
+- Import lyric materialization and LRC/TXT sidecars are wired through download
+  import; provider-registry tests follow the DB-backed streaming config.
+- Queue drag/arrow reordering now changes the downloader's effective execution
+  order even across priority/trigger boundaries. Deleting an active download
+  aborts only that provider job without pausing the queue; deleting an active
+  import waits for cooperative safe-boundary cancellation, cleans staging, and
+  preserves files already organized into a library.
+- Grouped video rows retain every `(provider, provider id, quality)` offer.
+  Filtering to Apple/TIDAL/YouTube chooses that provider for the row action,
+  grouped provider/quality badges stay paired, and canonical `recording_id`
+  files reliably mark the grouped video downloaded without cross-provider id
+  collisions.
+- Music-video thumbnails are downloaded through the owning provider, embedded
+  after tagging, and reflected in `TrackFiles`. MP4 metadata rewrites preserve
+  attached pictures and custom MusicBrainz/provider atoms; M4A cover replacement
+  likewise preserves custom tags through a dedicated Mutagen runtime.
+- Download imports now resolve lyrics immediately, persist synchronized lyrics
+  as `.lrc` and unsynchronized lyrics as Lidarr-compatible `.txt` sidecars,
+  track both in `LyricFiles`, and pass the same resolved value into
+  the audio tag writer. TIDAL's tiddl and Spotify's Votify are allowed to emit
+  their native synced sidecars, while Apple/Spotify/Deezer tracks can reuse a
+  cached or remotely fetched lyric from another provider when both offers map
+  to the same MusicBrainz recording. Failed lookups are cached for the import
+  retag pass instead of being repeated during preview and write.
+- YouTube Music lyrics are converted from ytmusicapi timestamp objects into
+  provider-neutral plain text and LRC. Public live validation succeeded against
+  Bastille's “Give Me the Future”.
+- YouTube downloads ship with the required EJS challenge-solver dependency and
+  an explicitly enabled Node 22 runtime. The old Node 20/bare-pip image made
+  yt-dlp warn that no supported JavaScript runtime was available and could omit
+  formats. The bundled TIDAL downloader is also updated to `tiddl==3.4.4`.
 - Provider resource lookups in the download processor are keyed by the full
   `(provider, entity type, provider id)` identity, including album-track and
   selected-slot fallbacks. Equal numeric ids from TIDAL and Apple Music can no

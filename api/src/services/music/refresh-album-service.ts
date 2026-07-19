@@ -1026,7 +1026,14 @@ export class RefreshAlbumService {
             releaseGroupMatch?.status || "unmatched",
             releaseGroupMatch?.confidence ?? null,
             releaseGroupMatch?.method || null,
-            releaseGroupMatch ? JSON.stringify(releaseGroupMatch.evidence) : null,
+            releaseGroupMatch
+                ? JSON.stringify({
+                    ...releaseGroupMatch.evidence,
+                    providerQualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
+                })
+                : (Array.isArray(album.qualityTags) && album.qualityTags.length > 0
+                    ? JSON.stringify({ providerQualityTags: album.qualityTags })
+                    : null),
             JSON.stringify({
                 cover: album.cover || album.image_id || album.imageId || null,
                 vibrant_color: album.vibrant_color || album.vibrantColor || null,
@@ -1054,7 +1061,12 @@ export class RefreshAlbumService {
                 status: releaseGroupMatch?.status ?? null,
                 confidence: releaseGroupMatch?.confidence ?? null,
                 method: releaseGroupMatch?.method ?? null,
-                evidence: releaseGroupMatch ? JSON.stringify(releaseGroupMatch.evidence) : null,
+                evidence: releaseGroupMatch
+                    ? JSON.stringify({
+                        ...releaseGroupMatch.evidence,
+                        providerQualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
+                    })
+                    : null,
             });
         }
 

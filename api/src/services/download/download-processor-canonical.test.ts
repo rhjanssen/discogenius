@@ -12,8 +12,12 @@ const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
 const { DownloadProcessor } = await import("./download-processor.js");
+const queueModule = await import("../commands/command-queue-manager.js");
+const importServiceModule = await import("../mediafiles/downloaded-tracks-import-service.js");
+const downloadRoutingModule = await import("./download-routing.js");
 
 function resetRows() {
+  db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
@@ -27,6 +31,101 @@ function resetRows() {
 
 beforeEach(resetRows);
 afterEach(resetRows);
+
+test("cancelling the active item aborts its provider signal without pausing the queue", async () => {
+  const commandId = queueModule.CommandQueueManager.push(
+    queueModule.CommandNames.DownloadTrack,
+    { providerId: "cancel-active", type: "track" },
+    "cancel-active",
+  );
+  queueModule.CommandQueueManager.markProcessing(commandId);
+
+  const processor = new DownloadProcessor() as any;
+  const controller = new AbortController();
+  processor.processing = true;
+  processor.currentJobId = commandId;
+  processor.currentAbortController = controller;
+
+  await processor.cancelJob(commandId);
+
+  assert.equal(controller.signal.aborted, true);
+  assert.equal(processor.isPaused, false);
+  assert.equal(queueModule.CommandQueueManager.get(commandId)?.status, "cancelled");
+  assert.equal(processor.explicitlyCancelledDownloads.has(commandId), true);
+});
+
+test("cancelling an active import waits for a safe boundary before releasing its duplicate barrier", async () => {
+  const providerId = "cancel-active-import";
+  const commandId = queueModule.CommandQueueManager.push(
+    queueModule.CommandNames.DownloadTrack,
+    { providerId, provider: "tidal", type: "track" },
+    providerId,
+  );
+  queueModule.CommandQueueManager.markProcessing(commandId);
+
+  const downloadPath = downloadRoutingModule.getDownloadWorkspacePath("track", providerId, "tidal");
+  fs.mkdirSync(downloadPath, { recursive: true });
+  fs.writeFileSync(path.join(downloadPath, `${providerId}.flac`), "staged");
+
+  let signalImportStarted!: () => void;
+  const importStarted = new Promise<void>((resolve) => { signalImportStarted = resolve; });
+  let signalCancellationObserved!: () => void;
+  const cancellationObserved = new Promise<void>((resolve) => { signalCancellationObserved = resolve; });
+  let releaseSafeBoundary!: () => void;
+  const safeBoundary = new Promise<void>((resolve) => { releaseSafeBoundary = resolve; });
+  const originalProcess = importServiceModule.DownloadedTracksImportService.process;
+
+  (importServiceModule.DownloadedTracksImportService as any).process = async (_job: unknown, options: {
+    isCancelled?: () => boolean;
+  }) => {
+    signalImportStarted();
+    while (!options.isCancelled?.()) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    signalCancellationObserved();
+    await safeBoundary;
+    throw new importServiceModule.ImportDownloadCancelledError("test boundary");
+  };
+
+  try {
+    const processor = new DownloadProcessor() as any;
+    processor.dispatchImportPhase({
+      commandId,
+      providerId,
+      type: "track",
+      importPayload: {
+        type: "track",
+        providerId,
+        provider: "tidal",
+        path: downloadPath,
+      },
+      resolved: { title: "Cancellation Test", artist: "Test Artist", cover: null },
+    });
+    await importStarted;
+
+    let cancellationSettled = false;
+    const cancellation = processor.cancelJob(commandId).then(() => {
+      cancellationSettled = true;
+    });
+    await cancellationObserved;
+
+    const drainingCommand = queueModule.CommandQueueManager.get(commandId);
+    assert.equal(cancellationSettled, false);
+    assert.equal(drainingCommand?.status, "started");
+    assert.equal(drainingCommand?.payload.importCancellationRequested, true);
+
+    releaseSafeBoundary();
+    await cancellation;
+
+    assert.equal(cancellationSettled, true);
+    assert.equal(queueModule.CommandQueueManager.get(commandId)?.status, "cancelled");
+    assert.equal(processor.activeImports.has(commandId), false);
+    assert.equal(fs.existsSync(downloadPath), false);
+  } finally {
+    releaseSafeBoundary();
+    (importServiceModule.DownloadedTracksImportService as any).process = originalProcess;
+  }
+});
 
 test("download processor resolves canonical album provider offers without legacy provider catalog rows", () => {
   const processor = new DownloadProcessor() as any;
@@ -98,7 +197,7 @@ test("download processor resolves canonical album provider offers without legacy
   assert.deepEqual(processor.resolveDownloadMetadata("tidal-gmtf-expanded", "album", payload), {
     title: "Give Me the Future",
     artist: "Bastille",
-    cover: "/media-cover/Albums/rg-gmtf/cover.jpg",
+    cover: "/media-cover/Albums/rg-gmtf/cover.jpg?source=canonical",
   });
   assert.equal(processor.resolveDownloadQuality("tidal-gmtf-expanded", "album", payload), "HIRES_LOSSLESS");
 });
@@ -204,7 +303,7 @@ test("download processor detects canonical track and video files without Provide
   assert.deepEqual(processor.resolveDownloadMetadata("tidal-track", "track", { type: "track", providerId: "tidal-track" }), {
     title: "Canonical Track",
     artist: "Media Artist",
-    cover: "/media-cover/Albums/rg-media/cover.jpg",
+    cover: "/media-cover/Albums/rg-media/cover.jpg?source=canonical",
   });
   assert.equal(processor.isCanonicalProviderItemDownloaded("tidal-track", "track", { type: "track", providerId: "tidal-track" }), true);
 

@@ -105,6 +105,7 @@ test("maps a single Apple track and video", async () => {
   assert.equal(video.providerId, "1452310551");
   assert.equal(video.isrc, "GBUM71300999");
   assert.equal(video.duration, 215);
+  assert.equal(video.quality, "MP4_2160P");
 });
 
 test("artist albums returns all offers including spatial", async () => {
@@ -217,6 +218,7 @@ test("Apple downloader config stays headless-safe and follows the app's lyric se
   // tracks without lyrics, aborting the whole album download.
   assert.match(content, /embed-lrc: false/);
   assert.match(content, /save-lrc-file: false/);
+  assert.match(content, /embed-cover: true/);
   assert.doesNotMatch(content, /mv-file-format:/);
 });
 
@@ -391,7 +393,7 @@ test("Apple downloader backend builds provider-id based tool invocations", () =>
         providerId: "1452310551",
         downloadPath: "/downloads/job",
       }),
-      ["--mv-audio-type", "atmos", "https://music.apple.com/us/music-video/1452310551"],
+      ["--mv-audio-type", "atmos", "--mv-max", "1080", "https://music.apple.com/us/music-video/1452310551"],
     );
   } finally {
     if (previousStorefront == null) {

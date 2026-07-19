@@ -21,6 +21,7 @@ import {
 import { LibraryFilesService } from "./library-files.js";
 import { libraryMetadataBackfillService, type MetadataFillResult } from "./library-metadata-backfill.js";
 import { createCooperativeBatcher, yieldToEventLoop } from "../../utils/concurrent.js";
+import { isLyricSidecarExtension } from "../extras/lyrics/lyric-sidecar.js";
 
 // ============================================================================
 // Types
@@ -982,7 +983,7 @@ export class DiskScanService {
      *   - Album cover (if save_album_cover enabled and file missing)
      *   - Album video cover (if save_album_cover enabled, album has video_cover, and file missing)
      *   - Album NFO (if save_nfo enabled and file missing)
-     *   - Track lyrics (if save_lyrics enabled and .lrc missing for downloaded tracks)
+     *   - Track lyrics (if save_lyrics is enabled and neither `.lrc` nor `.txt` exists)
      *
      * For each monitored artist with library files:
      *   - Artist picture (if save_artist_picture enabled and file missing)
@@ -1288,10 +1289,11 @@ export class DiskScanService {
             return { albumId, mediaId: null, fileType: "video_cover", quality: null };
         }
 
-        if (ext === ".lrc") {
+        if (isLyricSidecarExtension(ext)) {
             // Try to match to a track by looking for an audio file with same stem
             const mediaId = this.findMediaIdByStem(stem, artistId)
                 || this.findMediaIdByTrackedSibling(filePath, artistId);
+            if (!mediaId) return null;
             const albumIdFromTrack = mediaId
                 ? (db.prepare(`
                     SELECT provider_album_id AS album_id
@@ -1299,7 +1301,7 @@ export class DiskScanService {
                     WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = ?
                   `).get(mediaId) as any)?.album_id?.toString() || null
                 : null;
-            // A .lrc sidecar lives in its album folder; when the track row carries no
+            // A lyric sidecar lives in its album folder; when the track row carries no
             // explicit provider_album_id, resolve the album from the path just like the
             // cover does, so the lyric still relinks to the right album.
             const albumId = albumIdFromTrack || this.findAlbumIdFromPath(filePath, artistId);

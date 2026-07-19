@@ -1,4 +1,5 @@
 import * as mm from 'music-metadata';
+import os from 'node:os';
 import path from 'path';
 import axios from 'axios';
 import { type Readable } from 'stream';
@@ -12,6 +13,8 @@ const DEFAULT_FFMPEG_BINARY = IS_WINDOWS ? "ffmpeg.exe" : "ffmpeg";
 const DEFAULT_FFPROBE_BINARY = IS_WINDOWS ? "ffprobe.exe" : "ffprobe";
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".mkv", ".mov", ".avi", ".ts", ".webm"]);
 const VIDEO_THUMBNAIL_EMBED_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
+const AUDIO_COVER_EMBED_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".flac", ".mp3", ".ogg", ".oga", ".opus"]);
+const MUTAGEN_MP4_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".m4v"]);
 const SPATIAL_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
 const SPATIAL_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
 const FFMPEG_AUDIO_CONTAINER_EXTENSIONS = new Set([".m4a", ".mp4", ".m4v", ".mov", ".ec3", ".ac4"]);
@@ -352,24 +355,45 @@ export async function lookupAcoustId(fingerprint: string, duration: number): Pro
     return null;
 }
 
-export async function writeMetadata(filePath: string, tags: Record<string, string>, removeKeys: string[] = []): Promise<boolean> {
+export function buildMetadataWriteArgs(
+    filePath: string,
+    tags: Record<string, string>,
+    removeKeys: string[] = [],
+    tempPath = filePath + '.tmp' + path.extname(filePath),
+    attachedPictureVideoStreamIndexes: number[] = [],
+): string[] {
     const removalArgs = Array.from(new Set(removeKeys.map((key) => key.trim()).filter(Boolean)))
         .flatMap((key) => ['-metadata', `${key}=`]);
     const metadataArgs = Object.entries(tags)
         .filter(([, value]) => typeof value === 'string' && value.length > 0)
         .flatMap(([key, value]) => ['-metadata', `${key}=${value}`]);
-    const tempPath = filePath + '.tmp' + path.extname(filePath);
-
-    const args = [
+    const attachedPictureArgs = attachedPictureVideoStreamIndexes
+        .filter((index) => Number.isInteger(index) && index >= 0)
+        .flatMap((index) => [`-disposition:v:${index}`, 'attached_pic']);
+    return [
         '-y',
         '-i', filePath,
+        // Preserve every stream, including MP4 attached-picture thumbnails.
+        // ffmpeg's default stream selection keeps only one video stream and
+        // silently discarded the thumbnail when VideoTagService ran afterward.
+        '-map', '0',
         '-map_metadata', '0',
         ...removalArgs,
         ...metadataArgs,
         '-c', 'copy',
+        ...attachedPictureArgs,
         ...getMetadataRewriteContainerArgs(filePath),
         tempPath
     ];
+}
+
+export async function writeMetadata(filePath: string, tags: Record<string, string>, removeKeys: string[] = []): Promise<boolean> {
+    if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+        return writeMp4MetadataWithMutagen(filePath, tags, removeKeys);
+    }
+    const tempPath = filePath + '.tmp' + path.extname(filePath);
+    const attachedPictures = await getAttachedPictureVideoStreamIndexes(filePath);
+    const args = buildMetadataWriteArgs(filePath, tags, removeKeys, tempPath, attachedPictures);
 
     return new Promise((resolve) => {
         const ffmpegBin = resolveFfmpegBinary();
@@ -430,8 +454,18 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
  * Uses ffmpeg with `-map_metadata -1` to remove all existing tags before a clean rewrite.
  */
 export async function removeAllTags(filePath: string): Promise<boolean> {
+    if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+        return runMutagenBridge(['clear', filePath], filePath);
+    }
     const tempPath = filePath + '.scrub' + path.extname(filePath);
-    const args = ['-y', '-i', filePath, '-map_metadata', '-1', '-c', 'copy', ...getMetadataRewriteContainerArgs(filePath), tempPath];
+    const attachedPictures = await getAttachedPictureVideoStreamIndexes(filePath);
+    const dispositionArgs = attachedPictures.flatMap((index) => [`-disposition:v:${index}`, 'attached_pic']);
+    const args = [
+        '-y', '-i', filePath, '-map', '0', '-map_metadata', '-1', '-c', 'copy',
+        ...dispositionArgs,
+        ...getMetadataRewriteContainerArgs(filePath),
+        tempPath,
+    ];
 
     return new Promise((resolve) => {
         const ffmpegBin = resolveFfmpegBinary();
@@ -471,32 +505,113 @@ export async function removeAllTags(filePath: string): Promise<boolean> {
     });
 }
 
-async function hasEmbeddedVideoThumbnail(filePath: string): Promise<boolean> {
+export async function hasEmbeddedVideoThumbnail(filePath: string): Promise<boolean> {
     const extension = path.extname(filePath).toLowerCase();
     if (!VIDEO_THUMBNAIL_EMBED_EXTENSIONS.has(extension)) {
         return false;
     }
 
+    return (await getAttachedPictureVideoStreamIndexes(filePath)).length > 0;
+}
+
+async function getAttachedPictureVideoStreamIndexes(filePath: string): Promise<number[]> {
     return new Promise((resolve) => {
         const ffprobeBin = resolveFfprobeBinary();
-        exec(
-            `"${ffprobeBin}" -v error -select_streams v -show_entries stream=disposition -of json "${filePath}"`,
+        execFile(
+            ffprobeBin,
+            getVideoThumbnailProbeArgs(filePath),
+            { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
             (error, stdout) => {
                 if (error || !stdout) {
-                    resolve(false);
+                    resolve([]);
                     return;
                 }
 
                 try {
                     const data = JSON.parse(stdout);
-                    const streams = Array.isArray(data?.streams) ? data.streams : [];
-                    resolve(streams.some((stream: any) => stream?.disposition?.attached_pic === 1));
+                    const streams: Array<{ disposition?: { attached_pic?: number } }> = Array.isArray(data?.streams)
+                        ? data.streams
+                        : [];
+                    resolve(streams.reduce((indexes: number[], stream, videoStreamIndex: number) => {
+                        if (stream?.disposition?.attached_pic === 1) {
+                            indexes.push(videoStreamIndex);
+                        }
+                        return indexes;
+                    }, []));
                 } catch {
-                    resolve(false);
+                    resolve([]);
                 }
             },
         );
     });
+}
+
+export function getVideoThumbnailProbeArgs(filePath: string): string[] {
+    return ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream_disposition=attached_pic', '-of', 'json', filePath];
+}
+
+function resolveMutagenBridge(): { python: string; script: string } | null {
+    const scriptCandidates = [
+        path.resolve(process.cwd(), 'src/services/mediafiles/mutagen-cover-bridge.py'),
+        path.resolve(process.cwd(), 'api/src/services/mediafiles/mutagen-cover-bridge.py'),
+    ];
+    const script = scriptCandidates.find((candidate) => fs.existsSync(candidate));
+    if (!script) return null;
+
+    const configuredPython = String(process.env.DISCOGENIUS_MEDIA_TAGS_PYTHON || '').trim();
+    const bundledPython = '/opt/media-tags-venv/bin/python';
+    const python = configuredPython
+        || (fs.existsSync(bundledPython) ? bundledPython : (IS_WINDOWS ? 'python.exe' : 'python3'));
+    return { python, script };
+}
+
+function runMutagenBridge(args: string[], targetPath: string): Promise<boolean> {
+    const bridge = resolveMutagenBridge();
+    if (!bridge) return Promise.resolve(false);
+    return new Promise((resolve) => {
+        execFile(
+            bridge.python,
+            [bridge.script, ...args],
+            { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+            (error, _stdout, stderr) => {
+                if (error) {
+                    console.warn(`[MediaTags] Mutagen update failed for ${targetPath}: ${String(stderr || error.message).trim()}`);
+                    resolve(false);
+                    return;
+                }
+                resolve(true);
+            },
+        );
+    });
+}
+
+async function writeMp4MetadataWithMutagen(
+    filePath: string,
+    tags: Record<string, string>,
+    removeKeys: string[],
+): Promise<boolean> {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'discogenius-mp4-tags-'));
+    const payloadPath = path.join(tempDir, 'tags.json');
+    try {
+        fs.writeFileSync(payloadPath, JSON.stringify({ tags, removeKeys }), 'utf-8');
+        return await runMutagenBridge(['metadata', filePath, payloadPath], filePath);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+}
+
+/**
+ * Replace embedded audio artwork in place while preserving every existing tag.
+ * Mutagen is used because ffmpeg's MP4 `use_metadata_tags` mode cannot retain
+ * both MusicBrainz mdta atoms and a `covr` attached-picture atom.
+ */
+export async function embedAudioCover(filePath: string, coverPath: string): Promise<boolean> {
+    const extension = path.extname(filePath).toLowerCase();
+    if (!AUDIO_COVER_EMBED_EXTENSIONS.has(extension) || !fs.existsSync(filePath) || !fs.existsSync(coverPath)) {
+        return false;
+    }
+
+    return runMutagenBridge(['cover', filePath, coverPath], filePath);
 }
 
 export async function embedVideoThumbnail(videoPath: string, thumbnailPath: string): Promise<boolean> {

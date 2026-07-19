@@ -349,11 +349,12 @@ router.delete('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    if (job.status === 'started' && !hasFailedDownloadState(job) && downloadProcessor.isActivelyProcessingJob(commandId)) {
-      return res.status(409).json({
-        error: 'Job is processing',
-        message: 'Pause or cancel the active download before deleting this queue item',
-      });
+    if (job.status === 'started') {
+      // The download loop owns active/pending-import state in its worker. Ask
+      // it to abort/detach that state before deleting the persisted command;
+      // this keeps the rest of the queue running and suppresses late progress
+      // or failure events from recreating the deleted row in the client.
+      await downloadProcessor.cancelJob(commandId);
     }
 
     CommandQueueManager.deleteCommand(commandId);
@@ -470,13 +471,19 @@ router.get('/history', async (req: Request, res: Response) => {
  */
 router.post('/reorder', async (req: Request, res: Response) => {
   try {
-    const rawJobIds: unknown[] = Array.isArray(req.body?.commandIds) ? req.body.commandIds : [];
+    // `jobIds` is the frontend/public contract. Keep accepting the older
+    // `commandIds` spelling for API clients created before queue grouping.
+    const rawJobIds: unknown[] = Array.isArray(req.body?.jobIds)
+      ? req.body.jobIds
+      : Array.isArray(req.body?.commandIds)
+        ? req.body.commandIds
+        : [];
     const parsedJobIds = rawJobIds.map((value: unknown) => parseInt(String(value), 10));
 
     if (parsedJobIds.some((value) => !Number.isInteger(value) || value <= 0)) {
       return res.status(400).json({
         error: 'Invalid reorder set',
-        message: 'commandIds must contain only positive integer ids',
+        message: 'jobIds must contain only positive integer ids',
       });
     }
 
@@ -484,7 +491,7 @@ router.post('/reorder', async (req: Request, res: Response) => {
     if (distinctJobIds.length !== parsedJobIds.length) {
       return res.status(400).json({
         error: 'Invalid reorder set',
-        message: 'commandIds must not contain duplicate ids',
+        message: 'jobIds must not contain duplicate ids',
       });
     }
 
@@ -493,7 +500,7 @@ router.post('/reorder', async (req: Request, res: Response) => {
     const afterJobId = req.body?.afterJobId == null ? undefined : parseInt(String(req.body.afterJobId), 10);
 
     if (commandIds.length === 0) {
-      return res.status(400).json({ error: 'Missing queue items', message: 'commandIds must contain one or more pending queue item ids' });
+      return res.status(400).json({ error: 'Missing queue items', message: 'jobIds must contain one or more pending queue item ids' });
     }
 
     if (beforeJobId != null && (!Number.isInteger(beforeJobId) || beforeJobId <= 0)) {

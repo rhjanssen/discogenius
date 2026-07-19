@@ -3,7 +3,10 @@ import { parentPort } from "node:worker_threads";
 import {CommandNames} from "../command-names.js";
 import {type CommandModelOf} from "../command-queue-manager.js";
 import { executeCommand } from "../command-context.js";
-import { DownloadedTracksImportService } from "../../mediafiles/downloaded-tracks-import-service.js";
+import {
+    DownloadedTracksImportService,
+    isImportDownloadCancellationRequested,
+} from "../../mediafiles/downloaded-tracks-import-service.js";
 import { initCurationListeners } from "../../music/curation.listener.js";
 import { forwardImportProgress, isCommandWorker, type MainToWorkerMessage, type WorkerToMainMessage } from "./command-worker-protocol.js";
 
@@ -47,7 +50,10 @@ async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): P
             // appEvents (FILE_ADDED) + cache invalidations ride the generic bridge.
             await DownloadedTracksImportService.process(
                 job as CommandModelOf<typeof CommandNames.ImportDownload>,
-                { updateState: (state) => forwardImportProgress(job.id, state) },
+                {
+                    updateState: (state) => forwardImportProgress(job.id, state),
+                    isCancelled: () => isImportDownloadCancellationRequested(job.id),
+                },
             );
         } else {
             // Regular command: run the full lifecycle on this worker's

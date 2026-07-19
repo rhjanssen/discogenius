@@ -491,10 +491,11 @@ function videoCoreTitle(title: string): string {
 /**
  * Whether two provider video entries describe the SAME video. Two passes:
  * 1. Exact comparable base title + same variant class (duration only rejects
- *    when both sides are known and differ by >3s).
+ *    when both sides are known and differ by >10s — Apple often includes
+ *    splash/title cards that stretch beyond a 3s TIDAL cut of the same video).
  * 2. Qualifier-tolerant fallback: identical core titles (all parenthetical
  *    qualifiers stripped) where at most one side carries a variant label and
- *    BOTH durations are known and within 3s. Catches TIDAL "SAVE MY SOUL"
+ *    BOTH durations are known and within 10s. Catches TIDAL "SAVE MY SOUL"
  *    (256s) vs Apple `SAVE MY SOUL ("FROM ALL SIDES" Tour)` (256s) without
  *    merging "X (Audio)" with "X (Lyric Video)" or a 4-minute video with a
  *    9-minute live cut.
@@ -513,7 +514,7 @@ function sameProviderVideo(
     const clsA = videoVariantClass(titleA);
     const clsB = videoVariantClass(titleB);
     const durationsKnown = lengthMsA != null && lengthMsB != null;
-    const durationsClose = durationsKnown && Math.abs((lengthMsA as number) - (lengthMsB as number)) <= 3000;
+    const durationsClose = durationsKnown && Math.abs((lengthMsA as number) - (lengthMsB as number)) <= 10000;
     if (baseA === baseB && clsA === clsB) {
         return !durationsKnown || durationsClose;
     }

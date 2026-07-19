@@ -413,13 +413,14 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
     const albumDir = path.dirname(track.file_path);
     const artistPicPath = path.join(artistDir, "folder.jpg");
     const albumCoverPath = path.join(albumDir, "cover.jpg");
-    const lyricPath = track.file_path.replace(/\.flac$/i, ".lrc");
+    const legacyLyricPath = track.file_path.replace(/\.flac$/i, ".lrc");
+    const lyricPath = track.file_path.replace(/\.flac$/i, ".txt");
     const videoArtistPicPath = path.join(configModule.Config.getVideoPath(), "The Example Artist", "folder.jpg");
 
     fs.writeFileSync(artistPicPath, "artist image");
     fs.writeFileSync(videoArtistPicPath, "artist image");
     fs.writeFileSync(albumCoverPath, "album image");
-    fs.writeFileSync(lyricPath, "lyrics");
+    fs.writeFileSync(legacyLyricPath, "plain lyrics without timestamps");
 
     const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
 
@@ -484,6 +485,8 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
         provider_id: "300",
         library_slot: "stereo",
     });
+    assert.equal(fs.existsSync(legacyLyricPath), false);
+    assert.equal(fs.readFileSync(lyricPath, "utf8"), "plain lyrics without timestamps");
 
     assert.equal(path.relative(musicRoot, artistPicPath).startsWith("The Example Artist"), true);
 });

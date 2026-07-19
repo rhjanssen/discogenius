@@ -77,10 +77,18 @@ export function qualityDescription(quality: string | null | undefined): string {
  */
 export function isVideoResolutionQuality(quality: string | null | undefined): boolean {
   const normalized = normalizeQualityTag(quality);
-  return normalized.startsWith("MP4_") || /^\d{3,4}P$/.test(normalized);
+  return normalized.startsWith("MP4_")
+    || /^\d{3,4}P$/.test(normalized)
+    || ["FHD", "QHD", "4K"].includes(normalized);
 }
 
 /** Short human resolution label for a video quality string, e.g. "1080p". */
 export function videoResolutionLabel(quality: string | null | undefined): string {
-  return normalizeQualityTag(quality).replace(/^MP4_/, "").toLowerCase();
+  const normalized = normalizeQualityTag(quality);
+  const aliases: Record<string, string> = {
+    FHD: "1080p",
+    QHD: "1440p",
+    "4K": "2160p",
+  };
+  return aliases[normalized] || normalized.replace(/^MP4_/, "").toLowerCase();
 }

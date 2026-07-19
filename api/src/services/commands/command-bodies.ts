@@ -69,6 +69,8 @@ export interface CommandBodyCommon {
   type?: string;
   title?: string;
   description?: string;
+  /** Internal cooperative-cancellation marker while an active import drains to a safe boundary. */
+  importCancellationRequested?: boolean;
   artist?: string;
   artists?: string[];
   artistIds?: string[];

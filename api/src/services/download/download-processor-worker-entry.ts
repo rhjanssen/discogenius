@@ -9,7 +9,8 @@ type WorkerRequest =
     | { kind: 'initialize'; requestId: number }
     | { kind: 'processQueue'; requestId: number }
     | { kind: 'pause'; requestId: number }
-    | { kind: 'resume'; requestId: number };
+    | { kind: 'resume'; requestId: number }
+    | { kind: 'cancelJob'; requestId: number; commandId: number };
 
 type WorkerResponse =
     | { kind: 'ready' }
@@ -88,6 +89,11 @@ port.on('message', (message: WorkerRequest) => {
             break;
         case 'resume':
             void processor.resume()
+                .then(() => acknowledge(message.requestId))
+                .catch((error) => reject(message.requestId, error));
+            break;
+        case 'cancelJob':
+            void processor.cancelJob(message.commandId)
                 .then(() => acknowledge(message.requestId))
                 .catch((error) => reject(message.requestId, error));
             break;

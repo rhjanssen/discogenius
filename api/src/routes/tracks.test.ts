@@ -201,3 +201,59 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
   );
   assert.equal(res.body.items[0].popularity, 90);
 });
+
+test("GET tracks filters selected offers and keeps remote quality separate from local files", () => {
+  insertCanonicalTrackFixture();
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider,
+      selected_provider_id, selected_release_mbid, quality
+    ) VALUES ('artist-mbid', 'rg-mbid', 'stereo', 1, 'tidal', 'tidal-album', 'release-mbid', 'HIRES_LOSSLESS')
+  `).run();
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, title, quality, library_slot
+    ) VALUES
+      ('deezer', 'track', 'deezer-track', 'deezer-album', 'artist-mbid', 'rg-mbid',
+       'release-mbid', 'track-mbid', 'recording-mbid', 'Canonical Track', 'FLAC', 'stereo'),
+      ('tidal', 'track', 'tidal-track', 'tidal-album', 'artist-mbid', 'rg-mbid',
+       'release-mbid', 'track-mbid', 'recording-mbid', 'Canonical Track', 'HIRES_LOSSLESS', 'stereo')
+  `).run();
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid, library_slot, file_path,
+      relative_path, library_root, filename, extension, file_type, quality
+    ) VALUES (
+      'artist-id', 'artist-mbid', 'rg-mbid', 'release-mbid', 'track-mbid', 'recording-mbid',
+      'stereo', '/music/Canonical Track.flac', 'Canonical Track.flac', '/music',
+      'Canonical Track.flac', '.flac', 'track', 'LOSSLESS'
+    )
+  `).run();
+
+  const selected = createMockResponse();
+  getRouteHandler("/", "get")({
+    query: { provider: "tidal", quality_tier: "MAX", limit: "10", offset: "0" },
+  }, selected);
+
+  assert.equal(selected.statusCode, 200);
+  assert.equal(selected.body.total, 1);
+  assert.deepEqual(selected.body.items[0].qualityTags, ["HIRES_LOSSLESS"]);
+  assert.deepEqual(selected.body.items[0].remoteOffers, [{
+    slot: "stereo",
+    provider: "tidal",
+    providerAlbumId: "tidal-album",
+    quality: "HIRES_LOSSLESS",
+  }]);
+  assert.equal(selected.body.items[0].preview_provider, "tidal");
+  assert.equal(selected.body.items[0].preview_provider_track_id, "tidal-track");
+  assert.equal(selected.body.items[0].files[0].quality, "LOSSLESS");
+
+  const wrongProvider = createMockResponse();
+  getRouteHandler("/", "get")({
+    query: { provider: "apple-music", limit: "10", offset: "0" },
+  }, wrongProvider);
+  assert.equal(wrongProvider.body.total, 0);
+});

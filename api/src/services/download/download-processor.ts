@@ -2,9 +2,9 @@ import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { db } from '../../database.js';
 import {CommandModelOf} from "../commands/command-model.js";
-import {DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames} from "../commands/command-names.js";
-import {CommandQueueManager} from "../commands/command-queue-manager.js";
-import { Config } from '../config/config.js';
+import { DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames } from "../commands/command-names.js";
+import { CommandQueueManager } from "../commands/command-queue-manager.js";
+import { getConfigSection } from '../config/config.js';
 import { downloadEvents } from './download-events.js';
 import {
     invalidateAlbumDownloadStatus,
@@ -240,6 +240,7 @@ export class DownloadProcessor {
 
     /** Tracks the active import phase per command (runs in its own slot alongside downloads, Tidarr-style). */
     private activeImports = new Map<number, { providerId: string; type: string; promise: Promise<void> }>();
+    private explicitlyCancelledDownloads = new Set<number>();
 
     // Download commands whose download phase finished and are waiting for an
     // import slot. The command stays 'started' throughout (one queue entity
@@ -331,6 +332,10 @@ export class DownloadProcessor {
             payload: importPayload,
         } as CommandModelOf<typeof CommandNames.ImportDownload>;
 
+        const isCancelled = () => {
+            return this.explicitlyCancelledDownloads.has(commandId) || this.cancelCurrentDownload;
+        };
+
         const importPromise = (async () => {
             try {
                 if (CommandWorkerPool.isActive()) {
@@ -344,6 +349,7 @@ export class DownloadProcessor {
                 } else {
                     await DownloadedTracksImportService.process(importJob, {
                         updateState: emitImportProgress,
+                        isCancelled,
                     });
                 }
 
@@ -359,25 +365,40 @@ export class DownloadProcessor {
                 });
                 console.log(`[DOWNLOAD-PROCESSOR] Completed download+import for ${type} ${providerId} (command #${commandId})`);
             } catch (error: any) {
-                console.error(`[DOWNLOAD-PROCESSOR] Failed to import command #${commandId}:`, error);
-                this.persistDownloadState(commandId, {
-                    progress: command.progress,
-                    description: `Import: ${error?.message || 'Import failed'}`,
-                    statusMessage: error?.message || 'Import failed',
-                    state: 'importFailed',
-                });
-                CommandQueueManager.fail(commandId, error?.message || 'Unknown import error');
-                this.activeImports.delete(commandId);
-                downloadEvents.emitFailed(commandId, {
-                    providerId,
-                    type,
-                    quality: importPayload?.quality ?? null,
-                    title: resolved.title,
-                    artist: resolved.artist,
-                    cover: resolved.cover,
-                    error: error?.message || 'Unknown import error',
-                    state: 'importFailed',
-                });
+                if (error?.name === 'ImportDownloadCancelledError' || error?.constructor?.name === 'ImportDownloadCancelledError') {
+                    console.log(`[DOWNLOAD-PROCESSOR] Import command #${commandId} cancelled (${error.message})`);
+                    CommandQueueManager.cancel(commandId);
+                    
+                    const downloadPath = importPayload.path;
+                    if (downloadPath) {
+                        try {
+                            if (fs.existsSync(downloadPath)) {
+                                fs.rmSync(downloadPath, { recursive: true, force: true });
+                            }
+                        } catch (e) {
+                            console.warn(`[DOWNLOAD-PROCESSOR] Failed to clean up path ${downloadPath} after cancellation:`, e);
+                        }
+                    }
+                } else {
+                    console.error(`[DOWNLOAD-PROCESSOR] Failed to import command #${commandId}:`, error);
+                    this.persistDownloadState(commandId, {
+                        progress: command.progress,
+                        description: `Import: ${error?.message || 'Import failed'}`,
+                        statusMessage: error?.message || 'Import failed',
+                        state: 'importFailed',
+                    });
+                    CommandQueueManager.fail(commandId, error?.message || 'Unknown import error');
+                    downloadEvents.emitFailed(commandId, {
+                        providerId,
+                        type,
+                        quality: importPayload?.quality ?? null,
+                        title: resolved.title,
+                        artist: resolved.artist,
+                        cover: resolved.cover,
+                        error: error?.message || 'Unknown import error',
+                        state: 'importFailed',
+                    });
+                }
             } finally {
                 this.activeImports.delete(commandId);
                 downloadEvents.emitQueueStatus(this.isPaused);
@@ -1637,6 +1658,8 @@ export class DownloadProcessor {
         }, 500);
 
         try {
+            const metadataConfig = getConfigSection("metadata");
+
             await backend.download({
                 provider: providerId,
                 entityType: type as "album" | "track" | "video",
@@ -1644,6 +1667,10 @@ export class DownloadProcessor {
                 downloadPath,
                 quality: payload.quality,
                 slot,
+                metadata: {
+                    artwork_preference: metadataConfig.artwork_preference,
+                    save_lyrics: metadataConfig.save_lyrics,
+                }
             }, {
                 signal,
                 onProgress,
@@ -1651,6 +1678,38 @@ export class DownloadProcessor {
         } finally {
             clearInterval(checkCancelInterval);
             this.currentAbortController = undefined;
+        }
+    }
+
+    /**
+     * Cancel one queue item without pausing unrelated downloads.
+     *
+     * Provider downloads transition to cancelled before their AbortSignal is
+     * fired. Active imports retain their started status as a duplicate-work
+     * barrier while a persisted cancellation marker drains them to the next safe
+     * checkpoint. Their cancellation only resolves after staging cleanup; files
+     * already organized into a library root are deliberately not rolled back.
+     */
+    async cancelJob(commandId: number): Promise<void> {
+        const currentJob = CommandQueueManager.get(commandId);
+        if (!currentJob) {
+            return;
+        }
+
+        if (this.processing && this.currentJobId === commandId) {
+            this.cancelCurrentDownload = true;
+            this.explicitlyCancelledDownloads.add(commandId);
+            if (this.currentAbortController) {
+                this.currentAbortController.abort();
+            }
+            CommandQueueManager.cancel(commandId);
+        } else if (this.activeImports.has(commandId)) {
+            // Cannot abort active import; mark as cancelled for when it finishes
+            this.explicitlyCancelledDownloads.add(commandId);
+            db.prepare("UPDATE commands SET payload = json_set(COALESCE(payload, '{}'), '$.importCancellationRequested', json('true')) WHERE id = ?").run(commandId);
+            await this.activeImports.get(commandId)?.promise;
+        } else if (currentJob.status === 'queued' || currentJob.status === 'started') {
+            CommandQueueManager.cancel(commandId);
         }
     }
 
@@ -1721,7 +1780,7 @@ export class DownloadProcessor {
 
 type DownloadProcessorStatus = ReturnType<DownloadProcessor['getStatus']>;
 
-type DownloadWorkerRequestKind = 'initialize' | 'processQueue' | 'pause' | 'resume';
+type DownloadWorkerRequestKind = 'initialize' | 'processQueue' | 'pause' | 'resume' | 'cancelJob';
 
 type DownloadWorkerToMainMessage =
     | { kind: 'ready' }
@@ -1735,6 +1794,7 @@ type DownloadWorkerToMainMessage =
 type DownloadWorkerRequest = {
     kind: DownloadWorkerRequestKind;
     requestId: number;
+    commandId?: number;
 };
 
 function resolveDownloadWorkerSpawn(): { entry: string; workerData: Record<string, unknown> } {
@@ -1807,6 +1867,10 @@ class DownloadProcessorWorkerProxy {
         await this.request('resume');
     }
 
+    async cancelJob(commandId: number): Promise<void> {
+        await this.request('cancelJob', commandId);
+    }
+
     isActivelyProcessingJob(commandId: number): boolean {
         return this.status.currentJobId === commandId || this.status.activeImportIds.includes(commandId);
     }
@@ -1819,7 +1883,7 @@ class DownloadProcessorWorkerProxy {
         return this.status.activeImportIds.includes(commandId);
     }
 
-    private request(kind: DownloadWorkerRequestKind): Promise<void> {
+    private request(kind: DownloadWorkerRequestKind, commandId?: number): Promise<void> {
         // Only initialize() may spawn the worker. Control calls before boot
         // (tests exercising the upgrader, shutdown with downloads disabled)
         // must not start a download thread — a live worker also keeps the
@@ -1832,7 +1896,7 @@ class DownloadProcessorWorkerProxy {
         const requestId = this.nextRequestId++;
         return new Promise<void>((resolve, reject) => {
             this.pending.set(requestId, { resolve, reject });
-            worker.postMessage({ kind, requestId } satisfies DownloadWorkerRequest);
+            worker.postMessage({ kind, requestId, commandId } satisfies DownloadWorkerRequest);
         });
     }
 
@@ -1940,6 +2004,10 @@ class DownloadProcessorCommandWorkerStub {
     }
 
     async resume(): Promise<void> {
+        throw new Error('Download processor controls are unavailable inside command workers');
+    }
+
+    async cancelJob(_commandId: number): Promise<void> {
         throw new Error('Download processor controls are unavailable inside command workers');
     }
 

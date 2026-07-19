@@ -312,6 +312,53 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
     assert.equal(linked?.target_foreign_recording_id, "recording-atmos");
 });
 
+test("lyrics fall back across providers for the same canonical recording", async () => {
+    seedMusicBrainzMetadata();
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems(
+            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+            track_mbid, recording_mbid, album_id, title, quality, duration, library_slot
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "apple-music",
+        "track",
+        "apple-track-300",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "album-mbid-200",
+        "track-mbid-300",
+        "recording-mbid-300",
+        "apple-album-200",
+        "Example Track",
+        "DOLBY_ATMOS",
+        180,
+        "spatial",
+    );
+
+    const providersModule = await import("../providers/index.js");
+    const tidal = providersModule.streamingProviderManager.getStreamingProvider("tidal") as any;
+    const originalGetLyrics = tidal.getLyrics;
+    const requested: string[] = [];
+    tidal.getLyrics = async (trackId: string) => {
+        requested.push(String(trackId));
+        return {
+            text: "Provider-neutral plain lyric",
+            subtitles: "[00:03.00]Provider-neutral synced lyric",
+            provider: "TIDAL fixture",
+        };
+    };
+
+    try {
+        const lyrics = await metadataFilesModule.getTrackLyrics("apple-track-300", "apple-music");
+        assert.equal(lyrics?.subtitles, "[00:03.00]Provider-neutral synced lyric");
+        assert.equal(lyrics?.provider, "tidal");
+        assert.equal(lyrics?.matchType, "shared_from_related_recording");
+        assert.deepEqual(requested, ["300"]);
+    } finally {
+        tidal.getLyrics = originalGetLyrics;
+    }
+});
+
 test("lyrics lookup scopes equal provider track IDs to the requested provider", async () => {
     seedMusicBrainzMetadata();
     dbModule.db.prepare(`
@@ -358,6 +405,70 @@ test("lyrics lookup scopes equal provider track IDs to the requested provider", 
     const lyrics = await metadataFilesModule.getTrackLyrics("300", "apple-music");
     assert.equal(lyrics?.subtitles, "[00:02.00]apple provider lyric");
     assert.equal(lyrics?.provider, "apple-music");
+});
+
+test("timestamp-free legacy lrc content is reused as plain lyrics", async () => {
+    seedMusicBrainzMetadata();
+    const legacyPath = path.join(tempDir, "legacy-plain.lrc");
+    fs.writeFileSync(legacyPath, "Plain lyric without timestamps", "utf8");
+    dbModule.db.prepare(`
+        INSERT INTO LyricFiles(
+            artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+            canonical_recording_mbid, provider, provider_entity_type, provider_id,
+            library_slot, file_path, relative_path, library_root, extension,
+            quality, expected_path
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        "100",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "recording-mbid-300",
+        "tidal",
+        "track",
+        "300",
+        "stereo",
+        legacyPath,
+        path.basename(legacyPath),
+        tempDir,
+        "lrc",
+        "LOSSLESS",
+        legacyPath,
+    );
+
+    const lyrics = await metadataFilesModule.getTrackLyrics("300", "tidal");
+    assert.equal(lyrics?.text, "Plain lyric without timestamps");
+    assert.equal(lyrics?.subtitles, "");
+});
+
+test("saveLyricsFile chooses txt for plain lyrics and lrc for valid timestamps", async () => {
+    seedMusicBrainzMetadata();
+    const providersModule = await import("../providers/index.js");
+    const tidal = providersModule.streamingProviderManager.getStreamingProvider("tidal") as any;
+    const originalGetLyrics = tidal.getLyrics;
+    const requestedPath = path.join(tempDir, "semantic-lyrics.lrc");
+
+    try {
+        tidal.getLyrics = async () => ({
+            text: "Plain provider lyric",
+            subtitles: "",
+            provider: "TIDAL fixture",
+        });
+        const plainPath = await metadataFilesModule.saveLyricsFile("300", requestedPath, "tidal");
+        assert.equal(plainPath, path.join(tempDir, "semantic-lyrics.txt"));
+        assert.equal(fs.existsSync(requestedPath), false);
+        assert.equal(fs.readFileSync(plainPath, "utf8"), "Plain provider lyric\n");
+
+        tidal.getLyrics = async () => ({
+            text: "Plain provider lyric",
+            subtitles: "[00:01.20]Synchronized provider lyric",
+            provider: "TIDAL fixture",
+        });
+        const synchronizedPath = await metadataFilesModule.saveLyricsFile("300", requestedPath, "tidal");
+        assert.equal(synchronizedPath, requestedPath);
+        assert.equal(fs.readFileSync(synchronizedPath, "utf8"), "[00:01.20]Synchronized provider lyric\n");
+    } finally {
+        tidal.getLyrics = originalGetLyrics;
+    }
 });
 
 test("album NFO uses the selected canonical release for a composite provider slot", async () => {

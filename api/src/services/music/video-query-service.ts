@@ -15,6 +15,8 @@ type VideoRow = {
   explicit?: number | boolean | null;
   quality?: string | null;
   current_quality?: string | null;
+  provider?: string | null;
+  provider_id?: string | null;
 
 
   cover?: string | null;
@@ -31,6 +33,13 @@ type VideoRow = {
   popularity?: number | null;
 };
 
+type GroupedVideoOfferRow = {
+  recording_id: string;
+  provider: string;
+  provider_id: string;
+  quality: string | null;
+};
+
 export interface ListVideosQuery {
   limit: number;
   offset: number;
@@ -38,6 +47,7 @@ export interface ListVideosQuery {
   monitored?: boolean;
   downloaded?: boolean;
   locked?: boolean;
+  provider?: string;
   sort?: string;
   dir?: string;
 }
@@ -58,8 +68,16 @@ function normalizeSortField(value: string | undefined): SortableVideoField {
   }
 }
 
-function mapVideoRow(row: VideoRow, isDownloaded: boolean): VideoContract {
+function mapVideoRow(
+  row: VideoRow,
+  isDownloaded: boolean,
+  groupedOffers: GroupedVideoOfferRow[] = [],
+  preferredProvider?: string,
+): VideoContract {
   const coverArtUrl = videoCoverLocalUrl(row.id) ?? row.cover_art_url ?? null;
+  const normalizedPreferredProvider = String(preferredProvider || "").trim();
+  const preferredOffer = groupedOffers.find((offer) => offer.provider === normalizedPreferredProvider)
+    ?? groupedOffers[0];
   return {
     id: String(row.id),
     title: row.title,
@@ -67,7 +85,15 @@ function mapVideoRow(row: VideoRow, isDownloaded: boolean): VideoContract {
     release_date: row.release_date ?? null,
     version: row.version ?? null,
     explicit: row.explicit === undefined || row.explicit === null ? undefined : Boolean(row.explicit),
-    quality: row.current_quality || row.quality || null,
+    quality: preferredOffer?.quality || row.current_quality || row.quality || null,
+    provider: preferredOffer?.provider || row.provider || null,
+    provider_id: preferredOffer?.provider_id || row.provider_id || null,
+    providers: [...new Set(groupedOffers.map((offer) => offer.provider))],
+    provider_offers: groupedOffers.map((offer) => ({
+      provider: offer.provider,
+      provider_id: offer.provider_id,
+      quality: offer.quality,
+    })),
     cover: row.cover ?? null,
     cover_id: row.cover ?? null,
     cover_art_url: coverArtUrl,
@@ -126,6 +152,8 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
       provider_item.explicit AS explicit,
       provider_item.quality AS quality,
       provider_item.quality AS current_quality,
+      provider_item.provider AS provider,
+      CAST(provider_item.provider_id AS TEXT) AS provider_id,
       COALESCE(recording.cover_image_id, provider_item.asset_id) AS cover,
       recording.cover_image_url AS cover_art_url,
       provider_item.provider_url AS url,
@@ -146,8 +174,14 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
         FROM TrackFiles lf
         WHERE lf.file_type = 'video'
           AND (
+            lf.recording_id = recording.id
+            OR
             (recording.mbid IS NOT NULL AND lf.canonical_recording_mbid = recording.mbid)
-            OR (provider_item.provider_id IS NOT NULL AND CAST(lf.provider_id AS TEXT) = CAST(provider_item.provider_id AS TEXT))
+            OR (
+              provider_item.provider_id IS NOT NULL
+              AND lf.provider = provider_item.provider
+              AND CAST(lf.provider_id AS TEXT) = CAST(provider_item.provider_id AS TEXT)
+            )
           )
       ) THEN 1 ELSE 0 END AS downloaded
     FROM Recordings recording
@@ -199,6 +233,23 @@ function buildCanonicalVideoWhere(input: ListVideosQuery): {
   if (input.locked !== undefined) {
     where.push("recording.monitored_lock = ?");
     params.push(input.locked ? 1 : 0);
+  }
+
+  const providerFilter = String(input.provider || "").trim();
+  if (providerFilter) {
+    where.push(`recording.id IN (
+      SELECT COALESCE(provider_filter.recording_id, provider_recording.id)
+      FROM ProviderItems provider_filter
+      LEFT JOIN Recordings provider_recording
+        ON provider_filter.recording_id IS NULL
+       AND provider_filter.recording_mbid IS NOT NULL
+       AND provider_recording.mbid = provider_filter.recording_mbid
+      WHERE provider_filter.entity_type = 'video'
+        AND provider_filter.provider = ?
+        AND (provider_filter.availability IS NULL
+             OR LOWER(CAST(provider_filter.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
+    )`);
+    params.push(providerFilter);
   }
 
   return {
@@ -263,7 +314,13 @@ function listCanonicalVideos(input: ListVideosQuery): VideosListResponseContract
     ${baseWhere}
   `).get(...params) as { total: number };
 
-  const items = rows.map((video) => mapVideoRow(video, Boolean(video.downloaded)));
+  const offersByRecording = getGroupedVideoOfferRows(candidateIds.map(String));
+  const items = rows.map((video) => mapVideoRow(
+    video,
+    Boolean(video.downloaded),
+    offersByRecording.get(String(video.id)) || [],
+    input.provider,
+  ));
 
   return {
     items,
@@ -272,6 +329,64 @@ function listCanonicalVideos(input: ListVideosQuery): VideosListResponseContract
     offset: input.offset,
     hasMore: input.offset + items.length < countResult.total,
   };
+}
+
+function videoOfferQualityRank(quality: string | null): number {
+  const normalized = String(quality || "").toUpperCase();
+  if (normalized.includes("4K") || normalized.includes("2160")) return 4;
+  if (normalized.includes("1440") || normalized.includes("QHD")) return 3;
+  if (normalized.includes("1080") || normalized.includes("FHD")) return 2;
+  if (normalized.includes("720") || normalized === "HD") return 1;
+  return 0;
+}
+
+function getGroupedVideoOfferRows(recordingIds: string[]): Map<string, GroupedVideoOfferRow[]> {
+  const result = new Map<string, GroupedVideoOfferRow[]>();
+  if (recordingIds.length === 0) {
+    return result;
+  }
+
+  const marks = recordingIds.map(() => "?").join(", ");
+  const rows = db.prepare(`
+    SELECT CAST(pi.recording_id AS TEXT) AS recording_id,
+           pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality
+    FROM ProviderItems pi
+    WHERE pi.entity_type = 'video'
+      AND pi.recording_id IN (${marks})
+      AND (pi.availability IS NULL
+           OR LOWER(CAST(pi.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
+
+    UNION ALL
+
+    SELECT CAST(recording.id AS TEXT) AS recording_id,
+           pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality
+    FROM ProviderItems pi
+    JOIN Recordings recording ON recording.mbid = pi.recording_mbid
+    WHERE pi.entity_type = 'video'
+      AND pi.recording_id IS NULL
+      AND recording.id IN (${marks})
+      AND (pi.availability IS NULL
+           OR LOWER(CAST(pi.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
+  `).all(...recordingIds, ...recordingIds) as GroupedVideoOfferRow[];
+
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = `${row.recording_id}\u0000${row.provider}\u0000${row.provider_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const bucket = result.get(row.recording_id) || [];
+    bucket.push(row);
+    result.set(row.recording_id, bucket);
+  }
+  for (const bucket of result.values()) {
+    bucket.sort((left, right) => (
+      streamingProviderManager.getProviderPreferenceRank(left.provider)
+      - streamingProviderManager.getProviderPreferenceRank(right.provider)
+      || videoOfferQualityRank(right.quality) - videoOfferQualityRank(left.quality)
+      || left.provider_id.localeCompare(right.provider_id)
+    ));
+  }
+  return result;
 }
 
 export function listVideos(input: ListVideosQuery): VideosListResponseContract {

@@ -225,7 +225,7 @@ const NAMING_HELP: Record<
         title: "Video File",
         description: "Template for the video filename (without extension). A Plex extras suffix (-video, -lyrics, -live, ...) is appended automatically based on the detected video type.",
         tokens: [
-            { section: "Formats", token: "{Artist CleanName} - {Video CleanTitle} {tidal-{Video Id}}", example: "Daft Punk - Around the World {tidal-44187439}", mode: "replace" },
+            { section: "Formats", token: "{Artist CleanName} - {Video CleanTitle} {{ProviderName}-{ProviderVideoId}}", example: "Daft Punk - Around the World {Apple Music-12345}", mode: "replace" },
             ...ARTIST_NAMING_TOKENS,
             { section: "Video", token: "{Video Title}", example: "Around the World" },
             { section: "Video", token: "{Video CleanTitle}", example: "Around the World" },
@@ -1195,8 +1195,8 @@ const SettingsPage = () => {
                 include_dj_mix: true,
                 include_mixtape_street: true,
                 include_demo: true,
-                include_spatial: false,
-                include_videos: false,
+                include_spatial: true,
+                include_videos: true,
                 enable_redundancy_filter: true,
                 prefer_explicit: true,
                 require_provider_availability: false,
@@ -1347,23 +1347,12 @@ const SettingsPage = () => {
         { value: 'max', label: 'Max', description: 'Hi-Res Lossless (up to 24-bit / 192 kHz FLAC/ALAC)' },
     ];
 
-    // Resolutions no connected provider can supply are shown greyed out. A
-    // provider without a declared ceiling is assumed to reach 1080p.
-    const maxConnectedVideoResolution = Math.max(
-        0,
-        ...(streamingProviders?.providers ?? [])
-            .filter((provider) => provider.authenticated && (provider.capabilities.videoDownloads || provider.capabilities.musicVideos))
-            .map((provider) => provider.capabilities.maxVideoResolution ?? 1080),
-    );
     const videoQualityOptions = [
-        { value: 'sd', label: 'SD (360p)', description: 'Lower bandwidth', minResolution: 360 },
-        { value: 'hd', label: 'HD (720p)', description: 'Balanced quality', minResolution: 720 },
-        { value: 'fhd', label: 'Full HD (1080p)', description: 'Best available on most services', minResolution: 1080 },
-        { value: 'uhd', label: '4K (2160p)', description: 'Where the service offers it; others fall back to 1080p', minResolution: 2160 },
-    ].map((option) => ({
-        ...option,
-        disabled: maxConnectedVideoResolution > 0 && option.minResolution > maxConnectedVideoResolution,
-    }));
+        { value: 'sd', label: 'SD (360p)', description: 'Lower bandwidth', disabled: false },
+        { value: 'hd', label: 'HD (720p)', description: 'Balanced quality', disabled: false },
+        { value: 'fhd', label: 'Full HD (1080p)', description: 'Best available on most services', disabled: false },
+        { value: 'uhd', label: '4K (2160p)', description: 'Where the service offers it; others fall back to 1080p', disabled: false },
+    ];
 
     const namingHelpMeta = namingHelpField ? NAMING_HELP[namingHelpField] : null;
     const isScanInProgress = checkingNow || monitoringStatus.checking || monitoringConfig?.checkInProgress;
@@ -1806,19 +1795,13 @@ const SettingsPage = () => {
                                                         <Badge appearance="tint" color="informative">Default</Badge>
                                                     ) : null}
                                                 </div>
-                                                {provider.id === "tidal" && accountSettings?.username ? (
-                                                    <Caption1 className={styles.mutedText}>
-                                                        Signed in as {accountSettings.fullName || accountSettings.username}
-                                                    </Caption1>
-                                                ) : (
-                                                    <Caption1 className={styles.mutedText}>
-                                                        {provider.authenticated
-                                                            ? publiclyAvailable
-                                                                ? "Ready to search and browse."
-                                                                : "Ready to search, browse, and download."
-                                                            : "Connect to search, browse, and download."}
-                                                    </Caption1>
-                                                )}
+                                                <Caption1 className={styles.mutedText}>
+                                                    {provider.authenticated
+                                                        ? publiclyAvailable
+                                                            ? "Ready to search and browse."
+                                                            : "Ready to search, browse, and download."
+                                                        : "Connect to search, browse, and download."}
+                                                </Caption1>
                                             </div>
                                         </div>
                                         <div className={styles.profileActions}>
@@ -2004,7 +1987,7 @@ const SettingsPage = () => {
                         {renderToggleRow({
                             title: "Music Videos",
                             description: "Download music videos",
-                            checked: curationConfig?.include_videos !== false,
+                            checked: curationConfig?.include_videos === true,
                             onChange: (checked) => updateCuration({ include_videos: checked }),
                         })}
                         <RadioGroup
@@ -2012,15 +1995,11 @@ const SettingsPage = () => {
                             onChange={(_, data) => updateQualitySettings({
                                 video_quality: data.value as "sd" | "hd" | "fhd" | "uhd"
                             })}
-                            disabled={curationConfig?.include_videos === false}
                         >
                             {videoQualityOptions.map((option) => (
                                 <label
                                     key={option.value}
-                                    className={mergeClasses(
-                                        styles.qualityOption,
-                                        (curationConfig?.include_videos === false || option.disabled) ? styles.qualityOptionDisabled : undefined
-                                    )}
+                                    className={styles.qualityOption}
                                     htmlFor={`video-quality-${option.value}`}
                                 >
                                     <Radio value={option.value} id={`video-quality-${option.value}`} disabled={option.disabled} />
@@ -2209,6 +2188,25 @@ const SettingsPage = () => {
                             onChange: (checked) => updateMetadataSettings({ save_album_cover: checked }),
                         })}
 
+                        <div className={styles.row}>
+                            <div className={styles.rowContent}>
+                                <Text weight="semibold">Preferred Artwork Source</Text>
+                                <Text size={200} className={styles.mutedText}>
+                                    Canonical uses Cover Art Archive for albums and Servarr/Fanart artist images when available. Provider preference uses the streaming service artwork first. The other source remains the fallback either way.
+                                </Text>
+                            </div>
+                            <Select
+                                value={metadataSettings?.artwork_preference === "provider" ? "provider" : "canonical"}
+                                onChange={(_, data) => updateMetadataSettings({
+                                    artwork_preference: data.value as "canonical" | "provider",
+                                })}
+                                className={styles.controlMedium}
+                            >
+                                <option value="canonical">Canonical (MusicBrainz / Fanart)</option>
+                                <option value="provider">Streaming service</option>
+                            </Select>
+                        </div>
+
                         {renderToggleRow({
                             title: "Save NFO Files",
                             description: "Save the info files Jellyfin and Kodi read for extra details.",
@@ -2235,6 +2233,13 @@ const SettingsPage = () => {
                             description: "Save a thumbnail image next to each video.",
                             checked: metadataSettings?.save_video_thumbnail === true,
                             onChange: (checked) => updateMetadataSettings({ save_video_thumbnail: checked }),
+                        })}
+
+                        {renderToggleRow({
+                            title: "Embed Music Video Thumbnails",
+                            description: "Embed the thumbnail into the video file as cover art when a thumbnail is available.",
+                            checked: metadataSettings?.embed_video_thumbnail !== false,
+                            onChange: (checked) => updateMetadataSettings({ embed_video_thumbnail: checked }),
                         })}
 
                         {renderToggleRow({

@@ -163,7 +163,7 @@ parallel provider catalog in the Discogenius database.
 | Apple Music | Apple Music API using a media-user token | `apple-music-downloader` plus the optional decryption-wrapper sidecar | AAC/ALAC through 24-bit/192kHz, Dolby Atmos, music videos, and previews. The catalog provider does **not** claim lyrics support, and upstream lyric embedding is disabled because it crashes on tracks without TTML lyrics. |
 | Amazon Music | Unofficial external API because Amazon's official Web API remains closed beta | `amazon-music==1.7.7` through a non-interactive bridge | Stereo, lossless/hi-res, and Dolby Atmos where the external API, account tier, and region expose them |
 | Spotify | Official Spotify Web API using client credentials | Optional `votify[librespot]==1.9.9` | Catalog, artwork, 30-second previews where Spotify supplies them, and lossy stereo downloads. No lossless, spatial, or video capability is advertised. |
-| YouTube / YouTube Music | Public `ytmusicapi` catalog access, with optional authenticated browser headers | `yt-dlp` plus FFmpeg | Lossy Opus/AAC audio and source-resolution video. Browser headers/cookies are needed for account library sources, age/region-restricted media, or other authenticated features. |
+| YouTube / YouTube Music | Public `ytmusicapi` catalog and lyrics access, with optional authenticated browser headers | `yt-dlp` plus FFmpeg | Lossy Opus/AAC audio, synchronized lyrics where YouTube exposes them, and source-resolution video. Browser headers/cookies are needed for account library sources, age/region-restricted media, or other authenticated features. |
 | Deezer | Public Deezer API | Streamrip with an ARL cookie | Public catalog and previews without authentication; MP3 up to 320 kbps or 16-bit FLAC downloads with a valid ARL/account entitlement |
 
 Provider cards on the Auth page render their credential fields from each
@@ -191,7 +191,7 @@ plugin's manifest:
   `arl` cookie is required only for Streamrip downloads.
 
 The production Docker image bundles the directly spawned tools in isolated,
-pinned runtimes: `tiddl==3.4.3`, `ytmusicapi==1.12.1`, `yt-dlp==2026.7.4`,
+pinned runtimes: `tiddl==3.4.4`, `ytmusicapi==1.12.1`, `yt-dlp==2026.7.4`,
 `streamrip==2.1.0`, `amazon-music==1.7.7`, and
 `votify[librespot]==1.9.9`, plus FFmpeg, MP4Box, mp4decrypt, and fpcalc. The
 Apple decryption wrapper remains an opt-in Compose sidecar. Bundling the tools
@@ -201,7 +201,7 @@ does not supply service credentials, subscriptions, or download entitlements.
 
 #### Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - Yarn 1.22.x
 - Python 3.13+ with `tiddl` on PATH (`pip install tiddl`) for TIDAL downloads
 - Upstream `apple-music-downloader` and `apple-music-wrapper` (for Apple Music downloads)

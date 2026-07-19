@@ -6,6 +6,10 @@ export interface DownloadRequest {
     quality?: string | null;
     /** The library variant selected by curation; one provider offer may serve more than one slot. */
     slot?: "stereo" | "spatial" | "video" | string;
+    metadata?: {
+        save_lyrics?: boolean;
+        artwork_preference?: "canonical" | "provider";
+    };
 }
 
 export interface DownloadProgress {

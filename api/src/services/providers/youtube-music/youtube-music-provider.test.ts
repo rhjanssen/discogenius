@@ -142,6 +142,13 @@ class FixtureBridge implements YtMusicBridge {
           microformat: { playerMicroformatRenderer: { publishDate: "2013-01-21" } },
         };
         break;
+      case "get_lyrics":
+        result = {
+          text: "I was left to my own devices",
+          subtitles: "[00:00.00]I was left to my own devices",
+          provider: "Source: LyricFind",
+        };
+        break;
       case "list_import_sources":
         result = {
           libraryArtists: [artistFixture],
@@ -188,6 +195,10 @@ test("fixture-backed catalog maps search, album tracks, artists, and videos", as
   const video = await catalog.getVideo(VIDEO_ID);
   assert.equal(video.releaseDate, "2013-01-21");
   assert.equal(video.duration, 233);
+
+  const lyrics = await catalog.getLyrics(TRACK_ID);
+  assert.equal(lyrics?.subtitles, "[00:00.00]I was left to my own devices");
+  assert.equal(lyrics?.provider, "Source: LyricFind");
 });
 
 test("authenticated import adapter exposes library, liked music, and playlists", async () => {
@@ -212,7 +223,7 @@ test("provider manifest is honest about lossy audio and delegates the catalog co
   const results = await provider.search("Bastille");
 
   assert.equal(provider.id, "youtube-music");
-  assert.equal(provider.name, "YouTube / YouTube Music");
+  assert.equal(provider.name, "YouTube Music");
   assert.equal(provider.manifest.displayName, provider.name);
   assert.equal(provider.manifest.integration.catalogSource, "unofficial-api");
   assert.equal(provider.manifest.integration.downloadSource, "native-cli");
@@ -221,7 +232,9 @@ test("provider manifest is honest about lossy audio and delegates the catalog co
   assert.equal(provider.capabilities.losslessStereo, false);
   assert.equal(provider.capabilities.spatialAudio, false);
   assert.equal(provider.capabilities.musicVideos, true);
+  assert.equal(provider.capabilities.lyrics, true);
   assert.equal(results.albums[0].title, "Bad Blood");
+  assert.equal((await provider.getLyrics(TRACK_ID))?.text, "I was left to my own devices");
 
   const spatial = await provider.searchReleaseGroup({
     artistName: "Bastille",
@@ -379,6 +392,7 @@ test("yt-dlp arguments use provider-ID filenames and select audio/video formats 
     downloadPath: path.join(testConfigDir, "audio-job"),
   };
   const audioArgs = backend.buildArgs(audioRequest);
+  assert.equal(audioArgs[audioArgs.indexOf("--js-runtimes") + 1], "node");
   assert.ok(audioArgs.includes("--extract-audio"));
   assert.ok(audioArgs.includes("opus"));
   assert.ok(audioArgs.includes("--no-playlist"));

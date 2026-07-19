@@ -236,7 +236,6 @@ export class VotifyBackend implements DownloadBackend {
       "--multi-disc-file-template", "{media_id}",
       "--no-album-file-template", "{media_id}",
       "--audio-quality", quality,
-      "--no-synced-lyrics-file",
       "--overwrite",
       url,
     ];

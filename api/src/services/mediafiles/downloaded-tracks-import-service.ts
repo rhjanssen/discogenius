@@ -10,13 +10,38 @@ import { VideoTagService } from "./video-tag-service.js";
 import { getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
 import { getExistingLibraryMediaIds } from "../download/download-recovery.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
-import {CommandModelOf} from "../commands/command-model.js";
+import {type CommandModelOf} from "../commands/command-model.js";
 import {CommandNames} from "../commands/command-names.js";
+import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { ProviderTrackTagSupplementService } from "./provider-track-tag-supplement-service.js";
+import { TrackLyricsMaterializer, type TrackLyricsMaterializeResult } from "./track-lyrics-materializer.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
+
+export class ImportDownloadCancelledError extends Error {
+    constructor(phase: string) {
+        super(`Import cancelled at safe boundary: ${phase}`);
+        this.name = "ImportDownloadCancelledError";
+    }
+}
+
+export function isImportDownloadCancelledError(error: unknown): error is ImportDownloadCancelledError {
+    return error instanceof ImportDownloadCancelledError;
+}
+
+/**
+ * Read the persisted cancellation marker as well as terminal/missing command
+ * state. Command workers have their own JS heap, so the database marker is the
+ * cross-thread half of cooperative import cancellation.
+ */
+export function isImportDownloadCancellationRequested(commandId: number): boolean {
+    const command = CommandQueueManager.get(commandId);
+    return !command
+        || command.status === "cancelled"
+        || command.payload.importCancellationRequested === true;
+}
 
 export type ImportDownloadState = {
     progress?: number;
@@ -287,6 +312,8 @@ export class DownloadedTracksImportService {
         job: ImportDownloadJob,
         options: {
             updateState: (state: ImportDownloadState) => void;
+            /** Checked only at boundaries where stopping cannot roll back or corrupt an in-flight file move. */
+            isCancelled?: () => boolean;
         },
     ): Promise<void> {
     const { type, providerId, resolved, originalJobId, path: payloadPath } = job.payload;
@@ -305,6 +332,12 @@ export class DownloadedTracksImportService {
         : getDownloadWorkspacePath(type, providerId, provider || undefined);
     let shouldCleanupDownloadPath = false;
 
+    const cancellationCheckpoint = (phase: string): void => {
+        if (options.isCancelled?.()) {
+            throw new ImportDownloadCancelledError(phase);
+        }
+    };
+
     options.updateState({
         progress: 5,
         description: "ImportDownload: preparing import",
@@ -313,6 +346,7 @@ export class DownloadedTracksImportService {
     });
 
     try {
+        cancellationCheckpoint("preparing import");
         let organizeResult: OrganizeResult;
         const workspaceHasMedia = workspaceContainsMediaFiles(downloadPath);
         if (!workspaceHasMedia) {
@@ -333,6 +367,7 @@ export class DownloadedTracksImportService {
             });
             console.warn(`[ImportDownload] Download workspace missing or empty for ${type} ${providerId}, but imported library file(s) already exist. Recovering import job.`);
         } else {
+            cancellationCheckpoint("before organizing downloaded files");
             options.updateState({
                 progress: 15,
                 description: "ImportDownload: importing downloaded files",
@@ -349,6 +384,11 @@ export class DownloadedTracksImportService {
                 slot: job.payload.slot || null,
                 downloadPath,
                 onProgress: (progress) => {
+                    // Organizer progress is emitted before each album track move
+                    // and after a completed track. Those are safe boundaries:
+                    // already-organized library files stay in place, while the
+                    // untouched remainder can be removed with the staging root.
+                    cancellationCheckpoint(`organizing downloaded files (${progress.phase})`);
                     const normalizedProgress = progress.phase === "finalizing"
                         ? 72
                         : progress.totalFiles && progress.currentFileNum !== undefined
@@ -370,6 +410,8 @@ export class DownloadedTracksImportService {
             });
         }
 
+        cancellationCheckpoint("after organizing downloaded files");
+
         options.updateState({
             progress: 78,
             description: "ImportDownload: reconciling library state",
@@ -380,9 +422,11 @@ export class DownloadedTracksImportService {
         });
 
         reconcileImportedDownload(type, providerId, organizeResult, provider);
+        cancellationCheckpoint("after reconciling library state");
 
         const affectedArtistId = resolveAffectedArtistId(type, providerId, provider);
         if (affectedArtistId) {
+            cancellationCheckpoint("before refreshing artist statistics");
             options.updateState({
                 progress: 82,
                 description: "ImportDownload: verifying library file records",
@@ -403,9 +447,11 @@ export class DownloadedTracksImportService {
 
             console.log(`[ImportDownload] Artist ${affectedArtistId}: ${trackedCount} library files tracked after import (skipped full disk scan)`);
             ArtistStatisticsService.refresh([affectedArtistId]);
+            cancellationCheckpoint("after refreshing artist statistics");
         }
 
         if ((type === "album" || type === "track") && organizeResult.processedTrackIds.length > 0) {
+            cancellationCheckpoint("before resolving metadata identity");
             options.updateState({
                 progress: 86,
                 description: "ImportDownload: resolving MusicBrainz and AcoustID identity",
@@ -419,19 +465,24 @@ export class DownloadedTracksImportService {
                 if (type === "album") {
                     const albumIds = providerId.split(";").filter(Boolean);
                     for (const albumId of albumIds) {
+                        cancellationCheckpoint(`before resolving album identity ${albumId}`);
                         try {
                             await MetadataIdentityService.resolveAlbum(albumId, { provider });
                         } catch (err) {
                             console.warn(`[ImportDownload] Metadata identity resolution failed for album ${albumId}:`, err);
                         }
+                        cancellationCheckpoint(`after resolving album identity ${albumId}`);
                     }
                 } else {
                     await MetadataIdentityService.resolveTrack(providerId, { provider });
+                    cancellationCheckpoint("after resolving track identity");
                 }
             } catch (error) {
+                if (isImportDownloadCancelledError(error)) throw error;
                 console.warn(`[ImportDownload] Metadata identity resolution failed for ${type} ${providerId}:`, error);
             }
 
+            cancellationCheckpoint("before refreshing provider tag supplements");
             try {
                 await ProviderTrackTagSupplementService.refresh({
                     providerId: job.payload.provider || null,
@@ -443,6 +494,27 @@ export class DownloadedTracksImportService {
                 // must not prevent importing otherwise valid media.
                 console.warn(`[ImportDownload] Failed to refresh provider tag supplements for ${type} ${providerId}:`, error);
             }
+            cancellationCheckpoint("after refreshing provider tag supplements");
+
+            let lyricResult: TrackLyricsMaterializeResult | null = null;
+            cancellationCheckpoint("before materializing lyrics");
+            try {
+                lyricResult = await TrackLyricsMaterializer.materializeForMediaIds(
+                    organizeResult.processedTrackIds,
+                    provider,
+                );
+                if (lyricResult.discovered > 0) {
+                    console.log(
+                        `[ImportDownload] Lyrics resolved for ${lyricResult.discovered} track(s); ` +
+                        `${lyricResult.saved} new sidecar(s) saved`,
+                    );
+                }
+            } catch (error) {
+                // Lyrics are optional media extras. A provider outage must not
+                // roll back otherwise valid audio already placed in the library.
+                console.warn(`[ImportDownload] Failed to materialize lyrics for ${type} ${providerId}:`, error);
+            }
+            cancellationCheckpoint("after materializing lyrics");
 
             options.updateState({
                 progress: 94,
@@ -453,8 +525,16 @@ export class DownloadedTracksImportService {
                 state: "importing",
             });
 
+            cancellationCheckpoint("before applying audio tag rules");
             try {
-                const retagResult = await AudioTagService.applyForMediaIds(organizeResult.processedTrackIds);
+                const retagResult = await AudioTagService.applyForMediaIds(
+                    organizeResult.processedTrackIds,
+                    {
+                        provider,
+                        includeExternalLyrics: lyricResult !== null,
+                        lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
+                    },
+                );
                 if (retagResult.errors.length > 0) {
                     console.warn(
                         `[ImportDownload] Audio tag rules completed with ${retagResult.errors.length} error(s) for ${type} ${providerId}:`,
@@ -464,9 +544,11 @@ export class DownloadedTracksImportService {
             } catch (error) {
                 console.warn(`[ImportDownload] Failed to apply audio tag rules for ${type} ${providerId}:`, error);
             }
+            cancellationCheckpoint("after applying audio tag rules");
         }
 
         if (type === "video" && organizeResult.processedTrackIds.length > 0) {
+            cancellationCheckpoint("before applying video tag rules");
             options.updateState({
                 progress: 94,
                 description: "ImportDownload: applying video tag rules",
@@ -482,8 +564,10 @@ export class DownloadedTracksImportService {
             if (retagResult.errors.length > 0) {
                 console.warn(`[ImportDownload] Video tag rules completed with ${retagResult.errors.length} error(s) for ${providerId}:`, retagResult.errors);
             }
+            cancellationCheckpoint("after applying video tag rules");
         }
 
+        cancellationCheckpoint("before recording import history");
         const historyContext = resolveImportHistoryContext(type, providerId, provider);
         try {
             recordHistoryEvent({
@@ -532,6 +616,7 @@ export class DownloadedTracksImportService {
             }
         }
 
+        cancellationCheckpoint("before completing import");
         options.updateState({
             progress: 100,
             description: "ImportDownload: completed",
@@ -543,6 +628,13 @@ export class DownloadedTracksImportService {
 
         shouldCleanupDownloadPath = true;
     } catch (error) {
+        if (isImportDownloadCancelledError(error)) {
+            // Only the validated download workspace is disposable. Files already
+            // moved into a configured library root are deliberately preserved.
+            shouldCleanupDownloadPath = true;
+            throw error;
+        }
+
         const historyContext = resolveImportHistoryContext(type, providerId, provider);
         const message = error instanceof Error ? error.message : String(error);
         try {

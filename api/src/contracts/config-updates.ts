@@ -54,6 +54,7 @@ const CATALOG_UPDATE_KEYS = [
 ] as const satisfies readonly (keyof CatalogConfigContract)[];
 
 const METADATA_UPDATE_KEYS = [
+  "artwork_preference",
   "save_album_cover",
   "album_cover_name",
   "album_cover_resolution",

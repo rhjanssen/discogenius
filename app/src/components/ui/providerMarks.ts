@@ -27,7 +27,11 @@ const PROVIDER_MARKS: Record<string, ProviderMarkAsset> = {
 };
 
 export function providerKey(provider?: string | null): string {
-    return String(provider || "").trim().toLowerCase();
+    let key = String(provider || "").trim().toLowerCase();
+    if (key === "amazon_music" || key === "amazon-music") key = "amazon";
+    if (key === "apple_music" || key === "apple-music") key = "apple";
+    if (key === "youtube_music" || key === "youtube-music") key = "youtube";
+    return key;
 }
 
 export function providerMarkFor(provider?: string | null): ProviderMarkAsset | undefined {

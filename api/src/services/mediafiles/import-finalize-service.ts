@@ -5,6 +5,7 @@ import { Config } from "../config/config.js";
 import { embedVideoThumbnail } from "./audioUtils.js";
 import { SUPPORTED_IMPORT_EXTENSIONS } from "./import-discovery.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
+import { isLyricSidecarExtension } from "../extras/lyrics/lyric-sidecar.js";
 
 export type ImportedDirectoryMapping = {
     destDir: string;
@@ -115,7 +116,7 @@ export async function finalizeImportedDirectories(params: {
                 let fileType = "other";
                 if ([".jpg", ".jpeg", ".png", ".webp"].includes(ext)) {
                     fileType = imageFileType;
-                } else if (ext === ".lrc") {
+                } else if (isLyricSidecarExtension(ext)) {
                     fileType = "lyrics";
                 } else if (ext === ".nfo") {
                     fileType = "nfo";
@@ -140,6 +141,12 @@ export async function finalizeImportedDirectories(params: {
                 const linkedMedia =
                     siblingMediaFiles.find((row) => path.parse(row.file_path).name === stem)
                     || (imageFileType === "video_thumbnail" ? siblingMediaFiles[0] || null : null);
+
+                // `.txt` is only a lyric sidecar when it shares a stem with a
+                // managed track. Other text files remain ordinary extras.
+                if (fileType === "lyrics" && !linkedMedia) {
+                    fileType = "other";
+                }
 
                 const sidecarIdentity = resolveLibraryFileIdentity({
                     artistId: mapping.artistId,

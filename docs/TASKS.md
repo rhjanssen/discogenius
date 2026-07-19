@@ -12,6 +12,11 @@ The provider plugins, diagnostics, queue routing, and offline contract tests can
 be completed without service secrets. These final entitlement/authenticated
 flows require Robert after the rebuilt Docker image is running:
 
+- pending (needs Robert): Turn **Spatial audio** ON in Settings if Atmos chips
+  are missing on albums that already have matched Atmos offers in the DB
+  (existing installs may still have `include_spatial=false` from the previous
+  default). Then open Bastille `&` and confirm TIDAL Atmos plus Apple dual-
+  capability Atmos chips both appear in the release switcher.
 - pending (needs Robert): Re-authenticate the Apple decryption wrapper through
   the Auth page (Apple ID, password, then 2FA) so its rootfs can serve keys on
   ports 10020/20020. Then validate one stereo/hi-res track, one Dolby Atmos
@@ -26,7 +31,8 @@ flows require Robert after the rebuilt Docker image is running:
 - pending (needs Robert): Add YouTube Music browser-header JSON and cookies to
   validate account library/favorite/playlist imports and an
   authenticated/restricted `yt-dlp` audio and video download. Public
-  `ytmusicapi` catalog access remains separately testable without credentials.
+  `ytmusicapi` catalog and synchronized-lyrics access remain separately
+  testable without credentials.
 - pending (needs Robert): Supply a Deezer `arl` cookie and validate one
   Streamrip MP3/FLAC download/import. Public Deezer catalog search and previews
   do not require the ARL and should be smoke-tested separately.
@@ -48,21 +54,9 @@ flows require Robert after the rebuilt Docker image is running:
   TKEY, iTunes `----:initialkey`); (3) ReplayGain values are wrong:
   `REPLAYGAIN_TRACK_PEAK: 1.000000` constants on FLAC and `+0.00 dB`/`0.000000`
   placeholders on spatial M4A — only write RG tags when the provider supplied
-  real values, and never write peak=1.0/0.0 defaults; (4) lyrics are missing
-  entirely (no embedded lyrics, no .lrc sidecars) despite `embed_lyrics`
-  being on and lyrics existing (e.g. Give Me the Future) — trace the tiddl
-  lyric flow end-to-end; (5) audit MP4 music-video tag embedding (what can be
-  written: title/artist/MB ids/cover) — nothing is verified today; (6) verify
+  real values, and never write peak=1.0/0.0 defaults; (4) verify
   Windows-visible fields (BPM populated but Explorer shows empty — Explorer
   reads WM/ID3 fields, likely fine to ignore for FLAC).
-- pending (next release): cover art source consistency. The embedded cover and
-  the saved `cover.jpg` sidecar come from the PROVIDER (tiddl embeds its own
-  fetch) while the UI shows the canonical Servarr/CAA image. Add a
-  `metadata.album_cover_source` (and artist equivalent) preference
-  (canonical-first default) and make ALL surfaces follow it: the sidecar
-  writer already can (canonical-first resolver exists); embedded covers need
-  our own post-import embed step (ffmpeg attached_pic remux) since tiddl only
-  embeds provider art — or disable tiddl's embed and always embed ourselves.
 
 - pending: Replace the tidal-shaped `health.ts` `backends.tiddl` response used
   by the Docker healthcheck and StatusPage with a backend-id-keyed projection

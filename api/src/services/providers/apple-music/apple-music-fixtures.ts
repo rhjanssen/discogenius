@@ -116,6 +116,7 @@ export const VIDEO_RESPONSE = {
         releaseDate: "2013-02-11",
         isrc: "GBUM71300999",
         contentRating: "clean",
+        has4K: true,
         url: "https://music.apple.com/us/music-video/pompeii/1452310551",
         artwork: { url: "https://is1-ssl.mzstatic.com/image/thumb/v/{w}x{h}bb.{f}" },
       },

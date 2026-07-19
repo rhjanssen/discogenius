@@ -8,31 +8,25 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-provider-regi
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 
-const CONFIG_FILE = path.join(tempDir, "config.toml");
-
-function writeDefaultProvider(id: string | null): void {
-  const lines = id ? ["[streaming]", `default_provider = "${id}"`] : [];
-  fs.writeFileSync(CONFIG_FILE, lines.join("\n") + "\n", "utf-8");
-}
-
 test("registry resolves the active provider from config, not a hardcoded id", async () => {
+  const { initDatabase } = await import("../../database.js");
+  initDatabase();
+  const { updateConfig } = await import("../config/config.js");
   const { streamingProviderManager } = await import("./index.js");
 
-  // Default config -> tidal.
-  writeDefaultProvider("tidal");
+  updateConfig("streaming", { default_provider: "tidal" });
   assert.equal(streamingProviderManager.getDefaultProviderId(), "tidal");
   assert.equal(streamingProviderManager.getDefaultStreamingProvider().id, "tidal");
 
-  // Config switches the active provider to apple-music.
-  writeDefaultProvider("apple-music");
+  updateConfig("streaming", { default_provider: "apple-music" });
   assert.equal(streamingProviderManager.getDefaultProviderId(), "apple-music");
   assert.equal(streamingProviderManager.getDefaultStreamingProvider().id, "apple-music");
 
-  writeDefaultProvider("does-not-exist");
+  updateConfig("streaming", { default_provider: "does-not-exist" });
   assert.throws(() => streamingProviderManager.getDefaultProviderId(), /not registered/);
 
-  // Missing streaming config uses the built-in default.
-  writeDefaultProvider(null);
+  // Empty/missing default falls back to the built-in tidal registration.
+  updateConfig("streaming", { default_provider: "" });
   assert.equal(streamingProviderManager.getDefaultProviderId(), "tidal");
 });
 

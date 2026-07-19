@@ -166,7 +166,7 @@ function yamlString(value: string): string {
 }
 
 /** App video-quality setting → downloader mv-max height (Apple MVs go up to 4K). */
-function appleVideoMaxHeight(): number {
+export function resolveAppleVideoMaxHeight(): number {
   let configured = "fhd";
   try {
     configured = String(Config.getQualityConfig()?.video_quality || "fhd").toLowerCase();
@@ -191,6 +191,7 @@ export function syncTokenToDownloader(token: AppleMusicAuthToken | null, downloa
   }
   ensureDir(APPLE_MUSIC_DOWNLOADER_DIR);
   const outputRoot = downloadPath || "AM-DL downloads";
+  const embedCover = Config.getQualityConfig()?.embed_cover !== false;
   const lines = [
     "# Managed by Discogenius. Manual edits are overwritten on credential sync.",
     `media-user-token: ${yamlString(resolved.media_user_token)}`,
@@ -202,7 +203,7 @@ export function syncTokenToDownloader(token: AppleMusicAuthToken | null, downloa
     // whole album download. Reproduced live 2026-07-16 on album 1459871277.
     "embed-lrc: false",
     "save-lrc-file: false",
-    "embed-cover: true",
+    `embed-cover: ${embedCover ? "true" : "false"}`,
     "cover-size: 5000x5000",
     "cover-format: jpg",
     "tag-sort-order: true",
@@ -235,7 +236,7 @@ export function syncTokenToDownloader(token: AppleMusicAuthToken | null, downloa
     "use-songinfo-for-playlist: false",
     "dl-albumcover-for-playlist: false",
     "mv-audio-type: atmos",
-    `mv-max: ${appleVideoMaxHeight()}`,
+    `mv-max: ${resolveAppleVideoMaxHeight()}`,
     "alac-fix: false",
     "convert-after-download: false",
     "ffmpeg-path: \"ffmpeg\"",

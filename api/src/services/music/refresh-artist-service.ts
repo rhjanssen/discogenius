@@ -24,8 +24,6 @@ import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate, type Provider
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import {
-    ensureCachedMediaCover,
-    getServarrMetadataArtistImageUrl,
     resolveAlbumArtwork,
     resolveArtistArtwork,
     resolveVideoArtwork,
@@ -291,15 +289,12 @@ export class RefreshArtistService {
             providerCandidates,
             preferredCoverTypes: ["Poster", "Headshot"],
         });
-        const fanartSourceUrl = getServarrMetadataArtistImageUrl(artistData, "Fanart");
-        const fanartUrl = fanartSourceUrl
-            ? await ensureCachedMediaCover({
-                entityId: artistMbid,
-                coverEntity: "Artist",
-                coverType: "Fanart",
-                sourceUrl: fanartSourceUrl,
-            }) || fanartSourceUrl
-            : posterUrl;
+        const fanartUrl = await resolveArtistArtwork({
+            artistMbid,
+            servarrMetadataData: artistData,
+            providerCandidates,
+            preferredCoverTypes: ["Fanart"],
+        }) || posterUrl;
         const resolvedArtistFolder = resolveArtistFolderForIdentityUpdate({
             artistId: localArtistId,
             artistName,

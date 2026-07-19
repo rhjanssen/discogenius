@@ -4,7 +4,7 @@ export const amazonMusicQualityMapping: ProviderQualityMapping = {
   provider: "amazon-music",
 
   toNeutralAudio(raw: string | null | undefined): NeutralAudioQuality | null {
-    const normalized = String(raw || "").trim().toLowerCase();
+    const normalized = String(raw || "").trim().toLowerCase().replace(/[_-]+/gu, " ");
     if (/uhd|max|master|24[ -]?bit|hi.?res/u.test(normalized)) return "hires-lossless";
     if (/\bhd\b|lossless|flac|high/u.test(normalized)) return "lossless";
     if (/normal|medium|low|free|opus|lossy|sd/u.test(normalized)) return "lossy";

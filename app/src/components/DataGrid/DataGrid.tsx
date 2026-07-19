@@ -258,6 +258,21 @@ function useMediaQuery(query: string) {
     return matches;
 }
 
+function useViewportWidth() {
+    const [width, setWidth] = React.useState(() => (
+        typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerWidth
+    ));
+
+    React.useEffect(() => {
+        const updateWidth = () => setWidth(window.innerWidth);
+        updateWidth();
+        window.addEventListener("resize", updateWidth);
+        return () => window.removeEventListener("resize", updateWidth);
+    }, []);
+
+    return width;
+}
+
 function DataGridInner<T>(
     {
         columns,
@@ -283,6 +298,7 @@ function DataGridInner<T>(
     ref: React.Ref<HTMLDivElement>
 ) {
     const styles = useStyles();
+    const viewportWidth = useViewportWidth();
     const isMobile = useMediaQuery("(max-width: 767px)");
     const [columnWidths, setColumnWidths] = React.useState<Record<string, string>>(() => {
         if (!columnResizeStorageKey || typeof window === "undefined") {
@@ -308,8 +324,8 @@ function DataGridInner<T>(
     const visibleColumns = useMemo(
         () => disableResponsiveColumnHiding
             ? columns
-            : columns.filter((column) => !column.minWidth || (!isMobile || column.minWidth <= 767)),
-        [columns, disableResponsiveColumnHiding, isMobile]
+            : columns.filter((column) => !column.minWidth || viewportWidth >= column.minWidth),
+        [columns, disableResponsiveColumnHiding, viewportWidth]
     );
 
     const defaultKey = useCallback(

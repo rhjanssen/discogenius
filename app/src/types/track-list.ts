@@ -6,6 +6,13 @@ export interface TrackAlbumRef {
   cover_id?: string | null;
 }
 
+export interface TrackRemoteOffer {
+  slot: string;
+  provider: string;
+  providerAlbumId: string;
+  quality: string | null;
+}
+
 export interface TrackListItem {
   id: string;
   preview_provider?: string | null;
@@ -18,6 +25,7 @@ export interface TrackListItem {
   explicit?: boolean;
   quality?: string | null;
   qualityTags?: string[] | null;
+  remoteOffers?: TrackRemoteOffer[] | null;
   album_id?: string | null;
   album_title?: string | null;
   album_cover?: string | null;

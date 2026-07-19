@@ -185,7 +185,7 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(albums[0].source, "musicbrainz");
   assert.equal(albums[0].monitored_lock, true);
   assert.equal(albums[0].selected_provider_id, "provider-album-1");
-  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg");
+  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
   assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 
@@ -475,7 +475,7 @@ test("artist list and album helper count canonical release groups and tracks", (
   assert.equal(albums[0].id, "release-group-mbid-1");
   assert.equal(albums[0].title, "Canonical Album");
   assert.equal(albums[0].source, "musicbrainz");
-  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg");
+  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 });
 
@@ -525,7 +525,7 @@ test("artist page album cards prefer cached Servarr Metadata Server artwork over
     .find((module: any) => module.title === "Albums")?.items || [];
 
   assert.equal(albums.length, 1);
-  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg");
+  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
   assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
 });
 
@@ -546,7 +546,7 @@ test("artist page album cards resolve Servarr Metadata Server artwork before pro
     .find((module: any) => module.title === "Albums")?.items || [];
 
   assert.equal(albums.length, 1);
-  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg");
+  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
   assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
 });
 
@@ -578,7 +578,7 @@ test("artist page uses provider fallback without hydrating missing release-group
       .find((module: any) => module.title === "Albums")?.items || [];
 
     assert.equal(albums.length, 1);
-    assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg");
+    assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
     // provider_cover_id is the provider-native identifier (the plugin builds the
     // fetchable URL); core never renders it directly. The provider-fallback URL
     // stored in Albums.images surfaces only through the cached cover_art_url above.

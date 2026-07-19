@@ -1,9 +1,10 @@
 import { db } from "../../database.js";
-import type { AlbumTrackContract, LibraryFileContract } from "../../contracts/media.js";
+import type { AlbumTrackContract, LibraryFileContract, TrackRemoteOfferContract } from "../../contracts/media.js";
 import { isSpatialAudioQuality, spatialAudioQualitySql } from "../../utils/spatial-audio.js";
 import { getConfigSection } from "../config/config.js";
 import { albumCoverLocalUrl, imageContainerFromImagesColumn } from "../metadata/media-cover-service.js";
 import { TrackLibraryIndexService } from "./track-library-index-service.js";
+import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
 
 const canonicalTrackDownloadedPredicate = `
   track.id IN (
@@ -100,6 +101,7 @@ export interface TrackRow {
   volume_number: number;
   quality: string;
   quality_tags?: string | null;
+  remote_offers?: string | null;
   artist_name?: string;
   artist_id?: number | string | null;
   album_title?: string;
@@ -162,6 +164,8 @@ export interface ListTracksQuery {
   downloaded?: boolean;
   locked?: boolean;
   libraryFilter?: string;
+  provider?: string;
+  qualityTier?: string;
   sort?: string;
   dir?: string;
 }
@@ -252,6 +256,34 @@ function getTrackFromSql(selectClause: string, whereClause: string, candidateSco
   `;
 }
 
+function providerTrackRowIdSql(
+  alias: string,
+  providerIdentityColumn: "track_id" | "recording_id" | "track_mbid" | "recording_mbid",
+  canonicalIdentityExpression: string,
+  selectedOfferOnly: boolean,
+): string {
+  return `
+    SELECT ${alias}.rowid
+    FROM ProviderItems ${alias}
+    ${selectedOfferOnly ? `JOIN ReleaseGroupSlots selected_provider_slot
+      ON selected_provider_slot.selected_album_release_id = track.album_release_id
+     AND selected_provider_slot.selected_provider = ${alias}.provider
+     AND selected_provider_slot.selected_provider_id IS NOT NULL
+     AND (
+       ${alias}.provider_album_id IS NULL
+       OR (';' || selected_provider_slot.selected_provider_id || ';')
+          LIKE ('%;' || ${alias}.provider_album_id || ';%')
+     )` : ""}
+    WHERE ${alias}.entity_type = 'track'
+      AND ${alias}.${providerIdentityColumn} = ${canonicalIdentityExpression}
+    ORDER BY
+      CASE ${alias}.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+      ${alias}.updated_at DESC,
+      ${alias}.provider_id ASC
+    LIMIT 1
+  `;
+}
+
 function getTrackSelectSql(whereClause: string): string {
   return getTrackFromSql(`
       track.id AS track_row_id,
@@ -265,7 +297,7 @@ function getTrackSelectSql(whereClause: string): string {
       ) AS duration,
       track.position AS track_number,
       track.medium_position AS volume_number,
-      COALESCE(provider_track.quality, selected_slot.quality, primary_file.quality, '') AS quality,
+      COALESCE(selected_slot.quality, provider_track.quality, '') AS quality,
       (
         SELECT GROUP_CONCAT(quality_value)
         FROM (
@@ -273,23 +305,30 @@ function getTrackSelectSql(whereClause: string): string {
           FROM ReleaseGroupSlots slot_quality
           WHERE slot_quality.release_group_id = release_group.id
             AND slot_quality.selected_album_release_id = track.album_release_id
-          UNION
-          SELECT provider_quality.quality AS quality_value
-          FROM ProviderItems provider_quality
-          WHERE provider_quality.entity_type = 'track'
-            AND provider_quality.track_id = track.id
-          UNION
-          SELECT recording_provider_quality.quality AS quality_value
-          FROM ProviderItems recording_provider_quality
-          WHERE recording_provider_quality.entity_type = 'track'
-            AND recording_provider_quality.recording_id = recording.id
-          UNION
-          SELECT file_quality.quality AS quality_value
-          FROM TrackFiles file_quality
-          WHERE file_quality.canonical_track_mbid = track.mbid
+            AND slot_quality.selected_provider IS NOT NULL
+            AND slot_quality.selected_provider_id IS NOT NULL
+          ORDER BY CASE slot_quality.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
         )
         WHERE quality_value IS NOT NULL AND TRIM(quality_value) != ''
       ) AS quality_tags,
+      COALESCE((
+        SELECT json_group_array(json_object(
+          'slot', selected_offer.slot,
+          'provider', selected_offer.selected_provider,
+          'providerAlbumId', selected_offer.selected_provider_id,
+          'quality', selected_offer.quality
+        ))
+        FROM (
+          SELECT selected_track_offer.slot, selected_track_offer.selected_provider,
+                 selected_track_offer.selected_provider_id, selected_track_offer.quality
+          FROM ReleaseGroupSlots selected_track_offer
+          WHERE selected_track_offer.release_group_id = release_group.id
+            AND selected_track_offer.selected_album_release_id = track.album_release_id
+            AND selected_track_offer.selected_provider IS NOT NULL
+            AND selected_track_offer.selected_provider_id IS NOT NULL
+          ORDER BY CASE selected_track_offer.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+        ) selected_offer
+      ), '[]') AS remote_offers,
       COALESCE(provider_track.explicit, 0) AS explicit,
       CASE WHEN EXISTS (
         SELECT 1
@@ -326,50 +365,15 @@ function getTrackSelectSql(whereClause: string): string {
     `, `
     LEFT JOIN ProviderItems provider_track
       ON provider_track.rowid = COALESCE(
-      (
-       SELECT preferred_provider_track.rowid
-       FROM ProviderItems preferred_provider_track
-       WHERE preferred_provider_track.entity_type = 'track'
-         AND preferred_provider_track.track_id = track.id
-       ORDER BY
-         CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-         preferred_provider_track.updated_at DESC,
-         preferred_provider_track.provider_id ASC
-       LIMIT 1
-     ),
-     (
-       SELECT preferred_recording_provider_track.rowid
-       FROM ProviderItems preferred_recording_provider_track
-       WHERE preferred_recording_provider_track.entity_type = 'track'
-         AND preferred_recording_provider_track.recording_id = recording.id
-       ORDER BY
-         CASE preferred_recording_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-         preferred_recording_provider_track.updated_at DESC,
-         preferred_recording_provider_track.provider_id ASC
-       LIMIT 1
-     ),
-     (
-       SELECT preferred_provider_track.rowid
-       FROM ProviderItems preferred_provider_track
-       WHERE preferred_provider_track.entity_type = 'track'
-         AND preferred_provider_track.track_mbid = track.mbid
-       ORDER BY
-         CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-         preferred_provider_track.updated_at DESC,
-         preferred_provider_track.provider_id ASC
-       LIMIT 1
-     ),
-     (
-       SELECT preferred_recording_provider_track.rowid
-       FROM ProviderItems preferred_recording_provider_track
-       WHERE preferred_recording_provider_track.entity_type = 'track'
-         AND preferred_recording_provider_track.recording_mbid = track.recording_mbid
-       ORDER BY
-         CASE preferred_recording_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-         preferred_recording_provider_track.updated_at DESC,
-         preferred_recording_provider_track.provider_id ASC
-       LIMIT 1
-     ))
+       (${providerTrackRowIdSql("selected_track_id_offer", "track_id", "track.id", true)}),
+       (${providerTrackRowIdSql("selected_recording_id_offer", "recording_id", "recording.id", true)}),
+       (${providerTrackRowIdSql("selected_track_mbid_offer", "track_mbid", "track.mbid", true)}),
+       (${providerTrackRowIdSql("selected_recording_mbid_offer", "recording_mbid", "track.recording_mbid", true)}),
+       (${providerTrackRowIdSql("fallback_track_id_offer", "track_id", "track.id", false)}),
+       (${providerTrackRowIdSql("fallback_recording_id_offer", "recording_id", "recording.id", false)}),
+       (${providerTrackRowIdSql("fallback_track_mbid_offer", "track_mbid", "track.mbid", false)}),
+       (${providerTrackRowIdSql("fallback_recording_mbid_offer", "recording_mbid", "track.recording_mbid", false)})
+     )
     LEFT JOIN ProviderItems provider_album
       ON provider_album.rowid = (
        SELECT preferred_provider_album.rowid
@@ -391,17 +395,6 @@ function getTrackSelectSql(whereClause: string): string {
        WHERE preferred_slot.release_group_id = release_group.id
          AND preferred_slot.selected_album_release_id = track.album_release_id
        ORDER BY CASE preferred_slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
-       LIMIT 1
-     )
-    LEFT JOIN TrackFiles primary_file
-      ON primary_file.canonical_track_mbid = track.mbid
-     AND primary_file.file_type = 'track'
-     AND primary_file.id = (
-       SELECT preferred_file.id
-       FROM TrackFiles preferred_file
-       WHERE preferred_file.canonical_track_mbid = track.mbid
-         AND preferred_file.file_type = 'track'
-       ORDER BY CASE preferred_file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, preferred_file.id ASC
        LIMIT 1
      )
     ${whereClause}
@@ -429,6 +422,42 @@ function splitQualityTags(value: string | null | undefined, includeSpatial: bool
       seen.add(key);
       return true;
     });
+}
+
+function parseRemoteOffers(value: string | null | undefined, includeSpatial: boolean): TrackRemoteOfferContract[] {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    return parsed.flatMap((candidate): TrackRemoteOfferContract[] => {
+      if (!candidate || typeof candidate !== "object") {
+        return [];
+      }
+      const offer = candidate as Record<string, unknown>;
+      const slot = String(offer.slot || "").trim();
+      const provider = String(offer.provider || "").trim();
+      const providerAlbumId = String(offer.providerAlbumId || "").trim();
+      const quality = sanitizeQualityTag(String(offer.quality || ""), includeSpatial) || null;
+      if (!slot || !provider || !providerAlbumId || (!includeSpatial && slot === "spatial")) {
+        return [];
+      }
+      const key = `${slot}\u0000${provider}\u0000${providerAlbumId}\u0000${quality || ""}`;
+      if (seen.has(key)) {
+        return [];
+      }
+      seen.add(key);
+      return [{ slot, provider, providerAlbumId, quality }];
+    });
+  } catch {
+    return [];
+  }
 }
 
 export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
@@ -511,6 +540,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       musicbrainz_release_id: track.musicbrainz_release_id || null,
       quality: sanitizeQualityTag(track.quality, includeSpatial),
       qualityTags: splitQualityTags(track.quality_tags, includeSpatial),
+      remoteOffers: parseRemoteOffers(track.remote_offers, includeSpatial),
       is_monitored: Boolean(track.is_monitored),
       monitored_lock: Boolean(track.monitored_lock),
       explicit: track.explicit === undefined ? undefined : Boolean(track.explicit),
@@ -624,6 +654,37 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
     where.push(canonicalTrackStereoQualityPredicate);
   }
 
+  const providerFilter = String(input.provider || "").trim();
+  const qualityTierFilter = String(input.qualityTier || "").trim();
+  const selectedOfferWhere = [
+    "filtered_slot.release_group_id = release_group.id",
+    "filtered_slot.selected_album_release_id = track.album_release_id",
+    "filtered_slot.selected_provider_id IS NOT NULL",
+  ];
+  if (input.libraryFilter === "spatial") {
+    selectedOfferWhere.push("filtered_slot.slot = 'spatial'");
+  } else if (input.libraryFilter === "stereo") {
+    selectedOfferWhere.push("filtered_slot.slot = 'stereo'");
+  }
+  if (providerFilter) {
+    selectedOfferWhere.push("filtered_slot.selected_provider = ?");
+    params.push(providerFilter);
+  }
+  const qualityCondition = qualityTierFilter
+    ? qualityTierSqlCondition("filtered_slot.quality", qualityTierFilter)
+    : null;
+  if (qualityCondition) {
+    selectedOfferWhere.push(qualityCondition);
+  }
+  const hasSelectedOfferFilter = Boolean(providerFilter || qualityCondition);
+  if (hasSelectedOfferFilter) {
+    where.push(`track.album_release_id IN (
+      SELECT filtered_slot.selected_album_release_id
+      FROM ReleaseGroupSlots filtered_slot
+      WHERE ${selectedOfferWhere.join(" AND ")}
+    )`);
+  }
+
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const sort = normalizeSortField(input.sort);
   const dir = normalizeSortDirection(input.dir);
@@ -663,12 +724,13 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
           ), 0)
         ) ${dir}, COALESCE(artist.popularity, 0) ${dir}, track.mbid ASC`
     : orderBy;
-  const useReleaseDatePage = sort === "releaseDate" && input.monitored === true;
+  const useReleaseDatePage = sort === "releaseDate" && input.monitored === true && !hasSelectedOfferFilter;
   const usePopularityPage = sort === "popularity"
     && input.monitored === true
     && input.locked !== true
     && !input.search
     && (!input.libraryFilter || input.libraryFilter === "all")
+    && !hasSelectedOfferFilter
     && trackLibraryReady;
   const candidateSql = usePopularityPage ? `
     SELECT library_track.track_id AS id, '' AS mbid
@@ -730,6 +792,7 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
     && !input.search
     && (!input.libraryFilter || input.libraryFilter === "all")
     && input.locked !== true
+    && !hasSelectedOfferFilter
     && trackLibraryReady;
   const totalResult = useFastMonitoredCount ? db.prepare(`
     SELECT COUNT(*) AS total

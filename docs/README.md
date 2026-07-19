@@ -15,6 +15,9 @@
   - Remaining release-centric matching work.
 - [LIDARR_STRUCTURE_ALIGNMENT.md](LIDARR_STRUCTURE_ALIGNMENT.md)
   - Current file/folder alignment notes and deferred split candidates.
+- [PROVIDER_DOWNLOADER_DECISION.md](PROVIDER_DOWNLOADER_DECISION.md)
+  - Direct-download feasibility, OrpheusDL decision, and the spotDL provenance
+    boundary for each streaming provider.
 - [ULTRABLUR_DOCUMENTATION.md](ULTRABLUR_DOCUMENTATION.md)
   - UltraBlur background subsystem.
 

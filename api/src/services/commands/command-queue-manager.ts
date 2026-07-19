@@ -833,6 +833,11 @@ ${buildExecutionOrderClause()}
             throw new Error("Queue reorder anchor is not in the pending download queue.");
         }
 
+        const anchorJob = pendingById.get(anchorJobId);
+        if (!anchorJob) {
+            throw new Error("Queue reorder anchor could not be resolved.");
+        }
+
         const remainingJobs = pendingJobs.filter((job) => !movingSet.has(job.id));
         const anchorIndex = remainingJobs.findIndex((job) => job.id === anchorJobId);
         if (anchorIndex === -1) {
@@ -848,15 +853,33 @@ ${buildExecutionOrderClause()}
 
         const updateQueueOrder = db.prepare(`
             UPDATE commands
-            SET queue_order = ?, updated_at = CURRENT_TIMESTAMP
+            SET
+              queue_order = ?,
+              priority = ?,
+              trigger = ?,
+              updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-              AND (queue_order IS NULL OR queue_order != ?)
+              AND status = 'queued'
         `);
 
         const tx = db.transaction(() => {
             reorderedJobs.forEach((job, index) => {
                 const queueOrder = index + 1;
-                updateQueueOrder.run(queueOrder, job.id, queueOrder);
+                // Execution order intentionally sorts priority/trigger before
+                // queue_order so newly queued interactive work can start ahead
+                // of background acquisitions. Once a user explicitly moves a
+                // row, however, that move must become the effective execution
+                // order as well as the visible order. Align the moved block to
+                // the anchor's execution class; otherwise a drag across a
+                // trigger/priority boundary is immediately undone by the next
+                // query and the downloader still selects the old first item.
+                const isMoving = movingSet.has(job.id);
+                updateQueueOrder.run(
+                    queueOrder,
+                    isMoving ? anchorJob.priority : job.priority,
+                    isMoving ? (anchorJob.trigger ?? CommandTrigger.Unspecified) : (job.trigger ?? CommandTrigger.Unspecified),
+                    job.id,
+                );
             });
         });
 

@@ -75,9 +75,22 @@ test("video list and detail use canonical video recordings with provider offers"
     ) VALUES
       ('youtube-music', 'video', 'yt-video-01', 'artist-mbid', ?,
        'Canonical Video', NULL, 215, 1),
+      ('apple-music', 'video', 'apple-video-4k', 'artist-mbid', ?,
+       'Canonical Video', 'MP4_2160P', 215, 1),
       ('apple-music', 'video', 'unavailable-video', 'artist-mbid', ?,
        'Canonical Video', '4K', 215, 0)
-  `).run(recording.id, recording.id);
+  `).run(recording.id, recording.id, recording.id);
+
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, recording_id, provider, provider_entity_type, provider_id,
+      library_slot, file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (
+      'artist-mbid', ?, 'apple-music', 'video', 'apple-video-4k',
+      'video', 'C:/library/Canonical Video.mp4', 'Canonical Video.mp4', 'C:/library',
+      'Canonical Video.mp4', '.mp4', 'video'
+    )
+  `).run(recording.id);
 
   const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
 
@@ -87,9 +100,26 @@ test("video list and detail use canonical video recordings with provider offers"
   assert.equal(list.items[0]?.artist_id, "artist-mbid");
   assert.equal(list.items[0]?.artist_name, "Video Artist");
   assert.equal(list.items[0]?.quality, "FHD");
+  assert.equal(list.items[0]?.provider, "tidal");
+  assert.equal(list.items[0]?.provider_id, "provider-video-1");
+  assert.deepEqual(list.items[0]?.providers, ["tidal", "apple-music", "youtube-music"]);
+  assert.deepEqual(list.items[0]?.provider_offers, [{
+    provider: "tidal",
+    provider_id: "provider-video-1",
+    quality: "FHD",
+  }, {
+    provider: "apple-music",
+    provider_id: "apple-video-4k",
+    quality: "MP4_2160P",
+  }, {
+    provider: "youtube-music",
+    provider_id: "yt-video-01",
+    quality: null,
+  }]);
   assert.equal(list.items[0]?.cover, "canonical-cover");
   assert.equal(list.items[0]?.cover_art_url, `/media-cover/Videos/${recording.id}/cover.jpg`);
   assert.equal(list.items[0]?.is_monitored, true);
+  assert.equal(list.items[0]?.is_downloaded, true);
 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
 
@@ -107,6 +137,14 @@ test("video list and detail use canonical video recordings with provider offers"
     can_preview: true,
     can_download: true,
   }, {
+    provider: "apple-music",
+    provider_id: "apple-video-4k",
+    quality: "MP4_2160P",
+    url: null,
+    available: true,
+    can_preview: true,
+    can_download: true,
+  }, {
     provider: "youtube-music",
     provider_id: "yt-video-01",
     quality: null,
@@ -115,6 +153,21 @@ test("video list and detail use canonical video recordings with provider offers"
     can_preview: false,
     can_download: true,
   }]);
+
+  const youtubeOnly = videoQueryModule.listVideos({ limit: 10, offset: 0, provider: "youtube-music" });
+  assert.equal(youtubeOnly.total, 1);
+  assert.equal(youtubeOnly.items[0]?.id, String(recording.id));
+  assert.equal(youtubeOnly.items[0]?.provider, "youtube-music");
+  assert.equal(youtubeOnly.items[0]?.provider_id, "yt-video-01");
+
+  const appleOnly = videoQueryModule.listVideos({ limit: 10, offset: 0, provider: "apple-music" });
+  assert.equal(appleOnly.total, 1);
+  assert.equal(appleOnly.items[0]?.provider, "apple-music");
+  assert.equal(appleOnly.items[0]?.provider_id, "apple-video-4k");
+  assert.equal(appleOnly.items[0]?.quality, "MP4_2160P");
+
+  const unavailableProvider = videoQueryModule.listVideos({ limit: 10, offset: 0, provider: "deezer" });
+  assert.equal(unavailableProvider.total, 0);
 });
 
 test("video list and detail ignore legacy provider-media-only video rows", () => {
@@ -125,6 +178,46 @@ const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
   assert.equal(list.total, 0);
   assert.equal(list.items.length, 0);
   assert.equal(videoQueryModule.getVideoDetail("legacy-video-1"), null);
+});
+
+test("video downloaded state treats provider ids as provider-scoped", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('collision-artist', 'Collision Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('collision-artist', 'collision-artist', 'Collision Artist')
+  `).run();
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('shared-42', ?, 'collision-artist', 'Apple Video', 1, 'provider_only')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_id, title, quality
+    ) VALUES ('apple-music', 'video', '42', 'collision-artist', ?, 'Apple Video', 'FHD')
+  `).run(recording.id);
+
+  // A legacy TIDAL file with the same service-local numeric id must not mark
+  // Apple's canonical video as downloaded.
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (
+      'collision-artist', 'tidal', 'video', '42', 'video',
+      'C:/library/Tidal 42.mp4', 'Tidal 42.mp4', 'C:/library',
+      'Tidal 42.mp4', '.mp4', 'video'
+    )
+  `).run();
+
+  const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
+  assert.equal(list.items[0]?.provider, 'apple-music');
+  assert.equal(list.items[0]?.is_downloaded, false);
 });
 
 test("video detail resolves its provider album by composite provider identity", () => {

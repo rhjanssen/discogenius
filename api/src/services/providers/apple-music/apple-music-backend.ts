@@ -6,6 +6,7 @@ import {
   APPLE_MUSIC_DOWNLOADER_DIR,
   loadStoredAppleMusicToken,
   resolveAppleStorefront,
+  resolveAppleVideoMaxHeight,
   syncTokenToDownloader,
 } from "./apple-music-auth.js";
 
@@ -290,6 +291,10 @@ export class AppleMusicBackend implements DownloadBackend {
     const args: string[] = [];
     if (request.entityType === "video") {
       args.push("--mv-audio-type", "atmos");
+      // Per-job ceiling must match the managed config.yaml mv-max; otherwise a
+      // concurrent stereo download that rewrote config to 1080 would clamp 4K
+      // jobs that only inherited the file-level default.
+      args.push("--mv-max", String(resolveAppleVideoMaxHeight()));
     } else {
       // Resource scope and audio mode are independent upstream flags. In
       // particular, a single song still needs --atmos/--aac when its selected
@@ -327,6 +332,7 @@ export class AppleMusicBackend implements DownloadBackend {
     const cp = spawn(getAppleMusicDownloaderBinary(), args, {
       cwd: APPLE_MUSIC_DOWNLOADER_DIR,
       stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
     });
 
     if (options.signal) {

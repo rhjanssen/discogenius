@@ -74,6 +74,42 @@ test("reorderPendingJobs preserves explicit move order deterministically", () =>
     );
 });
 
+test("reorderPendingJobs makes a cross-priority move the effective execution order", () => {
+    const highPriority = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadTrack,
+        { providerId: "priority-100", type: "track" },
+        "priority-100",
+        100,
+        1,
+    );
+    const background = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadTrack,
+        { providerId: "priority-0", type: "track" },
+        "priority-0",
+        0,
+        0,
+    );
+
+    assert.equal(queueModule.CommandQueueManager.getNextJobByTypes(queueModule.DOWNLOAD_COMMAND_NAMES)?.id, highPriority);
+
+    queueModule.CommandQueueManager.reorderPendingJobs([highPriority], {
+        afterJobId: background,
+        types: queueModule.DOWNLOAD_COMMAND_NAMES,
+    });
+
+    const pending = queueModule.CommandQueueManager.listJobsByTypesAndStatuses(
+        queueModule.DOWNLOAD_COMMAND_NAMES,
+        ["queued"],
+        10,
+        0,
+        { orderBy: "execution" },
+    );
+    assert.deepEqual(pending.map((job) => job.id), [background, highPriority]);
+    assert.equal(queueModule.CommandQueueManager.getNextJobByTypes(queueModule.DOWNLOAD_COMMAND_NAMES)?.id, background);
+    assert.equal(queueModule.CommandQueueManager.get(highPriority)?.priority, 0);
+    assert.equal(queueModule.CommandQueueManager.get(highPriority)?.trigger, 0);
+});
+
 test("provider artist imports reuse an active equivalent source selection", () => {
     const first = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.ImportProviderArtists,
@@ -423,7 +459,7 @@ test("download queue query resolves canonical release-group provider offers with
     assert.equal(live.items[0]?.quality, "HIRES_LOSSLESS");
     // The download queue resolves covers through the same Lidarr-style local
     // media-cover route as the rest of the app (no per-request upstream proxy).
-    assert.equal(live.items[0]?.cover, "/media-cover/Albums/rg-gmtf/cover.jpg");
+    assert.equal(live.items[0]?.cover, "/media-cover/Albums/rg-gmtf/cover.jpg?source=canonical");
 
     const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
         artistId: "artist-bastille",
@@ -496,7 +532,7 @@ test("download queue query resolves canonical track provider offers without Prov
     assert.equal(live.items[0]?.album_id, "rg-track");
     assert.equal(live.items[0]?.album_title, "Canonical Album");
     assert.equal(live.items[0]?.quality, "DOLBY_ATMOS");
-    assert.equal(live.items[0]?.cover, "/media-cover/Albums/rg-track/cover.jpg");
+    assert.equal(live.items[0]?.cover, "/media-cover/Albums/rg-track/cover.jpg?source=canonical");
 
     const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
         artistId: "artist-track",

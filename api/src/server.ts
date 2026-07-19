@@ -35,7 +35,7 @@ import ultraBlurRouter from "./routes/ultrablur.js";
 import unmappedRouter from "./routes/unmapped.js";
 import videosRouter from "./routes/v1/video.js";
 import { closeAppLogging, initAppLogging } from "./services/config/app-logger.js";
-import { ensureConfigExists, getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config/config.js";
+import { getConfigSection, CONFIG_DIR, REPO_ROOT } from "./services/config/config.js";
 import { downloadProcessor } from "./services/download/download-processor.js";
 import { queueUpdateLibraryMetadata, startMonitoring } from "./services/commands/scheduler.js";
 import {
@@ -54,13 +54,13 @@ import { TrackLibraryIndexService } from "./services/music/track-library-index-s
 import { CommandTrigger } from "./services/commands/command-trigger.js";
 
 function initializeAuthEnvironment() {
-  ensureConfigExists();
+  // DB-driven config, no local config.toml generation needed
 
   if (!process.env.ADMIN_PASSWORD) {
     const configuredPassword = String(getConfigSection("app").admin_password || "").trim();
     if (configuredPassword) {
       process.env.ADMIN_PASSWORD = configuredPassword;
-      console.log("[AUTH] Loaded ADMIN_PASSWORD from config.toml.");
+      console.log("[AUTH] Loaded ADMIN_PASSWORD from database config.");
     }
   }
 

@@ -100,6 +100,8 @@ router.get("/", (req, res) => {
     const downloadedFilter = parseOptionalQueryBoolean(req.query.downloaded);
     const lockedFilter = parseOptionalQueryBoolean(req.query.locked);
     const libraryFilter = (req.query.library_filter as string | undefined) || 'all';
+    const providerFilter = req.query.provider as string | undefined;
+    const qualityTierFilter = req.query.quality_tier as string | undefined;
 
     const sortParam = (req.query.sort as string | undefined) || 'releaseDate';
     const dirParam = (req.query.dir as string | undefined) || 'desc';
@@ -113,6 +115,8 @@ router.get("/", (req, res) => {
       downloaded: downloadedFilter,
       locked: lockedFilter,
       libraryFilter,
+      provider: providerFilter,
+      qualityTier: qualityTierFilter,
       sort: sortParam,
       dir: sortDir,
     }));

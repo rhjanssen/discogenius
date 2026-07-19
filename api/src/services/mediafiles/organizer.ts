@@ -19,6 +19,13 @@ import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { albumCoverLocalUrl } from "../metadata/media-cover-service.js";
+import {
+  findAdjacentLyricSidecar,
+  LYRIC_SIDECAR_EXTENSIONS,
+  readLyricSidecar,
+  SYNCHRONIZED_LYRIC_EXTENSION,
+  type LyricSidecarExtension,
+} from "../extras/lyrics/lyric-sidecar.js";
 
 
 type OrganizeType = "album" | "track" | "video";
@@ -1111,9 +1118,10 @@ export class OrganizerService {
   private static getExpectedLinkedSidecarPath(
     mediaPath: string,
     fileType: "lyrics" | "video_thumbnail",
+    lyricExtension: LyricSidecarExtension = SYNCHRONIZED_LYRIC_EXTENSION,
   ): string {
     if (fileType === "lyrics") {
-      return mediaPath.replace(new RegExp(`${path.extname(mediaPath)}$`), ".lrc");
+      return mediaPath.replace(new RegExp(`${path.extname(mediaPath)}$`), lyricExtension);
     }
 
     return path.join(path.dirname(mediaPath), `${path.parse(mediaPath).name}.jpg`);
@@ -1129,8 +1137,7 @@ export class OrganizerService {
     quality?: string | null;
     namingTemplate?: string | null;
   }): string {
-    const expectedPath = this.getExpectedLinkedSidecarPath(params.mediaPath, params.fileType);
-    const normalizedExpectedPath = this.normalizeResolvedPath(expectedPath);
+    let expectedPath = this.getExpectedLinkedSidecarPath(params.mediaPath, params.fileType);
     const canonicalIdentity = resolveLibraryFileIdentity({
       artistId: params.artistId,
       albumId: params.albumId || null,
@@ -1172,6 +1179,27 @@ export class OrganizerService {
       file_path: string;
       library_root: string;
     }>;
+
+    if (params.fileType === "lyrics") {
+      const adjacent = findAdjacentLyricSidecar(params.mediaPath, { normalizeExtension: true });
+      const tracked = sidecars
+        .map((sidecar) => readLyricSidecar(resolveStoredLibraryPath({
+          filePath: sidecar.file_path,
+          libraryRoot: sidecar.library_root,
+        })))
+        .filter((sidecar) => sidecar != null)
+        .sort((left, right) => Number(right.synchronized) - Number(left.synchronized))[0];
+      const selected = adjacent || tracked;
+      if (selected) {
+        expectedPath = this.getExpectedLinkedSidecarPath(
+          params.mediaPath,
+          params.fileType,
+          selected.extension,
+        );
+      }
+    }
+
+    const normalizedExpectedPath = this.normalizeResolvedPath(expectedPath);
 
     let hasExpectedSidecar = fs.existsSync(expectedPath);
 
@@ -1813,10 +1841,12 @@ export class OrganizerService {
 
         this.moveFileCrossDevice(srcFile, destFile);
 
-        const srcLrcFile = srcFile.replace(new RegExp(`\\${ext}$`, "i"), ".lrc");
-        const destLrcFile = destFile.replace(new RegExp(`\\${ext}$`, "i"), ".lrc");
-        if (fs.existsSync(srcLrcFile)) {
-          this.moveFileCrossDevice(srcLrcFile, destLrcFile);
+        for (const lyricExtension of LYRIC_SIDECAR_EXTENSIONS) {
+          const srcLyricFile = srcFile.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
+          const destLyricFile = destFile.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
+          if (fs.existsSync(srcLyricFile)) {
+            this.moveFileCrossDevice(srcLyricFile, destLyricFile);
+          }
         }
 
         // Fingerprinting and embedded tags are applied by the post-organize
@@ -1888,7 +1918,7 @@ export class OrganizerService {
 
         if (metadataConfig.save_lyrics && trackId) {
           try {
-            const lrcPath = this.relocateLinkedSidecar({
+            const lyricPath = this.relocateLinkedSidecar({
               artistId,
               albumId: String(trackRow.album_id || albumIds[0]),
               mediaId: trackId,
@@ -1903,18 +1933,18 @@ export class OrganizerService {
             // scheduled library-metadata backfill instead. On large albums the old
             // inline fallback could hold the import phase for many minutes
             // after every audio file was already safely organized.
-            if (fs.existsSync(lrcPath)) {
+            if (fs.existsSync(lyricPath)) {
               this.upsertLibraryFile({
                 artistId,
                 albumId: String(trackRow.album_id || albumIds[0]),
                 mediaId: trackId,
                 trackFileId: importedTrackFileId,
-                filePath: lrcPath,
+                filePath: lyricPath,
                 libraryRoot: targetRoot,
                 fileType: "lyrics",
                 quality: trackRow?.quality || album.quality,
                 namingTemplate: null,
-                expectedPath: lrcPath,
+                expectedPath: lyricPath,
                 provider: canonicalIdentity.provider,
                 providerEntityType: "track",
                 providerId: trackId,
@@ -1966,7 +1996,7 @@ export class OrganizerService {
           fileType: "cover",
         });
       }
-      if (metadataConfig.save_artist_picture && !fs.existsSync(artistPicPath)) {
+      if (metadataConfig.save_artist_picture) {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.artist_picture_resolution (which only caps
         // the UI's cached display thumbnail — see media-cover-service.ts).
@@ -2004,7 +2034,7 @@ export class OrganizerService {
           fileType: "cover",
         });
       }
-      if (metadataConfig.save_album_cover && !fs.existsSync(albumCoverPath)) {
+      if (metadataConfig.save_album_cover) {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.album_cover_resolution (which only caps the
         // UI's cached display thumbnail — see media-cover-service.ts).
@@ -2313,6 +2343,14 @@ export class OrganizerService {
       const dest = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
       this.moveFileCrossDevice(src, dest);
 
+      for (const lyricExtension of LYRIC_SIDECAR_EXTENSIONS) {
+        const srcLyricFile = src.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
+        const destLyricFile = dest.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
+        if (fs.existsSync(srcLyricFile)) {
+          this.moveFileCrossDevice(srcLyricFile, destLyricFile);
+        }
+      }
+
       // Fingerprinting and embedded tags are applied by the post-organize
       // import finalizer after MusicBrainz identity is resolved.
       const fileFingerprint: string | null = null;
@@ -2385,7 +2423,7 @@ export class OrganizerService {
 
       if (metadataConfig.save_lyrics) {
         try {
-          const lrcPath = this.relocateLinkedSidecar({
+          const lyricPath = this.relocateLinkedSidecar({
             artistId,
             albumId,
             mediaId: providerId,
@@ -2398,18 +2436,18 @@ export class OrganizerService {
           // delivered with the media. Network metadata enrichment is handled
           // by the library-metadata backfill so a slow/missing lyric cannot block the
           // download queue.
-          if (fs.existsSync(lrcPath)) {
+          if (fs.existsSync(lyricPath)) {
             this.upsertLibraryFile({
               artistId,
               albumId,
               mediaId: providerId,
               trackFileId: importedTrackFileId,
-              filePath: lrcPath,
+              filePath: lyricPath,
               libraryRoot: targetRoot,
               fileType: "lyrics",
               quality: trackRow?.quality || album.quality,
               namingTemplate: null,
-              expectedPath: lrcPath,
+              expectedPath: lyricPath,
               provider: trackIdentity.provider,
               providerEntityType: "track",
               providerId,
@@ -2438,7 +2476,7 @@ export class OrganizerService {
           fileType: "cover",
         });
       }
-      if (metadataConfig.save_artist_picture && !fs.existsSync(artistPicPath)) {
+      if (metadataConfig.save_artist_picture) {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.artist_picture_resolution (which only caps
         // the UI's cached display thumbnail — see media-cover-service.ts).
@@ -2480,7 +2518,7 @@ export class OrganizerService {
           fileType: "cover",
         });
       }
-      if (metadataConfig.save_album_cover && !fs.existsSync(albumCoverPath)) {
+      if (metadataConfig.save_album_cover) {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.album_cover_resolution (which only caps the
         // UI's cached display thumbnail — see media-cover-service.ts).
@@ -2603,46 +2641,75 @@ export class OrganizerService {
       // a ProviderItems video offer, via RefreshVideoService — no legacy ProviderMedia.
       const videoData = await this.fetchProviderVideo(providerId, streamingProviderId);
       let fetchedVideoData: any | null = videoData;
+      const videoProvider = String(raw.provider || getDefaultStreamingSource());
 
-      const videoArtistId = videoData.artist_id ? String(videoData.artist_id) : null;
-      if (!videoArtistId || !/^\d+$/.test(videoArtistId)) {
-        throw new Error(`[Organizer] Video ${providerId} missing valid artist_id`);
+      // Try to find the canonical local artist id via the DB
+      let canonicalArtistId = this.resolveCanonicalVideoArtistId(videoProvider, providerId);
+      
+      if (!canonicalArtistId) {
+        // Fallback: look up ProviderItems artist_mbid directly
+        const piRow = db.prepare(`
+          SELECT 
+            COALESCE(
+              (SELECT id FROM Artists WHERE mbid = pi.artist_mbid LIMIT 1),
+              (SELECT id FROM Artists WHERE id = pi.artist_mbid LIMIT 1)
+            ) as artist_id
+          FROM ProviderItems pi
+          WHERE pi.provider = ? AND pi.entity_type = 'video' AND pi.provider_id = ?
+          LIMIT 1
+        `).get(videoProvider, providerId) as any;
+        if (piRow?.artist_id) {
+          canonicalArtistId = String(piRow.artist_id);
+        }
       }
 
+      // If still missing, we need the provider artist ID to potentially create a local row
+      const providerArtistId = String(videoData?.artist?.providerId || videoData?.artist?.id || videoData?.artist_id || "");
+
+      if (!canonicalArtistId && providerArtistId) {
+          // See if we have an artist provider item
+          const artistPiRow = db.prepare(`SELECT artist_id FROM ProviderItems WHERE provider = ? AND provider_id = ? AND entity_type = 'artist' LIMIT 1`).get(videoProvider, providerArtistId) as any;
+          if (artistPiRow?.artist_id) {
+             canonicalArtistId = String(artistPiRow.artist_id);
+          }
+      }
+
+      if (!canonicalArtistId && providerArtistId) {
+          // Last resort: create a new canonical local artist
+          const a = await this.fetchProviderArtist(providerArtistId, streamingProviderId);
+          if (a) {
+              const insertResult = db.prepare("INSERT INTO Artists (name, picture, popularity, monitored, path) VALUES (?, ?, ?, 0, 'temp') RETURNING id").get(a.name, a.picture || null, a.popularity || 0) as any;
+              if (insertResult?.id) {
+                  canonicalArtistId = String(insertResult.id);
+                  const newPath = resolveArtistFolderForPersistence({
+                      artistId: canonicalArtistId,
+                      artistName: a.name,
+                  });
+                  db.prepare("UPDATE Artists SET path = ? WHERE id = ?").run(newPath, canonicalArtistId);
+                  
+                  // Also record the provider item so we don't recreate
+                  db.prepare("INSERT OR IGNORE INTO ProviderItems (provider, entity_type, provider_id, artist_id, title) VALUES (?, 'artist', ?, ?, ?)").run(videoProvider, providerArtistId, canonicalArtistId, a.name);
+              }
+          }
+      }
+
+      if (!canonicalArtistId) {
+        throw new Error(`[Organizer] Video ${providerId} missing valid artist_id connection`);
+      }
+
+      const resolvedVideoArtistId = canonicalArtistId;
+
       const { RefreshVideoService } = await import("../music/refresh-video-service.js");
-      const videoProvider = String(raw.provider || getDefaultStreamingSource());
-      RefreshVideoService.upsertArtistVideos(videoArtistId, [{
+      RefreshVideoService.upsertArtistVideos(resolvedVideoArtistId, [{
         ...videoData,
         provider_id: providerId,
         provider: videoProvider,
       }]);
 
-      // Provider video payloads identify the provider artist. Once the offer is
-      // mapped onto a canonical Recording, prefer that recording's managed
-      // MusicBrainz artist and its prescribed folder. Otherwise a legacy
-      // provider-only Artists row creates a second plain-name video directory.
-      const canonicalArtistId = this.resolveCanonicalVideoArtistId(videoProvider, providerId);
-      const resolvedVideoArtistId = canonicalArtistId ?? videoArtistId;
-      if (!canonicalArtistId) {
-        const exists = db.prepare("SELECT id FROM Artists WHERE id = ?").get(videoArtistId) as any;
-        if (!exists) {
-          try {
-            const a = await this.fetchProviderArtist(videoArtistId, streamingProviderId);
-            db.prepare("INSERT OR IGNORE INTO artists (id, name, picture, popularity, monitored, path) VALUES (?, ?, ?, ?, 0, ?)")
-              .run(videoArtistId, a.name, a.picture || null, a.popularity || 0, resolveArtistFolderForPersistence({
-                artistId: videoArtistId,
-                artistName: a.name,
-              }));
-          } catch {
-            // ignore
-          }
-        }
-      }
-
       const video: any = {
         id: providerId,
         artist_id: resolvedVideoArtistId,
-        album_id: videoData.album_id || null,
+        album_id: videoData?.album?.providerId || videoData?.album_id || null,
         title: videoData.title,
         explicit: videoData.explicit ? 1 : 0,
         quality: videoData.quality || null,
@@ -2756,8 +2823,9 @@ export class OrganizerService {
       });
 
       // Batch all per-video DB writes in a single transaction (Lidarr-style).
+      let libraryFileId: number | null = null;
       db.transaction(() => {
-        const libraryFileId = this.upsertLibraryFile({
+        libraryFileId = this.upsertLibraryFile({
           artistId,
           albumId: video.album_id ? String(video.album_id) : null,
           mediaId: providerId,
@@ -2849,7 +2917,10 @@ export class OrganizerService {
         if (coverId) {
           const videoThumbnailResolution = metadataConfig.video_thumbnail_resolution || "1080x720";
           if (coverPath && !fs.existsSync(coverPath)) {
-            await downloadVideoThumbnail(coverId, videoThumbnailResolution as any, coverPath);
+            await downloadVideoThumbnail(coverId, videoThumbnailResolution as any, coverPath, {
+              provider: videoProvider,
+              providerId,
+            });
           }
         }
 
@@ -2868,7 +2939,17 @@ export class OrganizerService {
         }
 
         if (metadataConfig.embed_video_thumbnail !== false && coverPath && fs.existsSync(coverPath)) {
-          await embedVideoThumbnail(dest, coverPath);
+          const embedded = await embedVideoThumbnail(dest, coverPath);
+          if (!embedded) {
+            console.warn(`[Organizer] Failed to embed video thumbnail for ${providerId}`);
+          } else if (libraryFileId !== null) {
+            const stat = fs.statSync(dest);
+            db.prepare(`
+              UPDATE TrackFiles
+              SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).run(stat.size, stat.mtime.toISOString(), libraryFileId);
+          }
         }
 
         if (!persistentCoverPath && transientCoverPath && fs.existsSync(transientCoverPath)) {

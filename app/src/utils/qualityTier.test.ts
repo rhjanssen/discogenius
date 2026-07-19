@@ -44,6 +44,8 @@ describe("video resolution helpers", () => {
     expect(isVideoResolutionQuality("MP4_1080P")).toBe(true);
     expect(isVideoResolutionQuality("2160P")).toBe(true);
     expect(isVideoResolutionQuality("720p")).toBe(true);
+    expect(isVideoResolutionQuality("FHD")).toBe(true);
+    expect(isVideoResolutionQuality("4K")).toBe(true);
     expect(isVideoResolutionQuality("LOSSLESS")).toBe(false);
     expect(isVideoResolutionQuality("DOLBY_ATMOS")).toBe(false);
   });
@@ -51,6 +53,8 @@ describe("video resolution helpers", () => {
   it("labels resolutions without the MP4_ prefix", () => {
     expect(videoResolutionLabel("MP4_1080P")).toBe("1080p");
     expect(videoResolutionLabel("2160P")).toBe("2160p");
+    expect(videoResolutionLabel("FHD")).toBe("1080p");
+    expect(videoResolutionLabel("4K")).toBe("2160p");
   });
 });
 

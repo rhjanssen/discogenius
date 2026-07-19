@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 
 /**
  * Provider item -> MusicBrainz match graph (the `ProviderItemMatches` table).
@@ -78,6 +79,43 @@ function sameProviderAlbumSet(left: unknown, right: unknown): boolean {
   return leftIds.length > 0
     && leftIds.length === rightIds.length
     && leftIds.every((id, index) => id === rightIds[index]);
+}
+
+function parseProviderQualityTags(evidenceJson: string | null | undefined): string[] {
+  if (!evidenceJson) return [];
+  try {
+    const parsed = JSON.parse(evidenceJson) as { providerQualityTags?: unknown };
+    if (!Array.isArray(parsed.providerQualityTags)) return [];
+    return parsed.providerQualityTags.map((tag) => String(tag)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Apple/Amazon often store stereo + Atmos on one album id. Persist stereo as the
+ * primary library_slot, but advertise a sibling spatial offer when match evidence
+ * still carries the full quality-tag set.
+ */
+function expandMultiFormatAvailabilityOffers(
+  offer: ReleaseAvailabilityProvider,
+  qualityTags: string[],
+): ReleaseAvailabilityProvider[] {
+  if (qualityTags.length === 0) return [offer];
+  const hasSpatial = qualityTags.some((tag) => isSpatialAudioQuality(tag));
+  if (!hasSpatial) return [offer];
+
+  const expanded = [offer];
+  const slot = String(offer.librarySlot || "").toLowerCase();
+  const alreadySpatial = slot === "spatial" || isSpatialAudioQuality(offer.quality);
+  if (!alreadySpatial) {
+    expanded.push({
+      ...offer,
+      quality: "DOLBY_ATMOS",
+      librarySlot: "spatial",
+    });
+  }
+  return expanded;
 }
 
 /** Additively upsert a provider-album -> MB-release match candidate. */
@@ -422,7 +460,8 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       pm.evidence         AS evidence,
       pi.quality          AS quality,
       pi.library_slot     AS library_slot,
-      pi.explicit         AS explicit
+      pi.explicit         AS explicit,
+      pi.match_evidence   AS match_evidence
     FROM AlbumReleases ar
     LEFT JOIN ProviderItemMatches pm
       ON pm.provider_item_type = 'album'
@@ -493,6 +532,7 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
     quality: string | null;
     library_slot: string | null;
     explicit: number | null;
+    match_evidence: string | null;
   }>;
 
   const byRelease = new Map<string, ReleaseAvailability>();
@@ -542,7 +582,7 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
           explicit: null,
         });
       } else {
-        rel.availability.push({
+        const directOffer: ReleaseAvailabilityProvider = {
           provider: r.provider,
           providerAlbumId: r.provider_album_id,
           quality: r.quality,
@@ -551,7 +591,17 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
           confidence: r.confidence,
           matchKind: "direct",
           explicit: r.explicit == null ? null : Boolean(r.explicit),
-        });
+        };
+        const qualityTags = parseProviderQualityTags(r.match_evidence);
+        for (const offer of expandMultiFormatAvailabilityOffers(directOffer, qualityTags)) {
+          const alreadyPresent = rel.availability.some((existing) =>
+            String(existing.provider).toLowerCase() === String(offer.provider).toLowerCase()
+            && (existing.librarySlot || "") === (offer.librarySlot || "")
+            && sameProviderAlbumSet(existing.providerAlbumId, offer.providerAlbumId));
+          if (!alreadyPresent) {
+            rel.availability.push(offer);
+          }
+        }
       }
     }
   }

@@ -16,6 +16,8 @@ const {
     clearTiddlAuth,
     buildTiddlEnv,
     TIDDL_CONFIG_DIR,
+    TIDDL_CONFIG_FILE,
+    syncTiddlSettings,
 } = await import("./tiddl.js");
 
 test("mapAudioQualityToTiddl maps provider quality tags to tiddl tiers", () => {
@@ -80,4 +82,11 @@ test("buildTiddlEnv pins TIDDL_PATH and client credentials", () => {
     const env = buildTiddlEnv();
     assert.equal(env.TIDDL_PATH, TIDDL_CONFIG_DIR);
     assert.match(String(env.TIDDL_AUTH), /^[^;]+;[^;]+$/);
+});
+
+test("syncTiddlSettings enables configured lyric sidecars and embedding", () => {
+    syncTiddlSettings();
+    const config = fs.readFileSync(TIDDL_CONFIG_FILE, "utf8");
+    assert.match(config, /\[download\][\s\S]*write_lrc_file = true/u);
+    assert.match(config, /\[metadata\][\s\S]*lyrics = true/u);
 });

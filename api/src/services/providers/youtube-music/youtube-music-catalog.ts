@@ -3,6 +3,7 @@ import type {
   ProviderArtist,
   ProviderImportSelection,
   ProviderImportSource,
+  ProviderLyrics,
   ProviderSearchOptions,
   ProviderSearchResults,
   ProviderTrack,
@@ -325,6 +326,20 @@ export class YouTubeMusicCatalog {
     const video = mapYouTubeMusicVideo(await this.bridge.request("get_video", { id: String(id) }));
     if (!video.providerId) throw new Error(`ytmusicapi returned no stable video ID for video ${id}.`);
     return video;
+  }
+
+  async getLyrics(id: string | number): Promise<ProviderLyrics | null> {
+    const raw = await this.bridge.request<unknown>("get_lyrics", { id: String(id) });
+    const lyrics = record(raw);
+    const textValue = text(lyrics.text);
+    const subtitles = text(lyrics.subtitles);
+    if (!textValue && !subtitles) return null;
+    return {
+      text: textValue,
+      subtitles,
+      provider: text(lyrics.provider) || "YouTube Music",
+      raw,
+    };
   }
 
   async listImportSources(): Promise<ProviderImportSource[]> {

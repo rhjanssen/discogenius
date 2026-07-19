@@ -5,6 +5,7 @@ import { resolveStoredLibraryPath } from "../../mediafiles/library-paths.js";
 import { streamingProviderManager } from "../../providers/index.js";
 import type { ProviderLyrics } from "../../providers/streaming-provider.js";
 import { LyricFileService, type LyricFileRow } from "./lyric-file-service.js";
+import { classifyLyricsForSidecar } from "./lyric-sidecar.js";
 
 export type ResolvedLyrics = {
   text: string;
@@ -82,9 +83,10 @@ function providerLyricsToResolved(
   matchType: ResolvedLyrics["matchType"],
   sourceProviderId: string,
 ): ResolvedLyrics {
+  const classified = classifyLyricsForSidecar(lyrics);
   return {
-    text: lyrics.text || "",
-    subtitles: lyrics.subtitles || "",
+    text: classified?.text || "",
+    subtitles: classified?.subtitles || "",
     provider,
     lyricsProvider: lyrics.provider || null,
     matchType,
@@ -113,12 +115,18 @@ function lyricFileToResolved(
     return null;
   }
 
-  const extension = nullableText(row.extension)?.toLowerCase();
-  const isSynced = extension === "lrc";
+  // Do not infer synchronization from `.lrc` alone. Older downloaders could
+  // emit timestamp-free content under that extension; classifying the actual
+  // content keeps cached sidecars and embedded tags semantically correct.
+  const classified = classifyLyricsForSidecar({
+    subtitles: content,
+    text: content,
+  });
+  if (!classified) return null;
 
   return {
-    text: isSynced ? "" : content,
-    subtitles: isSynced ? content : "",
+    text: classified.text,
+    subtitles: classified.subtitles,
     provider: row.provider || provider,
     lyricsProvider: null,
     matchType,
@@ -215,6 +223,9 @@ function loadLyricFileForForeignRecording(foreignRecordingId: string | null): Ly
 
 function candidateScore(media: ProviderTrackLyricsRow, candidate: CandidateRow): number {
   let score = 0;
+  if (nullableText(media.mbid) && nullableText(candidate.mbid) === nullableText(media.mbid)) {
+    score -= 200;
+  }
   if (candidate.source_release_group_mbid && candidate.candidate_release_group_mbid === candidate.source_release_group_mbid) {
     score -= 40;
   }
@@ -232,6 +243,14 @@ function candidateScore(media: ProviderTrackLyricsRow, candidate: CandidateRow):
 }
 
 function sameRecordingCandidate(media: ProviderTrackLyricsRow, candidate: CandidateRow): boolean {
+  const mediaRecordingMbid = nullableText(media.mbid);
+  const candidateRecordingMbid = nullableText(candidate.mbid);
+  if (mediaRecordingMbid && candidateRecordingMbid) {
+    // A canonical recording identity is stronger evidence than the fuzzy
+    // title/position fallback. Never borrow lyrics across conflicting MBIDs.
+    return candidateRecordingMbid === mediaRecordingMbid;
+  }
+
   const sameTrackNumber = media.track_number == null
     || candidate.track_number == null
     || Number(media.track_number) === Number(candidate.track_number);
@@ -250,6 +269,11 @@ function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow
   if (!normalized || !media.artist_id) {
     return null;
   }
+  const candidateProviders = streamingProviderManager.getAllStreamingProviders().map((provider) => provider.id);
+  if (candidateProviders.length === 0) {
+    return null;
+  }
+  const providerPlaceholders = candidateProviders.map(() => "?").join(",");
 
   const rows = db.prepare(`
     SELECT
@@ -298,16 +322,29 @@ function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow
         OR (candidate.track_mbid IS NOT NULL AND lf.canonical_track_mbid = candidate.track_mbid)
         OR (candidate.recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = candidate.recording_mbid)
       )
-    WHERE candidate.provider = ?
+    WHERE candidate.provider IN (${providerPlaceholders})
       AND CAST(candidate.artist_mbid AS TEXT) = CAST(? AS TEXT)
-      AND CAST(candidate.provider_id AS TEXT) != CAST(? AS TEXT)
+      AND NOT (
+        candidate.provider = ?
+        AND CAST(candidate.provider_id AS TEXT) = CAST(? AS TEXT)
+      )
       AND candidate.entity_type = 'track'
       AND COALESCE(t.title, r.title, candidate.title) IS NOT NULL
-  `).all(media.release_group_mbid, media.provider, media.artist_id, media.id) as LyricCandidateRow[];
+  `).all(
+    media.release_group_mbid,
+    ...candidateProviders,
+    media.artist_id,
+    media.provider,
+    media.id,
+  ) as LyricCandidateRow[];
 
   return rows
     .filter((row) => sameRecordingCandidate(media, row))
-    .sort((left, right) => candidateScore(media, left) - candidateScore(media, right))[0] ?? null;
+    .sort((left, right) => {
+      const scoreDelta = candidateScore(media, left) - candidateScore(media, right);
+      return scoreDelta || streamingProviderManager.getProviderPreferenceRank(left.provider)
+        - streamingProviderManager.getProviderPreferenceRank(right.provider);
+    })[0] ?? null;
 }
 
 function findSourceCandidates(media: ProviderTrackLyricsRow): CandidateRow[] {
@@ -315,6 +352,14 @@ function findSourceCandidates(media: ProviderTrackLyricsRow): CandidateRow[] {
   if (!normalized || !media.artist_id) {
     return [];
   }
+
+  const lyricProviders = streamingProviderManager.getAllStreamingProviders()
+    .filter((provider) => provider.capabilities.lyrics && typeof provider.getLyrics === "function")
+    .map((provider) => provider.id);
+  if (lyricProviders.length === 0) {
+    return [];
+  }
+  const providerPlaceholders = lyricProviders.map(() => "?").join(",");
 
   const rows = db.prepare(`
     SELECT
@@ -347,16 +392,23 @@ function findSourceCandidates(media: ProviderTrackLyricsRow): CandidateRow[] {
     LEFT JOIN Recordings r
       ON (candidate.recording_id IS NOT NULL AND r.id = candidate.recording_id)
       OR (candidate.recording_mbid IS NOT NULL AND r.mbid = candidate.recording_mbid)
-    WHERE candidate.provider = ?
+    WHERE candidate.provider IN (${providerPlaceholders})
       AND CAST(candidate.artist_mbid AS TEXT) = CAST(? AS TEXT)
-      AND CAST(candidate.provider_id AS TEXT) != CAST(? AS TEXT)
+      AND NOT (
+        candidate.provider = ?
+        AND CAST(candidate.provider_id AS TEXT) = CAST(? AS TEXT)
+      )
       AND candidate.entity_type = 'track'
       AND COALESCE(t.title, r.title, candidate.title) IS NOT NULL
-  `).all(media.release_group_mbid, media.provider, media.artist_id, media.id) as CandidateRow[];
+  `).all(media.release_group_mbid, ...lyricProviders, media.artist_id, media.provider, media.id) as CandidateRow[];
 
   return rows
     .filter((row) => sameRecordingCandidate(media, row))
-    .sort((left, right) => candidateScore(media, left) - candidateScore(media, right))
+    .sort((left, right) => {
+      const scoreDelta = candidateScore(media, left) - candidateScore(media, right);
+      return scoreDelta || streamingProviderManager.getProviderPreferenceRank(left.provider)
+        - streamingProviderManager.getProviderPreferenceRank(right.provider);
+    })
     .slice(0, 8);
 }
 
@@ -379,8 +431,8 @@ function lyricCandidateFile(candidate: LyricCandidateRow): LyricFileRow {
 }
 
 async function fetchProviderLyrics(providerId: string, providerMediaId: string): Promise<ProviderLyrics | null> {
-  const provider = streamingProviderManager.getStreamingProvider(providerId);
   try {
+    const provider = streamingProviderManager.getStreamingProvider(providerId);
     const lyrics = await provider.getLyrics?.(providerMediaId) ?? null;
     if (!lyrics?.subtitles && !lyrics?.text) {
       return null;
@@ -392,12 +444,12 @@ async function fetchProviderLyrics(providerId: string, providerMediaId: string):
 }
 
 function recordSharedLyricsRelation(provider: string, media: ProviderTrackLyricsRow, sourceMedia: ProviderTrackLyricsRow): void {
-  if (media.id === sourceMedia.id) {
+  if (media.provider === sourceMedia.provider && media.id === sourceMedia.id) {
     return;
   }
 
   const targetRecordingId = getRecordingIdForMedia(provider, media);
-  const sourceRecordingId = getRecordingIdForMedia(provider, sourceMedia);
+  const sourceRecordingId = getRecordingIdForMedia(sourceMedia.provider, sourceMedia);
   const targetForeignRecordingId = nullableText(media.mbid);
   const sourceForeignRecordingId = nullableText(sourceMedia.mbid);
 
@@ -442,7 +494,7 @@ export async function getLyricsForProviderMedia(
 
   const cachedCounterpart = findCachedCounterpart(media);
   const cachedCounterpartLyrics = cachedCounterpart
-    ? lyricFileToResolved(provider, lyricCandidateFile(cachedCounterpart), "shared_from_related_recording", cachedCounterpart.id)
+    ? lyricFileToResolved(cachedCounterpart.provider, lyricCandidateFile(cachedCounterpart), "shared_from_related_recording", cachedCounterpart.id)
     : null;
   if (cachedCounterpart && cachedCounterpartLyrics) {
     recordSharedLyricsRelation(provider, media, cachedCounterpart);
@@ -455,20 +507,20 @@ export async function getLyricsForProviderMedia(
   }
 
   for (const candidate of findSourceCandidates(media)) {
-    const candidateFile = loadLyricFileForMedia(provider, candidate)
+    const candidateFile = loadLyricFileForMedia(candidate.provider, candidate)
       ?? loadLyricFileForForeignRecording(nullableText(candidate.mbid));
     const candidateFileLyrics = candidateFile
-      ? lyricFileToResolved(provider, candidateFile, "shared_from_related_recording", candidate.id)
+      ? lyricFileToResolved(candidate.provider, candidateFile, "shared_from_related_recording", candidate.id)
       : null;
     if (candidateFileLyrics) {
       recordSharedLyricsRelation(provider, media, candidate);
       return candidateFileLyrics;
     }
 
-    const candidateLyrics = await fetchProviderLyrics(provider, candidate.id);
+    const candidateLyrics = await fetchProviderLyrics(candidate.provider, candidate.id);
     if (candidateLyrics) {
       recordSharedLyricsRelation(provider, media, candidate);
-      return providerLyricsToResolved(provider, candidateLyrics, "shared_from_related_recording", candidate.id);
+      return providerLyricsToResolved(candidate.provider, candidateLyrics, "shared_from_related_recording", candidate.id);
     }
   }
 

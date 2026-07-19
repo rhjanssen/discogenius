@@ -1,6 +1,6 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
 import { Router } from "express";
-import { clearConfigCache, getConfigSection, updateConfig, CONFIG_FILE, Config } from "../../services/config/config.js";
+import { clearConfigCache, getConfigSection, updateConfig, Config } from "../../services/config/config.js";
 import { streamingProviderManager } from "../../services/providers/index.js";
 import { UpgraderService } from "../../services/mediafiles/upgrader.js";
 import { getAppReleaseInfo } from "../../services/config/app-release.js";
@@ -327,42 +327,6 @@ router.post("/path", (req, res) => {
     const updates = parsePathConfigUpdate(getObjectBody(req.body), getConfigSection("path"));
     updateConfig("path", updates);
     res.json({ success: true });
-  } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
-  }
-});
-
-// Get raw TOML file content for advanced editing
-router.get("/toml", (_, res) => {
-  try {
-    const tomlContent = fs.readFileSync(CONFIG_FILE, "utf-8");
-    res.json({ toml: tomlContent });
-  } catch (error: any) {
-    res.status(500).json({ detail: error.message });
-  }
-});
-
-// Save raw TOML file content
-router.post("/toml", async (req, res) => {
-  try {
-    const body = getObjectBody(req.body);
-    const toml = getRequiredString(body, "toml");
-
-    // Validate TOML syntax before saving
-    try {
-      TOML.parse(toml);
-    } catch (parseError: any) {
-      res.status(400).json({ detail: `Invalid TOML syntax: ${parseError.message}` });
-      return;
-    }
-
-    fs.writeFileSync(CONFIG_FILE, toml, "utf-8");
-    clearConfigCache();
-    await syncDownloadBackends();
-    res.json({ success: true, message: "Config saved successfully" });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });

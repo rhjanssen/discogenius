@@ -20,6 +20,8 @@ type UseTracksOptions = {
   downloaded?: boolean;
   locked?: boolean;
   libraryFilter?: "all" | "stereo" | "spatial" | "video";
+  provider?: string;
+  qualityTier?: string;
   sort?: string;
   dir?: "asc" | "desc";
   search?: string;
@@ -42,6 +44,8 @@ const tracksQueryKey = (options: UseTracksOptions) => [
     downloaded: options.downloaded,
     locked: options.locked,
     libraryFilter: options.libraryFilter ?? "all",
+    provider: options.provider ?? null,
+    qualityTier: options.qualityTier ?? null,
     sort: options.sort ?? null,
     dir: options.dir ?? null,
     search: options.search ?? "",
@@ -116,6 +120,8 @@ export const useTracks = (options?: UseTracksOptions) => {
         library_filter: (options?.libraryFilter ?? "all") === "video"
           ? "all"
           : (options?.libraryFilter ?? "all"),
+        provider: options?.provider,
+        quality_tier: options?.qualityTier,
         sort: options?.sort,
         dir: options?.dir,
         search: options?.search,

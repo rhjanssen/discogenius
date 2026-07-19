@@ -683,7 +683,7 @@ dbModule.db.prepare(`
   const root = configModule.Config.getMusicPath();
   const albumDir = path.join(root, "Bastille {mbid-artist-mbid-1}", "SAVE MY SOUL (2025)");
   const audioPath = path.join(albumDir, "Track 01 - SAVE MY SOUL.flac");
-  const lyricPath = path.join(albumDir, "Track 01 - SAVE MY SOUL.lrc");
+  const lyricPath = path.join(albumDir, "Track 01 - SAVE MY SOUL.txt");
   const coverPath = path.join(albumDir, "cover.jpg");
   fs.mkdirSync(albumDir, { recursive: true });
   fs.writeFileSync(audioPath, "audio");

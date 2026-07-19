@@ -14,6 +14,7 @@ import type {
   ProviderImportSelection,
   ProviderImportSource,
   ProviderManifest,
+  ProviderLyrics,
   ProviderReleaseGroupSearch,
   ProviderSearchOptions,
   ProviderSearchResults,
@@ -142,7 +143,7 @@ export function parseYouTubeMusicUrl(url: string): { type: string; providerId: s
 
 export class YouTubeMusicProvider implements StreamingProvider {
   readonly id = "youtube-music";
-  readonly name = "YouTube / YouTube Music";
+  readonly name = "YouTube Music";
   readonly manifest: ProviderManifest = {
     id: this.id,
     displayName: this.name,
@@ -195,7 +196,7 @@ export class YouTubeMusicProvider implements StreamingProvider {
     losslessStereo: false,
     hiResStereo: false,
     spatialAudio: false,
-    lyrics: false,
+    lyrics: true,
     musicVideos: true,
     videoPreviews: false,
     videoDownloads: true,
@@ -268,6 +269,10 @@ export class YouTubeMusicProvider implements StreamingProvider {
 
   getVideo(id: string | number): Promise<ProviderVideo> {
     return this.catalog.getVideo(id);
+  }
+
+  getLyrics(id: string | number): Promise<ProviderLyrics | null> {
+    return this.catalog.getLyrics(id);
   }
 
   listImportSources(): Promise<ProviderImportSource[]> {

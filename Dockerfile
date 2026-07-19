@@ -2,13 +2,14 @@
 ARG APPLE_MUSIC_DOWNLOADER_IMAGE=ghcr.io/zhaarey/apple-music-downloader@sha256:e5f84e46ac4e7adc3c64ad462a0f328ac2f934ed7152d83840792bd21621aac1
 FROM python:3.13-slim-bookworm AS base
 
-# Install Node.js 20.x and system dependencies.
+# Install Node.js 22.x and system dependencies. yt-dlp's YouTube EJS challenge
+# solver requires Node 22 or newer (and Node is also the Discogenius runtime).
 # curl/gnupg are only needed to set up the NodeSource repo and are purged again.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg ffmpeg gosu libchromaprint-tools \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
     && apt-get install -y nodejs \
     && npm install -g yarn \
@@ -18,8 +19,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install tiddl (TIDAL downloader) in its own venv
 RUN python3 -m venv /opt/tiddl-venv \
-    && /opt/tiddl-venv/bin/pip install --no-cache-dir tiddl==3.4.3 \
+    && /opt/tiddl-venv/bin/pip install --no-cache-dir tiddl==3.4.4 \
     && ln -s /opt/tiddl-venv/bin/tiddl /usr/local/bin/tiddl
+
+# Core media tagging uses Mutagen to replace embedded cover atoms without
+# sacrificing MusicBrainz/freeform tags (ffmpeg's MP4 mdta mode drops `covr`).
+RUN python3 -m venv /opt/media-tags-venv \
+    && /opt/media-tags-venv/bin/pip install --no-cache-dir mutagen==1.47.0 \
+    && /opt/media-tags-venv/bin/pip check
 
 # Keep every third-party provider runtime isolated. Their dependency graphs
 # intentionally overlap at incompatible versions (notably Pillow, Rich and
@@ -27,7 +34,7 @@ RUN python3 -m venv /opt/tiddl-venv \
 # on pip's resolver order.
 RUN python3 -m venv /opt/ytmusic-venv \
     && /opt/ytmusic-venv/bin/pip install --no-cache-dir \
-        ytmusicapi==1.12.1 yt-dlp==2026.7.4 \
+        ytmusicapi==1.12.1 'yt-dlp[default]==2026.7.4' \
     && /opt/ytmusic-venv/bin/pip check
 
 RUN python3 -m venv /opt/streamrip-venv \

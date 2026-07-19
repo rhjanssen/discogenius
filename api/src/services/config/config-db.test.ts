@@ -17,28 +17,31 @@ before(async () => {
   dbModule.initDatabase();
 });
 
+
 after(() => {
   dbModule.closeDatabase();
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("editable settings are persisted to config.toml and read through the cache", () => {
-  const rawBefore = fs.readFileSync(configModule.CONFIG_FILE, "utf-8");
-  assert.match(rawBefore, /audio_quality = "max"/);
-  assert.doesNotMatch(rawBefore, /embed_synced_lyrics/);
-  assert.match(rawBefore, /enable_fingerprinting = true/);
+test("editable settings are persisted to database and read through the cache", () => {
+  const rowBefore = dbModule.db
+    .prepare("SELECT value FROM config WHERE key = 'settings.quality'")
+    .get() as { value: string } | undefined;
+  
+  if (rowBefore) {
+    assert.match(rowBefore.value, /"audio_quality":"max"/);
+    assert.doesNotMatch(rowBefore.value, /embed_synced_lyrics/);
+  }
 
   configModule.updateConfig("quality", { audio_quality: "normal" });
 
-  const rawAfter = fs.readFileSync(configModule.CONFIG_FILE, "utf-8");
-  assert.match(rawAfter, /audio_quality = "normal"/);
-  assert.doesNotMatch(rawAfter, /embed_synced_lyrics/);
-  assert.equal(configModule.getConfigSection("quality").audio_quality, "normal");
-
-  const row = dbModule.db
+  const rowAfter = dbModule.db
     .prepare("SELECT value FROM config WHERE key = 'settings.quality'")
     .get() as { value: string } | undefined;
-  assert.equal(row, undefined);
+  
+  assert.notEqual(rowAfter, undefined);
+  assert.match(rowAfter!.value, /"audio_quality":"normal"/);
+  assert.equal(configModule.getConfigSection("quality").audio_quality, "normal");
 
   configModule.clearConfigCache();
   assert.equal(configModule.readConfig().quality.audio_quality, "normal");
@@ -51,11 +54,12 @@ test("fresh installs use the production monitoring and library defaults", () => 
   assert.equal(config.monitoring.remove_unmonitored_files, true);
   assert.equal(config.quality.upgrade_existing_files, true);
   assert.equal(config.filtering.require_provider_availability, true);
-  assert.equal(config.filtering.include_spatial, false);
-  assert.equal(config.filtering.include_videos, false);
+  assert.equal(config.filtering.include_spatial, true);
+  assert.equal(config.filtering.include_videos, true);
   assert.equal(config.path.create_empty_artist_folders, true);
   assert.equal(config.naming.video_file, "{Video CleanTitle} {{providerName}-{mediaId}}");
   assert.equal(config.metadata.enable_fingerprinting, true);
+  assert.equal(config.metadata.artwork_preference, "canonical");
   assert.equal(config.catalog.source, "servarr");
 });
 
@@ -65,8 +69,11 @@ test("config writes strip retired quality settings", () => {
   configModule.writeConfig(config);
 
   configModule.clearConfigCache();
-  const raw = fs.readFileSync(configModule.CONFIG_FILE, "utf-8");
-  assert.doesNotMatch(raw, /embed_synced_lyrics/);
+  const rowAfter = dbModule.db
+    .prepare("SELECT value FROM config WHERE key = 'settings.quality'")
+    .get() as { value: string } | undefined;
+  assert.notEqual(rowAfter, undefined);
+  assert.doesNotMatch(rowAfter!.value, /embed_synced_lyrics/);
   assert.equal("embed_synced_lyrics" in (configModule.readConfig().quality as any), false);
 });
 
@@ -79,23 +86,24 @@ test("config writes normalize unsupported metadata tag policy values", () => {
   assert.equal(configModule.readConfig().metadata.write_audio_tags_policy, "new_files");
 });
 
-test("app settings update config.toml without splitting values into database overrides", () => {
+test("app settings update database and retain configured keys", () => {
   const config = configModule.readConfig();
-  config.app.admin_password = "from-file";
+  config.app.admin_password = "from-db";
   configModule.writeConfig(config);
 
   configModule.updateConfig("app", {
-    admin_password: "from-file",
+    admin_password: "from-db",
     acoustid_api_key: "acoustid-test-key",
   });
 
   configModule.clearConfigCache();
   const appConfig = configModule.getConfigSection("app");
-  assert.equal(appConfig.admin_password, "from-file");
+  assert.equal(appConfig.admin_password, "from-db");
   assert.equal(appConfig.acoustid_api_key, "acoustid-test-key");
 
   const row = dbModule.db
     .prepare("SELECT value FROM config WHERE key = 'settings.app'")
     .get() as { value: string } | undefined;
-  assert.equal(row, undefined);
+  assert.notEqual(row, undefined);
+  assert.match(row!.value, /"acoustid_api_key":"acoustid-test-key"/);
 });

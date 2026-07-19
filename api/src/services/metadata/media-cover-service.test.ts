@@ -11,11 +11,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let mediaCoverServiceModule: typeof import("./media-cover-service.js");
+let configModule: typeof import("../config/config.js");
 const originalFetch = globalThis.fetch;
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
+  configModule = await import("../config/config.js");
   mediaCoverServiceModule = await import("./media-cover-service.js");
 });
 
@@ -42,7 +44,7 @@ test("Servarr Metadata Server album artwork maps to the album MediaCover route",
     },
   });
 
-  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
+  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg?source=canonical`);
 });
 
 test("Servarr Metadata Server selectors return raw URLs for durable storage", () => {
@@ -124,7 +126,7 @@ test("Servarr Metadata Server album artwork wins over cached provider fallback a
     },
   });
 
-  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
+  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg?source=canonical`);
 });
 
 test("provider artwork ids resolve through the provider interface before caching", async () => {
@@ -217,6 +219,95 @@ test("provider artwork ids resolve through the provider interface before caching
   assert.equal(fs.existsSync(path.join(albumCache, "cover.jpg")), false);
   assert.equal(fs.existsSync(path.join(albumCache, "cover-500.jpg")), true);
   assert.equal(fs.existsSync(path.join(albumCache, "cover-250.jpg")), true);
+});
+
+test("artwork preference controls whether canonical or provider album art is fetched first", async () => {
+  const providerModule = await import("../providers/index.js");
+  const canonicalUrl = "https://metadata.example/canonical-cover.jpg";
+  const providerUrl = "https://provider.example/preferred-cover.jpg";
+  const image = jpeg.encode({
+    width: 600,
+    height: 600,
+    data: Buffer.alloc(600 * 600 * 4, 255),
+  }, 92).data;
+  const fetchCalls: string[] = [];
+
+  providerModule.streamingProviderManager.registerStreamingProvider({
+    id: "preference-artwork-provider",
+    name: "Preference Artwork Provider",
+    capabilities: { artwork: true },
+    getArtworkUrl: () => providerUrl,
+  } as any);
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    fetchCalls.push(String(url));
+    return new Response(image, {
+      status: 200,
+      headers: { "content-type": "image/jpeg" },
+    });
+  }) as typeof fetch;
+
+  try {
+    configModule.updateConfig("metadata", { artwork_preference: "provider" });
+    const providerPreferred = await mediaCoverServiceModule.resolveAlbumArtwork({
+      albumMbid: "provider-preference-release-group",
+      servarrMetadataData: { images: [{ coverType: "Cover", url: canonicalUrl }] },
+      providerCandidates: [{
+        provider: "preference-artwork-provider",
+        entityId: "provider-preference-album",
+        imageId: "provider-preference-image",
+      }],
+    });
+    assert.equal(providerPreferred, "/media-cover/Albums/provider-preference-release-group/cover.jpg");
+    assert.deepEqual(fetchCalls, [providerUrl]);
+
+    fetchCalls.length = 0;
+    configModule.updateConfig("metadata", { artwork_preference: "canonical" });
+    const canonicalPreferred = await mediaCoverServiceModule.resolveAlbumArtwork({
+      albumMbid: "canonical-preference-release-group",
+      servarrMetadataData: { images: [{ coverType: "Cover", url: canonicalUrl }] },
+      providerCandidates: [{
+        provider: "preference-artwork-provider",
+        entityId: "canonical-preference-album",
+        imageId: "canonical-preference-image",
+      }],
+    });
+    assert.equal(canonicalPreferred, "/media-cover/Albums/canonical-preference-release-group/cover.jpg");
+    assert.deepEqual(fetchCalls, [canonicalUrl]);
+  } finally {
+    configModule.updateConfig("metadata", { artwork_preference: "canonical" });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("canonical artwork resolution falls through a dead metadata URL to Cover Art Archive", async () => {
+  const albumMbid = "dead-metadata-cover-release-group";
+  const metadataUrl = "https://metadata.example/dead-cover.jpg";
+  const caaUrl = `https://coverartarchive.org/release-group/${albumMbid}/front`;
+  const calls: string[] = [];
+  const image = jpeg.encode({
+    width: 600,
+    height: 600,
+    data: Buffer.alloc(600 * 600 * 4, 255),
+  }, 92).data;
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const source = String(url);
+    calls.push(source);
+    return source === metadataUrl
+      ? new Response("", { status: 404 })
+      : new Response(image, { status: 200, headers: { "content-type": "image/jpeg" } });
+  }) as typeof fetch;
+
+  try {
+    const artworkUrl = await mediaCoverServiceModule.resolveAlbumArtwork({
+      albumMbid,
+      servarrMetadataData: { images: [{ coverType: "Cover", url: metadataUrl }] },
+    });
+    assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
+    assert.deepEqual(calls, [metadataUrl, caaUrl]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("provider video artwork ids resolve through the provider interface before caching", async () => {

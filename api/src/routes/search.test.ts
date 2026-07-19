@@ -78,6 +78,30 @@ function insertCanonicalArtist() {
   return artist;
 }
 
+test("local artist search honors canonical artwork preference", async () => {
+  insertCanonicalArtist();
+  dbModule.db.prepare(`
+    UPDATE ArtistMetadata
+    SET images = '[{"coverType":"Poster","url":"https://fanart.example/canonical.jpg"}]'
+    WHERE mbid = 'artist-mbid'
+  `).run();
+  dbModule.db.prepare(`
+    UPDATE Artists
+    SET picture = 'https://provider.example/provider.jpg'
+    WHERE mbid = 'artist-mbid'
+  `).run();
+
+  const res = createMockResponse();
+  await getSearchHandler()({ query: { query: "Search Artist", type: "artists", limit: "10" } }, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.results.artists.length, 1);
+  assert.equal(
+    res.body.results.artists[0].imageId,
+    "/media-cover/artist-mbid/poster.jpg?source=canonical",
+  );
+});
+
 test("local search returns canonical tracks", async () => {
   insertCanonicalArtist();
 

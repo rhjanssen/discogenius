@@ -5,6 +5,8 @@ export type ResolvedVideoOffer = {
     provider: string;
     providerId: string;
     quality: string | null;
+    recordingId: string | null;
+    recordingMbid: string | null;
 };
 
 function findDirectProviderVideoOffer(
@@ -15,19 +17,30 @@ function findDirectProviderVideoOffer(
         return null;
     }
     const row = db.prepare(`
-        SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality
+        SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality,
+               CAST(recording_id AS TEXT) AS recording_id, recording_mbid
         FROM ProviderItems
         WHERE entity_type = 'video'
           AND provider = ?
           AND CAST(provider_id AS TEXT) = ?
+          AND (availability IS NULL
+               OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
         LIMIT 1
     `).get(String(provider), String(providerId)) as {
         provider: string;
         provider_id: string;
         quality: string | null;
+        recording_id: string | null;
+        recording_mbid: string | null;
     } | undefined;
     return row
-        ? { provider: row.provider, providerId: row.provider_id, quality: row.quality ?? null }
+        ? {
+            provider: row.provider,
+            providerId: row.provider_id,
+            quality: row.quality ?? null,
+            recordingId: row.recording_id ?? null,
+            recordingMbid: row.recording_mbid ?? null,
+        }
         : null;
 }
 
@@ -43,18 +56,32 @@ export function resolveVideoOfferForProvider(provider: string, recordingRef: str
         return null;
     }
     const row = db.prepare(`
-        SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality
+        SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality,
+               CAST(recording_id AS TEXT) AS recording_id, recording_mbid
         FROM ProviderItems
         WHERE entity_type = 'video' AND provider = ?
           AND (CAST(recording_id AS TEXT) = ? OR recording_mbid = ?)
-          AND (availability IS NULL OR availability = 'available')
+          AND (availability IS NULL
+               OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
         ORDER BY CAST(provider_id AS TEXT)
         LIMIT 1
-    `).get(String(provider), key, key) as { provider: string; provider_id: string; quality: string | null } | undefined;
+    `).get(String(provider), key, key) as {
+        provider: string;
+        provider_id: string;
+        quality: string | null;
+        recording_id: string | null;
+        recording_mbid: string | null;
+    } | undefined;
     if (!row) {
         return null;
     }
-    return { provider: row.provider, providerId: row.provider_id, quality: row.quality ?? null };
+    return {
+        provider: row.provider,
+        providerId: row.provider_id,
+        quality: row.quality ?? null,
+        recordingId: row.recording_id ?? null,
+        recordingMbid: row.recording_mbid ?? null,
+    };
 }
 
 /**
@@ -68,12 +95,20 @@ export function resolvePreferredVideoOffer(recordingRef: string | null | undefin
         return null;
     }
     const offers = db.prepare(`
-        SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality
+        SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality,
+               CAST(recording_id AS TEXT) AS recording_id, recording_mbid
         FROM ProviderItems
         WHERE entity_type = 'video'
           AND (CAST(recording_id AS TEXT) = ? OR recording_mbid = ?)
-          AND (availability IS NULL OR availability = 'available')
-    `).all(key, key) as Array<{ provider: string; provider_id: string; quality: string | null }>;
+          AND (availability IS NULL
+               OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
+    `).all(key, key) as Array<{
+        provider: string;
+        provider_id: string;
+        quality: string | null;
+        recording_id: string | null;
+        recording_mbid: string | null;
+    }>;
     if (offers.length === 0) {
         return null;
     }
@@ -88,6 +123,8 @@ export function resolvePreferredVideoOffer(recordingRef: string | null | undefin
         provider: offers[0].provider,
         providerId: offers[0].provider_id,
         quality: offers[0].quality ?? null,
+        recordingId: offers[0].recording_id ?? null,
+        recordingMbid: offers[0].recording_mbid ?? null,
     };
 }
 

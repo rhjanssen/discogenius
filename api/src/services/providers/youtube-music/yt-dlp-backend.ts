@@ -194,7 +194,7 @@ async function findMediaFiles(root: string): Promise<string[]> {
 }
 
 function abortError(): Error {
-  const error = new Error("YouTube/YouTube Music download aborted.");
+  const error = new Error("YouTube Music download aborted.");
   error.name = "AbortError";
   return error;
 }
@@ -217,12 +217,13 @@ export class YtDlpBackend implements DownloadBackend {
       .map((id) => id.trim())
       .filter(Boolean);
     if (providerIds.length === 0) {
-      throw new Error("YouTube/YouTube Music download requested without a provider ID.");
+      throw new Error("YouTube Music download requested without a provider ID.");
     }
     const urls = providerIds.map((id) => buildYouTubeMusicSourceUrl(request.entityType, id));
     const outputTemplate = path.join(request.downloadPath, "%(id)s.%(ext)s");
     const args = [
       "--ignore-config",
+      "--js-runtimes", "node",
       "--no-color",
       "--newline",
       "--no-simulate",

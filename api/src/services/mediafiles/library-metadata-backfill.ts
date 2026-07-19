@@ -13,10 +13,15 @@ import {
     saveLyricsFile,
     saveVideoNfoFile,
 } from "./metadata-files.js";
-import { embedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
+import { embedVideoThumbnail, hasEmbeddedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
 import { LibraryFilesService } from "./library-files.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
+import {
+    findAdjacentLyricSidecar,
+    lyricSidecarPath,
+    SYNCHRONIZED_LYRIC_EXTENSION,
+} from "../extras/lyrics/lyric-sidecar.js";
 
 
 
@@ -505,17 +510,16 @@ class LibraryMetadataBackfillService {
         }>;
 
         for (const track of tracks) {
-            const ext = path.extname(track.file_path);
-            const lrcPath = track.file_path.replace(new RegExp(`${ext.replace('.', '\\.')}$`), ".lrc");
-            if (fs.existsSync(lrcPath)) {
+            const existingSidecar = findAdjacentLyricSidecar(track.file_path, { normalizeExtension: true });
+            if (existingSidecar) {
                 this.upsertLibraryFile({
                     artistId,
                     albumId: track.album_id ? String(track.album_id) : null,
                     mediaId: String(track.provider_id),
-                    filePath: lrcPath,
+                    filePath: existingSidecar.filePath,
                     libraryRoot: String(track.library_root || "").trim() || Config.getMusicPath(),
                     fileType: "lyrics",
-                    expectedPath: lrcPath,
+                    expectedPath: existingSidecar.filePath,
                     librarySlot: track.library_slot,
                     trackFileId: track.track_file_id,
                     provider: track.provider,
@@ -532,16 +536,17 @@ class LibraryMetadataBackfillService {
             }
 
             try {
-                await saveLyricsFile(String(track.provider_id), lrcPath, track.provider);
-                if (fs.existsSync(lrcPath)) {
+                const requestedPath = lyricSidecarPath(track.file_path, SYNCHRONIZED_LYRIC_EXTENSION);
+                const savedPath = await saveLyricsFile(String(track.provider_id), requestedPath, track.provider);
+                if (fs.existsSync(savedPath)) {
                     this.upsertLibraryFile({
                         artistId,
                         albumId: track.album_id ? String(track.album_id) : null,
                         mediaId: String(track.provider_id),
-                        filePath: lrcPath,
+                        filePath: savedPath,
                         libraryRoot: String(track.library_root || "").trim() || Config.getMusicPath(),
                         fileType: "lyrics",
-                        expectedPath: lrcPath,
+                        expectedPath: savedPath,
                         librarySlot: track.library_slot,
                         trackFileId: track.track_file_id,
                         provider: track.provider,
@@ -571,7 +576,7 @@ class LibraryMetadataBackfillService {
         const videoRoot = Config.getVideoPath();
 
         // ---- Thumbnail backfill ----
-        if (metadataConfig.save_video_thumbnail) {
+        if (metadataConfig.save_video_thumbnail || metadataConfig.embed_video_thumbnail !== false) {
             const resolution = metadataConfig.video_thumbnail_resolution || "1080x720";
 
             const thumbnailVideos = db.prepare(`
@@ -588,23 +593,20 @@ class LibraryMetadataBackfillService {
         pi.album_id AS album_id,
         r.cover_image_id AS cover
       FROM TrackFiles lf
-      JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+      JOIN ProviderItems pi ON pi.rowid = (
+        SELECT candidate.rowid
+        FROM ProviderItems candidate
+        WHERE candidate.entity_type = 'video'
+          AND CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+          AND (lf.provider IS NULL OR candidate.provider = lf.provider)
+        ORDER BY candidate.updated_at DESC
+        LIMIT 1
+      )
       JOIN Recordings r ON r.id = pi.recording_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
         AND r.cover_image_id IS NOT NULL
         AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM MetadataFiles mf
-          WHERE (
-              (mf.provider_entity_type = 'video' AND CAST(mf.provider_id AS TEXT) = CAST(COALESCE(lf.provider_id, pi.provider_id) AS TEXT))
-              OR (
-                lf.canonical_recording_mbid IS NOT NULL
-                AND mf.canonical_recording_mbid = lf.canonical_recording_mbid
-              )
-            )
-            AND mf.file_type = 'video_thumbnail'
-        )
     `).all(artistId) as Array<{
                 track_file_id: number;
                 file_path: string;
@@ -622,32 +624,25 @@ class LibraryMetadataBackfillService {
             for (const video of thumbnailVideos) {
                 const videoDir = path.dirname(video.file_path);
                 const videoStem = path.parse(video.file_path).name;
-                const thumbPath = path.join(videoDir, `${videoStem}.jpg`);
-
-                if (fs.existsSync(thumbPath)) {
-                    this.upsertLibraryFile({
-                        artistId,
-                        albumId: video.album_id ? String(video.album_id) : null,
-                        mediaId: String(video.provider_id),
-                        filePath: thumbPath,
-                        libraryRoot: String(video.library_root || "").trim() || videoRoot,
-                        fileType: "video_thumbnail",
-                        expectedPath: thumbPath,
-                        librarySlot: video.library_slot,
-                        trackFileId: video.track_file_id,
-                        provider: video.provider,
-                        providerEntityType: "video",
-                        providerId: String(video.provider_id),
-                        canonicalArtistMbid: video.canonical_artist_mbid,
-                        canonicalRecordingMbid: video.canonical_recording_mbid,
-                    });
-                    result.skipped++;
-                    continue;
-                }
+                const persistentThumbPath = path.join(videoDir, `${videoStem}.jpg`);
+                const transientThumbPath = path.join(videoDir, `.${videoStem}.embed-thumb.jpg`);
+                const thumbPath = metadataConfig.save_video_thumbnail ? persistentThumbPath : transientThumbPath;
 
                 try {
-                    await downloadVideoThumbnail(video.cover, resolution as any, thumbPath);
-                    if (fs.existsSync(thumbPath)) {
+                    const alreadyEmbedded = metadataConfig.embed_video_thumbnail !== false
+                        ? await hasEmbeddedVideoThumbnail(video.file_path)
+                        : true;
+                    const needsEmbedding = metadataConfig.embed_video_thumbnail !== false && !alreadyEmbedded;
+                    let downloadedThumbnail = false;
+                    if (!fs.existsSync(thumbPath) && (metadataConfig.save_video_thumbnail || needsEmbedding)) {
+                        await downloadVideoThumbnail(video.cover, resolution as any, thumbPath, {
+                            provider: video.provider,
+                            providerId: video.provider_id,
+                        });
+                        downloadedThumbnail = fs.existsSync(thumbPath);
+                    }
+
+                    if (metadataConfig.save_video_thumbnail && fs.existsSync(thumbPath)) {
                         this.upsertLibraryFile({
                             artistId,
                             albumId: video.album_id ? String(video.album_id) : null,
@@ -664,14 +659,39 @@ class LibraryMetadataBackfillService {
                             canonicalArtistMbid: video.canonical_artist_mbid,
                             canonicalRecordingMbid: video.canonical_recording_mbid,
                         });
-                        if (metadataConfig.embed_video_thumbnail !== false) {
-                            await embedVideoThumbnail(video.file_path, thumbPath);
+                    }
+
+                    let embeddedThumbnail = false;
+                    if (needsEmbedding && fs.existsSync(thumbPath)) {
+                        embeddedThumbnail = await embedVideoThumbnail(video.file_path, thumbPath);
+                        if (embeddedThumbnail) {
+                            const stat = fs.statSync(video.file_path);
+                            db.prepare(`
+                              UPDATE TrackFiles
+                              SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
+                              WHERE id = ?
+                            `).run(stat.size, stat.mtime.toISOString(), video.track_file_id);
                         }
+                    }
+
+                    if (!metadataConfig.save_video_thumbnail && fs.existsSync(transientThumbPath)) {
+                        fs.rmSync(transientThumbPath, { force: true });
+                    }
+
+                    const savedThumbnailReady = !metadataConfig.save_video_thumbnail || fs.existsSync(persistentThumbPath);
+                    const embeddedThumbnailReady = !needsEmbedding || embeddedThumbnail;
+                    if (!savedThumbnailReady || !embeddedThumbnailReady) {
+                        result.failed++;
+                    } else if (downloadedThumbnail || embeddedThumbnail) {
                         result.downloaded++;
                     } else {
-                        result.failed++;
+                        result.skipped++;
                     }
-                } catch {
+                } catch (error) {
+                    if (!metadataConfig.save_video_thumbnail && fs.existsSync(transientThumbPath)) {
+                        fs.rmSync(transientThumbPath, { force: true });
+                    }
+                    console.warn(`[MetadataBackfill] Failed video thumbnail processing for ${video.provider}:${video.provider_id}:`, error);
                     result.failed++;
                 }
             }

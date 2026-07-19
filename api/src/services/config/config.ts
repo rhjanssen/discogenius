@@ -1,70 +1,8 @@
-import fs from "fs";
+import { db, runWithSqliteBusyRetry } from "../../database.js";
 import path from "path";
-import * as TOML from "@iarna/toml";
-import { fileURLToPath } from "url";
+import { REPO_ROOT, CONFIG_DIR, APP_DATA_DIR } from "./bootstrap.js";
+export { REPO_ROOT, CONFIG_DIR, APP_DATA_DIR };
 import { normalizeMbHost } from "../catalog/mb-connection.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-function findRepoRoot(startDir: string): string {
-  let current = startDir;
-
-  while (true) {
-    const packageJsonPath = path.join(current, "package.json");
-    const hasApiWorkspace = fs.existsSync(path.join(current, "api", "package.json"));
-    const hasAppWorkspace = fs.existsSync(path.join(current, "app", "package.json"));
-
-    if (hasApiWorkspace && hasAppWorkspace) {
-      return current;
-    }
-
-    if (fs.existsSync(packageJsonPath)) {
-      try {
-        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as { workspaces?: unknown };
-        if (Array.isArray(packageJson.workspaces) && packageJson.workspaces.includes("api") && packageJson.workspaces.includes("app")) {
-          return current;
-        }
-      } catch {
-        // Ignore parse errors and keep walking upward.
-      }
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      break;
-    }
-    current = parent;
-  }
-
-  return path.resolve(startDir, "..", "..", "..");
-}
-
-export const REPO_ROOT = findRepoRoot(__dirname);
-
-function resolveOverridePath(rawPath: string): string {
-  if (path.isAbsolute(rawPath)) {
-    return rawPath;
-  }
-
-  return path.join(REPO_ROOT, rawPath);
-}
-
-const DEFAULT_CONFIG_DIR = process.env.DOCKER === 'true' ? "/config" : path.join(REPO_ROOT, "config");
-const CONFIG_DIR_OVERRIDE = process.env.DISCOGENIUS_CONFIG_DIR?.trim();
-const CONFIG_FILE_OVERRIDE = process.env.DISCOGENIUS_CONFIG_FILE?.trim();
-const DB_PATH_OVERRIDE = process.env.DB_PATH?.trim();
-
-export const CONFIG_FILE = CONFIG_FILE_OVERRIDE
-  ? resolveOverridePath(CONFIG_FILE_OVERRIDE)
-  : path.join(
-    CONFIG_DIR_OVERRIDE ? resolveOverridePath(CONFIG_DIR_OVERRIDE) : DEFAULT_CONFIG_DIR,
-    "config.toml",
-  );
-export const CONFIG_DIR = path.dirname(CONFIG_FILE);
-export const DB_PATH = DB_PATH_OVERRIDE
-  ? resolveOverridePath(DB_PATH_OVERRIDE)
-  : path.join(CONFIG_DIR, "discogenius.db");
 
 export interface AppConfig {
   admin_password: string;
@@ -125,6 +63,8 @@ export interface NamingConfig {
 export type WriteAudioTagsPolicy = "no" | "new_files" | "all_files";
 
 export interface MetadataConfig {
+  /** Prefer canonical catalog/CAA artwork or streaming-provider artwork. */
+  artwork_preference: "canonical" | "provider";
   save_album_cover: boolean;
   album_cover_name: string;
   album_cover_resolution: "origin" | number;
@@ -246,8 +186,8 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_dj_mix: true,
     include_mixtape_street: true,
     include_demo: true,
-    include_spatial: false,
-    include_videos: false,
+    include_spatial: true,
+    include_videos: true,
     require_provider_availability: true,
   },
   path: {
@@ -266,6 +206,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     video_file: "{Video CleanTitle} {{providerName}-{mediaId}}",
   },
   metadata: {
+    artwork_preference: "canonical",
     save_album_cover: true,
     album_cover_name: "cover.jpg",
     album_cover_resolution: 1200,
@@ -297,19 +238,10 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
 };
 
 let configCache: DiscoGeniusConfig | null = null;
-let configCacheFileKey: string | null = null;
+let dbInitializedForConfig = false;
 
 function cloneConfig<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function getConfigFileKey(): string | null {
-  try {
-    const stats = fs.statSync(CONFIG_FILE, { bigint: true });
-    return `${stats.mtimeNs}:${stats.size}`;
-  } catch {
-    return null;
-  }
 }
 
 function normalizeMonitoringConfig(raw?: Partial<MonitoringConfig>): MonitoringConfig {
@@ -352,6 +284,7 @@ function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig 
   const writeAudioTagsPolicy = raw?.write_audio_tags_policy;
 
   return {
+    artwork_preference: raw?.artwork_preference === "provider" ? "provider" : "canonical",
     save_album_cover: raw?.save_album_cover ?? DEFAULT_CONFIG.metadata.save_album_cover,
     album_cover_name: raw?.album_cover_name ?? DEFAULT_CONFIG.metadata.album_cover_name,
     album_cover_resolution: raw?.album_cover_resolution ?? DEFAULT_CONFIG.metadata.album_cover_resolution,
@@ -440,74 +373,74 @@ function normalizeConfig(config: Partial<DiscoGeniusConfig>): DiscoGeniusConfig 
   };
 }
 
-function readConfigFile(): DiscoGeniusConfig {
-  ensureConfigExists();
-
+function readConfigFromDb(): DiscoGeniusConfig {
+  const config = cloneConfig(DEFAULT_CONFIG);
   try {
-    const content = fs.readFileSync(CONFIG_FILE, "utf-8");
-    const parsed = TOML.parse(content) as unknown as DiscoGeniusConfig;
-
-    return normalizeConfig(parsed);
-  } catch (error) {
-    console.error("❌ Error reading config.toml:", error);
-    console.log("⚠️  Using default configuration");
-    return cloneConfig(DEFAULT_CONFIG);
+    const rows = runWithSqliteBusyRetry(() => db.prepare("SELECT key, value FROM config WHERE key LIKE 'settings.%'").all()) as Array<{key: string, value: string}>;
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.value);
+        if (row.key === "settings.app") Object.assign(config.app, parsed);
+        else if (row.key === "settings.monitoring") Object.assign(config.monitoring, parsed);
+        else if (row.key === "settings.filtering") Object.assign(config.filtering, parsed);
+        else if (row.key === "settings.path") Object.assign(config.path, parsed);
+        else if (row.key === "settings.naming") Object.assign(config.naming, parsed);
+        else if (row.key === "settings.metadata") Object.assign(config.metadata, parsed);
+        else if (row.key === "settings.quality") Object.assign(config.quality, parsed);
+        else if (row.key === "settings.streaming") Object.assign(config.streaming, parsed);
+        else if (row.key === "settings.catalog") Object.assign(config.catalog, parsed);
+        else if (row.key === "settings.account") {
+          config.account = config.account || {};
+          Object.assign(config.account, parsed);
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+  } catch {
+    // If DB isn't ready or table doesn't exist yet, return defaults
   }
+  return normalizeConfig(config);
 }
 
 export function clearConfigCache(): void {
   configCache = null;
-  configCacheFileKey = null;
 }
 
 /**
- * Ensure config directory and default config file exist
- */
-export function ensureConfigExists(): void {
-  // Create config directory if it doesn't exist
-  if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    console.log(`📁 Created config directory: ${CONFIG_DIR}`);
-  }
-
-  // Create default config file if it doesn't exist
-  if (!fs.existsSync(CONFIG_FILE)) {
-    const defaultToml = TOML.stringify(DEFAULT_CONFIG as any);
-    fs.writeFileSync(CONFIG_FILE, defaultToml, "utf-8");
-    console.log(`📄 Created default config file: ${CONFIG_FILE}`);
-  }
-}
-
-/**
- * Read and parse config.toml
+ * Read and parse config
  */
 export function readConfig(): DiscoGeniusConfig {
-  const currentFileKey = getConfigFileKey();
-  if (configCache && configCacheFileKey !== currentFileKey) {
-    configCache = null;
-  }
-
   if (!configCache) {
-    configCache = readConfigFile();
-    configCacheFileKey = getConfigFileKey();
+    configCache = readConfigFromDb();
   }
   return cloneConfig(configCache);
 }
 
 /**
- * Write config to config.toml
+ * Write config to database
  */
 export function writeConfig(config: DiscoGeniusConfig): void {
-  ensureConfigExists();
-
+  const normalized = normalizeConfig(config);
   try {
-    const tomlString = TOML.stringify(normalizeConfig(config) as any);
-    fs.writeFileSync(CONFIG_FILE, tomlString, "utf-8");
-    configCache = null;
-    configCacheFileKey = null;
-    console.log("✅ Config saved to config.toml");
+    const stmt = db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)");
+    const run = db.transaction(() => {
+      stmt.run("settings.app", JSON.stringify(normalized.app));
+      stmt.run("settings.monitoring", JSON.stringify(normalized.monitoring));
+      stmt.run("settings.filtering", JSON.stringify(normalized.filtering));
+      stmt.run("settings.path", JSON.stringify(normalized.path));
+      stmt.run("settings.naming", JSON.stringify(normalized.naming));
+      stmt.run("settings.metadata", JSON.stringify(normalized.metadata));
+      stmt.run("settings.quality", JSON.stringify(normalized.quality));
+      stmt.run("settings.streaming", JSON.stringify(normalized.streaming));
+      stmt.run("settings.catalog", JSON.stringify(normalized.catalog));
+      stmt.run("settings.account", JSON.stringify(normalized.account));
+    });
+    runWithSqliteBusyRetry(() => run());
+    configCache = normalized;
+    console.log("✅ Config saved to database");
   } catch (error) {
-    console.error("❌ Error writing config.toml:", error);
+    console.error("❌ Error writing config to database:", error);
     throw error;
   }
 }
@@ -521,9 +454,6 @@ export function getConfigSection<K extends keyof DiscoGeniusConfig>(
   const config = readConfig();
   return config[section];
 }
-
-// Initialize config on module load
-ensureConfigExists();
 
 /**
  * Update specific config section

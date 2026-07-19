@@ -175,6 +175,60 @@ def get_import_artists(api: YTMusic, payload: dict[str, Any]) -> list[dict[str, 
     raise ValueError(f"unsupported import category: {category}")
 
 
+def lrc_timestamp(milliseconds: Any) -> str | None:
+    try:
+        total = max(0, int(milliseconds))
+    except (TypeError, ValueError):
+        return None
+    minutes, remaining = divmod(total, 60_000)
+    seconds, millis = divmod(remaining, 1_000)
+    return f"[{minutes:02d}:{seconds:02d}.{millis // 10:02d}]"
+
+
+def get_track_lyrics(api: YTMusic, video_id: str) -> dict[str, Any] | None:
+    """Return provider-neutral plain and synchronized lyrics for a video id.
+
+    ytmusicapi exposes the lyrics browse id through get_watch_playlist(). Its
+    timestamped response contains LyricLine dataclasses, which json.dump would
+    otherwise stringify into Python reprs. Convert those objects deliberately
+    and emit ordinary LRC so the TypeScript provider contract stays stable.
+    """
+    watch = api.get_watch_playlist(videoId=video_id, limit=1)
+    browse_id = watch.get("lyrics") if isinstance(watch, dict) else None
+    if not browse_id:
+        return None
+
+    result = api.get_lyrics(str(browse_id), timestamps=True)
+    if not isinstance(result, dict):
+        return None
+
+    raw_lines = result.get("lyrics")
+    plain_lines: list[str] = []
+    synced_lines: list[str] = []
+    if isinstance(raw_lines, str):
+        plain_lines = [line for line in raw_lines.splitlines() if line.strip()]
+    elif isinstance(raw_lines, list):
+        for raw_line in raw_lines:
+            line = raw_line if isinstance(raw_line, dict) else vars(raw_line) if hasattr(raw_line, "__dict__") else {}
+            lyric_text = str(line.get("text") or "").strip()
+            if not lyric_text:
+                continue
+            plain_lines.append(lyric_text)
+            timestamp = lrc_timestamp(line.get("start_time"))
+            if timestamp:
+                synced_lines.append(f"{timestamp}{lyric_text}")
+
+    text = "\n".join(plain_lines).strip()
+    subtitles = "\n".join(synced_lines).strip()
+    if not text and not subtitles:
+        return None
+    return {
+        "text": text,
+        "subtitles": subtitles,
+        "provider": str(result.get("source") or "YouTube Music"),
+    }
+
+
 def dispatch(api: YTMusic, operation: str, payload: dict[str, Any]) -> Any:
     if operation == "search":
         query = require_text(payload, "query")
@@ -218,6 +272,8 @@ def dispatch(api: YTMusic, operation: str, payload: dict[str, Any]) -> Any:
         return player
     if operation == "get_video":
         return api.get_song(require_text(payload, "id"))
+    if operation == "get_lyrics":
+        return get_track_lyrics(api, require_text(payload, "id"))
     if operation == "list_import_sources":
         return list_import_sources(api)
     if operation == "get_import_artists":
@@ -229,7 +285,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=(
         "search", "get_artist", "get_artist_albums", "get_artist_videos",
-        "get_album", "get_track", "get_video", "list_import_sources",
+        "get_album", "get_track", "get_video", "get_lyrics", "list_import_sources",
         "get_import_artists",
     ))
     parser.add_argument("--headers")

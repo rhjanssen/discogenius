@@ -24,6 +24,7 @@ type UseVideosOptions = {
   monitored?: boolean;
   downloaded?: boolean;
   locked?: boolean;
+  provider?: string;
   sort?: string;
   dir?: "asc" | "desc";
   search?: string;
@@ -45,6 +46,7 @@ const videosQueryKey = (options: UseVideosOptions) => [
     monitored: options.monitored,
     downloaded: options.downloaded,
     locked: options.locked,
+    provider: options.provider ?? null,
     sort: options.sort ?? null,
     dir: options.dir ?? null,
     search: options.search ?? "",
@@ -90,6 +92,7 @@ export const useVideos = (options?: UseVideosOptions) => {
         monitored: options?.monitored,
         downloaded: options?.downloaded,
         locked: options?.locked,
+        provider: options?.provider,
         sort: options?.sort,
         dir: options?.dir,
         search: options?.search,

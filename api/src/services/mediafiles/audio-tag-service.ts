@@ -1,8 +1,10 @@
 import fs from "fs";
+import os from "node:os";
+import path from "node:path";
 import * as mm from "music-metadata";
 import { db } from "../../database.js";
 import { type MetadataConfig, type WriteAudioTagsPolicy, getConfigSection } from "../config/config.js";
-import { writeMetadata, removeAllTags } from "./audioUtils.js";
+import { embedAudioCover, writeMetadata, removeAllTags } from "./audioUtils.js";
 import {
   type AcoustIdLookupResult,
   type MusicBrainzRecording,
@@ -18,11 +20,26 @@ import { shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
-import { getLyricsForProviderMedia } from "../extras/lyrics/lyric-service.js";
-import { cleanProviderText } from "./metadata-files.js";
+import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
+import { classifyLyricsForSidecar } from "../extras/lyrics/lyric-sidecar.js";
+import { cleanProviderText, downloadAlbumCover } from "./metadata-files.js";
+import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
 
 export function selectEmbeddedLyricsText(lyrics: { subtitles?: string | null; text?: string | null } | null | undefined): string {
-  return lyrics?.subtitles || lyrics?.text || "";
+  return classifyLyricsForSidecar(lyrics)?.content || "";
+}
+
+export function buildEmbeddedLyricsManagedTag(
+  lyrics: { subtitles?: string | null; text?: string | null } | null | undefined,
+): ManagedTag | null {
+  const targetValue = selectEmbeddedLyricsText(lyrics);
+  return targetValue ? {
+    key: "lyrics",
+    label: "Lyrics",
+    ffmpegKey: "lyrics-eng",
+    targetValue,
+    aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
+  } : null;
 }
 
 type RetagTrackRow = {
@@ -68,6 +85,7 @@ type RetagTrackRow = {
   media_explicit: number | null;
   album_mbid: string | null;
   album_mb_release_group_id: string | null;
+  album_provider_id: string | null;
   artist_mbid: string | null;
   release_status: string | null;
   release_country: string | null;
@@ -131,6 +149,13 @@ type RetagApplyOptions = {
    * optional lyric misses cannot hold a completed media job for minutes.
    */
   includeExternalLyrics?: boolean;
+  lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
+};
+
+export type RetagMediaIdOptions = {
+  provider?: string | null;
+  includeExternalLyrics?: boolean;
+  lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
 };
 
 export type RetagScopeOptions = {
@@ -142,7 +167,57 @@ export type RetagScopeOptions = {
 
 type RetagEvaluationOptions = {
   includeExternalMetadata?: boolean;
+  lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
 };
+
+type EmbeddedCoverContext = {
+  byAlbum: Map<string, Promise<string | null>>;
+  temporaryDirectories: string[];
+};
+
+async function resolvePreferredEmbeddedCover(
+  row: RetagTrackRow,
+  config: MetadataConfig,
+  resolvedMediaPath: string,
+  context: EmbeddedCoverContext,
+): Promise<string | null> {
+  const sidecarPath = path.join(path.dirname(resolvedMediaPath), config.album_cover_name || "cover.jpg");
+  const albumId = String(row.album_provider_id || row.album_mb_release_group_id || row.album_mbid || "").trim();
+  if (!albumId) return fs.existsSync(sidecarPath) ? sidecarPath : null;
+
+  const key = `${String(row.file_provider || "").trim()}:${albumId}`;
+  let pending = context.byAlbum.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-embedded-cover-"));
+      context.temporaryDirectories.push(tempDir);
+      const tempCover = path.join(tempDir, "cover.jpg");
+      try {
+        await downloadAlbumCover(albumId, "origin", tempCover, { provider: row.file_provider });
+        if (fs.existsSync(tempCover)) return tempCover;
+      } catch (error) {
+        console.warn(`[AudioCover] Failed to resolve preferred artwork for ${albumId}:`, error);
+      }
+      return fs.existsSync(sidecarPath) ? sidecarPath : null;
+    })();
+    context.byAlbum.set(key, pending);
+  }
+  return pending;
+}
+
+async function resolveLyricsForRetagRow(
+  row: RetagTrackRow,
+  allowProviderFetch: boolean,
+  cache?: Map<string, ResolvedLyrics | null>,
+): Promise<ResolvedLyrics | null> {
+  if (!row.file_provider_id) return null;
+  const key = providerMediaLyricsKey(row.file_provider, row.file_provider_id);
+  if (cache?.has(key)) return cache.get(key) ?? null;
+  if (!allowProviderFetch) return null;
+  const lyrics = await getLyricsForProviderMedia(row.file_provider_id, row.file_provider);
+  cache?.set(key, lyrics);
+  return lyrics;
+}
 
 function buildFullTitle(title: string | null | undefined, version: string | null | undefined): string {
   const baseTitle = String(title || "").trim() || "Unknown Track";
@@ -872,6 +947,7 @@ export class AudioTagService {
         provider_track.explicit AS media_explicit,
         COALESCE(lf.canonical_release_mbid, canonical_track.release_mbid, provider_canonical_track.release_mbid, provider_track.release_mbid, provider_album.release_mbid) AS album_mbid,
         COALESCE(lf.canonical_release_group_mbid, provider_track.release_group_mbid, provider_album.release_group_mbid) AS album_mb_release_group_id,
+        provider_album.provider_id AS album_provider_id,
         COALESCE(lf.canonical_artist_mbid, canonical_recording.artist_mbid, provider_recording.artist_mbid, provider_track.artist_mbid, provider_album.artist_mbid, artist.mbid) AS artist_mbid,
         COALESCE(canonical_release.status, ar.status) AS release_status,
         COALESCE(canonical_release.country, ar.country) AS release_country,
@@ -1970,19 +2046,9 @@ export class AudioTagService {
 
     const quality = getConfigSection("quality");
     if (options.includeExternalMetadata !== false && quality.embed_lyrics && row.file_provider_id) {
-      const lyrics = await getLyricsForProviderMedia(row.file_provider_id, row.file_provider);
-      if (lyrics) {
-        const targetValue = selectEmbeddedLyricsText(lyrics);
-        if (targetValue) {
-          desiredTags.push({
-            key: "lyrics",
-            label: "Lyrics",
-            ffmpegKey: "lyrics-eng",
-            targetValue,
-            aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
-          });
-        }
-      }
+      const lyrics = await resolveLyricsForRetagRow(row, true, options.lyricsByProviderMedia);
+      const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
+      if (lyricTag) desiredTags.push(lyricTag);
     }
 
     const removals = this.buildRowManagedTagRemovals(row, config);
@@ -2133,6 +2199,23 @@ export class AudioTagService {
     `);
 
     const pendingUpdates: Array<[number, string, number]> = []; // [size, mtime, id]
+    const lyricsByProviderMedia = options.lyricsByProviderMedia ?? new Map<string, ResolvedLyrics | null>();
+    const quality = getConfigSection("quality");
+    const embeddedCoverContext: EmbeddedCoverContext = {
+      byAlbum: new Map(),
+      temporaryDirectories: [],
+    };
+
+    const applyPreferredCover = async (row: RetagTrackRow, mediaPath: string, id: number): Promise<boolean> => {
+      if (quality.embed_cover === false) return false;
+      const coverPath = await resolvePreferredEmbeddedCover(row, config, mediaPath, embeddedCoverContext);
+      if (!coverPath) return false;
+      const embedded = await embedAudioCover(mediaPath, coverPath);
+      if (!embedded) {
+        result.errors.push({ id, error: "Embedded cover write failed" });
+      }
+      return embedded;
+    };
 
     for (const id of ids) {
       const row = rowsById.get(id);
@@ -2156,29 +2239,26 @@ export class AudioTagService {
 
       const preview = await this.evaluateRow(enrichedRow, config, {
         includeExternalMetadata: options.includeExternalLyrics !== false,
+        lyricsByProviderMedia,
       });
       if (!preview.missing && preview.changes.length === 0) {
-        result.skipped++;
+        const coverUpdated = await applyPreferredCover(enrichedRow, resolvedPath, id);
+        if (coverUpdated) {
+          const stat = fs.statSync(resolvedPath);
+          pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
+          result.retagged++;
+        } else {
+          result.skipped++;
+        }
         continue;
       }
 
       const desiredTagsArr = this.buildDesiredTags(enrichedRow, config);
 
-      const quality = getConfigSection("quality");
       if (options.includeExternalLyrics !== false && quality.embed_lyrics && enrichedRow.file_provider_id) {
-        const lyrics = await getLyricsForProviderMedia(enrichedRow.file_provider_id, enrichedRow.file_provider);
-        if (lyrics) {
-          const targetValue = selectEmbeddedLyricsText(lyrics);
-          if (targetValue) {
-            desiredTagsArr.push({
-              key: "lyrics",
-              label: "Lyrics",
-              ffmpegKey: "lyrics-eng",
-              targetValue,
-              aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
-            });
-          }
-        }
+        const lyrics = await resolveLyricsForRetagRow(enrichedRow, true, lyricsByProviderMedia);
+        const lyricTag = buildEmbeddedLyricsManagedTag(lyrics);
+        if (lyricTag) desiredTagsArr.push(lyricTag);
       }
 
       const desiredTags = this.buildAudioTagWriteMap(desiredTagsArr, enrichedRow.extension);
@@ -2205,9 +2285,14 @@ export class AudioTagService {
         continue;
       }
 
+      await applyPreferredCover(enrichedRow, resolvedPath, id);
       const stat = fs.statSync(resolvedPath);
       pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
       result.retagged++;
+    }
+
+    for (const tempDir of embeddedCoverContext.temporaryDirectories) {
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort temp cleanup */ }
     }
 
     // Commit all DB updates in a single transaction
@@ -2222,7 +2307,10 @@ export class AudioTagService {
     return result;
   }
 
-  static async applyForMediaIds(mediaIds: Array<string | number>): Promise<RetagApplyResult> {
+  static async applyForMediaIds(
+    mediaIds: Array<string | number>,
+    options: RetagMediaIdOptions = {},
+  ): Promise<RetagApplyResult> {
     const uniqueMediaIds = Array.from(new Set(mediaIds.map((id) => String(id).trim()).filter(Boolean)));
     if (uniqueMediaIds.length === 0) {
       return {
@@ -2238,6 +2326,8 @@ export class AudioTagService {
     // canonical track or recording MBIDs instead, and provider_entity_type can be
     // absent on rows created before the current provider-id-only pipeline.
     const placeholders = uniqueMediaIds.map(() => "?").join(",");
+    const requestedProvider = String(options.provider || "").trim();
+    const providerClause = requestedProvider ? "AND provider = ?" : "";
     const libraryFileIds = db.prepare(`
       SELECT id
       FROM TrackFiles
@@ -2247,9 +2337,18 @@ export class AudioTagService {
           OR canonical_track_mbid IN (${placeholders})
           OR canonical_recording_mbid IN (${placeholders})
         )
-    `).all(...uniqueMediaIds, ...uniqueMediaIds, ...uniqueMediaIds) as Array<{ id: number }>;
+        ${providerClause}
+    `).all(
+      ...uniqueMediaIds,
+      ...uniqueMediaIds,
+      ...uniqueMediaIds,
+      ...(requestedProvider ? [requestedProvider] : []),
+    ) as Array<{ id: number }>;
 
-    return this.apply(libraryFileIds.map((row) => row.id), { includeExternalLyrics: false });
+    return this.apply(libraryFileIds.map((row) => row.id), {
+      includeExternalLyrics: options.includeExternalLyrics ?? false,
+      lyricsByProviderMedia: options.lyricsByProviderMedia,
+    });
   }
 
   static async applyByQuery(options: RetagScopeOptions = {}): Promise<RetagApplyResult> {

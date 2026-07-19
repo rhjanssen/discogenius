@@ -8,7 +8,8 @@ import {
   resolveMediaCoverFilePath,
   resolveAlbumArtwork,
   resolveArtistArtwork,
-  resolveVideoArtwork
+  resolveVideoArtwork,
+  isArtworkPreferenceCacheCurrent,
 } from "../services/metadata/media-cover-service.js";
 
 const router = Router();
@@ -47,7 +48,7 @@ router.get("/Albums/:albumId/:filename", async (req, res) => {
   const albumId = String(req.params.albumId || "").replace(/[^a-zA-Z0-9._-]/g, "_");
   let filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Albums", albumId), String(req.params.filename || ""));
 
-  if (!filePath) {
+  if (!filePath || !isArtworkPreferenceCacheCurrent(albumId, "Album", "Cover")) {
     try {
       await resolveAlbumArtwork({ albumMbid: albumId });
       filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Albums", albumId), String(req.params.filename || ""));
@@ -83,12 +84,14 @@ router.get("/Videos/:videoId/:filename", async (req, res) => {
 
 router.get("/:artistId/:filename", async (req, res) => {
   const artistId = String(req.params.artistId || "").replace(/[^a-zA-Z0-9._-]/g, "_");
-  let filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, artistId), String(req.params.filename || ""));
+  const filename = String(req.params.filename || "");
+  const requestedCoverType = filename.replace(/-\d+(?=\.[a-z0-9]+$)/i, "").replace(/\.[a-z0-9]+$/i, "") || "Poster";
+  let filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, artistId), filename);
 
-  if (!filePath) {
+  if (!filePath || !isArtworkPreferenceCacheCurrent(artistId, "Artist", requestedCoverType)) {
     try {
-      await resolveArtistArtwork({ artistMbid: artistId });
-      filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, artistId), String(req.params.filename || ""));
+      await resolveArtistArtwork({ artistMbid: artistId, preferredCoverTypes: requestedCoverType });
+      filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, artistId), filename);
     } catch (error) {
       console.warn(`[MediaCover Route] Failed to fetch missing artist cover on-the-fly for ${artistId}:`, error);
     }

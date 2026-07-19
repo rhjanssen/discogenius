@@ -40,6 +40,9 @@ export const VIDEO_THUMBNAIL_RESOLUTION_VALUES = [
 ] as const;
 export type VideoThumbnailResolutionValue = (typeof VIDEO_THUMBNAIL_RESOLUTION_VALUES)[number];
 
+export const ARTWORK_PREFERENCE_VALUES = ["canonical", "provider"] as const;
+export type ArtworkPreferenceValue = (typeof ARTWORK_PREFERENCE_VALUES)[number];
+
 export interface PublicAppConfigContract {
   acoustid_api_key?: string;
 }
@@ -66,6 +69,8 @@ export interface QualityConfigContract {
 }
 
 export interface MetadataConfigContract {
+  /** Preferred artwork origin; the other origin remains a fallback. */
+  artwork_preference: ArtworkPreferenceValue;
   save_album_cover: boolean;
   album_cover_name: string;
   album_cover_resolution: "origin" | number;
@@ -199,6 +204,11 @@ export function parseQualityConfigContract(value: unknown): QualityConfigContrac
 export function parseMetadataConfigContract(value: unknown): MetadataConfigContract {
   const record = expectRecord(value, "Metadata config");
   return {
+    artwork_preference: expectOptionalOneOf(
+      record.artwork_preference,
+      ARTWORK_PREFERENCE_VALUES,
+      "metadata.artwork_preference",
+    ) ?? "canonical",
     save_album_cover: expectBoolean(record.save_album_cover, "metadata.save_album_cover"),
     album_cover_name: expectString(record.album_cover_name, "metadata.album_cover_name"),
     album_cover_resolution: expectResolutionOrOrigin(record.album_cover_resolution, "metadata.album_cover_resolution"),

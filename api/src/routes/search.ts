@@ -4,6 +4,7 @@ import { db } from "../database.js";
 import {
     albumCoverLocalUrl,
     imageContainerFromImagesColumn,
+    mapArtistArtworkToLocalUrl,
     registerMediaCoverProxyUrl,
     resolveMediaCoverProxyUrl,
     videoCoverLocalUrl,
@@ -151,9 +152,14 @@ router.get("/", async (req, res) => {
                 const artistMarks = matchedArtistIds.map(() => "?").join(", ");
                 const localArtists = db
                     .prepare(
-                        `SELECT id, mbid, name, COALESCE(picture, cover_image_url) AS picture, monitored AS monitor
+                        `SELECT current_artist.id, current_artist.mbid, current_artist.name,
+                                current_artist.picture, current_artist.cover_image_url,
+                                artist_metadata.images AS canonical_images,
+                                current_artist.monitored AS monitor
                          FROM Artists current_artist
-                         WHERE CAST(id AS TEXT) IN (${artistMarks || "NULL"})
+                         LEFT JOIN ArtistMetadata artist_metadata
+                           ON artist_metadata.mbid = current_artist.mbid
+                         WHERE CAST(current_artist.id AS TEXT) IN (${artistMarks || "NULL"})
                            AND NOT EXISTS (
                              SELECT 1
                              FROM Artists canonical_artist
@@ -162,8 +168,8 @@ router.get("/", async (req, res) => {
                                AND lower(canonical_artist.name) = lower(current_artist.name)
                            )
                          ORDER BY
-                           CASE WHEN mbid IS NOT NULL THEN 0 ELSE 1 END,
-                           popularity DESC
+                           CASE WHEN current_artist.mbid IS NOT NULL THEN 0 ELSE 1 END,
+                           current_artist.popularity DESC
                          LIMIT ?`
                     )
                     .all(...matchedArtistIds, limit) as any[];
@@ -174,7 +180,14 @@ router.get("/", async (req, res) => {
                     results.artists.push(formatSearchResult({
                         id: row.id,
                         name: row.name,
-                        picture: row.picture,
+                        picture: mapArtistArtworkToLocalUrl({
+                            artistMbid: row.mbid,
+                            servarrMetadataData: imageContainerFromImagesColumn(row.canonical_images),
+                            providerCandidates: [
+                                { imageId: row.picture },
+                                { imageId: row.cover_image_url },
+                            ],
+                        }) || row.cover_image_url || row.picture,
                         monitored: !!row.monitor,
                         in_library: true,
                     }, 'artist'));

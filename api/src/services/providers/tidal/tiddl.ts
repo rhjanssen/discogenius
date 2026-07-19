@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { Config, CONFIG_DIR } from "../../config/config.js";
+import { getConfigSection, CONFIG_DIR } from "../../config/config.js";
 import { resolveTidalAuthClientConfig } from "../../config/provider-client-config.js";
 import {
     checkCommandAvailability,
@@ -170,7 +170,7 @@ export function mapAudioQualityToTiddl(quality?: string | null): TiddlTrackQuali
         return "max";
     }
 
-    return nativeTiddlTrackQuality(Config.getQualityConfig()?.audio_quality) ?? "high";
+    return nativeTiddlTrackQuality(getConfigSection('quality')?.audio_quality) ?? "high";
 }
 
 const TIDDL_TRACK_QUALITY_RANK: Record<TiddlTrackQuality, number> = {
@@ -190,7 +190,7 @@ export function capTiddlTrackQuality(requested: TiddlTrackQuality, isSpatial: bo
     if (isSpatial) {
         return requested;
     }
-    const configured = nativeTiddlTrackQuality(Config.getQualityConfig()?.audio_quality);
+    const configured = nativeTiddlTrackQuality(getConfigSection('quality')?.audio_quality);
     if (!configured) {
         return requested;
     }
@@ -209,7 +209,7 @@ export function mapVideoQualityToTiddl(quality?: string | null): TiddlVideoQuali
         return "fhd";
     }
 
-    const configured = String(Config.getQualityConfig()?.video_quality || "fhd").toLowerCase();
+    const configured = String(getConfigSection('quality')?.video_quality || "fhd").toLowerCase();
     if (configured === "sd" || configured === "hd" || configured === "fhd") {
         return configured as TiddlVideoQuality;
     }
@@ -248,10 +248,12 @@ function tomlString(value: string): string {
 export function syncTiddlSettings(): void {
     ensureTiddlConfigDir();
 
-    const quality = Config.getQualityConfig();
+    const quality = getConfigSection('quality');
+    const metadata = getConfigSection('metadata');
     const videoQuality = mapVideoQualityToTiddl(quality?.video_quality);
     const embedCover = quality?.embed_cover !== false;
-    const embedLyrics = false;
+    const embedLyrics = quality?.embed_lyrics !== false;
+    const writeLyricsFile = metadata?.save_lyrics !== false;
 
     const lines = [
         "# Managed by Discogenius. Manual edits are overwritten on settings sync.",
@@ -264,6 +266,7 @@ export function syncTiddlSettings(): void {
         "skip_existing = true",
         "threads_count = 4",
         "singles_filter = \"include\"",
+        `write_lrc_file = ${writeLyricsFile}`,
         "",
         "[metadata]",
         "enable = true",

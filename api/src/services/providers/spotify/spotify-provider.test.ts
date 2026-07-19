@@ -241,6 +241,7 @@ test("Votify backend builds a non-interactive deterministic media-id invocation"
   assert.equal(args[args.indexOf("--multi-disc-file-template") + 1], "{media_id}");
   assert.equal(args[args.indexOf("--no-album-file-template") + 1], "{media_id}");
   assert.equal(args[args.indexOf("--audio-quality") + 1], "vorbis-medium");
+  assert.equal(args.includes("--no-synced-lyrics-file"), false);
   assert.equal(args.at(-1), `https://open.spotify.com/album/${SPOTIFY_FIXTURE_IDS.album}`);
   assert.throws(() => backend.buildArgs({
     provider: "spotify", entityType: "video", providerId: "video", downloadPath: "/tmp", slot: "video",

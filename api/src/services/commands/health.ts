@@ -1,4 +1,5 @@
-import { Config, CONFIG_DIR, DB_PATH } from "../config/config.js";
+import { Config, CONFIG_DIR } from "../config/config.js";
+import { DB_PATH } from "../config/bootstrap.js";
 import { getRuntimeDiagnosticsSnapshot } from "./runtime-diagnostics.js";
 import {
   checkCommandAvailability,

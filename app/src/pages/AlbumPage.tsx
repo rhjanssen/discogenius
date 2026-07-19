@@ -675,6 +675,31 @@ function offersForSlot(
   return Array.from(deduped.values());
 }
 
+function selectedOfferExplicitForSlot(
+  availability: ReleaseGroupAvailability | null,
+  slot: SwitchableSlot,
+  fallback: { provider?: string | null; providerAlbumId?: string | null; releaseMbid?: string | null },
+): boolean | null {
+  if (!availability) {
+    return null;
+  }
+
+  const selectedReleaseMbid = availability.selectedReleaseBySlot[slot] || fallback.releaseMbid;
+  const selectedOffer = availability.selectedOfferBySlot?.[slot];
+  const provider = selectedOffer?.provider || fallback.provider;
+  const providerAlbumId = selectedOffer?.providerAlbumId || fallback.providerAlbumId;
+  if (!selectedReleaseMbid || !provider || !providerAlbumId) {
+    return null;
+  }
+
+  const release = availability.releases.find((candidate) => candidate.releaseMbid === selectedReleaseMbid);
+  const offer = release && offersForSlot(release, slot).find((candidate) => (
+    candidate.provider === provider
+    && sameProviderAlbumSelection(candidate.providerAlbumId, providerAlbumId)
+  ));
+  return offer?.explicit ?? null;
+}
+
 function sortReleasesForSwitcher(
   releases: ReleaseGroupAvailability["releases"],
   selectedReleaseBySlot: ReleaseGroupAvailability["selectedReleaseBySlot"],
@@ -923,6 +948,28 @@ const AlbumPage = () => {
   const hasStereoOffer = Boolean(album?.stereo_provider_id);
   const hasSpatialOffer = Boolean(album?.spatial_provider_id);
   const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
+  const selectedOfferExplicitBySlot = useMemo(() => ({
+    stereo: selectedOfferExplicitForSlot(releaseAvailability, "stereo", {
+      provider: album?.stereo_provider || album?.selected_provider,
+      providerAlbumId: album?.stereo_provider_id,
+      releaseMbid: album?.stereo_release_mbid || album?.selected_release_mbid,
+    }),
+    spatial: selectedOfferExplicitForSlot(releaseAvailability, "spatial", {
+      provider: album?.spatial_provider || album?.selected_provider,
+      providerAlbumId: album?.spatial_provider_id,
+      releaseMbid: album?.spatial_release_mbid || album?.selected_release_mbid,
+    }),
+  }), [
+    album?.selected_provider,
+    album?.selected_release_mbid,
+    album?.spatial_provider,
+    album?.spatial_provider_id,
+    album?.spatial_release_mbid,
+    album?.stereo_provider,
+    album?.stereo_provider_id,
+    album?.stereo_release_mbid,
+    releaseAvailability,
+  ]);
   const headerQualityBadges = useMemo(() => {
     const badges: Array<{ key: string; quality: string }> = [];
 
@@ -1479,6 +1526,7 @@ const AlbumPage = () => {
                               matchStatus: album.stereo_match_status,
                               providerAlbumId: album.stereo_provider_id,
                               selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
+                              explicit: selectedOfferExplicitBySlot.stereo,
                             }]
                           : []),
                         ...(hasSpatialOffer
@@ -1489,6 +1537,7 @@ const AlbumPage = () => {
                               matchStatus: album.spatial_match_status,
                               providerAlbumId: album.spatial_provider_id,
                               selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
+                              explicit: selectedOfferExplicitBySlot.spatial,
                             }]
                           : []),
                       ] as ProviderQualityOffer[]}
