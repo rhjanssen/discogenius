@@ -28,6 +28,20 @@ function providerWith(overrides: Partial<StreamingProvider>): StreamingProvider 
   } as StreamingProvider;
 }
 
+test("comingSoon providers are not connectable in the app", () => {
+  const provider = providerWith({
+    manifest: manifest({
+      kind: "external",
+      managedByApp: false,
+      comingSoon: true,
+      credentialFields: [{ key: "token", label: "Token", secret: true, required: true }],
+    }),
+    saveCredentials: async () => undefined,
+  });
+
+  assert.equal(providerSupportsAppAuthentication(provider), false);
+});
+
 test("credential persistence makes an external provider connectable in the app", () => {
   const provider = providerWith({
     manifest: manifest({

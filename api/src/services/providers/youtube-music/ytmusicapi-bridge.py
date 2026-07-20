@@ -85,6 +85,80 @@ def get_artist_albums(api: YTMusic, artist_id: str) -> list[dict[str, Any]]:
 # a slow or rate-limited lookup degrades gracefully instead of failing a refresh.
 VIDEO_ENRICH_LIMIT = 40
 
+# ATV→OMV counterpart lookups (UI audio/video switcher) use get_watch_playlist.
+# Cap per album so artist-wide refreshes cannot issue unbounded watch calls.
+COUNTERPART_ENRICH_LIMIT = 40
+
+
+def extract_watch_track(watch: Any, video_id: str) -> dict[str, Any] | None:
+    tracks = watch.get("tracks") if isinstance(watch, dict) else None
+    if not isinstance(tracks, list):
+        return None
+    match = next(
+        (track for track in tracks if isinstance(track, dict) and track.get("videoId") == video_id),
+        next((track for track in tracks if isinstance(track, dict)), None),
+    )
+    return match if isinstance(match, dict) else None
+
+
+def extract_counterpart(watch: Any, video_id: str) -> dict[str, Any] | None:
+    match = extract_watch_track(watch, video_id)
+    if not isinstance(match, dict):
+        return None
+    counterpart = match.get("counterpart")
+    if not isinstance(counterpart, dict):
+        return None
+    counterpart_id = str(counterpart.get("videoId") or "").strip()
+    if not counterpart_id or counterpart_id == video_id:
+        return None
+    return counterpart
+
+
+def is_official_music_video_type(video_type: Any) -> bool:
+    normalized = str(video_type or "").strip().upper()
+    if not normalized or "UGC" in normalized or "ATV" in normalized:
+        return False
+    return "OMV" in normalized or "OFFICIAL_SOURCE_MUSIC" in normalized or "MUSIC_VIDEO" in normalized
+
+
+def get_track_counterparts(api: YTMusic, video_ids: Iterable[str]) -> dict[str, Any]:
+    """Resolve ATV→OMV pairs, or mark album tracks that are already OMV.
+
+    Some YouTube Music "albums" (especially singles) publish the official music
+    video itself as the album track. Those have no separate counterpart id —
+    the watch id is already OMV. Return that as a self-OMV counterpart so the
+    TypeScript layer can persist a video offer alongside the stereo track.
+    """
+    counterparts: dict[str, Any] = {}
+    seen: set[str] = set()
+    for raw_id in video_ids:
+        video_id = str(raw_id or "").strip()
+        if not video_id or video_id in seen:
+            continue
+        seen.add(video_id)
+        if len(seen) > COUNTERPART_ENRICH_LIMIT:
+            counterparts[video_id] = None
+            continue
+        try:
+            watch = api.get_watch_playlist(videoId=video_id, limit=1)
+            counterpart = extract_counterpart(watch, video_id)
+            if counterpart is not None:
+                counterparts[video_id] = counterpart
+                continue
+            match = extract_watch_track(watch, video_id)
+            video_type = (match or {}).get("videoType")
+            if is_official_music_video_type(video_type):
+                counterparts[video_id] = {
+                    "videoId": video_id,
+                    "videoType": video_type,
+                    "kind": "yt-self-omv",
+                }
+            else:
+                counterparts[video_id] = None
+        except Exception:
+            counterparts[video_id] = None
+    return {"counterparts": counterparts}
+
 
 def enrich_videos(api: YTMusic, videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for video in videos[:VIDEO_ENRICH_LIMIT]:
@@ -265,11 +339,20 @@ def dispatch(api: YTMusic, operation: str, payload: dict[str, Any]) -> Any:
             )
             if match:
                 # Preserve player-only fields (thumbnail, exact duration) while
-                # adding watch-playlist album and artist identity.
-                return {**player, **match}
+                # adding watch-playlist album/artist identity and OMV counterpart.
+                merged = {**player, **match}
+                counterpart = extract_counterpart(watch, video_id)
+                if counterpart is not None:
+                    merged["counterpart"] = counterpart
+                return merged
         except Exception:
             pass
         return player
+    if operation == "get_track_counterparts":
+        ids = payload.get("ids")
+        if not isinstance(ids, list):
+            raise ValueError("ids must be a JSON array of video ids")
+        return get_track_counterparts(api, [str(item) for item in ids])
     if operation == "get_video":
         return api.get_song(require_text(payload, "id"))
     if operation == "get_lyrics":
@@ -285,8 +368,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=(
         "search", "get_artist", "get_artist_albums", "get_artist_videos",
-        "get_album", "get_track", "get_video", "get_lyrics", "list_import_sources",
-        "get_import_artists",
+        "get_album", "get_track", "get_track_counterparts", "get_video", "get_lyrics",
+        "list_import_sources", "get_import_artists",
     ))
     parser.add_argument("--headers")
     args = parser.parse_args()

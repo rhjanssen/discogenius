@@ -411,6 +411,28 @@ const useStyles = makeStyles({
     border: `${tokens.strokeWidthThin} solid ${tokens.colorPaletteRedBorder1}`,
     textAlign: 'left',
   },
+  inlineSuccess: {
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorPaletteGreenBackground1,
+    color: tokens.colorPaletteGreenForeground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorPaletteGreenBorder1}`,
+    textAlign: 'left',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+  },
+  inlineInfo: {
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: 'color-mix(in srgb, var(--colorNeutralBackground1) 52%, transparent)',
+    color: tokens.colorNeutralForeground2,
+    border: `${tokens.strokeWidthThin} solid color-mix(in srgb, var(--colorNeutralStroke1) 42%, transparent)`,
+    textAlign: 'left',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+  },
   tidalButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
     color: tokens.colorNeutralForeground1,
@@ -467,6 +489,12 @@ const getAppleCredentialValidationError = (
   return null;
 };
 
+type AuthNotice = {
+  tone: "success" | "error" | "info";
+  title: string;
+  description?: string;
+};
+
 const Auth = () => {
   const styles = useStyles();
   const queryClient = useQueryClient();
@@ -481,6 +509,7 @@ const Auth = () => {
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [credentialValues, setCredentialValues] = useState<Record<string, string>>({});
   const [credentialError, setCredentialError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<AuthNotice | null>(null);
   const [appleMediaUserToken, setAppleMediaUserToken] = useState("");
   const [appleWrapperAppleId, setAppleWrapperAppleId] = useState("");
   const [appleWrapperApplePassword, setAppleWrapperApplePassword] = useState("");
@@ -715,11 +744,17 @@ const Auth = () => {
 
   const connectTidal = async () => {
     if (authStatus && !authStatus.canAuthenticate) {
-      toast({
+      setAuthNotice({
+        tone: "info",
         title: "Live login disabled",
         description: authStatus.message || "Provider auth bypass mode is active.",
       });
-      if (authStatus.canAccessShell) {
+      toast({
+        title: "Live login disabled",
+        description: authStatus.message || "Provider auth bypass mode is active.",
+        variant: "destructive",
+      });
+      if (authStatus.canAccessShell && !isAddingProvider) {
         navigateAfterAuth();
       }
       return;
@@ -758,12 +793,16 @@ const Auth = () => {
         }
         const status = await api.getAuthStatus();
         setAuthStatus(status);
-        toast({
-          title: "Already Connected!",
+        refreshProviderAuthStatusCache(status);
+        void loadStreamingProviders();
+        setAuthNotice({
+          tone: "success",
+          title: "TIDAL already connected",
           description: "You are already logged in to TIDAL.",
         });
-        refreshProviderAuthStatusCache(status);
-        navigateAfterAuth();
+        if (!isAddingProvider) {
+          navigateAfterAuth();
+        }
         return;
       }
 
@@ -802,6 +841,11 @@ const Auth = () => {
           setConnecting(false);
           setUserCode(null);
           setVerificationUrl(null);
+          setAuthNotice({
+            tone: "error",
+            title: "Authorization expired",
+            description: "Please try connecting again.",
+          });
           toast({
             title: "Authorization Expired",
             description: "Please try connecting again",
@@ -828,12 +872,16 @@ const Auth = () => {
             setVerificationUrl(null);
             const status = await api.getAuthStatus();
             setAuthStatus(status);
-            toast({
-              title: "Connected!",
-              description: `Welcome ${authData.user?.username || 'user'}!`,
-            });
             refreshProviderAuthStatusCache(status);
-            navigateAfterAuth();
+            void loadStreamingProviders();
+            setAuthNotice({
+              tone: "success",
+              title: "TIDAL connected",
+              description: `Welcome ${authData.user?.username || "user"}!`,
+            });
+            if (!isAddingProvider) {
+              navigateAfterAuth();
+            }
           } else {
             // Continue polling
             devicePollTimeoutRef.current = setTimeout(() => {
@@ -867,6 +915,11 @@ const Auth = () => {
       setConnecting(false);
       setUserCode(null);
       setVerificationUrl(null);
+      setAuthNotice({
+        tone: "error",
+        title: "TIDAL connection failed",
+        description: error.message || "Could not start TIDAL authorization.",
+      });
       toast({
         title: "Connection Failed",
         description: error.message,
@@ -889,18 +942,29 @@ const Auth = () => {
         if (data.status === "success") {
           clearInterval(wrapperPollRef.current!);
           wrapperPollRef.current = null;
-          toast({
-            title: "Wrapper Authenticated",
-            description: "Decryption wrapper is ready.",
+          setAuthNotice({
+            tone: "success",
+            title: "Apple Music wrapper authenticated",
+            description: data.message || "Decryption wrapper is ready for lossless and Atmos downloads.",
           });
+          void loadStreamingProviders();
           setTimeout(() => {
             setWrapperLoginActive(false);
-            navigateAfterAuth();
-          }, 2000);
+            setManualProvider(null);
+            if (!isAddingProvider) {
+              navigateAfterAuth();
+            }
+          }, 1500);
         } else if (data.status === "failed") {
           clearInterval(wrapperPollRef.current!);
           wrapperPollRef.current = null;
           setWrapperLoginActive(false);
+          setAuthNotice({
+            tone: "error",
+            title: "Apple wrapper login failed",
+            description: data.message || "Could not authenticate the decryption wrapper.",
+          });
+          setCredentialError(data.message || "Could not authenticate the decryption wrapper.");
           toast({
             title: "Wrapper Login Failed",
             description: data.message,
@@ -947,6 +1011,7 @@ const Auth = () => {
 
   const openCredentialProvider = (provider: StreamingProviderStatus) => {
     setCredentialError(null);
+    setAuthNotice(null);
     setCredentialValues(Object.fromEntries(
       (provider.manifest?.auth.credentialFields ?? []).map((field) => [field.key, ""]),
     ));
@@ -961,6 +1026,7 @@ const Auth = () => {
     if (missing.length > 0) {
       const message = `Enter ${missing.map((field) => field.label).join(", ")} before connecting.`;
       setCredentialError(message);
+      setAuthNotice({ tone: "error", title: "Missing credentials", description: message });
       return;
     }
 
@@ -971,25 +1037,53 @@ const Auth = () => {
         fields.map((field) => [field.key, credentialValues[field.key]?.trim() ?? ""]),
       );
       const result = await api.saveProviderCredentials(selectedProvider.id, credentials);
+      const connected = Boolean(result.status?.connected);
       setStreamingProviders((providers) => providers.map((provider) => (
         provider.id === selectedProvider.id
-          ? { ...provider, authenticated: Boolean(result.status.connected) }
+          ? { ...provider, authenticated: connected }
           : provider
       )));
 
-      const aggregateStatus = await api.getAuthStatus().catch(() => result.status);
-      setAuthStatus(aggregateStatus);
-      refreshProviderAuthStatusCache(aggregateStatus);
-      toast({
-        title: `${selectedProvider.name} ${result.status.connected ? "connected" : "credentials saved"}`,
-        description: result.status.message || "Provider credentials were saved successfully.",
-      });
+      const aggregateStatus = await api.getAuthStatus().catch(() => null);
+      if (aggregateStatus) {
+        setAuthStatus(aggregateStatus);
+        refreshProviderAuthStatusCache(aggregateStatus);
+      }
+      void loadStreamingProviders();
+
+      const notice: AuthNotice = connected
+        ? {
+            tone: "success",
+            title: `${selectedProvider.name} connected`,
+            description: result.status?.message || "Credentials were saved and this provider is ready to use.",
+          }
+        : {
+            tone: "error",
+            title: `${selectedProvider.name} credentials were not accepted`,
+            description: result.status?.message || "Credentials were saved, but the provider is still not connected. Check the values and try again.",
+          };
+
+      setAuthNotice(notice);
+      if (!connected) {
+        setCredentialError(notice.description || notice.title);
+        toast({
+          title: notice.title,
+          description: notice.description,
+          variant: "destructive",
+        });
+        return;
+      }
+
       setCredentialValues({});
       setManualProvider(null);
-      void loadStreamingProviders();
     } catch (error: any) {
       const message = error?.message || `Could not save ${selectedProvider.name} credentials.`;
       setCredentialError(message);
+      setAuthNotice({
+        tone: "error",
+        title: `${selectedProvider.name} connection failed`,
+        description: message,
+      });
       toast({
         title: `${selectedProvider.name} connection failed`,
         description: message,
@@ -1043,16 +1137,28 @@ const Auth = () => {
         setWrapperStatus({ status: "logging_in", message: "Login request sent to the decryption wrapper..." });
         startWrapperPolling();
       } else {
-        toast({
+        setAuthNotice({
+          tone: "success",
           title: mediaUserToken ? "Apple Music connected" : "Apple Music already connected",
           description: "Catalog access and import sources are available.",
         });
-        navigateAfterAuth();
+        setManualProvider(null);
+        void loadStreamingProviders();
+        if (!isAddingProvider) {
+          navigateAfterAuth();
+        }
       }
     } catch (error: any) {
+      const message = error?.message || "Could not save Apple Music credentials.";
+      setCredentialError(message);
+      setAuthNotice({
+        tone: "error",
+        title: "Apple Music connection failed",
+        description: message,
+      });
       toast({
         title: "Apple Music connection failed",
-        description: error?.message || "Could not save Apple Music credentials.",
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -1061,6 +1167,7 @@ const Auth = () => {
   };
 
   const selectProvider = (provider: StreamingProviderStatus) => {
+    setAuthNotice(null);
     if (provider.id === "tidal") {
       void connectTidal();
       return;
@@ -1074,18 +1181,38 @@ const Auth = () => {
       openCredentialProvider(provider);
       return;
     }
-    toast({
+    setAuthNotice({
+      tone: "error",
       title: `${provider.name} cannot be connected here`,
       description: "This provider does not expose an app-managed connection method.",
     });
   };
 
   const selectedCredentialFields = selectedProvider?.manifest?.auth.credentialFields ?? [];
+  const selectedSetupInstructions = selectedProvider?.manifest?.auth.setupInstructions ?? [];
+  const selectedSetupIntro = selectedProvider?.manifest?.auth.setupIntro?.trim() || null;
   const selectedSetupNotes = [...new Set(
     (selectedProvider?.manifest?.downloadBackends ?? []).flatMap((backend) => (
       backend.setupNote ? [backend.setupNote] : []
     )),
   )];
+
+  const authNoticeClassName = authNotice?.tone === "success"
+    ? styles.inlineSuccess
+    : authNotice?.tone === "error"
+      ? styles.inlineError
+      : styles.inlineInfo;
+
+  const authNoticeBanner = authNotice ? (
+    <div
+      className={authNoticeClassName}
+      role={authNotice.tone === "error" ? "alert" : "status"}
+      data-testid="provider-auth-notice"
+    >
+      <Text weight="semibold" size={200}>{authNotice.title}</Text>
+      {authNotice.description ? <Text size={200}>{authNotice.description}</Text> : null}
+    </div>
+  ) : null;
 
   return (
     <>
@@ -1295,9 +1422,23 @@ const Auth = () => {
                           </Badge>
                         </div>
                         <Body1 className={styles.stateBody}>
-                          Enter the provider credentials below. Secret values stay masked and are stored in the provider&apos;s own configuration directory.
+                          {selectedSetupIntro
+                            ?? (selectedSetupInstructions.length > 0
+                              ? "Follow the steps below, then fill in the credential fields. Secret values stay masked and are stored only in this provider's config directory."
+                              : "Enter the provider credentials below. Secret values stay masked and are stored in the provider's own configuration directory.")}
                         </Body1>
                       </div>
+
+                      {selectedSetupInstructions.length > 0 ? (
+                        <div className={styles.manualTokenInstructions}>
+                          <Text weight="semibold">How to get these credentials</Text>
+                          <ol className={styles.manualTokenList}>
+                            {selectedSetupInstructions.map((step) => (
+                              <li key={step}>{step}</li>
+                            ))}
+                          </ol>
+                        </div>
+                      ) : null}
 
                       {selectedSetupNotes.length > 0 ? (
                         <div className={styles.setupNotes}>
@@ -1381,6 +1522,8 @@ const Auth = () => {
                         </Body1>
                       </div>
 
+                      {authNoticeBanner}
+
                       <div className={styles.providerButtonList}>
                         {providersLoading ? (
                           <div className={styles.waitingText}>
@@ -1420,7 +1563,7 @@ const Auth = () => {
                               ) : provider.management.canAuthenticate ? (
                                 <ArrowRight24Regular />
                               ) : (
-                                <span className={styles.providerSoonTag}>Unavailable</span>
+                                <span className={styles.providerSoonTag}>Soon</span>
                               )}
                             </div>
                           </Button>

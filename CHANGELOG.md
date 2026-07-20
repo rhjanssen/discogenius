@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [2.4.0] - Unreleased
+## [2.4.0] - 2026-07-20
 
 ### Added
 - Amazon Music provider plugin: catalog, availability, artwork, lyrics when the
@@ -10,12 +10,15 @@ All notable changes to this project are documented in this file.
   mapping, and a non-interactive `amazon-music==1.7.7` download bridge. Amazon's
   official Web API is still closed beta, so this integration explicitly uses
   an unofficial external API/token and supports an alternate compatible API
-  base URL.
+  base URL. **Auth lists Amazon as Soon for 2.4.0** while the hosted token API
+  (`amz.dezalty.com`) is unreliable; the plugin remains in-tree for re-enable.
 - Spotify provider plugin: official Web API catalog/search via client
   credentials, artwork and Spotify-supplied previews, plus an optional
   `votify[librespot]==1.9.9` cookie-backed lossy-stereo downloader. Lossless,
   spatial audio, and video are not advertised, and operators remain
-  responsible for complying with Spotify's terms.
+  responsible for complying with Spotify's terms. **Auth lists Spotify as Soon
+  for 2.4.0** until connection is simpler than a Developer app; plugin code
+  stays in-tree.
 - YouTube / YouTube Music provider plugin: public catalog, artist releases,
   videos, synchronized lyrics, and lossy audio/video downloads through
   `ytmusicapi` + `yt-dlp`.
@@ -27,7 +30,9 @@ All notable changes to this project are documented in this file.
   supplies a Deezer ARL cookie.
 - Provider authentication is manifest-driven: the Auth UI renders each
   plugin's declared credential fields and help text while retaining TIDAL's
-  device login and Apple Music's wrapper login/2FA workflow.
+  device login and Apple Music's wrapper login/2FA workflow. Providers may set
+  `auth.comingSoon` to stay visible in Auth as Soon without accepting
+  credentials (Amazon Music and Spotify use this for 2.4.0).
 - The Docker image bundles each third-party provider runtime in an isolated,
   pinned virtual environment (`ytmusicapi`/`yt-dlp`, Streamrip,
   `amazon-music`, and Votify) so conflicting Python dependencies cannot change
@@ -44,6 +49,13 @@ All notable changes to this project are documented in this file.
   and import as first-class videos: they map onto the release's canonical
   video tracks, land in the video library with video naming, and register a
   provider video offer on the same recording standalone uploads dedupe to.
+- YouTube Music ATV→OMV counterparts: album-track refresh resolves the UI
+  audio/video switcher via `get_watch_playlist`, persists the OMV as an
+  album-scoped video offer (plus a video-slot track offer when the OMV id
+  differs), and writes `provider_video_for` to the matched audio recording so
+  download offers and inline video layout can sit beside the album track.
+  Album tracks that are already official music videos (self-OMV, no separate
+  counterpart id) also get a video offer without overwriting the stereo row.
 - Provider-plugin boundary hardening: generic downloader-login auth routes,
   provider-neutral import decision types, default-provider fallbacks instead
   of hardcoded TIDAL, and removal of dead TIDAL quality tables from core.
@@ -53,6 +65,78 @@ All notable changes to this project are documented in this file.
   are never persisted by Discogenius; the 2FA code is submitted from the same
   page. Discogenius provisions the sidecar's supervisor entrypoint at boot, so
   fresh headless deployments work without the repo checked out.
+- Docker Compose no longer uses an `apple-music` profile: `apple-music-wrapper`
+  is a normal service in `docker-compose.yml` / `docker-compose.example.yml`
+  with comments explaining how to delete the block if Apple Music downloads
+  are not needed. `docker compose up -d` starts the full stack.
+- Fresh databases create schema **v38** in one plain-`CREATE` pass (no
+  `IF NOT EXISTS` ensure* path on empty DBs). Existing v38 databases open
+  without re-running upgrade repairs; v38 is the floor for forward migrations
+  after 2.4.0. Adds indexes for artist-scoped ProviderItems slot filters and
+  ArtistMetadata name lookup.
+
+### Fixed
+- Artist bios and album reviews now prefer streaming-provider editorial text
+  in Settings provider order (`provider_priority`): the first authenticated
+  provider that returns a non-empty bio/review wins. MusicBrainz artists no
+  longer skip provider biography lookup; Apple Music `editorialNotes` are
+  wired as bio/review sources alongside TIDAL. Album pages read stored
+  `Albums.review_text` first and fall back to a priority walk of matched
+  offers (then Servarr overview). Servarr overview remains hole-fill only and
+  no longer overwrites an existing provider bio.
+- Catalog refresh no longer freezes already-hydrated MusicBrainz release groups:
+  artist refresh re-reconciles every scoped album (content_hash still skips
+  unchanged payloads), album page load always re-syncs, and stub/video sync no
+  longer early-returns just because rows already exist. Local MusicBrainz now
+  also loads release labels/url-rels and release-group genres/links/aliases/
+  ratings into curated SQLite columns, and recording ISRCs / video flags
+  (including MusicBrainz video sync) persist on reconcile.
+- Retag and album NFO writers now embed catalog genre/label alongside existing
+  barcode (UPC) and ISRC: audio tags get GENRE / LABEL (Kodi/Picard/Jellyfin
+  primary path), album.nfo gets Kodi `<genre>` / `<label>`, keeps Discogenius
+  `<upc>`, and writes track-level `<isrc>` only inside `<track>` children (not
+  album-root; Kodi has no album ISRC and Jellyfin/Kodi music libraries rely on
+  embedded tags for identifiers consumers actually read).
+- Retag writes a plain `RELEASECOUNTRY` (not a JSON array string), embeds
+  `INITIALKEY` from provider musical key when present, and skips ReplayGain
+  placeholders (`+0.00 dB`, peak `0.0` / `1.0`).
+- Servarr metadata refresh preserves release barcodes with `COALESCE` (same
+  pattern as recording ISRCs) so a later Servarr pass cannot wipe UPC filled by
+  MusicBrainz-local mode.
+- Hybrid album quality badges use the majority track quality in a composite
+  stitch (ties break higher), so a few hi-res festival tracks no longer make a
+  mostly-lossless album advertise Max.
+- Settings: provider capability dialogs show badges only (tooltips keep the
+  detail); settings rows use balanced Fluent-style vertical padding; copy is
+  shorter and less technical across catalog, quality, monitoring, metadata,
+  and naming.
+- Queue/Activity: hide album tracklists until download/import is actually
+  running; ignore stale client progress on requeued jobs; filter progress-tick
+  SSE noise on the Active feed (stops completed-item flicker). Hybrid track
+  jobs carry disc/track numbers into the queue UI.
+- Downloads: up to two concurrent downloads when providers differ
+  (`DISCOGENIUS_MAX_CONCURRENT_DOWNLOADS`, default 2). Organize refuses a silent
+  TIDAL default when `provider` is missing (looks up ProviderItems instead) —
+  fixes Apple Music videos named/tagged as TIDAL / Unknown Video. Hybrid album
+  organize falls back when `release_mbid` does not match the source edition.
+  Embedded cover preference uses the canonical release group (not the foreign
+  source album). Lyrics sidecars are written whenever lyrics are embedded so
+  retag does not false-positive. Failed imports clean staging folders; rename/
+  retag settings scan up to 1000 files with an explicit Scan library action.
+  Album folder naming templates can include `{Provider Name}` after the release
+  year; organize now passes the provider into the naming renderer. Command
+  workers re-read Settings from SQLite on every job so curation/naming changes
+  (e.g. `include_videos`) apply without a container restart. Video offer upserts
+  no longer wipe a known title with a null/empty refresh payload; video organize
+  and seed prefer mapped provider titles over raw catalog payloads (fixes YouTube
+  `videoDetails.title` → `Unknown Video`). Video `computeExpectedPath` receives
+  `provider`/`provider_id` so filenames stop defaulting to `{TIDAL-…}`. Stereo↔
+  spatial lyric sharing works across distinct recording MBIDs. Slot repair without
+  tracklists prefers offers matched to the representative release.
+- Video detail/list titles prefer a real ProviderItems title when the recording
+  row is still `Unknown Video`. Settings release-type checklists use compact
+  Fluent checkbox rows (two columns on wide cards).
+- Apple Music progress no longer sticks at 50% for single-file downloads.
 
 ### Fixed (Apple Music downloads)
 - One Apple catalog album can now fill both stereo and spatial slots: Atmos
@@ -60,6 +144,16 @@ All notable changes to this project are documented in this file.
   lossless/hi-res and Dolby Atmos traits remain attached to the stored offers.
   Track downloads compose `--song` with the selected slot's `--atmos`, `--aac`,
   or hi-res ALAC arguments instead of dropping the quality choice.
+- Strict hybrid matching: multi-album provider stitches require catalog ISRC on
+  every track (no title/duration-only hybrids; Servarr mode without ISRCs forms
+  none), drop the previous 4-album cap, and rank complete covers of the same
+  MusicBrainz release by quality with hybrid and direct offers treated equally
+  so TIDAL MAX beats Apple HIGH. Hybrid quality badges use the majority album
+  quality in the stitch (ties break higher). Hybrid explicit badges aggregate member
+  albums (any explicit → E). Apple browser preview remains 30-second
+  catalog clips only — full-song Apple streams are FairPlay DRM and not available
+  as a TIDAL-like third-party progressive preview. Dolby Atmos from Apple and
+  TIDAL remain equally scored; equal-coverage ties use provider preference order.
 - Album-bundled Apple videos whose downloader filenames contain a track number
   and title instead of an Apple resource id are matched deterministically to
   same-provider album VIDEO rows by position/title. Ambiguous files remain in
@@ -102,8 +196,10 @@ All notable changes to this project are documented in this file.
 - The video page lists every provider offer for the video as selectable chips
   (provider mark, quality, tooltip with a link to the provider's public video
   page); the selection drives both preview playback and download.
-- Videos that appear on an album (e.g. Apple Music bundled music videos) link
-  to that album from the video page.
+- Videos that appear on an album (e.g. Apple Music bundled music videos) show a
+  queue-style "Appears on" row (cover + title, plus disc/track position when the
+  video sits on a release tracklist). Clicking opens the album and scrolls to
+  that track when a MusicBrainz track id is known.
 
 ### Changed
 - Library track rows now use one shared Fluent grid with fixed Provider,
@@ -141,7 +237,8 @@ All notable changes to this project are documented in this file.
 - Dual-capability Apple/Amazon albums (stereo + Atmos on one album id) now
   advertise a spatial offer in the release switcher from stored quality tags,
   and album refresh preserves those tags instead of wiping them.
-- Fresh installs default Spatial audio and Music Videos on; Settings exposes
+- Fresh installs default Spatial audio and Music Videos off, with Ultra HD as
+  the default video quality target; Settings exposes
   preferred artwork source (canonical vs streaming service) and embed-video-
   thumbnail. Queue status icons are smaller; Activity icons are consistently
   larger; library video list columns share one grid alignment.

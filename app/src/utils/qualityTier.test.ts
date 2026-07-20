@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { isVideoResolutionQuality, qualityDescription, stereoQualityTier, videoResolutionLabel } from "./qualityTier";
+import {
+  isUnknownQualityTag,
+  isVideoResolutionQuality,
+  qualityDescription,
+  stereoQualityTier,
+  videoCapabilityLabel,
+  videoQualityTier,
+  videoResolutionLabel,
+  videoTierFromMaxHeight,
+} from "./qualityTier";
 
 describe("stereoQualityTier", () => {
   it("maps hi-res lossless variants to MAX", () => {
@@ -44,17 +53,49 @@ describe("video resolution helpers", () => {
     expect(isVideoResolutionQuality("MP4_1080P")).toBe(true);
     expect(isVideoResolutionQuality("2160P")).toBe(true);
     expect(isVideoResolutionQuality("720p")).toBe(true);
+    expect(isVideoResolutionQuality("480p")).toBe(true);
     expect(isVideoResolutionQuality("FHD")).toBe(true);
     expect(isVideoResolutionQuality("4K")).toBe(true);
+    expect(isVideoResolutionQuality("UHD")).toBe(true);
+    expect(isVideoResolutionQuality("SD")).toBe(true);
     expect(isVideoResolutionQuality("LOSSLESS")).toBe(false);
     expect(isVideoResolutionQuality("DOLBY_ATMOS")).toBe(false);
+    expect(isVideoResolutionQuality("SOURCE")).toBe(false);
   });
 
-  it("labels resolutions without the MP4_ prefix", () => {
-    expect(videoResolutionLabel("MP4_1080P")).toBe("1080p");
-    expect(videoResolutionLabel("2160P")).toBe("2160p");
-    expect(videoResolutionLabel("FHD")).toBe("1080p");
-    expect(videoResolutionLabel("4K")).toBe("2160p");
+  it("maps resolutions onto SD / HD / FHD / UHD badge labels", () => {
+    expect(videoQualityTier("MP4_1080P")).toBe("FHD");
+    expect(videoQualityTier("2160P")).toBe("UHD");
+    expect(videoQualityTier("720p")).toBe("HD");
+    expect(videoQualityTier("480p")).toBe("SD");
+    expect(videoQualityTier("MP4_360P")).toBe("SD");
+    expect(videoQualityTier("FHD")).toBe("FHD");
+    expect(videoQualityTier("4K")).toBe("UHD");
+    expect(videoQualityTier("SD")).toBe("SD");
+    expect(videoResolutionLabel("MP4_1080P")).toBe("FHD");
+    expect(videoResolutionLabel("2160P")).toBe("UHD");
+    expect(videoResolutionLabel("FHD")).toBe("FHD");
+    expect(videoResolutionLabel("4K")).toBe("UHD");
+    expect(videoResolutionLabel("480p")).toBe("SD");
+  });
+
+  it("treats SOURCE as unknown, not a stereo NORMAL stand-in", () => {
+    expect(isUnknownQualityTag("SOURCE")).toBe(true);
+    expect(videoQualityTier("SOURCE")).toBeNull();
+    expect(isVideoResolutionQuality("SOURCE")).toBe(false);
+    expect(qualityDescription("SOURCE")).toMatch(/unknown/i);
+  });
+
+  it("derives capability copy from max height", () => {
+    expect(videoTierFromMaxHeight(2160)).toBe("UHD");
+    expect(videoTierFromMaxHeight(1080)).toBe("FHD");
+    expect(videoTierFromMaxHeight(720)).toBe("HD");
+    expect(videoTierFromMaxHeight(480)).toBe("SD");
+    expect(videoTierFromMaxHeight(360)).toBe("SD");
+    expect(videoCapabilityLabel(2160)).toBe("Up to UHD (2160p)");
+    expect(videoCapabilityLabel(1080)).toBe("Up to FHD (1080p)");
+    expect(videoCapabilityLabel(480)).toBe("Up to SD (480p)");
+    expect(videoCapabilityLabel(null)).toBe("Not available");
   });
 });
 
@@ -68,6 +109,6 @@ describe("qualityDescription", () => {
 
   it("describes spatial and video qualities distinctly", () => {
     expect(qualityDescription("DOLBY_ATMOS")).toMatch(/Atmos/);
-    expect(qualityDescription("MP4_1080P")).toMatch(/Video/);
+    expect(qualityDescription("MP4_1080P")).toMatch(/FHD|1080/);
   });
 });

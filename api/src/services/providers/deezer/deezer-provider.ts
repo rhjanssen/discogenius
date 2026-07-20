@@ -223,7 +223,9 @@ export class DeezerProvider implements StreamingProvider {
     artwork: true,
     editorialMetadata: false,
     providerIds: true,
-    stereoQuality: "MP3 up to 320 kbps or 16-bit FLAC",
+    stereoQuality: "Up to HIGH (16-bit FLAC) or NORMAL (MP3 320)",
+    spatialQuality: "Not available",
+    videoQuality: "Not available",
   };
   readonly qualityMapping = deezerQualityMapping;
 

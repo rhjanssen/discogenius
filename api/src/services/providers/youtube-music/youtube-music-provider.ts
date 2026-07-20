@@ -148,28 +148,36 @@ export class YouTubeMusicProvider implements StreamingProvider {
     id: this.id,
     displayName: this.name,
     configRoot: "providers/youtube-music",
-    auth: {
-      kind: "external",
-      managedByApp: false,
-      credentialFields: [
-        {
-          key: "headersJson",
-          label: "YouTube Music browser headers",
-          secret: true,
-          multiline: true,
-          required: false,
-          helpText: "JSON request headers exported from an authenticated music.youtube.com browser request.",
-        },
-        {
-          key: "cookies",
-          label: "YouTube cookies",
-          secret: true,
-          multiline: true,
-          required: false,
-          helpText: "Netscape cookies.txt content or a raw Cookie header for yt-dlp and authenticated library access.",
-        },
-      ],
-    },
+  auth: {
+    kind: "external",
+    managedByApp: false,
+    setupIntro:
+      "Follow the steps below, then paste the DevTools exports. Secret values stay masked and are stored only in this provider's config directory.",
+    setupInstructions: [
+      "Open https://music.youtube.com while signed in, then open DevTools → Network and reload Library.",
+      "Find a request whose URL contains youtubei/v1/browse (or another youtubei call).",
+      "Right-click it → Copy → Copy as Node.js fetch and paste the whole snippet into Browser headers. Discogenius keeps Authorization, Cookie (if present), and the other auth headers it needs.",
+      "Chrome often omits Cookie from that paste and only sets credentials: \"include\". If there is no cookie line in the headers object, also export cookies with the \"Get cookies.txt LOCALLY\" extension for youtube.com / music.youtube.com and paste that into YouTube cookies — that file is what fills Cookie for ytmusicapi and yt-dlp.",
+    ],
+    credentialFields: [
+      {
+        key: "headersJson",
+        label: "Browser headers (Copy as Node.js fetch)",
+        secret: true,
+        multiline: true,
+        required: false,
+        helpText: "Paste the full fetch(...) snippet. Do not paste the Response JSON.",
+      },
+      {
+        key: "cookies",
+        label: "YouTube cookies (cookies.txt)",
+        secret: true,
+        multiline: true,
+        required: false,
+        helpText: "Required when the fetch paste has no cookie header (common with credentials: \"include\"). Use \"Get cookies.txt LOCALLY\".",
+      },
+    ],
+  },
     integration: {
       catalogSource: "unofficial-api",
       downloadSource: "native-cli",
@@ -203,9 +211,9 @@ export class YouTubeMusicProvider implements StreamingProvider {
     artwork: true,
     editorialMetadata: false,
     providerIds: true,
-    stereoQuality: "Lossy Opus/AAC (best available)",
+    stereoQuality: "Up to LOW (lossy Opus/AAC)",
     spatialQuality: "Not available",
-    videoQuality: "Up to source resolution",
+    videoQuality: "Up to UHD (2160p)",
     maxVideoResolution: 2160,
   };
   readonly qualityMapping = youtubeMusicQualityMapping;

@@ -22,10 +22,6 @@ import {
   MoreHorizontal24Regular as MoreHorizontal24RegularBase,
   Play24Regular as Play24RegularBase,
   Pause24Regular as Pause24RegularBase,
-  MusicNote224Regular as MusicNote224RegularBase,
-  Person24Regular as Person24RegularBase,
-  Album24Regular as Album24RegularBase,
-  Video24Regular as Video24RegularBase,
   FolderSearch24Regular as FolderSearch24RegularBase,
   Filter24Regular as Filter24RegularBase,
   ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
@@ -79,10 +75,6 @@ const ChevronDownRegular = bundleIcon(ChevronDownFilled, ChevronDownRegularBase)
 const MoreHorizontal24Regular = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24RegularBase);
 const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
 const Pause24Regular = bundleIcon(Pause24Filled, Pause24RegularBase);
-const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
-const Person24Regular = bundleIcon(Person24Filled, Person24RegularBase);
-const Album24Regular = bundleIcon(Album24Filled, Album24RegularBase);
-const Video24Regular = bundleIcon(Video24Filled, Video24RegularBase);
 const FolderSearch24Regular = bundleIcon(FolderSearch24Filled, FolderSearch24RegularBase);
 const Filter24Regular = bundleIcon(Filter24Filled, Filter24RegularBase);
 const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
@@ -501,28 +493,28 @@ const Dashboard = () => {
         {
             key: 'artists',
             label: 'Artists',
-            icon: <span className={`${styles.statIconSlot} ${styles.statIconArtists}`}><Person24Regular className={styles.statIcon} /></span>,
+            icon: <span className={`${styles.statIconSlot} ${styles.statIconArtists}`}><Person24Filled className={styles.statIcon} /></span>,
             value: formatCompactNumber(libraryStats?.artists?.downloaded),
             detail: `${formatCompactNumber(libraryStats?.artists?.monitored)} monitored • ${formatCompactNumber(libraryStats?.artists?.total)} in database`,
         },
         {
             key: 'albums',
             label: 'Albums',
-            icon: <span className={`${styles.statIconSlot} ${styles.statIconAlbums}`}><Album24Regular className={styles.statIcon} /></span>,
+            icon: <span className={`${styles.statIconSlot} ${styles.statIconAlbums}`}><Album24Filled className={styles.statIcon} /></span>,
             value: formatCompactNumber(libraryStats?.albums?.downloaded),
             detail: `${formatCompactNumber(libraryStats?.albums?.monitored)} monitored • ${formatCompactNumber(libraryStats?.albums?.total)} in database`,
         },
         {
             key: 'tracks',
             label: 'Tracks',
-            icon: <span className={`${styles.statIconSlot} ${styles.statIconTracks}`}><MusicNote224Regular className={styles.statIcon} /></span>,
+            icon: <span className={`${styles.statIconSlot} ${styles.statIconTracks}`}><MusicNote224Filled className={styles.statIcon} /></span>,
             value: formatCompactNumber(libraryStats?.tracks?.downloaded),
             detail: `${formatCompactNumber(libraryStats?.tracks?.monitored)} monitored • ${formatCompactNumber(libraryStats?.tracks?.total)} in database`,
         },
         {
             key: 'videos',
             label: 'Videos',
-            icon: <span className={`${styles.statIconSlot} ${styles.statIconVideos}`}><Video24Regular className={styles.statIcon} /></span>,
+            icon: <span className={`${styles.statIconSlot} ${styles.statIconVideos}`}><Video24Filled className={styles.statIcon} /></span>,
             value: formatCompactNumber(libraryStats?.videos?.downloaded),
             detail: `${formatCompactNumber(libraryStats?.videos?.monitored)} monitored • ${formatCompactNumber(libraryStats?.videos?.total)} in database`,
         },

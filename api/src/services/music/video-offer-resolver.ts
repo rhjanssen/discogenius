@@ -63,31 +63,70 @@ export function resolveVideoOfferForProvider(provider: string, recordingRef: str
           AND (CAST(recording_id AS TEXT) = ? OR recording_mbid = ?)
           AND (availability IS NULL
                OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
-        ORDER BY CAST(provider_id AS TEXT)
-        LIMIT 1
-    `).get(String(provider), key, key) as {
+    `).all(String(provider), key, key) as Array<{
         provider: string;
         provider_id: string;
         quality: string | null;
         recording_id: string | null;
         recording_mbid: string | null;
-    } | undefined;
-    if (!row) {
+    }>;
+    if (row.length === 0) {
         return null;
     }
+    row.sort((a, b) => compareVideoOffersByQualityThenProvider(
+        { provider: a.provider, quality: a.quality, provider_id: a.provider_id },
+        { provider: b.provider, quality: b.quality, provider_id: b.provider_id },
+    ));
     return {
-        provider: row.provider,
-        providerId: row.provider_id,
-        quality: row.quality ?? null,
-        recordingId: row.recording_id ?? null,
-        recordingMbid: row.recording_mbid ?? null,
+        provider: row[0].provider,
+        providerId: row[0].provider_id,
+        quality: row[0].quality ?? null,
+        recordingId: row[0].recording_id ?? null,
+        recordingMbid: row[0].recording_mbid ?? null,
     };
+}
+
+/**
+ * Prefer higher video resolution first, then the user's provider priority.
+ * Ranks align with UI badge tiers: UHD (2160) > FHD (1080) > HD (720) > SD (480).
+ * Unknown placeholders such as SOURCE rank as 0 (never as a stereo NORMAL stand-in).
+ */
+export function videoOfferQualityRank(quality: string | null | undefined): number {
+    const normalized = String(quality || "").trim().toUpperCase().replace(/-/g, "_");
+    if (!normalized || normalized === "SOURCE" || normalized === "UNKNOWN") return 0;
+    if (normalized.includes("4K") || normalized.includes("2160") || normalized === "UHD") return 5;
+    if (normalized.includes("1440") || normalized.includes("QHD")) return 4;
+    if (normalized.includes("1080") || normalized === "FHD") return 3;
+    if (normalized.includes("720") || normalized === "HD") return 2;
+    if (
+        normalized.includes("480")
+        || normalized.includes("360")
+        || normalized.includes("240")
+        || normalized === "SD"
+    ) {
+        return 1;
+    }
+    return 0;
+}
+
+export function compareVideoOffersByQualityThenProvider(
+    left: { provider: string; quality?: string | null; providerId?: string; provider_id?: string },
+    right: { provider: string; quality?: string | null; providerId?: string; provider_id?: string },
+): number {
+    const qualityDelta = videoOfferQualityRank(right.quality) - videoOfferQualityRank(left.quality);
+    if (qualityDelta !== 0) return qualityDelta;
+    const providerDelta = streamingProviderManager.getProviderPreferenceRank(left.provider)
+        - streamingProviderManager.getProviderPreferenceRank(right.provider);
+    if (providerDelta !== 0) return providerDelta;
+    const leftId = String(left.providerId ?? left.provider_id ?? "");
+    const rightId = String(right.providerId ?? right.provider_id ?? "");
+    return leftId.localeCompare(rightId);
 }
 
 /**
  * Videos dedupe across providers, so UI references are canonical Recordings
  * ids (row id or MBID) rather than provider catalog ids. Resolve one to the
- * preferred provider's VIDEO offer (streaming.provider_priority order).
+ * preferred VIDEO offer: best resolution first, then provider priority.
  */
 export function resolvePreferredVideoOffer(recordingRef: string | null | undefined): ResolvedVideoOffer | null {
     const key = String(recordingRef ?? "").trim();
@@ -112,13 +151,10 @@ export function resolvePreferredVideoOffer(recordingRef: string | null | undefin
     if (offers.length === 0) {
         return null;
     }
-    offers.sort((a, b) => {
-        const rankDelta = streamingProviderManager.getProviderPreferenceRank(a.provider)
-            - streamingProviderManager.getProviderPreferenceRank(b.provider);
-        return rankDelta
-            || a.provider.localeCompare(b.provider)
-            || a.provider_id.localeCompare(b.provider_id);
-    });
+    offers.sort((a, b) => compareVideoOffersByQualityThenProvider(
+        { provider: a.provider, quality: a.quality, provider_id: a.provider_id },
+        { provider: b.provider, quality: b.quality, provider_id: b.provider_id },
+    ));
     return {
         provider: offers[0].provider,
         providerId: offers[0].provider_id,

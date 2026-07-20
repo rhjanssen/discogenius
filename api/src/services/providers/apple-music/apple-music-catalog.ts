@@ -36,6 +36,43 @@ export function renderAppleArtwork(artwork: AppleArtwork | undefined | null, siz
     .replace(/\{f\}/g, "jpg");
 }
 
+/**
+ * Prefer square editorial motion art when Apple returns `extend=editorialVideo`.
+ * Values are usually HLS (.m3u8) URLs suitable for ffmpeg remux to MP4.
+ */
+export function extractAppleEditorialVideoUrl(attributes: Record<string, unknown> | undefined | null): string | null {
+  const editorial = (attributes as {
+    editorialVideo?: {
+      motionDetailSquare?: { video?: string };
+      motionSquareVideo1x1?: { video?: string };
+    };
+  } | undefined)?.editorialVideo;
+  const square = editorial?.motionDetailSquare?.video || editorial?.motionSquareVideo1x1?.video;
+  const url = String(square || "").trim();
+  return url || null;
+}
+
+/**
+ * Apple catalog `editorialNotes` (artist bio / album blurb). Prefer the longer
+ * `standard` note, then `short`. Strip simple HTML so NFO/UI get plain text.
+ */
+export function extractAppleEditorialNotes(attributes: Record<string, unknown> | undefined | null): string | null {
+  const notes = (attributes as {
+    editorialNotes?: { standard?: string; short?: string; tagline?: string };
+  } | undefined)?.editorialNotes;
+  const raw = String(notes?.standard || notes?.short || notes?.tagline || "").trim();
+  if (!raw) {
+    return null;
+  }
+  return raw
+    .replace(/\r\n/g, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim() || null;
+}
+
 function audioTraits(attributes: Record<string, unknown> | undefined): string[] {
   const traits = (attributes as { audioTraits?: unknown })?.audioTraits;
   if (Array.isArray(traits)) return traits.map((t) => String(t));
@@ -103,6 +140,7 @@ export function mapAppleAlbum(resource: AppleResource): ProviderAlbum {
     title: attrs.name || "Unknown Album",
     artist,
     cover: renderAppleArtwork(attrs.artwork, 1200),
+    videoCover: extractAppleEditorialVideoUrl(resource.attributes as Record<string, unknown>),
     releaseDate: attrs.releaseDate || null,
     trackCount: attrs.trackCount ?? null,
     duration: null,
@@ -240,7 +278,10 @@ export async function getAppleArtistVideos(id: string, options: AppleMusicApiOpt
 
 export async function getAppleAlbum(id: string, options: AppleMusicApiOptions = {}): Promise<ProviderAlbum> {
   const sf = storefrontFor(options.token);
-  const res = await appleMusicApiRequest<AppleDataResponse>(`/v1/catalog/${sf}/albums/${id}?extend=audioVariants`, options);
+  const res = await appleMusicApiRequest<AppleDataResponse>(
+    `/v1/catalog/${sf}/albums/${id}?extend=audioVariants,editorialVideo`,
+    options,
+  );
   const resource = first(res);
   if (!resource) throw new Error(`Apple Music album not found: ${id}`);
   return mapAppleAlbum(resource);
@@ -286,12 +327,14 @@ export async function getAppleTrackPreviewUrl(id: string, options: AppleMusicApi
   return preview?.url || null;
 }
 
-/** Preview clip for a music video (progressive mp4/m3u8 URL). */
+/** Preview clip for a music video (progressive mp4 preferred; HLS fallback). */
 export async function getAppleVideoPreviewUrl(id: string, options: AppleMusicApiOptions = {}): Promise<string | null> {
   const sf = storefrontFor(options.token);
   const res = await appleMusicApiRequest<AppleDataResponse>(`/v1/catalog/${sf}/music-videos/${id}`, options);
   const preview = firstPreviewUrl(first(res));
-  return preview?.hlsUrl || preview?.url || null;
+  // Prefer progressive mp4 when Apple exposes it — HLS music-video previews
+  // often arrive without a usable audio track in browser players.
+  return preview?.url || preview?.hlsUrl || null;
 }
 
 interface AppleSearchResponse {

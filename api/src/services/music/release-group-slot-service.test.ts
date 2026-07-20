@@ -872,7 +872,7 @@ test("provider slot selection combines hydrated offers before legacy provider ro
   assert.equal(selections[0]?.match.releaseMbid, "release-mbid-hydrated-multi");
 });
 
-test("provider slot selection retains strict partial coverage without claiming completeness", () => {
+test("provider slot selection rejects incomplete multi-album hybrids and keeps single-album partials", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-incomplete";
   insertReleaseGroup(releaseGroupMbid);
@@ -941,14 +941,17 @@ test("provider slot selection retains strict partial coverage without claiming c
     WHERE release_group_mbid = ? AND slot = 'stereo'
   `).get(releaseGroupMbid) as { selected_provider_id: string | null; match_status: string; match_method: string; match_evidence: string };
 
-  assert.equal(slot.selected_provider_id, "prov-incomplete-a;prov-incomplete-b");
+  // Two albums covering 2/3 must not form an incomplete hybrid — keep the best
+  // single-album partial instead.
+  assert.ok(slot.selected_provider_id === "prov-incomplete-a" || slot.selected_provider_id === "prov-incomplete-b");
+  assert.equal(String(slot.selected_provider_id || "").includes(";"), false);
   assert.equal(slot.match_status, "probable");
   assert.equal(slot.match_method, "strict_partial_track_coverage");
   assert.deepEqual(JSON.parse(slot.match_evidence).coverage, {
-    coveredTracks: 2,
+    coveredTracks: 1,
     targetTracks: 3,
     complete: false,
-    qualityTrackCounts: { LOSSLESS: 2 },
+    qualityTrackCounts: { LOSSLESS: 1 },
     extraProviderTracks: 0,
   });
 });
@@ -1530,7 +1533,8 @@ test("quality-aware coverage uses hi-res standard tracks and lossless deluxe-onl
 
   assert.equal(slot.selected_provider_id, "tidal-standard-hires;tidal-deluxe-lossless");
   assert.equal(slot.selected_release_mbid, deluxeReleaseMbid);
-  assert.equal(slot.quality, "LOSSLESS");
+  // Hybrid badge uses the majority track quality (tie → higher).
+  assert.equal(slot.quality, "HIRES_LOSSLESS");
   assert.equal(slot.match_method, "quality_optimized_composite_track_coverage");
   assert.deepEqual(evidence.coverage.qualityTrackCounts, { HIRES_LOSSLESS: 2, LOSSLESS: 2 });
   assert.deepEqual(
@@ -1712,4 +1716,437 @@ test("equal-completeness editions: the higher-bit-depth (hi-res) release wins th
   assert.ok(stereo, "expected a stereo slot selection");
   assert.equal(stereo?.album.providerId, "163897909");
   assert.equal(stereo?.match.releaseMbid, release24);
+});
+
+test("cross-RG hybrid prefers the fuller MusicBrainz edition covered by two provider albums", () => {
+  const { db } = dbModule;
+  const artistMbid = "artist-bastille-hybrid";
+  const rgThree = "b1b81699-4273-492e-a8ce-7fa98fac7a93";
+  const rgTwo = "ac94d434-171e-4d3f-9e56-985869d569b2";
+  const releaseOne = "36f2b40f-b46d-4f37-8931-02c487a7ad3e";
+  const releaseThree = "fab7ff68-52e8-45e4-9218-c4eb369c4bc2";
+  const releaseTwo = "03358ffb-95aa-4b21-b506-fd79cb0c838b";
+
+  db.prepare(`INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run(artistMbid, "Bastille");
+  db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
+    .run(rgThree, artistMbid, "Killing Me Softly With His Song (MTV Unplugged)", "Single");
+  db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
+    .run(rgTwo, artistMbid, "Pompeii / Come As You Are (MTV Unplugged)", "Single");
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2023-04-26', ?, 1)
+  `).run(releaseOne, rgThree, artistMbid, "Killing Me Softly (1 track)", 1);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2023-04-26', ?, 1)
+  `).run(releaseThree, rgThree, artistMbid, "Killing Me Softly (3 track)", 3);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2023-04-26', ?, 1)
+  `).run(releaseTwo, rgTwo, artistMbid, "Pompeii / Come As You Are", 2);
+
+  for (const [recording, title, isrc] of [
+    ["rec-softly", "Killing Me Softly With His Song", "GBUM72302334"],
+    ["rec-pompeii", "Pompeii", "GBUM72302279"],
+    ["rec-nirvana", "Come as You Are", "GBUM72302277"],
+  ] as const) {
+    db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, isrcs) VALUES (?, ?, ?, ?)`)
+      .run(recording, artistMbid, title, JSON.stringify([isrc]));
+  }
+
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 1, 1, 299000)`).run("t-one-1", releaseOne, "rec-softly", "Killing Me Softly With His Song");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 1, 1, 299000)`).run("t-three-1", releaseThree, "rec-softly", "Killing Me Softly With His Song");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 2, 1, 269000)`).run("t-three-2", releaseThree, "rec-pompeii", "Pompeii");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 3, 1, 231000)`).run("t-three-3", releaseThree, "rec-nirvana", "Come as You Are");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 1, 1, 269000)`).run("t-two-1", releaseTwo, "rec-pompeii", "Pompeii");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 2, 1, 231000)`).run("t-two-2", releaseTwo, "rec-nirvana", "Come as You Are");
+
+  const matchThin = {
+    ...buildMatch(rgThree, "290132977"),
+    releaseMbid: releaseOne,
+    releaseGroup: {
+      ...buildMatch(rgThree, "290132977").releaseGroup!,
+      mbid: rgThree,
+      title: "Killing Me Softly With His Song (MTV Unplugged)",
+      primaryType: "Single",
+    },
+  };
+  const matchOther = {
+    ...buildMatch(rgTwo, "287367980"),
+    releaseMbid: releaseTwo,
+    releaseGroup: {
+      ...buildMatch(rgTwo, "287367980").releaseGroup!,
+      mbid: rgTwo,
+      title: "Pompeii / Come As You Are (MTV Unplugged)",
+      primaryType: "Single",
+    },
+  };
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "tidal",
+    artistMbid,
+    albums: [
+      {
+        providerId: "290132977",
+        title: "Killing Me Softly With His Song (MTV Unplugged / Edit)",
+        quality: "HIRES_LOSSLESS",
+        trackCount: 1,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "GBUM72302334", title: "Killing Me Softly With His Song", track_number: 1, volume_number: 1, duration: 299, providerId: "trk-softly" },
+        ],
+      },
+      {
+        providerId: "287367980",
+        title: "Pompeii / Come As You Are (MTV Unplugged)",
+        quality: "HIRES_LOSSLESS",
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "GBUM72302279", title: "Pompeii", track_number: 1, volume_number: 1, duration: 269, providerId: "trk-pompeii" },
+          { mbid: null, isrc: "GBUM72302277", title: "Come as You Are", track_number: 2, volume_number: 1, duration: 231, providerId: "trk-nirvana" },
+        ],
+      },
+    ],
+    matches: new Map([
+      ["290132977", matchThin],
+      ["287367980", matchOther],
+    ]),
+  });
+
+  const threeTrackSlot = db.prepare(`
+    SELECT selected_provider_id, selected_release_mbid, match_method, match_evidence
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ? AND slot = 'stereo'
+  `).get(rgThree) as {
+    selected_provider_id: string;
+    selected_release_mbid: string;
+    match_method: string;
+    match_evidence: string;
+  };
+
+  assert.equal(threeTrackSlot.selected_release_mbid, releaseThree);
+  assert.equal(threeTrackSlot.selected_provider_id, "290132977;287367980");
+  assert.equal(threeTrackSlot.match_method, "quality_optimized_composite_track_coverage");
+
+  const evidence = JSON.parse(threeTrackSlot.match_evidence) as {
+    trackSources?: Array<{ providerAlbumId?: string; providerTrackId?: string }>;
+  };
+  assert.ok(Array.isArray(evidence.trackSources));
+  assert.equal(evidence.trackSources?.length, 3);
+  assert.deepEqual(
+    [...new Set(evidence.trackSources?.map((source) => source.providerAlbumId))].sort(),
+    ["287367980", "290132977"],
+  );
+});
+
+test("incomplete multi-album stitch loses to a complete smaller edition (Amy Complete Version case)", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-amy-complete";
+  insertReleaseGroup(releaseGroupMbid);
+
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2006-10-27', ?, 1)
+  `).run("release-standard-11", releaseGroupMbid, "artist-mbid-1", "Back to Black", 11);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2007-01-01', ?, 1)
+  `).run("release-complete-27", releaseGroupMbid, "artist-mbid-1", "Back to Black (Complete Version)", 27);
+
+  for (let i = 1; i <= 27; i++) {
+    const rec = `rec-amy-${i}`;
+    const isrc = `ISRCAMY${String(i).padStart(3, "0")}`;
+    db.prepare(`INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)`)
+      .run(rec, `Track ${i}`, JSON.stringify([isrc]));
+    if (i <= 11) {
+      db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+                  VALUES (?, 'release-standard-11', ?, ?, ?, 1)`)
+        .run(`track-std-${i}`, rec, `Track ${i}`, i);
+    }
+    db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+                VALUES (?, 'release-complete-27', ?, ?, ?, 1)`)
+      .run(`track-cmp-${i}`, rec, `Track ${i}`, i);
+  }
+
+  // Five provider albums together cover 22/27 of the complete edition (incomplete
+  // hybrid), while one album covers the standard 11/11 completely.
+  const partialAlbums = [1, 2, 3, 4, 5].map((albumIndex) => {
+    const start = (albumIndex - 1) * 4 + 1;
+    const end = Math.min(start + 4, 22); // 5 albums → tracks 1..22
+    const tracks = [];
+    for (let i = start; i <= end; i++) {
+      tracks.push({
+        mbid: `rec-amy-${i}`,
+        isrc: `ISRCAMY${String(i).padStart(3, "0")}`,
+        title: `Track ${i}`,
+        track_number: i - start + 1,
+        volume_number: 1,
+        duration: 150,
+      });
+    }
+    return {
+      providerId: `apple-partial-${albumIndex}`,
+      title: `Partial ${albumIndex}`,
+      quality: "LOSSLESS",
+      trackCount: tracks.length,
+      volumeCount: 1,
+      tracks,
+    };
+  });
+
+  const standardAlbum = {
+    providerId: "apple-standard-11",
+    title: "Back to Black",
+    quality: "HIRES_LOSSLESS",
+    trackCount: 11,
+    volumeCount: 1,
+    tracks: Array.from({ length: 11 }, (_, index) => {
+      const i = index + 1;
+      return {
+        mbid: `rec-amy-${i}`,
+        isrc: `ISRCAMY${String(i).padStart(3, "0")}`,
+        title: `Track ${i}`,
+        track_number: i,
+        volume_number: 1,
+        duration: 150,
+      };
+    }),
+  };
+
+  const albums = [...partialAlbums, standardAlbum];
+  const matches = new Map(albums.map((album) => [album.providerId, buildMatch(releaseGroupMbid, album.providerId)]));
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "apple-music",
+    artistMbid: "artist-mbid-1",
+    albums,
+    matches,
+  });
+
+  const slot = db.prepare(`
+    SELECT selected_provider_id, selected_release_mbid, match_method, match_evidence
+    FROM ReleaseGroupSlots
+    WHERE release_group_mbid = ? AND slot = 'stereo'
+  `).get(releaseGroupMbid) as {
+    selected_provider_id: string;
+    selected_release_mbid: string;
+    match_method: string;
+    match_evidence: string;
+  };
+
+  assert.equal(slot.selected_provider_id, "apple-standard-11");
+  assert.equal(slot.selected_release_mbid, "release-standard-11");
+  assert.equal(String(slot.selected_provider_id).includes(";"), false);
+  const coverage = JSON.parse(slot.match_evidence).coverage as { coveredTracks: number; targetTracks: number; complete: boolean };
+  assert.equal(coverage.complete, true);
+  assert.equal(coverage.coveredTracks, 11);
+  assert.equal(coverage.targetTracks, 11);
+});
+
+test("same-release complete TIDAL MAX hybrid beats Apple HIGH hybrid (and beats Apple HIGH direct)", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-bastille-quality";
+  const releaseMbid = "release-bastille-quality";
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', 3, 1)
+  `).run(releaseMbid, releaseGroupMbid, "artist-mbid-1", "Three Track EP");
+
+  for (const [i, title, isrc] of [
+    [1, "Track One", "ISRCQUAL001"],
+    [2, "Track Two", "ISRCQUAL002"],
+    [3, "Track Three", "ISRCQUAL003"],
+  ] as const) {
+    db.prepare(`INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)`)
+      .run(`rec-qual-${i}`, title, JSON.stringify([isrc]));
+    db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+                VALUES (?, ?, ?, ?, ?, 1)`)
+      .run(`track-qual-${i}`, releaseMbid, `rec-qual-${i}`, title, i);
+  }
+
+  const tidalHybridA = {
+    providerId: "tidal-hybrid-a",
+    title: "Part A",
+    quality: "HIRES_LOSSLESS",
+    trackCount: 1,
+    volumeCount: 1,
+    tracks: [
+      { mbid: null, isrc: "ISRCQUAL001", title: "Track One", track_number: 1, volume_number: 1, duration: 180, providerId: "tidal-t1" },
+    ],
+  };
+  const tidalHybridB = {
+    providerId: "tidal-hybrid-b",
+    title: "Part B",
+    quality: "HIRES_LOSSLESS",
+    trackCount: 2,
+    volumeCount: 1,
+    tracks: [
+      { mbid: null, isrc: "ISRCQUAL002", title: "Track Two", track_number: 1, volume_number: 1, duration: 180, providerId: "tidal-t2" },
+      { mbid: null, isrc: "ISRCQUAL003", title: "Track Three", track_number: 2, volume_number: 1, duration: 180, providerId: "tidal-t3" },
+    ],
+  };
+  const appleDirect = {
+    providerId: "apple-direct-high",
+    title: "Three Track EP",
+    quality: "HIGH",
+    trackCount: 3,
+    volumeCount: 1,
+    tracks: [
+      { mbid: null, isrc: "ISRCQUAL001", title: "Track One", track_number: 1, volume_number: 1, duration: 180, providerId: "apple-t1" },
+      { mbid: null, isrc: "ISRCQUAL002", title: "Track Two", track_number: 2, volume_number: 1, duration: 180, providerId: "apple-t2" },
+      { mbid: null, isrc: "ISRCQUAL003", title: "Track Three", track_number: 3, volume_number: 1, duration: 180, providerId: "apple-t3" },
+    ],
+  };
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: tidalHybridA,
+      match: { ...buildMatch(releaseGroupMbid, "tidal-hybrid-a"), releaseMbid },
+    },
+    {
+      provider: "tidal",
+      album: tidalHybridB,
+      match: { ...buildMatch(releaseGroupMbid, "tidal-hybrid-b"), releaseMbid },
+    },
+    {
+      provider: "apple-music",
+      album: appleDirect,
+      match: { ...buildMatch(releaseGroupMbid, "apple-direct-high"), releaseMbid },
+    },
+  ]);
+
+  const stereo = selections.find((selection) => selection.slot === "stereo");
+  assert.ok(stereo);
+  assert.equal(stereo?.provider, "tidal");
+  assert.equal(stereo?.album.providerId, "tidal-hybrid-a;tidal-hybrid-b");
+  assert.equal(stereo?.album.quality, "HIRES_LOSSLESS");
+  assert.equal(stereo?.match.method, "quality_optimized_composite_track_coverage");
+});
+
+test("title-only soundtrack tracks cannot complete a hybrid without catalog ISRC", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-soundtrack-fuzzy";
+  const releaseMbid = "release-studio-edition";
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', 2, 1)
+  `).run(releaseMbid, releaseGroupMbid, "artist-mbid-1", "Studio Album");
+
+  // Catalog has no ISRCs (Servarr-style) — hybrid must not form from title matches.
+  db.prepare(`INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, '[]')`).run("rec-studio-1", "Rehab");
+  db.prepare(`INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, '[]')`).run("rec-studio-2", "Valerie");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 1, 1, 180000)`).run("track-studio-1", releaseMbid, "rec-studio-1", "Rehab");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 2, 1, 180000)`).run("track-studio-2", releaseMbid, "rec-studio-2", "Valerie");
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "apple-music",
+      album: {
+        providerId: "apple-ost-part",
+        title: "Amy Motion Picture Soundtrack",
+        quality: "HIRES_LOSSLESS",
+        trackCount: 1,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: null, title: "Rehab", track_number: 1, volume_number: 1, duration: 180, providerId: "ost-1" },
+        ],
+      },
+      match: { ...buildMatch(releaseGroupMbid, "apple-ost-part"), releaseMbid },
+    },
+    {
+      provider: "apple-music",
+      album: {
+        providerId: "apple-ost-part-2",
+        title: "Amy Motion Picture Soundtrack Vol 2",
+        quality: "HIRES_LOSSLESS",
+        trackCount: 1,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: null, title: "Valerie", track_number: 1, volume_number: 1, duration: 180, providerId: "ost-2" },
+        ],
+      },
+      match: { ...buildMatch(releaseGroupMbid, "apple-ost-part-2"), releaseMbid },
+    },
+  ]);
+
+  const stereo = selections.find((selection) => selection.slot === "stereo");
+  // No ISRC hybrid: at best a single-album title partial, never a complete multi-album stitch.
+  assert.ok(stereo);
+  assert.equal(String(stereo?.album.providerId || "").includes(";"), false);
+  assert.notEqual(stereo?.match.method, "quality_optimized_composite_track_coverage");
+  const evidence = stereo?.match.evidence as { matchKind?: string; coverage?: { complete?: boolean } };
+  assert.notEqual(evidence?.matchKind, "composite");
+  assert.notEqual(evidence?.coverage?.complete, true);
+});
+
+test("hybrid prefers explicit member albums and surfaces explicit on the stitch", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-hybrid-explicit";
+  const releaseMbid = "release-hybrid-explicit";
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', 2, 1)
+  `).run(releaseMbid, releaseGroupMbid, "artist-mbid-1", "Explicit Hybrid");
+
+  db.prepare(`INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)`)
+    .run("rec-hex-1", "Rehab", JSON.stringify(["ISRCHEX001"]));
+  db.prepare(`INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)`)
+    .run("rec-hex-2", "Valerie", JSON.stringify(["ISRCHEX002"]));
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+              VALUES (?, ?, ?, ?, 1, 1)`).run("track-hex-1", releaseMbid, "rec-hex-1", "Rehab");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
+              VALUES (?, ?, ?, ?, 2, 1)`).run("track-hex-2", releaseMbid, "rec-hex-2", "Valerie");
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "apple-music",
+      album: {
+        providerId: "apple-clean-part",
+        title: "Clean Part",
+        quality: "LOSSLESS",
+        explicit: false,
+        trackCount: 1,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "ISRCHEX001", title: "Rehab", track_number: 1, volume_number: 1, duration: 180, providerId: "c1" },
+        ],
+      },
+      match: { ...buildMatch(releaseGroupMbid, "apple-clean-part"), releaseMbid },
+    },
+    {
+      provider: "apple-music",
+      album: {
+        providerId: "apple-explicit-part",
+        title: "Explicit Part",
+        quality: "LOSSLESS",
+        explicit: true,
+        trackCount: 1,
+        volumeCount: 1,
+        tracks: [
+          { mbid: null, isrc: "ISRCHEX002", title: "Valerie", track_number: 1, volume_number: 1, duration: 180, providerId: "e1" },
+        ],
+      },
+      match: { ...buildMatch(releaseGroupMbid, "apple-explicit-part"), releaseMbid },
+    },
+  ], { preferExplicit: true });
+
+  const stereo = selections.find((selection) => selection.slot === "stereo");
+  assert.ok(stereo);
+  assert.equal(String(stereo?.album.providerId || "").includes(";"), true);
+  assert.equal(stereo?.album.explicit, true);
+  assert.equal((stereo?.match.evidence as { explicit?: boolean | null })?.explicit, true);
 });

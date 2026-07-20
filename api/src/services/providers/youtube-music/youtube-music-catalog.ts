@@ -172,6 +172,8 @@ export function mapYouTubeMusicTrack(
   const providerId = text(merged.videoId, merged.id);
   const album = options.album || albumForTrack(merged, artists[0], providerId || "unknown");
   const trackNumber = numeric(merged.trackNumber ?? merged.index ?? merged.playlistIndex) ?? options.index ?? 1;
+  const counterpart = record(merged.counterpart);
+  const counterpartVideoId = text(counterpart.videoId);
   return {
     providerId,
     title: text(merged.title, merged.name) || "Untitled YouTube Music track",
@@ -185,6 +187,8 @@ export function mapYouTubeMusicTrack(
     releaseDate: releaseDate(merged) || album.releaseDate,
     quality: "YOUTUBE_LOSSY",
     qualityTags: ["opus", "aac", "lossy"],
+    // Prefer a distinct ATV→OMV id; same-id self-OMV is filled by enrichAlbumTrackCounterparts.
+    counterpartVideoId: counterpartVideoId || null,
     raw: rawValue,
   };
 }
@@ -225,7 +229,9 @@ export function mapYouTubeMusicVideo(rawValue: unknown, fallbackArtist?: Provide
     duration: durationSeconds(merged) || null,
     releaseDate: releaseDate(merged),
     cover: imageFrom(merged),
-    quality: "SOURCE",
+    // Catalog rarely exposes a concrete height; omit rather than SOURCE (which
+    // previously rendered as a misleading stereo NORMAL badge).
+    quality: null,
     explicit: typeof merged.isExplicit === "boolean" ? merged.isExplicit : null,
     url: providerId ? `https://www.youtube.com/watch?v=${encodeURIComponent(providerId)}` : undefined,
     videoType: text(merged.videoType, merged.musicVideoType) || null,
@@ -307,13 +313,56 @@ export class YouTubeMusicCatalog {
   async getAlbumTracks(id: string | number): Promise<ProviderTrack[]> {
     const rawAlbum = await this.bridge.request<UnknownRecord>("get_album", { id: String(id) });
     const album = mapYouTubeMusicAlbum(rawAlbum, undefined, String(id));
-    return records(rawAlbum.tracks)
+    const tracks = records(rawAlbum.tracks)
       .map((track, index) => mapYouTubeMusicTrack(track, {
         album,
         fallbackArtist: album.artist,
         index: index + 1,
       }))
       .filter((track) => Boolean(track.providerId));
+    return this.enrichAlbumTrackCounterparts(tracks);
+  }
+
+  /**
+   * Resolve YouTube Music ATV→OMV counterparts (UI audio/video switcher) via
+   * get_watch_playlist. Also keeps album tracks that are already OMV (no
+   * separate counterpart id) so refresh can persist a video offer. Capped so
+   * album refresh cannot issue unbounded calls.
+   */
+  async enrichAlbumTrackCounterparts(tracks: ProviderTrack[]): Promise<ProviderTrack[]> {
+    const missingIds = [...new Set(
+      tracks
+        .filter((track) => Boolean(track.providerId) && !track.counterpartVideoId)
+        .map((track) => String(track.providerId)),
+    )];
+    if (missingIds.length === 0) {
+      return tracks;
+    }
+
+    let counterparts: Record<string, unknown> = {};
+    try {
+      const response = await this.bridge.request<{ counterparts?: Record<string, unknown> }>(
+        "get_track_counterparts",
+        { ids: missingIds },
+      );
+      counterparts = record(response?.counterparts);
+    } catch (error) {
+      console.warn("[YouTubeMusicCatalog] counterpart enrich failed:", error);
+      return tracks;
+    }
+
+    return tracks.map((track) => {
+      if (track.counterpartVideoId || !track.providerId) {
+        return track;
+      }
+      const counterpart = record(counterparts[track.providerId]);
+      const counterpartVideoId = text(counterpart.videoId);
+      if (!counterpartVideoId) {
+        return track;
+      }
+      // Separate ATV→OMV id, or self-OMV (album track is already the music video).
+      return { ...track, counterpartVideoId };
+    });
   }
 
   async getTrack(id: string | number): Promise<ProviderTrack> {

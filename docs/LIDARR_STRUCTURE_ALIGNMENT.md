@@ -52,6 +52,9 @@ enough.
 | `commands/command-history.ts` | ~1100 | `History/EntityHistory` + `EntityHistoryRepository` + `EntityHistoryService` |
 | `providers/tidal/tidal.ts` | ~1610 | n/a (provider client; no direct Lidarr analogue) |
 
-**Intentional divergence:** Discogenius uses `MediaFile` (not Lidarr's `TrackFile`)
-because it manages video + extras, not just audio. Keep `MediaFile`/`mediafiles/`
-naming; don't "correct" it to `TrackFile`.
+**Intentional divergence:** the service folder and v1 route use `mediafiles`/
+`/api/v1/mediaFile` (not Lidarr's `TrackFile`) because Discogenius manages video +
+extras, not just audio. Keep that naming. Note the *database table* stays
+`TrackFiles` for Lidarr parity (see `docs/DATA_MODEL_TARGET.md`); the folder/route
+naming and the table naming are deliberately different and neither should be
+"corrected" to match the other.

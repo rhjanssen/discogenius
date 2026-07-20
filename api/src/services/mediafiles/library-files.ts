@@ -136,7 +136,13 @@ function getCanonicalVideoMetadataForRow(row: LibraryFileRow, recordingMbid: str
   const params = provider ? [provider, providerId] : [providerId];
   return (db.prepare(`
     SELECT recording.mbid,
-           recording.title,
+           CASE
+             WHEN recording.title IS NULL
+               OR TRIM(recording.title) = ''
+               OR LOWER(TRIM(recording.title)) = 'unknown video'
+             THEN COALESCE(NULLIF(TRIM(pi.title), ''), recording.title)
+             ELSE recording.title
+           END AS title,
            recording.is_video AS is_video,
            recording.metadata_status AS metadata_status
     FROM ProviderItems pi
@@ -736,10 +742,46 @@ export class LibraryFilesService {
     if (videoFolderLayout === "inline" && row.media_id && (row.file_type === "video" || row.file_type === "video_thumbnail" || row.file_type === "nfo")) {
       if (canonicalVideo) {
         const recordingMbid = canonicalIdentity.canonicalRecordingMbid || null;
-        // The audio counterpart of this video lives in the canonical TrackFiles
-        // graph, matched by recording mbid; if there isn't an imported audio file
-        // we fall back to the canonical title-based resolver below.
-        const audioTrack = recordingMbid
+        const videoRecordingId = (() => {
+          if (recordingMbid) {
+            const byMbid = db.prepare(`SELECT id FROM Recordings WHERE mbid = ? AND is_video = 1 LIMIT 1`)
+              .get(recordingMbid) as { id?: number } | undefined;
+            if (byMbid?.id) return Number(byMbid.id);
+          }
+          const provider = String(row.provider || canonicalIdentity.provider || "").trim();
+          const providerId = String(row.provider_id || row.media_id || "").trim();
+          if (!provider || !providerId) return null;
+          const byOffer = db.prepare(`
+            SELECT recording_id FROM ProviderItems
+            WHERE provider = ? AND entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+              AND recording_id IS NOT NULL
+            LIMIT 1
+          `).get(provider, providerId) as { recording_id?: number | null } | undefined;
+          return byOffer?.recording_id == null ? null : Number(byOffer.recording_id);
+        })();
+        // Prefer an explicit audio↔video relation (YouTube ATV↔OMV counterpart,
+        // fuzzy provider_video_for, etc.) so inline layout sits beside the
+        // matched album track rather than only matching on shared recording id.
+        const relatedAudio = videoRecordingId
+          ? db.prepare(`
+              SELECT
+                tf.id, tf.artist_id, NULL AS album_id, tf.provider_id AS media_id,
+                tf.canonical_artist_mbid, tf.canonical_release_group_mbid, tf.canonical_release_mbid,
+                tf.canonical_track_mbid, tf.canonical_recording_mbid,
+                tf.file_path, tf.relative_path, tf.library_root, tf.file_type, tf.extension,
+                tf.quality, tf.codec, tf.bitrate, tf.sample_rate, tf.bit_depth, tf.channels
+              FROM RecordingRelations rr
+              JOIN TrackFiles tf
+                ON tf.recording_id = rr.target_recording_id
+               AND tf.file_type = 'track'
+              WHERE rr.source_recording_id = ?
+                AND rr.relation_type = 'provider_video_for'
+              ORDER BY rr.confidence DESC, tf.id ASC
+              LIMIT 1
+            `).get(videoRecordingId) as LibraryFileRow | undefined
+          : undefined;
+        // Fallback: audio file sharing the same canonical recording mbid (rare).
+        const audioTrack = relatedAudio || (recordingMbid
           ? db.prepare(`
             SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
                    canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
@@ -748,7 +790,7 @@ export class LibraryFilesService {
             WHERE canonical_recording_mbid = ? AND file_type = 'track'
             LIMIT 1
           `).get(recordingMbid) as LibraryFileRow | undefined
-          : undefined;
+          : undefined);
 
         const inlineVideoTitle = normalizeInlineVideoTitle(canonicalVideo.title);
 
@@ -793,10 +835,34 @@ export class LibraryFilesService {
             ? db.prepare("SELECT id FROM TrackFiles WHERE file_type = 'video' AND file_path = ? AND id != ? LIMIT 1")
               .get(baseExpectedPath, row.id)
             : null;
+          if (!conflict) {
+            return { expectedPath: baseExpectedPath };
+          }
+          let conflictProvider = String(row.provider || "").trim();
+          if (!conflictProvider && row.media_id != null) {
+            conflictProvider = String((db.prepare(`
+              SELECT provider FROM ProviderItems
+              WHERE CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                AND entity_type = 'video'
+              ORDER BY updated_at DESC
+              LIMIT 1
+            `).get(String(row.media_id)) as { provider?: string } | undefined)?.provider || "").trim();
+          }
+          const lower = conflictProvider.toLowerCase();
+          const prettyConflictProvider = !lower
+            ? "Unknown"
+            : lower === "tidal"
+              ? "TIDAL"
+              : lower === "apple-music" || lower === "apple"
+                ? "Apple Music"
+                : lower === "youtube-music" || lower === "youtube"
+                  ? "YouTube Music"
+                  : conflictProvider.charAt(0).toUpperCase() + conflictProvider.slice(1);
           return {
-            expectedPath: conflict
-              ? path.join(audioExpectedDir, `${audioExpectedStem}${videoTypeSuffix} {TIDAL-${row.media_id}}.${ext}`)
-              : baseExpectedPath,
+            expectedPath: path.join(
+              audioExpectedDir,
+              `${audioExpectedStem}${videoTypeSuffix} {${prettyConflictProvider}-${row.media_id}}.${ext}`,
+            ),
           };
         }
       }
@@ -819,8 +885,22 @@ export class LibraryFilesService {
       path: artist?.path || null,
     });
 
+    const resolvedProvider = String(row.provider || "").trim()
+      || (row.provider_id || row.media_id
+        ? String((db.prepare(`
+            SELECT provider FROM ProviderItems
+            WHERE CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+              AND (? IS NULL OR entity_type = ?)
+            ORDER BY updated_at DESC
+            LIMIT 1
+          `).get(
+            String(row.provider_id || row.media_id),
+            row.file_type === "video" ? "video" : null,
+            row.file_type === "video" ? "video" : "track",
+          ) as { provider?: string } | undefined)?.provider || "").trim()
+        : "");
     const contextBase: NamingContext = {
-      provider: row.provider || "tidal",
+      provider: resolvedProvider || null,
       artistName,
       artistId: String(row.artist_id),
       artistMbId,

@@ -3,12 +3,22 @@ import { Badge, makeStyles, mergeClasses, tokens } from "@fluentui/react-compone
 import { tidalBadgeColor, tidalBadgeColorLight } from "@/theme/theme";
 import { useTheme } from "@/providers/themeContext";
 import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
-import { isVideoResolutionQuality, qualityDescription, stereoQualityTier, videoResolutionLabel } from "@/utils/qualityTier";
+import {
+  isUnknownQualityTag,
+  isVideoResolutionQuality,
+  qualityDescription,
+  stereoQualityTier,
+  videoQualityTier,
+} from "@/utils/qualityTier";
+import {
+  ATMOS_LOGO_HEIGHT_PX,
+  BADGE_HEIGHT_PX,
+  type DiscogeniusBadgeSize,
+} from "./badgeSizes";
 
-// Standard quality values we store in DB (no underscore in HIRES)
 export type AudioQuality = string;
 
-type BadgeSize = "small" | "medium" | "large";
+type BadgeSize = DiscogeniusBadgeSize;
 
 interface QualityBadgeProps {
     quality: string;
@@ -16,12 +26,8 @@ interface QualityBadgeProps {
     size?: BadgeSize;
 }
 
-// Horizontal "Dolby Atmos" lockup aspect ratio (viewBox 110.76 × 15.64). The
-// logo renders at a fixed height per size and the badge widens to fit it, so the
-// Atmos badge lines up in height with the text badges — it's just longer.
+// Horizontal "Dolby Atmos" lockup aspect ratio (viewBox 110.76 × 15.64).
 const ATMOS_ASPECT = 110.7599945 / 15.6427517;
-const ATMOS_LOGO_HEIGHT: Record<BadgeSize, number> = { small: 10, medium: 12, large: 14 };
-const ATMOS_LOGO_OFFSET_Y: Record<BadgeSize, number> = { small: 0.75, medium: 1, large: 1 };
 
 function transparentHex(hex: string, alpha: number): string {
     const normalized = hex.replace("#", "");
@@ -42,11 +48,10 @@ const useStyles = makeStyles({
         alignItems: "center",
         justifyContent: "center",
         boxSizing: "border-box",
-        // Never let a flex parent squeeze the badge — that pushed the label
-        // outside the rounded body. Hold the intrinsic width and clip cleanly.
         flexShrink: 0,
         whiteSpace: "nowrap",
         minWidth: "max-content",
+        lineHeight: 1,
         "::after": {
             display: "none",
         },
@@ -61,24 +66,36 @@ const useStyles = makeStyles({
         justifyContent: "center",
         lineHeight: 1,
     },
-    // Heights are intentionally NOT overridden — we let Fluent's `size` prop set
-    // the badge height so a QualityBadge lines up exactly with a MediaTypeBadge
-    // (and any other Fluent Badge) of the same size in a shared row. We only tune
-    // the horizontal padding and font size here.
+    // Explicit heights match BADGE_HEIGHT_PX / provider pills in each size group.
     small: {
+        height: `${BADGE_HEIGHT_PX.small}px`,
+        minHeight: `${BADGE_HEIGHT_PX.small}px`,
+        maxHeight: `${BADGE_HEIGHT_PX.small}px`,
         fontSize: tokens.fontSizeBase100,
         paddingLeft: tokens.spacingHorizontalSNudge,
         paddingRight: tokens.spacingHorizontalSNudge,
+        paddingTop: 0,
+        paddingBottom: 0,
     },
     medium: {
+        height: `${BADGE_HEIGHT_PX.medium}px`,
+        minHeight: `${BADGE_HEIGHT_PX.medium}px`,
+        maxHeight: `${BADGE_HEIGHT_PX.medium}px`,
         fontSize: tokens.fontSizeBase200,
         paddingLeft: tokens.spacingHorizontalS,
         paddingRight: tokens.spacingHorizontalS,
+        paddingTop: 0,
+        paddingBottom: 0,
     },
     large: {
+        height: `${BADGE_HEIGHT_PX.large}px`,
+        minHeight: `${BADGE_HEIGHT_PX.large}px`,
+        maxHeight: `${BADGE_HEIGHT_PX.large}px`,
         fontSize: tokens.fontSizeBase300,
         paddingLeft: tokens.spacingHorizontalM,
         paddingRight: tokens.spacingHorizontalM,
+        paddingTop: 0,
+        paddingBottom: 0,
     },
     atmos: {
         lineHeight: 0,
@@ -86,7 +103,6 @@ const useStyles = makeStyles({
     atmosLogo: {
         display: "block",
         flexShrink: 0,
-        // colour set inline (white on dark, near-black on light)
         WebkitMaskImage: 'url("/assets/images/dolby_atmos_horizontal.svg")',
         maskImage: 'url("/assets/images/dolby_atmos_horizontal.svg")',
         WebkitMaskRepeat: "no-repeat",
@@ -107,8 +123,12 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
     const normalizedQuality = normalizeQualityTag(quality);
     const sizeClass = size === "small" ? styles.small : size === "large" ? styles.large : styles.medium;
 
+    if (isUnknownQualityTag(normalizedQuality)) {
+        return null;
+    }
+
     if (normalizedQuality === "DOLBY_ATMOS") {
-        const logoHeight = ATMOS_LOGO_HEIGHT[size];
+        const logoHeight = ATMOS_LOGO_HEIGHT_PX[size];
         return (
             <Badge
                 shape="circular"
@@ -126,7 +146,6 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
                         height: `${logoHeight}px`,
                         width: `${Math.round(logoHeight * ATMOS_ASPECT)}px`,
                         backgroundColor: palette.SpatialText,
-                        transform: `translateY(${ATMOS_LOGO_OFFSET_Y[size]}px)`,
                     }}
                 />
             </Badge>
@@ -138,17 +157,14 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
     let badgeText = quality;
 
     if (isSpatialAudioQuality(normalizedQuality)) {
-        // Non-Atmos spatial (Sony 360RA, generic surround).
         backgroundColor = transparentHex(palette.SpatialBackground, badgeAlpha);
         color = palette.SpatialText;
         badgeText = "Spatial";
     } else if (isVideoResolutionQuality(normalizedQuality)) {
-        // Music-video offers carry a resolution, not an audio fidelity tier.
-        badgeText = videoResolutionLabel(normalizedQuality);
+        const tier = videoQualityTier(normalizedQuality);
+        if (!tier) return null;
+        badgeText = tier;
     } else {
-        // Every provider's raw stereo quality collapses onto MAX / HIGH /
-        // NORMAL / LOW so a lossy YouTube offer reads the same as a lossy Apple
-        // one instead of leaking "YOUTUBE_LOSSY" / "FLAC" / "AAC" verbatim.
         const tier = stereoQualityTier(normalizedQuality);
         badgeText = tier;
         if (tier === "MAX") {
@@ -158,12 +174,9 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
             backgroundColor = transparentHex(palette.TealBackground, badgeAlpha);
             color = palette.TealText;
         } else if (tier === "LOW") {
-            // A dimmer neutral than NORMAL so the fidelity order reads
-            // gold(MAX) > teal(HIGH) > neutral(NORMAL) > muted(LOW).
             backgroundColor = `color-mix(in srgb, ${tokens.colorNeutralForeground4} 10%, transparent)`;
             color = tokens.colorNeutralForeground4;
         }
-        // NORMAL keeps the default neutral tint set above.
     }
 
     return (

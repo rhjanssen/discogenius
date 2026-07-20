@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactElement } from "react";
-import { Button, Tooltip, makeStyles, tokens } from "@fluentui/react-components";
+import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 export interface LibraryRowActionItem {
@@ -23,6 +23,10 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalXXS,
     justifyContent: "flex-end",
     flexWrap: "nowrap",
+    // Content-sized strip — do not artificially cap width or Fluent Overflow will
+    // park the last action alone behind a "more" menu even when it fits.
+    width: "max-content",
+    maxWidth: "100%",
   },
   actionButton: {
     ...glassButtonStyles,
@@ -33,7 +37,7 @@ export function LibraryRowActions({ actions, className }: LibraryRowActionsProps
   const styles = useStyles();
 
   return (
-    <div className={`${styles.root} ${className || ""}`.trim()}>
+    <div className={mergeClasses(styles.root, className)}>
       {actions.filter((action) => !action.hidden).map((action) => (
         <Tooltip key={action.key} content={action.label} relationship="label">
           <Button

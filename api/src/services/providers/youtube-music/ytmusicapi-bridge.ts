@@ -12,6 +12,7 @@ export type YtMusicBridgeOperation =
   | "get_artist_videos"
   | "get_album"
   | "get_track"
+  | "get_track_counterparts"
   | "get_video"
   | "get_lyrics"
   | "list_import_sources"

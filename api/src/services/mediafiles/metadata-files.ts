@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
 import { db } from '../../database.js';
 import { streamingProviderManager } from "../providers/index.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
@@ -8,6 +9,7 @@ import {
     classifyLyricsForSidecar,
     lyricSidecarPath,
 } from "../extras/lyrics/lyric-sidecar.js";
+import { resolveFfmpegBinary } from "./audioUtils.js";
 import {
     albumProviderArtworkCandidatesFromRow,
     imageContainerFromImagesColumn,
@@ -115,6 +117,20 @@ function escapeXml(value: unknown): string {
 function xmlElement(name: string, value: unknown): string | null {
     const text = String(value ?? "").trim();
     return text ? `  <${name}>${escapeXml(text)}</${name}>` : null;
+}
+
+/** Parse Albums.genres / AlbumReleases.label / Recordings.isrcs JSON arrays. */
+function parseJsonStringList(raw: string | null | undefined): string[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .map((item) => (typeof item === "string" ? item.trim() : ""))
+            .filter((item) => item.length > 0);
+    } catch {
+        return [];
+    }
 }
 
 function xmlUniqueId(type: string, value: unknown, isDefault = false): string | null {
@@ -265,15 +281,12 @@ async function getArtistForNfo(artistId: string) {
 }
 
 async function getArtistBioTextForNfo(artistId: string): Promise<string> {
-    try {
-        const bio = await streamingProviderManager.getDefaultStreamingProvider().getArtistBio?.(artistId);
-        if (bio) return cleanProviderText(bio);
-    } catch (error) {
-        warnNfoFallback("artist biography", artistId, error);
+    const row = db.prepare("SELECT bio_text FROM Artists WHERE id = ? OR mbid = ? LIMIT 1")
+        .get(artistId, artistId) as { bio_text?: string | null } | undefined;
+    if (row?.bio_text) {
+        return cleanProviderText(row.bio_text);
     }
-
-    const row = db.prepare("SELECT bio_text FROM Artists WHERE id = ?").get(artistId) as { bio_text?: string | null } | undefined;
-    return row?.bio_text ? cleanProviderText(row.bio_text) : "";
+    return "";
 }
 
 async function getAlbumForNfo(albumId: string) {
@@ -331,13 +344,6 @@ async function getAlbumForNfo(albumId: string) {
 }
 
 async function getAlbumReviewTextForNfo(albumId: string): Promise<string> {
-    try {
-        const review = await streamingProviderManager.getDefaultStreamingProvider().getAlbumReview?.(albumId);
-        if (review) return cleanProviderText(review);
-    } catch (error) {
-        warnNfoFallback("album review", albumId, error);
-    }
-
     const row = loadAlbumProviderItem(albumId);
     const review = textOrNull(
         row?.release_group_review_text,
@@ -663,15 +669,122 @@ export async function downloadAlbumCover(
 }
 
 /**
- * Download album video cover (animated MP4) at specified resolution
- * @param videoCoverId - Album video cover UUID (from album.videoCover)
+ * Download album video cover (animated MP4) at specified resolution.
+ * @param videoCoverId - Provider animated-cover id or absolute URL
  * @param resolution - Resolution: 80, 160, 320, 640, 1280, or "origin"
  * @param outputPath - Full path where to save the MP4
+ * @param options - Prefer the import/download provider; fall back to slot then default
  */
+export type AlbumVideoCoverDownloadOptions = {
+    provider?: string | null;
+    providerAlbumId?: string | null;
+    releaseGroupMbid?: string | null;
+};
+
+function resolveAlbumVideoCoverProvider(options?: AlbumVideoCoverDownloadOptions): {
+    providerId: string;
+    providerAlbumId: string | null;
+} {
+    const requestedProvider = String(options?.provider || "").trim();
+    const requestedAlbumId = String(options?.providerAlbumId || "").trim() || null;
+    if (requestedProvider) {
+        return { providerId: requestedProvider, providerAlbumId: requestedAlbumId };
+    }
+
+    const releaseGroupMbid = String(options?.releaseGroupMbid || "").trim();
+    if (releaseGroupMbid) {
+        const slot = db.prepare(`
+            SELECT selected_provider, selected_provider_id
+            FROM ReleaseGroupSlots
+            WHERE release_group_mbid = ?
+              AND selected_provider IS NOT NULL
+              AND TRIM(selected_provider) != ''
+            ORDER BY CASE slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+            LIMIT 1
+        `).get(releaseGroupMbid) as { selected_provider?: string | null; selected_provider_id?: string | null } | undefined;
+        const slotProvider = String(slot?.selected_provider || "").trim();
+        if (slotProvider) {
+            const slotAlbumId = String(slot?.selected_provider_id || "")
+                .split(";")
+                .map((part) => part.trim())
+                .find(Boolean) || null;
+            return {
+                providerId: slotProvider,
+                providerAlbumId: requestedAlbumId || slotAlbumId,
+            };
+        }
+    }
+
+    return {
+        providerId: streamingProviderManager.getDefaultProviderId(),
+        providerAlbumId: requestedAlbumId,
+    };
+}
+
+function isHlsArtworkUrl(url: string): boolean {
+    const normalized = url.toLowerCase();
+    return normalized.includes(".m3u8") || normalized.includes("application/vnd.apple.mpegurl");
+}
+
+async function downloadHlsArtworkToFile(url: string, outputPath: string, label: string): Promise<boolean> {
+    const ffmpegBin = resolveFfmpegBinary();
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    const tempPath = `${outputPath}.partial.mp4`;
+    try {
+        if (fs.existsSync(tempPath)) {
+            fs.unlinkSync(tempPath);
+        }
+    } catch {
+        // ignore
+    }
+
+    console.log(`📥 [METADATA] Remuxing HLS ${label}: ${url}`);
+    const ok = await new Promise<boolean>((resolve) => {
+        const child = spawn(ffmpegBin, [
+            "-y",
+            "-loglevel", "error",
+            "-i", url,
+            "-c", "copy",
+            "-bsf:a", "aac_adtstoasc",
+            tempPath,
+        ], { windowsHide: true });
+        let stderr = "";
+        child.stderr?.on("data", (chunk) => {
+            stderr += String(chunk);
+        });
+        child.on("error", (error) => {
+            console.warn(`⚠️ [METADATA] Failed to remux ${label}: ${error.message}`);
+            resolve(false);
+        });
+        child.on("close", (code) => {
+            if (code === 0 && fs.existsSync(tempPath)) {
+                resolve(true);
+                return;
+            }
+            console.warn(`⚠️ [METADATA] Failed to remux ${label}: ${stderr.trim() || `ffmpeg exited with code ${code}`}`);
+            resolve(false);
+        });
+    });
+
+    if (!ok) {
+        try {
+            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+        } catch {
+            // ignore
+        }
+        return false;
+    }
+
+    fs.renameSync(tempPath, outputPath);
+    console.log(`✅ [METADATA] ${label} saved: ${outputPath}`);
+    return true;
+}
+
 export async function downloadAlbumVideoCover(
     videoCoverId: string,
     resolution: number | "origin",
-    outputPath: string
+    outputPath: string,
+    options?: AlbumVideoCoverDownloadOptions,
 ): Promise<void> {
     const allowed = [80, 160, 250, 320, 500, 640, 1200, 1280];
     const numericResolution = typeof resolution === "number" ? resolution : Number(resolution);
@@ -682,11 +795,30 @@ export async function downloadAlbumVideoCover(
             : 320);
 
     const size = safeResolution === "origin" ? "origin" : `${safeResolution}x${safeResolution}`;
-    const url = await streamingProviderManager.getDefaultStreamingProvider().getArtworkUrl?.({
+    const resolved = resolveAlbumVideoCoverProvider(options);
+    let provider;
+    try {
+        provider = streamingProviderManager.getStreamingProvider(resolved.providerId);
+    } catch {
+        provider = streamingProviderManager.getDefaultStreamingProvider();
+    }
+
+    const url = await provider.getArtworkUrl?.({
         entityType: "albumVideoCover",
         imageId: videoCoverId,
+        providerId: resolved.providerAlbumId,
         size,
     });
+    if (!url) {
+        console.log("ℹ️ [METADATA] No album video cover available, skipping.");
+        return;
+    }
+
+    if (isHlsArtworkUrl(url)) {
+        await downloadHlsArtworkToFile(url, outputPath, "album video cover");
+        return;
+    }
+
     await downloadProviderArtwork(url, outputPath, "album video cover");
 }
 
@@ -879,7 +1011,8 @@ export async function saveAlbumNfoFile(
     const canonicalReleaseMbid = selectedSlot?.selected_release_mbid || localAlbum?.release_mbid || null;
     const canonicalRelease = canonicalReleaseMbid
         ? db.prepare(`
-            SELECT release.mbid, release_group.title, release.date, release.barcode
+            SELECT release.mbid, release_group.title, release.date, release.barcode, release.label,
+                   release_group.genres
             FROM AlbumReleases release
             JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
             WHERE release.mbid = ?
@@ -889,6 +1022,8 @@ export async function saveAlbumNfoFile(
             title?: string | null;
             date?: string | null;
             barcode?: string | null;
+            label?: string | null;
+            genres?: string | null;
         } | undefined
         : undefined;
     const providerAlbumIds = splitProviderIds(selectedSlot?.selected_provider_id || albumId);
@@ -900,8 +1035,10 @@ export async function saveAlbumNfoFile(
                 track.position AS track_number,
                 track.medium_position AS volume_number,
                 track.recording_mbid,
-                track.mbid AS track_mbid
+                track.mbid AS track_mbid,
+                recording.isrcs AS recording_isrcs
             FROM Tracks track
+            LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
             WHERE track.release_mbid = ?
             ORDER BY COALESCE(track.medium_position, 1), COALESCE(track.position, 0), track.id
         `).all(canonicalRelease.mbid)
@@ -912,8 +1049,11 @@ export async function saveAlbumNfoFile(
             NULL AS track_number,
             NULL AS volume_number,
             pi.recording_mbid,
-            pi.track_mbid
+            pi.track_mbid,
+            recording.isrcs AS recording_isrcs,
+            pi.isrc AS provider_isrc
         FROM ProviderItems pi
+        LEFT JOIN Recordings recording ON recording.mbid = pi.recording_mbid
         WHERE pi.entity_type = 'track'
           AND CAST(pi.album_id AS TEXT) = CAST(? AS TEXT)
         ORDER BY pi.provider_id
@@ -925,6 +1065,8 @@ export async function saveAlbumNfoFile(
         volume_number: number | null;
         recording_mbid: string | null;
         track_mbid: string | null;
+        recording_isrcs: string | null;
+        provider_isrc?: string | null;
     }>;
     const releaseDate = canonicalRelease?.date || album.releaseDate;
     const year = releaseDate ? releaseDate.substring(0, 4) : "";
@@ -933,6 +1075,22 @@ export async function saveAlbumNfoFile(
         ? albumRecord.artists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
         : [albumRecord.artist_name || albumRecord.artist?.name || "Unknown"];
 
+    // Kodi album.nfo reads <genre> (multiple) and <label>; Jellyfin ignores NFO
+    // genre for music albums but still benefits from embedded file tags.
+    // <upc> is Discogenius/Jellyfin-friendly (not in Kodi's album.nfo schema).
+    // ISRC stays track-level: embed in audio tags; optional <isrc> on NFO track
+    // children for archival (Kodi has no album-level ISRC and does not wire
+    // album.nfo tracks to library songs).
+    const albumGenres = parseJsonStringList(
+        canonicalRelease?.genres
+        || (localAlbum?.release_group_mbid
+            ? (db.prepare("SELECT genres FROM Albums WHERE mbid = ? LIMIT 1")
+                .get(localAlbum.release_group_mbid) as { genres?: string | null } | undefined)?.genres
+            : null)
+        || null,
+    );
+    const albumLabels = parseJsonStringList(canonicalRelease?.label || null);
+
     const elements = [
         xmlElement("title", canonicalRelease?.title || album.title),
         xmlElement("review", reviewText),
@@ -940,6 +1098,8 @@ export async function saveAlbumNfoFile(
         xmlElement("releasedate", releaseDate),
         ...artists.map((artistName: unknown) => xmlElement("artist", artistName)),
         ...artists.map((artistName: unknown) => xmlElement("albumartist", artistName)),
+        ...albumGenres.map((genre) => xmlElement("genre", genre)),
+        ...albumLabels.map((labelName) => xmlElement("label", labelName)),
         xmlElement("musicbrainzalbumid", canonicalRelease?.mbid || localAlbum?.release_mbid),
         xmlElement("musicbrainzreleasegroupid", localAlbum?.release_group_mbid),
         xmlElement("musicbrainzalbumartistid", localAlbum?.artist_mbid),
@@ -949,11 +1109,15 @@ export async function saveAlbumNfoFile(
         xmlUniqueId("MusicBrainzAlbumArtist", localAlbum?.artist_mbid),
         ...providerAlbumIds.map((providerAlbumId) => xmlUniqueId(`${provider.id}Album`, providerAlbumId)),
         ...nfoTracks.map((track) => {
+            const trackIsrc = parseJsonStringList(track.recording_isrcs)[0]
+                || String(track.provider_isrc || "").trim()
+                || null;
             const trackElements = [
                 xmlElement("disc", track.volume_number || 1),
                 xmlElement("position", track.track_number),
                 xmlElement("title", track.title),
                 xmlElement("duration", track.duration),
+                xmlElement("isrc", trackIsrc),
                 xmlUniqueId("MusicBrainzTrack", track.track_mbid),
                 xmlUniqueId("MusicBrainzRecording", track.recording_mbid),
             ].filter((element): element is string => Boolean(element));

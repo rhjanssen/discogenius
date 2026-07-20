@@ -114,6 +114,36 @@ test("audio tag writer emits Picard canonical barcode fields", () => {
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".m4a"), { "----:com.apple.iTunes:Barcode": "123456789012" });
 });
 
+test("audio tag writer emits genre and label fields for common formats", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "genre",
+      label: "Genre",
+      ffmpegKey: "genre",
+      targetValue: "Indie Rock / Alternative",
+    },
+    {
+      key: "label",
+      label: "Label",
+      ffmpegKey: "LABEL",
+      targetValue: "Canonical Label",
+    },
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), {
+    GENRE: "Indie Rock / Alternative",
+    LABEL: "Canonical Label",
+  });
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), {
+    genre: "Indie Rock / Alternative",
+    publisher: "Canonical Label",
+  });
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".m4a"), {
+    genre: "Indie Rock / Alternative",
+    "----:com.apple.iTunes:LABEL": "Canonical Label",
+  });
+});
+
 test("buildAudioTagWriteMap maps tags correctly for FLAC (.flac)", () => {
   const tags: ManagedTag[] = [
     {

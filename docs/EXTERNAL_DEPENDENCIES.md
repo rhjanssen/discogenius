@@ -30,12 +30,13 @@ Examples:
 ## 2. Provider companion services
 
 Some provider backends need a sidecar process that is not part of the core
-Discogenius server. These should be optional Compose profiles or documented
-external services, not always-on dependencies.
+Discogenius server. Keep them clearly commented in Compose so operators can
+delete the service block when unused, and never make them hard requirements
+for starting Discogenius itself.
 
 Rules:
 
-- Keep them disabled by default.
+- Comment the service so it is obvious what it is for and how to remove it.
 - Put provider-owned state under `config/providers/<provider>/`.
 - Prefer pinned images when the image becomes a release dependency.
 - Surface readiness through provider diagnostics before a download is started.
@@ -45,8 +46,10 @@ Rules:
 
 Examples:
 
-- Apple Music decryption wrapper: optional `apple-music` Compose profile,
-  sharing Discogenius' network namespace so `127.0.0.1:10020/20020` resolves.
+- Apple Music decryption wrapper: `apple-music-wrapper` service in
+  `docker-compose.yml` / `docker-compose.example.yml`, sharing Discogenius'
+  network namespace so `127.0.0.1:10020/20020` resolves. Delete the service
+  block if you will not download from Apple Music.
 - `MP4Box`: provider prerequisite reported by diagnostics. If we later bundle
   it, use a pinned binary/image source; do not clone GPAC at image build time.
 

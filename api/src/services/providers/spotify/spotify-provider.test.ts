@@ -138,8 +138,10 @@ test("Spotify token and provider-status probes abort on a bounded deadline", asy
   const status = await provider.getAuthStatus();
   assert.equal(status.connected, false);
   assert.equal(status.remoteCatalogAvailable, false);
-  assert.match(status.message || "", /timed out/u);
-  assert.equal(signals[1]?.aborted, true);
+  assert.equal(status.canAuthenticate, false);
+  assert.match(status.message || "", /Soon/u);
+  // Coming-soon auth status short-circuits before a second token probe.
+  assert.equal(signals.length, 1);
 });
 
 test("Spotify API refreshes once after a catalog 401 and surfaces retry-after metadata", async () => {
@@ -328,6 +330,10 @@ test("Spotify provider manifest, URL parsing, preview and auth status stay capab
   assert.equal(provider.capabilities.losslessStereo, false);
   assert.equal(provider.capabilities.musicVideos, false);
   assert.deepEqual(provider.manifest.downloadBackends[0].capabilities, ["stereo"]);
+  assert.equal(provider.manifest.auth.comingSoon, true);
+  assert.equal(provider.manifest.downloadBackends[0].enabled, false);
+  assert.equal(provider.isAuthenticated(), false);
+  assert.equal((await provider.getAuthStatus()).canAuthenticate, false);
   assert.deepEqual(provider.parseMediaUrl(`spotify:track:${SPOTIFY_FIXTURE_IDS.track}`), {
     type: "track", providerId: SPOTIFY_FIXTURE_IDS.track,
   });
@@ -338,7 +344,8 @@ test("Spotify provider manifest, URL parsing, preview and auth status stay capab
   assert.deepEqual(await provider.getPlaybackInfo(SPOTIFY_FIXTURE_IDS.track), {
     type: "bts", url: "https://p.scdn.co/mp3-preview/pompeii-preview",
   });
-  assert.equal((await provider.getAuthStatus()).connected, true);
+  assert.equal((await provider.getAuthStatus()).connected, false);
+  assert.equal((await provider.getAuthStatus()).canAuthenticate, false);
   const diagnostics = await provider.getDiagnostics();
   assert.equal(diagnostics.find((item) => item.kind === "download-backend")?.status, "error");
   assert.equal(provider.manifest.downloadBackends[0].setupNote?.includes(VOTIFY_PIP_REQUIREMENT), true);

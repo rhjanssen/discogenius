@@ -173,7 +173,7 @@ export function shouldRefreshVideos(options: {
 
   if (total === 0 || missing > 0 || !oldest) return true;
 
-  // Videos use album-style cadence for now (requested track-like treatment for videos).
+  // Videos follow the album refresh cadence.
   return shouldRefreshAlbum({
     albumReleaseDate: null,
     lastScanned: oldest,

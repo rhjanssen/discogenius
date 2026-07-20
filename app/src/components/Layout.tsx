@@ -229,8 +229,8 @@ const useStyles = makeStyles({
     marginRight: "auto",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     // Safe area insets for PWA - left/right for notch devices, bottom for home indicator
-    paddingLeft: `max(${tokens.spacingHorizontalSNudge}, env(safe-area-inset-left))`,
-    paddingRight: `max(${tokens.spacingHorizontalSNudge}, env(safe-area-inset-right))`,
+    paddingLeft: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-left))`,
+    paddingRight: `max(${tokens.spacingHorizontalS}, env(safe-area-inset-right))`,
     paddingBottom: `max(${tokens.spacingVerticalM}, env(safe-area-inset-bottom))`,
     paddingTop: tokens.spacingVerticalM,
     boxSizing: "border-box",

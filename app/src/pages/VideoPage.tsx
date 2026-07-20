@@ -7,8 +7,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
     Button,
-    Badge,
-    Link,
     Spinner,
     Text,
     Title1,
@@ -53,6 +51,7 @@ import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow, type ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
 import { ArtistPersona } from "@/components/ui/ArtistPersona";
+import { VideoAlbumAffiliation } from "@/components/ui/VideoAlbumAffiliation";
 import { ErrorState } from "@/components/ui/ContentState";
 
 import {
@@ -167,12 +166,26 @@ const useStyles = makeStyles({
     infoSection: {
         display: "flex",
         flexDirection: "column",
+        // Section rhythm; persona↔title uses the tighter titleBlock gap.
         gap: tokens.spacingVerticalM,
         padding: tokens.spacingHorizontalL,
         backgroundColor: tokens.colorNeutralBackgroundAlpha2,
         backdropFilter: "blur(10px)",
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
         borderRadius: tokens.borderRadiusXLarge,
+    },
+    // Related-content pair (Fluent XS / SNudge): artist byline belongs to the title.
+    titleBlock: {
+        display: "flex",
+        flexDirection: "column",
+        gap: tokens.spacingVerticalXS,
+        minWidth: 0,
+        "@media (min-width: 768px)": {
+            gap: tokens.spacingVerticalSNudge,
+        },
+    },
+    albumAffiliation: {
+        marginTop: tokens.spacingVerticalXXS,
     },
     titleRow: {
         display: "flex",
@@ -240,18 +253,6 @@ const useStyles = makeStyles({
     transparentButton: {
         ...detailActionGlassButtonStyles,
     },
-    fileInfo: {
-        display: "flex",
-        gap: tokens.spacingHorizontalM,
-        flexWrap: "wrap",
-        marginTop: tokens.spacingVerticalS,
-        padding: tokens.spacingVerticalS,
-        backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-        borderRadius: tokens.borderRadiusMedium,
-    },
-    fileBadge: {
-        fontSize: tokens.fontSizeBase200,
-    },
     loadingState: {
         minHeight: "320px",
         display: "flex",
@@ -259,18 +260,6 @@ const useStyles = makeStyles({
         justifyContent: "center",
     },
 });
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
-/* ------------------------------------------------------------------ */
-
-function formatFileSize(bytes?: number): string {
-    if (!bytes) return "—";
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */
@@ -477,7 +466,7 @@ const VideoPage = () => {
                 return;
             }
 
-            if (Hls.isSupported()) {
+            if (Hls.isSupported() && /\.m3u8(\?|$)/i.test(remoteStreamUrl)) {
                 const hls = new Hls({
                     enableWorker: true,
                 });
@@ -511,10 +500,8 @@ const VideoPage = () => {
                 return;
             }
 
-            if (videoRef.current.canPlayType("application/vnd.apple.mpegurl")) {
-                videoRef.current.src = remoteStreamUrl;
-                return;
-            }
+            videoRef.current.src = remoteStreamUrl;
+            videoRef.current.play().catch((e) => console.error("Play progressive preview failed:", e));
         };
 
         void attachRemoteVideo();
@@ -589,21 +576,30 @@ const VideoPage = () => {
                 </div>
 
                 <div className={styles.infoSection}>
-                    <div className={styles.titleRow}>
-                        <Title1 className={styles.videoTitle}>{video.title}</Title1>
-                        {video.explicit ? <ExplicitBadge /> : null}
+                    <div className={styles.titleBlock}>
+                        {video.artist_name ? (
+                            <ArtistPersona
+                                artistId={video.artist_id?.toString()}
+                                artistName={video.artist_name}
+                                avatarUrl={artistPicUrl || undefined}
+                            />
+                        ) : null}
+
+                        <div className={styles.titleRow}>
+                            <Title1 className={styles.videoTitle}>{video.title}</Title1>
+                            {video.explicit ? <ExplicitBadge /> : null}
+                        </div>
+
+                        {(video.albums?.length ?? 0) > 0 ? (
+                            <VideoAlbumAffiliation
+                                className={styles.albumAffiliation}
+                                albums={video.albums ?? []}
+                            />
+                        ) : null}
                     </div>
 
                     <div className={styles.metadataRow}>
                         <div className={styles.leftMeta}>
-                            {video.artist_name && (
-                                <ArtistPersona
-                                    artistId={video.artist_id?.toString()}
-                                    artistName={video.artist_name}
-                                    avatarUrl={artistPicUrl || undefined}
-                                />
-                            )}
-
                             <div className={styles.metaItems}>
                                 {year && (
                                     <>
@@ -624,35 +620,14 @@ const VideoPage = () => {
                                             canPreview: offer.can_preview,
                                             canDownload: offer.can_download,
                                         }))}
-                                        size="small"
+                                        size="medium"
                                         onSelectOffer={handleSelectOffer}
                                         selectedOfferAlbumId={selectedOffer?.provider_id ?? null}
                                         selectedOfferProvider={selectedOffer?.provider ?? null}
                                     />
                                 ) : video.quality ? (
-                                    <QualityBadge quality={video.quality} size="small" />
+                                    <QualityBadge quality={video.quality} size="medium" />
                                 ) : null}
-                                {(video.albums ?? []).map((album) => (
-                                    <span key={album.id}>
-                                        <Text>•</Text>{" "}
-                                        <Link onClick={() => navigate(`/album/${album.id}`)}>
-                                            From {album.title}
-                                        </Link>
-                                    </span>
-                                ))}
-                                {isDownloaded && videoFile && (
-                                    <>
-                                        <Text>•</Text>
-                                        <Badge appearance="outline" size="small">
-                                            {[
-                                                videoFile.codec,
-                                                videoFile.file_size ? formatFileSize(videoFile.file_size) : null,
-                                                videoFile.extension?.toUpperCase(),
-                                                videoFile.bitrate ? `${Math.round(videoFile.bitrate / 1000)}k` : null
-                                            ].filter(Boolean).join(" / ")}
-                                        </Badge>
-                                    </>
-                                )}
                             </div>
                         </div>
 

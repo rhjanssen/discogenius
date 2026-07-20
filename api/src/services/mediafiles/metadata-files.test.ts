@@ -49,17 +49,17 @@ function seedMusicBrainzMetadata() {
         VALUES(?, ?)
     `).run("artist-mbid-100", "The Example Artist");
     dbModule.db.prepare(`
-        INSERT INTO Albums(mbid, artist_mbid, title, first_release_date, primary_type, review_text)
+        INSERT INTO Albums(mbid, artist_mbid, title, first_release_date, primary_type, review_text, genres)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+    `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album", "Album review with <markup>", JSON.stringify(["Indie Pop", "Synth-pop"]));
+    dbModule.db.prepare(`
+        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, barcode, media_count, track_count, label)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("album-mbid-200", "release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "123456789012", 1, 1, JSON.stringify(["Virgin Records"]));
+    dbModule.db.prepare(`
+        INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date, isrcs)
         VALUES(?, ?, ?, ?, ?, ?)
-    `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album", "Album review with <markup>");
-    dbModule.db.prepare(`
-        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, barcode, media_count, track_count)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-    `).run("album-mbid-200", "release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "123456789012", 1, 1);
-    dbModule.db.prepare(`
-        INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date)
-        VALUES(?, ?, ?, ?, ?)
-    `).run("recording-mbid-300", "artist-mbid-100", "Example Track", 0, "2024-02-03");
+    `).run("recording-mbid-300", "artist-mbid-100", "Example Track", 0, "2024-02-03", JSON.stringify(["GBUM72300001"]));
     dbModule.db.prepare(`
         INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
         VALUES(?, ?, ?, ?, ?, ?, ?)
@@ -160,6 +160,11 @@ test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs
     assert.match(albumNfo, /<uniqueid type="MusicBrainzTrack" default="false">track-mbid-300<\/uniqueid>/);
     assert.match(albumNfo, /<uniqueid type="MusicBrainzRecording" default="false">recording-mbid-300<\/uniqueid>/);
     assert.match(albumNfo, /Album review with &lt;markup&gt;/);
+    assert.match(albumNfo, /<genre>Indie Pop<\/genre>/);
+    assert.match(albumNfo, /<genre>Synth-pop<\/genre>/);
+    assert.match(albumNfo, /<label>Virgin Records<\/label>/);
+    assert.match(albumNfo, /<upc>123456789012<\/upc>/);
+    assert.match(albumNfo, /<isrc>GBUM72300001<\/isrc>/);
 
     const videoNfo = fs.readFileSync(videoPath, "utf-8");
     assert.match(videoNfo, /<musicvideo>/);
@@ -503,4 +508,61 @@ test("album NFO uses the selected canonical release for a composite provider slo
     assert.doesNotMatch(albumNfo, /Edition-Specific Release Title/);
     assert.match(albumNfo, /<position>2<\/position>/);
     assert.match(albumNfo, /<uniqueid type="MusicBrainzTrack" default="false">track-mbid-301<\/uniqueid>/);
+});
+
+test("downloadAlbumVideoCover resolves artwork through the requested provider", async () => {
+    const { streamingProviderManager } = await import("../providers/index.js");
+    const outputPath = path.join(tempDir, "animated-cover.mp4");
+    const calls: Array<Record<string, unknown>> = [];
+    const originalGet = streamingProviderManager.getStreamingProvider.bind(streamingProviderManager);
+    const originalDefault = streamingProviderManager.getDefaultStreamingProvider.bind(streamingProviderManager);
+
+    streamingProviderManager.getStreamingProvider = ((id: string) => {
+        assert.equal(id, "apple-music");
+        return {
+            id: "apple-music",
+            name: "Apple Music",
+            capabilities: {} as any,
+            async getArtworkUrl(request: Record<string, unknown>) {
+                calls.push(request);
+                return "https://example.test/apple-motion.mp4";
+            },
+        } as any;
+    }) as typeof streamingProviderManager.getStreamingProvider;
+
+    streamingProviderManager.getDefaultStreamingProvider = (() => {
+        throw new Error("default provider must not be used when provider is explicit");
+    }) as typeof streamingProviderManager.getDefaultStreamingProvider;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+        ok: true,
+        statusText: "OK",
+        async arrayBuffer() {
+            return new Uint8Array([0, 0, 0, 0]).buffer;
+        },
+    })) as unknown as typeof fetch;
+
+    try {
+        await metadataFilesModule.downloadAlbumVideoCover(
+            "https://example.test/apple-motion.mp4",
+            "origin",
+            outputPath,
+            { provider: "apple-music", providerAlbumId: "1440904699" },
+        );
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].entityType, "albumVideoCover");
+        assert.equal(calls[0].imageId, "https://example.test/apple-motion.mp4");
+        assert.equal(calls[0].providerId, "1440904699");
+        assert.equal(fs.existsSync(outputPath), true);
+    } finally {
+        streamingProviderManager.getStreamingProvider = originalGet;
+        streamingProviderManager.getDefaultStreamingProvider = originalDefault;
+        globalThis.fetch = originalFetch;
+        try {
+            fs.unlinkSync(outputPath);
+        } catch {
+            // ignore
+        }
+    }
 });

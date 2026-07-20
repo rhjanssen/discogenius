@@ -209,7 +209,7 @@ export function mapVideoQualityToTiddl(quality?: string | null): TiddlVideoQuali
         return "fhd";
     }
 
-    const configured = String(getConfigSection('quality')?.video_quality || "fhd").toLowerCase();
+    const configured = String(getConfigSection('quality')?.video_quality || "uhd").toLowerCase();
     if (configured === "sd" || configured === "hd" || configured === "fhd") {
         return configured as TiddlVideoQuality;
     }

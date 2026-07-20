@@ -1,5 +1,5 @@
 import { api } from "@/services/api";
-import { useDashboardInfiniteFeed } from "@/hooks/useDashboardInfiniteFeed";
+import { ignoreProgressTickEvents, useDashboardInfiniteFeed } from "@/hooks/useDashboardInfiniteFeed";
 import type { ActivityJobContract } from "@contracts/status";
 
 export const activityInFlightFeedQueryKey = ["activityInFlightFeed"] as const;
@@ -25,6 +25,9 @@ export function useActivityInFlightFeed({ enabled = true }: UseActivityInFlightF
             timeoutMs,
         }),
         getItemId: (item) => item.id,
+        // Same filter as queue/history feeds: ignore per-second progress ticks so
+        // completed items don't flicker out/in while history catches up.
+        globalEventFilter: ignoreProgressTickEvents,
         enabled,
     });
 

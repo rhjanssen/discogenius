@@ -58,7 +58,7 @@ import {
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
-import { ProviderMark } from "@/components/ui/ProviderMark";
+import { albumSelectedQualityOffers } from "@/utils/albumSelectedQualityOffers";
 import { DownloadedBadge, NotScannedBadge } from "@/components/ui/StatusBadges";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
 import { MediaCard } from "@/components/cards/MediaCard";
@@ -91,7 +91,6 @@ import { useTheme } from "@/providers/themeContext";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { api, type StreamingProviderStatus } from "@/services/api";
 import { renderableArtworkUrl } from "@/utils/artwork";
-import { orderedQualityTags } from "@/utils/qualityTags";
 import {
   dispatchActivityRefresh,
   dispatchLibraryUpdated,
@@ -126,17 +125,25 @@ const downloadableVideoOffer = (video: any): { provider: string; providerId: str
   return provider && providerId ? { provider, providerId } : null;
 };
 
-const groupedVideoOffers = (video: any): Array<{ provider: string; providerId: string; quality: string | null }> => {
-  if (!Array.isArray(video?.provider_offers)) return [];
-  const deduped = new Map<string, { provider: string; providerId: string; quality: string | null }>();
-  for (const candidate of video.provider_offers) {
-    const provider = String(candidate?.provider || "").trim();
-    const providerId = String(candidate?.provider_id ?? candidate?.providerId ?? "").trim();
-    const quality = String(candidate?.quality || "").trim() || null;
-    if (!provider || !providerId) continue;
-    deduped.set(`${provider}\u0000${providerId}\u0000${quality || ""}`, { provider, providerId, quality });
+/** Selected download offer only — matches tracks' remoteOffers (chosen slot), not every variant. */
+const selectedVideoQualityOffer = (video: any): {
+  provider: string | null;
+  providerId: string | null;
+  quality: string | null;
+} | null => {
+  const selected = downloadableVideoOffer(video);
+  const quality = String(video?.quality || "").trim() || null;
+  if (selected) {
+    return { provider: selected.provider, providerId: selected.providerId, quality };
   }
-  return [...deduped.values()];
+  if (quality || video?.provider) {
+    return {
+      provider: String(video?.provider || "").trim() || null,
+      providerId: null,
+      quality,
+    };
+  }
+  return null;
 };
 
 const useStyles = makeStyles({
@@ -152,12 +159,16 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalXS,
     alignItems: "center",
     width: "100%",
+    // Room for glass-button hover shadow so Layout's overflow-x clipping
+    // does not flat-top the toolbar icons.
+    paddingTop: tokens.spacingVerticalXS,
+    paddingBottom: tokens.spacingVerticalXS,
     "@media (min-width: 640px)": {
       gap: tokens.spacingHorizontalS,
       justifyContent: "space-between",
     },
     "@media (max-width: 639px)": {
-      alignItems: "flex-start",
+      alignItems: "center",
       rowGap: tokens.spacingVerticalXS,
     },
   },
@@ -262,6 +273,11 @@ const useStyles = makeStyles({
   compactIcon: {
     width: "16px",
     height: "16px",
+  },
+  durationText: {
+    color: tokens.colorNeutralForeground3,
+    fontVariantNumeric: "tabular-nums",
+    whiteSpace: "nowrap",
   },
   dimmedIcon: {
     opacity: 0.6,
@@ -1045,6 +1061,7 @@ const Library = () => {
       key: "thumb",
       header: "",
       width: "40px",
+      media: true,
       render: (artist: any) => {
         const src = artist.picture || artist.cover_image_url;
         return src ? (
@@ -1059,14 +1076,34 @@ const Library = () => {
     {
       key: "name",
       header: "Name",
-      width: "1fr",
-      render: (artist: any) => <span className={dgCell.nameCell} title={artist.name}>{artist.name}</span>,
+      // minmax(0, 1fr) so the name column can shrink on narrow viewports;
+      // Albums/Scanned stack under the name below 768px (Fluent list pattern).
+      width: "minmax(0, 1fr)",
+      wrap: true,
+      render: (artist: any) => {
+        const albumLabel = `${artist.monitored_album_count ?? "--"} / ${artist.album_count ?? "--"} albums`;
+        const scannedLabel = artist.last_scanned
+          ? formatLastScanned(artist.last_scanned)
+          : "Not scanned";
+        return (
+          <div className={dgCell.nameStack}>
+            <span className={dgCell.nameCell} title={artist.name}>{artist.name}</span>
+            <div className={dgCell.mobileMetaLine}>
+              <span className={dgCell.mobileMetaText}>{albumLabel}</span>
+              <span className={dgCell.mobileMetaText}>·</span>
+              <span className={dgCell.mobileMetaText}>{scannedLabel}</span>
+            </div>
+          </div>
+        );
+      },
     },
     {
       key: "albums",
       header: "Albums",
       width: "70px",
       align: "center",
+      minWidth: 768,
+      className: dgCell.hideOnMobile,
       render: (artist: any) => (
         <>
           <span className={dgCell.statPrimary}>{artist.monitored_album_count ?? "--"}</span>
@@ -1093,6 +1130,8 @@ const Library = () => {
       header: "Scanned",
       width: "132px",
       align: "center",
+      minWidth: 768,
+      className: dgCell.hideOnMobile,
       render: (artist: any) => artist.last_scanned
         ? <Text size={200}>{formatLastScanned(artist.last_scanned)}</Text>
         : renderNotScannedBadge(),
@@ -1100,7 +1139,7 @@ const Library = () => {
     {
       key: "actions",
       header: "",
-      width: "140px",
+      width: "max-content",
       align: "right",
       render: (artist: any) => (
         <LibraryRowActions
@@ -1172,6 +1211,7 @@ const Library = () => {
     const isLocked = Boolean(album.monitored_lock);
     const imageUrl = renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id);
     const itemProgress = getProgressByProviderId(String(album.id));
+    const qualityOffers = albumSelectedQualityOffers(album);
     return (
       <MediaCard
         key={album.id}
@@ -1181,7 +1221,11 @@ const Library = () => {
         title={album.title}
         subtitle={subtitle}
         explicit={album.explicit}
-        quality={album.quality}
+        qualityBadges={qualityOffers.length > 0 ? (
+          <ProviderQualityRow size="small" offers={qualityOffers} />
+        ) : album.quality ? (
+          <QualityBadge quality={album.quality} size="small" />
+        ) : undefined}
         monitored={album.is_monitored}
         onMonitorToggle={isLocked ? undefined : (e) => handleToggleAlbumMonitored(e, album)}
         placeholder={
@@ -1210,11 +1254,20 @@ const Library = () => {
     await api.addAlbum(String(album.id));
   }, []);
 
+  const renderAlbumQuality = useCallback((album: any) => {
+    const offers = albumSelectedQualityOffers(album);
+    if (offers.length > 0) {
+      return <ProviderQualityRow size="small" offers={offers} />;
+    }
+    return album.quality ? <QualityBadge quality={album.quality} size="small" /> : null;
+  }, []);
+
   const albumColumns = useMemo<DataGridColumn[]>(() => [
     {
       key: "thumb",
       header: "",
       width: "40px",
+      media: true,
       render: (album: any) => {
         const src = renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id);
         return src ? (
@@ -1231,13 +1284,22 @@ const Library = () => {
     {
       key: "title",
       header: "Title",
-      width: "1fr",
-      render: (album: any) => (
-        <div className={dgCell.nameStack}>
-          <span className={dgCell.nameCell} title={album.title}>{album.title}</span>
-          <Text size={200} className={dgCell.subtitleText} truncate>{album.artist_name}</Text>
-        </div>
-      ),
+      width: "minmax(0, 1fr)",
+      wrap: true,
+      render: (album: any) => {
+        const quality = renderAlbumQuality(album);
+        return (
+          <div className={dgCell.nameStack}>
+            <span className={dgCell.nameCell} title={album.title}>{album.title}</span>
+            <Text size={200} className={dgCell.subtitleText} truncate>{album.artist_name}</Text>
+            {quality ? (
+              <div className={dgCell.mobileQuality} aria-label="Available provider quality">
+                {quality}
+              </div>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       key: "year",
@@ -1253,58 +1315,35 @@ const Library = () => {
     },
     {
       key: "tracks",
+      // Keep track count on the right on mobile (same pattern as TrackList Time).
       header: "Tracks",
-      width: "60px",
-      align: "center",
-      render: (album: any) => <>{album.num_tracks ?? album.track_count ?? 0}</>,
+      width: "max-content",
+      align: "right",
+      render: (album: any) => {
+        const files = Number(album.track_file_count ?? 0);
+        const total = Number(album.track_count ?? album.num_tracks ?? 0);
+        // Lidarr album rows: "trackFileCount / trackCount"
+        const label = total > 0 ? `${files} / ${total}` : String(files);
+        return (
+          <Text size={200} className={styles.durationText} title={`${files} on disk of ${total} tracks`}>
+            {label}
+          </Text>
+        );
+      },
     },
     {
       key: "quality",
       header: "Quality",
       width: "max-content",
       align: "left",
-      render: (album: any) => {
-        const hasStereoOffer = Boolean(album.stereo_provider_id);
-        const hasSpatialOffer = Boolean(album.spatial_provider_id);
-        const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
-
-        if (hasAnyProviderOffer) {
-          return (
-            <ProviderQualityRow
-              size="small"
-              offers={[
-                ...(hasStereoOffer
-                  ? [{
-                      slot: "stereo",
-                      quality: album.stereo_quality || album.quality,
-                      provider: album.stereo_provider || album.selected_provider,
-                      matchStatus: album.stereo_match_status,
-                      providerAlbumId: album.stereo_provider_id,
-                      selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
-                    }]
-                  : []),
-                ...(hasSpatialOffer
-                  ? [{
-                      slot: "spatial",
-                      quality: album.spatial_quality || "DOLBY_ATMOS",
-                      provider: album.spatial_provider || album.selected_provider,
-                      matchStatus: album.spatial_match_status,
-                      providerAlbumId: album.spatial_provider_id,
-                      selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
-                    }]
-                  : []),
-              ] as any}
-            />
-          );
-        }
-
-        return album.quality ? <QualityBadge quality={album.quality} /> : null;
-      },
+      minWidth: 768,
+      className: dgCell.hideOnMobile,
+      render: (album: any) => renderAlbumQuality(album),
     },
     {
       key: "actions",
       header: "",
-      width: "120px",
+      width: "max-content",
       align: "right",
       render: (album: any) => {
         const isLocked = Boolean(album.monitored_lock);
@@ -1335,14 +1374,31 @@ const Library = () => {
         );
       },
     },
-  ], [dgCell, handleDownloadAlbumRow, handleToggleAlbumLock, handleToggleAlbumMonitored]);
+  ], [dgCell, handleDownloadAlbumRow, handleToggleAlbumLock, handleToggleAlbumMonitored, renderAlbumQuality, styles.durationText]);
 
   /** Column definitions for video datagrid — used in library Videos tab */
+  const renderVideoQuality = useCallback((video: any) => {
+    const offer = selectedVideoQualityOffer(video);
+    if (!offer) return null;
+    return (
+      <ProviderQualityRow
+        size="small"
+        offers={[{
+          slot: "video" as const,
+          quality: offer.quality,
+          provider: offer.provider,
+          providerAlbumId: offer.providerId,
+        }]}
+      />
+    );
+  }, []);
+
   const videoColumns = useMemo<DataGridColumn[]>(() => [
     {
       key: "thumb",
       header: "",
       width: "64px",
+      media: true,
       render: (video: any) => {
         const src = renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id);
         return src ? (
@@ -1357,78 +1413,62 @@ const Library = () => {
     {
       key: "title",
       header: "Title",
-      width: "1fr",
-      render: (video: any) => (
-        <div className={dgCell.nameStack}>
-          <span className={dgCell.nameCell} title={video.title}>{video.title}</span>
-          <Text size={200} className={dgCell.subtitleText} truncate>{video.artist_name || 'Unknown'}</Text>
-        </div>
-      ),
-    },
-    {
-      key: "provider",
-      header: "Provider",
-      width: "96px",
-      minWidth: 900,
+      width: "minmax(0, 1fr)",
+      wrap: true,
       render: (video: any) => {
-        const offers = groupedVideoOffers(video);
-        const rawProviders: unknown[] = offers.length > 0
-          ? offers.map((offer) => offer.provider)
-          : Array.isArray(video.providers) && video.providers.length > 0
-            ? video.providers
-            : [video.provider];
-        const providers = [...new Set<string>(rawProviders
-          .filter((provider): provider is string => typeof provider === "string" && provider.length > 0))];
-        return providers.length > 0 ? (
-          <div style={{ display: "flex", gap: tokens.spacingHorizontalXS }} aria-label={`Available from ${providers.join(", ")}`}>
-            {providers.map((provider) => <ProviderMark key={provider} provider={provider} size={18} />)}
+        const quality = renderVideoQuality(video);
+        return (
+          <div className={dgCell.nameStack}>
+            <span className={dgCell.nameCell} title={video.title}>{video.title}</span>
+            <Text size={200} className={dgCell.subtitleText} truncate>{video.artist_name || 'Unknown'}</Text>
+            {video.is_downloaded ? (
+              <div className={dgCell.mobileMetaLine}>
+                <span className={dgCell.mobileMetaText}>Downloaded</span>
+              </div>
+            ) : null}
+            {quality ? (
+              <div className={dgCell.mobileQuality} aria-label="Available provider quality">
+                {quality}
+              </div>
+            ) : null}
           </div>
-        ) : <Text size={200}>—</Text>;
+        );
       },
     },
     {
       key: "quality",
-      header: "Available",
-      width: "96px",
+      header: "Quality",
+      width: "max-content",
       minWidth: 768,
-      render: (video: any) => {
-        const offerQualities = groupedVideoOffers(video)
-          .map((offer) => offer.quality)
-          .filter((quality): quality is string => Boolean(quality));
-        const qualities = orderedQualityTags({
-          qualityTags: offerQualities.length > 0
-            ? offerQualities
-            : video.quality
-              ? [String(video.quality)]
-              : [],
-        });
-        return qualities.length > 0 ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: tokens.spacingHorizontalXXS }}>
-            {qualities.map((quality) => <QualityBadge key={quality} quality={quality} size="small" />)}
-          </div>
-        ) : <Text size={200}>—</Text>;
-      },
+      className: dgCell.hideOnMobile,
+      render: (video: any) => renderVideoQuality(video) ?? <Text size={200}>—</Text>,
     },
     {
       key: "duration",
-      header: "Duration",
-      width: "70px",
-      align: "center",
-      minWidth: 768,
-      className: dgCell.hideOnMobile,
-      render: (video: any) => <Text size={200}>{formatDurationSeconds(video.duration)}</Text>,
+      // Keep Time on the right on mobile (same pattern as TrackList) — do not
+      // bury duration under the title stack.
+      header: "Time",
+      width: "max-content",
+      align: "right",
+      render: (video: any) => (
+        <Text size={200} className={styles.durationText}>
+          {formatDurationSeconds(video.duration)}
+        </Text>
+      ),
     },
     {
       key: "status",
       header: "Status",
       width: "90px",
       align: "center",
+      minWidth: 768,
+      className: dgCell.hideOnMobile,
       render: (video: any) => video.is_downloaded ? <DownloadedBadge /> : null,
     },
     {
       key: "actions",
       header: "",
-      width: "120px",
+      width: "max-content",
       align: "right",
       render: (video: any) => {
         const isLocked = Boolean(video.monitored_lock);
@@ -1480,7 +1520,7 @@ const Library = () => {
         );
       },
     },
-  ], [addToQueue, dgCell, styles.compactIcon, toggleVideoLock, toggleVideoMonitor]);
+  ], [addToQueue, dgCell, renderVideoQuality, styles.compactIcon, styles.durationText, toggleVideoLock, toggleVideoMonitor]);
 
   const isLibraryEmpty = Boolean(
     stats
@@ -1530,7 +1570,7 @@ const Library = () => {
           <DataGridSkeleton
             rows={10}
             columns={8}
-            columnTemplate="52px minmax(180px, 1.25fr) minmax(120px, 1fr) minmax(150px, 1.35fr) 146px 64px 88px 44px"
+            columnTemplate="52px minmax(180px, 1.25fr) minmax(120px, 1fr) minmax(150px, 1.35fr) max-content 72px 88px 44px"
             compact
             thumbnailColumns={[0]}
             actionColumns={[7]}
@@ -1542,7 +1582,7 @@ const Library = () => {
             <DataGridSkeleton
               rows={10}
               columns={5}
-              columnTemplate="64px minmax(220px, 1fr) 80px 100px 120px"
+              columnTemplate="64px minmax(220px, 1fr) max-content 70px 120px"
               compact
               thumbnailColumns={[0]}
               actionColumns={[4]}

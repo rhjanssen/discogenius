@@ -49,7 +49,7 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
         recording_name: "The Spirit",
         recording_length: 205000,
         video: false,
-        isrcs: null,
+        isrcs: "GBUMTEST00001",
       }];
     }
     if (sql.includes("release_unknown_country")) {
@@ -61,6 +61,31 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
         code: null,
       }];
     }
+    if (sql.includes("JOIN release_label") || sql.includes("l_release_url") || sql.includes("FROM release_group_meta")
+      || sql.includes("l_genre_release_group") || sql.includes("l_release_group_url") || sql.includes("release_group_alias")) {
+      if (sql.includes("JOIN release_label")) {
+        return [{ release_gid: "d75f9d41-a70a-4ee1-9343-b58a628d5130", label_name: "Island" }];
+      }
+      if (sql.includes("l_release_url")) {
+        return [{
+          release_gid: "d75f9d41-a70a-4ee1-9343-b58a628d5130",
+          rel_type: "stream for free",
+          resource: "https://tidal.com/album/123",
+        }];
+      }
+      if (sql.includes("FROM release_group_meta")) {
+        return [{ id: 101, rating: 80, rating_count: 12 }];
+      }
+      if (sql.includes("l_genre_release_group")) {
+        return [{ rg_id: 101, genre_name: "pop" }];
+      }
+      if (sql.includes("l_release_group_url")) {
+        return [{ rg_id: 101, rel_type: "official homepage", resource: "https://example.com/spirit" }];
+      }
+      if (sql.includes("release_group_alias")) {
+        return [{ rg_id: 101, alias_name: "Spirit" }];
+      }
+    }
     throw new Error(`Unexpected SQL in fixture: ${sql}`);
   };
 
@@ -71,8 +96,16 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
 
     assert.equal(entry.detail.releasedate, "2020-05-15");
     assert.equal(entry.detail.Releases[0].ReleaseDate, "2021-06-24");
+    assert.deepEqual(entry.detail.Releases[0].Label, ["Island"]);
+    assert.deepEqual(entry.detail.Releases[0].ExternalUrls, ["https://tidal.com/album/123"]);
+    assert.deepEqual(entry.detail.Releases[0].Tracks[0].Isrcs, ["GBUMTEST00001"]);
+    assert.deepEqual(entry.detail.genres, ["pop"]);
+    assert.deepEqual(entry.detail.aliases, ["Spirit"]);
+    assert.deepEqual(entry.detail.links, [{ type: "official homepage", target: "https://example.com/spirit" }]);
+    assert.deepEqual(entry.detail.rating, { Count: 12, Value: 8 });
     assert.ok(sqlCalls.some((sql) => sql.includes("release_group_meta")));
     assert.ok(sqlCalls.some((sql) => sql.includes("release_unknown_country")));
+    assert.ok(sqlCalls.some((sql) => sql.includes("release_label")));
   } finally {
     await provider.dispose();
   }

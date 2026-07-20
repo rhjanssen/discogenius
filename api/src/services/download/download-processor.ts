@@ -1,7 +1,7 @@
 import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { db } from '../../database.js';
-import {CommandModelOf} from "../commands/command-model.js";
+import {CommandModel, CommandModelOf} from "../commands/command-model.js";
 import { DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { getConfigSection } from '../config/config.js';
@@ -54,6 +54,16 @@ type DownloadCommand = DownloadTrackCommand | DownloadVideoCommand | DownloadAlb
 type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
 type DownloadOrImportCommand = DownloadCommand | ImportDownloadCommand;
 
+/** State for a single in-flight download slot (keyed by command id). */
+type ActiveDownload = {
+    provider: string;
+    type: DownloadJobType;
+    providerId: string;
+    abortController: AbortController;
+    downloadPath?: string;
+    cancelRequested: boolean;
+};
+
 function resetTracksForImportState(tracks?: DownloadTrackStateEntry[]): DownloadTrackStateEntry[] | undefined {
     if (!tracks?.length) {
         return undefined;
@@ -99,6 +109,7 @@ const BUSY_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_BUSY_LOG_THROTTLE_
 const STUCK_JOB_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_JOB_MS', 15 * 60 * 1000, 0); // 0 = disabled
 const STUCK_CLEANUP_INTERVAL_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_CLEANUP_INTERVAL_MS', 60_000, 1);
 const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 2, 1);
+const MAX_CONCURRENT_DOWNLOADS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_DOWNLOADS', 2, 1);
 export const DOWNLOAD_WORKER_MARKER = "discogeniusDownloadWorker" as const;
 
 // Docker: tiddl/ffmpeg installed globally via Dockerfile. Local dev resolves them from PATH (TIDDL_BIN override supported).
@@ -225,18 +236,19 @@ function formatQueueTimestamp(value: unknown): string {
 }
 
 export class DownloadProcessor {
-    private processing: boolean = false;
     private isPaused: boolean = false;
-    private currentAbortController?: AbortController;
-    private currentJobId?: number;
-    private currentProviderId?: string;
-    private currentType?: string;
-    private currentDownloadPath?: string;
     private pollTimer?: NodeJS.Timeout;
-    private cancelCurrentDownload: boolean = false;
     private lastBusyLogAt: number = 0;
     private lastStuckCleanupAt: number = 0;
     private queueEventsSubscribed: boolean = false;
+
+    /**
+     * Active download slots keyed by command id. Up to MAX_CONCURRENT_DOWNLOADS
+     * run at once, but never two on the same provider — same-provider downloads
+     * stay serialized to avoid rate-limit / auth contention (e.g. a YouTube
+     * video can run alongside a TIDAL album, but two TIDAL albums do not).
+     */
+    private activeDownloads = new Map<number, ActiveDownload>();
 
     /** Tracks the active import phase per command (runs in its own slot alongside downloads, Tidarr-style). */
     private activeImports = new Map<number, { providerId: string; type: string; promise: Promise<void> }>();
@@ -333,7 +345,7 @@ export class DownloadProcessor {
         } as CommandModelOf<typeof CommandNames.ImportDownload>;
 
         const isCancelled = () => {
-            return this.explicitlyCancelledDownloads.has(commandId) || this.cancelCurrentDownload;
+            return this.explicitlyCancelledDownloads.has(commandId);
         };
 
         const importPromise = (async () => {
@@ -398,6 +410,19 @@ export class DownloadProcessor {
                         error: error?.message || 'Unknown import error',
                         state: 'importFailed',
                     });
+
+                    // Permanent import failure: reclaim staging space (success/cancel
+                    // already clean up). Leaving failed workspaces forever filled disks.
+                    const downloadPath = importPayload.path;
+                    if (downloadPath) {
+                        try {
+                            if (fs.existsSync(downloadPath)) {
+                                fs.rmSync(downloadPath, { recursive: true, force: true });
+                            }
+                        } catch (e) {
+                            console.warn(`[DOWNLOAD-PROCESSOR] Failed to clean up path ${downloadPath} after import failure:`, e);
+                        }
+                    }
                 }
             } finally {
                 this.activeImports.delete(commandId);
@@ -421,7 +446,7 @@ export class DownloadProcessor {
     }
 
     private maybeCleanupStuckJobs(): void {
-        if (STUCK_JOB_MS <= 0 || this.processing) return;
+        if (STUCK_JOB_MS <= 0) return;
 
         const now = Date.now();
         if (now - this.lastStuckCleanupAt < STUCK_CLEANUP_INTERVAL_MS) {
@@ -430,7 +455,7 @@ export class DownloadProcessor {
         this.lastStuckCleanupAt = now;
 
         const excludeIds = [
-            ...(this.currentJobId ? [this.currentJobId] : []),
+            ...this.activeDownloads.keys(),
             ...this.activeImports.keys(),
         ];
 
@@ -477,19 +502,17 @@ export class DownloadProcessor {
         return walk(downloadPath);
     }
 
-    private async cleanupDownloadSourcePath(): Promise<void> {
-        if (!this.currentDownloadPath) {
+    private async cleanupDownloadSourcePath(downloadPath?: string): Promise<void> {
+        if (!downloadPath) {
             return;
         }
 
         try {
-            await fs.promises.rm(this.currentDownloadPath, { recursive: true, force: true });
-            console.log(`[DOWNLOAD-PROCESSOR] Cleaned up download source path: ${this.currentDownloadPath}`);
+            await fs.promises.rm(downloadPath, { recursive: true, force: true });
+            console.log(`[DOWNLOAD-PROCESSOR] Cleaned up download source path: ${downloadPath}`);
         } catch {
             // ignore cleanup errors
         }
-
-        this.currentDownloadPath = undefined;
     }
 
     private parseProviderData(value: unknown): Record<string, unknown> {
@@ -1203,8 +1226,8 @@ export class DownloadProcessor {
             // Non-fatal: continue with normal operation; jobs may be recovered on next cleanup cycle
         }
 
-        // We no longer rely on a background poll loop for the download queue.
-        // It's purely event-driven: triggered on app startup, when items are added, or when the previous item finishes.
+        // The download queue is event-driven, not polled: it runs on app
+        // startup, when items are added, and when the previous item finishes.
         await this.processQueue();
     }
 
@@ -1231,18 +1254,44 @@ export class DownloadProcessor {
             this.dispatchImportPhase(entry);
         }
 
-        // ── Download slot: only one download at a time ──
-        if (this.processing) {
-            this.logBusy();
-            return;
+        // ── Download slots: up to MAX_CONCURRENT_DOWNLOADS in parallel, but at
+        // most one per provider (same-provider downloads stay serialized). ──
+        // Each iteration picks the highest-priority queued job whose provider is
+        // not already busy, then fire-and-forgets its download phase. The phase
+        // registers its slot synchronously (before its first await) so the next
+        // iteration sees the newly-occupied provider.
+        while (this.activeDownloads.size < MAX_CONCURRENT_DOWNLOADS) {
+            const activeProviders = new Set<string>();
+            for (const entry of this.activeDownloads.values()) {
+                activeProviders.add(entry.provider);
+            }
+
+            const candidates = CommandQueueManager.getTopPendingJobsByTypes(DOWNLOAD_COMMAND_NAMES, 20);
+            const job = candidates.find((candidate) => (
+                !activeProviders.has(this.resolvePayloadProvider(candidate.payload as DownloadCommand))
+            ));
+
+            if (!job) {
+                // Either nothing queued, or every queued job's provider already
+                // has an in-flight download. Wait for a slot to free up.
+                if (candidates.length > 0) {
+                    this.logBusy();
+                }
+                break;
+            }
+
+            void this.dispatchDownloadPhase(job);
         }
+    }
 
-        const job = CommandQueueManager.getNextJobByTypes(DOWNLOAD_COMMAND_NAMES);
-
-        if (!job) {
-            return;
-        }
-
+    /**
+     * Run one download job to completion in its own slot. Registers the slot in
+     * `activeDownloads` synchronously (before the first await) so concurrent
+     * scheduling treats the provider as busy, then runs the download and — on
+     * success — queues the import phase. Always frees the slot and re-schedules
+     * the queue in `finally`.
+     */
+    private async dispatchDownloadPhase(job: CommandModel): Promise<void> {
         // Check retry limit - if job has exceeded max attempts, fail permanently
         if (job.attempts >= MAX_RETRY_ATTEMPTS) {
             console.warn(`[DOWNLOAD-PROCESSOR] Job #${job.id} exceeded max retries (${job.attempts}/${MAX_RETRY_ATTEMPTS}), marking as permanently failed`);
@@ -1252,9 +1301,6 @@ export class DownloadProcessor {
             return;
         }
 
-        this.processing = true;
-        this.cancelCurrentDownload = false;
-        this.currentJobId = job.id;
         let providerId = String(
             (job.payload as DownloadCommand | undefined)?.providerId
             || job.payload?.providerId
@@ -1267,41 +1313,37 @@ export class DownloadProcessor {
                 ? 'album'
                 : 'track';
 
-        if (!type) {
-            console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid type: ${job.name}`);
-            CommandQueueManager.fail(job.id, `Invalid job type - cannot download`);
-            this.processing = false;
-            this.currentJobId = undefined;
-            this.scheduleNext();
-            return;
-        }
-
         // Validate providerId before processing
         if (!providerId || providerId === 'undefined' || providerId === 'null') {
             console.warn(`[DOWNLOAD-PROCESSOR] Skipping job #${job.id} with invalid providerId: ${providerId}`);
             CommandQueueManager.fail(job.id, `Invalid providerId - cannot download`);
-            this.processing = false;
-            this.currentJobId = undefined;
             // Process next item
             this.scheduleNext();
             return;
         }
-        this.currentProviderId = providerId;
-        this.currentType = type;
-        this.currentDownloadPath = undefined;
         let payload = job.payload as DownloadOrImportCommand;
 
         console.log(`[DOWNLOAD-PROCESSOR] Processing Job #${job.id}: ${job.name} (ref: ${providerId})`);
 
         if (!CommandQueueManager.markProcessing(job.id)) {
             console.log(`[DOWNLOAD-PROCESSOR] Job #${job.id} is no longer pending; skipping dispatch.`);
-            this.processing = false;
-            this.currentJobId = undefined;
-            this.currentProviderId = undefined;
-            this.currentType = undefined;
             this.scheduleNext();
             return;
         }
+
+        // Claim the download slot synchronously so the scheduling loop sees this
+        // provider as busy before it picks the next job.
+        const entry: ActiveDownload = {
+            provider: this.resolvePayloadProvider(payload as DownloadCommand),
+            type,
+            providerId,
+            abortController: new AbortController(),
+            downloadPath: undefined,
+            cancelRequested: false,
+        };
+        this.activeDownloads.set(job.id, entry);
+        console.log(`[DOWNLOAD-PROCESSOR] Download slot ${this.activeDownloads.size}/${MAX_CONCURRENT_DOWNLOADS} for command #${job.id} (${entry.provider})`);
+
         // Video references dedupe across providers, so payloads (including
         // retried ones persisted before an offer existed) may carry a canonical
         // Recordings id instead of a provider catalog id. Resolve to the
@@ -1319,7 +1361,8 @@ export class DownloadProcessor {
                         streamingSource: offer.provider,
                         providerId: offer.providerId,
                     } as unknown as DownloadOrImportCommand;
-                    this.currentProviderId = providerId;
+                    entry.provider = offer.provider;
+                    entry.providerId = providerId;
                 }
             }
         }
@@ -1426,12 +1469,12 @@ export class DownloadProcessor {
                 });
             }
 
-            await this.downloadItem(job.id, providerId, type, payload);
+            await this.downloadItem(job.id, providerId, type, payload, entry);
 
             // Check if the item-specific download path has any media files before attempting organization.
             // tiddl may skip all items (already downloaded or unavailable) and exit successfully
             // without producing any new files.
-            if (!await this.hasDownloadedMediaFiles(this.currentDownloadPath)) {
+            if (!await this.hasDownloadedMediaFiles(entry.downloadPath)) {
                 // The downloader exited 0 but downloaded nothing.
                 // Check if content already exists in library — if so, treat as already-imported.
                 if (type === 'album') {
@@ -1450,7 +1493,7 @@ export class DownloadProcessor {
                         updateAlbumDownloadStatus(String(payload.releaseGroupMbid || providerId));
 
                         CommandQueueManager.complete(job.id);
-                        await this.cleanupDownloadSourcePath();
+                        await this.cleanupDownloadSourcePath(entry.downloadPath);
 
                         downloadEvents.emitCompleted(job.id, {
                             providerId, type,
@@ -1468,7 +1511,7 @@ export class DownloadProcessor {
                     if (payload?.reason !== 'upgrade' && alreadyDownloaded) {
                         console.log(`[DOWNLOAD-PROCESSOR] Download workspace empty but ${type} ${providerId} is already downloaded — marking job as complete.`);
                         CommandQueueManager.complete(job.id);
-                        await this.cleanupDownloadSourcePath();
+                        await this.cleanupDownloadSourcePath(entry.downloadPath);
 
                         downloadEvents.emitCompleted(job.id, {
                             providerId, type,
@@ -1507,7 +1550,7 @@ export class DownloadProcessor {
                 canonicalRecordingMbid: payload.canonicalRecordingMbid,
                 slot: payload.slot,
                 type,
-                path: this.currentDownloadPath,
+                path: entry.downloadPath,
                 quality: payload.quality ?? null,
                 qualityProfile: payload.qualityProfile,
                 title: payload.title,
@@ -1540,13 +1583,13 @@ export class DownloadProcessor {
             });
 
             // Ownership of the workspace passes to the import phase, which cleans
-            // it up after import. Clear the download-slot pointer so the next
-            // download can start without deleting this command's files.
-            this.currentDownloadPath = undefined;
+            // it up after import. Clear the slot pointer so the finally block
+            // does not delete this command's files.
+            entry.downloadPath = undefined;
 
             console.log(`[DOWNLOAD-PROCESSOR] Downloaded ${type} ${providerId} — queued import phase for command #${job.id}`);
         } catch (error: any) {
-            if (this.cancelCurrentDownload && this.isPaused) {
+            if (entry.cancelRequested && this.isPaused) {
                 const current = CommandQueueManager.get(job.id);
                 if (current?.status === 'started') {
                     console.log(`[DOWNLOAD-PROCESSOR] Download job #${job.id} interrupted by pause; returning to queue`);
@@ -1581,17 +1624,12 @@ export class DownloadProcessor {
             // (retries exhausted) gets its workspace cleaned up.
             const jobAttempts = CommandQueueManager.get(job.id)?.attempts ?? job.attempts;
             if (jobAttempts >= MAX_RETRY_ATTEMPTS) {
-                await this.cleanupDownloadSourcePath();
+                await this.cleanupDownloadSourcePath(entry.downloadPath);
             }
         } finally {
-            this.processing = false;
-            this.currentAbortController = undefined;
-            this.currentJobId = undefined;
-            this.currentProviderId = undefined;
-            this.currentType = undefined;
-            this.cancelCurrentDownload = false;
+            this.activeDownloads.delete(job.id);
 
-            // Process next item
+            // A download slot freed up — check for more pending downloads/imports.
             this.scheduleNext();
         }
     }
@@ -1600,7 +1638,8 @@ export class DownloadProcessor {
         commandId: number,
         id: string,
         type: DownloadJobType,
-        payload: DownloadCommand
+        payload: DownloadCommand,
+        entry: ActiveDownload,
     ): Promise<void> {
         // Download commands carry the slot's selected provider as `provider`
         // (queue-route payloads may use `streamingSource`); only fall back to
@@ -1608,7 +1647,7 @@ export class DownloadProcessor {
         const providerId = (payload as any).streamingSource || (payload as any).provider || getDefaultStreamingSource();
         const baseDownloadPath = getDownloadWorkspacePath(type, id, providerId);
         const downloadPath = path.join(baseDownloadPath, `job_${commandId}`);
-        this.currentDownloadPath = downloadPath;
+        entry.downloadPath = downloadPath;
         const slot = (payload as any).slot || 'stereo';
         const capability = type === 'video' ? 'video' : (slot === 'spatial' ? 'spatial' : 'stereo');
 
@@ -1617,8 +1656,7 @@ export class DownloadProcessor {
             throw new Error(`No download backend found for provider ${providerId} with capability ${capability}`);
         }
 
-        const controller = new AbortController();
-        this.currentAbortController = controller;
+        const controller = entry.abortController;
         const signal = controller.signal;
 
         const onProgress = (state: any) => {
@@ -1650,7 +1688,7 @@ export class DownloadProcessor {
         };
 
         const checkCancelInterval = setInterval(() => {
-            if (this.cancelCurrentDownload) {
+            if (entry.cancelRequested) {
                 console.log(`[DOWNLOAD-PROCESSOR] Job #${commandId} cancelled, aborting provider download...\n`);
                 controller.abort();
                 clearInterval(checkCancelInterval);
@@ -1677,7 +1715,6 @@ export class DownloadProcessor {
             });
         } finally {
             clearInterval(checkCancelInterval);
-            this.currentAbortController = undefined;
         }
     }
 
@@ -1696,12 +1733,11 @@ export class DownloadProcessor {
             return;
         }
 
-        if (this.processing && this.currentJobId === commandId) {
-            this.cancelCurrentDownload = true;
+        const activeDownload = this.activeDownloads.get(commandId);
+        if (activeDownload) {
+            activeDownload.cancelRequested = true;
             this.explicitlyCancelledDownloads.add(commandId);
-            if (this.currentAbortController) {
-                this.currentAbortController.abort();
-            }
+            activeDownload.abortController.abort();
             CommandQueueManager.cancel(commandId);
         } else if (this.activeImports.has(commandId)) {
             // Cannot abort active import; mark as cancelled for when it finishes
@@ -1720,13 +1756,11 @@ export class DownloadProcessor {
         // Flush any buffered progress writes before pausing/shutdown.
         this.flushProgressBuffer();
 
-        if (this.processing && this.currentJobId) {
-            console.log(`[DOWNLOAD-PROCESSOR] Cancelling current job: ${this.currentJobId}`);
-            this.cancelCurrentDownload = true;
-
-            if (this.currentAbortController) {
-                this.currentAbortController.abort();
-            }
+        // Abort every in-flight download so the queue halts promptly.
+        for (const [commandId, entry] of this.activeDownloads) {
+            console.log(`[DOWNLOAD-PROCESSOR] Cancelling current job: ${commandId}`);
+            entry.cancelRequested = true;
+            entry.abortController.abort();
         }
 
         downloadEvents.emitQueueStatus(true);
@@ -1750,7 +1784,7 @@ export class DownloadProcessor {
     }
 
     isActivelyProcessingJob(commandId: number): boolean {
-        return (this.processing && this.currentJobId === commandId) || this.activeImports.has(commandId);
+        return this.activeDownloads.has(commandId) || this.activeImports.has(commandId);
     }
 
     getStatus(): {
@@ -1759,15 +1793,23 @@ export class DownloadProcessor {
         currentJobId?: number;
         currentProviderId?: string;
         currentType?: string;
+        activeDownloads: number;
+        activeDownloadIds: number[];
         activeImports: number;
         activeImportIds: number[];
     } {
+        // currentJobId/currentProviderId/currentType describe the first active
+        // download slot for backward-compatible status display; use
+        // activeDownloadIds for the full set.
+        const first = this.activeDownloads.entries().next().value as [number, ActiveDownload] | undefined;
         return {
             isPaused: this.isPaused,
-            processing: this.processing,
-            currentJobId: this.currentJobId,
-            currentProviderId: this.currentProviderId,
-            currentType: this.currentType,
+            processing: this.activeDownloads.size > 0,
+            currentJobId: first?.[0],
+            currentProviderId: first?.[1].providerId,
+            currentType: first?.[1].type,
+            activeDownloads: this.activeDownloads.size,
+            activeDownloadIds: Array.from(this.activeDownloads.keys()),
             activeImports: this.activeImports.size,
             activeImportIds: Array.from(this.activeImports.keys()),
         };
@@ -1827,6 +1869,8 @@ class DownloadProcessorWorkerProxy {
     private status: DownloadProcessorStatus = {
         isPaused: process.env.DISCOGENIUS_START_PAUSED === '1',
         processing: false,
+        activeDownloads: 0,
+        activeDownloadIds: [],
         activeImports: 0,
         activeImportIds: [],
     };
@@ -1872,11 +1916,15 @@ class DownloadProcessorWorkerProxy {
     }
 
     isActivelyProcessingJob(commandId: number): boolean {
-        return this.status.currentJobId === commandId || this.status.activeImportIds.includes(commandId);
+        return this.status.activeDownloadIds.includes(commandId) || this.status.activeImportIds.includes(commandId);
     }
 
     getStatus(): DownloadProcessorStatus {
-        return { ...this.status, activeImportIds: [...this.status.activeImportIds] };
+        return {
+            ...this.status,
+            activeDownloadIds: [...this.status.activeDownloadIds],
+            activeImportIds: [...this.status.activeImportIds],
+        };
     }
 
     isActivelyImporting(commandId: number): boolean {
@@ -1943,6 +1991,7 @@ class DownloadProcessorWorkerProxy {
             case 'status':
                 this.status = {
                     ...message.status,
+                    activeDownloadIds: message.status.activeDownloadIds ?? [],
                     activeImportIds: message.status.activeImportIds ?? [],
                 };
                 break;
@@ -2023,6 +2072,8 @@ class DownloadProcessorCommandWorkerStub {
         return {
             isPaused: false,
             processing: false,
+            activeDownloads: 0,
+            activeDownloadIds: [],
             activeImports: 0,
             activeImportIds: [],
         };

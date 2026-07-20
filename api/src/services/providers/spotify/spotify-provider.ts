@@ -32,35 +32,13 @@ export class SpotifyProvider implements StreamingProvider {
     auth: {
       kind: "external",
       managedByApp: false,
-      credentialFields: [
-        {
-          key: "clientId",
-          label: "Spotify client ID",
-          required: true,
-          helpText: "Client ID from a Spotify for Developers application; used only for official catalog metadata.",
-        },
-        {
-          key: "clientSecret",
-          label: "Spotify client secret",
-          secret: true,
-          required: true,
-          helpText: "Client secret for the server-side client-credentials token flow.",
-        },
-        {
-          key: "cookiesText",
-          label: "Spotify cookies.txt",
-          secret: true,
-          multiline: true,
-          required: false,
-          helpText: "Optional Netscape-format Spotify web cookies used only by Votify downloads.",
-        },
-        {
-          key: "cookiesPath",
-          label: "Spotify cookies path",
-          required: false,
-          helpText: "Alternative path to a Netscape cookies.txt file visible inside the Discogenius runtime.",
-        },
+      comingSoon: true,
+      setupIntro:
+        "Spotify is temporarily listed as Soon. The plugin exists (official Web API catalog + optional Votify cookies for lossy downloads), but connection is held back until the auth UX is simpler than a Spotify Developer app.",
+      setupInstructions: [
+        "No action needed until Spotify leaves Soon.",
       ],
+      credentialFields: [],
     },
     integration: {
       catalogSource: "official-api",
@@ -70,8 +48,8 @@ export class SpotifyProvider implements StreamingProvider {
     downloadBackends: [{
       id: "votify",
       capabilities: ["stereo"],
-      enabled: true,
-      setupNote: `Install ${VOTIFY_PIP_REQUIREMENT} and provide Netscape-format Spotify cookies. The baseline path is Vorbis only.`,
+      enabled: false,
+      setupNote: `Disabled while Spotify is marked Soon. Docker still bundles ${VOTIFY_PIP_REQUIREMENT} for when connection returns.`,
     }],
     catalog: {
       search: true,
@@ -105,7 +83,9 @@ export class SpotifyProvider implements StreamingProvider {
     artwork: true,
     editorialMetadata: false,
     providerIds: true,
-    stereoQuality: "Vorbis 160 kbps default (320 kbps requires Premium)",
+    stereoQuality: "Up to NORMAL (320 kbps Premium; 160 kbps default)",
+    spatialQuality: "Not available",
+    videoQuality: "Not available",
   };
   readonly qualityMapping = spotifyQualityMapping;
 
@@ -127,6 +107,7 @@ export class SpotifyProvider implements StreamingProvider {
   }
 
   isAuthenticated(): boolean {
+    if (this.manifest.auth.comingSoon) return false;
     return Boolean(this.authStore.load());
   }
 
@@ -190,6 +171,19 @@ export class SpotifyProvider implements StreamingProvider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatus> {
+    if (this.manifest.auth.comingSoon) {
+      return {
+        connected: false,
+        tokenExpired: false,
+        refreshTokenExpired: false,
+        hoursUntilExpiry: 0,
+        canAccessShell: false,
+        canAccessLocalLibrary: false,
+        remoteCatalogAvailable: false,
+        canAuthenticate: false,
+        message: "Spotify is marked Soon until connection no longer requires a Developer app for day-to-day use.",
+      };
+    }
     const credentials = this.authStore.load();
     const disconnected: ProviderAuthStatus = {
       connected: false,

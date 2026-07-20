@@ -71,11 +71,14 @@ type RetagTrackRow = {
   media_copyright: string | null;
   media_replay_gain: number | null;
   media_peak: number | null;
+  media_musical_key: string | null;
   album_title: string | null;
   album_version: string | null;
   album_release_date: string | null;
   album_num_volumes: number | null;
   album_upc: string | null;
+  album_genres: string | null;
+  album_label: string | null;
   album_review_text: string | null;
   media_credits: string | null;
   media_mbid: string | null;
@@ -182,10 +185,13 @@ async function resolvePreferredEmbeddedCover(
   context: EmbeddedCoverContext,
 ): Promise<string | null> {
   const sidecarPath = path.join(path.dirname(resolvedMediaPath), config.album_cover_name || "cover.jpg");
-  const albumId = String(row.album_provider_id || row.album_mb_release_group_id || row.album_mbid || "").trim();
+  const albumId = String(row.album_mb_release_group_id || row.album_mbid || row.album_provider_id || "").trim();
   if (!albumId) return fs.existsSync(sidecarPath) ? sidecarPath : null;
 
-  const key = `${String(row.file_provider || "").trim()}:${albumId}`;
+  // Prefer the selected/canonical release-group id so hybrid imports (tracks
+  // sourced from another provider album) overwrite foreign embedded art with
+  // the destination album cover rather than keeping the source edition art.
+  const key = `${String(row.file_provider || "").trim()}:canonical:${albumId}`;
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
@@ -305,6 +311,20 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/** Parse Albums.genres / AlbumReleases.label JSON arrays into trimmed strings. */
+function parseJsonStringList(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter((item) => item.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 function normalizeValue(value: unknown): string | null {
   if (value === null || value === undefined) {
     return null;
@@ -378,6 +398,10 @@ function formatReplayGain(value: number | null | undefined): string | null {
   if (!Number.isFinite(numeric)) {
     return null;
   }
+  // Skip placeholder zeros providers emit when they have no real ReplayGain.
+  if (Math.abs(numeric) < 0.0005) {
+    return null;
+  }
 
   const prefix = numeric >= 0 ? "+" : "";
   return `${prefix}${numeric.toFixed(2)} dB`;
@@ -389,8 +413,34 @@ function formatReplayPeak(value: number | null | undefined): string | null {
   if (!Number.isFinite(numeric)) {
     return null;
   }
+  // Skip unset placeholders (0.0 / 1.0) that are not real measured peaks.
+  if (numeric <= 0 || Math.abs(numeric - 1) < 0.0000005) {
+    return null;
+  }
 
   return numeric.toFixed(6);
+}
+
+/** Normalize AlbumReleases.country (plain code or JSON array string) for tags. */
+function formatReleaseCountryTag(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const countries = parsed
+        .map((item) => formatReleaseCountryTag(item))
+        .filter((country): country is string => Boolean(country));
+      return countries.length > 0 ? countries.join(", ") : null;
+    }
+  } catch {
+    // Scalar path below.
+  }
+
+  const withoutBrackets = raw.replace(/^\[+|\]+$/g, "").trim();
+  if (!withoutBrackets) return null;
+  return withoutBrackets.toLowerCase() === "worldwide" ? "Worldwide" : withoutBrackets;
 }
 
 function normalizeIdentifier(value: string | null | undefined): string {
@@ -930,11 +980,14 @@ export class AudioTagService {
         ) AS media_copyright,
         provider_track.replay_gain AS media_replay_gain,
         provider_track.peak AS media_peak,
+        provider_track.musical_key AS media_musical_key,
         COALESCE(canonical_group.title, canonical_release.title, alb.title, provider_album.title) AS album_title,
         CASE WHEN COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid, provider_track.release_group_mbid) IS NOT NULL THEN NULL ELSE provider_album.version END AS album_version,
         COALESCE(canonical_release.date, ar.date, provider_album.release_date) AS album_release_date,
         canonical_release.media_count AS album_num_volumes,
         COALESCE(canonical_release.barcode, provider_album.upc) AS album_upc,
+        COALESCE(canonical_group.genres, alb.genres) AS album_genres,
+        canonical_release.label AS album_label,
         COALESCE(
           canonical_group.review_text,
           alb.review_text
@@ -1146,9 +1199,11 @@ export class AudioTagService {
       disc_number: "DISCNUMBER",
       disc_count: "DISCTOTAL",
       date: "DATE",
+      genre: "GENRE",
       isrc: "ISRC",
       copyright: "COPYRIGHT",
       barcode: "BARCODE",
+      label: "LABEL",
       provider_url: "PROVIDER_URL",
       musicbrainz_recordingid: "MUSICBRAINZ_TRACKID",
       musicbrainz_albumid: "MUSICBRAINZ_ALBUMID",
@@ -1161,6 +1216,7 @@ export class AudioTagService {
       release_country: "RELEASECOUNTRY",
       release_status: "RELEASESTATUS",
       release_type: "RELEASETYPE",
+      initialkey: "INITIALKEY",
     };
 
     const mp3Map: Record<string, string> = {
@@ -1176,9 +1232,11 @@ export class AudioTagService {
       disc_number: "TXXX:Disc Number",
       disc_count: "TXXX:Disc Count",
       date: "date",
+      genre: "genre",
       isrc: "isrc",
       copyright: "copyright",
       barcode: "TXXX:Barcode",
+      label: "publisher",
       provider_url: "TXXX:PROVIDER_URL",
       musicbrainz_recordingid: "TXXX:MusicBrainz Track Id",
       musicbrainz_albumid: "TXXX:MusicBrainz Album Id",
@@ -1191,6 +1249,7 @@ export class AudioTagService {
       release_country: "TXXX:MusicBrainz Album Release Country",
       release_status: "TXXX:MusicBrainz Album Status",
       release_type: "TXXX:MusicBrainz Album Type",
+      initialkey: "TKEY",
     };
 
     const m4aMap: Record<string, string> = {
@@ -1206,9 +1265,11 @@ export class AudioTagService {
       disc_number: "----:com.apple.iTunes:Disc Number",
       disc_count: "----:com.apple.iTunes:Disc Count",
       date: "date",
+      genre: "genre",
       isrc: "isrc",
       copyright: "copyright",
       barcode: "----:com.apple.iTunes:Barcode",
+      label: "----:com.apple.iTunes:LABEL",
       provider_url: "----:com.apple.iTunes:PROVIDER_URL",
       musicbrainz_recordingid: "----:com.apple.iTunes:MusicBrainz Track Id",
       musicbrainz_albumid: "----:com.apple.iTunes:MusicBrainz Album Id",
@@ -1221,6 +1282,7 @@ export class AudioTagService {
       release_country: "----:com.apple.iTunes:MusicBrainz Album Release Country",
       release_status: "----:com.apple.iTunes:MusicBrainz Album Status",
       release_type: "----:com.apple.iTunes:MusicBrainz Album Type",
+      initialkey: "----:com.apple.iTunes:initialkey",
     };
 
     // ASF/WMA descriptor names, mirroring Lidarr's AudioTag.cs mapping:
@@ -1239,9 +1301,11 @@ export class AudioTagService {
       disc_number: "WM/PartOfSet",
       disc_count: "WM/DiscCount",
       date: "WM/Year",
+      genre: "WM/Genre",
       isrc: "WM/ISRC",
       copyright: "copyright",
       barcode: "WM/Barcode",
+      label: "WM/Publisher",
       provider_url: "WM/PROVIDER_URL",
       musicbrainz_recordingid: "MusicBrainz/Track Id",
       musicbrainz_albumid: "MusicBrainz/Album Id",
@@ -1254,6 +1318,7 @@ export class AudioTagService {
       release_country: "MusicBrainz/Album Release Country",
       release_status: "MusicBrainz/Album Status",
       release_type: "MusicBrainz/Album Type",
+      initialkey: "WM/InitialKey",
     };
 
     // APE (Monkey's Audio) uses APEv2 tags, nearly identical field naming to
@@ -1781,6 +1846,18 @@ export class AudioTagService {
         });
       }
 
+      // Kodi/Jellyfin/Picard read genre from embedded tags (not album.nfo for
+      // Jellyfin). Join with " / " — Kodi's default multi-value divider.
+      const albumGenres = parseJsonStringList(row.album_genres);
+      if (albumGenres.length > 0) {
+        tags.push({
+          key: "genre",
+          label: "Genre",
+          ffmpegKey: "genre",
+          targetValue: albumGenres.join(" / "),
+        });
+      }
+
       if (row.media_isrc) {
         tags.push({
           key: "isrc",
@@ -1806,6 +1883,18 @@ export class AudioTagService {
           ffmpegKey: "BARCODE",
           targetValue: String(row.album_upc),
           aliases: ["barcode"],
+        });
+      }
+
+      // Picard/Kodi LABEL / publisher — first label from AlbumReleases.label JSON.
+      const albumLabels = parseJsonStringList(row.album_label);
+      if (albumLabels.length > 0) {
+        tags.push({
+          key: "label",
+          label: "Label",
+          ffmpegKey: "LABEL",
+          targetValue: albumLabels[0],
+          aliases: ["publisher"],
         });
       }
 
@@ -1893,12 +1982,26 @@ export class AudioTagService {
       }
 
       if (row.release_country) {
+        const releaseCountry = formatReleaseCountryTag(row.release_country);
+        if (releaseCountry) {
+          tags.push({
+            key: "release_country",
+            label: "Release Country",
+            ffmpegKey: "release_country",
+            targetValue: releaseCountry,
+            aliases: ["releasecountry", "release_country"],
+          });
+        }
+      }
+
+      const musicalKey = String(row.media_musical_key || "").trim();
+      if (musicalKey) {
         tags.push({
-          key: "release_country",
-          label: "Release Country",
-          ffmpegKey: "release_country",
-          targetValue: String(row.release_country),
-          aliases: ["releasecountry", "release_country"],
+          key: "initialkey",
+          label: "Initial Key",
+          ffmpegKey: "INITIALKEY",
+          targetValue: musicalKey,
+          aliases: ["initialkey", "initial_key", "tkey", "key"],
         });
       }
 

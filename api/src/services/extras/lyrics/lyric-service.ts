@@ -245,23 +245,29 @@ function candidateScore(media: ProviderTrackLyricsRow, candidate: CandidateRow):
 function sameRecordingCandidate(media: ProviderTrackLyricsRow, candidate: CandidateRow): boolean {
   const mediaRecordingMbid = nullableText(media.mbid);
   const candidateRecordingMbid = nullableText(candidate.mbid);
-  if (mediaRecordingMbid && candidateRecordingMbid) {
-    // A canonical recording identity is stronger evidence than the fuzzy
-    // title/position fallback. Never borrow lyrics across conflicting MBIDs.
-    return candidateRecordingMbid === mediaRecordingMbid;
-  }
-
   const sameTrackNumber = media.track_number == null
     || candidate.track_number == null
     || Number(media.track_number) === Number(candidate.track_number);
   const sameVolume = media.volume_number == null
     || candidate.volume_number == null
     || Number(media.volume_number) === Number(candidate.volume_number);
-
-  return normalizeTitle(candidate.title) === normalizeTitle(media.title)
+  const fuzzySame = normalizeTitle(candidate.title) === normalizeTitle(media.title)
     && sameTrackNumber
     && sameVolume
     && durationDelta(media.duration, candidate.duration) <= 12;
+
+  if (mediaRecordingMbid && candidateRecordingMbid) {
+    if (candidateRecordingMbid === mediaRecordingMbid) {
+      return true;
+    }
+    // Stereo and Atmos mixes are distinct MusicBrainz recordings but share
+    // lyrical content. Allow sharing only for a stereo↔spatial pair with a
+    // matching title/position/duration — never across unrelated MBIDs.
+    const spatialPair = isSpatialAudioQuality(media.quality) !== isSpatialAudioQuality(candidate.quality);
+    return spatialPair && fuzzySame;
+  }
+
+  return fuzzySame;
 }
 
 function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow | null {

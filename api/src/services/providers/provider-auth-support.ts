@@ -9,6 +9,7 @@ import type { StreamingProvider } from "./streaming-provider.js";
  * `managedByApp` must not hide those providers from the connection UI.
  */
 export function providerSupportsAppAuthentication(provider: StreamingProvider): boolean {
+  if (provider.manifest?.auth.comingSoon) return false;
   return providerSupportsDeviceAuthentication(provider) || Boolean(provider.saveCredentials);
 }
 

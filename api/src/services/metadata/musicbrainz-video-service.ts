@@ -130,8 +130,8 @@ function createSyncContext(): SyncContext {
     upsertRecording: db.prepare(`
       INSERT INTO Recordings (
         foreign_recording_id, mbid, artist_metadata_id, artist_mbid, title,
-        artist_credit, credits, length_ms, is_video, metadata_status, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', CURRENT_TIMESTAMP)
+        artist_credit, credits, length_ms, is_video, isrcs, metadata_status, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'musicbrainz', CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         foreign_recording_id = COALESCE(Recordings.foreign_recording_id, excluded.foreign_recording_id),
         artist_metadata_id = COALESCE(Recordings.artist_metadata_id, excluded.artist_metadata_id),
@@ -141,6 +141,7 @@ function createSyncContext(): SyncContext {
         credits = COALESCE(Recordings.credits, excluded.credits),
         length_ms = COALESCE(excluded.length_ms, Recordings.length_ms),
         is_video = CASE WHEN excluded.is_video = 1 THEN 1 ELSE Recordings.is_video END,
+        isrcs = COALESCE(excluded.isrcs, Recordings.isrcs),
         metadata_status = 'musicbrainz',
         updated_at = CURRENT_TIMESTAMP
       RETURNING id
@@ -193,6 +194,10 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
   const artistMbid = nullableText(options.artistMbid);
   const artistMetadataId = upsertArtistMetadataForRecording(recording, artistMbid, context);
   const recordingArtistMbid = artistMetadataId == null ? null : artistMbid;
+  const isrcs = Array.isArray(recording.isrcs)
+    ? recording.isrcs.map((value) => String(value || "").trim().toUpperCase()).filter(Boolean)
+    : [];
+  const isrcJson = isrcs.length > 0 ? JSON.stringify(isrcs) : null;
 
   const row = context.upsertRecording.get(
     recordingMbid,
@@ -204,6 +209,7 @@ function upsertRecording(recording: MusicBrainzRecording, options: {
     structuredArtistCredits(recording),
     Number(recording.length || 0) > 0 ? Number(recording.length) : null,
     options.isVideo ? 1 : 0,
+    isrcJson,
   ) as { id?: number | null } | undefined;
 
   return row?.id == null ? null : Number(row.id);

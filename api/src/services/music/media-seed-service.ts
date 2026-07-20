@@ -45,9 +45,20 @@ export class MediaSeedService {
         if (!providerVideo) {
             throw new Error(`Video ${videoId} not found`);
         }
-        const videoData = (providerVideo.raw && typeof providerVideo.raw === "object")
-            ? providerVideo.raw as any
-            : providerVideo as any;
+        // Prefer mapped ProviderVideo fields so YouTube titles under
+        // videoDetails are not lost when seed upserts Recordings.
+        const raw = (providerVideo.raw && typeof providerVideo.raw === "object")
+            ? providerVideo.raw as Record<string, any>
+            : {};
+        const videoData: any = {
+            ...raw,
+            ...providerVideo,
+            title: providerVideo.title || raw.title || null,
+            provider_id: providerVideo.providerId || videoId,
+            artist_id: providerVideo.artist?.providerId || raw.artist_id || null,
+            quality: providerVideo.quality || raw.quality || null,
+            explicit: providerVideo.explicit ? 1 : 0,
+        };
         // upsertArtistVideos attributes rows to `video.provider` (defaulting to
         // the default provider) — stamp the catalog that actually served this.
         videoData.provider = videoData.provider || providerClient.id;

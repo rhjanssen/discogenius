@@ -39,6 +39,14 @@ export const ARTIST_ALBUMS_RESPONSE = {
         audioTraits: ["lossless", "lossy-stereo"],
         url: "https://music.apple.com/us/album/bad-blood/1440904699",
         artwork: { url: "https://is1-ssl.mzstatic.com/image/thumb/x/{w}x{h}bb.{f}", width: 1500, height: 1500 },
+        editorialVideo: {
+          motionDetailSquare: {
+            video: "https://mzstatic.com/editorialvideo/motion-detail-square.m3u8",
+          },
+          motionSquareVideo1x1: {
+            video: "https://mzstatic.com/editorialvideo/motion-square-fallback.m3u8",
+          },
+        },
       },
     },
     {

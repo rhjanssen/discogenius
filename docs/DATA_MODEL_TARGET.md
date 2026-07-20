@@ -1,7 +1,5 @@
 # Discogenius Data Model Direction
 
-Last updated: 2026-06-23
-
 This document describes the current data-model rules and the direction for new
 schema/provider work. It is not a migration log. Current schema details live in
 `api/src/database.ts`; release blockers and future work live in `docs/TASKS.md`.
@@ -118,17 +116,28 @@ The `CatalogProvider` abstraction is the planned seam between:
   MusicBrainz-docker `/ws/2` mirror first and direct Postgres later only if
   needed for performance.
 
-Local MusicBrainz mode should not require a parallel Discogenius catalog. It
-should use MusicBrainz as the catalog backend, while Discogenius-owned state
-such as provider matches, slots, files, and monitoring decisions remains keyed
-to MBIDs or local FKs.
+Local MusicBrainz mode reads Postgres during refresh and **replicates** scoped
+catalog into Discogenius SQLite (same write path as Servarr). It is not a
+live-query-only UI backend and does not require flushing the SQLite catalog on
+every request.
+
+**Mode switching (current):** flipping `catalog.source` swaps
+`CatalogProvider` only. The next refresh hydrates from the new source into the
+same SQLite tables. Servarr typically lacks ISRC/UPC; MB-local fills them.
+App state (monitoring, slots, files, matches) is keyed by MBID and is not
+deleted by the toggle; matching/curation/library can still change after a
+refresh rematch. Prefer MBID-value references over cascading FKs into catalog
+tables for future schema hygiene.
+
+Do **not** implement the older “flush SQLite + live-query Postgres only” switch
+design unless architecture deliberately changes — see `docs/MB_LOCAL_MODE.md`
+and `docs/TASKS.md`.
 
 Local MusicBrainz mode may still use the Servarr Metadata Server as a
 supplemental metadata service for fields that MusicBrainz-docker does not serve
-well in the `/ws/2` mirror, such as cached/normalized artwork URLs or
-metadata-server ratings. Supplemental Servarr data must not override
-MusicBrainz identity, release grouping, track identity, UPC/ISRC evidence, or
-provider-resource evidence.
+well, such as cached/normalized artwork URLs or metadata-server ratings.
+Supplemental Servarr data must not override MusicBrainz identity, release
+grouping, track identity, UPC/ISRC evidence, or provider-resource evidence.
 
 ## Matching Direction
 
@@ -143,7 +152,8 @@ Release-centric matching is the desired end state:
 5. Servarr Metadata Server mode must degrade gracefully when UPC/ISRC or external-link data is
    unavailable.
 
-Detailed remaining work is in `docs/RELEASE_CENTRIC_MATCHING_PLAN.md`.
+The design is detailed in `docs/MATCHING_SET_COVER_DESIGN.md`; remaining work is
+tracked in `docs/TASKS.md`.
 
 ## Library Type Direction
 

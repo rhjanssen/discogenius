@@ -4,7 +4,7 @@ import path from "node:path";
 import { CONFIG_DIR } from "../../config/config.js";
 
 export interface YouTubeMusicCredentialsInput {
-  /** ytmusicapi browser headers, either as a JSON object or serialized JSON. */
+  /** ytmusicapi browser headers: flat JSON, headers object, or a Copy as fetch / Copy as Node.js fetch paste. */
   headers?: unknown;
   /** Netscape cookies.txt content or a raw Cookie header. */
   cookies?: unknown;
@@ -21,30 +21,159 @@ const COOKIE_EXPIRY = "2147483647";
 const YOUTUBE_MUSIC_COOKIE_HOST = "music.youtube.com";
 const HTTP_ONLY_PREFIX = "#HttpOnly_";
 
+/** Headers ytmusicapi / Discogenius actually need — everything else from a fetch paste is dropped. */
+const STORED_HEADER_CANONICAL: Record<string, string> = {
+  accept: "Accept",
+  authorization: "Authorization",
+  "content-type": "Content-Type",
+  cookie: "Cookie",
+  "user-agent": "User-Agent",
+  "x-goog-authuser": "X-Goog-AuthUser",
+  "x-origin": "x-origin",
+  origin: "x-origin",
+};
+
+const RESPONSE_BODY_KEYS = new Set([
+  "responseContext",
+  "contents",
+  "trackingParams",
+  "frameworkUpdates",
+  "continuationContents",
+]);
+
 export const YOUTUBE_MUSIC_PROVIDER_DIR = path.join(CONFIG_DIR, "providers", "youtube-music");
 export const YOUTUBE_MUSIC_HEADERS_FILE = path.join(YOUTUBE_MUSIC_PROVIDER_DIR, "browser.json");
 export const YOUTUBE_MUSIC_COOKIES_FILE = path.join(YOUTUBE_MUSIC_PROVIDER_DIR, "cookies.txt");
 
-function parseHeaders(input: unknown): Record<string, string> {
-  if (input == null || input === "") return {};
-  let value = input;
-  if (typeof value === "string") {
-    try {
-      value = JSON.parse(value);
-    } catch {
-      throw new Error("YouTube Music browser headers must be a valid JSON object.");
+function looksLikeYouTubeApiResponseBody(value: Record<string, unknown>): boolean {
+  return Object.keys(value).some((key) => RESPONSE_BODY_KEYS.has(key));
+}
+
+function extractBalancedObject(source: string, openBraceIndex: number): string | null {
+  let depth = 0;
+  let inString: '"' | "'" | null = null;
+  let escaped = false;
+  for (let i = openBraceIndex; i < source.length; i++) {
+    const ch = source[i]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === inString) inString = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inString = ch;
+      continue;
+    }
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(openBraceIndex, i + 1);
     }
   }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("YouTube Music browser headers must be a JSON object.");
+  return null;
+}
+
+function parseJsonObjectLoose(raw: string): Record<string, unknown> | null {
+  const cleaned = raw.replace(/,\s*([}\]])/gu, "$1");
+  try {
+    const parsed = JSON.parse(cleaned) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function extractHeadersRecordFromObject(value: Record<string, unknown>): Record<string, unknown> | null {
+  if (looksLikeYouTubeApiResponseBody(value)) {
+    throw new Error(
+      "That JSON is a YouTube Music API response body, not request headers. "
+      + "In DevTools → Network, right-click a music.youtube.com/youtubei request → Copy → Copy as Node.js fetch.",
+    );
+  }
+  const nested = value.headers;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return nested as Record<string, unknown>;
+  }
+  return value;
+}
+
+function extractHeadersFromFetchPaste(raw: string): Record<string, unknown> | null {
+  const match = /["']?headers["']?\s*:\s*\{/iu.exec(raw);
+  if (!match || match.index == null) return null;
+  const openBrace = match.index + match[0].length - 1;
+  const block = extractBalancedObject(raw, openBrace);
+  if (!block) return null;
+  return parseJsonObjectLoose(block);
+}
+
+function parseColonHeaderDump(raw: string): Record<string, unknown> | null {
+  const lines = raw.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 2) return null;
+  const result: Record<string, unknown> = {};
+  let matched = 0;
+  for (const line of lines) {
+    const separator = line.indexOf(":");
+    if (separator <= 0) continue;
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (!HEADER_NAME.test(name) || !value) continue;
+    result[name] = value;
+    matched += 1;
+  }
+  return matched >= 2 ? result : null;
+}
+
+function coerceHeadersRecord(input: unknown): Record<string, unknown> {
+  if (input == null || input === "") return {};
+
+  if (typeof input === "object" && !Array.isArray(input)) {
+    const extracted = extractHeadersRecordFromObject(input as Record<string, unknown>);
+    return extracted || {};
   }
 
-  const result: Record<string, string> = {};
-  for (const [rawName, rawValue] of Object.entries(value as Record<string, unknown>)) {
-    const name = rawName.trim();
-    if (!HEADER_NAME.test(name)) {
-      throw new Error(`YouTube Music browser header name is invalid: ${rawName}`);
+  if (typeof input !== "string") {
+    throw new Error("YouTube Music browser headers must be a JSON object or a Copy as fetch paste.");
+  }
+
+  const raw = input.trim();
+  if (!raw) return {};
+
+  const fromFetch = extractHeadersFromFetchPaste(raw);
+  if (fromFetch) return fromFetch;
+
+  if (raw.startsWith("{")) {
+    const parsed = parseJsonObjectLoose(raw);
+    if (!parsed) {
+      throw new Error("YouTube Music browser headers must be valid JSON or a Copy as Node.js fetch paste.");
     }
+    return extractHeadersRecordFromObject(parsed) || {};
+  }
+
+  const fromDump = parseColonHeaderDump(raw);
+  if (fromDump) return fromDump;
+
+  throw new Error(
+    "Could not parse YouTube Music headers. Paste Chrome's \"Copy as Node.js fetch\" for a music.youtube.com/youtubei request, "
+    + "or a flat JSON headers object.",
+  );
+}
+
+function parseHeaders(input: unknown): Record<string, string> {
+  const record = coerceHeadersRecord(input);
+  const result: Record<string, string> = {};
+
+  for (const [rawName, rawValue] of Object.entries(record)) {
+    const name = rawName.trim();
+    const canonical = STORED_HEADER_CANONICAL[name.toLowerCase()];
+    if (!canonical) continue;
     if (typeof rawValue !== "string" && typeof rawValue !== "number" && typeof rawValue !== "boolean") {
       throw new Error(`YouTube Music browser header ${name} must have a scalar value.`);
     }
@@ -52,8 +181,12 @@ function parseHeaders(input: unknown): Record<string, string> {
     if (/\r|\n|\0/u.test(headerValue)) {
       throw new Error(`YouTube Music browser header ${name} contains an invalid control character.`);
     }
-    if (headerValue) result[name] = headerValue;
+    if (!headerValue) continue;
+    // Prefer an explicit x-origin over Origin when both appear in a fetch paste.
+    if (canonical === "x-origin" && result["x-origin"] && name.toLowerCase() === "origin") continue;
+    result[canonical] = headerValue;
   }
+
   return result;
 }
 
@@ -163,6 +296,7 @@ function atomicWrite(target: string, content: string): void {
 }
 
 export function saveYouTubeMusicCredentials(input: YouTubeMusicCredentialsInput): void {
+  const headerInputProvided = input.headers != null && String(input.headers).trim() !== "";
   const headers = parseHeaders(input.headers);
   const normalizedCookies = normalizeYouTubeMusicCookies(input.cookies);
   const headerCookie = findHeader(headers, "cookie");
@@ -172,20 +306,53 @@ export function saveYouTubeMusicCredentials(input: YouTubeMusicCredentialsInput)
     throw new Error("Provide YouTube Music browser headers, cookies, or both.");
   }
 
+  if (headerInputProvided && Object.keys(headers).length === 0) {
+    throw new Error(
+      "Could not find usable auth headers in that paste. Use Copy as Node.js fetch on a youtubei request, not the Response body.",
+    );
+  }
+
+  if (headerInputProvided && !headerCookie && !normalizedCookies) {
+    throw new Error(
+      "The pasted headers are missing Cookie. Use Chrome's \"Copy as Node.js fetch\" "
+      + "(plain \"Copy as fetch\" often omits it), or paste a cookies.txt export in the cookies field.",
+    );
+  }
+
+  if (headerInputProvided && !findHeader(headers, "authorization")) {
+    throw new Error(
+      "The pasted headers are missing Authorization (SAPISIDHASH). "
+      + "Copy a logged-in music.youtube.com/youtubei request via Copy as Node.js fetch.",
+    );
+  }
+
   if (cookies && (normalizedCookies || !headerCookie)) {
     setHeader(headers, "Cookie", cookies.cookieHeader);
+  }
+  if (!findHeader(headers, "Accept")) {
+    setHeader(headers, "Accept", "*/*");
   }
   if (!findHeader(headers, "User-Agent")) {
     setHeader(headers, "User-Agent", "Mozilla/5.0");
   }
-  if (!findHeader(headers, "Origin")) {
-    setHeader(headers, "Origin", "https://music.youtube.com");
+  if (!findHeader(headers, "x-origin") && !findHeader(headers, "Origin")) {
+    setHeader(headers, "x-origin", "https://music.youtube.com");
   }
   if (!findHeader(headers, "Content-Type")) {
     setHeader(headers, "Content-Type", "application/json");
   }
+  if (!findHeader(headers, "X-Goog-AuthUser")) {
+    setHeader(headers, "X-Goog-AuthUser", "0");
+  }
 
-  atomicWrite(YOUTUBE_MUSIC_HEADERS_FILE, `${JSON.stringify(headers, null, 2)}\n`);
+  // Persist only the allowlisted auth headers, in ytmusicapi's expected shape.
+  const stored: Record<string, string> = {};
+  for (const canonical of [...new Set(Object.values(STORED_HEADER_CANONICAL))]) {
+    const value = findHeader(headers, canonical);
+    if (value) stored[canonical] = value;
+  }
+
+  atomicWrite(YOUTUBE_MUSIC_HEADERS_FILE, `${JSON.stringify(stored, null, 2)}\n`);
   if (cookies) {
     atomicWrite(YOUTUBE_MUSIC_COOKIES_FILE, cookies.netscape);
   } else {

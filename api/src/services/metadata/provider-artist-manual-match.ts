@@ -67,7 +67,7 @@ function getProviderArtistRow(provider: string, providerId: string): ProviderArt
 function parseStoredArtistData(row: ProviderArtistRow): { picture: string | null; providerUrl: string | null; popularity: number | null } {
   return {
     picture: row.cover,
-    providerUrl: null, // we no longer store providerUrl explicitly here, could be built from provider ID if needed
+    providerUrl: null, // not stored here; derivable from the provider ID if needed
     popularity: row.popularity,
   };
 }

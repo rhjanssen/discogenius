@@ -18,6 +18,7 @@ import {
   Play24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
 const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
 const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
@@ -51,6 +52,9 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingHorizontalXS,
   },
+  actionButton: {
+    ...glassButtonStyles,
+  },
 });
 
 export function TrackRowActions({
@@ -80,6 +84,7 @@ export function TrackRowActions({
             icon={isPlaying ? <Stop24Filled /> : <Play24Regular />}
             size="small"
             onClick={onPlay}
+            className={styles.actionButton}
           />
         </Tooltip>
       ) : null}
@@ -95,6 +100,7 @@ export function TrackRowActions({
             size="small"
             disabled={isLocked}
             onClick={onToggleMonitor}
+            className={styles.actionButton}
           />
         </Tooltip>
       ) : null}
@@ -106,6 +112,7 @@ export function TrackRowActions({
             icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
             size="small"
             onClick={onToggleLock}
+            className={styles.actionButton}
           />
         </Tooltip>
       ) : null}
@@ -119,6 +126,7 @@ export function TrackRowActions({
             icon={<Info24Regular />}
             size="small"
             onClick={onShowInfo}
+            className={styles.actionButton}
           />
         </Tooltip>
       ) : showDownload ? (
@@ -130,6 +138,7 @@ export function TrackRowActions({
             size="small"
             disabled={isDownloading || !onDownload}
             onClick={onDownload}
+            className={styles.actionButton}
           />
         </Tooltip>
       ) : null}

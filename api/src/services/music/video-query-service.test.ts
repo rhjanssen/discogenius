@@ -99,18 +99,18 @@ test("video list and detail use canonical video recordings with provider offers"
   assert.equal(list.items[0]?.title, "Canonical Video");
   assert.equal(list.items[0]?.artist_id, "artist-mbid");
   assert.equal(list.items[0]?.artist_name, "Video Artist");
-  assert.equal(list.items[0]?.quality, "FHD");
-  assert.equal(list.items[0]?.provider, "tidal");
-  assert.equal(list.items[0]?.provider_id, "provider-video-1");
-  assert.deepEqual(list.items[0]?.providers, ["tidal", "apple-music", "youtube-music"]);
+  assert.equal(list.items[0]?.quality, "MP4_2160P");
+  assert.equal(list.items[0]?.provider, "apple-music");
+  assert.equal(list.items[0]?.provider_id, "apple-video-4k");
+  assert.deepEqual(list.items[0]?.providers, ["apple-music", "tidal", "youtube-music"]);
   assert.deepEqual(list.items[0]?.provider_offers, [{
-    provider: "tidal",
-    provider_id: "provider-video-1",
-    quality: "FHD",
-  }, {
     provider: "apple-music",
     provider_id: "apple-video-4k",
     quality: "MP4_2160P",
+  }, {
+    provider: "tidal",
+    provider_id: "provider-video-1",
+    quality: "FHD",
   }, {
     provider: "youtube-music",
     provider_id: "yt-video-01",
@@ -129,18 +129,18 @@ test("video list and detail use canonical video recordings with provider offers"
   assert.equal(detail?.duration, 215);
   assert.equal(detail?.cover_art_url, `/media-cover/Videos/${recording.id}/cover.jpg`);
   assert.deepEqual(detail?.offers, [{
-    provider: "tidal",
-    provider_id: "provider-video-1",
-    quality: "FHD",
-    url: "https://tidal.com/browse/video/provider-video-1",
-    available: true,
-    can_preview: true,
-    can_download: true,
-  }, {
     provider: "apple-music",
     provider_id: "apple-video-4k",
     quality: "MP4_2160P",
     url: null,
+    available: true,
+    can_preview: true,
+    can_download: true,
+  }, {
+    provider: "tidal",
+    provider_id: "provider-video-1",
+    quality: "FHD",
+    url: "https://tidal.com/browse/video/provider-video-1",
     available: true,
     can_preview: true,
     can_download: true,
@@ -262,5 +262,93 @@ test("video detail resolves its provider album by composite provider identity", 
 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
 
-  assert.deepEqual(detail?.albums, [{ id: "rg-apple", title: "Apple Album", cover_id: null }]);
+  assert.deepEqual(detail?.albums, [{
+    id: "rg-apple",
+    title: "Apple Album",
+    cover_id: null,
+    track_mbid: null,
+    track_number: null,
+    volume_number: null,
+  }]);
+});
+
+test("video detail surfaces album track position when the video is on a release tracklist", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-track-pos', 'Track Pos Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('artist-track-pos', 'artist-track-pos', 'Track Pos Artist')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, cover_image_id)
+    VALUES ('rg-track-pos', 'artist-track-pos', 'Video Album', 'album', 'cover-42')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count)
+    VALUES ('rel-track-pos', 'rg-track-pos', 'artist-track-pos', 'Video Album', '2024-01-01', 2)
+  `).run();
+
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-video-track', ?, 'artist-track-pos', 'Official Video', 1, 'complete')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, recording_id,
+      medium_position, position, number, title
+    ) VALUES (
+      'track-video-3', 'rel-track-pos', 'rec-video-track', ?,
+      2, 3, '3', 'Official Video'
+    )
+  `).run(recording.id);
+
+  const detail = videoQueryModule.getVideoDetail(String(recording.id));
+  assert.deepEqual(detail?.albums, [{
+    id: "rg-track-pos",
+    title: "Video Album",
+    cover_id: "cover-42",
+    track_mbid: "track-video-3",
+    track_number: 3,
+    volume_number: 2,
+  }]);
+});
+
+test("video detail prefers provider title when recording title is Unknown Video", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-mbid', 'Video Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('artist-mbid', 'artist-mbid', 'Video Artist')
+  `).run();
+
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_metadata_id, artist_mbid, title, length_ms, is_video, metadata_status
+    ) VALUES (?, 'artist-mbid', 'Unknown Video', 307000, 1, 'provider_only')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_id,
+      title, quality, duration, availability
+    ) VALUES (
+      'tidal', 'video', 'prov-title-1', 'artist-mbid', ?,
+      'Happy Endings', 'FHD', 307, 1
+    )
+  `).run(recording.id);
+
+  const detail = videoQueryModule.getVideoDetail(String(recording.id));
+  assert.equal(detail?.title, "Happy Endings");
+
+  const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
+  assert.equal(list.items[0]?.title, "Happy Endings");
 });

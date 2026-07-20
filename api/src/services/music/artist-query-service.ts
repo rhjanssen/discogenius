@@ -23,8 +23,25 @@ import {
 import { getConfigSection } from "../config/config.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { ARTIST_TOP_TRACK_LIMIT, ArtistTopTrackService } from "./artist-top-track-service.js";
+import { streamingProviderManager } from "../providers/index.js";
 
 const managedArtistPredicate = buildManagedArtistPredicate("a");
+
+function sqlStringLiteral(value: string): string {
+    return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+/** Lower = more preferred. Used to break ties when ranking provider track offers. */
+function buildProviderPreferenceOrderSql(providerColumn: string): string {
+    const priority = streamingProviderManager.getProviderPriority();
+    if (priority.length === 0) {
+        return "0";
+    }
+    const whens = priority
+        .map((id, index) => `WHEN ${providerColumn} = ${sqlStringLiteral(id)} THEN ${index}`)
+        .join(" ");
+    return `CASE ${whens} ELSE ${priority.length} END`;
+}
 
 function artistArtworkUrl(artistMbid: unknown, ...values: unknown[]): string | null {
     return mapArtistArtworkToLocalUrl({
@@ -381,7 +398,12 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
     artistId: string;
     artistName: string;
     includeSpatial: boolean;
-    downloadStats?: { downloadedPercent?: number; isDownloaded?: boolean };
+    downloadStats?: {
+        downloadedPercent?: number;
+        isDownloaded?: boolean;
+        totalTracks?: number;
+        downloadedTracks?: number;
+    };
 }): any {
     const bucketKey = releaseGroupBucket(row);
     const primaryType = normalizeReleaseGroupPrimaryType(row.primary_type);
@@ -410,12 +432,15 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
         group_type: primaryType === "EP" || primaryType === "SINGLE" ? "EPSANDSINGLES" : "ALBUMS",
         explicit: Boolean(row.explicit),
         quality: row.selected_quality || null,
+        selected_provider: row.selected_provider || row.stereo_provider || null,
         selected_provider_id: row.selected_provider_id || null,
+        stereo_provider: row.stereo_provider || null,
         stereo_provider_id: row.stereo_provider_id || null,
         stereo_release_mbid: row.stereo_release_mbid || null,
         stereo_quality: row.stereo_quality || null,
         stereo_match_status: row.stereo_match_status || null,
         stereo_match_method: row.stereo_match_method || null,
+        spatial_provider: options.includeSpatial ? row.spatial_provider || null : null,
         spatial_provider_id: options.includeSpatial ? row.spatial_provider_id || null : null,
         spatial_release_mbid: options.includeSpatial ? row.spatial_release_mbid || null : null,
         spatial_quality: options.includeSpatial ? row.spatial_quality || null : null,
@@ -424,6 +449,8 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
         is_monitored: Boolean(row.wanted),
         downloaded: options.downloadStats?.downloadedPercent ?? 0,
         is_downloaded: options.downloadStats?.isDownloaded ?? false,
+        track_file_count: Number(options.downloadStats?.downloadedTracks || 0),
+        track_count: Number(options.downloadStats?.totalTracks || 0),
         monitored_lock: Boolean(row.stereo_monitor_lock || row.spatial_monitor_lock),
         module: bucketKey,
         source: "musicbrainz",
@@ -434,7 +461,12 @@ function mapReleaseGroupCardForArtistPage(row: Record<string, any>, options: {
     artistId: string;
     artistName: string;
     includeSpatial: boolean;
-    downloadStats?: { downloadedPercent?: number; isDownloaded?: boolean };
+    downloadStats?: {
+        downloadedPercent?: number;
+        isDownloaded?: boolean;
+        totalTracks?: number;
+        downloadedTracks?: number;
+    };
 }): any {
     const card = mapReleaseGroupCard(row, options);
     const coverUrl = card.cover_art_url;
@@ -905,6 +937,7 @@ export class ArtistQueryService {
              candidates.recording_id,
              provider_item.provider,
              provider_item.provider_id,
+             provider_item.title,
              provider_item.duration,
              provider_item.release_date,
              provider_item.version,
@@ -953,7 +986,17 @@ export class ArtistQueryService {
          )
          SELECT
            CAST(recording.id AS TEXT) AS id,
-           recording.title,
+           CASE
+             WHEN recording.title IS NOT NULL
+               AND TRIM(recording.title) != ''
+               AND LOWER(TRIM(recording.title)) != 'unknown video'
+             THEN recording.title
+             ELSE COALESCE(
+               NULLIF(TRIM(provider_item.title), ''),
+               NULLIF(TRIM(recording.title), ''),
+               'Unknown Video'
+             )
+           END AS title,
            COALESCE(
              CASE
                WHEN COALESCE(recording.length_ms, 0) > 0
@@ -989,9 +1032,17 @@ export class ArtistQueryService {
            ON downloaded_video.recording_id = recording.id
          ORDER BY COALESCE(video_popularity, 0) DESC, (COALESCE(recording.release_date, provider_item.release_date) IS NULL) ASC, COALESCE(recording.release_date, provider_item.release_date) DESC, recording.title ASC, recording.id ASC
        `).all({
-            artistMetadataId: Number(artist.id) || -1,
+            artistMetadataId: (() => {
+                const mbid = String(artist.mbid || artistId);
+                const row = db.prepare(`SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1`).get(mbid) as { id?: number } | undefined;
+                return Number(row?.id) || -1;
+            })(),
             artistMbid: String(artist.mbid || artistId),
-            artistIdNum: Number(artist.id) || null,
+            artistIdNum: (() => {
+                const mbid = String(artist.mbid || artistId);
+                const row = db.prepare(`SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1`).get(mbid) as { id?: number } | undefined;
+                return Number(row?.id) || null;
+            })(),
             artistName: (artist as any).name ?? null,
         }) as any[] : [];
         const musicBrainzReleaseGroups = includeReleaseGroups && artist.mbid
@@ -1058,6 +1109,7 @@ export class ArtistQueryService {
         const topTrackIdentity = includeTracks
             ? ArtistTopTrackService.ensureForArtist(artistId, String(artist.mbid || artistId))
             : null;
+        const providerPreferenceOrderSql = buildProviderPreferenceOrderSql("provider_item.provider");
         const topTracks = includeTracks && topTrackIdentity ? db.prepare(`
       -- Ranking is maintained off the page-read path in ArtistTopTracks. The
       -- request only materializes and enriches a bounded top-100 integer-id
@@ -1125,7 +1177,30 @@ export class ArtistQueryService {
           ROW_NUMBER() OVER (
             PARTITION BY candidates.track_id
             ORDER BY
+              -- Prefer the release-group's selected stereo/spatial offer provider
+              -- (same rule as album tracklists). Otherwise top tracks pick the
+              -- newest stereo ProviderItems row — often Apple — and preview fails
+              -- while the album page still plays via the selected TIDAL offer.
+              CASE
+                WHEN EXISTS (
+                  SELECT 1
+                  FROM top_tracks tt
+                  JOIN ReleaseGroupSlots slot
+                    ON slot.release_group_mbid = tt.release_group_mbid
+                   AND slot.selected_release_mbid = tt.release_mbid
+                   AND slot.selected_provider = provider_item.provider
+                   AND slot.selected_provider IS NOT NULL
+                  WHERE tt.id = candidates.track_id
+                    AND (
+                      provider_item.provider_album_id IS NULL
+                      OR slot.selected_provider_id IS NULL
+                      OR (';' || REPLACE(REPLACE(slot.selected_provider_id, '+', ';'), ' ', '') || ';')
+                         LIKE ('%;' || provider_item.provider_album_id || ';%')
+                    )
+                ) THEN 0 ELSE 1
+              END,
               CASE provider_item.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+              ${providerPreferenceOrderSql},
               provider_item.updated_at DESC,
               provider_item.provider_id ASC
           ) AS rank
@@ -1140,7 +1215,18 @@ export class ArtistQueryService {
           ROW_NUMBER() OVER (
             PARTITION BY top_tracks.id
             ORDER BY
+              CASE
+                WHEN EXISTS (
+                  SELECT 1
+                  FROM ReleaseGroupSlots slot
+                  WHERE slot.release_group_mbid = top_tracks.release_group_mbid
+                    AND slot.selected_release_mbid = top_tracks.release_mbid
+                    AND slot.selected_provider = provider_item.provider
+                    AND slot.selected_provider IS NOT NULL
+                ) THEN 0 ELSE 1
+              END,
               CASE provider_item.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+              ${providerPreferenceOrderSql},
               provider_item.updated_at DESC,
               provider_item.provider_id ASC
         ) AS rank

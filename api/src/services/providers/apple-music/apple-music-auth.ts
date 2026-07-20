@@ -169,7 +169,7 @@ function yamlString(value: string): string {
 export function resolveAppleVideoMaxHeight(): number {
   let configured = "fhd";
   try {
-    configured = String(Config.getQualityConfig()?.video_quality || "fhd").toLowerCase();
+    configured = String(Config.getQualityConfig()?.video_quality || "uhd").toLowerCase();
   } catch { /* config unavailable during early bootstrap — keep the default */ }
   switch (configured) {
     case "sd": return 480;
@@ -199,8 +199,8 @@ export function syncTokenToDownloader(token: AppleMusicAuthToken | null, downloa
     `storefront: ${yamlString(resolved.storefront || resolveAppleStorefront())}`,
     "language: \"\"",
     // MUST stay disabled: upstream apple-music-dl panics (nil pointer in
-    // lyrics.TtmlToLrc) whenever a track has no TTML lyrics, which aborts the
-    // whole album download. Reproduced live 2026-07-16 on album 1459871277.
+    // lyrics.TtmlToLrc) whenever a track has no TTML lyrics, aborting the whole
+    // album download.
     "embed-lrc: false",
     "save-lrc-file: false",
     `embed-cover: ${embedCover ? "true" : "false"}`,

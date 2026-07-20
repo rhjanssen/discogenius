@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 37;
+const CURRENT_SCHEMA_VERSION = 38;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -38,14 +38,18 @@ test("fresh database initializes the current development baseline", () => {
   const coreTables = [
     "Artists", "ArtistMetadata", "Albums", "AlbumReleases",
     "AlbumArtists", "ArtistReleaseGroups", "ArtistReleaseGroupCuration",
-    "Tracks", "Recordings", "ProviderItems", "ReleaseGroupSlots",
+    "Tracks", "Recordings", "ProviderItems", "ProviderItemMatches",
+    "RecordingRelations", "ReleaseGroupSlots",
     "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles", "UnmappedFiles",
     "commands", "scheduled_tasks", "quality_profiles",
     "history_events", "MediaCoverProxyCache",
+    "metadata_identity_status",
     "ArtistStatistics",
     "ArtistTopTracks", "ArtistTopTrackProjectionState",
     "AlbumLibraryIndex", "AlbumLibraryProjectionState",
     "TrackLibraryIndex", "TrackLibraryProjectionState",
+    // FTS5 virtual tables register in sqlite_master with type='table'.
+    "TrackSearch", "CatalogSearch",
   ];
 
   for (const tableName of coreTables) {
@@ -53,6 +57,30 @@ test("fresh database initializes the current development baseline", () => {
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
       .get(tableName) as { name: string } | undefined;
     assert.ok(row, `Expected table '${tableName}' to exist`);
+  }
+});
+
+test("re-initializing an existing schema-38 database opens it without a wipe", () => {
+  // Seed a row so we can prove the open-only path never drops/recreates tables.
+  dbModule.db
+    .prepare("INSERT INTO config (key, value, description) VALUES (?, ?, ?)")
+    .run("baseline.open_only_probe", "kept", "sentinel for the open-only path");
+
+  assert.doesNotThrow(() => dbModule.initDatabase());
+
+  const userVersion = dbModule.db.pragma("user_version", { simple: true }) as number;
+  assert.equal(userVersion, CURRENT_SCHEMA_VERSION);
+
+  const probe = dbModule.db
+    .prepare("SELECT value FROM config WHERE key = ?")
+    .get("baseline.open_only_probe") as { value?: string } | undefined;
+  assert.equal(probe?.value, "kept", "Re-init must not wipe existing data");
+
+  for (const tableName of ["TrackSearch", "CatalogSearch", "ProviderItemMatches", "RecordingRelations", "metadata_identity_status"]) {
+    const row = dbModule.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+      .get(tableName) as { name: string } | undefined;
+    assert.ok(row, `Expected table '${tableName}' to survive re-initialization`);
   }
 });
 

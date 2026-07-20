@@ -31,9 +31,9 @@ settings, but does not clone or build the MusicBrainz stack inside its image.
 `getArtist`, `getArtistReleaseGroups`, `getReleaseGroup`, `getReleaseWithTracks`,
 `getRecording?`, `lookupByUPC?`, `lookupByISRC?`, `search`.
 
-The last three are optional because **Servarr Metadata Server can't serve them** (no standalone
-recording endpoint, no UPC index, no ISRC index). Per §3, until MB-local is
-connected, matching falls back to title / track-count / date / duration /
+The last three are optional because **Servarr Metadata Server can't serve them**
+(no standalone recording endpoint, no UPC index, no ISRC index). Until MB-local
+is connected, matching falls back to title / track-count / date / duration /
 position and accepts slightly weaker matches. The Postgres MB provider implements
 all of them.
 
@@ -94,18 +94,25 @@ The Settings page uses the same host-only value. Enter `192.168.1.100`,
 `musicbrainz.mydomain.com`, `db`, or `host:postgresPort` for non-standard
 Postgres ports; Discogenius derives the Postgres DSN and `/ws/2` probe URL.
 
-## Mode switching (per §3)
+## Mode switching
 
-Because Layers C/D and the file inventory key on **MBID**, Layer A (the canonical
-catalog tables) is a pure cache. So:
+**What shipped:** both Servarr and MB-local hydrate the same Discogenius SQLite
+catalog on refresh. Switching `catalog.source` only swaps the active
+`CatalogProvider`; the next artist/album refresh reads from the new source.
+There is no catalog-table flush on toggle.
 
-- **MB-local → Servarr Metadata Server:** trigger an on-demand catalog build for the monitored
-  set.
-- **Servarr Metadata Server → MB-local:** stop replicating and lazily empty Layer A *after a
-  delay*, so an accidental toggle doesn't force a rebuild.
+**Evidence differences:** Servarr typically omits ISRC/UPC; MB-local fills
+`Recordings.isrcs` and `AlbumReleases.barcode`. ISRCs are usually preserved
+across a later Servarr re-hydrate (`COALESCE`); barcodes can be cleared when
+Servarr rewrites the release. Switching back to MB-local and refreshing fills
+those holes again. Matching, slot selection, curation, and (with
+`remove_unmonitored_files`) library prune/replace can then change — not at the
+moment of the Settings toggle, but after refresh → rematch → curate → download.
 
-This switch is future work; the current implementation only lays the provider
-seam.
+**Not the plan:** the older “MB-local = flush SQLite and live-query Postgres
+only” design. Treat that as obsolete unless we deliberately revisit architecture.
+Remaining UX work is optional “refresh monitored artists now” after a switch
+(see `docs/TASKS.md`).
 
 ## Testing
 
@@ -118,79 +125,32 @@ seam.
 - **Live container e2e is skipped** — no MB-docker container is provisioned in
   CI; the behavior is covered by the fixture unit tests above.
 
-## Curated-column parity: catalog source ↔ schema (verified 2026-06-24)
+## Catalog source ↔ schema parity
 
-Verified the live MB-docker `:5000` `/ws/2` shapes against both the Servarr
-Metadata Server shape and the curated catalog columns (schema 33). Conclusion:
-**the schema itself is source-agnostic** — both sources converge on the Lidarr
-DTOs → the same write path → the same curated columns. The gaps are in the
-mapping/DTO layer, and a few fields MB genuinely cannot serve.
+The curated schema is source-agnostic: both Servarr and MB-local converge on the
+Lidarr DTOs → the same write path → the same curated columns. The differences are
+in the mapping layer and a few fields MB cannot serve.
 
-### What MB serves natively (use the right `inc`)
+**MB serves natively** (with the right `inc`), and is strictly richer than the
+Servarr replica for two things:
 
-The MB DB is a SUPERSET of identity/relational data, and for two things it's
-strictly richer than the Servarr replica:
+- Per-recording artist-credit (`inc=artist-credits`) at recording AND track
+  level — the queryable recording↔artist-credit relation the recording-centric
+  song-set work needs (Servarr exposes only a single primary artist per track).
+- ISRCs per recording (`inc=isrcs`, plus `/isrc/{isrc}`) and UPC/barcode via
+  `barcode:` search. Servarr/Skyhook strips these — the whole reason for MB-local.
 
-- **Per-recording artist-credit** (`inc=artist-credits`) at recording AND track
-  level: `[{name, joinphrase, artist:{id,name,sort-name}}]`. This is exactly the
-  queryable recording↔artist-credit relation the recording-centric song-set item
-  needs — and the blocker on dropping the `data` blob. The Servarr metadata service only
-  exposes a single primary `ArtistId` per track.
-- **ISRCs per recording** (`inc=isrcs`) and a dedicated `/isrc/{isrc}` endpoint;
-  **UPC/barcode** via `barcode:` release search. (Skyhook strips these — the
-  whole reason for MB-local.)
+Also native: url-rels/external links, genres, aliases, ratings, labels, media/disc
+structure, country, status, and life-span dates.
+`PostgresMusicBrainzCatalogProvider` maps these into the curated columns
+(`Recordings` ISRCs/video flags, `AlbumReleases.label`/external URLs, `Albums`
+genres/links/aliases/rating).
 
-Also native: relations/external links (`inc=url-rels` → `relations[].url.resource`
-+ `.type`), genres (`inc=genres`), aliases (`inc=aliases`), rating
-(`inc=ratings` → `{votes-count, value}`), labels (`inc=labels`), media/disc
-structure (`media[]` with inline `tracks[].recording`), country, status,
-life-span dates.
+**Still supplemental in MB-local mode** (come from Servarr/CAA/fanart, never
+overriding MB identity):
 
-### What MB does NOT serve → still needs Servarr Metadata Server (or CAA/fanart)
-
-The user's intuition is correct — even in MB-local mode these are supplemental:
-
-- **Cover art.** MB only carries a `cover-art-archive: {artwork, count, front}`
-  FLAG that art exists; the bytes live at coverartarchive.org (release/RG only,
-  public — fetchable directly) and **artist images are not in CAA at all**
-  (fanart.tv / Wikimedia, which the Servarr server aggregates). So album art can
-  come from CAA directly; artist art needs Servarr/fanart.
-- **Overview / bio / album review.** MB has none (Servarr enriches from
-  Wikipedia/Wikidata). Our `ArtistMetadata.overview` / `Albums.overview` columns
-  would stay empty in pure MB-local mode.
-- **Normalized popularity.** MB has only the raw `rating`; Servarr derives the
-  0–100 popularity we store.
-
-This matches the existing 3.0 "supplemental Servarr lookups" task: artwork URLs,
-ratings/popularity, overview. Identity/credits/ISRC/UPC must always come from MB
-and never be overridden by the supplement.
-
-### The mapping gap to close BEFORE MB-local goes live
-
-The Servarr write path (`servarr-metadata.ts`) populates the curated JSON
-columns by reading the RAW Servarr payload (`raw.links`, `raw.genres`,
-`raw.rating`, `raw.artistaliases`, `raw.oldids`). The Lidarr DTO interfaces do
-NOT carry those fields, so `musicbrainz-ws-mapping.ts` produces clean DTOs
-WITHOUT them — meaning an MB-sourced row would leave `links/genres/ratings/
-aliases` empty (and the matching-evidence reader, which now reads
-`Albums.links`, would be empty in MB-local mode). To reach parity when wiring
-MB-local:
-
-1. Add typed `links/genres/ratings/aliases/overview/images` fields to the shared
-   catalog DTOs and have BOTH mappers populate them (Servarr from its raw shape,
-   MB from `relations`/`genres`/`aliases`/`rating`). The write path then reads
-   the typed DTO instead of `raw.*`.
-2. **Normalize `links` to one canonical shape at WRITE time** (e.g.
-   `[{type, url}]`) in both mappers, so `extractLinkUrls` /
-   `getLinkedProviderArtistId` work uniformly. Servarr uses `{type, target}`; MB
-   uses `{type, url:{resource}}` (nested) — today's `extractLinkUrls` only reads
-   top-level strings and would miss MB's nested URL.
-3. Extend the MB provider's `inc` params: `getArtist` currently fetches only
-   `inc=release-groups`; add `url-rels+genres+aliases+ratings` to feed the
-   curated columns.
-4. Persist artist-credit + ISRCs to columns (the recording↔artist-credit relation
-   + `Recordings.isrcs`) in the write path — needed for both the blob-drop AND to
-   capture MB's richer credit data.
-
-None of this BREAKS today (MB-local isn't wired); it's the parity checklist so
-the curated columns fill correctly from either source when 3.0 lands.
+- Cover art bytes (album art from CAA directly; artist images from fanart via
+  Servarr — not in CAA).
+- Overview / bio / album review (MB has none; Servarr enriches from
+  Wikipedia/Wikidata).
+- Normalized 0–100 popularity (MB has only a raw rating).

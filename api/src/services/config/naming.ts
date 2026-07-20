@@ -175,9 +175,12 @@ function formatQualityValue(value: unknown, format: string): string {
 }
 
 function getPrettyProviderName(provider: string | null | undefined): string {
-  const lower = (provider || "tidal").trim().toLowerCase();
+  const lower = String(provider || "").trim().toLowerCase();
+  if (!lower) return "Unknown";
   if (lower === "tidal") return "TIDAL";
   if (lower === "apple" || lower === "apple-music" || lower === "applemusic") return "Apple Music";
+  if (lower === "youtube" || lower === "youtube-music" || lower === "youtubemusic") return "YouTube Music";
+  if (lower === "amazon" || lower === "amazon-music" || lower === "amazonmusic") return "Amazon Music";
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 

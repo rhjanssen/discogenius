@@ -54,8 +54,9 @@ test("fresh installs use the production monitoring and library defaults", () => 
   assert.equal(config.monitoring.remove_unmonitored_files, true);
   assert.equal(config.quality.upgrade_existing_files, true);
   assert.equal(config.filtering.require_provider_availability, true);
-  assert.equal(config.filtering.include_spatial, true);
-  assert.equal(config.filtering.include_videos, true);
+  assert.equal(config.filtering.include_spatial, false);
+  assert.equal(config.filtering.include_videos, false);
+  assert.equal(config.quality.video_quality, "uhd");
   assert.equal(config.path.create_empty_artist_folders, true);
   assert.equal(config.naming.video_file, "{Video CleanTitle} {{providerName}-{mediaId}}");
   assert.equal(config.metadata.enable_fingerprinting, true);

@@ -241,13 +241,13 @@ test("getReleaseGroupAvailability derives strict hybrid coverage from multiple p
               VALUES (?, ?, ?, ?, 'Official', '2023-04-26', 'XW', 1, 3)`)
     .run("rel-three-track", "rg-unplugged", "artist-bastille", "Killing Me Softly With His Song (MTV Unplugged)");
 
-  for (const [recording, track, title, position, length] of [
-    ["rec-softly", "track-softly", "Killing Me Softly With His Song (edit)", 1, 298540],
-    ["rec-pompeii", "track-pompeii", "Pompeii (edit)", 2, 268690],
-    ["rec-nirvana", "track-nirvana", "Come as You Are (edit)", 3, 231490],
+  for (const [recording, track, title, position, length, isrc] of [
+    ["rec-softly", "track-softly", "Killing Me Softly With His Song (edit)", 1, 298540, "GBUM72302334"],
+    ["rec-pompeii", "track-pompeii", "Pompeii (edit)", 2, 268690, "GBUM72302279"],
+    ["rec-nirvana", "track-nirvana", "Come as You Are (edit)", 3, 231490, "GBUM72302277"],
   ] as const) {
-    db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms) VALUES (?, 'artist-bastille', ?, ?)`)
-      .run(recording, title, length);
+    db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, isrcs) VALUES (?, 'artist-bastille', ?, ?, ?)`)
+      .run(recording, title, length, JSON.stringify([isrc]));
     db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
                 VALUES (?, 'rel-three-track', ?, ?, ?, 1, ?)`)
       .run(track, recording, title, position, length);
@@ -357,6 +357,87 @@ test("composite coverage matches provider tracks by ISRC even when titles differ
   const composite = release.availability.find((offer) => offer.matchKind === "composite");
   assert.ok(composite, "ISRC-only composite should form despite mismatched titles");
   assert.deepEqual(composite!.providerAlbumIds, ["prov-a", "prov-b"]);
+});
+
+test("composite availability aggregates explicit from member albums", () => {
+  const { db } = dbModule;
+  db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-explicit", "Explicit Artist");
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')`)
+    .run("rg-explicit", "artist-explicit", "Back To Explicit");
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count)
+              VALUES ('rel-explicit', 'rg-explicit', 'artist-explicit', 'Back To Explicit', 'Official', '2006-01-01', 'XW', 1, 2)`).run();
+
+  for (const [rec, trk, title, pos, isrc] of [
+    ["rec-ex-a", "trk-ex-a", "Song A", 1, "EXPLICIT0001"],
+    ["rec-ex-b", "trk-ex-b", "Song B", 2, "EXPLICIT0002"],
+  ] as const) {
+    db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, isrcs) VALUES (?, 'artist-explicit', ?, 200000, ?)`)
+      .run(rec, title, JSON.stringify([isrc]));
+    db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+                VALUES (?, 'rel-explicit', ?, ?, ?, 1, 200000)`).run(trk, rec, title, pos);
+  }
+
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, explicit)
+              VALUES ('apple-music','album',?, 'artist-explicit', 'Part A Explicit', 'LOSSLESS', 1)`).run("ex-a");
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality, explicit)
+              VALUES ('apple-music','album',?, 'artist-explicit', 'Part B Clean', 'LOSSLESS', 0)`).run("ex-b");
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, provider_album_id, title, isrc, duration)
+              VALUES ('apple-music', 'track', 'ex-t1', 'ex-a', 'Song A', 'EXPLICIT0001', 200)`).run();
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, provider_album_id, title, isrc, duration)
+              VALUES ('apple-music', 'track', 'ex-t2', 'ex-b', 'Song B', 'EXPLICIT0002', 200)`).run();
+
+  providerMatches.persistCompositeReleaseMatches("rg-explicit");
+  const result = providerMatches.getReleaseGroupAvailability("rg-explicit");
+  const release = result.releases.find((item) => item.releaseMbid === "rel-explicit");
+  assert.ok(release);
+  const composite = release.availability.find((offer) => offer.matchKind === "composite");
+  assert.ok(composite, "expected hybrid coverage");
+  assert.equal(composite!.explicit, true, "hybrid must show E when any member album is explicit");
+});
+
+test("aggregateExplicitFlags prefers any explicit member", () => {
+  assert.equal(providerMatches.aggregateExplicitFlags([false, true, false]), true);
+  assert.equal(providerMatches.aggregateExplicitFlags([0, 0]), false);
+  assert.equal(providerMatches.aggregateExplicitFlags([false, null]), null);
+  assert.equal(providerMatches.aggregateExplicitFlags([]), null);
+});
+
+test("composite coverage does not form from title matches when catalog ISRCs are missing", () => {
+  const { db } = dbModule;
+  db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run("artist-no-isrc", "No ISRC Artist");
+  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'single')`)
+    .run("rg-no-isrc", "artist-no-isrc", "No ISRC Composite");
+  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, country, media_count, track_count)
+              VALUES ('rel-no-isrc', 'rg-no-isrc', 'artist-no-isrc', 'No ISRC Composite', 'Official', '2023-01-01', 'XW', 1, 2)`).run();
+
+  for (const [rec, trk, title, pos] of [
+    ["rec-na", "trk-na", "Title A", 1],
+    ["rec-nb", "trk-nb", "Title B", 2],
+  ] as const) {
+    db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, isrcs) VALUES (?, 'artist-no-isrc', ?, 200000, '[]')`)
+      .run(rec, title);
+    db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+                VALUES (?, 'rel-no-isrc', ?, ?, ?, 1, 200000)`).run(trk, rec, title, pos);
+  }
+
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality)
+              VALUES ('tidal','album',?, 'artist-no-isrc', 'Title A Only', 'LOSSLESS')`).run("prov-na");
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, quality)
+              VALUES ('tidal','album',?, 'artist-no-isrc', 'Title B Only', 'LOSSLESS')`).run("prov-nb");
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, provider_album_id, title, duration)
+              VALUES ('tidal', 'track', 'trk-na-p', 'prov-na', 'Title A', 200)`).run();
+  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, provider_album_id, title, duration)
+              VALUES ('tidal', 'track', 'trk-nb-p', 'prov-nb', 'Title B', 200)`).run();
+
+  providerMatches.persistCompositeReleaseMatches("rg-no-isrc");
+  const result = providerMatches.getReleaseGroupAvailability("rg-no-isrc");
+  const release = result.releases.find((item) => item.releaseMbid === "rel-no-isrc");
+  assert.ok(release);
+  assert.equal(
+    release.availability.some((offer) => offer.matchKind === "composite"),
+    false,
+    "Servarr-style missing catalog ISRCs must not form title-only hybrids",
+  );
 });
 
 test("setSlotSelection switches the selected release and derives the best provider", () => {

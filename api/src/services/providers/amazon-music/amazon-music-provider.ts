@@ -198,18 +198,13 @@ export class AmazonMusicProvider implements StreamingProvider {
     auth: {
       kind: "external",
       managedByApp: false,
-      credentialFields: [{
-        key: "accessToken",
-        label: "Unofficial API access token",
-        secret: true,
-        required: true,
-        helpText: "Token issued by the configured Amazon Music API service. The official Amazon Music Web API remains closed beta.",
-      }, {
-        key: "apiBase",
-        label: "API base URL",
-        required: false,
-        helpText: `Defaults to ${DEFAULT_AMAZON_MUSIC_API_BASE}. Public custom hosts require HTTPS; private/loopback self-hosted endpoints require DISCOGENIUS_ALLOW_PRIVATE_AMAZON_MUSIC_API_BASE=true.`,
-      }],
+      comingSoon: true,
+      setupIntro:
+        "Amazon Music is temporarily listed as Soon. Catalog and downloads depend on the community amazon-music bridge and its hosted token API (https://amz.dezalty.com), which is currently unreliable. Discogenius will re-enable connection when that path is usable again.",
+      setupInstructions: [
+        "No action needed until Amazon Music leaves Soon.",
+      ],
+      credentialFields: [],
     },
     integration: {
       catalogSource: "unofficial-api",
@@ -219,8 +214,8 @@ export class AmazonMusicProvider implements StreamingProvider {
     downloadBackends: [{
       id: "amazon-music-cli",
       capabilities: ["stereo", "spatial"],
-      enabled: true,
-      setupNote: "Uses amazon-music 1.7.7 through a non-interactive provider bridge. The external API token/service is required.",
+      enabled: false,
+      setupNote: "Disabled while Amazon Music is marked Soon. Re-enable with amazon-music 1.7.7 once the unofficial token/API host is usable again.",
     }],
     catalog: { search: true, artistCatalog: true, releaseOffers: true, videos: false },
     imports: { supported: [] },
@@ -245,14 +240,16 @@ export class AmazonMusicProvider implements StreamingProvider {
     editorialMetadata: false,
     providerIds: true,
     spatialFormats: ["DOLBY_ATMOS"],
-    stereoQuality: "Up to 24-bit / 192 kHz (external API tier dependent)",
-    spatialQuality: "Dolby Atmos (external API tier dependent)",
+    stereoQuality: "Up to MAX (24-bit / 192 kHz, account tier dependent)",
+    spatialQuality: "Dolby Atmos (account tier dependent)",
+    videoQuality: "Not available",
   };
   readonly qualityMapping = amazonMusicQualityMapping;
 
   constructor(private readonly apiOptions: AmazonMusicApiOptions = {}) {}
 
   isAuthenticated(): boolean {
+    if (this.manifest.auth.comingSoon) return false;
     return Boolean(this.apiOptions.credentials ?? loadAmazonMusicCredentials());
   }
 
@@ -349,6 +346,20 @@ export class AmazonMusicProvider implements StreamingProvider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatus> {
+    if (this.manifest.auth.comingSoon) {
+      return {
+        connected: false,
+        tokenExpired: false,
+        refreshTokenExpired: false,
+        hoursUntilExpiry: 0,
+        canAccessShell: false,
+        canAccessLocalLibrary: false,
+        remoteCatalogAvailable: false,
+        canAuthenticate: false,
+        user: null,
+        message: "Amazon Music is marked Soon until the unofficial token/API host is reliable again.",
+      };
+    }
     const connected = this.isAuthenticated();
     return {
       connected,

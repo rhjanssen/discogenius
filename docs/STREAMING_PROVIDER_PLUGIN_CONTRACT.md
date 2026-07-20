@@ -7,9 +7,8 @@ canonical catalog identity.
 
 External provider tooling follows `docs/EXTERNAL_DEPENDENCIES.md`: small
 direct-spawn binaries may be bundled as pinned artifacts, while sidecars stay
-optional and stateful catalog stacks stay external.
-Apple downloader selection notes live in
-`docs/APPLE_MUSIC_DOWNLOADER_EVALUATION.md`.
+optional and stateful catalog stacks stay external. Per-provider download-backend
+choices are recorded in `docs/PROVIDER_DOWNLOADER_DECISION.md`.
 
 ## Core-Owned Language
 
@@ -76,10 +75,10 @@ Track materialization is the critical acquisition contract:
   templates, so Discogenius writes job-specific config instead of passing
   nonexistent generic output flags. The Docker image packages the upstream
   static `apple-music-dl` CLI; diagnostics still treat MP4Box and the wrapper
-  ports as separate live-download readiness checks. Compose includes a disabled
-  Apple wrapper sidecar profile using the same network namespace as
-  Discogenius so the downloader's `127.0.0.1:10020/20020` config resolves to
-  the wrapper when live Apple testing is enabled.
+  ports as separate live-download readiness checks. Compose includes the
+  `apple-music-wrapper` service in the same file (commented so operators can
+  delete it if unused), sharing Discogenius' network namespace so the
+  downloader's `127.0.0.1:10020/20020` config resolves to the wrapper.
 - YouTube Music has no official Apple/TIDAL-like catalog API for this use case.
   `ytmusicapi` is the best-known catalog automation layer and emulates the web
   client with cookie/OAuth data. `yubal` is a useful reference because it combines

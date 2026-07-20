@@ -6,9 +6,14 @@ import { ProviderMark } from "./ProviderMark";
 import { providerAlbumUrl, providerKey, providerMarkFor, providerVideoUrl } from "./providerMarks";
 import { tidalBadgeColor, tidalBadgeColorLight } from "@/theme/theme";
 import { useTheme } from "@/providers/themeContext";
+import {
+    BADGE_HEIGHT_PX,
+    PROVIDER_GLYPH_SIZE_PX,
+    type DiscogeniusBadgeSize,
+} from "./badgeSizes";
 
 type SlotName = "stereo" | "spatial" | "video";
-type BadgeSize = "small" | "medium" | "large";
+type BadgeSize = DiscogeniusBadgeSize;
 
 export interface ProviderQualityOffer {
     /** Library slot this offer fills. */
@@ -52,10 +57,9 @@ interface ProviderQualityRowProps {
     selectedOfferProvider?: string | null;
 }
 
-// Fluent Badge heights for small/medium/large, so provider tokens line up with
-// adjacent quality and type badges instead of sitting one size step larger.
-const PILL_DIAMETER: Record<BadgeSize, number> = { small: 16, medium: 20, large: 24 };
-const GLYPH_SIZE: Record<BadgeSize, number> = { small: 10, medium: 12, large: 14 };
+// Provider circular marks share BADGE_HEIGHT_PX with QualityBadge chips.
+const PILL_DIAMETER = BADGE_HEIGHT_PX;
+const GLYPH_SIZE = PROVIDER_GLYPH_SIZE_PX;
 
 function transparentHex(hex: string, alpha: number): string {
     const normalized = hex.replace("#", "");
@@ -75,8 +79,11 @@ const useStyles = makeStyles({
         alignItems: "center",
         columnGap: tokens.spacingHorizontalXS,
         rowGap: tokens.spacingVerticalXS,
-        flexWrap: "nowrap",
-        whiteSpace: "nowrap",
+        // Wrap on narrow viewports so release-switcher / track pills stay in-bounds
+        // instead of clipping off the card edge (Fluent: content reflows, not overflow).
+        flexWrap: "wrap",
+        minWidth: 0,
+        maxWidth: "100%",
     },
     // A little extra breathing room before a second provider group so its icon
     // visibly "owns" the badges to its right.
@@ -199,6 +206,9 @@ const useStyles = makeStyles({
     tooltipContent: {
         maxWidth: "400px",
     },
+    tooltipLink: {
+        fontWeight: tokens.fontWeightSemibold,
+    },
 });
 
 function providerDisplayName(provider?: string | null): string {
@@ -287,6 +297,104 @@ function statusLabel(offer: ProviderQualityOffer): string {
     return "probable match";
 }
 
+/**
+ * Shared quality-badge tooltip used by the album header and the releases
+ * switcher (and every other ProviderQualityRow). Keep one format everywhere.
+ *
+ *   TIDAL · Stereo · verified match
+ *   TIDAL ID: 287367980          ← id is a hyperlink to the provider page
+ *   MusicBrainz edition <mbid>   ← mbid is a hyperlink to musicbrainz.org
+ */
+function buildQualityOfferTooltip(
+    offer: MergedOffer,
+    options: {
+        styles: ReturnType<typeof useStyles>;
+        isSelectedOffer: boolean;
+        interactive: boolean;
+    },
+): { content: React.ReactNode; ariaLabel: string } {
+    const providerName = providerDisplayName(offer.provider);
+    const providerAlbumIds = offer.providerAlbumIds?.length
+        ? offer.providerAlbumIds
+        : splitProviderAlbumIds(offer.providerAlbumId);
+    const fillsBothLibraries = offer.slots.length > 1;
+    const summaryLine = `${providerName} · ${slotsDisplayName(offer.slots)} · ${statusLabel(offer)}`;
+    const idLabel = `${providerName} ID`;
+
+    const ariaParts = [
+        summaryLine,
+        ...providerAlbumIds.map((id) => `${idLabel}: ${id}`),
+        offer.selectedReleaseMbid ? `MusicBrainz edition ${offer.selectedReleaseMbid}` : null,
+        fillsBothLibraries
+            ? "Same release fills both libraries (no separate stereo release available)"
+            : null,
+        offer.slot === "video" && offer.canPreview === false && offer.canDownload !== false
+            ? "Download available; remote preview is not supported by this provider."
+            : null,
+        offer.slot === "video" && offer.canDownload === false
+            ? "Video download is not supported by this provider."
+            : null,
+        options.interactive
+            ? (options.isSelectedOffer ? "Currently selected" : "Click to use this offer")
+            : null,
+    ].filter(Boolean) as string[];
+
+    const content = (
+        <div className={options.styles.tooltipBody}>
+            <span>{summaryLine}</span>
+            {providerAlbumIds.map((id) => {
+                const href = offer.slot === "video"
+                    ? providerVideoUrl(offer.provider, id)
+                    : providerAlbumUrl(offer.provider, id);
+                return (
+                    <span key={id}>
+                        {idLabel}:{" "}
+                        {href ? (
+                            <Link
+                                href={href}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className={options.styles.tooltipLink}
+                                onClick={(event) => event.stopPropagation()}
+                            >
+                                {id}
+                            </Link>
+                        ) : id}
+                    </span>
+                );
+            })}
+            {offer.selectedReleaseMbid ? (
+                <span>
+                    MusicBrainz edition{" "}
+                    <Link
+                        href={`https://musicbrainz.org/release/${offer.selectedReleaseMbid}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className={options.styles.tooltipLink}
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        {offer.selectedReleaseMbid}
+                    </Link>
+                </span>
+            ) : null}
+            {fillsBothLibraries ? (
+                <span>Same release fills both libraries (no separate stereo release available)</span>
+            ) : null}
+            {offer.slot === "video" && offer.canPreview === false && offer.canDownload !== false ? (
+                <span>Download available; remote preview is not supported by this provider.</span>
+            ) : null}
+            {offer.slot === "video" && offer.canDownload === false ? (
+                <span>Video download is not supported by this provider.</span>
+            ) : null}
+            {options.interactive ? (
+                <span>{options.isSelectedOffer ? "Currently selected" : "Click to use this offer"}</span>
+            ) : null}
+        </div>
+    );
+
+    return { content, ariaLabel: ariaParts.join(". ") };
+}
+
 interface ProviderGroup {
     provider?: string | null;
     key: string;
@@ -297,8 +405,9 @@ interface ProviderGroup {
  * A row of provider + quality indicators for an album/track. The provider mark
  * sits in its own round pill to the left of the quality badges it covers; a
  * single source shows one icon, while a stereo-from-A / spatial-from-B split
- * shows each provider before its badge. Match confidence and the selected
- * MusicBrainz edition live in the hover tooltips.
+ * shows each provider before its badge. Match confidence, provider album id
+ * (as a link), and the selected MusicBrainz edition live on the quality-badge
+ * tooltip — defined once in buildQualityOfferTooltip for header and releases.
  */
 export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     offers,
@@ -350,10 +459,6 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             ? <ProviderMark provider={group.provider} size={fillsBadge ? diameter : glyphSize} tone="auto" className={fillsBadge ? styles.badgeFillMark : undefined} />
             : providerName.charAt(0);
 
-        const tooltipLines = [
-            providerName,
-            ...group.offers.map((offer) => `${slotsDisplayName(offer.slots)} · ${statusLabel(offer)}`),
-        ];
         const linkedOffer = group.offers.find((offer) => splitProviderAlbumIds(offer.providerAlbumId).length > 0);
         const linkedId = splitProviderAlbumIds(linkedOffer?.providerAlbumId)[0];
         const providerHref = linkedId
@@ -372,21 +477,14 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             </span>
         );
 
+        // Quality badges already carry provider / slot / match detail. Keep the
+        // provider mark tooltip to the brand name only.
         return (
             <Tooltip
                 key={`p-${groupIndex}`}
                 withArrow
-                relationship="description"
-                content={{
-                    children: (
-                        <div className={styles.tooltipBody}>
-                            {tooltipLines.map((line, i) => (
-                                <span key={i}>{line}</span>
-                            ))}
-                        </div>
-                    ),
-                    className: styles.tooltipContent,
-                }}
+                relationship="label"
+                content={providerName}
             >
                 {providerHref ? (
                     <Link
@@ -404,8 +502,6 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     };
 
     const renderQualityBadge = (offer: MergedOffer, groupIndex: number, offerIndex: number) => {
-        const providerName = providerDisplayName(offer.provider);
-        const fillsBothLibraries = offer.slots.length > 1;
         const providerAlbumIds = offer.providerAlbumIds?.length
             ? offer.providerAlbumIds
             : splitProviderAlbumIds(offer.providerAlbumId);
@@ -413,44 +509,17 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             && providerAlbumIds.length > 0
             && providerKey(selectedOfferProvider) === providerKey(offer.provider)
             && sameProviderAlbumIdSet(selectedOfferAlbumId, offer.providerAlbumId);
-        const tooltipTextLines = [
-            `${providerName} · ${slotsDisplayName(offer.slots)} · ${statusLabel(offer)}`,
-            offer.explicit === true ? "Explicit" : offer.explicit === false ? "Clean" : null,
-            offer.coverageSummary || null,
-            offer.slot === "video" && offer.canPreview === false && offer.canDownload !== false
-                ? "Download available; remote preview is not supported by this provider."
-                : null,
-            offer.slot === "video" && offer.canDownload === false
-                ? "Video download is not supported by this provider."
-                : null,
-            fillsBothLibraries
-                ? "Same release fills both libraries (no separate stereo release available)"
-                : null,
-            onSelectOffer ? (isSelectedOffer ? "Currently selected" : "Click to use this offer") : null,
-        ].filter(Boolean) as string[];
-        const ariaLines = [
-            ...tooltipTextLines,
-            providerAlbumIds.length ? `${providerName} ID${providerAlbumIds.length > 1 ? "s" : ""} ${providerAlbumIds.join(", ")}` : null,
-            offer.selectedReleaseMbid ? `MusicBrainz edition ${offer.selectedReleaseMbid}` : null,
-        ].filter(Boolean) as string[];
-
-        const tooltipContent = (
-            <div className={styles.tooltipBody}>
-                {tooltipTextLines.map((line, i) => (
-                    <span key={i}>{line}</span>
-                ))}
-                {providerAlbumIds.map((id) => <span key={id}>{providerName} ID {id}</span>)}
-                {providerAlbumIds.length > 0 ? <span>Use the provider icon to open this offer.</span> : null}
-                {offer.selectedReleaseMbid ? <span>MusicBrainz edition {offer.selectedReleaseMbid}</span> : null}
-            </div>
-        );
+        const { content: tooltipContent, ariaLabel } = buildQualityOfferTooltip(offer, {
+            styles,
+            isSelectedOffer,
+            interactive: Boolean(onSelectOffer),
+        });
 
         const badge = <QualityBadge quality={offer.quality || "Unknown"} size={size} className={styles.badge} />;
+        // Only mark explicit editions. Clean is the default assumption — no "C" badge.
         const explicitMark = offer.explicit === true
             ? <span className={styles.explicitMark} aria-hidden="true" title="Explicit edition">E</span>
-            : offer.explicit === false
-                ? <span className={styles.explicitMark} aria-hidden="true" title="Clean edition">C</span>
-                : null;
+            : null;
 
         return (
             <Tooltip
@@ -467,7 +536,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                         appearance="transparent"
                         size="small"
                         className={mergeClasses(styles.offerSelectButton, isSelectedOffer ? styles.offerSelectButtonSelected : undefined)}
-                        aria-label={ariaLines.join(". ")}
+                        aria-label={ariaLabel}
                         aria-pressed={isSelectedOffer}
                         onClick={() => {
                             if (!isSelectedOffer) onSelectOffer(offer);
@@ -484,7 +553,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                 ) : (
                     <span
                         style={{ display: "inline-flex", alignItems: "center" }}
-                        aria-label={ariaLines.join(". ")}
+                        aria-label={ariaLabel}
                     >
                         {badge}
                         {explicitMark}

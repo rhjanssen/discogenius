@@ -98,6 +98,32 @@ export const useDataGridCellStyles = makeStyles({
         alignItems: "center",
         gap: tokens.spacingHorizontalXXS,
     },
+    /* Secondary caption under the primary name — used for mobile-stacked meta
+     * (Fluent List / TableCellLayout description pattern). */
+    mobileMetaLine: {
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        columnGap: tokens.spacingHorizontalXS,
+        rowGap: tokens.spacingVerticalXXS,
+        minWidth: 0,
+        "@media (min-width: 768px)": {
+            display: "none",
+        },
+    },
+    mobileMetaText: {
+        fontSize: tokens.fontSizeBase200,
+        color: tokens.colorNeutralForeground3,
+        whiteSpace: "nowrap",
+    },
+    mobileQuality: {
+        display: "flex",
+        minWidth: 0,
+        maxWidth: "100%",
+        "@media (min-width: 768px)": {
+            display: "none",
+        },
+    },
     /* Responsive hide below 768px */
     hideOnMobile: {
         display: "none !important",

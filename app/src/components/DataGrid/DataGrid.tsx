@@ -20,6 +20,10 @@ export interface DataGridColumn<T = any> {
     align?: "left" | "center" | "right";
     minWidth?: number;
     className?: string;
+    /** Media/thumbnail cells: no ellipsis clip, keep intrinsic artwork size. */
+    media?: boolean;
+    /** Allow multi-line / wrapping cell content (Fluent list primary+description stacks). */
+    wrap?: boolean;
 }
 
 export type DataGridRowProps = Omit<
@@ -82,20 +86,17 @@ const useStyles = makeStyles({
     },
     // sharedColumns: the root becomes the one grid that owns the column tracks;
     // the header and every row are subgrids of it, so content-sized columns
-    // resolve identically across all rows. Horizontal padding moves here (rows
-    // drop theirs) so the tracks line up; column gap lives here too.
+    // resolve identically across all rows. Keep horizontal padding on the
+    // header/rows themselves (do not zero it) so the first media column cannot
+    // sit flush against a clipping overflow ancestor.
     rootSharedColumns: {
         display: "grid",
         boxSizing: "border-box",
         columnGap: tokens.spacingHorizontalS,
-        paddingLeft: tokens.spacingHorizontalM,
-        paddingRight: tokens.spacingHorizontalM,
     },
     sharedGridRow: {
         gridColumn: "1 / -1",
         gridTemplateColumns: "subgrid",
-        paddingLeft: 0,
-        paddingRight: 0,
     },
     sharedFullWidthRow: {
         gridColumn: "1 / -1",
@@ -123,6 +124,8 @@ const useStyles = makeStyles({
     row: {
         display: "grid",
         gap: tokens.spacingHorizontalXS,
+        // Keep a real horizontal inset on narrow viewports so the first media
+        // column cannot sit flush against a clipping overflow ancestor.
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
         alignItems: "center",
         width: "100%",
@@ -145,10 +148,8 @@ const useStyles = makeStyles({
         cursor: "pointer",
     },
     rowCompact: {
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
-        "@media (min-width: 768px)": {
-            padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-        },
+        paddingTop: tokens.spacingVerticalXS,
+        paddingBottom: tokens.spacingVerticalXS,
     },
     rowSelected: {
         backgroundColor: tokens.colorSubtleBackgroundSelected,
@@ -214,6 +215,20 @@ const useStyles = makeStyles({
         whiteSpace: "nowrap",
         minWidth: 0,
     },
+    cellWrap: {
+        overflow: "hidden",
+        whiteSpace: "normal",
+        minWidth: 0,
+    },
+    cellMedia: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "visible",
+        minWidth: "auto",
+        whiteSpace: "normal",
+        textOverflow: "clip",
+    },
     selectionCell: {
         display: "flex",
         justifyContent: "center",
@@ -221,23 +236,15 @@ const useStyles = makeStyles({
         minWidth: 0,
     },
     rowDetail: {
-        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalS}`,
+        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalS}`,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         backgroundColor: tokens.colorSubtleBackground,
-        "@media (min-width: 768px)": {
-            paddingLeft: tokens.spacingHorizontalM,
-            paddingRight: tokens.spacingHorizontalM,
-        },
     },
     rowBefore: {
-        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS} ${tokens.spacingVerticalXXS}`,
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalXXS}`,
         color: tokens.colorNeutralForeground2,
         fontWeight: tokens.fontWeightSemibold,
         backgroundColor: tokens.colorSubtleBackground,
-        "@media (min-width: 768px)": {
-            paddingLeft: tokens.spacingHorizontalM,
-            paddingRight: tokens.spacingHorizontalM,
-        },
     },
 });
 
@@ -362,7 +369,21 @@ function DataGridInner<T>(
         && selectableRowIds.some((rowId) => selectedRowIdSet.has(rowId));
 
     const gridTemplate = useMemo(
-        () => [selection ? "44px" : null, ...visibleColumns.map((column) => columnWidths[column.key] ?? column.width)].filter(Boolean).join(" "),
+        () => {
+            const tracks = [
+                selection ? "44px" : null,
+                ...visibleColumns.map((column) => {
+                    const width = columnWidths[column.key] ?? column.width;
+                    // Fixed px tracks must not shrink under minWidth:0 cells, or
+                    // cover art in the first column gets clipped by overflow:hidden.
+                    if (/^\d+px$/.test(width)) {
+                        return `minmax(${width}, ${width})`;
+                    }
+                    return width;
+                }),
+            ].filter(Boolean) as string[];
+            return tracks.join(" ");
+        },
         [columnWidths, selection, visibleColumns]
     );
 
@@ -567,7 +588,11 @@ function DataGridInner<T>(
                                     key={column.key}
                                     role="gridcell"
                                     className={mergeClasses(
-                                        styles.cell,
+                                        column.media || column.key === "thumb" || column.key === "cover"
+                                            ? styles.cellMedia
+                                            : column.wrap
+                                                ? styles.cellWrap
+                                                : styles.cell,
                                         column.align === "center"
                                             ? styles.cellCenter
                                             : column.align === "right"

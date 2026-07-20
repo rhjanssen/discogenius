@@ -61,6 +61,10 @@ export interface AlbumContract {
   is_monitored: boolean;
   is_downloaded: boolean;
   downloaded?: number;
+  /** Tracks present on disk for the selected slot release(s). Lidarr: TrackFileCount. */
+  track_file_count?: number;
+  /** Expected track count on the selected slot release(s). Lidarr: TrackCount. */
+  track_count?: number;
   artist_id: string;
   artist_name: string;
   album_artists?: Array<{
@@ -233,6 +237,8 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
     is_downloaded: expectBoolean(record.is_downloaded, `${label}.is_downloaded`),
     downloaded: expectOptionalNumber(record.downloaded, `${label}.downloaded`),
+    track_file_count: expectOptionalNumber(record.track_file_count, `${label}.track_file_count`),
+    track_count: expectOptionalNumber(record.track_count, `${label}.track_count`),
     artist_id: expectIdentifierString(record.artist_id, `${label}.artist_id`),
     artist_name: expectString(record.artist_name, `${label}.artist_name`),
     album_artists: record.album_artists === undefined

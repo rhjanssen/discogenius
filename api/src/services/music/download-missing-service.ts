@@ -7,7 +7,7 @@ import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } fro
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { queueTrackAcquisitionPlan } from "./release-group-acquisition-plan.js";
-import { streamingProviderManager } from "../providers/index.js";
+import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -355,8 +355,18 @@ export class DownloadMissingService {
             });
             const preferredVideos = Array.from(offersByRecording.values()).map((offers) => {
                 offers.sort((left, right) =>
-                    streamingProviderManager.getProviderPreferenceRank(String(left.video.provider || ""))
-                    - streamingProviderManager.getProviderPreferenceRank(String(right.video.provider || ""))
+                    compareVideoOffersByQualityThenProvider(
+                        {
+                            provider: String(left.video.provider || ""),
+                            quality: left.video.quality,
+                            provider_id: String(left.video.provider_id || ""),
+                        },
+                        {
+                            provider: String(right.video.provider || ""),
+                            quality: right.video.quality,
+                            provider_id: String(right.video.provider_id || ""),
+                        },
+                    )
                     || left.index - right.index);
                 return offers[0].video;
             });

@@ -215,8 +215,9 @@ Aligns with the 3.0 MB-local direction (already recording-centric there).
   ISRCs) or the same recording? Treat as distinct atoms keyed by ISRC and let the
   explicit filter pick — needs a per-provider check (some expose an `explicit`
   flag but reuse the clean ISRC).
-- **Provider capability matrix:** §A assumes ISRC/UPC where available; confirm per
-  provider (see `docs/PROVIDER_CAPABILITY_AUDIT.md`).
+- **Provider capability matrix:** §A assumes ISRC/UPC where available; ISRC/UPC
+  are present on TIDAL/Apple/Spotify/Deezer, absent on YouTube Music, and gated on
+  Amazon, so they must always be optional inputs, never assumed present.
 - **Cross-release-group dedup:** a recording on both a single and the album — keep
   both (user wants the single *and* the album) or dedup to the album? Make it a
   filter (`enable_redundancy_filter` already exists); the coverage model supports

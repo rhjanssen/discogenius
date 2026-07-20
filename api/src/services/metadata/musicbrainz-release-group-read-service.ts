@@ -8,6 +8,10 @@ import { scoreTrackMatch as sharedScoreTrackMatch } from "../music/provider-trac
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderTrack } from "../providers/streaming-provider.js";
 import {
+    firstProviderEditorialText,
+    listReleaseGroupAlbumOfferCandidates,
+} from "../providers/provider-editorial-text.js";
+import {
     albumCoverLocalUrl,
     albumProviderArtworkCandidatesFromRow,
     providerArtworkIdFromCandidates,
@@ -18,6 +22,7 @@ import { resolveHydratedReleaseGroupArtwork } from "./release-group-artwork-serv
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "./musicbrainz-artist-credit-service.js";
 import { getConfigSection } from "../config/config.js";
+import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-audio.js";
 
 function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values: unknown[]): string | null {
     return mapArtistArtworkToLocalUrl({
@@ -310,39 +315,55 @@ async function resolveProviderAlbumReview(releaseGroup: any): Promise<{
     source: string;
     updatedAt: string;
 } | null> {
+    const storedReview = String(releaseGroup.review_text || "").trim();
+    if (storedReview) {
+        return {
+            review: storedReview,
+            source: String(releaseGroup.review_source || "provider").trim() || "provider",
+            updatedAt: String(releaseGroup.review_last_updated || new Date().toISOString()),
+        };
+    }
+
+    const overview = String(releaseGroup.overview || "").trim();
     const candidates = [
+        ...listReleaseGroupAlbumOfferCandidates(String(releaseGroup.mbid)),
         {
-            providerId: String(releaseGroup.stereo_provider || releaseGroup.selected_provider || "").trim(),
-            providerAlbumId: String(releaseGroup.stereo_provider_id || releaseGroup.selected_provider_id || "").trim(),
+            provider: String(releaseGroup.stereo_provider || releaseGroup.selected_provider || "").trim(),
+            providerId: String(releaseGroup.stereo_provider_id || releaseGroup.selected_provider_id || "").trim(),
         },
         {
-            providerId: String(releaseGroup.spatial_provider || releaseGroup.selected_provider || "").trim(),
-            providerAlbumId: String(releaseGroup.spatial_provider_id || releaseGroup.selected_provider_id || "").trim(),
+            provider: String(releaseGroup.spatial_provider || releaseGroup.selected_provider || "").trim(),
+            providerId: String(releaseGroup.spatial_provider_id || releaseGroup.selected_provider_id || "").trim(),
         },
     ];
-    const seen = new Set<string>();
 
-    for (const candidate of candidates) {
-        const key = `${candidate.providerId}:${candidate.providerAlbumId}`;
-        if (!candidate.providerId || !candidate.providerAlbumId || seen.has(key)) {
-            continue;
-        }
-        seen.add(key);
+    const editorial = await firstProviderEditorialText({
+        kind: "albumReview",
+        candidates,
+    });
+    if (editorial) {
+        // Persist so NFO/tags/refresh consumers see the same text without another live call.
+        db.prepare(`
+            UPDATE Albums SET
+                review_text = ?,
+                review_source = ?,
+                review_last_updated = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE mbid = ?
+        `).run(editorial.text, editorial.source, new Date().toISOString(), String(releaseGroup.mbid));
+        return {
+            review: editorial.text,
+            source: editorial.source,
+            updatedAt: new Date().toISOString(),
+        };
+    }
 
-        try {
-            const provider = streamingProviderManager.getStreamingProvider(candidate.providerId);
-            const review = await provider.getAlbumReview?.(candidate.providerAlbumId);
-            const trimmed = String(review || "").trim();
-            if (trimmed) {
-                return {
-                    review: trimmed,
-                    source: provider.id,
-                    updatedAt: new Date().toISOString(),
-                };
-            }
-        } catch {
-            // provider editorial metadata is best-effort; canonical MB data still loads.
-        }
+    if (overview) {
+        return {
+            review: overview,
+            source: "musicbrainz",
+            updatedAt: String(releaseGroup.updated_at || new Date().toISOString()),
+        };
     }
 
     return null;
@@ -415,6 +436,10 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         monitored_lock: Boolean(releaseGroup.monitored_lock),
         module: primaryType,
         group_type: primaryType,
+        review: String(releaseGroup.review_text || releaseGroup.overview || "").trim() || null,
+        review_text: String(releaseGroup.review_text || "").trim() || null,
+        review_source: releaseGroup.review_source || null,
+        review_last_updated: releaseGroup.review_last_updated || null,
     };
 }
 
@@ -673,8 +698,50 @@ function mergeQualityTags(values: Array<string | null | undefined>): string[] {
         });
 }
 
-function providerTrackQuality(track: AnnotatedProviderTrack | null | undefined): string | null {
-    return track?.quality || track?.__albumQuality || null;
+/**
+ * Quality shown for a selected slot offer on the album tracklist.
+ *
+ * Apple (and similar) often put Atmos in `qualityTags` while `quality` is the
+ * best *stereo* trait (LOSSLESS → MAX). Preferring track.quality for a spatial
+ * slot then makes the tracklist show Apple MAX next to a header that correctly
+ * says Dolby Atmos. Slot/album spatial quality wins for spatial offers.
+ */
+function offerDisplayQuality(
+    providerTrack: AnnotatedProviderTrack | null | undefined,
+    slot: ProviderTrackSlot,
+): string | null {
+    if (!providerTrack) return null;
+
+    const trackQuality = String(providerTrack.quality || "").trim() || null;
+    const albumQuality = String(providerTrack.__albumQuality || "").trim() || null;
+    const tags = Array.isArray(providerTrack.qualityTags)
+        ? providerTrack.qualityTags.map((tag) => String(tag || "").trim()).filter(Boolean)
+        : [];
+
+    if (slot === "spatial") {
+        if (albumQuality && isSpatialAudioQuality(albumQuality)) {
+            return normalizeSpatialBadgeQuality(albumQuality);
+        }
+        for (const tag of tags) {
+            if (isSpatialAudioQuality(tag)) {
+                return normalizeSpatialBadgeQuality(tag);
+            }
+        }
+        if (trackQuality && isSpatialAudioQuality(trackQuality)) {
+            return normalizeSpatialBadgeQuality(trackQuality);
+        }
+        return albumQuality || trackQuality;
+    }
+
+    return trackQuality || albumQuality;
+}
+
+function normalizeSpatialBadgeQuality(value: string): string {
+    const normalized = normalizeQualityTag(value);
+    if (normalized === "ATMOS" || normalized === "DOLBY_ATMOS") {
+        return "DOLBY_ATMOS";
+    }
+    return value;
 }
 
 function providerArtistCredits(track: AnnotatedProviderTrack | null | undefined): Array<{ id: string; name: string; join_phrase: string }> {
@@ -734,7 +801,10 @@ function buildProviderTrackSelections(releaseGroup: any): ProviderTrackSelection
     const seenAlbums = new Set<string>();
     for (const selection of selections) {
         for (const providerAlbumId of selection.providerAlbumIds) {
-            const key = `${selection.providerId}:${providerAlbumId}`;
+            // Key includes slot so the same provider album can fill stereo and
+            // spatial (Apple dual-format) and so cross-provider stereo/Atmos
+            // both stay available for per-track matching.
+            const key = `${selection.providerId}:${providerAlbumId}:${selection.slot}`;
             if (!selection.providerId || !providerAlbumId || seenAlbums.has(key)) {
                 continue;
             }
@@ -827,6 +897,7 @@ async function attachProviderPreviewTracks(
                     ...track,
                     quality: "",
                     qualityTags: [],
+                    remoteOffers: [],
                 };
             }
 
@@ -838,14 +909,32 @@ async function attachProviderPreviewTracks(
 
             const credits = providerArtistCredits(bestPreview?.providerTrack);
             const qualityTags = mergeQualityTags([
-                providerTrackQuality(spatialBest?.providerTrack),
-                providerTrackQuality(stereoBest?.providerTrack),
-                providerTrackQuality(selectedBest?.providerTrack),
+                offerDisplayQuality(spatialBest?.providerTrack, "spatial"),
+                offerDisplayQuality(stereoBest?.providerTrack, "stereo"),
+                offerDisplayQuality(selectedBest?.providerTrack, "selected"),
             ]);
-            const primaryQuality = providerTrackQuality(stereoBest?.providerTrack)
-                || providerTrackQuality(selectedBest?.providerTrack)
-                || providerTrackQuality(spatialBest?.providerTrack)
+            const primaryQuality = offerDisplayQuality(stereoBest?.providerTrack, "stereo")
+                || offerDisplayQuality(selectedBest?.providerTrack, "selected")
+                || offerDisplayQuality(spatialBest?.providerTrack, "spatial")
                 || track.quality;
+
+            // Per-slot offers (with provider) so the tracklist quality column
+            // mirrors the album header when stereo and Atmos are from different
+            // providers — qualityTags alone would collapse both onto preview_provider.
+            const remoteOffers = [
+                stereoBest ? {
+                    slot: "stereo",
+                    provider: stereoBest.providerTrack.__providerId,
+                    providerAlbumId: stereoBest.providerTrack.__providerAlbumId,
+                    quality: offerDisplayQuality(stereoBest.providerTrack, "stereo"),
+                } : null,
+                spatialBest ? {
+                    slot: "spatial",
+                    provider: spatialBest.providerTrack.__providerId,
+                    providerAlbumId: spatialBest.providerTrack.__providerAlbumId,
+                    quality: offerDisplayQuality(spatialBest.providerTrack, "spatial"),
+                } : null,
+            ].filter((offer): offer is NonNullable<typeof offer> => Boolean(offer));
 
             return {
                 ...track,
@@ -853,6 +942,7 @@ async function attachProviderPreviewTracks(
                 preview_provider_track_id: bestPreview ? String(bestPreview.providerTrack.providerId) : track.preview_provider_track_id,
                 quality: primaryQuality,
                 qualityTags,
+                remoteOffers,
                 artist_name: credits.length > 0
                     ? credits.map((credit) => credit.name).join(", ")
                     : track.artist_name,
@@ -912,18 +1002,13 @@ export class MusicBrainzReleaseGroupReadService {
             return null;
         }
 
-        // "Hydrated" now means the release-group has AlbumReleases rows — the
-        // curated-column equivalent of the old "data blob contains Releases[]"
-        // check (which is being retired).
-        const releaseCount = db.prepare("SELECT COUNT(*) AS count FROM AlbumReleases WHERE release_group_mbid = ?")
-            .get(releaseGroupMbid) as { count: number } | undefined;
-
-        if (Number(releaseCount?.count || 0) === 0) {
-            try {
-                await servarrMetadata.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
-            } catch (error) {
-                console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate MusicBrainz release group ${releaseGroupMbid}:`, error);
-            }
+        // Always re-reconcile on album load. content_hash skips unchanged
+        // payloads, so this is cheap when fresh and backfills ISRCs / labels /
+        // curated columns when the catalog source gained data after first hydrate.
+        try {
+            await servarrMetadata.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
+        } catch (error) {
+            console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate MusicBrainz release group ${releaseGroupMbid}:`, error);
         }
 
         return queryReleaseGroup(releaseGroupMbid);

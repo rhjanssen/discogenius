@@ -3,6 +3,7 @@ import type { VideoContract, VideosListResponseContract } from "../../contracts/
 import type { VideoAlbumRefContract, VideoDetailContract, VideoProviderOfferContract } from "../../contracts/media.js";
 import { streamingProviderManager } from "../providers/index.js";
 import { videoCoverLocalUrl } from "../metadata/media-cover-service.js";
+import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
 
@@ -133,11 +134,31 @@ function mapVideoDetail(row: VideoRow, isDownloaded: boolean): VideoDetailContra
   };
 }
 
+/**
+ * Prefer a real recording/provider title over the "Unknown Video" placeholder.
+ * Provider refresh can leave Recordings.title stuck on the placeholder while
+ * ProviderItems.title was later filled — artist cards and the video page must
+ * agree on the same display title.
+ */
+const VIDEO_DISPLAY_TITLE_SQL = `
+  CASE
+    WHEN recording.title IS NOT NULL
+      AND TRIM(recording.title) != ''
+      AND LOWER(TRIM(recording.title)) != 'unknown video'
+    THEN recording.title
+    ELSE COALESCE(
+      NULLIF(TRIM(provider_item.title), ''),
+      NULLIF(TRIM(recording.title), ''),
+      'Unknown Video'
+    )
+  END
+`;
+
 function getCanonicalVideoSelectSql(whereClause: string): string {
   return `
     SELECT
       CAST(recording.id AS TEXT) AS id,
-      recording.title AS title,
+      ${VIDEO_DISPLAY_TITLE_SQL} AS title,
       COALESCE(
         CASE
           WHEN COALESCE(recording.length_ms, 0) > 0
@@ -331,15 +352,6 @@ function listCanonicalVideos(input: ListVideosQuery): VideosListResponseContract
   };
 }
 
-function videoOfferQualityRank(quality: string | null): number {
-  const normalized = String(quality || "").toUpperCase();
-  if (normalized.includes("4K") || normalized.includes("2160")) return 4;
-  if (normalized.includes("1440") || normalized.includes("QHD")) return 3;
-  if (normalized.includes("1080") || normalized.includes("FHD")) return 2;
-  if (normalized.includes("720") || normalized === "HD") return 1;
-  return 0;
-}
-
 function getGroupedVideoOfferRows(recordingIds: string[]): Map<string, GroupedVideoOfferRow[]> {
   const result = new Map<string, GroupedVideoOfferRow[]>();
   if (recordingIds.length === 0) {
@@ -379,11 +391,9 @@ function getGroupedVideoOfferRows(recordingIds: string[]): Map<string, GroupedVi
     result.set(row.recording_id, bucket);
   }
   for (const bucket of result.values()) {
-    bucket.sort((left, right) => (
-      streamingProviderManager.getProviderPreferenceRank(left.provider)
-      - streamingProviderManager.getProviderPreferenceRank(right.provider)
-      || videoOfferQualityRank(right.quality) - videoOfferQualityRank(left.quality)
-      || left.provider_id.localeCompare(right.provider_id)
+    bucket.sort((left, right) => compareVideoOffersByQualityThenProvider(
+      { provider: left.provider, quality: left.quality, provider_id: left.provider_id },
+      { provider: right.provider, quality: right.quality, provider_id: right.provider_id },
     ));
   }
   return result;
@@ -436,9 +446,10 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
         OR pi.recording_mbid = (SELECT mbid FROM Recordings WHERE CAST(id AS TEXT) = CAST(? AS TEXT) AND mbid IS NOT NULL)
       )
   `).all(recordingId, recordingId) as Array<{ provider: string; provider_id: string; quality: string | null; url: string | null }>;
-  rows.sort((a, b) =>
-    streamingProviderManager.getProviderPreferenceRank(a.provider)
-    - streamingProviderManager.getProviderPreferenceRank(b.provider));
+  rows.sort((a, b) => compareVideoOffersByQualityThenProvider(
+    { provider: a.provider, quality: a.quality, provider_id: a.provider_id },
+    { provider: b.provider, quality: b.quality, provider_id: b.provider_id },
+  ));
   return rows.map((row) => {
     let canPreview = false;
     let canDownload = false;
@@ -465,11 +476,67 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
 /**
  * Albums (release groups) this video appears on: canonical release VIDEO
  * tracks pointing at the recording, plus provider album linkage on the video
- * offers themselves (Apple bundles MVs inside albums).
+ * offers themselves (Apple bundles MVs inside albums). When the video sits on
+ * a release tracklist, also surface disc/track position for the video page.
  */
 function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
+  const recordingMatch = `
+    CAST(t.recording_id AS TEXT) = CAST(? AS TEXT)
+    OR t.recording_mbid = (
+      SELECT mbid FROM Recordings
+      WHERE CAST(id AS TEXT) = CAST(? AS TEXT) AND mbid IS NOT NULL
+    )
+  `;
   const rows = db.prepare(`
-    SELECT DISTINCT a.mbid AS id, a.title, a.cover_image_id AS cover_id
+    SELECT
+      a.mbid AS id,
+      a.title,
+      a.cover_image_id AS cover_id,
+      (
+        SELECT t.mbid
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = a.mbid
+          AND (${recordingMatch})
+        ORDER BY
+          CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
+          ar.date ASC,
+          t.medium_position ASC,
+          t.position ASC
+        LIMIT 1
+      ) AS track_mbid,
+      (
+        SELECT t.position
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = a.mbid
+          AND (${recordingMatch})
+        ORDER BY
+          CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
+          ar.date ASC,
+          t.medium_position ASC,
+          t.position ASC
+        LIMIT 1
+      ) AS track_number,
+      (
+        SELECT t.medium_position
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = a.mbid
+          AND (${recordingMatch})
+        ORDER BY
+          CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
+          ar.date ASC,
+          t.medium_position ASC,
+          t.position ASC
+        LIMIT 1
+      ) AS volume_number
     FROM Albums a
     WHERE a.mbid IN (
       SELECT ar.release_group_mbid
@@ -477,8 +544,7 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       JOIN AlbumReleases ar
         ON ar.id = t.album_release_id
         OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-      WHERE CAST(t.recording_id AS TEXT) = CAST(? AS TEXT)
-        OR t.recording_mbid = (SELECT mbid FROM Recordings WHERE CAST(id AS TEXT) = CAST(? AS TEXT) AND mbid IS NOT NULL)
+      WHERE ${recordingMatch}
 
       UNION
 
@@ -501,11 +567,31 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
         AND v.provider_album_id IS NOT NULL
         AND alb.release_group_mbid IS NOT NULL
     )
-  `).all(recordingId, recordingId, recordingId, recordingId) as Array<{ id: string; title: string; cover_id: string | null }>;
+    ORDER BY a.title COLLATE NOCASE ASC
+  `).all(
+    // Subquery params (track_mbid / track_number / volume_number) × recordingMatch (2 each)
+    recordingId, recordingId,
+    recordingId, recordingId,
+    recordingId, recordingId,
+    // IN-clause Tracks branch
+    recordingId, recordingId,
+    // Provider release_group_mbid + provider_album_id branches
+    recordingId, recordingId,
+  ) as Array<{
+    id: string;
+    title: string;
+    cover_id: string | null;
+    track_mbid: string | null;
+    track_number: number | null;
+    volume_number: number | null;
+  }>;
   return rows.map((row) => ({
     id: String(row.id),
     title: row.title,
     cover_id: row.cover_id ?? null,
+    track_mbid: row.track_mbid ?? null,
+    track_number: row.track_number == null ? null : Number(row.track_number),
+    volume_number: row.volume_number == null ? null : Number(row.volume_number),
   }));
 }
 

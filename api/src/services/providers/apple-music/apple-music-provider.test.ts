@@ -86,6 +86,50 @@ test("maps Apple album with UPC, explicit flag and neutral-classifiable quality 
   assert.equal(album.explicit, true);
   assert.equal(album.trackCount, 13);
   assert.deepEqual(album.qualityTags, ["lossless", "lossy-stereo"]);
+  assert.equal(album.videoCover, "https://mzstatic.com/editorialvideo/motion-detail-square.m3u8");
+});
+
+test("extractAppleEditorialVideoUrl prefers motionDetailSquare over fallback", async () => {
+  const { extractAppleEditorialVideoUrl } = await import("./apple-music-catalog.js");
+  assert.equal(
+    extractAppleEditorialVideoUrl({
+      editorialVideo: {
+        motionDetailSquare: { video: "https://example/square.m3u8" },
+        motionSquareVideo1x1: { video: "https://example/fallback.m3u8" },
+      },
+    }),
+    "https://example/square.m3u8",
+  );
+  assert.equal(
+    extractAppleEditorialVideoUrl({
+      editorialVideo: {
+        motionSquareVideo1x1: { video: "https://example/fallback.m3u8" },
+      },
+    }),
+    "https://example/fallback.m3u8",
+  );
+  assert.equal(extractAppleEditorialVideoUrl({}), null);
+});
+
+test("Apple getArtworkUrl returns editorial video URL for albumVideoCover", async () => {
+  const { appleMusicStreamingProvider } = await import("./apple-music-provider.js");
+  const originalApiOptions = (appleMusicStreamingProvider as any).apiOptions.bind(appleMusicStreamingProvider);
+  (appleMusicStreamingProvider as any).apiOptions = () => opts();
+  try {
+    const url = await appleMusicStreamingProvider.getArtworkUrl({
+      entityType: "albumVideoCover",
+      imageId: "https://already-a-url.example/motion.m3u8",
+    });
+    assert.equal(url, "https://already-a-url.example/motion.m3u8");
+
+    const fromAlbum = await appleMusicStreamingProvider.getArtworkUrl({
+      entityType: "albumVideoCover",
+      providerId: "1440904699",
+    });
+    assert.equal(fromAlbum, "https://mzstatic.com/editorialvideo/motion-detail-square.m3u8");
+  } finally {
+    (appleMusicStreamingProvider as any).apiOptions = originalApiOptions;
+  }
 });
 
 test("maps Apple album tracks with ISRC, duration in seconds and track/disc numbers", async () => {
@@ -393,7 +437,7 @@ test("Apple downloader backend builds provider-id based tool invocations", () =>
         providerId: "1452310551",
         downloadPath: "/downloads/job",
       }),
-      ["--mv-audio-type", "atmos", "--mv-max", "1080", "https://music.apple.com/us/music-video/1452310551"],
+      ["--mv-audio-type", "atmos", "--mv-max", "2160", "https://music.apple.com/us/music-video/1452310551"],
     );
   } finally {
     if (previousStorefront == null) {

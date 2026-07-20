@@ -651,10 +651,10 @@ router.delete('/remove', async (req: Request, res: Response) => {
     }
 
     const status = downloadProcessor.getStatus();
-    if (status.currentJobId === commandId) {
-      await downloadProcessor.pause();
-      CommandQueueManager.cancel(commandId);
-      await downloadProcessor.resume();
+    if (status.activeDownloadIds.includes(commandId)) {
+      // Cancel just this download slot (aborts its provider signal) without
+      // pausing the queue, so other concurrent downloads keep running.
+      await downloadProcessor.cancelJob(commandId);
     } else if (downloadProcessor.isActivelyImporting(commandId)) {
       CommandQueueManager.cancel(commandId);
     } else {

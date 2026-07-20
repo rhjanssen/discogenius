@@ -49,10 +49,12 @@ test("an explicit provider offer wins over a colliding canonical recording id", 
     provider: "apple-music",
     providerId: "42",
     quality: "MP4_2160P",
+    recordingId: "7",
+    recordingMbid: "apple-recording",
   });
 });
 
-test("canonical resolution ignores unavailable offers and is deterministic within a provider", () => {
+test("canonical resolution prefers higher resolution within a provider", () => {
   dbModule.db.prepare(`
     INSERT INTO Recordings (id, mbid, title, is_video, metadata_status)
     VALUES (11, 'canonical-recording', 'Canonical asset', 1, 'musicbrainz')
@@ -72,7 +74,34 @@ test("canonical resolution ignores unavailable offers and is deterministic withi
 
   assert.deepEqual(resolver.resolveVideoOfferForProvider("tidal", "11"), {
     provider: "tidal",
-    providerId: "a-available",
-    quality: "MP4_720P",
+    providerId: "b-available",
+    quality: "MP4_1080P",
+    recordingId: "11",
+    recordingMbid: "canonical-recording",
+  });
+});
+
+test("preferred offer chooses Apple 4K over a preferred-provider TIDAL 1080p offer", () => {
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (id, mbid, title, is_video, metadata_status)
+    VALUES (21, 'shared-recording', 'Shared asset', 1, 'musicbrainz')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, recording_mbid, recording_id,
+      title, quality, availability, library_slot
+    ) VALUES
+      ('tidal', 'video', 'tidal-1080', 'shared-recording', 21,
+       'Shared asset', 'MP4_1080P', 'available', 'video'),
+      ('apple-music', 'video', 'apple-4k', 'shared-recording', 21,
+       'Shared asset', 'MP4_2160P', 'available', 'video')
+  `).run();
+
+  assert.deepEqual(resolver.resolvePreferredVideoOffer("21"), {
+    provider: "apple-music",
+    providerId: "apple-4k",
+    quality: "MP4_2160P",
+    recordingId: "21",
+    recordingMbid: "shared-recording",
   });
 });

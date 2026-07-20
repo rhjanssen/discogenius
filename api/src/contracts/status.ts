@@ -27,6 +27,7 @@ export type DownloadContentTypeContract = "track" | "video" | "album";
 export interface DownloadTrackProgressContract {
   title: string;
   trackNum?: number;
+  volumeNum?: number;
   status: DownloadTrackStatusContract;
   /**
    * Provider track id (tiddl stages files as `{providerTrackId}.ext`). The
@@ -220,6 +221,7 @@ function parseDownloadTrackProgressContract(value: unknown, index: number, label
   return {
     title: expectString(record.title, `${label}[${index}].title`),
     trackNum: expectOptionalNumber(record.trackNum, `${label}[${index}].trackNum`),
+    volumeNum: expectOptionalNumber(record.volumeNum, `${label}[${index}].volumeNum`),
     status: status as DownloadTrackStatusContract,
     providerTrackId: expectOptionalString(record.providerTrackId, `${label}[${index}].providerTrackId`),
   };

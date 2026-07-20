@@ -317,6 +317,37 @@ test("a parenthetical qualifier one provider omits still dedupes when durations 
   assert.equal(offers[0].recordingId, videos[0].id);
 });
 
+test("unlabeled live cuts merge with an explicitly Live-titled peer when durations agree", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-good-grief-live",
+    title: "Good Grief",
+    artist_name: "Bastille",
+    duration: 278,
+  }]);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "apple-music",
+    provider_id: "apple-good-grief-live",
+    title: "Good Grief (Bastille Presents “&” / Live From O2 Shepherd's Bush Empire)",
+    artist_name: "Bastille",
+    duration: 278,
+  }]);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id, title FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number; title: string }>;
+  assert.equal(videos.length, 1);
+
+  const offers = dbModule.db.prepare(`
+    SELECT provider, provider_id AS providerId, recording_id AS recordingId, quality
+    FROM ProviderItems WHERE entity_type = 'video'
+    ORDER BY provider
+  `).all() as Array<{ provider: string; providerId: string; recordingId: number; quality: string | null }>;
+  assert.equal(offers.length, 2);
+  assert.equal(offers[0].recordingId, offers[1].recordingId);
+});
+
 test("qualifier-tolerant dedup does NOT merge when durations differ beyond tolerance", () => {
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",

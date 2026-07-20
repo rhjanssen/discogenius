@@ -194,7 +194,10 @@ export class TrackLyricsMaterializer {
       const lyricPath = existingSidecar?.filePath
         ?? lyricSidecarPath(resolvedFilePath, classified.extension);
 
-      if (metadata.save_lyrics) {
+      if (metadata.save_lyrics || getConfigSection("quality").embed_lyrics) {
+        // Persist a sidecar whenever we embed or the user asked to save lyrics.
+        // Without a stable on-disk copy, retag preview re-fetches live lyrics and
+        // often flags a false "needs change" right after import.
         if (!fs.existsSync(lyricPath)) {
           fs.mkdirSync(path.dirname(lyricPath), { recursive: true });
           fs.writeFileSync(lyricPath, `${classified.content}\n`, "utf8");

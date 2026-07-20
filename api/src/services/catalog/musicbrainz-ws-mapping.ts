@@ -85,7 +85,7 @@ export interface MbRelease {
   date?: string | null;
   disambiguation?: string | null;
   "label-info"?: Array<{ label?: { name?: string } }>;
-  relations?: Array<{ url?: { resource?: string | null } | null }>;
+  relations?: Array<{ type?: string; url?: { resource?: string | null } | null }>;
   "release-group"?: MbReleaseGroupStub & { "artist-credit"?: MbArtistCreditName[] };
   media?: MbMedium[];
 }
@@ -99,6 +99,10 @@ export interface MbReleaseGroup {
   disambiguation?: string | null;
   "artist-credit"?: MbArtistCreditName[];
   releases?: MbRelease[];
+  genres?: Array<{ name?: string; count?: number } | string>;
+  aliases?: Array<{ name?: string; locale?: string | null } | string>;
+  relations?: Array<{ type?: string; url?: { resource?: string | null } | null }>;
+  rating?: { "votes-count"?: number; value?: number } | null;
 }
 
 export interface MbRecording {
@@ -174,6 +178,7 @@ export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): Lidarr
     MediumNumber: mediumNumber,
     DurationMs: Number(lengthMs || 0),
     Isrcs: Array.isArray(recording?.isrcs) ? recording.isrcs.filter(Boolean) : [],
+    IsVideo: recording?.video === true,
   };
 }
 
@@ -217,6 +222,26 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
 }
 
 export function mapMbReleaseGroupToLidarrDetail(rg: MbReleaseGroup): LidarrReleaseGroupDetail {
+  const genres = (rg.genres || [])
+    .map((entry) => String(typeof entry === "string" ? entry : entry?.name || "").trim())
+    .filter(Boolean);
+  const aliases = (rg.aliases || [])
+    .map((entry) => String(typeof entry === "string" ? entry : entry?.name || "").trim())
+    .filter(Boolean);
+  const links: Array<{ type?: string; target: string }> = [];
+  for (const relation of rg.relations || []) {
+    const target = String(relation.url?.resource || "").trim();
+    if (!target) continue;
+    const type = String(relation.type || "").trim() || undefined;
+    links.push(type ? { type, target } : { target });
+  }
+  const voteCount = Number(rg.rating?.["votes-count"] ?? 0);
+  const rawRating = Number(rg.rating?.value ?? NaN);
+  // MusicBrainz stores 0–100; Servarr/Lidarr curated ratings use 0–10.
+  const rating = Number.isFinite(rawRating) && voteCount > 0
+    ? { Count: voteCount, Value: rawRating / 10 }
+    : null;
+
   return {
     id: String(rg.id ?? ""),
     artistid: primaryArtistId(rg["artist-credit"]) ?? undefined,
@@ -225,6 +250,12 @@ export function mapMbReleaseGroupToLidarrDetail(rg: MbReleaseGroup): LidarrRelea
     secondarytypes: Array.isArray(rg["secondary-types"]) ? rg["secondary-types"] : [],
     releasedate: rg["first-release-date"] ?? undefined,
     disambiguation: rg.disambiguation ?? undefined,
+    overview: null,
+    images: [],
+    links,
+    genres: Array.from(new Set(genres)),
+    aliases: Array.from(new Set(aliases)),
+    rating,
     Releases: (rg.releases || []).map(mapMbReleaseToLidarr),
   };
 }

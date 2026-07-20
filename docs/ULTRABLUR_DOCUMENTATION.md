@@ -1,7 +1,5 @@
 # UltraBlur Background System
 
-Last updated: 2026-06-18
-
 ## Scope and Ownership
 
 This document covers the current UltraBlur implementation used across the Discogenius UI shell.

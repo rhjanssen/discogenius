@@ -324,6 +324,41 @@ test("artist page top tracks resolve provider previews through canonical MBIDs",
   assert.equal(topTracks[0].preview_provider_track_id, "provider-track-1");
 });
 
+test("artist page top tracks prefer the selected slot provider for preview over a newer alternate offer", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+
+  db.prepare(`
+    UPDATE ProviderItems
+    SET provider_album_id = 'provider-album-1', updated_at = '2020-01-01T00:00:00.000Z'
+    WHERE provider = 'tidal' AND provider_id = 'provider-track-1'
+  `).run();
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, title, quality,
+      library_slot, album_release_id, track_id, recording_id, match_status, updated_at
+    ) VALUES (
+      'apple-music', 'track', 'apple-track-newer', 'apple-album-1', 'artist-mbid-1', 'release-group-mbid-1',
+      'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', 'Canonical Track', 'HIGH',
+      'stereo', 201, 401, 301, 'matched', '2026-01-01T00:00:00.000Z'
+    )
+  `).run();
+
+  const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
+    includeReleaseGroups: false,
+    includeTracks: true,
+    includeVideos: false,
+  });
+  const topTracks = (page?.rows || [])
+    .flatMap((row: any) => row.modules || [])
+    .find((module: any) => module.title === "Top Tracks")?.items || [];
+
+  assert.equal(topTracks.length, 1);
+  assert.equal(topTracks[0].preview_provider, "tidal");
+  assert.equal(topTracks[0].preview_provider_track_id, "provider-track-1");
+});
+
 test("artist top tracks prefer the default provider popularity and fall back to another provider", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;

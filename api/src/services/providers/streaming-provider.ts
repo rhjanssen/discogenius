@@ -51,6 +51,15 @@ export interface ProviderManifest {
     kind: ProviderAuthKind;
     /** True when the provider can start/complete auth from Discogenius UI routes. */
     managedByApp: boolean;
+    /**
+     * When true, the provider remains listed in Auth/Settings as a roadmap
+     * entry but cannot be connected (Auth shows "Soon").
+     */
+    comingSoon?: boolean;
+    /** Optional Auth-page intro shown above the step list / credential fields. */
+    setupIntro?: string;
+    /** Optional step-by-step Auth page guidance for external credential paste flows. */
+    setupInstructions?: string[];
     credentialFields?: Array<{
       key: string;
       label: string;
@@ -316,6 +325,8 @@ export interface ProviderAlbum {
   artist: ProviderArtist;
   artists?: ProviderArtist[];
   cover?: string | null;
+  /** Provider animated-cover id or URL (TIDAL UUID, Apple editorial motion URL, …). */
+  videoCover?: string | null;
   releaseDate?: string | null;
   trackCount?: number | null;
   volumeCount?: number | null;
@@ -358,6 +369,12 @@ export interface ProviderTrack {
    * type, video library placement — while keeping their album/track identity.
    */
   isVideo?: boolean;
+  /**
+   * Provider video id for the UI audio/video switcher counterpart (YouTube
+   * Music ATV song → OMV music video). Core persists this as an album-scoped
+   * video offer linked to the audio recording for download + inline layout.
+   */
+  counterpartVideoId?: string | null;
   raw?: unknown;
 }
 

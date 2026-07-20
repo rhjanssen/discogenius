@@ -7,12 +7,14 @@ import {
 } from "@fluentui/react-components";
 import {
   ArrowClockwise24Regular as ArrowClockwise24RegularBase,
-  CheckmarkCircle24Filled,
+  CheckmarkCircle16Filled,
+  Clock16Regular as Clock16RegularBase,
   Clock24Regular as Clock24RegularBase,
-  DismissCircle24Color,
+  DismissCircle16Filled,
   DismissCircle24Filled,
-  Warning24Filled,
+  Warning16Filled,
   ArrowClockwise24Filled,
+  Clock16Filled,
   Clock24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
@@ -34,6 +36,7 @@ import {
 } from "./dashboardUtils";
 
 const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
+const Clock16Regular = bundleIcon(Clock16Filled, Clock16RegularBase);
 const Clock24Regular = bundleIcon(Clock24Filled, Clock24RegularBase);
 
 type ActivityTabProps = {
@@ -225,14 +228,13 @@ const ActivityTab = ({
     const getStatusIcon = (level: EventLevel, source: ActivitySource) => {
         switch (level) {
             case "success":
-                return <CheckmarkCircle24Filled className={source === "history" ? styles.statusIconSuccessHistory : styles.statusIconSuccess} />;
+                return <CheckmarkCircle16Filled className={source === "history" ? styles.statusIconSuccessHistory : styles.statusIconSuccess} />;
             case "warning":
-                return <Warning24Filled className={styles.statusIconNeutral} />;
+                return <Warning16Filled className={styles.statusIconNeutral} />;
             case "error":
-                // Colored variant to match the queue's colored success/failure icon family.
-                return <DismissCircle24Color className={styles.statusIconError} />;
+                return <DismissCircle16Filled className={styles.statusIconError} />;
             default:
-                return <Clock24Regular className={styles.statusIconNeutral} />;
+                return <Clock16Regular className={styles.statusIconNeutral} />;
         }
     };
 
@@ -262,7 +264,7 @@ const ActivityTab = ({
                 <div className={styles.activityLeading}>
                     <div className={source === "history" ? styles.activityLeadingContent : styles.activityLeadingContentCompact}>
                         {source === "running"
-                            ? <Spinner size="tiny" />
+                            ? <Spinner size="extra-tiny" />
                             : getStatusIcon(level, source)}
                         <span className={styles.activityIconOffset}>{getActivityTypeIcon(job)}</span>
                     </div>

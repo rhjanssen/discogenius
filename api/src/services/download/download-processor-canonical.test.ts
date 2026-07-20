@@ -42,9 +42,13 @@ test("cancelling the active item aborts its provider signal without pausing the 
 
   const processor = new DownloadProcessor() as any;
   const controller = new AbortController();
-  processor.processing = true;
-  processor.currentJobId = commandId;
-  processor.currentAbortController = controller;
+  processor.activeDownloads.set(commandId, {
+    provider: "tidal",
+    type: "track",
+    providerId: "cancel-active",
+    abortController: controller,
+    cancelRequested: false,
+  });
 
   await processor.cancelJob(commandId);
 

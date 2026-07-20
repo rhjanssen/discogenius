@@ -7,6 +7,7 @@ import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
+import { selectFewestReleaseGroupsForCoverage } from "./artist-coverage-optimizer.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -217,58 +218,44 @@ export class CurationService {
             return new Set();
         }
 
-        // Sort all release groups:
-        // 1. By track count descending (larger groups first)
-        // 2. By custom type priority descending to break ties (Album > EP > Single > Broadcast > Other)
-        // 3. By MusicBrainz ID comparison for stable sorting
-        hydratedGroups.sort((a, b) => {
-            const sizeA = a.preferredRelease.tracks.length;
-            const sizeB = b.preferredRelease.tracks.length;
-            if (sizeB !== sizeA) {
-                return sizeB - sizeA;
-            }
+        const providerAlbumCounts = new Map<string, number>();
+        const slotRows = db.prepare(`
+            SELECT release_group_mbid, selected_provider_id
+            FROM ReleaseGroupSlots
+            WHERE slot = 'stereo'
+              AND selected_provider_id IS NOT NULL
+              AND TRIM(selected_provider_id) != ''
+        `).all() as Array<{ release_group_mbid: string; selected_provider_id: string }>;
+        for (const row of slotRows) {
+            const count = String(row.selected_provider_id)
+                .split(";")
+                .map((part) => part.trim())
+                .filter(Boolean).length;
+            providerAlbumCounts.set(row.release_group_mbid, Math.max(1, count));
+        }
 
-            const priorityA = this.getReleaseGroupPriority(a.releaseGroup);
-            const priorityB = this.getReleaseGroupPriority(b.releaseGroup);
-            if (priorityB !== priorityA) {
-                return priorityB - priorityA;
-            }
+        // Artist-wide fewest-releases cover: retain the minimal set of release
+        // groups that still cover every filtered recording, preferring fewer
+        // provider downloads and stronger release types on ties.
+        const retainedMbids = selectFewestReleaseGroupsForCoverage(
+            hydratedGroups.map(({ releaseGroup, preferredRelease }) => ({
+                mbid: releaseGroup.mbid,
+                recordingIds: preferredRelease.recordingIds,
+                providerAlbumCount: providerAlbumCounts.get(releaseGroup.mbid) ?? 1,
+                typePriority: this.getReleaseGroupPriority(releaseGroup),
+            })),
+        );
 
-            return a.releaseGroup.mbid.localeCompare(b.releaseGroup.mbid);
-        });
-
-        const retainedGroups: Array<{ releaseGroup: ReleaseGroupForCuration; preferredRelease: PreferredReleaseRecordings }> = [];
         const redundantReleaseGroupIds = new Set<string>();
-
-        for (const entry of hydratedGroups) {
-            const isContained = retainedGroups.some(({ releaseGroup, preferredRelease }) => {
-                if (entry.preferredRelease.tracks.length > preferredRelease.tracks.length) {
-                    return false;
-                }
-
-                // Curation redundancy is MusicBrainz recording-centric. Provider
-                // matching may use weaker title/duration fallbacks, but curation
-                // should not collapse distinct recordings that share a title.
-                let overlap = 0;
-                for (const track of entry.preferredRelease.tracks) {
-                    const hasMatch = preferredRelease.recordingIds.has(track.recordingMbid);
-                    if (hasMatch) {
-                        overlap++;
-                    }
-                }
-                return overlap === entry.preferredRelease.tracks.length;
-            });
-
-            if (isContained) {
-                redundantReleaseGroupIds.add(entry.releaseGroup.mbid);
-            } else {
-                retainedGroups.push(entry);
+        for (const { releaseGroup } of hydratedGroups) {
+            if (!retainedMbids.has(releaseGroup.mbid)) {
+                redundantReleaseGroupIds.add(releaseGroup.mbid);
             }
         }
 
         if (redundantReleaseGroupIds.size > 0) {
             console.log(
-                `[Curation] Marked ${redundantReleaseGroupIds.size} release group(s) redundant by MusicBrainz recording/title overlap.`
+                `[Curation] Marked ${redundantReleaseGroupIds.size} release group(s) redundant by fewest-releases recording coverage.`
             );
         }
 

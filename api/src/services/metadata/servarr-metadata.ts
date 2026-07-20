@@ -72,6 +72,11 @@ export interface LidarrReleaseGroupDetail {
   releasedate?: string;
   ReleaseDate?: string;
   disambiguation?: string;
+  overview?: string | null;
+  links?: Array<{ type?: string; target?: string; url?: string }>;
+  genres?: string[];
+  aliases?: string[];
+  rating?: { Count?: number; Value?: number; count?: number; value?: number } | null;
   Images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
   images?: Array<{ Url?: string; url?: string; CoverType?: string; coverType?: string; remoteUrl?: string }>;
   Releases: LidarrRelease[];
@@ -105,6 +110,8 @@ export interface LidarrTrack {
   DurationMs: number;
   Isrcs?: string[];
   isrcs?: string[];
+  /** True when the MusicBrainz recording is flagged as video. */
+  IsVideo?: boolean;
 }
 
 export interface MediaCover {
@@ -689,7 +696,8 @@ export class ServarrMetadataService {
         status = excluded.status,
         country = excluded.country,
         date = excluded.date,
-        barcode = excluded.barcode,
+        -- Servarr strips UPC; keep any barcode already filled (e.g. from MB-local).
+        barcode = COALESCE(excluded.barcode, AlbumReleases.barcode),
         disambiguation = excluded.disambiguation,
         media_count = excluded.media_count,
         track_count = excluded.track_count,
@@ -700,12 +708,14 @@ export class ServarrMetadataService {
     `);
 
     const insertRecording = db.prepare(`
-      INSERT INTO Recordings (mbid, title, length_ms, isrcs, updated_at)
-      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO Recordings (mbid, title, length_ms, isrcs, is_video, artist_mbid, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         length_ms = excluded.length_ms,
         isrcs = COALESCE(excluded.isrcs, Recordings.isrcs),
+        is_video = CASE WHEN excluded.is_video = 1 THEN 1 ELSE Recordings.is_video END,
+        artist_mbid = COALESCE(Recordings.artist_mbid, excluded.artist_mbid),
         updated_at = CURRENT_TIMESTAMP
     `);
 
@@ -738,12 +748,12 @@ export class ServarrMetadataService {
         JSON.stringify(detail.secondarytypes || []),
         detail.releasedate || rawDetail.ReleaseDate || null,
         detail.disambiguation || null,
-        rawDetail.overview ?? null,
+        detail.overview ?? rawDetail.overview ?? null,
         JSON.stringify(albumImages),
-        JSON.stringify(rawDetail.links ?? []),
-        JSON.stringify(rawDetail.genres ?? []),
-        JSON.stringify(rawDetail.rating ?? rawDetail.Rating ?? null),
-        JSON.stringify(rawDetail.aliases ?? []),
+        JSON.stringify(detail.links ?? rawDetail.links ?? []),
+        JSON.stringify(detail.genres ?? rawDetail.genres ?? []),
+        JSON.stringify(detail.rating ?? rawDetail.rating ?? rawDetail.Rating ?? null),
+        JSON.stringify(detail.aliases ?? rawDetail.aliases ?? []),
         JSON.stringify(rawDetail.oldids ?? rawDetail.oldIds ?? []),
         contentHash,
       );
@@ -786,7 +796,15 @@ export class ServarrMetadataService {
           ? track.isrcs
           : [];
       const isrcJson = isrcs.length > 0 ? JSON.stringify(isrcs.map(String).filter(Boolean)) : null;
-      insertRecording.run(track.RecordingId, track.TrackName, track.DurationMs, isrcJson);
+      const isVideo = track.IsVideo === true || track.isVideo === true || track.video === true ? 1 : 0;
+      insertRecording.run(
+        track.RecordingId,
+        track.TrackName,
+        track.DurationMs,
+        isrcJson,
+        isVideo,
+        ownerArtistMbid || null,
+      );
       insertTrack.run(
         track.Id,
         release.Id,

@@ -251,6 +251,8 @@ export type StreamingProviderStatus = {
     auth: {
       kind: 'oauth-device' | 'developer-token' | 'external' | 'none';
       managedByApp: boolean;
+      setupInstructions?: string[];
+      setupIntro?: string;
       credentialFields?: Array<{
         key: string;
         label: string;

@@ -149,15 +149,16 @@ const useStyles = makeStyles({
     },
   },
   coverArt: {
-    width: "168px",
-    height: "168px",
+    // Mobile covers read small next to Title1; step up toward the desktop 220.
+    width: "200px",
+    height: "200px",
     objectFit: "cover",
     borderRadius: tokens.borderRadiusLarge,
     boxShadow: tokens.shadow28,
     flexShrink: 0,
     "@media (min-width: 480px)": {
-      width: "200px",
-      height: "200px",
+      width: "220px",
+      height: "220px",
     },
     "@media (min-width: 768px)": {
       width: "220px",
@@ -166,8 +167,8 @@ const useStyles = makeStyles({
     },
   },
   coverPlaceholder: {
-    width: "168px",
-    height: "168px",
+    width: "200px",
+    height: "200px",
     borderRadius: tokens.borderRadiusLarge,
     backgroundColor: tokens.colorNeutralBackgroundAlpha2,
     color: tokens.colorNeutralForeground4,
@@ -176,8 +177,8 @@ const useStyles = makeStyles({
     justifyContent: "center",
     flexShrink: 0,
     "@media (min-width: 480px)": {
-      width: "200px",
-      height: "200px",
+      width: "220px",
+      height: "220px",
     },
     "@media (min-width: 768px)": {
       width: "220px",
@@ -188,7 +189,9 @@ const useStyles = makeStyles({
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalS,
+    // Section rhythm (title block → metadata → actions). Persona↔title lives
+    // in titleBlock with a tighter related-content gap.
+    gap: tokens.spacingVerticalM,
     minWidth: 0,
     width: "100%",
     alignItems: "center",
@@ -197,7 +200,20 @@ const useStyles = makeStyles({
       alignItems: "flex-start",
       justifyContent: "flex-end",
       textAlign: "left",
-      gap: tokens.spacingVerticalM,
+    },
+  },
+  // Fluent related-content pair: byline + title share XS/SNudge, not the
+  // section M gap — so the persona reads as belonging to the title.
+  titleBlock: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: tokens.spacingVerticalXS,
+    width: "100%",
+    minWidth: 0,
+    "@media (min-width: 768px)": {
+      alignItems: "flex-start",
+      gap: tokens.spacingVerticalSNudge,
     },
   },
   albumTitle: {
@@ -214,7 +230,7 @@ const useStyles = makeStyles({
     alignItems: "center",
     justifyContent: "center",
     columnGap: tokens.spacingHorizontalXS,
-    rowGap: tokens.spacingVerticalS,
+    rowGap: tokens.spacingVerticalXXS,
     flexWrap: "wrap",
     "@media (min-width: 768px)": {
       justifyContent: "flex-start",
@@ -512,22 +528,32 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     flexWrap: "wrap",
     color: tokens.colorNeutralForeground2,
+    minWidth: 0,
   },
   releaseAvailability: {
     display: "flex",
     flexDirection: "column",
     alignItems: "stretch",
     gap: tokens.spacingVerticalXS,
+    minWidth: 0,
+    width: "100%",
   },
   slotOfferRow: {
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: tokens.spacingHorizontalS,
-    flexWrap: "wrap",
+    minWidth: 0,
+    width: "100%",
   },
   slotOfferLabel: {
     color: tokens.colorNeutralForeground3,
     minWidth: "52px",
+    flexShrink: 0,
+    paddingTop: tokens.spacingVerticalXXS,
+  },
+  slotOfferPills: {
+    flex: "1 1 0",
+    minWidth: 0,
   },
   unavailableText: {
     color: tokens.colorNeutralForeground3,
@@ -594,20 +620,33 @@ function releaseYear(date?: string | null): string | null {
 function releaseCountryLabel(country?: string | null): string | null {
   const text = String(country || "").trim();
   if (!text || text === "[]") return null;
+
+  const normalizeList = (values: unknown[]): string[] => values
+    .map((item) => String(item || "").replace(/^\[|\]$/g, "").trim())
+    .filter(Boolean);
+
+  let countries: string[] = [];
   if (text.startsWith("[") && text.endsWith("]")) {
     try {
       const parsed = JSON.parse(text) as unknown;
       if (Array.isArray(parsed)) {
-        return parsed
-          .map((item) => String(item || "").replace(/^\[|\]$/g, "").trim())
-          .filter(Boolean)
-          .join(", ") || null;
+        countries = normalizeList(parsed);
       }
     } catch {
-      return text;
+      countries = normalizeList(text.replace(/^\[|\]$/g, "").split(","));
     }
+  } else {
+    countries = normalizeList(text.split(","));
   }
-  return text.replace(/^\[|\]$/g, "").trim() || null;
+
+  if (countries.length === 0) {
+    return null;
+  }
+  // Long worldwide territory dumps blow up mobile release cards — summarize.
+  if (countries.length > 4) {
+    return `${countries.length} countries`;
+  }
+  return countries.join(", ");
 }
 
 function releaseDisambiguationLabel(disambiguation?: string | null): string | null {
@@ -824,20 +863,22 @@ function ReleaseSwitcher({
                       <Text size={200} className={styles.slotOfferLabel}>
                         {pending ? "Saving..." : slotLabel(slot)}
                       </Text>
-                      <ProviderQualityRow
-                        offers={rowOffers}
-                        size="small"
-                        onSelectOffer={pendingSelectionKey ? undefined : (picked) => {
-                          const source = slotOffers.find((offer) =>
-                            offer.provider === picked.provider
-                            && sameProviderAlbumSelection(offer.providerAlbumId, picked.providerAlbumId));
-                          if (source) {
-                            onSelect(slot, release.releaseMbid, source);
-                          }
-                        }}
-                        selectedOfferAlbumId={releaseSelectedForSlot ? selectedOffer?.providerAlbumId ?? null : null}
-                        selectedOfferProvider={releaseSelectedForSlot ? selectedOffer?.provider ?? null : null}
-                      />
+                      <div className={styles.slotOfferPills}>
+                        <ProviderQualityRow
+                          offers={rowOffers}
+                          size="small"
+                          onSelectOffer={pendingSelectionKey ? undefined : (picked) => {
+                            const source = slotOffers.find((offer) =>
+                              offer.provider === picked.provider
+                              && sameProviderAlbumSelection(offer.providerAlbumId, picked.providerAlbumId));
+                            if (source) {
+                              onSelect(slot, release.releaseMbid, source);
+                            }
+                          }}
+                          selectedOfferAlbumId={releaseSelectedForSlot ? selectedOffer?.providerAlbumId ?? null : null}
+                          selectedOfferProvider={releaseSelectedForSlot ? selectedOffer?.provider ?? null : null}
+                        />
+                      </div>
                     </div>
                   );
                 })}
@@ -1502,12 +1543,11 @@ const AlbumPage = () => {
               );
             })()}
             <div className={styles.albumInfo}>
-              <Title1 className={styles.albumTitle}>{album.title}</Title1>
-
-              <div
-                className={styles.artistInfo}
-              >
-                {renderAlbumArtists()}
+              <div className={styles.titleBlock}>
+                <div className={styles.artistInfo}>
+                  {renderAlbumArtists()}
+                </div>
+                <Title1 className={styles.albumTitle}>{album.title}</Title1>
               </div>
 
               <div className={styles.metadata}>

@@ -2,9 +2,9 @@ import { tokens } from "@fluentui/react-components";
 
 /** Shared collection spacing so tables, selection bars, cards, and queue rows align. */
 export const collectionContentInset = {
-    padding: tokens.spacingHorizontalXXS,
+    padding: tokens.spacingHorizontalS,
     "@media (min-width: 768px)": {
-        padding: tokens.spacingHorizontalS,
+        padding: tokens.spacingHorizontalM,
     },
 } as const;
 

@@ -16,11 +16,10 @@ import {
     tokens,
 } from "@fluentui/react-components";
 import {
-  CheckmarkCircle24Filled,
-  CheckmarkCircle24Color,
-  DismissCircle24Color,
+  CheckmarkCircle16Filled,
+  DismissCircle16Filled,
   ArrowClockwise24Regular as ArrowClockwise24RegularBase,
-  Clock24Regular as Clock24RegularBase,
+  Clock16Regular as Clock16RegularBase,
   Delete24Regular as Delete24RegularBase,
   MusicNote224Regular as MusicNote224RegularBase,
   Video24Regular as Video24RegularBase,
@@ -30,7 +29,7 @@ import {
   ArrowUp24Regular as ArrowUp24RegularBase,
   ArrowDown24Regular as ArrowDown24RegularBase,
   ArrowClockwise24Filled,
-  Clock24Filled,
+  Clock16Filled,
   Delete24Filled,
   MusicNote224Filled,
   Video24Filled,
@@ -60,7 +59,7 @@ import { formatRelativeTime } from "./dashboardUtils";
 import { ProviderMark } from "@/components/ui/ProviderMark";
 
 const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
-const Clock24Regular = bundleIcon(Clock24Filled, Clock24RegularBase);
+const Clock16Regular = bundleIcon(Clock16Filled, Clock16RegularBase);
 const Delete24Regular = bundleIcon(Delete24Filled, Delete24RegularBase);
 const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
 const Video24Regular = bundleIcon(Video24Filled, Video24RegularBase);
@@ -96,7 +95,7 @@ function matchesProviderTrackId(trackProviderId?: string | null, currentProvider
 
 function findProgressTrackState(
     trackTitle: string | null | undefined,
-    tracks?: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
+    tracks?: Array<{ title: string; trackNum?: number; volumeNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
     providerTrackId?: string | null,
 ) {
     if (!tracks?.length) {
@@ -126,7 +125,7 @@ function findActiveAlbumTrackIndex(
         currentProviderTrackId?: string | null;
         state?: string;
     } | undefined,
-    tracks?: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
+    tracks?: Array<{ title: string; trackNum?: number; volumeNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
 ): number {
     if (!tracks?.length) {
         return -1;
@@ -240,16 +239,17 @@ function inferAlbumTrackStatus(
 }
 
 function renderPendingIndicator(styles: ReturnType<typeof useDashboardStyles>) {
-    return <Clock24Regular className={styles.downloadStatusPendingIcon} />;
+    return <Clock16Regular className={styles.downloadStatusPendingIcon} />;
 }
 
 /**
  * Track-row indicator scheme:
  * - actively downloading OR importing → spinner
  * - downloaded, import still ahead    → brand-orange filled checkmark
- * - download + import both complete   → multicolor checkmark
+ * - download + import both complete   → green filled checkmark
  * During the import phase every track is already downloaded, so rows the
  * importer hasn't reached yet show the orange checkmark instead of a clock.
+ * Glyphs are Fluent 16 icons (native size) — no CSS width/height overrides.
  */
 function renderTrackStatusIndicator(
     styles: ReturnType<typeof useDashboardStyles>,
@@ -263,7 +263,7 @@ function renderTrackStatusIndicator(
     },
 ) {
     if (options.isFailed) {
-        return <DismissCircle24Color className={styles.downloadStatusErrorIcon} />;
+        return <DismissCircle16Filled className={styles.downloadStatusErrorIcon} />;
     }
 
     if (options.isActive) {
@@ -271,11 +271,9 @@ function renderTrackStatusIndicator(
     }
 
     if (options.isCompleted) {
-        // Same 24-size glyph as the filled variant so both render with equal
-        // visual weight in the 16px slot.
         return options.phase === 'import'
-            ? <CheckmarkCircle24Color className={styles.downloadStatusColorIcon} title="Downloaded and imported" />
-            : <CheckmarkCircle24Filled className={styles.downloadStatusCompleteIcon} title="Downloaded" />;
+            ? <CheckmarkCircle16Filled className={styles.downloadStatusColorIcon} title="Downloaded and imported" />
+            : <CheckmarkCircle16Filled className={styles.downloadStatusCompleteIcon} title="Downloaded" />;
     }
 
     if (options.isSkipped) {
@@ -284,7 +282,7 @@ function renderTrackStatusIndicator(
 
     if (options.isQueued) {
         return options.phase === 'import'
-            ? <CheckmarkCircle24Filled className={styles.downloadStatusCompleteIcon} title="Downloaded" />
+            ? <CheckmarkCircle16Filled className={styles.downloadStatusCompleteIcon} title="Downloaded" />
             : renderPendingIndicator(styles);
     }
 
@@ -305,15 +303,14 @@ function renderHistoryStatusIndicator(
     error?: string | null,
 ) {
     if (error || status === "failed") {
-        return <DismissCircle24Color className={styles.downloadStatusErrorIcon} />;
+        return <DismissCircle16Filled className={styles.downloadStatusErrorIcon} />;
     }
 
     if (status === "completed") {
-        // Fully done (downloaded + imported) uses the multicolor checkmark.
-        return <CheckmarkCircle24Color className={styles.downloadStatusColorIcon} title="Completed" />;
+        return <CheckmarkCircle16Filled className={styles.downloadStatusColorIcon} title="Completed" />;
     }
 
-    return <Clock24Regular className={styles.downloadStatusPendingIcon} />;
+    return <Clock16Regular className={styles.downloadStatusPendingIcon} />;
 }
 
 function getOptionalIdentifier(value: unknown): string | null {
@@ -464,8 +461,8 @@ function getLiveQueueItemStatus(progress: DownloadProgress): QueueItem["status"]
         case "importFailed":
             return "failed";
         case "queued":
-        case "importPending":
             return "queued";
+        case "importPending":
         case "importing":
             return "started";
         case "completed":
@@ -498,6 +495,16 @@ function mergeQueueItemsWithProgress(
     const mergedQueue = downloadQueue.map((item) => {
         const progress = progressByJobId.get(item.id);
         if (!progress) {
+            return item;
+        }
+
+        // Server is authoritative for clean queued rows. Client progress can linger
+        // after a requeue that stripped downloadState, which otherwise resurrects
+        // tracklists / "downloading" chrome on items that are only waiting.
+        const serverIsCleanQueued = item.status === "queued"
+            && (!item.state || item.state === "queued")
+            && !(item.tracks && item.tracks.length > 0);
+        if (serverIsCleanQueued && progress.state !== "queued") {
             return item;
         }
 
@@ -1556,20 +1563,11 @@ const QueueTab = () => {
                                                         </div>
                                                         <Text className={styles.progressText}>
                                                             {prog.progress !== undefined ? `${prog.progress}%` : "…"}
+                                                            {group.type === "album"
+                                                                ? ` · ${prog.currentFileNum ?? "…"}/${prog.totalFiles ?? "…"} files`
+                                                                : ""}
                                                         </Text>
                                                     </div>
-                                                )}
-
-                                                {isDownloading && prog && group.type === 'album' && prog.currentFileNum !== undefined && prog.totalFiles !== undefined && (
-                                                    <Text className={styles.downloadMeta}>
-                                                        {`${prog.currentFileNum}/${prog.totalFiles} files`}
-                                                    </Text>
-                                                )}
-
-                                                {isFailed && groupError && (
-                                                    <Text className={styles.downloadMeta} style={{ color: tokens.colorPaletteRedForeground1 }}>
-                                                        {groupError}
-                                                    </Text>
                                                 )}
                                             </div>
                                             {isFailed && (
@@ -1677,6 +1675,9 @@ const QueueTab = () => {
                                                 )}
                                                 <Button size="small" appearance="subtle" icon={<Delete24Regular />} onClick={() => { void handleDeleteAction(group); }} />
                                             </div>
+                                            {isFailed && groupError ? (
+                                                <Text className={styles.downloadErrorText}>{groupError}</Text>
+                                            ) : null}
                                         </div>
 
                                         {shouldRenderGroupedTrackRows && groupedTrackItems.map(item => {
@@ -1720,6 +1721,11 @@ const QueueTab = () => {
                                                                 phase: isItemImportPhase ? 'import' : 'download',
                                                             })}
                                                         </div>
+                                                        <Text className={styles.downloadTrackNumber}>
+                                                            {item.currentVolumeNum && item.currentVolumeNum > 1
+                                                                ? `${item.currentVolumeNum}-${item.currentTrackNum || ""}`
+                                                                : String(item.currentTrackNum || matchedTrack?.trackNum || "")}
+                                                        </Text>
                                                     </div>
                                                     <div className={styles.downloadInfo}>
                                                         <Text className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText)} truncate>{item.title || "Unknown Track"}</Text>
@@ -1739,7 +1745,7 @@ const QueueTab = () => {
                                             );
                                         })}
 
-                                        {group.type === 'album' && groupedTrackItems.length === 0 && prog && prog.tracks && prog.tracks.length > 0 && (
+                                        {group.type === 'album' && groupedTrackItems.length === 0 && isDownloading && prog && prog.tracks && prog.tracks.length > 0 && (
                                             <div>
                                                 {prog.tracks.map((t, idx) => {
                                                     const tracks = prog.tracks || [];
@@ -1747,6 +1753,9 @@ const QueueTab = () => {
                                                     const isTrackDownloading = visualStatus === 'downloading';
                                                     const isTrackCompleted = visualStatus === 'completed';
                                                     const isTrackFailed = visualStatus === 'error';
+                                                    const trackLabel = t.volumeNum && t.volumeNum > 1
+                                                        ? `${t.volumeNum}-${t.trackNum || idx + 1}`
+                                                        : String(t.trackNum || idx + 1);
 
                                                     return (
                                                         <div key={idx} className={styles.downloadSubItem} onClick={() => { if (groupNavPath) navigate(groupNavPath); }}>
@@ -1762,7 +1771,7 @@ const QueueTab = () => {
                                                                     })}
                                                                 </div>
                                                                 <Text className={styles.downloadTrackNumber}>
-                                                                    {t.trackNum || idx + 1}
+                                                                    {trackLabel}
                                                                 </Text>
                                                             </div>
                                                             <div className={styles.downloadInfo}>
@@ -1902,9 +1911,6 @@ const QueueTab = () => {
                                                     </div>
                                                 </div>
                                             </div>
-                                            {row.error ? (
-                                                <Text className={styles.queueHistoryErrorText}>{row.error}</Text>
-                                            ) : null}
                                         </div>
                                         <div className={styles.queueHistoryTrailing}>
                                             <Text className={styles.queueHistoryTime}>{row.timeLabel}</Text>
@@ -1916,6 +1922,9 @@ const QueueTab = () => {
                                             <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
                                                 <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} onClick={() => retryItem(item.id)} title="Retry" />
                                             </div>
+                                        ) : null}
+                                        {row.error ? (
+                                            <Text className={styles.queueHistoryErrorText}>{row.error}</Text>
                                         ) : null}
                                     </div>
                                 );

@@ -204,15 +204,47 @@ test("syncReleaseGroup persists recording ISRCs when the catalog source supplies
       Tracks: [{
         ...DOOM_DAYS_PAYLOAD.Releases[0].Tracks[0],
         Isrcs: ["GBUM71902200"],
+        IsVideo: true,
       }],
     }],
   });
 
   await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
 
-  const recording = db.prepare("SELECT isrcs FROM Recordings WHERE mbid = ?")
-    .get("rec-1") as { isrcs: string | null };
+  const recording = db.prepare("SELECT isrcs, is_video, artist_mbid FROM Recordings WHERE mbid = ?")
+    .get("rec-1") as { isrcs: string | null; is_video: number; artist_mbid: string | null };
   assert.equal(recording.isrcs, JSON.stringify(["GBUM71902200"]));
+  assert.equal(recording.is_video, 1);
+  assert.equal(recording.artist_mbid, "artist-mbid");
+});
+
+test("syncReleaseGroup persists typed curated release-group fields from MusicBrainz-shaped detail", async () => {
+  const { db } = dbModule;
+  resetCatalog();
+  fetchReturning({
+    ...DOOM_DAYS_PAYLOAD,
+    links: [{ type: "official homepage", target: "https://example.com/doom-days" }],
+    genres: ["indie pop"],
+    aliases: ["Doom Days (album)"],
+    rating: { Count: 10, Value: 7.5 },
+    Releases: [{
+      ...DOOM_DAYS_PAYLOAD.Releases[0],
+      Label: ["Virgin EMI"],
+    }],
+  });
+
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+
+  const album = db.prepare("SELECT links, genres, aliases, ratings FROM Albums WHERE mbid = ?")
+    .get("rg-skip") as { links: string; genres: string; aliases: string; ratings: string };
+  assert.deepEqual(JSON.parse(album.links), [{ type: "official homepage", target: "https://example.com/doom-days" }]);
+  assert.deepEqual(JSON.parse(album.genres), ["indie pop"]);
+  assert.deepEqual(JSON.parse(album.aliases), ["Doom Days (album)"]);
+  assert.deepEqual(JSON.parse(album.ratings), { Count: 10, Value: 7.5 });
+
+  const rel = db.prepare("SELECT label FROM AlbumReleases WHERE mbid = ?")
+    .get("rel-1") as { label: string };
+  assert.deepEqual(JSON.parse(rel.label), ["Virgin EMI"]);
 });
 
 test("syncArtist skips rewriting an unchanged artist (diff-reconcile)", async () => {

@@ -1,32 +1,37 @@
 # Discogenius Documentation Map
 
+Operator and contributor docs. The root [README.md](../README.md) is the
+getting-started guide; shipped history lives in [CHANGELOG.md](../CHANGELOG.md);
+agent/contributor rules live in [AGENTS.md](../AGENTS.md).
+
 - [ARCHITECTURE.md](ARCHITECTURE.md)
   - Current architecture and the stable boundaries we preserve while iterating.
-- [CURATION_DEDUPLICATION.md](CURATION_DEDUPLICATION.md)
-  - Deep-dive into release-group slot curation and discography deduplication.
-- [TASKS.md](TASKS.md)
-  - Outstanding work and release blockers. Shipped detail belongs in CHANGELOG.
 - [DATA_MODEL_TARGET.md](DATA_MODEL_TARGET.md)
-  - Current data-model rules plus the future direction for providers, matching,
-    library types, and MB-local mode.
+  - Data-model rules and the direction for providers, matching, library types,
+    and catalog-source modes.
+- [CURATION_DEDUPLICATION.md](CURATION_DEDUPLICATION.md)
+  - How release-group slot curation and discography deduplication work.
+- [MATCHING_SET_COVER_DESIGN.md](MATCHING_SET_COVER_DESIGN.md)
+  - Recording-centric matching, coverage, and deduplication design.
 - [MB_LOCAL_MODE.md](MB_LOCAL_MODE.md)
   - Local MusicBrainz catalog-provider notes and dev wiring.
-- [RELEASE_CENTRIC_MATCHING_PLAN.md](RELEASE_CENTRIC_MATCHING_PLAN.md)
-  - Remaining release-centric matching work.
-- [LIDARR_STRUCTURE_ALIGNMENT.md](LIDARR_STRUCTURE_ALIGNMENT.md)
-  - Current file/folder alignment notes and deferred split candidates.
+- [STREAMING_PROVIDER_PLUGIN_CONTRACT.md](STREAMING_PROVIDER_PLUGIN_CONTRACT.md)
+  - The shared contract every streaming provider adapter implements.
 - [PROVIDER_DOWNLOADER_DECISION.md](PROVIDER_DOWNLOADER_DECISION.md)
-  - Direct-download feasibility, OrpheusDL decision, and the spotDL provenance
-    boundary for each streaming provider.
+  - Per-provider download backend decisions and the spotDL provenance boundary.
+- [EXTERNAL_DEPENDENCIES.md](EXTERNAL_DEPENDENCIES.md)
+  - How external tools, sidecars, and catalog stacks are packaged.
+- [LIDARR_STRUCTURE_ALIGNMENT.md](LIDARR_STRUCTURE_ALIGNMENT.md)
+  - How our file/folder layout maps to Lidarr's.
 - [ULTRABLUR_DOCUMENTATION.md](ULTRABLUR_DOCUMENTATION.md)
   - UltraBlur background subsystem.
+- [TASKS.md](TASKS.md)
+  - Outstanding work and release blockers only. Shipped detail belongs in
+    CHANGELOG.
 
-Agent/contributor expectations live in [AGENTS.md](../AGENTS.md) at the
-repository root. Shipped history lives in [CHANGELOG.md](../CHANGELOG.md).
-
-Documentation rules:
+## Documentation rules
 
 1. Keep ARCHITECTURE.md focused on current state — no backlog inventory.
-2. Keep curation design and semantics in CURATION_DEDUPLICATION.md.
-3. Keep only outstanding work in TASKS.md; record shipped work in CHANGELOG.md.
-4. Remove stale overlap docs instead of letting parallel versions drift.
+2. Keep only outstanding work in TASKS.md; record shipped work in CHANGELOG.md.
+3. Prefer one living doc per topic. Remove stale overlap instead of letting
+   parallel versions drift.

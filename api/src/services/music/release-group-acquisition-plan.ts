@@ -24,6 +24,8 @@ type TrackSource = {
   canonicalRecordingMbid: string;
   title: string;
   quality: string | null;
+  trackNum: number | null;
+  volumeNum: number | null;
 };
 
 export type QueueTrackAcquisitionPlanOptions = {
@@ -35,6 +37,7 @@ function parseTrackSources(slot: PlannedReleaseGroupSlot): TrackSource[] | null 
   const providerAlbumIds = String(slot.selected_provider_id || "").split(";").filter(Boolean);
   const isTrackPlan = slot.match_method === "strict_partial_track_coverage"
     || slot.match_method === "quality_optimized_composite_track_coverage"
+    || slot.match_method === "strict_composite_track_coverage"
     || providerAlbumIds.length > 1;
   if (!isTrackPlan || !slot.match_evidence) return null;
 
@@ -58,6 +61,8 @@ function parseTrackSources(slot: PlannedReleaseGroupSlot): TrackSource[] | null 
       canonicalRecordingMbid,
       title: String(source.title || slot.title || "Unknown Track"),
       quality: source.quality ? String(source.quality) : slot.quality || null,
+      trackNum: Number(source.trackNum || source.trackPosition || 0) || null,
+      volumeNum: Number(source.volumeNum || source.mediumPosition || 0) || null,
     });
   }
   return sources.length > 0 ? sources : null;
@@ -125,6 +130,8 @@ export function queueTrackAcquisitionPlan(
       albumTitle: slot.title || undefined,
       cover: slot.provider_cover || null,
       quality: source.quality,
+      trackNumber: source.trackNum,
+      volumeNumber: source.volumeNum,
       description: `${source.title} by ${artistName}`,
     }, queueRefId);
     if (commandId !== -1) {

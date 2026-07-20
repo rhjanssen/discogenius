@@ -304,7 +304,6 @@ function getTrackSelectSql(whereClause: string): string {
           SELECT slot_quality.quality AS quality_value
           FROM ReleaseGroupSlots slot_quality
           WHERE slot_quality.release_group_id = release_group.id
-            AND slot_quality.selected_album_release_id = track.album_release_id
             AND slot_quality.selected_provider IS NOT NULL
             AND slot_quality.selected_provider_id IS NOT NULL
           ORDER BY CASE slot_quality.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
@@ -323,7 +322,6 @@ function getTrackSelectSql(whereClause: string): string {
                  selected_track_offer.selected_provider_id, selected_track_offer.quality
           FROM ReleaseGroupSlots selected_track_offer
           WHERE selected_track_offer.release_group_id = release_group.id
-            AND selected_track_offer.selected_album_release_id = track.album_release_id
             AND selected_track_offer.selected_provider IS NOT NULL
             AND selected_track_offer.selected_provider_id IS NOT NULL
           ORDER BY CASE selected_track_offer.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END

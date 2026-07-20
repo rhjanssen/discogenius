@@ -159,6 +159,10 @@ export interface VideoAlbumRefContract {
   id: string;
   title: string;
   cover_id?: string | null;
+  /** MusicBrainz track MBID when the video sits on a release tracklist (album deep-link). */
+  track_mbid?: string | null;
+  track_number?: number | null;
+  volume_number?: number | null;
 }
 
 export interface VideoDetailContract {
@@ -450,5 +454,8 @@ function parseVideoAlbumRefContract(value: unknown, indexLabel: string): VideoAl
     id: expectString(record.id, `${indexLabel}.id`),
     title: expectString(record.title, `${indexLabel}.title`),
     cover_id: expectNullableString(record.cover_id, `${indexLabel}.cover_id`),
+    track_mbid: expectNullableString(record.track_mbid, `${indexLabel}.track_mbid`),
+    track_number: expectOptionalNumber(record.track_number, `${indexLabel}.track_number`) ?? null,
+    volume_number: expectOptionalNumber(record.volume_number, `${indexLabel}.volume_number`) ?? null,
   };
 }

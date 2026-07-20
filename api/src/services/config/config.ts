@@ -164,7 +164,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   },
   quality: {
     audio_quality: "max",
-    video_quality: "fhd",
+    video_quality: "uhd",
     embed_cover: true,
     embed_lyrics: true,
     upgrade_existing_files: true,
@@ -186,8 +186,8 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_dj_mix: true,
     include_mixtape_street: true,
     include_demo: true,
-    include_spatial: true,
-    include_videos: true,
+    include_spatial: false,
+    include_videos: false,
     require_provider_availability: true,
   },
   path: {
@@ -238,7 +238,6 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
 };
 
 let configCache: DiscoGeniusConfig | null = null;
-let dbInitializedForConfig = false;
 
 function cloneConfig<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -411,9 +410,11 @@ export function clearConfigCache(): void {
  * Read and parse config
  */
 export function readConfig(): DiscoGeniusConfig {
-  if (!configCache) {
-    configCache = readConfigFromDb();
-  }
+  // Always re-read from SQLite. Command workers are separate threads with their
+  // own module cache; a long-lived in-memory snapshot would keep boot-time
+  // defaults (include_videos=false, naming templates, etc.) after Settings
+  // changes on the main thread.
+  configCache = readConfigFromDb();
   return cloneConfig(configCache);
 }
 

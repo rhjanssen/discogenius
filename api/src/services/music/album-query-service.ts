@@ -114,11 +114,13 @@ function sanitizeAlbumTrack(track: AlbumTrackContract, includeSpatial: boolean):
         const fileQuality = sanitizeQualityTag(file.quality, includeSpatial);
         return fileQuality === file.quality ? file : { ...file, quality: fileQuality || null };
     });
+    const remoteOffers = (track.remoteOffers || []).filter((offer) => offer.slot !== "spatial");
 
     return {
         ...track,
         quality,
         qualityTags,
+        remoteOffers,
         files,
     };
 }
@@ -278,8 +280,7 @@ function getAlbumLibraryIndexOrderBy(sortParam: string | undefined, sortDir: "AS
 
 function normalizeReleaseGroupListRow(
     row: any,
-    downloadedPercent: number,
-    isDownloaded: boolean,
+    downloadStats: { downloadedPercent: number; isDownloaded: boolean; totalTracks: number; downloadedTracks: number },
     albumArtists?: CanonicalAlbumArtist[],
 ): AlbumContract {
     const album = normalizeMusicBrainzReleaseGroupAlbum(row, null, undefined, albumArtists);
@@ -291,14 +292,22 @@ function normalizeReleaseGroupListRow(
         quality: row.selected_quality || null,
         is_monitored: monitored,
         monitored_lock: Boolean(row.monitored_lock),
-        downloaded: downloadedPercent,
-        is_downloaded: isDownloaded,
+        downloaded: downloadStats.downloadedPercent,
+        is_downloaded: downloadStats.isDownloaded,
+        // Lidarr-style library stats: files on disk / tracks on the selected release(s).
+        track_file_count: downloadStats.downloadedTracks,
+        track_count: downloadStats.totalTracks,
+        stereo_provider: row.stereo_provider || null,
         stereo_provider_id: row.stereo_provider_id || null,
         stereo_quality: row.stereo_quality || null,
         stereo_match_status: row.stereo_match_status || null,
+        stereo_release_mbid: row.stereo_release_mbid || null,
+        spatial_provider: includeSpatial ? row.spatial_provider || null : null,
         spatial_provider_id: includeSpatial ? row.spatial_provider_id || null : null,
         spatial_quality: includeSpatial ? row.spatial_quality || null : null,
         spatial_match_status: includeSpatial ? row.spatial_match_status || null : null,
+        spatial_release_mbid: includeSpatial ? row.spatial_release_mbid || null : null,
+        selected_provider: row.selected_provider || row.stereo_provider || null,
         selected_provider_id: row.selected_provider_id || null,
         source: "musicbrainz",
         popularity: Number(row.popularity || 0),
@@ -475,8 +484,12 @@ export class AlbumQueryService {
                 const stats = releaseGroupMbid ? downloadStats.get(releaseGroupMbid) : null;
                 return normalizeReleaseGroupListRow(
                     row,
-                    stats?.downloadedPercent ?? 0,
-                    stats?.isDownloaded ?? false,
+                    {
+                        downloadedPercent: stats?.downloadedPercent ?? 0,
+                        isDownloaded: stats?.isDownloaded ?? false,
+                        totalTracks: stats?.totalTracks ?? 0,
+                        downloadedTracks: stats?.downloadedTracks ?? 0,
+                    },
                     releaseGroupMbid ? albumArtists.get(releaseGroupMbid) : undefined,
                 );
             }),
@@ -583,8 +596,12 @@ export class AlbumQueryService {
                 const stats = releaseGroupMbid ? downloadStats.get(releaseGroupMbid) : null;
                 return normalizeReleaseGroupListRow(
                     row,
-                    stats?.downloadedPercent ?? 0,
-                    stats?.isDownloaded ?? false,
+                    {
+                        downloadedPercent: stats?.downloadedPercent ?? 0,
+                        isDownloaded: stats?.isDownloaded ?? false,
+                        totalTracks: stats?.totalTracks ?? 0,
+                        downloadedTracks: stats?.downloadedTracks ?? 0,
+                    },
                     releaseGroupMbid ? albumArtists.get(releaseGroupMbid) : undefined,
                 );
             }),

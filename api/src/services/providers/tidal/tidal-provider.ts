@@ -209,9 +209,9 @@ export class TidalProvider implements StreamingProvider {
     editorialMetadata: true,
     providerIds: true,
     spatialFormats: ["DOLBY_ATMOS"],
-    stereoQuality: "Lossless up to 24-bit / 192 kHz",
+    stereoQuality: "Up to MAX (24-bit / 192 kHz)",
     spatialQuality: "Dolby Atmos",
-    videoQuality: "Up to 1080p",
+    videoQuality: "Up to FHD (1080p)",
     maxVideoResolution: 1080,
   };
   readonly qualityMapping = tidalQualityMapping;
@@ -765,6 +765,7 @@ export class TidalProvider implements StreamingProvider {
         : { providerId: this.providerId(album.artist_provider_id, album.artist_id), name: album.artist_name || "Unknown Artist" },
       artists: albumArtists.length > 0 ? albumArtists : undefined,
       cover: album.cover || album.cover_id || null,
+      videoCover: album.videoCover || album.video_cover || null,
       releaseDate: album.releaseDate || album.release_date || null,
       trackCount: album.numberOfTracks ?? album.num_tracks ?? null,
       volumeCount: album.numberOfVolumes ?? album.num_volumes ?? null,
@@ -780,6 +781,11 @@ export class TidalProvider implements StreamingProvider {
       version: album.version || null,
       raw: album,
     };
+  }
+
+  /** Test/helper access to album DTO mapping (preserves videoCover). */
+  mapAlbumForTests(album: any): ProviderAlbum {
+    return this.mapAlbum(album);
   }
 
   private mapTrack(track: any): ProviderTrack {

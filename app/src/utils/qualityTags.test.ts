@@ -14,8 +14,13 @@ describe("orderedQualityTags", () => {
     })).toEqual(["FLAC", "DOLBY_ATMOS", "SONY_360RA"]);
   });
 
-  it("deduplicates equivalent video resolution spellings", () => {
+  it("deduplicates equivalent video resolution spellings onto one HD/FHD/UHD key", () => {
     expect(orderedQualityTags({ qualityTags: ["MP4_1080P", "1080p", "FHD", "2160P"] }))
       .toEqual(["MP4_1080P", "2160P"]);
+  });
+
+  it("drops unknown placeholders such as SOURCE", () => {
+    expect(orderedQualityTags({ qualityTags: ["SOURCE", "YOUTUBE_LOSSY"] }))
+      .toEqual(["YOUTUBE_LOSSY"]);
   });
 });

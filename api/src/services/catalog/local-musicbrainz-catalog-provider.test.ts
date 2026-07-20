@@ -145,6 +145,29 @@ test("mapMbReleaseToLidarr flattens media/tracks/recording", () => {
   assert.equal(track.MediumNumber, 1);
   assert.equal(track.DurationMs, 363000);
   assert.deepEqual(track.Isrcs, ["USSM18200001"]);
+  assert.equal(track.IsVideo, false);
+});
+
+test("mapMbReleaseGroupToLidarrDetail carries curated genres/links/aliases/rating", () => {
+  const detail = mapMbReleaseGroupToLidarrDetail({
+    id: "rg-1",
+    title: "Thriller",
+    "primary-type": "Album",
+    "secondary-types": [],
+    "first-release-date": "1982-11-30",
+    "artist-credit": [{ artist: { id: "artist-1" } }],
+    genres: [{ name: "pop" }, "funk"],
+    aliases: [{ name: "Thriller (album)" }],
+    relations: [{ type: "official homepage", url: { resource: "https://example.com/thriller" } }],
+    rating: { "votes-count": 40, value: 85 },
+    releases: [],
+  });
+  assert.deepEqual(detail.genres, ["pop", "funk"]);
+  assert.deepEqual(detail.aliases, ["Thriller (album)"]);
+  assert.deepEqual(detail.links, [{ type: "official homepage", target: "https://example.com/thriller" }]);
+  assert.deepEqual(detail.rating, { Count: 40, Value: 8.5 });
+  assert.equal(detail.overview, null);
+  assert.deepEqual(detail.images, []);
 });
 
 test("mapMbRecordingToCatalog carries isrcs + flattened credit", () => {

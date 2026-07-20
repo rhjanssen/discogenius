@@ -31,8 +31,9 @@ import {
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
-import { upsertProviderReleaseMatch } from "./provider-matches.js";
+import { upsertProviderReleaseMatch, persistCompositeReleaseMatchesForArtist } from "./provider-matches.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
+import { firstProviderEditorialText } from "../providers/provider-editorial-text.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -66,12 +67,13 @@ export function isMusicBrainzMbid(value: string | number | null | undefined): bo
     return MUSICBRAINZ_MBID_RE.test(String(value || "").trim());
 }
 
-function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId: string): any {
+export function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId: string): any {
     const raw = providerAlbum.raw;
     if (raw && typeof raw === "object" && "provider_id" in raw) {
         return {
             ...raw,
             provider_id: String((raw as any).provider_id),
+            video_cover: (raw as any).video_cover || (raw as any).videoCover || providerAlbum.videoCover || null,
             qualityTags: Array.isArray(providerAlbum.qualityTags)
                 ? providerAlbum.qualityTags
                 : Array.isArray((raw as any).qualityTags)
@@ -90,7 +92,7 @@ function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId:
         release_date: providerAlbum.releaseDate || null,
         cover: providerAlbum.cover || null,
         vibrant_color: null,
-        video_cover: null,
+        video_cover: providerAlbum.videoCover || null,
         num_tracks: providerAlbum.trackCount || 0,
         num_videos: 0,
         num_volumes: providerAlbum.volumeCount || 1,
@@ -177,23 +179,13 @@ export class RefreshArtistService {
             return null;
         }
 
-        const cachedCount = db.prepare("SELECT COUNT(*) AS count FROM Albums WHERE artist_mbid = ?")
-            .get(artistMbid) as { count: number };
-        const cachedVideoCount = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM Recordings
-            WHERE artist_mbid = ?
-              AND is_video = 1
-        `).get(artistMbid) as { count: number };
-
-        if (!force && Number(cachedCount?.count || 0) > 0 && Number(cachedVideoCount?.count || 0) > 0) {
-            return artistMbid;
-        }
-
+        // Past the artist-refresh staleness gate we always re-pull canonical
+        // stubs + videos. syncArtist is content_hash-cheap; video upserts are
+        // idempotent. Skipping because Albums/videos already exist stranded new
+        // release groups and left ISRCs / curated columns on the first hydrate.
+        void force;
         try {
-            if (force || Number(cachedCount?.count || 0) === 0) {
-                await servarrMetadata.syncArtist(artistMbid);
-            }
+            await servarrMetadata.syncArtist(artistMbid);
             if (includeCreditedReleaseGroups) {
                 const credited = await MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist(artistMbid);
                 console.log(
@@ -201,7 +193,7 @@ export class RefreshArtistService {
                     `and ${credited.artists} credited artist(s) for ${artistMbid}`,
                 );
             }
-            const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force });
+            const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force: true });
             if (syncedVideos > 0) {
                 console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
             }
@@ -214,23 +206,17 @@ export class RefreshArtistService {
 
     private static async hydrateScopedReleaseGroups(artistMbid: string): Promise<void> {
         const releaseGroups = db.prepare(`
-            SELECT DISTINCT rg.mbid
+            SELECT DISTINCT rg.mbid, rg.cover_image_id AS coverImageId
             FROM Albums rg
             LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
-            WHERE (rg.artist_mbid = ? OR scope.artist_mbid = ?)
-              AND NOT EXISTS (
-                SELECT 1
-                FROM AlbumReleases release
-                WHERE release.release_group_mbid = rg.mbid
-              )
+            WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
             ORDER BY rg.mbid ASC
-        `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
+        `).all(artistMbid, artistMbid) as Array<{ mbid: string; coverImageId?: string | null }>;
 
-        // One bulk metadata fetch + reconcile for the whole artist. The old path
-        // called syncReleaseGroup per release group (~3 catalog round-trips each,
-        // ~6s × 80 groups ≈ 8 min) — a per-RG N+1. syncArtistReleaseGroups fetches
-        // every group's detail in a fixed number of set-based queries (MB-local)
-        // and reconciles each with the same write path.
+        // Reconcile EVERY scoped release group. Missing-releases-only hydration
+        // froze Softly-class albums after first write (null ISRCs, empty labels)
+        // even though local MusicBrainz already had the data. content_hash still
+        // skips unchanged payloads inside syncArtistReleaseGroups.
         const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
         try {
             await servarrMetadata.syncArtistReleaseGroups(artistMbid, releaseGroupMbids);
@@ -238,10 +224,13 @@ export class RefreshArtistService {
             console.warn(`[RefreshArtistService] Failed to bulk-hydrate release groups for ${artistMbid}:`, error);
         }
 
-        // Cover art is network-bound (one download per group) and stays
-        // parallelized, independent of the metadata fetch above.
+        // Cover art is network-bound — only fetch for groups that still lack a
+        // local cover after reconcile, not every album on every refresh.
+        const needingArtwork = releaseGroups
+            .filter((releaseGroup) => !String(releaseGroup.coverImageId || "").trim())
+            .map((releaseGroup) => releaseGroup.mbid);
         const limit = pLimit(6);
-        await Promise.all(releaseGroupMbids.map((releaseGroupMbid) => limit(async () => {
+        await Promise.all(needingArtwork.map((releaseGroupMbid) => limit(async () => {
             try {
                 await resolveAlbumArtwork({ albumMbid: releaseGroupMbid });
             } catch (error) {
@@ -346,8 +335,11 @@ export class RefreshArtistService {
                     musicbrainz_status = 'verified',
                     musicbrainz_last_checked = CURRENT_TIMESTAMP,
                     musicbrainz_match_method = 'musicbrainz-metadata',
-                    bio_text = COALESCE(?, bio_text),
-                    bio_source = CASE WHEN ? IS NOT NULL THEN 'musicbrainz' ELSE bio_source END,
+                    bio_text = COALESCE(NULLIF(TRIM(bio_text), ''), ?),
+                    bio_source = CASE
+                        WHEN (bio_text IS NULL OR TRIM(bio_text) = '') AND ? IS NOT NULL THEN 'musicbrainz'
+                        ELSE bio_source
+                    END,
                     monitored = ?,
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END,
                     path = CASE WHEN ? = 1 THEN ? ELSE COALESCE(path, ?) END
@@ -750,25 +742,25 @@ export class RefreshArtistService {
             ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
-                version = excluded.version,
-                explicit = excluded.explicit,
-                quality = excluded.quality,
-                type = excluded.type,
-                upc = excluded.upc,
+                version = COALESCE(excluded.version, ProviderItems.version),
+                explicit = COALESCE(excluded.explicit, ProviderItems.explicit),
+                quality = COALESCE(excluded.quality, ProviderItems.quality),
+                type = COALESCE(excluded.type, ProviderItems.type),
+                upc = COALESCE(excluded.upc, ProviderItems.upc),
                 copyright = COALESCE(excluded.copyright, ProviderItems.copyright),
-                duration = excluded.duration,
-                volume_count = excluded.volume_count,
-                release_date = excluded.release_date,
-                artist_mbid = excluded.artist_mbid,
-                release_group_mbid = excluded.release_group_mbid,
-                release_mbid = excluded.release_mbid,
+                duration = COALESCE(excluded.duration, ProviderItems.duration),
+                volume_count = COALESCE(excluded.volume_count, ProviderItems.volume_count),
+                release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
+                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
+                release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
+                release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
                 library_slot = excluded.library_slot,
                 match_status = excluded.match_status,
-                match_confidence = excluded.match_confidence,
-                match_method = excluded.match_method,
-                match_evidence = excluded.match_evidence,
+                match_confidence = COALESCE(excluded.match_confidence, ProviderItems.match_confidence),
+                match_method = COALESCE(excluded.match_method, ProviderItems.match_method),
+                match_evidence = COALESCE(excluded.match_evidence, ProviderItems.match_evidence),
                 cover = COALESCE(excluded.cover, ProviderItems.cover),
-                discovered_from_artist_mbid = excluded.discovered_from_artist_mbid,
+                discovered_from_artist_mbid = COALESCE(excluded.discovered_from_artist_mbid, ProviderItems.discovered_from_artist_mbid),
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -793,7 +785,7 @@ export class RefreshArtistService {
                     providerAlbumId,
                     album.title || null,
                     album.version || null,
-                    album.explicit ? 1 : 0,
+                    album.explicit == null ? null : (album.explicit ? 1 : 0),
                     album.quality || null,
                     album.type || null,
                     album.upc || null,
@@ -1033,6 +1025,7 @@ export class RefreshArtistService {
     }
 
     static syncProviderSelectionsFromStoredOffers(artistMbid: string | null): { stereo: number; spatial: number } {
+        persistCompositeReleaseMatchesForArtist(artistMbid);
         const candidates = this.buildStoredProviderAlbumSelections(artistMbid);
         if (candidates.length === 0) {
             return { stereo: 0, spatial: 0 };
@@ -1097,8 +1090,8 @@ export class RefreshArtistService {
                 match_status = excluded.match_status,
                 match_confidence = excluded.match_confidence,
                 match_method = excluded.match_method,
-                cover = excluded.cover,
-                popularity = excluded.popularity,
+                cover = COALESCE(excluded.cover, ProviderItems.cover),
+                popularity = COALESCE(excluded.popularity, ProviderItems.popularity),
                 updated_at = CURRENT_TIMESTAMP
         `).run(
             provider.id,
@@ -1108,7 +1101,7 @@ export class RefreshArtistService {
             status,
             status === "verified" ? 1 : 0.75,
             artist.picture || null,
-            artist.popularity || 0,
+            artist.popularity ?? null,
         );
 
         const updatePopularity = artist.popularity ?? 0;
@@ -1357,52 +1350,59 @@ export class RefreshArtistService {
     }
 
     /**
-     * Fetch + store the artist's provider biography as a plain sub-step of the
-     * Lidarr-style artist refresh.
+     * Fetch + store artist biography from streaming providers in
+     * `provider_priority` order. First non-empty bio wins. Servarr/MB overview
+     * remains the hole-fill fallback when no provider returns text.
      */
     private static async refreshArtistBiography(artistId: string, options: RefreshOptions = {}): Promise<void> {
-        const existing = db.prepare("SELECT bio_text, last_scanned FROM Artists WHERE id = ?").get(artistId) as any;
-        const shouldRefreshBio =
-            options.forceUpdate === true ||
-            existing?.bio_text == null ||
-            shouldRefreshArtist({
-                artistId,
-                lastScanned: existing?.last_scanned,
-            });
+        const existing = db.prepare("SELECT bio_text, bio_source, mbid FROM Artists WHERE id = ?")
+            .get(artistId) as {
+                bio_text?: string | null;
+                bio_source?: string | null;
+                mbid?: string | null;
+            } | undefined;
+        const existingBio = String(existing?.bio_text || "").trim();
+        const artistMbid = existing?.mbid || (isMusicBrainzMbid(artistId) ? artistId : null);
+        const priority = options.provider
+            ? [options.provider, ...streamingProviderManager.getProviderPriority().filter((id) => id !== options.provider)]
+            : streamingProviderManager.getProviderPriority();
 
-        const refreshed = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
-        if (isMusicBrainzMbid(artistId) && refreshed?.mbid === artistId) {
-            console.log(`[RefreshArtistService] Skipping provider biography lookup for MusicBrainz artist ${artistId}`);
-            return;
-        }
-
-        if (!shouldRefreshBio) {
-            console.log(`[RefreshArtistService] Skipping bio refresh for ${artistId} (fresh)`);
-            return;
+        const candidates: Array<{ provider: string; providerId: string }> = [];
+        for (const providerId of priority) {
+            let provider;
+            try {
+                provider = streamingProviderManager.getStreamingProvider(providerId);
+            } catch {
+                continue;
+            }
+            if (typeof provider.getArtistBio !== "function") {
+                continue;
+            }
+            const providerArtistIds = await this.resolveProviderArtistIds(provider, artistId, artistMbid);
+            for (const providerArtistId of providerArtistIds) {
+                candidates.push({ provider: provider.id, providerId: providerArtistId });
+            }
         }
 
         try {
-            const provider = options.provider
-                ? streamingProviderManager.getStreamingProvider(options.provider)
-                : streamingProviderManager.getDefaultStreamingProvider();
-            const bioText = await provider.getArtistBio?.(artistId);
+            const editorial = await firstProviderEditorialText({
+                kind: "artistBio",
+                candidates,
+            });
 
-            if (bioText !== null && bioText !== undefined) {
+            if (editorial) {
                 db.prepare(`
                     UPDATE Artists SET
                         bio_text = ?,
                         bio_source = ?,
                         bio_last_updated = ?
                     WHERE id = ?
-                `).run(bioText ?? "", provider.id, new Date().toISOString(), artistId);
-            } else if (options.forceUpdate === true || existing?.bio_text == null) {
-                db.prepare(`
-                    UPDATE Artists SET
-                        bio_text = ?,
-                        bio_source = ?,
-                        bio_last_updated = ?
-                    WHERE id = ?
-                `).run("", provider.id, new Date().toISOString(), artistId);
+                `).run(editorial.text, editorial.source, new Date().toISOString(), artistId);
+                return;
+            }
+
+            if (!existingBio) {
+                console.log(`[RefreshArtistService] No provider biography found for ${artistId}`);
             }
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to fetch bio for ${artistId}:`, error);
@@ -1446,9 +1446,9 @@ export class RefreshArtistService {
 
         const includeSimilarArtists = options.includeSimilarArtists !== false;
         const seedSimilarArtists = options.seedSimilarArtists !== false;
-        // Past the staleness gate, a refresh always does the full canonical
-        // metadata sync — diff-reconcile (content_hash) skips unchanged writes, so
-        // it's cheap, and a stale artist warrants a fresh provider re-fetch too.
+        // Past the staleness gate, refresh always re-syncs canonical stubs/videos
+        // and re-reconciles every scoped release group; content_hash skips
+        // unchanged payloads so the write cost stays bounded.
         const shouldHydrateCatalog = true;
 
         // Canonical identity + biography.
@@ -1596,7 +1596,9 @@ export class RefreshArtistService {
         // Core video-catalog providers that are NOT connected for audio still
         // contribute music-video metadata (YouTube's public catalog). They are
         // deliberately excluded from the album/offer hydration loop below.
-        for (const provider of videoOnlyProviders) {
+        // Run connected providers in parallel so adding Apple/YouTube/etc. does
+        // not serialize wall-clock matching time against TIDAL.
+        await Promise.all(videoOnlyProviders.map(async (provider) => {
             try {
                 const providerArtistIds = await this.resolveProviderArtistIds(provider, artistId, artistMbid);
                 if (providerArtistIds.length > 0) {
@@ -1605,13 +1607,13 @@ export class RefreshArtistService {
             } catch (err) {
                 console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
             }
-        }
+        }));
 
-        for (const provider of connectedProviders) {
+        await Promise.all(connectedProviders.map(async (provider) => {
             const providerArtistIds = await this.resolveProviderArtistIds(provider, artistId, artistMbid);
             if (providerArtistIds.length === 0) {
                 console.log(`[RefreshArtistService] Skipping catalog hydration on ${provider.name} for ${artistId} (no provider artist match)`);
-                continue;
+                return;
             }
 
             try {
@@ -1833,7 +1835,7 @@ export class RefreshArtistService {
             } catch (error) {
                 console.warn(`[RefreshArtistService] Failed to fetch albums on ${provider.name} for ${artistId}:`, error);
             }
-        }
+        }));
 
         // The per-provider loop above already reported fetch progress; from here
         // the remaining work is release selection over the collected offers.
@@ -1854,6 +1856,11 @@ export class RefreshArtistService {
             .all()
             .map((row) => String((row as { providerId: string }).providerId))
             .filter((providerId) => !registeredProviderIds.has(providerId));
+
+        // Artist-wide composite graph first: exact-cover hybrids across provider
+        // albums matched to different release groups (Bastille Unplugged case).
+        // Slot selection then consumes the same artist-wide track pool.
+        persistCompositeReleaseMatchesForArtist(artistMbid);
 
         const slotCounts = ReleaseGroupSlotService.syncProviderAlbumSelections({
             artistMbid,
@@ -1881,17 +1888,17 @@ export class RefreshArtistService {
             return;
         }
 
-        for (const provider of providers) {
+        await Promise.all(providers.map(async (provider) => {
             const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
             if (!providerArtistId) {
-                continue;
+                return;
             }
             try {
                 await this.refreshProviderVideosForMatchedArtist(provider, providerArtistId, artistId, options);
             } catch (err) {
                 console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
             }
-        }
+        }));
     }
 
     private static async refreshProviderVideosForMatchedArtist(
@@ -1910,6 +1917,30 @@ export class RefreshArtistService {
                     ...providerVideoToOfferRow(video, artistId),
                     _provider: provider.id,
                 }));
+            // Artist video lists often omit publish/release dates (especially
+            // YouTube). Fill gaps with a bounded getVideo pass so VideoPage years
+            // and ordering have something to show after refresh.
+            if (provider.getVideo) {
+                const missingDates = videos
+                    .filter((video) => !String(video.release_date || "").trim())
+                    .slice(0, 60);
+                if (missingDates.length > 0) {
+                    const limit = pLimit(4);
+                    await Promise.all(missingDates.map((video) => limit(async () => {
+                        try {
+                            const detailed = await provider.getVideo!(String(video.provider_id));
+                            if (detailed.releaseDate) {
+                                video.release_date = detailed.releaseDate;
+                            }
+                        } catch (error) {
+                            console.warn(
+                                `[RefreshArtistService] Failed to enrich video date for ${provider.name}:${video.provider_id}:`,
+                                error,
+                            );
+                        }
+                    })));
+                }
+            }
             console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
             RefreshVideoService.upsertArtistVideos(artistId, videos, options);
             await this.precacheArtistVideoArtwork(artistId);

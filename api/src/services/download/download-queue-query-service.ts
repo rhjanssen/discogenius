@@ -268,10 +268,12 @@ function parseDownloadStateTracks(value: unknown): QueueItemContract["tracks"] |
         return null;
       }
       const trackNum = getOptionalNumber(record.trackNum);
+      const volumeNum = getOptionalNumber(record.volumeNum);
       const providerTrackId = getOptionalString(record.providerTrackId);
       return {
         title,
         trackNum: trackNum ?? undefined,
+        volumeNum: volumeNum ?? undefined,
         status: normalizeTrackStatus(record.status),
         ...(providerTrackId ? { providerTrackId } : {}),
       };
@@ -1018,8 +1020,12 @@ export class DownloadQueueQueryService {
       totalFiles: typeof downloadState.totalFiles === "number" ? downloadState.totalFiles : undefined,
       currentTrack: getOptionalString(downloadState.currentTrack) ?? undefined,
       currentProviderTrackId: getOptionalString(downloadState.currentProviderTrackId) ?? undefined,
-      currentTrackNum: typeof downloadState.currentTrackNum === "number" ? downloadState.currentTrackNum : undefined,
-      currentVolumeNum: typeof downloadState.currentVolumeNum === "number" ? downloadState.currentVolumeNum : undefined,
+      currentTrackNum: typeof downloadState.currentTrackNum === "number"
+        ? downloadState.currentTrackNum
+        : getOptionalNumber(job.payload?.trackNumber) ?? undefined,
+      currentVolumeNum: typeof downloadState.currentVolumeNum === "number"
+        ? downloadState.currentVolumeNum
+        : getOptionalNumber(job.payload?.volumeNumber) ?? undefined,
       trackProgress: typeof downloadState.trackProgress === "number" ? downloadState.trackProgress : undefined,
       trackStatus: getOptionalString(downloadState.trackStatus) as QueueItemContract["trackStatus"] | undefined,
       statusMessage: getOptionalString(downloadState.statusMessage) ?? undefined,

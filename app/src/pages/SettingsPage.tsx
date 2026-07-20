@@ -13,7 +13,6 @@ import {
     Title1,
     Divider,
     makeStyles,
-    mergeClasses,
     tokens,
     Caption1,
     Tooltip,
@@ -56,7 +55,9 @@ import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { ProviderMark } from "@/components/ui/ProviderMark";
 import { providerMarkFor } from "@/components/ui/providerMarks";
+import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ImportArtistsModal } from "@/components/ui/ImportArtistsModal";
+import { videoCapabilityLabel, videoTierFromMaxHeight } from "@/utils/qualityTier";
 import { useProviderConnection } from "@/hooks/useProviderConnection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAppAuth } from "@/providers/appAuthContext";
@@ -187,8 +188,8 @@ const NAMING_HELP: Record<
     { title: string; description: string; tokens: NamingToken[] }
 > = {
     artist_folder: {
-        title: "Artist Folder",
-        description: "Template for the artist folder name.",
+        title: "Artist folder",
+        description: "Name of the artist folder under each library root.",
         tokens: [
             { section: "Formats", token: "{Artist Name} {mbid-{Artist MbId}}", example: "Daft Punk {mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}", mode: "replace" },
             { section: "Formats", token: "{Artist CleanNameThe} {mbid-{Artist MbId}}", example: "Daft Punk {mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}", mode: "replace" },
@@ -196,8 +197,8 @@ const NAMING_HELP: Record<
         ],
     },
     album_track_path_single: {
-        title: "Single-volume Album Track Path",
-        description: "Relative path (inside the artist folder) for tracks in single-volume albums. Include album folder + track filename (without extension).",
+        title: "Album track path (single disc)",
+        description: "Path under the artist folder for tracks on single-disc albums (album folder + filename, no extension).",
         tokens: [
             { section: "Formats", token: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}", example: "Discovery (2001)/01 - One More Time", mode: "replace" },
             { section: "Formats", token: "{Album Title} ({Release Year})/{Artist Name} - {Album Title} - {track:00} - {Track Title}", example: "Discovery (2001)/Daft Punk - Discovery - 01 - One More Time", mode: "replace" },
@@ -209,8 +210,8 @@ const NAMING_HELP: Record<
         ],
     },
     album_track_path_multi: {
-        title: "Multi-volume Album Track Path",
-        description: "Relative path (inside the artist folder) for tracks in multi-volume albums. Include album folder + optional disc folder + track filename (without extension).",
+        title: "Album track path (multi disc)",
+        description: "Path under the artist folder for multi-disc albums (album folder, optional disc folder, filename).",
         tokens: [
             { section: "Formats", token: "{Album CleanTitle} ({Release Year})/{medium:0}{track:00} - {Track CleanTitle}", example: "Discovery (2001)/201 - One More Time", mode: "replace" },
             { section: "Formats", token: "{Album Title} ({Release Year})/{medium:00}/{Artist Name} - {Album Title} - {track:00} - {Track Title}", example: "Discovery (2001)/02/Daft Punk - Discovery - 01 - One More Time", mode: "replace" },
@@ -222,8 +223,8 @@ const NAMING_HELP: Record<
         ],
     },
     video_file: {
-        title: "Video File",
-        description: "Template for the video filename (without extension). A Plex extras suffix (-video, -lyrics, -live, ...) is appended automatically based on the detected video type.",
+        title: "Music video file",
+        description: "Filename for music videos (no extension). A type suffix such as -video, -live, or -lyrics is added automatically so media servers can recognize extras.",
         tokens: [
             { section: "Formats", token: "{Artist CleanName} - {Video CleanTitle} {{ProviderName}-{ProviderVideoId}}", example: "Daft Punk - Around the World {Apple Music-12345}", mode: "replace" },
             ...ARTIST_NAMING_TOKENS,
@@ -247,7 +248,9 @@ const MEDIA = {
 };
 const MODAL_LAYOUT = {
     rowPadding: {
-        base: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+        // Fluent settings rows: equal vertical padding so title/description
+        // sit balanced with the trailing control (not cramped toward the bottom).
+        base: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
         mobile: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     },
     qualityPadding: {
@@ -263,16 +266,16 @@ const MODAL_LAYOUT = {
 
 const rowBase = {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     flexWrap: 'wrap' as const,
     padding: MODAL_LAYOUT.rowPadding.base,
     columnGap: tokens.spacingHorizontalM,
-    rowGap: tokens.spacingVerticalS,
+    rowGap: tokens.spacingVerticalXS,
     [MEDIA.mobile]: {
         padding: MODAL_LAYOUT.rowPadding.mobile,
         columnGap: tokens.spacingHorizontalS,
-        rowGap: tokens.spacingVerticalS,
+        rowGap: tokens.spacingVerticalXS,
     },
 };
 
@@ -339,7 +342,7 @@ const useStyles = makeStyles({
         display: 'flex',
         flexDirection: 'column',
         gap: tokens.spacingVerticalXXS,
-        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalS}`,
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     // Standard row: horizontal layout with title/description left, control right
@@ -372,6 +375,14 @@ const useStyles = makeStyles({
         gap: tokens.spacingVerticalXXS,
         flex: 1,
         minWidth: 0,
+        paddingTop: tokens.spacingVerticalXXS,
+    },
+    rowControl: {
+        display: 'flex',
+        alignItems: 'center',
+        flexShrink: 0,
+        minHeight: '32px',
+        paddingTop: tokens.spacingVerticalXXS,
     },
     templateControl: {
         display: 'flex',
@@ -530,6 +541,38 @@ const useStyles = makeStyles({
     rowNoDivider: {
         ...rowBase,
     },
+    // Dense checklist (release types): single-line labels, not full settings rows.
+    checkboxList: {
+        display: 'grid',
+        gridTemplateColumns: '1fr',
+        paddingTop: tokens.spacingVerticalXS,
+        paddingBottom: tokens.spacingVerticalS,
+        [MEDIA.desktop]: {
+            gridTemplateColumns: '1fr 1fr',
+        },
+    },
+    checkboxRow: {
+        display: 'flex',
+        alignItems: 'center',
+        minHeight: '28px',
+        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}`,
+        [MEDIA.mobile]: {
+            padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+        },
+    },
+    checkboxRowWithDescription: {
+        ...rowBase,
+        alignItems: 'flex-start',
+        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        '&:last-child': {
+            borderBottom: 'none',
+        },
+    },
+    checkboxLabelStack: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: tokens.spacingVerticalXXS,
+    },
     aboutBadgeRow: {
         display: 'flex',
         flexWrap: 'wrap',
@@ -626,6 +669,10 @@ const useStyles = makeStyles({
     },
     capabilitySummaryValue: {
         fontWeight: tokens.fontWeightSemibold,
+        display: 'flex',
+        alignItems: 'center',
+        gap: tokens.spacingHorizontalXS,
+        minHeight: '22px',
     },
     providerActionRow: {
         display: 'flex',
@@ -644,7 +691,7 @@ const useStyles = makeStyles({
     },
     qualityOption: {
         display: 'flex',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         padding: MODAL_LAYOUT.qualityPadding.base,
         gap: tokens.spacingHorizontalM,
         cursor: 'pointer',
@@ -665,6 +712,7 @@ const useStyles = makeStyles({
         flexDirection: 'column',
         gap: tokens.spacingVerticalXXS,
         flex: 1,
+        paddingTop: tokens.spacingVerticalXXS,
     },
     pathInput: {
         flex: 1,
@@ -815,7 +863,6 @@ const SettingsPage = () => {
         namingSettings,
         updateNamingSettings,
         flushNamingSettings,
-        accountSettings,
     } = useUserSettings();
     const { isLoading: providerLoading } = useProviderConnection();
     const {
@@ -946,7 +993,7 @@ const SettingsPage = () => {
         setRenameStatusLoading(true);
         try {
             await flushNamingSettings(getCurrentNamingSettings());
-            const status = await api.getLibraryRenameStatus({ sampleLimit: 4, scanLimit: 25 });
+            const status = await api.getLibraryRenameStatus({ sampleLimit: 8, scanLimit: 1000 });
             setRenameStatus(status as NamingRenameStatus);
         } catch (error: any) {
             toast({
@@ -1029,7 +1076,7 @@ const SettingsPage = () => {
     const loadRetagStatus = useCallback(async () => {
         setRetagStatusLoading(true);
         try {
-            const status = await api.getRetagStatus({ sampleLimit: 4, scanLimit: 25 });
+            const status = await api.getRetagStatus({ sampleLimit: 8, scanLimit: 1000 });
             setRetagStatus(status as RetagStatus);
             setRetagStatusInitialized(true);
         } catch (error: any) {
@@ -1195,8 +1242,8 @@ const SettingsPage = () => {
                 include_dj_mix: true,
                 include_mixtape_street: true,
                 include_demo: true,
-                include_spatial: true,
-                include_videos: true,
+                include_spatial: false,
+                include_videos: false,
                 enable_redundancy_filter: true,
                 prefer_explicit: true,
                 require_provider_availability: false,
@@ -1341,17 +1388,17 @@ const SettingsPage = () => {
     }
 
     const qualityOptions = [
-        { value: 'low', label: 'Low', description: 'Economy AAC (~96 kbps)' },
-        { value: 'normal', label: 'Normal', description: 'High-Quality AAC (256-320 kbps)' },
-        { value: 'high', label: 'High', description: 'Lossless CD Quality (16-bit / 44.1 kHz FLAC/ALAC)' },
-        { value: 'max', label: 'Max', description: 'Hi-Res Lossless (up to 24-bit / 192 kHz FLAC/ALAC)' },
+        { value: 'low', label: 'Low', description: 'Smaller files, lower quality' },
+        { value: 'normal', label: 'Normal', description: 'Good quality for everyday listening' },
+        { value: 'high', label: 'High', description: 'CD quality (lossless)' },
+        { value: 'max', label: 'Max', description: 'Highest available quality (hi-res when offered)' },
     ];
 
     const videoQualityOptions = [
-        { value: 'sd', label: 'SD (360p)', description: 'Lower bandwidth', disabled: false },
-        { value: 'hd', label: 'HD (720p)', description: 'Balanced quality', disabled: false },
-        { value: 'fhd', label: 'Full HD (1080p)', description: 'Best available on most services', disabled: false },
-        { value: 'uhd', label: '4K (2160p)', description: 'Where the service offers it; others fall back to 1080p', disabled: false },
+        { value: 'sd', label: 'SD (480p)', disabled: false },
+        { value: 'hd', label: 'HD (720p)', disabled: false },
+        { value: 'fhd', label: 'Full HD (1080p)', disabled: false },
+        { value: 'uhd', label: 'Ultra HD (2160p)', disabled: false },
     ];
 
     const namingHelpMeta = namingHelpField ? NAMING_HELP[namingHelpField] : null;
@@ -1475,11 +1522,13 @@ const SettingsPage = () => {
                     {description}
                 </Text>
             </div>
-            <Switch
-                checked={checked}
-                onChange={(_, data) => onChange(data.checked)}
-                disabled={disabled}
-            />
+            <div className={styles.rowControl}>
+                <Switch
+                    checked={checked}
+                    onChange={(_, data) => onChange(data.checked)}
+                    disabled={disabled}
+                />
+            </div>
         </div>
     );
 
@@ -1488,28 +1537,29 @@ const SettingsPage = () => {
         description,
         checked,
         onChange,
-        noDivider = false,
         rowKey,
     }: {
         title: string;
         description?: React.ReactNode;
         checked: boolean;
         onChange: (checked: boolean) => void;
-        noDivider?: boolean;
         rowKey?: string;
     }) => (
-        <div key={rowKey} className={noDivider ? styles.rowNoDivider : styles.row}>
+        <div
+            key={rowKey}
+            className={description ? styles.checkboxRowWithDescription : styles.checkboxRow}
+        >
             <Checkbox
                 checked={checked}
                 onChange={(_, data) => onChange(Boolean(data.checked))}
-                label={<>
-                    <Text weight="semibold">{title}</Text>
-                    {description && (
+                label={description ? (
+                    <span className={styles.checkboxLabelStack}>
+                        <Text weight="semibold">{title}</Text>
                         <Text size={200} className={styles.mutedTextBlock}>
                             {description}
                         </Text>
-                    )}
-                </>}
+                    </span>
+                ) : title}
             />
         </div>
     );
@@ -1577,23 +1627,39 @@ const SettingsPage = () => {
 
     const getProviderCapabilitySummary = (provider: StreamingProviderStatus) => {
         const caps = provider.capabilities;
-        const stereo = caps.stereoQuality
-            ?? (caps.hiResStereo
-                ? "Lossless up to 24-bit"
-                : caps.losslessStereo
-                    ? "Lossless"
-                    : caps.lossyStereo
-                        ? "Lossy stereo"
-                        : "Not available");
-        const spatial = caps.spatialQuality
-            ?? (caps.spatialAudio ? "Available" : "Not available");
-        const video = caps.videoQuality
-            ?? ((caps.videoDownloads || caps.musicVideos) ? "Available" : "Not available");
+
+        const stereoBadge = caps.hiResStereo
+            ? "HIRES_LOSSLESS"
+            : caps.losslessStereo
+                ? "LOSSLESS"
+                : caps.lossyStereo
+                    ? (provider.id === "youtube-music" ? "YOUTUBE_LOSSY" : "MP3_320")
+                    : null;
+        const spatialBadge = caps.spatialAudio
+            ? (caps.spatialFormats?.includes("DOLBY_ATMOS") ? "DOLBY_ATMOS" : "SPATIAL")
+            : null;
+        const videoTier = videoTierFromMaxHeight(caps.maxVideoResolution);
+        const videoBadge = videoTier === "UHD"
+            ? "MP4_2160P"
+            : videoTier === "FHD"
+                ? "MP4_1080P"
+                : videoTier === "HD"
+                    ? "MP4_720P"
+                    : videoTier === "SD"
+                        ? "MP4_480P"
+                        : null;
+
+        const stereoCaption = caps.stereoQuality
+            ?? (stereoBadge ? undefined : "Not available");
+        const spatialCaption = caps.spatialQuality
+            ?? (spatialBadge ? "Dolby Atmos" : "Not available");
+        const videoCaption = caps.videoQuality
+            ?? videoCapabilityLabel(caps.maxVideoResolution);
 
         return [
-            { label: "Stereo quality", value: stereo },
-            { label: "Spatial audio", value: spatial },
-            { label: "Music video", value: video },
+            { label: "Stereo quality", badgeQuality: stereoBadge, caption: stereoCaption || "Not available" },
+            { label: "Spatial audio", badgeQuality: spatialBadge, caption: spatialCaption },
+            { label: "Music video", badgeQuality: videoBadge, caption: videoCaption },
         ];
     };
 
@@ -1602,7 +1668,7 @@ const SettingsPage = () => {
         <SettingsSection
             id="metadata-source"
             title="Metadata source"
-            description="Where Discogenius sources its music catalog (artists, releases, tracks). Servarr is the hosted default; MusicBrainz Docker reads a local mirror for complete releases and ISRC/UPC matching."
+            description="Choose where artist, album, and track details come from."
             className={styles.section}
         >
             <div className={styles.card}>
@@ -1615,16 +1681,16 @@ const SettingsPage = () => {
                         <div className={styles.qualityContent}>
                             <Text weight="semibold">Servarr Metadata</Text>
                             <Text size={200} className={styles.mutedText}>
-                                Hosted Servarr / Skyhook server. No setup, but omits some releases and strips ISRC/UPC.
+                                Hosted catalog — easy setup. Some releases and codes (ISRC/UPC) may be missing.
                             </Text>
                         </div>
                     </label>
                     <label className={styles.qualityOption} htmlFor="metadata-source-musicbrainz">
                         <Radio value="musicbrainz" id="metadata-source-musicbrainz" />
                         <div className={styles.qualityContent}>
-                            <Text weight="semibold">MusicBrainz Docker</Text>
+                            <Text weight="semibold">MusicBrainz (local)</Text>
                             <Text size={200} className={styles.mutedText}>
-                                A local MusicBrainz mirror, read directly from Postgres. Complete releases + ISRC/UPC matching, no rate limit.
+                                Your own MusicBrainz mirror — fuller release data and better matching.
                             </Text>
                         </div>
                     </label>
@@ -1634,7 +1700,7 @@ const SettingsPage = () => {
                         <Divider className={styles.divider} />
                         <Field
                             label="MusicBrainz host"
-                            hint="Enter only the IP address or hostname. Discogenius derives Postgres :5432 and MusicBrainz web/Solr :5000 automatically."
+                            hint="Hostname or IP only. Discogenius uses the standard MusicBrainz ports automatically."
                             validationState={
                                 catalogTest.status === "ok" ? "success"
                                     : catalogTest.status === "error" ? "error"
@@ -1674,7 +1740,7 @@ const SettingsPage = () => {
         <SettingsSection
             id="streaming-providers"
             title="Streaming Providers"
-            description="Connect the services you download from. Drag to set the preference order — the first provider is the default and wins equal-quality matches."
+            description="Connect download services. Drag to set preference — higher entries win when quality is equal."
             className={styles.section}
         >
             <div className={styles.card}>
@@ -1740,11 +1806,6 @@ const SettingsPage = () => {
                                 const publiclyAvailable = provider.authenticated
                                     && !provider.management.canAuthenticate
                                     && !provider.management.canDisconnect;
-                                const statusLabel = publiclyAvailable
-                                    ? "Available"
-                                    : provider.authenticated
-                                        ? "Connected"
-                                        : "Not connected";
 
                                 return (
                                     <div
@@ -1788,19 +1849,14 @@ const SettingsPage = () => {
                                             <div className={styles.profileDetails}>
                                                 <div className={styles.optionIconRow}>
                                                     <Text weight="semibold" size={400}>{provider.name}</Text>
-                                                    <Badge appearance="filled" color={provider.authenticated ? "success" : "subtle"}>
-                                                        {statusLabel}
-                                                    </Badge>
                                                     {provider.isDefault ? (
                                                         <Badge appearance="tint" color="informative">Default</Badge>
                                                     ) : null}
                                                 </div>
                                                 <Caption1 className={styles.mutedText}>
-                                                    {provider.authenticated
-                                                        ? publiclyAvailable
-                                                            ? "Ready to search and browse."
-                                                            : "Ready to search, browse, and download."
-                                                        : "Connect to search, browse, and download."}
+                                                    {publiclyAvailable
+                                                        ? "Ready to search and browse."
+                                                        : "Ready to search, browse, and download."}
                                                 </Caption1>
                                             </div>
                                         </div>
@@ -1869,7 +1925,13 @@ const SettingsPage = () => {
                                         {getProviderCapabilitySummary(detailsProvider).map((capability) => (
                                             <div key={capability.label} className={styles.capabilitySummaryItem}>
                                                 <Caption1 className={styles.mutedText}>{capability.label}</Caption1>
-                                                <Text size={200} className={styles.capabilitySummaryValue}>{capability.value}</Text>
+                                                <div className={styles.capabilitySummaryValue}>
+                                                    {capability.badgeQuality ? (
+                                                        <QualityBadge quality={capability.badgeQuality} size="large" />
+                                                    ) : (
+                                                        <Text size={200}>Not available</Text>
+                                                    )}
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -1917,17 +1979,18 @@ const SettingsPage = () => {
                     <SettingsSection
                         id="app-access"
                         title="App Access"
-                        description="Discogenius admin-session controls."
+                        description="Sign-in for this browser session."
                         className={styles.section}
                     >
                         <div className={styles.card}>
                             <div className={styles.row}>
                                 <div className={styles.rowContent}>
-                                    <Text weight="semibold">Sign Out Of Discogenius</Text>
+                                    <Text weight="semibold">Sign out</Text>
                                     <Text size={200} className={styles.mutedText}>
-                                        Clear the admin-password session on this browser.
+                                        End the admin session on this device.
                                     </Text>
                                 </div>
+                                <div className={styles.rowControl}>
                                 <Button
                                     appearance="outline"
                                     className={styles.signOutButton}
@@ -1936,6 +1999,7 @@ const SettingsPage = () => {
                                 >
                                     Sign out
                                 </Button>
+                                </div>
                             </div>
                         </div>
                     </SettingsSection>
@@ -1944,8 +2008,8 @@ const SettingsPage = () => {
                 {/* Audio Quality */}
                 <SettingsSection
                     id="audio-quality"
-                    title="Audio Quality"
-                    description="Stereo quality for downloaded tracks. Applies to new and upgraded downloads."
+                    title="Audio quality"
+                    description="Preferred quality for new stereo downloads and upgrades."
                     className={styles.section}
                 >
                     <div className={styles.card}>
@@ -1970,7 +2034,7 @@ const SettingsPage = () => {
                         <Divider className={styles.divider} />
                         {renderToggleRow({
                             title: "Spatial audio",
-                            description: "Also download spatial or surround versions alongside stereo.",
+                            description: "Also keep Dolby Atmos or other spatial versions when available.",
                             checked: curationConfig?.include_spatial === true,
                             onChange: (checked) => updateCuration({ include_spatial: checked }),
                         })}
@@ -1979,19 +2043,19 @@ const SettingsPage = () => {
                 {/* Video Quality */}
                 <SettingsSection
                     id="video-quality"
-                    title="Video Quality"
-                    description="Control music video downloads and resolution."
+                    title="Music videos"
+                    description="Whether to download videos and at which resolution."
                     className={styles.section}
                 >
                     <div className={styles.card}>
                         {renderToggleRow({
-                            title: "Music Videos",
-                            description: "Download music videos",
+                            title: "Download music videos",
+                            description: "Include official videos in the library when a service offers them.",
                             checked: curationConfig?.include_videos === true,
                             onChange: (checked) => updateCuration({ include_videos: checked }),
                         })}
                         <RadioGroup
-                            value={qualitySettings?.video_quality || 'fhd'}
+                            value={qualitySettings?.video_quality || 'uhd'}
                             onChange={(_, data) => updateQualitySettings({
                                 video_quality: data.value as "sd" | "hd" | "fhd" | "uhd"
                             })}
@@ -2005,9 +2069,11 @@ const SettingsPage = () => {
                                     <Radio value={option.value} id={`video-quality-${option.value}`} disabled={option.disabled} />
                                     <div className={styles.qualityContent}>
                                         <Text weight="semibold">{option.label}</Text>
-                                        <Text size={200} className={styles.mutedText}>
-                                            {option.disabled ? "No connected service offers this resolution" : option.description}
-                                        </Text>
+                                        {option.disabled ? (
+                                            <Text size={200} className={styles.mutedText}>
+                                                No connected service offers this resolution
+                                            </Text>
+                                        ) : null}
                                     </div>
                                 </label>
                             ))}
@@ -2019,47 +2085,49 @@ const SettingsPage = () => {
                 <SettingsSection
                     id="curation"
                     title="Curation"
-                    description="Choose what release types to include and how to prioritize versions."
+                    description="Which release types to keep, and how to choose between versions."
                     className={styles.section}
                 >
                     <div className={styles.card}>
                         <div className={styles.subsectionHeader}>
                             <Text weight="semibold">Primary release types</Text>
                         </div>
-                        {primaryReleaseTypeRows.map((row) => renderCheckboxRow({
-                            rowKey: row.key,
-                            title: row.title,
-                            checked: curationConfig?.[row.key] !== false,
-                            onChange: (checked) => updateCuration({ [row.key]: checked }),
-                            noDivider: true,
-                        }))}
+                        <div className={styles.checkboxList}>
+                            {primaryReleaseTypeRows.map((row) => renderCheckboxRow({
+                                rowKey: row.key,
+                                title: row.title,
+                                checked: curationConfig?.[row.key] !== false,
+                                onChange: (checked) => updateCuration({ [row.key]: checked }),
+                            }))}
+                        </div>
                         <Divider className={styles.divider} />
                         <div className={styles.subsectionHeader}>
                             <Text weight="semibold">Secondary release types</Text>
                         </div>
-                        {secondaryReleaseTypeRows.map((row) => renderCheckboxRow({
-                            rowKey: row.key,
-                            title: row.title,
-                            checked: curationConfig?.[row.key] === true,
-                            onChange: (checked) => updateCuration({ [row.key]: checked }),
-                            noDivider: true,
-                        }))}
+                        <div className={styles.checkboxList}>
+                            {secondaryReleaseTypeRows.map((row) => renderCheckboxRow({
+                                rowKey: row.key,
+                                title: row.title,
+                                checked: curationConfig?.[row.key] === true,
+                                onChange: (checked) => updateCuration({ [row.key]: checked }),
+                            }))}
+                        </div>
                         <Divider className={styles.divider} />
                         {renderToggleRow({
-                            title: "Prefer Explicit",
-                            description: "Prefer explicit versions over clean ones",
+                            title: "Prefer explicit",
+                            description: "Choose explicit editions when both clean and explicit are available.",
                             checked: curationConfig?.prefer_explicit !== false,
                             onChange: (checked) => updateCuration({ prefer_explicit: checked }),
                         })}
                         {renderToggleRow({
-                            title: "Deduplicate Releases",
-                            description: "Unmonitor singles when their tracks appear on a full album",
+                            title: "Hide redundant singles",
+                            description: "Skip singles when those tracks already appear on an album.",
                             checked: curationConfig?.enable_redundancy_filter !== false,
                             onChange: (checked) => updateCuration({ enable_redundancy_filter: checked }),
                         })}
                         {renderToggleRow({
-                            title: "Require Provider Match",
-                            description: "Only download releases that a connected streaming service actually has.",
+                            title: "Require a download source",
+                            description: "Only keep releases that at least one connected service can download.",
                             checked: curationConfig?.require_provider_availability === true,
                             onChange: (checked) => updateCuration({ require_provider_availability: checked }),
                         })}
@@ -2081,31 +2149,31 @@ const SettingsPage = () => {
                 <SettingsSection
                     id="monitoring"
                     title="Monitoring"
-                    description="Schedule automatic scans and cleanup behavior."
+                    description="Automatic checks for new music and library cleanup."
                     className={styles.section}
                 >
                     <div className={styles.card}>
                         {renderToggleRow({
-                            title: "Active Monitoring",
-                            description: "Check for new releases automatically",
+                            title: "Automatic monitoring",
+                            description: "Periodically look for new releases from monitored artists.",
                             checked: monitoringConfig?.enabled || false,
                             onChange: (checked) => updateMonitoring({ enabled: checked }),
                         })}
                         {renderToggleRow({
-                            title: "Re-Download On Quality Change",
-                            description: "Re-download existing files when quality settings change (e.g. AAC → FLAC or 720p → 1080p)",
+                            title: "Upgrade when quality settings change",
+                            description: "Replace existing files if you raise the preferred quality.",
                             checked: qualitySettings?.upgrade_existing_files ?? false,
                             onChange: (checked) => updateQualitySettings({ upgrade_existing_files: checked }),
                         })}
                         {renderToggleRow({
-                            title: "Monitor Discovered Artists",
-                            description: "Auto-monitor artists found during a folder rescan and download their full discography",
+                            title: "Monitor newly found artists",
+                            description: "When a folder scan finds a new artist, monitor them and fill their library.",
                             checked: monitoringConfig?.monitorNewArtists ?? true,
                             onChange: (checked) => updateMonitoring({ monitorNewArtists: checked }),
                         })}
                         {renderToggleRow({
-                            title: "Delete Unmonitored Files",
-                            description: "Remove files for items that are no longer monitored (e.g. singles replaced by albums, disabled categories)",
+                            title: "Remove unmonitored files",
+                            description: "Delete files for releases you no longer monitor.",
                             checked: monitoringConfig?.removeUnmonitoredFiles || false,
                             onChange: (checked) => updateMonitoring({ removeUnmonitoredFiles: checked }),
                         })}
@@ -2152,18 +2220,19 @@ const SettingsPage = () => {
                 {/* Metadata */}
                 <SettingsSection
                     id="metadata"
-                    title="Metadata"
-                    description="Choose what Discogenius writes into your files and saves next to them."
+                    title="Metadata & extras"
+                    description="What to write into files and keep beside them in the library."
                     className={styles.section}
                 >
                     <div className={styles.card}>
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
-                                <Text weight="semibold">Write Audio Tags</Text>
+                                <Text weight="semibold">Write audio tags</Text>
                                 <Text size={200} className={styles.mutedText}>
-                                    Write track, artist, album, and release details into your audio files.
+                                    Embed titles, artists, albums, and MusicBrainz IDs in audio files.
                                 </Text>
                             </div>
+                            <div className={styles.rowControl}>
                             <Select
                                 value={writeAudioTagsPolicy}
                                 onChange={(_, data) => {
@@ -2179,22 +2248,24 @@ const SettingsPage = () => {
                                 <option value="new_files">New downloads only</option>
                                 <option value="all_files">All files</option>
                             </Select>
+                            </div>
                         </div>
 
                         {renderToggleRow({
-                            title: "Save Album Covers",
-                            description: "Save cover art in the album folder. Animated covers are kept when available.",
+                            title: "Save album covers",
+                            description: "Keep cover art in the album folder. Animated covers are kept when available.",
                             checked: metadataSettings?.save_album_cover === true,
                             onChange: (checked) => updateMetadataSettings({ save_album_cover: checked }),
                         })}
 
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
-                                <Text weight="semibold">Preferred Artwork Source</Text>
+                                <Text weight="semibold">Preferred artwork</Text>
                                 <Text size={200} className={styles.mutedText}>
-                                    Canonical uses Cover Art Archive for albums and Servarr/Fanart artist images when available. Provider preference uses the streaming service artwork first. The other source remains the fallback either way.
+                                    Prefer catalog artwork, or artwork from the streaming service. The other source is used as fallback.
                                 </Text>
                             </div>
+                            <div className={styles.rowControl}>
                             <Select
                                 value={metadataSettings?.artwork_preference === "provider" ? "provider" : "canonical"}
                                 onChange={(_, data) => updateMetadataSettings({
@@ -2202,49 +2273,50 @@ const SettingsPage = () => {
                                 })}
                                 className={styles.controlMedium}
                             >
-                                <option value="canonical">Canonical (MusicBrainz / Fanart)</option>
+                                <option value="canonical">Catalog (MusicBrainz / Fanart)</option>
                                 <option value="provider">Streaming service</option>
                             </Select>
+                            </div>
                         </div>
 
                         {renderToggleRow({
-                            title: "Save NFO Files",
-                            description: "Save the info files Jellyfin and Kodi read for extra details.",
+                            title: "Save NFO files",
+                            description: "Write sidecar info files for apps like Jellyfin and Kodi.",
                             checked: metadataSettings?.save_nfo === true,
                             onChange: (checked) => updateMetadataSettings({ save_nfo: checked }),
                         })}
 
                         {renderToggleRow({
-                            title: "Save Lyrics",
-                            description: "Save lyrics as a text file next to the track. Synced lyrics are saved when available.",
+                            title: "Save lyrics",
+                            description: "Save a lyrics file next to each track. Synced lyrics are used when available.",
                             checked: metadataSettings?.save_lyrics === true,
                             onChange: (checked) => updateMetadataSettings({ save_lyrics: checked }),
                         })}
 
                         {renderToggleRow({
-                            title: "Save Artist Pictures",
-                            description: "Save artist artwork in the artist folder.",
+                            title: "Save artist pictures",
+                            description: "Keep artist images in the artist folder.",
                             checked: metadataSettings?.save_artist_picture === true,
                             onChange: (checked) => updateMetadataSettings({ save_artist_picture: checked }),
                         })}
 
                         {renderToggleRow({
-                            title: "Save Music Video Thumbnails",
-                            description: "Save a thumbnail image next to each video.",
+                            title: "Save video thumbnails",
+                            description: "Keep a thumbnail image next to each music video (Plex/Jellyfin-friendly).",
                             checked: metadataSettings?.save_video_thumbnail === true,
                             onChange: (checked) => updateMetadataSettings({ save_video_thumbnail: checked }),
                         })}
 
                         {renderToggleRow({
-                            title: "Embed Music Video Thumbnails",
-                            description: "Embed the thumbnail into the video file as cover art when a thumbnail is available.",
+                            title: "Embed video thumbnails",
+                            description: "Also embed the thumbnail inside the video file when possible.",
                             checked: metadataSettings?.embed_video_thumbnail !== false,
                             onChange: (checked) => updateMetadataSettings({ embed_video_thumbnail: checked }),
                         })}
 
                         {renderToggleRow({
-                            title: "Fingerprint Imported Files",
-                            description: "When you import files you already have, check their audio fingerprint to confirm the right track before tagging.",
+                            title: "Fingerprint imported files",
+                            description: "For files you already have, use audio fingerprinting to confirm the correct track before tagging.",
                             checked: metadataSettings?.enable_fingerprinting === true,
                             onChange: (checked) => {
                                 updateMetadataSettings({ enable_fingerprinting: checked });
@@ -2287,6 +2359,14 @@ const SettingsPage = () => {
                                 <Button
                                     appearance="outline"
                                     icon={retagStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                                    onClick={() => void loadRetagStatus()}
+                                    disabled={retagStatusLoading || retagApplying || !audioRetaggingEnabled}
+                                >
+                                    Scan library
+                                </Button>
+                                <Button
+                                    appearance="outline"
+                                    icon={retagStatusLoading ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
                                     onClick={() => openRetagPreview()}
                                     disabled={retagStatusLoading || retagApplying || !audioRetaggingEnabled}
                                 >
@@ -2301,7 +2381,7 @@ const SettingsPage = () => {
                 <SettingsSection
                     id="storage"
                     title="Storage"
-                    description="Set the paths where your organized library is stored."
+                    description="Folders where Discogenius stores your organized music and videos."
                     className={styles.section}
                 >
                     <div className={styles.card}>
@@ -2383,7 +2463,7 @@ const SettingsPage = () => {
                 <SettingsSection
                     id="naming"
                     title="Naming"
-                    description="Use templates to organize your library. Click the ? buttons to see available tokens and examples."
+                    description="Templates for artist folders, album tracks, and music video filenames. Use ? for tokens and examples."
                     className={styles.section}
                 >
                     <div className={styles.card}>
@@ -2572,16 +2652,24 @@ const SettingsPage = () => {
                                     </Text>
                                 ) : null}
                             </div>
-                            <div className={styles.namingActionGroup}>
+                                <div className={styles.namingActionGroup}>
                                 <Button
                                     appearance="outline"
-	                                    icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
-	                                    onClick={() => openRenamePreview()}
-	                                    disabled={renameStatusLoading || renameApplying || !namingSettings || namingActionsDisabled}
-	                                >
+                                    icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                                    onClick={() => void loadRenameStatus()}
+                                    disabled={renameStatusLoading || renameApplying || !namingSettings || namingActionsDisabled}
+                                >
+                                    Scan library
+                                </Button>
+                                <Button
+                                    appearance="outline"
+                                    icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
+                                    onClick={() => openRenamePreview()}
+                                    disabled={renameStatusLoading || renameApplying || !namingSettings || namingActionsDisabled}
+                                >
                                     Preview changes
                                 </Button>
-                            </div>
+                                </div>
                         </div>
                     </div>
 

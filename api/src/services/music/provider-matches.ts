@@ -33,7 +33,7 @@ export interface ReleaseAvailabilityProvider {
   confidence: number | null;
   matchKind?: "direct" | "composite";
   coverageSummary?: string | null;
-  /** Whether this provider edition is the explicit cut (null when unknown/composite). */
+  /** Whether this provider edition is the explicit cut (null when unknown). */
   explicit?: boolean | null;
 }
 
@@ -225,6 +225,7 @@ interface ProviderAlbumCoverageCandidate {
   providerAlbumId: string;
   quality: string | null;
   librarySlot: string | null;
+  explicit: boolean | null;
   coveredTrackMbids: Set<string>;
   evidence: Array<{
     targetTrackMbid: string;
@@ -246,6 +247,32 @@ interface ProviderAlbumRow {
   provider_item_id: string;
   quality: string | null;
   library_slot: string | null;
+  explicit: number | null;
+}
+
+/**
+ * Aggregate album-level explicit flags for a hybrid: any explicit → true;
+ * all known clean → false; otherwise unknown.
+ */
+export function aggregateExplicitFlags(
+  values: Array<boolean | number | null | undefined>,
+): boolean | null {
+  let sawFalse = false;
+  let sawUnknown = false;
+  for (const value of values) {
+    if (value === true || value === 1) {
+      return true;
+    }
+    if (value === false || value === 0) {
+      sawFalse = true;
+    } else {
+      sawUnknown = true;
+    }
+  }
+  if (sawFalse && !sawUnknown) {
+    return false;
+  }
+  return null;
 }
 
 /**
@@ -535,6 +562,11 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
     match_evidence: string | null;
   }>;
 
+  const lookupExplicit = db.prepare(`
+    SELECT explicit FROM ProviderItems
+    WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
+  `);
+
   const byRelease = new Map<string, ReleaseAvailability>();
   for (const r of rows) {
     let rel = byRelease.get(r.release_mbid);
@@ -558,7 +590,13 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       if (typeof r.provider_item_id === "string" && r.provider_item_id.includes(COMPOSITE_PROVIDER_ID_SEPARATOR)) {
         // Composite match: rebuild from the persisted evidence (quality, slot,
         // album set) rather than a single ProviderItems row.
-        let parsed: { providerAlbumIds?: unknown; quality?: unknown; librarySlot?: unknown; coverageSummary?: unknown } = {};
+        let parsed: {
+          providerAlbumIds?: unknown;
+          quality?: unknown;
+          librarySlot?: unknown;
+          coverageSummary?: unknown;
+          explicit?: unknown;
+        } = {};
         try {
           parsed = r.evidence ? JSON.parse(r.evidence) : {};
         } catch {
@@ -567,6 +605,11 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
         const providerAlbumIds = Array.isArray(parsed.providerAlbumIds) && parsed.providerAlbumIds.length > 0
           ? parsed.providerAlbumIds.map((id) => String(id))
           : splitProviderAlbumIds(r.provider_item_id);
+        const memberExplicit = providerAlbumIds.map((albumId) => {
+          const row = lookupExplicit.get(r.provider, albumId) as { explicit: number | null } | undefined;
+          return row?.explicit == null ? null : Boolean(row.explicit);
+        });
+        const evidenceExplicit = typeof parsed.explicit === "boolean" ? parsed.explicit : null;
         rel.availability.push({
           provider: r.provider,
           providerAlbumId: joinProviderAlbumIds(providerAlbumIds),
@@ -577,9 +620,8 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
           confidence: r.confidence,
           matchKind: "composite",
           coverageSummary: parsed.coverageSummary != null ? String(parsed.coverageSummary) : null,
-          // A composite spans multiple provider albums, so a single explicit
-          // flag is not meaningful.
-          explicit: null,
+          // Any explicit member album makes the hybrid explicit (E badge).
+          explicit: evidenceExplicit ?? aggregateExplicitFlags(memberExplicit),
         });
       } else {
         const directOffer: ReleaseAvailabilityProvider = {
@@ -634,10 +676,6 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
   // slot; surface any selected offer the join missed so a release's Atmos offer
   // never disappears from the switcher just because the same album also serves
   // stereo (the "header says Apple Atmos but the list only shows TIDAL" bug).
-  const lookupExplicit = db.prepare(`
-    SELECT explicit FROM ProviderItems
-    WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
-  `);
   for (const s of slotRows) {
     const releaseMbid = s.selected_release_mbid;
     const provider = s.selected_provider;
@@ -653,7 +691,10 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       && sameProviderAlbumSet(offer.providerAlbumId, providerAlbumId));
     if (alreadyPresent) continue;
     const explicit = isComposite
-      ? null
+      ? aggregateExplicitFlags(albumIds.map((albumId) => {
+        const row = lookupExplicit.get(provider, albumId) as { explicit: number | null } | undefined;
+        return row?.explicit == null ? null : Boolean(row.explicit);
+      }))
       : (lookupExplicit.get(provider, providerAlbumId) as { explicit: number | null } | undefined)?.explicit ?? null;
     rel.availability.push({
       provider,
@@ -702,9 +743,9 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
 /**
  * Persist strict composite release matches for every release group of an artist
  * (core + collaborative). Composite coverage — a *set* of provider albums whose
- * combined identity (ISRC, then title/shape) exactly covers one MB release —
- * lives in the match graph as first-class `ProviderItemMatches` rows, so the
- * read layer and selection no longer recompute it on the fly.
+ * combined ISRC identity exactly covers one MB release — lives in the match
+ * graph as first-class `ProviderItemMatches` rows. Title/duration is not enough
+ * for multi-album stitches (Servarr mode without catalog ISRCs simply forms none).
  */
 export function persistCompositeReleaseMatchesForArtist(artistMbid: string | null): void {
   const mbid = String(artistMbid || "").trim();
@@ -744,7 +785,7 @@ export function persistCompositeReleaseMatches(releaseGroupMbid: string): void {
   if (!groupArtist?.artist_mbid) return;
 
   const providerAlbums = db.prepare(`
-    SELECT provider, provider_id AS provider_item_id, quality, library_slot
+    SELECT provider, provider_id AS provider_item_id, quality, library_slot, explicit
     FROM ProviderItems
     WHERE entity_type = 'album'
       AND (artist_mbid = ? OR discovered_from_artist_mbid = ?)
@@ -808,8 +849,9 @@ export function persistCompositeReleaseMatches(releaseGroupMbid: string): void {
       const orderedSelected = orderCompositeByTargetTrack(selected, targetTracks);
       const providerAlbumIds = orderedSelected.map((candidate) => candidate.providerAlbumId);
       const qualities = orderedSelected.map((candidate) => candidate.quality).filter(Boolean) as string[];
-      const quality = chooseLowestCompositeQuality(qualities);
+      const quality = chooseHighestCompositeQuality(qualities);
       const librarySlot = orderedSelected.find((candidate) => candidate.librarySlot)?.librarySlot ?? null;
+      const explicit = aggregateExplicitFlags(orderedSelected.map((candidate) => candidate.explicit));
 
       upsertProviderReleaseMatch({
         provider: orderedSelected[0].provider,
@@ -824,6 +866,7 @@ export function persistCompositeReleaseMatches(releaseGroupMbid: string): void {
           providerAlbumIds,
           quality,
           librarySlot,
+          explicit,
           coverageSummary: `${targetTracks.length}/${targetTracks.length} tracks from ${orderedSelected.length} provider albums`,
         }),
       });
@@ -856,7 +899,8 @@ function buildProviderAlbumCoverageCandidate(
   for (const providerTrack of providerTracks) {
     const matches = targetTracks.filter((target) => {
       if (coveredTrackMbids.has(target.mbid)) return false;
-      return providerTrackMatchesTarget(providerTrack, target);
+      // Composite pieces are ISRC-only — no title/duration false positives.
+      return providerTrackMatchesTargetByIsrc(providerTrack, target);
     });
     if (matches.length !== 1) return null;
     const target = matches[0];
@@ -879,40 +923,16 @@ function buildProviderAlbumCoverageCandidate(
     providerAlbumId: String(album.provider_item_id),
     quality: album.quality,
     librarySlot: album.library_slot,
+    explicit: album.explicit == null ? null : Boolean(album.explicit),
     coveredTrackMbids,
     evidence,
   };
 }
 
-function providerTrackMatchesTarget(providerTrack: ProviderTrackLike, target: TargetTrackRow): boolean {
-  // ISRC is authoritative: when both sides carry one, the recording identity is
-  // decided by it (no title/duration heuristic needed, and a mismatch is a hard
-  // no even if the titles look alike). Title + duration is the fallback for
-  // Servarr Metadata Server-mode data that lacks ISRCs.
+/** Hybrid / composite coverage requires catalog ISRC identity on both sides. */
+function providerTrackMatchesTargetByIsrc(providerTrack: ProviderTrackLike, target: TargetTrackRow): boolean {
   const providerIsrc = normalizeIsrc(providerTrack.isrc);
-  if (providerIsrc && target.isrcs.size > 0) {
-    return target.isrcs.has(providerIsrc);
-  }
-
-  const providerTitle = normalizeTrackTitle(providerTrack.title);
-  const targetTitle = normalizeTrackTitle(target.title);
-  if (!providerTitle || !targetTitle || providerTitle !== targetTitle) return false;
-
-  const providerDuration = numericProviderDuration(providerTrack.duration);
-  if (providerDuration == null || target.length_ms == null) return true;
-  return Math.abs(providerDuration - target.length_ms / 1000) <= 4;
-}
-
-function normalizeTrackTitle(value: unknown): string {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, " ")
-    .replace(/\[[^\]]*\]/g, " ")
-    .replace(/\b(edit|single version|radio edit|mtv unplugged)\b/g, " ")
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
+  return Boolean(providerIsrc && target.isrcs.size > 0 && target.isrcs.has(providerIsrc));
 }
 
 function numericProviderDuration(value: unknown): number | null {
@@ -967,8 +987,8 @@ function chooseStrictComposites(
   }
   return selections.sort((left, right) =>
     compareCompositeQualityDesc(
-      normalizeCompositeQuality(chooseLowestCompositeQuality(left.map((candidate) => candidate.quality).filter(Boolean) as string[])),
-      normalizeCompositeQuality(chooseLowestCompositeQuality(right.map((candidate) => candidate.quality).filter(Boolean) as string[])),
+      normalizeCompositeQuality(chooseHighestCompositeQuality(left.map((candidate) => candidate.quality).filter(Boolean) as string[])),
+      normalizeCompositeQuality(chooseHighestCompositeQuality(right.map((candidate) => candidate.quality).filter(Boolean) as string[])),
     ) || compositeSelectionKey(left).localeCompare(compositeSelectionKey(right)),
   );
 }
@@ -1013,7 +1033,6 @@ function findExactCover(
   startIndex: number,
 ): ProviderAlbumCoverageCandidate[] | null {
   if (covered.size === targetMbids.size) return [...selected];
-  if (selected.length >= 4) return null;
 
   for (let i = startIndex; i < candidates.length; i++) {
     const candidate = candidates[i];
@@ -1034,7 +1053,8 @@ function findExactCover(
   return null;
 }
 
-function chooseLowestCompositeQuality(qualities: string[]): string | null {
+/** Advertised composite badge: highest album quality in the stitch. */
+function chooseHighestCompositeQuality(qualities: string[]): string | null {
   if (qualities.length === 0) return null;
   const rank = (quality: string) => {
     const q = quality.toUpperCase();
@@ -1044,5 +1064,5 @@ function chooseLowestCompositeQuality(qualities: string[]): string | null {
     if (q.includes("HIGH")) return 1;
     return 0;
   };
-  return [...qualities].sort((a, b) => rank(a) - rank(b))[0] ?? null;
+  return [...qualities].sort((a, b) => rank(b) - rank(a))[0] ?? null;
 }

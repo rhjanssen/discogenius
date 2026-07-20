@@ -100,13 +100,11 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalXXS,
     paddingTop: tokens.spacingVerticalS,
     paddingBottom: tokens.spacingVerticalS,
-    paddingLeft: tokens.spacingHorizontalXXS,
-    paddingRight: tokens.spacingHorizontalXXS,
+    paddingLeft: tokens.spacingHorizontalM,
+    paddingRight: tokens.spacingHorizontalM,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke3}`,
     "@media (min-width: 768px)": {
       gap: tokens.spacingHorizontalS,
-      paddingLeft: tokens.spacingHorizontalM,
-      paddingRight: tokens.spacingHorizontalM,
     },
     ":last-child": {
       borderBottom: "none",
@@ -316,24 +314,22 @@ const useStyles = makeStyles({
   dataGridHeader: {
     display: "grid",
     gap: tokens.spacingHorizontalXS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     backgroundColor: tokens.colorNeutralBackgroundAlpha2,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     "@media (min-width: 768px)": {
       gap: tokens.spacingHorizontalS,
-      padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     },
   },
   dataGridRow: {
     display: "grid",
     gap: tokens.spacingHorizontalXS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     alignItems: "center",
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorSubtleBackground,
     "@media (min-width: 768px)": {
       gap: tokens.spacingHorizontalS,
-      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     },
     ":last-child": {
       borderBottom: "none",

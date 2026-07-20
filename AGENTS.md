@@ -1,18 +1,28 @@
 # Discogenius Agent Guide & Memories
 
-This file contains accumulated knowledge, architectural constraints, and user preferences for the Discogenius project. It serves as persistent memory for agents working in this repository and is automatically loaded on every session.
+Accumulated architectural constraints and user preferences. Auto-loaded every
+session. This file is the single source of truth for rules; `docs/` holds the
+living design/operator docs and `docs/TASKS.md` is the backlog.
 
-## Universal Project Structure
-- **Instructions**: This file (`AGENTS.md`) is the single source of truth for rules.
-- **Skills**: Project-local reusable workflows live under `skills/`. Use them when the task matches their scope.
-- **MCP Servers**: Model Context Protocol configuration is stored in `mcp.json` at the root. It is currently empty unless a local agent adds project-specific servers.
-
-## Project Identity & Goals
-- Discogenius is a self-hosted, Lidarr-style music library manager that uses streaming-service rippers (TIDAL via tiddl) instead of torrent indexers.
-- Adds discography deduplication on top of release-type filtering.
-- Manages stereo, spatial (Atmos), and music-video libraries — by default in three separate library roots.
-- **Key decisions**: Keep the TypeScript stack (Express+better-sqlite3 api/, React+Vite+Fluent UI v9 app/). Frontend must stay pure Fluent UI. MusicBrainz is canonical identity; providers are availability/download resources only.
-- Core app views should be MusicBrainz/Servarr Metadata Server-primary. Provider data may supplement canonical holes where useful (artwork asset ids, copyright, provider URLs, availability/downloads), but do not preserve provider-only catalog/discovery features such as similar artists/albums or top tracks unless they can be driven from MusicBrainz/Servarr Metadata Server. Drop non-essential provider-only sections/code instead of adding provider catalog tables.
+## Project identity & goals
+- Self-hosted, Lidarr-style music library manager that uses streaming-service
+  rippers instead of torrent indexers, plus discography deduplication on top of
+  release-type filtering.
+- Manages stereo, spatial (Atmos), and music-video libraries — by default in
+  three separate library roots.
+- Providers: TIDAL, Apple Music, Amazon Music, Spotify, YouTube / YouTube Music,
+  and Deezer. Each is an availability/download resource behind one shared
+  adapter contract (`docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md`); TIDAL is the
+  most exercised.
+- **Key decisions**: keep the TypeScript stack (Express + better-sqlite3 `api/`,
+  React + Vite + Fluent UI v9 `app/`). Frontend stays pure Fluent UI.
+  MusicBrainz is canonical identity; providers are availability/download only.
+- Core views are MusicBrainz/Servarr-primary. Provider data may supplement
+  canonical holes (artwork asset ids, copyright, provider URLs,
+  availability/downloads), but do not preserve provider-only catalog/discovery
+  features (similar artists/albums, top tracks) unless MusicBrainz/Servarr can
+  drive them. Drop provider-only sections rather than adding provider catalog
+  tables.
 
 ## Layout
 - `api/` — Express + TypeScript + better-sqlite3 (synchronous DB access only)
@@ -20,62 +30,99 @@ This file contains accumulated knowledge, architectural constraints, and user pr
 - `e2e/` — Playwright tests
 - `config/` — runtime state (TOML config, SQLite DB, provider tokens) — never commit
 - `.ref_*` — read-only reference checkouts; consult them, never import from them
+- `docs/LIDARR_STRUCTURE_ALIGNMENT.md` maps our folders to Lidarr's.
 
-## Architecture & Development Rules
+## Architecture & development rules
 - TypeScript everywhere; Yarn 1.x only.
 - Keep routes thin; durable workflow logic lives in services/repositories.
-- Long-running work goes through the command queue (`api/src/services/commands/`), never inline in route handlers. The system mirrors Lidarr: `CommandModel`s (the `commands` table) are enqueued via `CommandQueueService`, `command-executor.ts` drains the queue and dispatches to per-command handlers in `commands/handlers/`, and `scheduler.ts` enqueues due scheduled tasks. Use `CommandExecutor.yieldToEventLoop()` (setImmediate) in heavy inline loops.
+- Long-running work goes through the command queue
+  (`api/src/services/commands/`), never inline in route handlers. `CommandModel`s
+  (the `commands` table) are enqueued via the queue manager, `command-executor.ts`
+  drains and dispatches to handlers in `commands/handlers/`, and `scheduler.ts`
+  enqueues due scheduled tasks. Use `CommandExecutor.yieldToEventLoop()` in heavy
+  inline loops.
 - Validate external boundaries explicitly.
-- Respect `monitored_lock` / `monitor_lock` columns: automation must never flip user-locked monitor state.
-- **tiddl integration**: lives in `api/src/services/providers/tidal/tiddl.ts`. Auth is at `config/.tiddl`. tiddl steering = config(global) + args(per-job).
-- **Atmos vs Stereo**: TIDAL Atmos has a SEPARATE stereo stream. An Atmos-only release filling the stereo slot is downloaded AS Atmos m4a and organized into `stereo-music`.
-- **Hi-Res needs ffmpeg**: TIDAL ships hi-res as FLAC-in-MP4; tiddl extracts via ffmpeg.
-- **Matching**: One shared matcher is used for slot-candidate tracks. Beware camelCase vs snake_case differences between callers.
-- **Servarr Metadata Server**: Strips ISRC/UPC. Use local-MB mode for exact ISRC/UPC if needed later. Match on MBID + duration + title distance.
+- Respect `monitored_lock` / `monitor_lock`: automation must never flip
+  user-locked monitor state.
+- **Provider tooling** stays inside the provider adapter/backend. TIDAL's `tiddl`
+  lives in `api/src/services/providers/tidal/`; its auth/config live under
+  `config/providers/tidal/.tiddl`. tiddl steering = config (global) + args
+  (per-job).
+- **Atmos vs stereo**: TIDAL Atmos has a SEPARATE stereo stream. An Atmos-only
+  release filling the stereo slot is downloaded AS Atmos m4a and organized into
+  `stereo-music`.
+- **Hi-Res needs ffmpeg**: TIDAL ships hi-res as FLAC-in-MP4; tiddl extracts via
+  ffmpeg.
+- **Matching**: one shared matcher scores slot-candidate tracks. Beware
+  camelCase vs snake_case differences between callers.
+- **Servarr Metadata Server** strips ISRC/UPC. Use local-MB mode for exact
+  ISRC/UPC; otherwise match on MBID + duration + title distance.
 
-## Performance Facts
-- The API uses **synchronous better-sqlite3 on the single Node event loop**, so any slow query stalls the WHOLE app.
-- Never scan big tables. Use indexes for foreign keys/filter columns.
+## Performance facts
+- The API uses **synchronous better-sqlite3 on the single Node event loop**, so
+  any slow query stalls the whole app.
+- Never scan big tables. Use indexes for foreign-key/filter columns.
 - Replace `OR EXISTS(subquery)` with `OR col IN (subquery)`.
-- Use `col = 1` not `COALESCE(col,0)=1` for `is_video`/`monitored` so indexes apply.
+- Use `col = 1` not `COALESCE(col,0)=1` for `is_video`/`monitored` so indexes
+  apply.
 
-## Robert's Preferences & Testing
+## Robert's preferences & testing
 - Use artists **Bastille** and **Bakermat** for live app tests.
-- Real-data testing over mocks (use live TIDAL token in `config/`).
-- Propose findings back to Robert before larger fix rounds.
-- **Reviewing other AI's work**: Be critical of Codex/Claude output. Run FULL `yarn ci` because vite `app build` tolerates type errors. Clean scratch debris. Verify behavioural claims against the running container before trusting them.
-- **Native Tools**: DO NOT claim native tools (ffmpeg/fpcalc) are untestable on Windows. Either use `winget install` or test inside the Docker container since the Dockerfile bundles `ffmpeg` + `libchromaprint-tools` (fpcalc).
+- Real-data testing over mocks (live provider token in `config/`).
+- Propose findings before larger fix rounds.
+- **Reviewing other AI's work**: be critical. Run FULL `yarn ci` because vite
+  `app build` tolerates type errors. Clean scratch debris. Verify behavioural
+  claims against the running container before trusting them.
+- **Native tools**: do not claim ffmpeg/fpcalc are untestable on Windows. Use
+  `winget install` or test inside the Docker container (the Dockerfile bundles
+  `ffmpeg` + `libchromaprint-tools` for fpcalc).
 
-## Validation Checklist
-- `yarn --cwd api build` (after backend changes)
-- `yarn --cwd app build` (after frontend changes)
-- `yarn ci` = `yarn lint && yarn typecheck && yarn test:api && yarn build` (ALWAYS run before tagging a release to catch tsc-only errors).
-- `docker compose up -d --build` (when runtime packaging changes)
-- Test flake: the node test-runner occasionally fails a whole file with "Unable to deserialize cloned data" — rerun in isolation.
+## Validation checklist
+- `yarn --cwd api build` after backend changes; `yarn --cwd app build` after
+  frontend changes.
+- `yarn ci` = `yarn lint && yarn typecheck && yarn test:api && yarn build`.
+  ALWAYS run before tagging a release to catch tsc-only errors.
+- `docker compose up -d --build` when runtime packaging changes.
+- Test flake: the node test-runner occasionally fails a whole file with "Unable
+  to deserialize cloned data" — rerun in isolation.
 
 ## Releases
-- The Docker image is published by `.github/workflows/release-dockerhub.yml`.
-- `yarn release:prepare` drives version bumps.
-- Local Docker validation uses `docker-compose.yml` (build) vs `docker-compose.example.yml` (published image).
-- Hand-write the CHANGELOG `## [x.y.z]` section first. `node .github/workflows/release/prepare-release.mjs --version x.y.z`. Commit `release: x.y.z`, tag `vX.Y.Z`, push.
+- The Docker image is published by `.github/workflows/release-dockerhub.yml`;
+  `yarn release:prepare` drives version bumps.
+- Local Docker validation: `docker-compose.yml` (build) vs
+  `docker-compose.example.yml` (published image).
+- Hand-write the CHANGELOG `## [x.y.z]` section first, then
+  `node .github/workflows/release/prepare-release.mjs --version x.y.z`. Commit
+  `release: x.y.z`, tag `vX.Y.Z`, push.
 
-## Roadmap & Backlog
-- Authoritative, versioned task backlog lives in `docs/TASKS.md`. Always read this to pick up work and keep statuses current.
-- Keep shipped work out of `docs/TASKS.md`; shipped detail belongs in `CHANGELOG.md`.
-- Deprioritized items: Lidarr parity items (notifications, tags, blocklist, per-artist metadata/quality profiles).
-
-## Database Rules
-- Never touch the host SQLite DB directly while the container is running. For ad-hoc inspection, run `docker exec discogenius sh -c 'node /tmp/x.js'` opening better-sqlite3 with `{readonly:true, fileMustExist:true}`.
-- **MusicBrainz/Servarr Metadata Server is the catalog source of truth.** Providers exist only to (1) download media and (2) *supplement* allowed holes in catalog rows (cover-art ids, copyright, replay gain/peak, provider URLs/availability), never to seed a parallel catalog table. Provider UPC/barcode and ISRC are matching evidence and must stay on `ProviderItems`, not `Albums`/`AlbumReleases`/`Recordings`; normal Servarr Metadata Server mode should not populate catalog UPC/ISRC columns from provider data. There are no provider catalog tables; `ProviderItems` is availability/offers only, and `ProviderItemMatches` stores provider-to-MusicBrainz match evidence. If a feature is populated *exclusively* from provider data, re-source it from MB/Servarr Metadata Server or remove it (e.g. similar-artists was removed because there is no MB equivalent and no Lidarr feature). Prefer integer catalog FKs for new file joins; do not add new provider-shadow catalog columns.
+## Database rules
+- Never touch the host SQLite DB directly while the container is running. For
+  ad-hoc inspection, `docker exec discogenius sh -c 'node /tmp/x.js'` opening
+  better-sqlite3 with `{readonly:true, fileMustExist:true}`.
+- **MusicBrainz/Servarr is the catalog source of truth.** Providers exist only to
+  download media and to supplement allowed catalog holes (cover-art ids,
+  copyright, replay gain/peak, provider URLs/availability), never to seed a
+  parallel catalog table. Provider UPC/barcode and ISRC are matching evidence and
+  stay on `ProviderItems`, not `Albums`/`AlbumReleases`/`Recordings`; normal
+  Servarr mode does not populate catalog UPC/ISRC from provider data. There are
+  no provider catalog tables: `ProviderItems` is offers/availability and
+  `ProviderItemMatches` is match evidence. If a feature is populated exclusively
+  from provider data, re-source it from MB/Servarr or remove it. Prefer integer
+  catalog FKs for new file joins; do not add provider-shadow catalog columns.
 
 ## Import & M4A
 - M4A stores tags fine (iTunes-style atoms).
-- Duration "—" bug was due to `music-metadata` failing on Atmos MP4. Fixed with `probeMediaDuration()` (ffprobe).
-- Track stays "unknown" when `music-metadata` fails and fuzzy match of title from filename to a provider/MB recording fails.
+- The duration "—" bug was `music-metadata` failing on Atmos MP4; fixed with
+  `probeMediaDuration()` (ffprobe).
+- A track stays "unknown" when `music-metadata` fails and the filename-title
+  fuzzy match to a provider/MB recording also fails.
 
-## AcoustID & MBID Embedding
-- `fpcalc` produces a Chromaprint fingerprint plus duration; AcoustID lookup maps that fingerprint to an AcoustID and, when available, MusicBrainz recording IDs. It does not directly "return the MBIDs" without the web-service lookup.
-- Fingerprinting is for unknown/mistagged imports. We already embed the full set of `MUSICBRAINZ_*` tags when present.
-- Downloads get MBIDs embedded directly.
-- We only fingerprint files with NO mbid (imports / pre-existing library).
-- Plex matches by its own fingerprint/database, not embedded MBID tags. Jellyfin natively reads `MUSICBRAINZ_*` tags.
+## AcoustID & MBID embedding
+- `fpcalc` produces a Chromaprint fingerprint + duration; the AcoustID
+  web-service lookup maps it to an AcoustID and, when available, MusicBrainz
+  recording IDs (it does not return MBIDs without the lookup).
+- Fingerprinting is for unknown/mistagged imports; we only fingerprint files with
+  NO mbid. We already embed the full `MUSICBRAINZ_*` tag set when present, and
+  downloads get MBIDs embedded directly.
+- Plex matches by its own fingerprint/database, not embedded MBID tags. Jellyfin
+  natively reads `MUSICBRAINZ_*` tags.

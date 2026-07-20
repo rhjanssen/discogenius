@@ -195,6 +195,7 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     }
 
     const releases = await this.loadReleasesForGroup(header.id);
+    const curated = (await this.loadReleaseGroupCuratedFields([header.id])).get(header.id);
 
     const firstReleaseDate = earlierDate(
       releases
@@ -212,6 +213,10 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       disambiguation: header.comment || null,
       "artist-credit": header.artist_gid ? [{ artist: { id: header.artist_gid } }] : [],
       releases,
+      genres: curated?.genres ?? [],
+      aliases: curated?.aliases ?? [],
+      relations: curated?.relations ?? [],
+      rating: curated?.rating ?? null,
     };
     return mapMbReleaseGroupToLidarrDetail(mbReleaseGroup);
   }
@@ -254,9 +259,11 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     }
 
     const releasesByRgId = await this.loadReleasesForGroups(headers.map((header) => header.id));
+    const curatedByRgId = await this.loadReleaseGroupCuratedFields(headers.map((header) => header.id));
 
     return headers.map((header) => {
       const releases = releasesByRgId.get(header.id) ?? [];
+      const curated = curatedByRgId.get(header.id);
       const firstReleaseDate = earlierDate(
         releases
           .map((release) => release.date ?? null)
@@ -272,6 +279,10 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
         disambiguation: header.comment || null,
         "artist-credit": header.artist_gid ? [{ artist: { id: header.artist_gid } }] : [],
         releases,
+        genres: curated?.genres ?? [],
+        aliases: curated?.aliases ?? [],
+        relations: curated?.relations ?? [],
+        rating: curated?.rating ?? null,
       };
       return { releaseGroupMbid: header.gid, detail: mapMbReleaseGroupToLidarrDetail(mbReleaseGroup) };
     });
@@ -348,6 +359,45 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       }
     }
 
+    const labelRows = await this.query<{ release_gid: string; label_name: string }>(
+      `SELECT r.gid AS release_gid, lab.name AS label_name
+       FROM release r
+       JOIN release_label rl ON rl.release = r.id
+       JOIN label lab ON lab.id = rl.label
+       WHERE r.release_group = ANY($1::int[])
+       ORDER BY r.gid, rl.id`,
+      [ids],
+    );
+    const labelsByRelease = new Map<string, Array<{ label?: { name?: string } }>>();
+    for (const row of labelRows) {
+      const list = labelsByRelease.get(row.release_gid) ?? [];
+      const name = String(row.label_name || "").trim();
+      if (name && !list.some((entry) => entry.label?.name === name)) {
+        list.push({ label: { name } });
+      }
+      labelsByRelease.set(row.release_gid, list);
+    }
+
+    const urlRows = await this.query<{ release_gid: string; rel_type: string | null; resource: string }>(
+      `SELECT r.gid AS release_gid, lt.name AS rel_type, u.url AS resource
+       FROM release r
+       JOIN l_release_url lru ON lru.entity0 = r.id
+       JOIN link l ON l.id = lru.link
+       JOIN link_type lt ON lt.id = l.link_type
+       JOIN url u ON u.id = lru.entity1
+       WHERE r.release_group = ANY($1::int[])
+       ORDER BY r.gid, lru.link_order, lt.name`,
+      [ids],
+    );
+    const relationsByRelease = new Map<string, NonNullable<MbRelease["relations"]>>();
+    for (const row of urlRows) {
+      const resource = String(row.resource || "").trim();
+      if (!resource) continue;
+      const list = relationsByRelease.get(row.release_gid) ?? [];
+      list.push({ type: row.rel_type ?? undefined, url: { resource } });
+      relationsByRelease.set(row.release_gid, list);
+    }
+
     // Assemble: release → media[] → tracks[] (grouped by the ordered rows),
     // bucketed into result by release_group id.
     const releaseMap = new Map<string, MbRelease>();
@@ -363,6 +413,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           barcode: row.barcode,
           date: releaseDate.get(row.release_gid) ?? null,
           disambiguation: row.release_comment || null,
+          "label-info": labelsByRelease.get(row.release_gid) ?? [],
+          relations: relationsByRelease.get(row.release_gid) ?? [],
           media: [],
         };
         releaseMap.set(row.release_gid, release);
@@ -397,6 +449,99 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       medium.tracks!.push(track);
     }
     return result;
+  }
+
+  /**
+   * Load curated release-group fields (genres, url-rels, aliases, rating) for
+   * many groups in a fixed number of set-based queries.
+   */
+  private async loadReleaseGroupCuratedFields(releaseGroupIds: number[]): Promise<Map<number, {
+    genres: string[];
+    aliases: string[];
+    relations: NonNullable<MbReleaseGroup["relations"]>;
+    rating: MbReleaseGroup["rating"];
+  }>> {
+    const curated = new Map<number, {
+      genres: string[];
+      aliases: string[];
+      relations: NonNullable<MbReleaseGroup["relations"]>;
+      rating: MbReleaseGroup["rating"];
+    }>();
+    const ids = Array.from(new Set(releaseGroupIds.filter((id) => Number.isFinite(id))));
+    if (ids.length === 0) {
+      return curated;
+    }
+
+    for (const id of ids) {
+      curated.set(id, { genres: [], aliases: [], relations: [], rating: null });
+    }
+
+    const ratingRows = await this.query<{ id: number; rating: number | null; rating_count: number | null }>(
+      `SELECT id, rating, rating_count
+       FROM release_group_meta
+       WHERE id = ANY($1::int[])`,
+      [ids],
+    );
+    for (const row of ratingRows) {
+      const entry = curated.get(row.id);
+      if (!entry) continue;
+      const voteCount = Number(row.rating_count ?? 0);
+      const value = Number(row.rating ?? NaN);
+      if (voteCount > 0 && Number.isFinite(value)) {
+        entry.rating = { "votes-count": voteCount, value };
+      }
+    }
+
+    const genreRows = await this.query<{ rg_id: number; genre_name: string }>(
+      `SELECT rg.id AS rg_id, g.name AS genre_name
+       FROM release_group rg
+       JOIN l_genre_release_group lgrg ON lgrg.entity1 = rg.id
+       JOIN genre g ON g.id = lgrg.entity0
+       WHERE rg.id = ANY($1::int[])
+       ORDER BY rg.id, lgrg.link_order, g.name`,
+      [ids],
+    );
+    for (const row of genreRows) {
+      const entry = curated.get(row.rg_id);
+      const name = String(row.genre_name || "").trim();
+      if (!entry || !name || entry.genres.includes(name)) continue;
+      entry.genres.push(name);
+    }
+
+    const linkRows = await this.query<{ rg_id: number; rel_type: string | null; resource: string }>(
+      `SELECT rg.id AS rg_id, lt.name AS rel_type, u.url AS resource
+       FROM release_group rg
+       JOIN l_release_group_url lrgu ON lrgu.entity0 = rg.id
+       JOIN link l ON l.id = lrgu.link
+       JOIN link_type lt ON lt.id = l.link_type
+       JOIN url u ON u.id = lrgu.entity1
+       WHERE rg.id = ANY($1::int[])
+       ORDER BY rg.id, lrgu.link_order, lt.name`,
+      [ids],
+    );
+    for (const row of linkRows) {
+      const entry = curated.get(row.rg_id);
+      const resource = String(row.resource || "").trim();
+      if (!entry || !resource) continue;
+      entry.relations.push({ type: row.rel_type ?? undefined, url: { resource } });
+    }
+
+    const aliasRows = await this.query<{ rg_id: number; alias_name: string }>(
+      `SELECT rg.id AS rg_id, a.name AS alias_name
+       FROM release_group rg
+       JOIN release_group_alias a ON a.release_group = rg.id
+       WHERE rg.id = ANY($1::int[])
+       ORDER BY rg.id, a.name`,
+      [ids],
+    );
+    for (const row of aliasRows) {
+      const entry = curated.get(row.rg_id);
+      const name = String(row.alias_name || "").trim();
+      if (!entry || !name || entry.aliases.includes(name)) continue;
+      entry.aliases.push(name);
+    }
+
+    return curated;
   }
 
   async getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null> {

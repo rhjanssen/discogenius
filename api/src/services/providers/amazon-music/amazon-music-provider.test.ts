@@ -232,10 +232,14 @@ test("Amazon Music API requests abort on their bounded deadline", async () => {
   assert.equal(signal?.aborted, true);
 });
 
-test("Amazon Music manifest truthfully declares the unofficial external dependency", () => {
+test("Amazon Music manifest truthfully declares the unofficial external dependency", async () => {
   const provider = new AmazonMusicProvider({ credentials, fetchImpl: amazonFetch });
   assert.equal(provider.manifest.integration.catalogSource, "unofficial-api");
   assert.equal(provider.manifest.auth.kind, "external");
+  assert.equal(provider.manifest.auth.comingSoon, true);
+  assert.equal(provider.manifest.downloadBackends[0].enabled, false);
+  assert.equal(provider.isAuthenticated(), false);
+  assert.equal((await provider.getAuthStatus()).canAuthenticate, false);
   assert.equal(provider.capabilities.spatialAudio, true);
   assert.equal(provider.capabilities.musicVideos, false);
 });

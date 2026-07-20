@@ -7,6 +7,7 @@ import {
     DownloadedTracksImportService,
     isImportDownloadCancellationRequested,
 } from "../../mediafiles/downloaded-tracks-import-service.js";
+import { clearConfigCache } from "../../config/config.js";
 import { initCurationListeners } from "../../music/curation.listener.js";
 import { forwardImportProgress, isCommandWorker, type MainToWorkerMessage, type WorkerToMainMessage } from "./command-worker-protocol.js";
 
@@ -42,6 +43,10 @@ function post(message: WorkerToMainMessage): void {
 
 async function runJob(message: Extract<MainToWorkerMessage, { kind: "run" }>): Promise<void> {
     const job = message.job;
+    // Settings are written on the main thread. Workers keep a process-local
+    // config cache, so without a refresh they keep boot-time defaults
+    // (e.g. include_videos=false, old naming templates) forever.
+    clearConfigCache();
     try {
         if (job.name === CommandNames.ImportDownload) {
             // Imports are owned by the download processor (it persists

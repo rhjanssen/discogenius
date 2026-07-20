@@ -127,8 +127,23 @@ class FixtureBridge implements YtMusicBridge {
             lengthSeconds: "214",
             thumbnail: { thumbnails: [{ url: "https://img.test/pompeii.jpg", width: 640, height: 640 }] },
           },
+          counterpart: {
+            videoId: VIDEO_ID,
+            title: "Pompeii (Official Music Video)",
+          },
         };
         break;
+      case "get_track_counterparts": {
+        const ids = Array.isArray(payload.ids) ? payload.ids.map(String) : [];
+        const counterparts: Record<string, unknown> = {};
+        for (const id of ids) {
+          counterparts[id] = id === TRACK_ID
+            ? { videoId: VIDEO_ID, title: "Pompeii (Official Music Video)" }
+            : null;
+        }
+        result = { counterparts };
+        break;
+      }
       case "get_video":
         result = {
           videoDetails: {
@@ -189,8 +204,14 @@ test("fixture-backed catalog maps search, album tracks, artists, and videos", as
   assert.equal(tracks.length, 2);
   assert.equal(tracks[0].album.providerId, ALBUM_ID);
   assert.equal(tracks[0].trackNumber, 1);
+  assert.equal(tracks[0].counterpartVideoId, VIDEO_ID, "ATV album track should resolve OMV counterpart");
   assert.equal(tracks[1].trackNumber, 2);
   assert.equal(tracks[1].duration, 241);
+  assert.equal(tracks[1].counterpartVideoId ?? null, null);
+  assert.ok(bridge.calls.some((call) => call.operation === "get_track_counterparts"));
+
+  const single = await catalog.getTrack(TRACK_ID);
+  assert.equal(single.counterpartVideoId, VIDEO_ID);
 
   const video = await catalog.getVideo(VIDEO_ID);
   assert.equal(video.releaseDate, "2013-01-21");
@@ -199,6 +220,25 @@ test("fixture-backed catalog maps search, album tracks, artists, and videos", as
   const lyrics = await catalog.getLyrics(TRACK_ID);
   assert.equal(lyrics?.subtitles, "[00:00.00]I was left to my own devices");
   assert.equal(lyrics?.provider, "Source: LyricFind");
+});
+
+test("album track counterpart enrich keeps self-OMV video ids", async () => {
+  const bridge = new FixtureBridge();
+  const originalRequest = bridge.request.bind(bridge);
+  bridge.request = async <T,>(operation: import("./ytmusicapi-bridge.js").YtMusicBridgeOperation, payload: Record<string, unknown> = {}) => {
+    if (operation === "get_track_counterparts") {
+      const ids = Array.isArray(payload.ids) ? payload.ids.map(String) : [];
+      const counterparts: Record<string, unknown> = {};
+      for (const id of ids) {
+        counterparts[id] = { videoId: id, videoType: "MUSIC_VIDEO_TYPE_OMV", kind: "yt-self-omv" };
+      }
+      return { counterparts } as T;
+    }
+    return originalRequest<T>(operation, payload);
+  };
+  const catalog = new YouTubeMusicCatalog(bridge);
+  const tracks = await catalog.getAlbumTracks(ALBUM_ID);
+  assert.equal(tracks[0].counterpartVideoId, tracks[0].providerId);
 });
 
 test("authenticated import adapter exposes library, liked music, and playlists", async () => {
@@ -272,7 +312,11 @@ test("URL parsing preserves stable IDs across YouTube and YouTube Music hosts", 
 test("credentials are normalized into provider-owned header and Netscape cookie files", () => {
   clearYouTubeMusicCredentials();
   saveYouTubeMusicCredentials({
-    headers: JSON.stringify({ "X-Goog-AuthUser": "0" }),
+    headers: JSON.stringify({
+      Authorization: "SAPISIDHASH test-hash",
+      "X-Goog-AuthUser": "0",
+      "sec-ch-ua": "should-be-dropped",
+    }),
     cookies: "Cookie: SAPISID=test-secret; __Secure-3PAPISID=second-secret",
   });
 
@@ -280,7 +324,11 @@ test("credentials are normalized into provider-owned header and Netscape cookie 
   assert.deepEqual(state, { browserHeadersConfigured: true, cookiesConfigured: true });
   assert.equal(path.dirname(YOUTUBE_MUSIC_HEADERS_FILE), path.dirname(YOUTUBE_MUSIC_COOKIES_FILE));
   assert.match(YOUTUBE_MUSIC_HEADERS_FILE, /providers[\\/]youtube-music[\\/]browser\.json$/u);
-  assert.equal(loadYouTubeMusicHeaders()?.Cookie, "SAPISID=test-secret; __Secure-3PAPISID=second-secret");
+  const storedHeaders = loadYouTubeMusicHeaders();
+  assert.equal(storedHeaders?.Cookie, "SAPISID=test-secret; __Secure-3PAPISID=second-secret");
+  assert.equal(storedHeaders?.Authorization, "SAPISIDHASH test-hash");
+  assert.equal(storedHeaders?.["X-Goog-AuthUser"], "0");
+  assert.equal((storedHeaders as Record<string, string> | null)?.["sec-ch-ua"], undefined);
   const cookies = fs.readFileSync(YOUTUBE_MUSIC_COOKIES_FILE, "utf8");
   assert.match(cookies, /^# Netscape HTTP Cookie File/u);
   assert.match(cookies, /\.youtube\.com\tTRUE\t\/\tTRUE\t2147483647\tSAPISID\ttest-secret/u);
@@ -289,8 +337,79 @@ test("credentials are normalized into provider-owned header and Netscape cookie 
     () => saveYouTubeMusicCredentials({ headers: { Cookie: "safe\r\nInjected: bad" } }),
     /control character/i,
   );
+  assert.throws(
+    () => saveYouTubeMusicCredentials({
+      headers: JSON.stringify({
+        responseContext: { serviceTrackingParams: [] },
+        contents: { singleColumnBrowseResultsRenderer: {} },
+      }),
+    }),
+    /response body, not request headers/i,
+  );
   clearYouTubeMusicCredentials();
   assert.deepEqual(getYouTubeMusicCredentialState(), { browserHeadersConfigured: false, cookiesConfigured: false });
+});
+
+test("Copy as Node.js fetch paste is accepted and trimmed to auth headers", () => {
+  clearYouTubeMusicCredentials();
+  const fetchPaste = `fetch("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false", {
+  "headers": {
+    "accept": "*/*",
+    "accept-language": "en-US,en;q=0.9",
+    "authorization": "SAPISIDHASH abc123",
+    "content-type": "application/json",
+    "sec-ch-ua": "\\"Chromium\\";v=\\"120\\"",
+    "sec-fetch-mode": "same-origin",
+    "x-goog-authuser": "0",
+    "x-origin": "https://music.youtube.com",
+    "cookie": "SAPISID=fetch-secret; SID=session",
+    "Referer": "https://music.youtube.com/"
+  },
+  "body": "{\\"context\\":{}}",
+  "method": "POST"
+});`;
+
+  saveYouTubeMusicCredentials({ headers: fetchPaste });
+
+  const stored = JSON.parse(fs.readFileSync(YOUTUBE_MUSIC_HEADERS_FILE, "utf8")) as Record<string, string>;
+  assert.equal(stored.Authorization, "SAPISIDHASH abc123");
+  assert.equal(stored.Cookie, "SAPISID=fetch-secret; SID=session");
+  assert.equal(stored["X-Goog-AuthUser"], "0");
+  assert.equal(stored["x-origin"], "https://music.youtube.com");
+  assert.equal(stored.Accept, "*/*");
+  assert.equal(stored["Content-Type"], "application/json");
+  assert.equal(stored["sec-ch-ua"], undefined);
+  assert.equal(stored.Referer, undefined);
+  assert.equal(getYouTubeMusicCredentialState().cookiesConfigured, true);
+  clearYouTubeMusicCredentials();
+});
+
+test("fetch paste without Cookie can be completed with a cookies.txt export", () => {
+  clearYouTubeMusicCredentials();
+  const fetchWithoutCookie = `fetch("https://music.youtube.com/youtubei/v1/browse", {
+  "headers": {
+    "authorization": "SAPISIDHASH xyz",
+    "x-goog-authuser": "1",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "credentials": "include"
+});`;
+  const netscape = [
+    "# Netscape HTTP Cookie File",
+    ".youtube.com\tTRUE\t/\tTRUE\t2147483647\tSAPISID\textension-secret",
+  ].join("\n");
+
+  assert.throws(
+    () => saveYouTubeMusicCredentials({ headers: fetchWithoutCookie }),
+    /missing Cookie/i,
+  );
+
+  saveYouTubeMusicCredentials({ headers: fetchWithoutCookie, cookies: netscape });
+  assert.equal(loadYouTubeMusicHeaders()?.Cookie, "SAPISID=extension-secret");
+  assert.equal(loadYouTubeMusicHeaders()?.Authorization, "SAPISIDHASH xyz");
+  assert.equal(loadYouTubeMusicHeaders()?.["X-Goog-AuthUser"], "1");
+  clearYouTubeMusicCredentials();
 });
 
 test("Netscape cookies retain only domains applicable to music.youtube.com", () => {
@@ -307,7 +426,11 @@ test("Netscape cookies retain only domains applicable to music.youtube.com", () 
 
   clearYouTubeMusicCredentials();
   saveYouTubeMusicCredentials({
-    headers: { Cookie: "stale=header", "X-Goog-AuthUser": "0" },
+    headers: {
+      Authorization: "SAPISIDHASH keep-me",
+      Cookie: "stale=header",
+      "X-Goog-AuthUser": "0",
+    },
     cookies: netscape,
   });
 

@@ -638,8 +638,8 @@ test("download queue history hides completed download while paired import is act
     assert.equal(activeDuringImport.items[0]?.id, importJobId);
     assert.equal(activeDuringImport.items[0]?.stage, "import");
     assert.deepEqual(activeDuringImport.items[0]?.tracks, [
-        { title: "Import Track 1", trackNum: 1, status: "queued" },
-        { title: "Import Track 2", trackNum: 2, status: "queued" },
+        { title: "Import Track 1", trackNum: 1, volumeNum: undefined, status: "queued" },
+        { title: "Import Track 2", trackNum: 2, volumeNum: undefined, status: "queued" },
     ]);
     assert.equal(historyDuringImport.total, 0);
 

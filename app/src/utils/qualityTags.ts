@@ -1,5 +1,10 @@
-import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
-import { isVideoResolutionQuality, stereoQualityTier, videoResolutionLabel } from "@/utils/qualityTier";
+import { isSpatialAudioQuality, normalizeQualityTag } from "./spatialAudio";
+import {
+  isUnknownQualityTag,
+  isVideoResolutionQuality,
+  stereoQualityTier,
+  videoResolutionLabel,
+} from "./qualityTier";
 
 export interface QualityTaggedItem {
   quality?: string | null;
@@ -8,6 +13,9 @@ export interface QualityTaggedItem {
 
 export const qualityDisplayKey = (quality: string): string => {
   const normalized = normalizeQualityTag(quality);
+  if (isUnknownQualityTag(normalized)) {
+    return "UNKNOWN";
+  }
   if (isSpatialAudioQuality(normalized)) {
     return normalized === "DOLBY_ATMOS" ? "SPATIAL:DOLBY_ATMOS" : "SPATIAL";
   }
@@ -28,8 +36,11 @@ export const orderedQualityTags = (item: QualityTaggedItem): string[] => {
   return values
     .map((quality) => String(quality || "").trim())
     .filter((quality) => {
+      if (!quality || isUnknownQualityTag(quality)) {
+        return false;
+      }
       const key = qualityDisplayKey(quality);
-      if (!quality || seen.has(key)) {
+      if (seen.has(key)) {
         return false;
       }
       seen.add(key);

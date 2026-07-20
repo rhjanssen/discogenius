@@ -7,6 +7,7 @@ import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-rele
 import { streamingProviderManager } from "../providers/index.js";
 import {
     upsertProviderReleaseMatch,
+    aggregateExplicitFlags,
 } from "./provider-matches.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
@@ -281,6 +282,12 @@ function scoreTrackMatch(target: TargetTrack, pt: ProviderTrackDetail): number {
     );
 }
 
+/** Hybrid stitches require catalog ISRC identity — no title/duration false positives. */
+function hasCatalogIsrcIdentity(target: TargetTrack, providerTrack: ProviderTrackDetail): boolean {
+    const providerIsrc = normalizeIsrc(providerTrack.isrc);
+    return Boolean(providerIsrc && target.isrcs.has(providerIsrc));
+}
+
 function isTrackCovered(target: TargetTrack, providerTracks: Array<ProviderTrackDetail>): boolean {
     return providerTracks.some(pt => {
         return scoreTrackMatch(target, pt) >= TRACK_MATCH_THRESHOLD;
@@ -401,6 +408,7 @@ function buildCoveragePlanForProvider(
     provider: string,
     candidates: ProviderAlbumCandidateWithTracks[],
     slot: ReleaseGroupLibrarySlot,
+    preferExplicit: boolean = true,
 ): ReleaseCoveragePlan | null {
     const providerCandidatesByAlbum = new Map<string, ProviderAlbumCandidateWithTracks>();
     for (const candidate of candidates) {
@@ -439,6 +447,10 @@ function buildCoveragePlanForProvider(
         });
     }
     const sources = Array.from(sourcesByKey.values());
+    // Multi-album stitches require catalog ISRC on every edge (Servarr mode
+    // without ISRCs simply will not form hybrids). Single-album plans keep the
+    // shared fuzzy matcher for normal matching.
+    const requireIsrc = providerCandidates.length > 1;
     const normalizedTitle = (value: string | null | undefined) => String(value || "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
@@ -450,32 +462,30 @@ function buildCoveragePlanForProvider(
         const title = normalizedTitle(track.title);
         titleCounts.set(title, (titleCounts.get(title) || 0) + 1);
     }
-    const hasStrongTrackIdentity = (targetTrack: TargetTrack, providerTrack: ProviderTrackDetail) => {
-        if (targetTrack.recordingMbid && providerTrack.mbid && targetTrack.recordingMbid === providerTrack.mbid) {
-            return true;
-        }
-        const providerIsrc = normalizeIsrc(providerTrack.isrc);
-        return Boolean(providerIsrc && targetTrack.isrcs.has(providerIsrc));
-    };
     const edges = target.tracks.map((targetTrack, targetIndex) => sources
-        .map((source) => ({
-            source,
-            targetIndex,
-            matchScore: scoreTrackMatch(targetTrack, source.providerTrack),
-        }))
+        .map((source) => {
+            const matchScore = requireIsrc
+                ? (hasCatalogIsrcIdentity(targetTrack, source.providerTrack) ? 1 : 0)
+                : scoreTrackMatch(targetTrack, source.providerTrack);
+            return { source, targetIndex, matchScore };
+        })
         .filter((edge) => {
+            if (requireIsrc) {
+                return edge.matchScore >= 1;
+            }
             if (edge.matchScore < TRACK_MATCH_THRESHOLD) return false;
             const duplicateCanonicalTitle = (titleCounts.get(normalizedTitle(targetTrack.title)) || 0) > 1;
             // Editions such as an original album plus an instrumental disc can
             // repeat every displayed title while referring to different MB
-            // recordings. Without MBID/ISRC evidence, title/duration cannot say
-            // which repeated recording a provider track represents. Treat that
-            // ambiguity as uncovered instead of reusing vocal tracks as the
-            // instrumental disc (or vice versa).
-            return !duplicateCanonicalTitle || hasStrongTrackIdentity(targetTrack, edge.source.providerTrack);
+            // recordings. Without ISRC evidence, title/duration cannot say which
+            // repeated recording a provider track represents.
+            return !duplicateCanonicalTitle || hasCatalogIsrcIdentity(targetTrack, edge.source.providerTrack);
         })
         .sort((left, right) =>
             right.source.quality - left.source.quality
+            || (preferExplicit
+                ? Number(Boolean(right.source.candidate.album.explicit)) - Number(Boolean(left.source.candidate.album.explicit))
+                : Number(Boolean(left.source.candidate.album.explicit)) - Number(Boolean(right.source.candidate.album.explicit)))
             || right.matchScore - left.matchScore
             || right.source.candidate.score - left.source.candidate.score
             || left.source.candidate.album.providerId.localeCompare(right.source.candidate.album.providerId)
@@ -538,27 +548,67 @@ function buildCoveragePlanForProvider(
 }
 
 function compareCoveragePlans(left: ReleaseCoveragePlan, right: ReleaseCoveragePlan): number {
+    // Complete always beats incomplete (Amy 22/27 stitch must not beat 11/11).
+    const completeCmp = Number(right.complete) - Number(left.complete);
+    if (completeCmp !== 0) {
+        return completeCmp;
+    }
+
+    if (left.complete && right.complete) {
+        // Different MB editions: prefer the fuller complete cover (deluxe).
+        if (left.releaseMbid !== right.releaseMbid) {
+            const editionCmp = right.targetTracks.length - left.targetTracks.length;
+            if (editionCmp !== 0) {
+                return editionCmp;
+            }
+        }
+        // Same release (or equal-length editions): hybrid and direct are equal —
+        // pick by quality (TIDAL MAX beats Apple HIGH), then fewer albums.
+        return right.qualityTotal - left.qualityTotal
+            || left.candidates.length - right.candidates.length
+            || right.identityCompatibleAssignments - left.identityCompatibleAssignments
+            || left.extraProviderTracks - right.extraProviderTracks
+            || right.scoreTotal - left.scoreTotal
+            || streamingProviderManager.getProviderPreferenceRank(left.provider)
+                - streamingProviderManager.getProviderPreferenceRank(right.provider)
+            || left.releaseMbid.localeCompare(right.releaseMbid)
+            || left.provider.localeCompare(right.provider);
+    }
+
+    // Incomplete: prefer more covered tracks, then quality.
     return right.assignments.length - left.assignments.length
-        || Number(right.complete) - Number(left.complete)
         || right.qualityTotal - left.qualityTotal
         || right.identityCompatibleAssignments - left.identityCompatibleAssignments
         || left.candidates.length - right.candidates.length
         || left.extraProviderTracks - right.extraProviderTracks
         || right.scoreTotal - left.scoreTotal
         || right.targetTracks.length - left.targetTracks.length
-        // Equal-merit plans from different providers fall back to the user's
-        // provider preference order, never the alphabetical provider id.
         || streamingProviderManager.getProviderPreferenceRank(left.provider)
             - streamingProviderManager.getProviderPreferenceRank(right.provider)
         || left.releaseMbid.localeCompare(right.releaseMbid)
         || left.provider.localeCompare(right.provider);
 }
 
-function lowestPlanQuality(plan: ReleaseCoveragePlan, slot: ReleaseGroupLibrarySlot): string | null {
-    return [...plan.assignments]
+/**
+ * Advertised badge quality for a composite plan: the quality most tracks
+ * actually use. Ties break toward higher quality. Using the absolute best
+ * track made hybrid albums show Max while most of the tracklist was High.
+ */
+function dominantPlanQuality(plan: ReleaseCoveragePlan, slot: ReleaseGroupLibrarySlot): string | null {
+    const counts = new Map<string, number>();
+    for (const assignment of plan.assignments) {
+        const quality = normalizeQualityTag(assignment.candidate.album.quality);
+        if (!quality) continue;
+        counts.set(quality, (counts.get(quality) || 0) + 1);
+    }
+    if (counts.size === 0) {
+        return null;
+    }
+    return [...counts.entries()]
         .sort((left, right) =>
-            qualityScore(slot, left.candidate.album.quality) - qualityScore(slot, right.candidate.album.quality),
-        )[0]?.candidate.album.quality || null;
+            right[1] - left[1]
+            || qualityScore(slot, right[0]) - qualityScore(slot, left[0]),
+        )[0]?.[0] || null;
 }
 
 function coveragePlanEvidence(plan: ReleaseCoveragePlan): Record<string, unknown> {
@@ -584,6 +634,8 @@ function coveragePlanEvidence(plan: ReleaseCoveragePlan): Record<string, unknown
                 canonicalTrackMbid: target.trackMbid,
                 canonicalRecordingMbid: target.recordingMbid,
                 title: target.title,
+                trackNum: target.position,
+                volumeNum: target.mediumPosition,
                 providerTrackId: assignment.providerTrack.providerId || assignment.providerTrack.provider_id || null,
                 providerAlbumId: assignment.candidate.album.providerId,
                 quality: assignment.candidate.album.quality || null,
@@ -690,8 +742,11 @@ export function selectReleaseGroupSlotAlbums(
     const preferExplicit = resolvedOptions.preferExplicit !== false;
     const bestByReleaseGroupAndSlot = new Map<string, ReleaseGroupSlotSelection>();
 
-    // Group candidates by releaseGroupMbid:slot
+    // Group candidates by releaseGroupMbid:slot for ownership, and also by slot
+    // alone so coverage planning can borrow same-artist provider albums that
+    // were matched to a different release group (cross-RG hybrid / Bastille).
     const candidatesByGroupAndSlot = new Map<string, Array<{ provider: string; album: ProviderAlbumSlotCandidate; match: ProviderReleaseGroupMatch; score: number }>>();
+    const coverageCandidatesBySlot = new Map<string, Array<{ provider: string; album: ProviderAlbumSlotCandidate; match: ProviderReleaseGroupMatch; score: number }>>();
 
     for (const c of candidates) {
         const { provider, album, match } = c;
@@ -709,6 +764,16 @@ export function selectReleaseGroupSlotAlbums(
                 candidatesByGroupAndSlot.set(key, list);
             }
             list.push({ provider, album: variant.album, match, score });
+
+            let slotList = coverageCandidatesBySlot.get(variant.slot);
+            if (!slotList) {
+                slotList = [];
+                coverageCandidatesBySlot.set(variant.slot, slotList);
+            }
+            const albumKey = `${provider}:${variant.album.providerId}`;
+            if (!slotList.some((entry) => `${entry.provider}:${entry.album.providerId}` === albumKey)) {
+                slotList.push({ provider, album: variant.album, match, score });
+            }
         }
     }
 
@@ -756,8 +821,11 @@ export function selectReleaseGroupSlotAlbums(
         const preferredCompatibleCandidates = preferredReleaseRow
             ? groupCandidates.filter((candidate) => compatibleReleaseMbids(candidate.match).includes(preferredReleaseRow.mbid))
             : [];
+        // Coverage sources are artist-wide for this library slot: albums matched
+        // to sibling RGs can still supply tracks for a fuller edition here.
+        const crossRgSlotCandidates = coverageCandidatesBySlot.get(slot) || groupCandidates;
         const slotCandidates = releaseTargets.length > 0
-            ? groupCandidates
+            ? crossRgSlotCandidates
             : preferredCompatibleCandidates.length > 0
                 ? preferredCompatibleCandidates
                 : groupCandidates;
@@ -773,9 +841,23 @@ export function selectReleaseGroupSlotAlbums(
         // Check: do we have track details for any candidate?
         const hasTrackDetails = candidatesWithTracks.some(c => c.tracks.length > 0);
 
-        // 1. If there are no target tracks or no candidate track details, select the best candidate by score
+        // 1. If there are no target tracks or no candidate track details, select
+        // the best candidate by score — but prefer offers already matched to the
+        // representative release so a probable radio-edit cannot beat a verified
+        // full edition on typeMatched alone when tracklists are unavailable.
         if (releaseTargets.length === 0 || !hasTrackDetails) {
-            const standaloneCandidates = candidatesWithTracks.filter((candidate) => candidate.match.status !== "candidate");
+            const scorePool = preferredCompatibleCandidates.length > 0
+                ? preferredCompatibleCandidates
+                : groupCandidates;
+            const standaloneCandidates = scorePool
+                .map((c) => ({
+                    ...c,
+                    tracks: (c.album.tracks || []).map((track) => ({
+                        ...track,
+                        isrc: track.isrc ? normalizeIsrc(track.isrc) : null,
+                    })),
+                }))
+                .filter((candidate) => candidate.match.status !== "candidate");
             standaloneCandidates.sort((a, b) => b.score - a.score
                 || streamingProviderManager.getProviderPreferenceRank(a.provider)
                     - streamingProviderManager.getProviderPreferenceRank(b.provider));
@@ -786,6 +868,9 @@ export function selectReleaseGroupSlotAlbums(
             const selectedMatch: ProviderReleaseGroupMatch = {
                 ...best.match,
                 releaseMbid: selectReleaseMbidForCandidate(releaseGroupMbid, best, preferredReleaseRow?.mbid),
+                releaseGroup: best.match.releaseGroup
+                    ? { ...best.match.releaseGroup, mbid: releaseGroupMbid }
+                    : best.match.releaseGroup,
             };
             bestByReleaseGroupAndSlot.set(key, {
                 releaseGroupMbid,
@@ -798,22 +883,46 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        // Build a strict per-track acquisition plan for every canonical edition
-        // and provider. Recording identity (MBID/ISRC, then the shared structural
-        // matcher) decides coverage. Quality is optimized per target track, so a
-        // hi-res standard edition can supply disc one while a lossless deluxe
-        // offer supplies otherwise-unavailable bonus tracks. No title-specific
-        // remix/radio-edit rules are needed.
+        // Build a per-track acquisition plan for every canonical edition and
+        // provider. Multi-album hybrids require catalog ISRC; single-album plans
+        // use the shared structural matcher. Quality is optimized per target.
         const providers = Array.from(new Set(candidatesWithTracks.map((candidate) => candidate.provider)));
-        const coveragePlans = releaseTargets.flatMap((target) => providers
-            .map((provider) => buildCoveragePlanForProvider(target, provider, candidatesWithTracks, slot))
-            .filter((plan): plan is ReleaseCoveragePlan => Boolean(plan)));
+        // Coverage plans are per-provider (no TIDAL+Apple stitch). Multi-album
+        // hybrids require catalog ISRC on every track and must be complete;
+        // single-album plans keep the fuzzy matcher. Incomplete ISRC stitches
+        // never enter the ranking — we always also consider per-album fuzzy plans.
+        const coveragePlans = releaseTargets.flatMap((target) => providers.flatMap((provider) => {
+            const providerCandidates = candidatesWithTracks.filter((candidate) => candidate.provider === provider);
+            if (providerCandidates.length === 0) {
+                return [];
+            }
+            const plans: ReleaseCoveragePlan[] = [];
+            if (providerCandidates.length > 1) {
+                const hybrid = buildCoveragePlanForProvider(target, provider, providerCandidates, slot, preferExplicit);
+                if (hybrid?.complete) {
+                    plans.push(hybrid);
+                }
+                for (const candidate of providerCandidates) {
+                    const single = buildCoveragePlanForProvider(target, provider, [candidate], slot, preferExplicit);
+                    if (single) {
+                        plans.push(single);
+                    }
+                }
+            } else {
+                const single = buildCoveragePlanForProvider(target, provider, providerCandidates, slot, preferExplicit);
+                if (single) {
+                    plans.push(single);
+                }
+            }
+            return plans;
+        }));
         coveragePlans.sort(compareCoveragePlans);
         const selectedPlan = coveragePlans[0] || null;
 
         if (!selectedPlan) {
             const strongMetadataCandidates = candidatesWithTracks.filter((candidate) =>
                 hasStrongReleaseShapeEvidence(candidate, preferredReleaseRow?.mbid)
+                && candidate.match.releaseGroup?.mbid === releaseGroupMbid
             );
             if (strongMetadataCandidates.length === 0) {
                 continue;
@@ -824,6 +933,9 @@ export function selectReleaseGroupSlotAlbums(
             const selectedMatch: ProviderReleaseGroupMatch = {
                 ...bestMetadataCover.match,
                 releaseMbid: selectReleaseMbidForCandidate(releaseGroupMbid, bestMetadataCover, preferredReleaseRow?.mbid),
+                releaseGroup: bestMetadataCover.match.releaseGroup
+                    ? { ...bestMetadataCover.match.releaseGroup, mbid: releaseGroupMbid }
+                    : bestMetadataCover.match.releaseGroup,
             };
             bestByReleaseGroupAndSlot.set(key, {
                 releaseGroupMbid,
@@ -851,11 +963,13 @@ export function selectReleaseGroupSlotAlbums(
         const evidence = {
             ...primary.match.evidence,
             ...coveragePlanEvidence(selectedPlan),
+            explicit: aggregateExplicitFlags(selectedCandidates.map((candidate) => candidate.album.explicit)),
         };
         const mergedAlbum: ProviderAlbumSlotCandidate = {
             ...primary.album,
             providerId: selectedIds.join(";"),
-            quality: lowestPlanQuality(selectedPlan, slot),
+            quality: dominantPlanQuality(selectedPlan, slot),
+            explicit: aggregateExplicitFlags(selectedCandidates.map((candidate) => candidate.album.explicit)),
         };
         const method = selectedPlan.complete
             ? selectedCandidates.length > 1
@@ -873,6 +987,9 @@ export function selectReleaseGroupSlotAlbums(
                 : Math.min(0.94, selectedPlan.assignments.length / selectedPlan.targetTracks.length),
             method,
             evidence,
+            releaseGroup: primary.match.releaseGroup
+                ? { ...primary.match.releaseGroup, mbid: releaseGroupMbid }
+                : primary.match.releaseGroup,
         };
 
         bestByReleaseGroupAndSlot.set(key, {

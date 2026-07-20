@@ -375,11 +375,13 @@ export class AppleMusicBackend implements DownloadBackend {
           : 0;
         const progress = totalFiles
           ? toOverallPercent(Math.min(1, completedItems / totalFiles))
-          : toOverallPercent(0.5);
+          // Single-file / video downloads rarely emit "Track N of M" — use a
+          // soft ramp instead of a flat 50% that looks hung until close.
+          : toOverallPercent(Math.min(0.9, 0.15 + ((current.currentFileNum || 1) * 0.2)));
         options.onProgress({
           progress,
-          currentFileNum,
-          totalFiles,
+          currentFileNum: currentFileNum ?? 1,
+          totalFiles: totalFiles ?? 1,
           currentTrack: event.currentTrack,
           currentProviderTrackId: event.currentProviderTrackId,
           trackStatus,

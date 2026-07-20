@@ -45,6 +45,7 @@ import {
   getAppleVideoPreviewUrl,
   renderAppleArtwork,
   searchApple,
+  extractAppleEditorialNotes,
 } from "./apple-music-catalog.js";
 import { AppleMusicApiOptions, validateAppleMusicCredentials } from "./apple-music-api.js";
 import { downloadBackendRegistry } from "../../download/download-backend.js";
@@ -157,12 +158,10 @@ export class AppleMusicProvider implements StreamingProvider {
     editorialMetadata: true,
     providerIds: true,
     spatialFormats: ["DOLBY_ATMOS"],
-    // Display vocabulary matches the TIDAL manifest so capability cards read
-    // consistently: ALAC Hi-Res Lossless tops out at 24-bit / 192 kHz, spatial
-    // audio is Dolby Atmos, and music videos stream up to 1080p.
-    stereoQuality: "Lossless up to 24-bit / 192 kHz",
+    // Capability copy uses the same badge vocabulary as the UI (MAX / Atmos / UHD).
+    stereoQuality: "Up to MAX (24-bit / 192 kHz)",
     spatialQuality: "Dolby Atmos",
-    videoQuality: "Up to 4K (2160p)",
+    videoQuality: "Up to UHD (2160p)",
     maxVideoResolution: 2160,
   };
   readonly qualityMapping = appleMusicQualityMapping;
@@ -224,6 +223,18 @@ export class AppleMusicProvider implements StreamingProvider {
     return getAppleAlbum(String(id), this.apiOptions());
   }
 
+  async getArtistBio(id: string | number): Promise<string | null> {
+    const artist = await getAppleArtist(String(id), this.apiOptions());
+    const attrs = (artist.raw as { attributes?: Record<string, unknown> } | undefined)?.attributes;
+    return extractAppleEditorialNotes(attrs);
+  }
+
+  async getAlbumReview(id: string | number): Promise<string | null> {
+    const album = await getAppleAlbum(String(id), this.apiOptions());
+    const attrs = (album.raw as { attributes?: Record<string, unknown> } | undefined)?.attributes;
+    return extractAppleEditorialNotes(attrs);
+  }
+
   async getAlbumTracks(id: string | number): Promise<ProviderTrack[]> {
     return getAppleAlbumTracks(String(id), this.apiOptions());
   }
@@ -254,6 +265,17 @@ export class AppleMusicProvider implements StreamingProvider {
 
   async getArtworkUrl(request: ProviderArtworkRequest): Promise<string | null> {
     const size = typeof request.size === "number" ? request.size : Number(request.size) || 640;
+    if (request.entityType === "albumVideoCover") {
+      const imageId = String(request.imageId || "").trim();
+      if (/^https?:\/\//i.test(imageId)) {
+        return imageId;
+      }
+      if (request.providerId != null) {
+        const album = await getAppleAlbum(String(request.providerId), this.apiOptions());
+        return album.videoCover || null;
+      }
+      return null;
+    }
     if (request.entityType === "album" && request.providerId != null) {
       const album = await getAppleAlbum(String(request.providerId), this.apiOptions());
       return album.cover ? this.resizeArtwork(album.cover, size) : null;

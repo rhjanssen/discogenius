@@ -1,317 +1,209 @@
-<!-- markdownlint-disable MD012 -->
 # Discogenius Architecture (Current State)
 
-Last updated: 2026-06-23
+This document describes the current architecture and the stable boundaries we
+preserve while iterating. Curation flow lives in
+`docs/CURATION_DEDUPLICATION.md`; data-model rules in `docs/DATA_MODEL_TARGET.md`;
+the Lidarr folder mapping in `docs/LIDARR_STRUCTURE_ALIGNMENT.md`.
 
-## Purpose
-
-This document describes the current Discogenius architecture and the stable boundaries we preserve while iterating.
-
-For curation flow details, use docs/CURATION_DEDUPLICATION.md.
-
-## System Shape
+## System shape
 
 Discogenius is a monorepo with a TypeScript backend and frontend:
 
-- api/: Express + TypeScript + better-sqlite3
-- app/: React + Vite + Fluent UI v9 + react-query
-- config/: TOML settings, SQLite metadata DB, auth/runtime state
-- library/: managed media library roots (music, spatial, videos)
+- `api/` — Express + TypeScript + better-sqlite3 (synchronous DB access only)
+- `app/` — React + Vite + Fluent UI v9 + TanStack Query
+- `config/` — TOML settings, SQLite metadata DB, auth/runtime state (never
+  committed)
+- `library/` — managed media roots (stereo music, spatial, videos)
 
-## Stable Architectural Principles
+## Stable architectural principles
 
-1. Keep long-running work in the queue, not in route handlers.
+1. Long-running work runs on the command queue, never inline in route handlers.
+2. One download backend per provider; provider-specific tooling stays inside the
+   provider adapter/backend.
+3. MusicBrainz is canonical identity; providers supply availability, downloads,
+   artwork, and allowed metadata supplements only.
+4. `TrackFiles` is the canonical on-disk inventory for managed playable media
+   (audio and video). `MetadataFiles`, `LyricFiles`, and `ExtraFiles` are the
+   Lidarr-style sidecar inventories.
+5. Respect lock semantics (`monitor_lock`) as intentional user state; automation
+   must never flip a locked monitor value.
 
-1. Keep one download backend per provider: all TIDAL downloads (audio, Atmos, video) run through tiddl (`api/src/services/providers/tidal/tiddl.ts` + `tiddl-backend.ts`). Tokens and settings are synced into tiddl's config dir (`config/.tiddl`) whenever the provider login or quality settings change.
+## Command queue and lifecycle
 
-1. Preserve explicit workflow boundaries:
+The queue mirrors Lidarr: `CommandModel` rows in the `commands` table are
+enqueued via the queue manager, drained by an executor on the main thread, and
+dispatched to per-command handlers that run on a worker-thread pool.
 
-- queue and exclusivity
-- scheduling and orchestration
-- scanning/import and organization
-- curation/dedup and download queueing
+- `api/src/services/commands/command-queue-manager.ts` — SQLite-backed queue,
+  state transitions, dedupe, reorder.
+- `api/src/services/commands/command.ts` — exclusivity and dedup gating.
+- `api/src/services/commands/command-executor.ts` — main-thread poller/state
+  owner; dispatches handler execution to the worker pool.
+- `api/src/services/commands/worker/command-worker-pool.ts` — worker-thread
+  execution for command handlers and heavy import work.
+- `api/src/services/commands/scheduler.ts` — periodic trigger that enqueues due
+  scheduled tasks.
+- `api/src/services/commands/system-task-service.ts` — shared catalog of
+  scheduled tasks and manually triggerable operator commands.
+- `api/src/services/commands/command-history.ts` — activity history projection.
+- `api/src/services/download/download-processor.ts` — download orchestration;
+  heavy import finalization runs on the worker pool.
 
-1. Treat `TrackFiles` as canonical on-disk inventory for managed playable media. Treat `MetadataFiles`, `LyricFiles`, and `ExtraFiles` as the Lidarr-style sidecar inventories for artwork, NFO, lyrics, and other sidecars.
+Routes stay thin. `api/src/routes/v1/queue.ts` is authoritative for live queue
+state and reorder; `api/src/routes/v1/command.ts` is the manual enqueue surface;
+`api/src/routes/status.ts` is a summary-only control-plane snapshot. Terminal
+queue states (`completed`, `failed`, `cancelled`) are immutable so a cancelled
+import cannot later overwrite itself as completed once an async worker catches up.
 
-1. Respect lock semantics (monitor_lock) as intentional user state.
+### Commands
 
-## Runtime Components
-
-### Queue and Command Lifecycle
-
-- [api/src/services/commands/command-queue-manager.ts](../api/src/services/commands/command-queue-manager.ts): SQLite-backed persistent command queue, state transitions, dedupe, and reorder operations
-- [api/src/services/commands/command.ts](../api/src/services/commands/command.ts): command exclusivity and dedup gating
-- [api/src/services/commands/command-executor.ts](../api/src/services/commands/command-executor.ts): main-thread queue poller and state owner; dispatches handler execution to the command-worker pool
-- [api/src/services/commands/worker/command-worker-pool.ts](../api/src/services/commands/worker/command-worker-pool.ts): worker-thread execution pool for command handlers and heavy import work
-- [api/src/services/commands/scheduler.ts](../api/src/services/commands/scheduler.ts): 30s scheduled-task trigger that enqueues due commands
-- [api/src/services/commands/system-task-service.ts](../api/src/services/commands/system-task-service.ts): shared catalog for scheduled tasks and manually-triggerable operator commands
-- [api/src/services/download/download-processor.ts](../api/src/services/download/download-processor.ts): exact media download orchestration; heavy import finalization runs through the command-worker pool
-- [api/src/services/commands/command-history.ts](../api/src/services/commands/command-history.ts): activity history projection and summary derivation
-- [api/src/routes/v1/queue.ts](../api/src/routes/v1/queue.ts): live queue authority (`/api/v1/queue`), dedicated queue history, and reorder operations
-- [api/src/routes/v1/command.ts](../api/src/routes/v1/command.ts): manual command enqueue surface
-- [api/src/routes/status.ts](../api/src/routes/status.ts): summary-only control-plane snapshot for queue stats, activity summary, command stats, running commands, and rate-limit metrics
-
-#### Control-Plane Endpoint Boundaries (Increment 1)
-
-- `/api/tasks` is the canonical non-download task surface (scans/other categories) and supports detailed rows, filtering (`statuses`, `categories`, `types`), pagination (`limit`, `offset`), and task actions (add/retry/cancel/clear completed).
-- `/api/activity` is the canonical read-only activity surface for command activity snapshots. Defaults are history-oriented (`completed`, `failed`, `cancelled`) across downloads/scans/other, with explicit filter overrides for status/category/type.
-- `/api/activity/events` returns a merged paginated event feed from task-queue events and persisted history events, sorted newest-first with deterministic tie-breaking, and item IDs prefixed by source (`task:<id>`, `history:<id>`).
-- `/api/status` is intentionally summary-only and should not be treated as a paginated task list surface.
-- `/api/status/tasks` has been removed.
-- `/api/queue` remains authoritative for live queue state and ordering/reorder behavior.
-- `GET /api/queue/history` is the queue-tab history surface for completed/failed/cancelled download/import rows and returns queue-shaped `QueueItemContract` payloads.
-- `/api/activity` is not the queue-history source for the Dashboard queue tab.
-- Queue reorder requests must target pending download jobs and provide exactly one anchor (`beforeJobId` xor `afterJobId`) with deduplicated positive integer `jobIds`.
-- Terminal queue states (`completed`, `failed`, `cancelled`) are immutable for late progress/state/complete/fail calls. This prevents cancelled imports from later overwriting themselves as completed after an async worker catches up.
-
-#### Library List Filter Contract
-
-- `/api/v1/album`, `/api/v1/track`, and `/api/v1/video` support optional list filters: `monitored`, `downloaded`, and `locked`.
-- These list endpoints keep existing pagination/search/sort behavior (`limit`, `offset`, `search`, `sort`, `dir`), and media-specific filters such as `library_filter` where applicable.
-- Boolean query parsing is normalized to accept `1|true|yes|on` and `0|false|no|off` (case-insensitive). Unknown boolean values are treated as not provided.
-- `locked` maps to `monitor_lock` filtering and is used to keep intentional user lock state queryable across library list surfaces.
-
-#### Control-Plane Optimization Increment (Completed)
-
-- Shared filter/pagination parsing is centralized in [api/src/utils/activity-query.ts](api/src/utils/activity-query.ts) and reused by [api/src/routes/activity.ts](api/src/routes/activity.ts) and [api/src/routes/queue.ts](api/src/routes/queue.ts) to keep validation behavior consistent across tasks/activity surfaces.
-- Activity row mapping in [api/src/services/command-history.ts](api/src/services/command-history.ts) now batches artist/album/track/video lookups and reuses a per-page description context, reducing repeated DB lookups during page mapping.
-- `/api/activity/events` pagination in [api/src/services/command-history.ts](api/src/services/command-history.ts) now merges task/history streams incrementally in bounded chunks instead of materializing large merged sets for each page request.
-- `queuePosition` derivation for pending activity rows is page-bounded: only pending IDs present on the current page are ranked, instead of scanning/numbering the full pending set first.
-
-#### Command Summary
-
-**Manual operator commands** (via POST `/api/v1/command` with `{ "name": "CommandName" }`; case-insensitive, and available through `/api/v1/system/task`, with selected run-now actions surfaced in the Dashboard overflow menu):
+Manual operator commands (via `POST /api/v1/command`, also surfaced through
+`/api/v1/system/task` and selected Dashboard run-now actions):
 
 | Command | Purpose | Exclusivity |
 | --- | --- | --- |
 | `BulkRefreshArtist` | Refresh metadata for all monitored artists | Type-exclusive |
 | `DownloadMissingForce` | Queue a missing-download pass for monitored media | Type-exclusive |
 | `RescanAllRoots` | Full disk scan for all enabled root folders | Type-exclusive |
-| `CheckHealth` | System health diagnostics (runtime, writable paths, tool availability, backend capability checks) | Globally exclusive |
-| `CompactDatabase` | SQLite VACUUM + ANALYZE for maintenance | Globally exclusive |
+| `CheckHealth` | Runtime/writable-path/tool/backend diagnostics | Globally exclusive |
+| `CompactDatabase` | SQLite VACUUM + ANALYZE | Globally exclusive |
 | `CleanupTempFiles` | Remove orphaned staging files | Globally exclusive |
-| `UpdateLibraryMetadata` | Backfill/update metadata sidecars in library | Globally exclusive |
+| `UpdateLibraryMetadata` | Backfill/update library metadata sidecars | Globally exclusive |
 | `ConfigPrune` | Prune disabled metadata sources, backfill enabled ones | Globally exclusive |
 
-**Orchestration commands** (used by monitoring scheduler and resolved through the shared system-task catalog rather than a route-local switch):
+Orchestration commands (scheduler-driven, resolved through the system-task
+catalog): `RefreshMetadata`, `MonitoringCycle`, `ApplyCuration`,
+`DownloadMissing`, `CheckUpgrades`, `Housekeeping`, `RescanFolders`.
 
-| Command | Purpose |
-| --- | --- |
-| `RefreshMetadata` | Metadata refresh pass for queued artists |
-| `MonitoringCycle` | Full monitoring lifecycle (refresh → root scan → curation → download) |
-| `ApplyCuration` | Apply curation rules to monitored release-group slots |
-| `DownloadMissing` | Queue concrete downloads for missing monitored media |
-| `CheckUpgrades` | Check for upgrade candidates in library |
-| `Housekeeping` | General system cleanup and maintenance |
-| `RescanFolders` | Disk scan for root folders with minimal reprocessing |
+## SQLite concurrency and main-thread responsiveness
 
-### SQLite Concurrency and Main-Thread Responsiveness
+`better-sqlite3` is synchronous and SQLite allows one writer at a time. Up to
+four writers contend: three command-worker threads plus the main HTTP/SSE thread.
+The hard constraint is that the **main thread is the event loop** — any
+synchronous wait there freezes all requests, SSE streams, and `/health`. The
+model in `api/src/database.ts`:
 
-`better-sqlite3` is synchronous, so every query runs to completion on the calling
-thread. SQLite also allows only one writer at a time, and the app has up to four
-writers contending for that lock: the three command-worker threads and the main
-HTTP/SSE thread. The hard constraint is that the **main thread is the event loop**
-— any synchronous wait there freezes all requests, SSE streams, and `/health`.
+- **Main thread fails fast** (`busy_timeout = 1000ms`, single quick retry) and
+  retries at the next scheduler tick rather than blocking the loop, mirroring
+  Lidarr's short request-path timeout.
+- **Workers wait** (`busy_timeout = 30000ms` + retries) so heavy refresh writes
+  wait their turn instead of erroring with `database is locked`.
+- **Chunked catalog writes** commit large refresh/hydration in bounded chunks so
+  no single transaction holds the write lock long enough to starve peers.
+- **Bounded WAL** (`journal_size_limit`, `wal_autocheckpoint`, periodic passive
+  checkpoint) keeps the WAL from ballooning under a write storm.
 
-The model in [api/src/database.ts](../api/src/database.ts):
+## Metadata, scan, and import
 
-- **Main thread fails fast.** `busy_timeout = 1000ms` and a single quick retry. A
-  contended main-thread write (chiefly the `markProcessing` job-claim) gives up in
-  ~2s and is retried at the next scheduler tick rather than blocking the event
-  loop. This mirrors Lidarr's 100ms request-path `busy_timeout` (Lidarr can afford
-  fail-fast because its request handling is multi-threaded and pooled; we achieve
-  the same end — a stalled write never freezes the server — by retrying off the
-  request path). The `trySyncScheduledTasks` SQLITE_BUSY catch in `scheduler.ts`
-  is the canonical graceful-skip pattern.
-- **Workers wait.** Worker threads run off the event loop, so they keep a generous
-  `busy_timeout = 30000ms` + 8 retries: heavy refresh writes wait their turn
-  instead of erroring with `database is locked`.
-- **Chunked catalog writes (`runChunkedWrite`).** Large refresh/catalog hydration
-  (a big artist is hundreds of release groups and thousands of tracks) commits in
-  bounded chunks so a single transaction never holds the write lock long enough to
-  starve peers or time out the main-thread claim.
-- **Bounded WAL.** `journal_size_limit = 64MB`, `wal_autocheckpoint = 400`, and a
-  periodic `PASSIVE` checkpoint keep the WAL from growing into the hundreds of MB
-  under a write storm and slowing every reader.
+- `api/src/services/music/refresh-artist-service.ts`,
+  `refresh-album-service.ts`, `refresh-video-service.ts` — Lidarr-style
+  artist/album/video metadata orchestration.
+- `api/src/services/catalog/` — the `CatalogProvider` seam (Servarr Metadata
+  Server and local MusicBrainz). See `docs/MB_LOCAL_MODE.md`.
+- `api/src/services/metadata/` — MusicBrainz/AcoustID identity enrichment,
+  MusicBrainz video sync, artwork resolution, and provider↔MB matching.
+- `api/src/services/mediafiles/library-scan.ts` — disk reconciliation/import
+  coordination; `import-service.ts` and siblings run the manual import pipeline.
+- `api/src/services/mediafiles/metadata-files.ts` — Jellyfin/Kodi NFO/artwork
+  sidecar generation (provider data when available, local DB as fallback).
+- `api/src/services/extras/` — Lidarr-style `ExtraFiles`/`MetadataFiles`/
+  `LyricFiles` write paths, including stereo/spatial lyric sharing across related
+  provider recordings.
 
-Long-running, request-triggered work belongs on the command queue/worker pool, not
-inline in a route handler (Lidarr runs import-list sync as a scheduled command).
+## Curation and file organization
 
-### Persistent History
+- `api/src/services/music/curation-service.ts` — MusicBrainz release-group slot
+  curation and download-candidate generation.
+- `api/src/services/mediafiles/organizer.ts` — stage-to-library organization;
+  `library-files.ts` tracks/prunes managed files.
+- `api/src/services/config/naming.ts` — Lidarr-compatible naming renderer.
+  Supports Discogenius camelCase tokens plus Lidarr-style aliases (normalized
+  space/underscore/dot/dash-insensitive), the `CleanTitle`/`TitleThe`/
+  `CleanTitleThe` cleaners, numeric formatting (`{trackNumber:00}`), and quality
+  tokens (`{quality}`, `{codec}`, `{bitrate}`, `{sampleRate}`, …). Templates are
+  validated server-side; unknown tokens resolve to empty and empty paths
+  normalize to `Unknown`.
 
-- api/src/services/history-events.ts: persistent history write service for file lifecycle and operational events
-- api/src/routes/history.ts: `/api/history` read surface for persisted history records
-- History writes are emitted from organizer/scheduler/library-files flows where file lifecycle state changes are finalized
+MusicBrainz identity behavior: artist refresh resolves `Artists.mbid` and stores
+match status in `metadata_identity_status`; release-group metadata lives in
+`Albums` (provider album IDs never define album identity); provider UPC/ISRC stay
+in `ProviderItems` and are not copied into catalog columns in normal Servarr mode;
+MusicBrainz videos are `Recordings` with `IsVideo = 1`, provider-only videos are
+provisional recordings until matched. Artwork resolution is metadata-source first
+(Servarr/CAA), provider artwork as fallback.
 
-### Event Coordination
+## Logging, playback, and events
 
-- api/src/services/app-events.ts: typed app-level event bus
-- api/src/services/download-events.ts: download progress/event stream
-- api/src/services/curation.listener.ts: event-driven handoff from scan completion to curation jobs
-- Queue SSE/download event contracts include optional `quality` metadata so live queue recovery and queue-history badges can preserve the selected quality across reconnects and refreshes
+- `api/src/services/config/app-logger.ts` — in-process log buffer + JSONL
+  persistence under `config/logs/`.
+- `api/src/services/commands/health.ts` — health snapshot (runtime, writable
+  paths, tool availability, downloader/backend capability checks).
+- `api/src/routes/playback.ts` — signed browser playback backed by the active
+  provider; browser-incompatible Atmos/Hi-Res audio is transcoded to a
+  browser-safe path so downloaded playback stays usable.
+- `api/src/services/commands/app-events.ts`,
+  `api/src/services/download/download-events.ts` — typed event bus and download
+  progress stream. Scan completion drives an event-driven handoff to curation.
 
-### Logging and Diagnostics
+## Data and state model
 
-- api/src/services/app-logger.ts: in-process app logging buffer and JSONL persistence under config/logs/
-- Startup behavior tail-loads persisted logs into memory from the end of discogenius.jsonl with a 4 MiB read cap, then continues append-only writes
-- api/src/services/health.ts: health-diagnostics snapshot covering runtime state, writable paths, tool availability, and downloader/backend capability checks
+Primary persisted entities: `Artists`/`ArtistMetadata`/`ArtistStatistics`;
+`Albums`/`AlbumReleases`/`Tracks`/`Recordings`;
+`ProviderItems`/`ProviderItemMatches`/`ReleaseGroupSlots`; `TrackFiles`;
+`MetadataFiles`/`LyricFiles`/`ExtraFiles`; `UnmappedFiles`;
+`metadata_identity_status`; `history_events`; `commands`; `scheduled_tasks`;
+`monitoring_runtime_state`; `quality_profiles`; `config`.
 
-### Playback and Browser Streaming
+Operational semantics:
 
-- api/src/routes/playback.ts: signed browser playback routes backed by the active streaming provider
-- Browser audio playback prefers progressive sources, but falls back to DASH segment playback when that is the only browser-safe provider path available
-- Browser-incompatible Atmos/Hi-Res audio is served through backend browser-compatible streaming/transcode paths so local/downloaded playback remains usable in standard browsers
+- monitor = eligible for automation; `monitor_lock` = manual override automation
+  must not flip; `redundant` = why a release is filtered out of active curation.
+- MusicBrainz tables are the canonical metadata graph. Provider data is a
+  cache/resource layer: `ProviderItems` are offers, `ProviderItemMatches` are
+  provider↔MusicBrainz match evidence (incl. provider UPC/ISRC), and
+  `ReleaseGroupSlots` hold the selected offer per MusicBrainz release-group slot.
+- Stereo and spatial slots are release-specific. A Dolby Atmos offer may have a
+  different UPC and recording/ISRC set from the stereo offer in the same release
+  group, so each `ReleaseGroupSlots` row keeps its own `selected_release_mbid`
+  and selected provider album. Readers must resolve tracks through the slot's
+  selected release, not a release-group-wide representative.
+- Provider rows store only normalized availability/action fields plus compact
+  selected-offer snapshots — not raw response blobs — and must not create
+  canonical artists/albums/releases/tracks or wanted state by themselves.
+- `Recordings` is the extension point for audio recordings, spatial/alternate
+  mixes, MusicBrainz video recordings, and provider-only provisional videos.
+  `RecordingRelations` stores MusicBrainz `music_video_for` links plus inferred
+  relations like `same_lyrical_content`.
+- Lyrics are sidecar files in `LyricFiles`; the payload is never stored in
+  metadata tables.
 
-### Metadata, Scan, and Import
+## Workflow topology
 
-- api/src/services/refresh-artist-service.ts: Lidarr-style artist metadata orchestration (basic/shallow/deep refresh)
-- api/src/services/refresh-album-service.ts: Lidarr-style album metadata orchestration
-- api/src/services/refresh-video-service.ts: video upsert/refresh helpers for artist catalog scans
-- api/src/services/media-seed-service.ts: small targeted metadata seed flows for single track/video intake
-- api/src/services/metadata-identity-service.ts: MusicBrainz and AcoustID identity enrichment for artists, albums, tracks, and videos during scan/import
-- api/src/services/metadata/musicbrainz-video-service.ts: MusicBrainz-first music-video recording sync and recording-to-recording relationship import
-- api/src/services/library-scan.ts: disk reconciliation/import coordination
-- api/src/services/import-service.ts + import-* services: manual import discovery/matching/apply/finalize pipeline
-- api/src/services/identification-service.ts + fingerprint.ts: local-file identification support
-- api/src/services/metadata-files.ts: Jellyfin/Kodi NFO/artwork sidecar generation using provider data when available and local database metadata as fallback
-- api/src/services/extras/files/extra-file-service.ts: Lidarr-style base extra-file inventory helpers
-- api/src/services/extras/metadata/files/metadata-file-service.ts: Lidarr-style `MetadataFiles` write path for artwork/NFO sidecars
-- api/src/services/extras/lyrics/lyric-file-service.ts: Lidarr-style `LyricFiles` write/read path for lyric sidecars
-- api/src/services/extras/lyrics/lyric-service.ts: Lidarr-style lyric sidecar lookup plus stereo/spatial lyric sharing across related provider recordings
+Artist lifecycle: queue a workflow entry (refresh/scan/curation/monitoring) →
+metadata refresh and/or library scan → scan completion emits events → curation
+updates MusicBrainz-driven wanted/redundant state → provider availability fills
+selected slot resources → download-missing queues concrete jobs only for wanted
+slots with an available offer → download processor fetches, organizer commits →
+library/sidecar cleanup runs as needed.
 
-### Curation and Download Candidate Selection
+Monitoring lifecycle: the scheduler drives periodic metadata/root-scan passes;
+follow-up chaining is explicit (refresh → root scan → curation → download
+missing). `/api/v1/system/task` projects scheduled tasks and manual operator
+commands with active state, last/next execution, and run-now capability.
 
-- api/src/services/curation-service.ts: CurationService — MusicBrainz release-group slot curation and download queue candidate generation
-- api/src/services/artist-workflow.ts: workflow phase definitions and queued handoff payloads
-- api/src/services/task-scheduler.ts: scheduled pass orchestration (Lidarr-aligned per-artist pipeline)
+## Auth and connection model
 
-Detailed flow and semantics are documented in docs/CURATION_DEDUPLICATION.md.
+App access and provider access are separate concerns. `AppBootstrapGate` blocks
+the shell only for Discogenius app auth; missing provider auth does not block
+local-library navigation. Provider auth state is polled and controls remote
+catalog and login-required features. Provider authentication is optional for
+MusicBrainz library management; downloads, previews, followed artists, provider
+artwork, and provider lyrics require a capable connected provider.
 
-### File Organization and Library Tracking
+## Boundaries we intentionally keep
 
-- api/src/services/organizer.ts: stage-to-library file organization
-- api/src/services/library-files.ts: managed file tracking/prune helpers
-- api/src/services/naming.ts + library-paths.ts: naming/path conventions
-- api/src/routes/config.ts: naming validation and preview endpoints used by the settings UI before persisting templates
-
-Naming renderer behavior (api/src/services/naming.ts):
-
-- Supports Discogenius camelCase tokens and Lidarr-style aliases by normalizing token names as space/underscore/dot/dash-insensitive.
-- Implements Lidarr-compatible naming cleaners:
-  - `CleanTitle`: removes special chars, replaces & with "and", replaces / with space, removes diacritics
-  - `TitleThe`: moves prefix (The/An/A) to end of name (e.g., "The Beatles" → "Beatles, The"), preserves parenthetical suffixes
-  - `CleanTitleThe`: splits prefix, cleans main and suffix parts separately, rebuilds (e.g., "The AC/DC" → "AC DC, The")
-- Provides named variable variants for all text fields:
-  - Base form: `{artistName}`, `{albumTitle}`, `{trackTitle}`, `{trackArtistName}`, `{videoTitle}`
-  - Clean form: `{artistCleanName}`, `{albumCleanTitle}`, `{trackCleanTitle}`, etc. (applies CleanTitle)
-  - The form: `{artistNameThe}`, `{albumTitleThe}`, `{trackTitleThe}`, etc. (applies TitleThe)
-  - Clean+The form: `{artistCleanNameThe}`, `{albumCleanTitleThe}`, `{trackCleanTitleThe}`, etc. (applies CleanTitleThe)
-- Supports numeric formatting for track and medium tokens using format suffixes such as `{trackNumber:00}`, `{trackNumber:000}`, `{medium:00}`, and `{medium:000}`.
-- Supports quality metadata tokens: `{quality}`, `{codec}`, `{bitrate}`, `{sampleRate}`, `{bitDepth}`, `{channels}` with optional format modifiers (e.g., `{sampleRate:kHz}`)
-- Validates persisted naming templates server-side. Format suffixes inside tokens, such as `{track:00}`, are allowed; invalid filename characters are checked only in literal template text.
-- Modifier syntax such as `{artistName:clean:the}` is not supported. Use named variables such as `{artistCleanNameThe}`.
-- Unknown tokens resolve to an empty string; if the rendered relative path has no valid segments, it normalizes to `Unknown`.
-- MBID and track-artist fields are metadata-dependent: `artistMbId`, `albumMbId`, and `trackArtistMbId` are optional, and track-artist naming fields use available track-artist metadata when present.
-
-MusicBrainz identity behavior:
-
-- Artist refresh resolves `Artists.mbid` from existing IDs or MusicBrainz artist search and stores match status in `metadata_identity_status`.
-- MusicBrainz/Lidarr release-group metadata is stored in `Albums`; provider album IDs do not define album identity.
-- Track identity resolution uses MusicBrainz release tracklists, provider UPC/ISRC evidence, and AcoustID/fingerprint matches where available. Provider UPC/ISRC stays in `ProviderItems`; normal Servarr Metadata Server mode does not copy provider UPC/ISRC into catalog barcode/ISRC columns. Imported-file provenance belongs on `TrackFiles`.
-- MusicBrainz video recordings are synced into `Recordings` with `IsVideo = 1` where MusicBrainz exposes them. Provider videos are represented as provisional local recordings when they do not yet have an MBID, and provider acquisition IDs stay in `ProviderItems`.
-- Imported audio runs the identity phase before audio tags are applied, so MusicBrainz and AcoustID values can be embedded alongside provider provenance.
-- `save_nfo` controls Jellyfin/Kodi `artist.nfo`, `album.nfo`, and music-video sidecar generation. Artist biographies and album reviews are embedded in NFO files; `bio.txt` and `review.txt` sidecars are not generated.
-- Artwork resolution is metadata-source first: Servarr Metadata Server/Lidarr and Cover Art Archive URLs are preferred for artist/album art, while provider artwork remains a fallback or selected-offer supplement. Album cover settings use CAA-friendly `Original`, `1200`, `500`, and `250` sizes rather than TIDAL-only size names.
-
-## Data and State Model
-
-Primary persisted entities:
-
-- `Artists`, `ArtistMetadata`
-- `ArtistStatistics`
-- `Albums`, `AlbumReleases`, `Tracks`, `Recordings`
-- `ProviderItems`, `ProviderItemMatches`, `ReleaseGroupSlots`
-- `TrackFiles`
-- `MetadataFiles`, `LyricFiles`, `ExtraFiles`
-- metadata_identity_status
-- history_events
-- `UnmappedFiles`
-- commands, scheduled_tasks, monitoring_runtime_state
-- quality_profiles
-- config
-
-Operationally important semantics:
-
-- monitor = eligible for automation (curation/download/maintenance scope)
-- monitor_lock = manual override; automation must not flip locked state
-- redundant = why a release is filtered out of active curation selection
-- MusicBrainz/Lidarr tables are the canonical metadata graph.
-- Provider data is a cache/resource layer only: `ProviderItems` stores available provider offers, `ProviderItemMatches` stores provider-to-MusicBrainz match evidence including provider UPC/ISRC, `ReleaseGroupSlots` stores the selected provider offer for a MusicBrainz release-group slot, and `TrackFiles`/extra-file tables store provider provenance for already imported files and sidecars.
-- Stereo and spatial slots are release-specific. A Dolby Atmos provider offer may have a different UPC/barcode and different recording/ISRC set from the stereo offer inside the same MusicBrainz release group, so each `ReleaseGroupSlots` row keeps its own `selected_release_mbid` and selected provider album. Readers must resolve tracks through the slot's selected release, not a release-group-wide representative.
-- Provider raw response blobs are not durable catalog data. Persist only normalized availability/action fields plus compact selected-offer snapshots required for queue/display behavior.
-- Provider offer rows must not create canonical artists, albums, releases, tracks, or wanted state by themselves.
-- MusicBrainz catalog tables carry Lidarr-style local `Id` and `Foreign*Id` columns where those entities exist in Lidarr. Prefer integer FKs for file joins and neutral MBID names for new file identity work.
-- `Recordings` is Discogenius' extension point for audio recordings, spatial/alternate mixes, MusicBrainz video recordings, and provider-only provisional video recordings. MusicBrainz videos use `IsVideo = 1`; provider-only videos use `MetadataStatus = 'provider_only'` until matched.
-- `RecordingRelations` stores MusicBrainz `music_video_for` links and Discogenius-inferred relationships such as `same_lyrical_content`.
-- Lyrics are treated as sidecar files in `LyricFiles`, like Lidarr's extra-file flow and like generated NFO/artwork sidecars in `MetadataFiles`. The lyric payload is not stored in metadata tables; `RecordingRelations` only records evidence that two recordings can share lyrical content.
-
-## Current Workflow Topology
-
-### Artist-oriented lifecycle
-
-1. Queue workflow entry (refresh, scan, curation, or monitoring pass).
-2. Metadata refresh and/or library scan runs.
-3. Scan completion emits events.
-4. Curation pass updates MusicBrainz-driven wanted/redundant state.
-5. Provider availability fills selected slot resources, and download-missing queueing adds concrete jobs only for wanted slots with an available provider offer.
-6. Download processor fetches media, then organizer commits files.
-7. Library file cleanup/metadata sidecar cleanup runs as needed.
-
-### Monitoring lifecycle
-
-- Monitoring scheduler drives periodic metadata/root-scan passes.
-- Follow-up pass chaining is explicit (refresh -> root scan -> curation -> download missing).
-- System task state is exposed through scheduled task snapshots, the `/api/v1/system/task` operator surface, and status APIs.
-- `/api/v1/system/task` projects both scheduled tasks and manual operator commands with task metadata, active state, last/next execution, and run-now capability, plus schedule metadata for supported scheduled tasks.
-- The current frontend uses that surface selectively: operator run-now actions are available from the Dashboard overflow menu, while Settings remains focused on monitoring configuration and the monitoring-cycle trigger rather than a general system-task control plane.
-
-### Frontend Activity/Status Refresh Semantics
-
-- Shared dashboard infinite-feed behavior is centralized in [app/src/hooks/useDashboardInfiniteFeed.ts](app/src/hooks/useDashboardInfiniteFeed.ts) and reused by activity/tasks feeds for dedupe, cached refresh semantics, fallback polling, and event-driven invalidation.
-- Dashboard tab data fetching is active-tab gated (`enabled`) so non-visible tabs do not continuously query or paginate in the background.
-- Dashboard activity and status reads keep previous data during refresh (`placeholderData`) and use short staleness windows so polling updates are non-blocking.
-- Refresh failures with cached data are presented as "showing cached" notices instead of blocking the view.
-- Dashboard queue history uses [app/src/hooks/useQueueHistoryFeed.ts](app/src/hooks/useQueueHistoryFeed.ts) against `GET /api/queue/history`, so queue history is rendered from `QueueItemContract` rows instead of remapped `/api/activity` jobs.
-- Queue shell status in [app/src/providers/QueueStatusProvider.tsx](app/src/providers/QueueStatusProvider.tsx) reconciles queue-status SSE, progress batches, and global queue/job invalidation events, while full paged queue reads stay local to queue-focused views instead of the global shell.
-- Activity retry suppression in [app/src/pages/dashboard/ActivityTab.tsx](app/src/pages/dashboard/ActivityTab.tsx) now checks in-flight `/api/activity` results first (pending/processing). If that feed reports `hasMore`, retry stays suppressed conservatively to avoid duplicate/redundant retries while newer in-flight work may exist off-page.
-- Activity tab empty/error behavior is explicit:
-  - "Activity unavailable" when initial load fails and there is no cached activity.
-  - "No recent activity" when load succeeds but there are no activity or audit entries.
-- Loading UX now prefers layout-matching skeletons (`CardGridSkeleton`, `DataGridSkeleton`, `TrackTableSkeleton`, `DetailPageSkeleton`) for library/detail/suspense fallbacks where preserving layout structure improves perceived responsiveness, while app bootstrap uses the branded `BootLoadingPage`.
-
-## Auth and Connection Model
-
-- App access and provider access are separate concerns. `AppBootstrapGate` blocks the shell only for Discogenius app auth; missing TIDAL auth no longer blocks local-library navigation.
-- Provider auth state is polled via `useTidalConnection` (TanStack Query, 30 s stale time). It controls remote catalog and login-required provider features, not shell access.
-- Search and metadata endpoints still require a live TIDAL session where remote catalog access is necessary, but users can still load the local library shell without a live TIDAL session.
-- The TIDAL provider adapter emits canonical `id` values plus provider-neutral `provider_id` aliases for remaining provider-row hydration paths.
-- Internal matching paths key on canonical `id` or `provider_id`; generic queue/API payloads use `providerId`.
-
-## Boundaries We Intentionally Keep
-
-- No downloader invocations outside the tiddl backend in the TIDAL provider.
-- No heavy route-level orchestration for scan/import/curation/download operations.
-- No provider-shaped shadow file state. Playable media lives in `TrackFiles`; sidecar inventory lives in the Lidarr-style extra-file tables.
+- No downloader invocations outside a provider's registered download backend.
+- No heavy route-level orchestration for scan/import/curation/download.
+- No provider-shaped shadow file state. Playable media lives in `TrackFiles`;
+  sidecars live in the Lidarr-style extra-file tables.
 - No lock-blind monitor updates.
-- Provider authentication is optional for MusicBrainz library management; downloads, previews, followed artists, provider artwork, and provider lyrics require a capable connected provider.
-
-## Documentation Ownership
-
-- docs/ARCHITECTURE.md: current architecture and stable boundaries (this file)
-- docs/CURATION_DEDUPLICATION.md: curation flow deep-dive
-- docs/TASKS.md: outstanding work and release blockers
-- docs/DATA_MODEL_TARGET.md: current data-model rules and future data-model direction
-- docs/MB_LOCAL_MODE.md: local MusicBrainz catalog-provider notes
-- docs/RELEASE_CENTRIC_MATCHING_PLAN.md: release-centric matching follow-up plan
-- docs/LIDARR_STRUCTURE_ALIGNMENT.md: file/folder alignment and deferred split candidates
-- AGENTS.md (repo root): coding-agent expectations and validation checklist

@@ -177,7 +177,22 @@ export class OrganizerService {
       throw new Error(`${provider.name} does not support video metadata`);
     }
     const video = await provider.getVideo(videoId);
-    return video?.raw || video;
+    if (!video) {
+      return null;
+    }
+    // Prefer the mapped ProviderVideo fields (title/artist/quality). Returning
+    // `.raw` alone drops YouTube titles that live under videoDetails and stamps
+    // "Unknown Video" into Recordings / filenames.
+    const raw = (video.raw && typeof video.raw === "object") ? video.raw as Record<string, unknown> : {};
+    return {
+      ...raw,
+      ...video,
+      title: video.title || (raw as { title?: string }).title || null,
+      provider_id: video.providerId || videoId,
+      artist_id: video.artist?.providerId || null,
+      quality: video.quality || null,
+      explicit: video.explicit ? 1 : 0,
+    };
   }
 
   private static refreshArtistPathFromTemplateIfNeeded(artistId: string) {
@@ -606,6 +621,9 @@ export class OrganizerService {
       file_type: "video",
       extension: "mp4",
       quality: sourceVideoQuality,
+      provider: params.provider,
+      provider_entity_type: "video",
+      provider_id: params.providerTrackId,
     });
     const dest = inlineExpected.expectedPath || separatedDest;
     const organizedVideoRoot = this.resolveLibraryRoot(dest) || params.videoRoot;
@@ -762,6 +780,30 @@ export class OrganizerService {
         AND pi.entity_type = 'track'
         AND pi.provider_id = ?
         AND pi.release_mbid = ?
+      LIMIT 1
+    `).get(params.provider, params.trackId, params.releaseMbid) as any
+    // Hybrid composites often source tracks from a different provider release
+    // than the selected canonical release_mbid. Fall back to the provider id
+    // alone so organize still attaches the file instead of reporting 0 tracks.
+    ?? db.prepare(`
+      SELECT
+        pi.provider_id,
+        pi.title,
+        pi.version,
+        pi.explicit,
+        pi.quality,
+        pi.album_id,
+        pi.track_mbid,
+        pi.recording_mbid,
+        pi.match_evidence,
+        json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
+      FROM ProviderItems pi
+      WHERE pi.provider = ?
+        AND pi.entity_type = 'track'
+        AND pi.provider_id = ?
+      ORDER BY
+        CASE WHEN pi.release_mbid = ? THEN 0 ELSE 1 END,
+        pi.updated_at DESC
       LIMIT 1
     `).get(params.provider, params.trackId, params.releaseMbid) as any;
 
@@ -1555,6 +1597,41 @@ export class OrganizerService {
     return match ? match[1] : null;
   }
 
+  /**
+   * Prefer the explicit job provider. Never silently fall back to the global
+   * default (often TIDAL) for Apple/YouTube ids — that misnames files and
+   * fetches the wrong catalog metadata.
+   */
+  private static resolveOrganizeStreamingProvider(
+    raw: OrganizeRequest,
+    providerId: string,
+    type: OrganizeType,
+  ): string {
+    const explicit = String(raw.provider || "").trim();
+    if (explicit) {
+      return explicit;
+    }
+
+    const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
+    const row = db.prepare(`
+      SELECT provider
+      FROM ProviderItems
+      WHERE entity_type = ?
+        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get(entityType, providerId) as { provider?: string } | undefined;
+    const fromOffer = String(row?.provider || "").trim();
+    if (fromOffer) {
+      return fromOffer;
+    }
+
+    throw new Error(
+      `Missing provider for ${entityType} ${providerId}. ` +
+      `Refusing to default to ${getDefaultStreamingSource()} — requeue the download with an explicit provider.`,
+    );
+  }
+
   public static async organizeDownload(raw: OrganizeRequest): Promise<OrganizeResult> {
     const type: OrganizeType =
       raw.type === "DownloadAlbum" ? "album" :
@@ -1567,7 +1644,7 @@ export class OrganizerService {
       throw new Error("Missing tidal id for organizer");
     }
 
-    const streamingProviderId = String(raw.provider || getDefaultStreamingSource()).trim() || getDefaultStreamingSource();
+    const streamingProviderId = OrganizerService.resolveOrganizeStreamingProvider(raw, providerId, type as OrganizeType);
     const downloadPath = raw.downloadPath
       ? validateDownloadWorkspacePath(raw.downloadPath)
       : getDownloadWorkspacePath(type as OrganizeType, providerId, streamingProviderId);
@@ -1802,6 +1879,7 @@ export class OrganizerService {
           explicit: trackRow.explicit === 1,
           trackNumber,
           volumeNumber,
+          provider: canonicalContext?.provider || raw.provider || getDefaultStreamingSource(),
           quality: derivedQuality,
           codec: metrics.codec || null,
           bitrate: metrics.bitrate || null,
@@ -2064,7 +2142,8 @@ export class OrganizerService {
 
       const albumVideoCoverName = getAlbumVideoCoverName(metadataConfig.album_cover_name || "cover.jpg");
       const albumVideoCoverPath = path.join(targetAlbumDir, albumVideoCoverName);
-      if (metadataConfig.save_album_cover && album.video_cover) {
+      const albumVideoCoverId = canonicalAlbumForNaming?.videoCover || null;
+      if (metadataConfig.save_album_cover && albumVideoCoverId) {
         this.relocateSingletonSidecar({
           artistId,
           albumId: albumIds[0],
@@ -2073,14 +2152,18 @@ export class OrganizerService {
           fileType: "video_cover",
         });
       }
-      if (metadataConfig.save_album_cover && album.video_cover && !fs.existsSync(albumVideoCoverPath)) {
+      if (metadataConfig.save_album_cover && albumVideoCoverId && !fs.existsSync(albumVideoCoverPath)) {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.album_cover_resolution (which only caps the
         // UI's cached display thumbnail — see media-cover-service.ts).
         // Same rule as the still cover: an animated-cover fetch failure must not
         // fail an already-tracked import.
         try {
-          await downloadAlbumVideoCover(String(album.video_cover), "origin", albumVideoCoverPath);
+          await downloadAlbumVideoCover(String(albumVideoCoverId), "origin", albumVideoCoverPath, {
+            provider: streamingProviderId,
+            providerAlbumId: albumIds[0],
+            releaseGroupMbid: canonicalContext?.releaseGroupMbid || album.mb_release_group_id || null,
+          });
           if (fs.existsSync(albumVideoCoverPath)) {
             this.upsertLibraryFile({
               artistId,
@@ -2208,7 +2291,21 @@ export class OrganizerService {
         currentTrack: trackData?.title,
         statusMessage: "Importing downloaded track",
       });
-      const albumId = trackData?.album_id ? String(trackData.album_id) : null;
+      // Prefer live catalog album id, then the stored ProviderItems linkage
+      // (YouTube/Apple singles often omit album on the track payload).
+      let albumId = trackData?.album_id ? String(trackData.album_id) : null;
+      if (!albumId) {
+        const linked = db.prepare(`
+          SELECT CAST(COALESCE(provider_album_id, album_id) AS TEXT) AS album_id
+          FROM ProviderItems
+          WHERE provider = ?
+            AND entity_type = 'track'
+            AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+          ORDER BY updated_at DESC
+          LIMIT 1
+        `).get(streamingProviderId, providerId) as { album_id?: string | null } | undefined;
+        albumId = linked?.album_id ? String(linked.album_id) : null;
+      }
       if (!albumId) throw new Error(`Track ${providerId} missing album_id`);
 
       // Ensure album + tracks in DB for naming and to locate track metadata.
@@ -2299,6 +2396,18 @@ export class OrganizerService {
       const metrics = await parseAudioFile(src);
       const derivedQuality = deriveQuality(ext, metrics);
 
+      const trackIdentity = resolveLibraryFileIdentity({
+        artistId,
+        albumId,
+        mediaId: providerId,
+        libraryRoot: targetRoot,
+        fileType: "track",
+        quality: derivedQuality,
+        provider: streamingProviderId,
+        providerEntityType: "track",
+        providerId,
+      });
+
       const renderedTrackPath = renderRelativePath(trackTemplate, {
         artistName: resolvedArtistName,
         artistId,
@@ -2321,6 +2430,7 @@ export class OrganizerService {
         volumeNumber,
         trackVersion: canonicalPosition ? null : trackRow.version || null,
         explicit: trackRow.explicit === 1,
+        provider: streamingProviderId || trackIdentity.provider || getDefaultStreamingSource(),
         quality: derivedQuality,
         codec: metrics.codec || null,
         bitrate: metrics.bitrate || null,
@@ -2354,18 +2464,6 @@ export class OrganizerService {
       // Fingerprinting and embedded tags are applied by the post-organize
       // import finalizer after MusicBrainz identity is resolved.
       const fileFingerprint: string | null = null;
-      const trackIdentity = resolveLibraryFileIdentity({
-        artistId,
-        albumId,
-        mediaId: providerId,
-        libraryRoot: targetRoot,
-        fileType: "track",
-        quality: derivedQuality,
-        provider: streamingProviderId,
-        providerEntityType: "track",
-        providerId,
-      });
-
       // Batch all per-track DB writes in a single transaction (Lidarr-style).
       let importedTrackFileId: number | null = null;
       db.transaction(() => {
@@ -2540,7 +2638,8 @@ export class OrganizerService {
 
       const albumVideoCoverName = getAlbumVideoCoverName(metadataConfig.album_cover_name || "cover.jpg");
       const albumVideoCoverPath = path.join(targetAlbumDir, albumVideoCoverName);
-      if (metadataConfig.save_album_cover && album.video_cover) {
+      const albumVideoCoverId = canonicalAlbum?.videoCover || null;
+      if (metadataConfig.save_album_cover && albumVideoCoverId) {
         this.relocateSingletonSidecar({
           artistId,
           albumId,
@@ -2549,23 +2648,31 @@ export class OrganizerService {
           fileType: "video_cover",
         });
       }
-      if (metadataConfig.save_album_cover && album.video_cover && !fs.existsSync(albumVideoCoverPath)) {
+      if (metadataConfig.save_album_cover && albumVideoCoverId && !fs.existsSync(albumVideoCoverPath)) {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.album_cover_resolution (which only caps the
         // UI's cached display thumbnail — see media-cover-service.ts).
-        await downloadAlbumVideoCover(String(album.video_cover), "origin", albumVideoCoverPath);
-        if (fs.existsSync(albumVideoCoverPath)) {
-          this.upsertLibraryFile({
-            artistId,
-            albumId,
-            mediaId: null,
-            filePath: albumVideoCoverPath,
-            libraryRoot: targetRoot,
-            fileType: "video_cover",
-            quality: null,
-            namingTemplate: null,
-            expectedPath: albumVideoCoverPath,
+        try {
+          await downloadAlbumVideoCover(String(albumVideoCoverId), "origin", albumVideoCoverPath, {
+            provider: streamingProviderId,
+            providerAlbumId: albumId,
+            releaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid || album.mb_release_group_id || null,
           });
+          if (fs.existsSync(albumVideoCoverPath)) {
+            this.upsertLibraryFile({
+              artistId,
+              albumId,
+              mediaId: null,
+              filePath: albumVideoCoverPath,
+              libraryRoot: targetRoot,
+              fileType: "video_cover",
+              quality: null,
+              namingTemplate: null,
+              expectedPath: albumVideoCoverPath,
+            });
+          }
+        } catch (error) {
+          console.warn(`[Organizer] Failed to fetch album video cover for ${albumId}; import already complete:`, error);
         }
       }
 
@@ -2641,7 +2748,42 @@ export class OrganizerService {
       // a ProviderItems video offer, via RefreshVideoService — no legacy ProviderMedia.
       const videoData = await this.fetchProviderVideo(providerId, streamingProviderId);
       let fetchedVideoData: any | null = videoData;
-      const videoProvider = String(raw.provider || getDefaultStreamingSource());
+      const videoProvider = streamingProviderId;
+
+      // Prefer a real provider title over an empty/placeholder payload so
+      // filenames never stick on "Unknown Video" when the download source
+      // (or a peer ProviderItems row) already knows the name.
+      const resolveVideoTitle = (): string => {
+        const candidates = [
+          videoData?.title,
+          videoData?.name,
+          (db.prepare(`
+            SELECT title FROM ProviderItems
+            WHERE provider = ? AND entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            LIMIT 1
+          `).get(videoProvider, providerId) as { title?: string | null } | undefined)?.title,
+          (db.prepare(`
+            SELECT recording.title AS title
+            FROM ProviderItems provider_item
+            JOIN Recordings recording ON recording.id = provider_item.recording_id
+            WHERE provider_item.provider = ?
+              AND provider_item.entity_type = 'video'
+              AND CAST(provider_item.provider_id AS TEXT) = CAST(? AS TEXT)
+            LIMIT 1
+          `).get(videoProvider, providerId) as { title?: string | null } | undefined)?.title,
+        ];
+        for (const candidate of candidates) {
+          const title = String(candidate || "").trim();
+          if (title && title.toLowerCase() !== "unknown video") {
+            return title;
+          }
+        }
+        return "Unknown Video";
+      };
+      const resolvedVideoTitle = resolveVideoTitle();
+      if (videoData && resolvedVideoTitle !== "Unknown Video") {
+        videoData.title = resolvedVideoTitle;
+      }
 
       // Try to find the canonical local artist id via the DB
       let canonicalArtistId = this.resolveCanonicalVideoArtistId(videoProvider, providerId);
@@ -2710,7 +2852,7 @@ export class OrganizerService {
         id: providerId,
         artist_id: resolvedVideoArtistId,
         album_id: videoData?.album?.providerId || videoData?.album_id || null,
-        title: videoData.title,
+        title: resolvedVideoTitle,
         explicit: videoData.explicit ? 1 : 0,
         quality: videoData.quality || null,
       };
@@ -2789,6 +2931,9 @@ export class OrganizerService {
         file_type: "video",
         extension: "mp4",
         quality: sourceVideoQuality,
+        provider: videoProvider,
+        provider_entity_type: "video",
+        provider_id: providerId,
       });
       const dest = inlineExpected.expectedPath || separatedDest;
       const organizedVideoRoot = this.resolveLibraryRoot(dest) || videoRoot;

@@ -25,6 +25,7 @@ export type DownloadQueueStateValue =
 export interface DownloadTrackStateEntry {
   title: string;
   trackNum?: number;
+  volumeNum?: number;
   status: DownloadTrackStatus;
   /** Provider track id (staged file name); the hard link for per-track state. */
   providerTrackId?: string;
@@ -113,6 +114,8 @@ export interface CommandBodyCommon {
   path?: string | null;
   libraryRoot?: string;
   slot?: "stereo" | "spatial" | string;
+  trackNumber?: number | null;
+  volumeNumber?: number | null;
   fileTypes?: string[];
   files?: unknown[];
   originalJobId?: number;

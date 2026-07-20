@@ -163,30 +163,27 @@ export const useCardStyles = makeStyles({
         flexShrink: 0,
     },
 
-    // Quality badge overlay (top-left of preview)
+    // Quality badge overlay — top-left on desktop cards only. Mobile grids are
+    // tight enough that provider/quality chips crowd the artwork.
     qualityBadge: {
-        position: "absolute",
-        // Mobile: cards are narrow so the two badges stack — anchor bottom-left so
-        // the long Atmos pill sits on the bottom with the short stereo pill above.
-        // Desktop: cards are wide enough for one row — anchor top-left.
-        bottom: tokens.spacingVerticalS,
-        left: tokens.spacingHorizontalS,
-        zIndex: 2,
-        display: "flex",
-        alignItems: "flex-start",
-        flexWrap: "wrap",
-        columnGap: tokens.spacingHorizontalXXS,
-        rowGap: tokens.spacingVerticalXXS,
-        maxWidth: `calc(100% - ${tokens.spacingHorizontalM})`,
+        display: "none",
         "@media (min-width: 768px)": {
-            bottom: "auto",
+            position: "absolute",
             top: tokens.spacingVerticalS,
+            left: tokens.spacingHorizontalS,
+            bottom: "auto",
+            zIndex: 2,
+            display: "flex",
+            alignItems: "flex-start",
+            flexWrap: "wrap",
+            columnGap: tokens.spacingHorizontalXXS,
+            rowGap: tokens.spacingVerticalXXS,
+            maxWidth: `calc(100% - ${tokens.spacingHorizontalXXL})`,
         },
     },
     qualityBadgeWithSelection: {
-        "@media (min-width: 768px)": {
-            top: "40px",
-        },
+        // Selection checkbox owns the top-left corner; park quality under it.
+        top: "40px",
     },
 
     selectionIndicator: {

@@ -43,8 +43,8 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   `).run("album-artist-mbid-1", "album-artist-mbid-1", "Album Artist One");
 
   dbModule.db.prepare(`
-    INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, review_text)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, review_text, genres)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "release-group-mbid-1",
     "release-group-mbid-1",
@@ -54,12 +54,13 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     "[\"Compilation\"]",
     "2024-03-01",
     '[wimpLink artistId="1"]Canonical[/wimpLink] review<br/>text',
+    JSON.stringify(["Indie Rock", "Alternative"]),
   );
 
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, barcode, copyright, media_count, track_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Official", "[\"[Worldwide]\"]", "2024-03-01", null, "(P) 2024 Canonical Release", 1, 1);
+    INSERT INTO AlbumReleases (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, barcode, copyright, media_count, track_count, label)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Official", "[\"[Worldwide]\"]", "2024-03-01", null, "(P) 2024 Canonical Release", 1, 1, JSON.stringify(["Canonical Label"]));
 
   dbModule.db.prepare(`
     INSERT INTO AlbumArtists (release_group_mbid, artist_mbid, ord, credited_name, is_primary)
@@ -103,7 +104,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     "release-group-mbid-1",
     "release-mbid-1",
     "provider-album-1",
-    "Canonical Album",
+    "Soundtrack Album From Wrong Provider",
     "LOSSLESS",
     "987654321000",
     "2024-03-01",
@@ -170,9 +171,14 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   assert.equal(byKey.get("artist"), "Artist One, Guest One");
   assert.equal(byKey.get("album_artist"), "Album Artist One");
   assert.equal(byKey.get("album"), "Canonical Album");
+  // Provider album title must not leak into tags when canonical release is set
+  // (hybrid downloads can source audio from a differently named provider album).
+  assert.notEqual(byKey.get("album"), "Soundtrack Album From Wrong Provider");
   assert.equal(byKey.get("track"), "1/1");
   assert.equal(byKey.get("disc"), "1/1");
   assert.equal(byKey.get("date"), "2024-03-01");
+  assert.equal(byKey.get("genre"), "Indie Rock / Alternative");
+  assert.equal(byKey.get("label"), "Canonical Label");
   assert.equal(byKey.get("barcode"), "987654321000");
   assert.equal(byKey.get("isrc"), "TESTISRC1234");
   assert.equal(byKey.get("copyright"), "(P) 2024 Canonical Recording");

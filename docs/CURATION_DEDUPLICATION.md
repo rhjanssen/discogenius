@@ -1,7 +1,5 @@
 # Curation Workflow
 
-Last updated: 2026-06-23
-
 Discogenius curation is MusicBrainz-canonical and provider-availability driven.
 The current implementation is in transition from release-group-shaped matching
 to release-level matching: provider offers are still processed through
@@ -145,29 +143,15 @@ settings.
 
 ## Target Coverage Optimizer
 
-The next matching/curation step should evaluate release choices artist-wide
-before permanently locking each release group to a single edition.
+The next matching/curation step evaluates release choices artist-wide before
+locking each release group to a single edition: build an artist-wide candidate
+graph of covered releases, apply the user's filters before solving, then choose
+releases by marginal new recording coverage versus cost (number of
+releases/downloads, then redundancy), with track count only as a tie-breaker.
 
-Example: a release group has a 20-track edition and a 25-track edition. Tracks
-1-15 overlap, but the last 5 tracks of the 20-track edition and the last 10
-tracks of the 25-track edition are different recordings. If the missing
-recordings from the 20-track path are available together on one EP, while the
-missing recordings from the 25-track path require five separate singles or are
-unavailable, the optimizer should prefer the 20-track edition plus the EP.
-
-That means the optimizer should:
-
-- build an artist-wide candidate graph of covered MusicBrainz releases;
-- remove candidates excluded by release-type, secondary-type, explicit/clean,
-  spatial/video, and library-type settings before computing coverage;
-- compute recording sets per candidate release;
-- choose releases by marginal new recording coverage versus cost, where cost is
-  mainly number of releases/provider downloads and secondarily redundancy;
-- treat track count as a tie-breaker inside equivalent coverage, not as the
-  first global objective;
-- then write the resulting per-release-group slot selections.
-
-This optimizer is target work and is tracked in `docs/TASKS.md`.
+The full design (recording-centric matching, canonicalness scoring, and set-cover
+deduplication) lives in `docs/MATCHING_SET_COVER_DESIGN.md`; remaining work is
+tracked in `docs/TASKS.md`.
 
 ## Queue Coupling
 

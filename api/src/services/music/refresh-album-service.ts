@@ -11,6 +11,11 @@ import { ProviderArtistIdentityService, type ProviderArtistIdentityInput } from 
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { upsertProviderReleaseMatch } from "./provider-matches.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
+import { RefreshVideoService } from "./refresh-video-service.js";
+import {
+    firstProviderEditorialText,
+    listReleaseGroupAlbumOfferCandidates,
+} from "../providers/provider-editorial-text.js";
 
 type SimilarAlbumSeed = {
     albumId: string;
@@ -86,6 +91,8 @@ export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): a
         // Album-bundled music videos (Apple deluxe/festival editions) keep
         // their tracklist position but flow through the video import path.
         is_video: providerTrack.isVideo ? 1 : 0,
+        // YouTube Music ATV→OMV counterpart (persisted as album-scoped video offer).
+        counterpart_video_id: providerTrack.counterpartVideoId || null,
     };
 }
 
@@ -577,30 +584,34 @@ export class RefreshAlbumService {
         const shouldRefreshReview =
             options.forceUpdate === true ||
             existing?.review_text == null ||
+            String(existing?.review_text || "").trim() === "" ||
             shouldRefreshAlbumMeta;
 
         if (shouldRefreshReview) {
             try {
-                const reviewText = await provider.getAlbumReview?.(albumId);
-                const reviewLastUpdated = new Date().toISOString();
+                const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
+                const releaseGroupMbid = canonicalLink.releaseGroupMbid;
+                const candidates = releaseGroupMbid
+                    ? listReleaseGroupAlbumOfferCandidates(releaseGroupMbid)
+                    : [{ provider: provider.id, providerId: String(albumId) }];
 
-                // Review homes onto the canonical Albums row (no legacy provider row).
-                if (reviewText !== null && reviewText !== undefined) {
-                    const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
+                // Always include the album currently being refreshed.
+                candidates.unshift({ provider: provider.id, providerId: String(albumId) });
+
+                const editorial = await firstProviderEditorialText({
+                    kind: "albumReview",
+                    candidates,
+                });
+
+                if (editorial) {
                     this.storeCanonicalAlbumReview({
-                        releaseGroupMbid: canonicalLink.releaseGroupMbid,
-                        reviewText: reviewText ?? "",
-                        reviewSource: provider.id,
-                        reviewLastUpdated,
+                        releaseGroupMbid,
+                        reviewText: editorial.text,
+                        reviewSource: editorial.source,
+                        reviewLastUpdated: new Date().toISOString(),
                     });
-                } else if (options.forceUpdate === true || existing?.review_text == null) {
-                    const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
-                    this.storeCanonicalAlbumReview({
-                        releaseGroupMbid: canonicalLink.releaseGroupMbid,
-                        reviewText: "",
-                        reviewSource: provider.id,
-                        reviewLastUpdated,
-                    });
+                } else if (!String(existing?.review_text || "").trim()) {
+                    console.log(`[RefreshAlbumService] No provider review found for album ${albumId}`);
                 }
             } catch (error) {
                 console.warn(`[RefreshAlbumService] Failed to fetch review for album ${albumId}:`, error);
@@ -837,14 +848,14 @@ export class RefreshAlbumService {
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 title = excluded.title,
-                version = excluded.version,
-                explicit = excluded.explicit,
-                quality = excluded.quality,
-                isrc = excluded.isrc,
-                duration = excluded.duration,
-                track_number = excluded.track_number,
-                volume_number = excluded.volume_number,
-                release_date = excluded.release_date,
+                version = COALESCE(excluded.version, ProviderItems.version),
+                explicit = COALESCE(excluded.explicit, ProviderItems.explicit),
+                quality = COALESCE(excluded.quality, ProviderItems.quality),
+                isrc = COALESCE(excluded.isrc, ProviderItems.isrc),
+                duration = COALESCE(excluded.duration, ProviderItems.duration),
+                track_number = COALESCE(excluded.track_number, ProviderItems.track_number),
+                volume_number = COALESCE(excluded.volume_number, ProviderItems.volume_number),
+                release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
                 artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
                 release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
                 release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
@@ -854,10 +865,10 @@ export class RefreshAlbumService {
                 track_id = COALESCE(excluded.track_id, ProviderItems.track_id),
                 recording_id = COALESCE(excluded.recording_id, ProviderItems.recording_id),
                 match_status = excluded.match_status,
-                match_confidence = excluded.match_confidence,
-                match_method = excluded.match_method,
-                match_evidence = excluded.match_evidence,
-                provider_artist_name = excluded.provider_artist_name,
+                match_confidence = COALESCE(excluded.match_confidence, ProviderItems.match_confidence),
+                match_method = COALESCE(excluded.match_method, ProviderItems.match_method),
+                match_evidence = COALESCE(excluded.match_evidence, ProviderItems.match_evidence),
+                provider_artist_name = COALESCE(excluded.provider_artist_name, ProviderItems.provider_artist_name),
                 cover = COALESCE(excluded.cover, ProviderItems.cover),
                 copyright = COALESCE(excluded.copyright, ProviderItems.copyright),
                 popularity = COALESCE(excluded.popularity, ProviderItems.popularity),
@@ -870,6 +881,19 @@ export class RefreshAlbumService {
 
         const cooperateTrackStore = createCooperativeBatcher(25);
         const trackBatch: any[] = [];
+        const counterpartLinks: Array<{
+            audioProviderTrackId: string;
+            counterpartVideoId: string;
+            title: string;
+            duration: number | null;
+            cover: string | null;
+            url: string | null;
+            audioRecordingId: number | null;
+            audioRecordingMbid: string | null;
+            trackNumber: number;
+            volumeNumber: number;
+            artistName: string | null;
+        }> = [];
         for (const track of tracks) {
             const trackArtistId = track.artist_id || fallbackArtistId;
             track.artist_id = trackArtistId;
@@ -894,13 +918,25 @@ export class RefreshAlbumService {
                                 recording_id?: number | null;
                             } | undefined
                             : null;
+                        const counterpartVideoId = textOrNull(currentTrack.counterpart_video_id);
+                        const evidence: Record<string, unknown> = {
+                            albumProviderId: albumId,
+                            mediumPosition: Number(currentTrack.volume_number || 1),
+                            trackPosition: Number(currentTrack.track_number || 0),
+                        };
+                        if (counterpartVideoId) {
+                            evidence.counterpartVideoId = counterpartVideoId;
+                            evidence.counterpartKind = counterpartVideoId === String(currentTrack.provider_id)
+                                ? "yt-self-omv"
+                                : "yt-atv-omv";
+                        }
                         upsertProviderTrackOffer.run(
                             providerId,
                             String(currentTrack.provider_id),
                             String(albumId),
                             currentTrack.title || null,
                             currentTrack.version || null,
-                            currentTrack.explicit ? 1 : 0,
+                            currentTrack.explicit == null ? null : (currentTrack.explicit ? 1 : 0),
                             currentTrack.quality || selectedRelease?.quality || null,
                             currentTrack.isrc || null,
                             currentTrack.duration || null,
@@ -920,12 +956,8 @@ export class RefreshAlbumService {
                             canonicalTrack?.track_mbid ? "matched" : "pending",
                             canonicalTrack?.track_mbid ? 0.9 : null,
                             canonicalTrack?.track_mbid ? "selected-release-position" : "provider-album-tracklist",
-                            JSON.stringify({
-                                albumProviderId: albumId,
-                                mediumPosition: Number(currentTrack.volume_number || 1),
-                                trackPosition: Number(currentTrack.track_number || 0),
-                            }),
-                            currentTrack.artist?.name || null,
+                            JSON.stringify(evidence),
+                            currentTrack.artist?.name || currentTrack.artist_name || null,
                             null,
                             textOrNull(currentTrack.copyright),
                             positiveNumberOrNull(currentTrack.popularity),
@@ -935,11 +967,110 @@ export class RefreshAlbumService {
                             textOrNull(currentTrack.musical_key),
                         );
                         this.storeCanonicalTrackSupplements(canonicalTrack?.recording_id || null, currentTrack);
+
+                        if (counterpartVideoId && !currentTrack.is_video) {
+                            const isSelfOmv = counterpartVideoId === String(currentTrack.provider_id);
+                            const counterpartKind = isSelfOmv ? "yt-self-omv" : "yt-atv-omv";
+                            // Distinct OMV ids also get a track-row with library_slot=video
+                            // (Apple-parity album-track video offer). Self-OMV reuses the
+                            // same provider id as the stereo track, so only the video-entity
+                            // upsert below may run — otherwise ON CONFLICT would overwrite
+                            // the stereo offer.
+                            if (!isSelfOmv) {
+                                const videoCanonical = releaseMbid
+                                    ? selectCanonicalVideoTrackByPosition.get(
+                                        releaseMbid,
+                                        Number(currentTrack.volume_number || 1),
+                                        Number(currentTrack.track_number || 0),
+                                    ) as {
+                                        track_id?: number | null;
+                                        track_mbid?: string | null;
+                                        recording_mbid?: string | null;
+                                        recording_id?: number | null;
+                                    } | undefined
+                                    : null;
+                                upsertProviderTrackOffer.run(
+                                    providerId,
+                                    counterpartVideoId,
+                                    String(albumId),
+                                    currentTrack.title || null,
+                                    currentTrack.version || null,
+                                    currentTrack.explicit == null ? null : (currentTrack.explicit ? 1 : 0),
+                                    null,
+                                    currentTrack.isrc || null,
+                                    currentTrack.duration || null,
+                                    currentTrack.track_number ?? null,
+                                    currentTrack.volume_number ?? null,
+                                    currentTrack.release_date || null,
+                                    selectedRelease?.artist_mbid || null,
+                                    selectedRelease?.release_group_mbid || null,
+                                    releaseMbid || null,
+                                    videoCanonical?.track_mbid || null,
+                                    videoCanonical?.recording_mbid || null,
+                                    "video",
+                                    videoCanonical?.track_id || null,
+                                    videoCanonical?.recording_id || null,
+                                    videoCanonical?.track_mbid ? "matched" : "pending",
+                                    videoCanonical?.track_mbid ? 0.9 : null,
+                                    videoCanonical?.track_mbid
+                                        ? "selected-release-position"
+                                        : "yt-atv-omv-counterpart-track",
+                                    JSON.stringify({
+                                        ...evidence,
+                                        audioProviderTrackId: String(currentTrack.provider_id),
+                                        counterpartKind,
+                                    }),
+                                    currentTrack.artist?.name || currentTrack.artist_name || null,
+                                    null,
+                                    textOrNull(currentTrack.copyright),
+                                    positiveNumberOrNull(currentTrack.popularity),
+                                    null,
+                                    null,
+                                    finiteNumberOrNull(currentTrack.bpm),
+                                    textOrNull(currentTrack.musical_key),
+                                );
+                            }
+                            counterpartLinks.push({
+                                audioProviderTrackId: String(currentTrack.provider_id),
+                                counterpartVideoId,
+                                title: String(currentTrack.title || "Unknown Video"),
+                                duration: currentTrack.duration == null ? null : Number(currentTrack.duration),
+                                cover: null,
+                                url: `https://www.youtube.com/watch?v=${encodeURIComponent(counterpartVideoId)}`,
+                                audioRecordingId: canonicalTrack?.recording_id ?? null,
+                                audioRecordingMbid: canonicalTrack?.recording_mbid ?? null,
+                                trackNumber: Number(currentTrack.track_number || 0),
+                                volumeNumber: Number(currentTrack.volume_number || 1),
+                                artistName: currentTrack.artist?.name || currentTrack.artist_name || null,
+                            });
+                        }
                     }
                 })();
                 trackBatch.length = 0;
                 await cooperateTrackStore();
             }
+        }
+
+        if (counterpartLinks.length > 0) {
+            RefreshVideoService.upsertAlbumTrackCounterpartVideos({
+                artistId: String(selectedRelease?.artist_mbid || fallbackArtistId || ""),
+                provider: providerId,
+                albumId: String(albumId),
+                releaseGroupMbid: selectedRelease?.release_group_mbid || null,
+                releaseMbid: selectedRelease?.release_mbid || null,
+                counterparts: counterpartLinks.map((link) => ({
+                    providerId: link.counterpartVideoId,
+                    albumId: String(albumId),
+                    title: link.title,
+                    duration: link.duration,
+                    cover: link.cover,
+                    url: link.url,
+                    audioRecordingId: link.audioRecordingId,
+                    audioRecordingMbid: link.audioRecordingMbid,
+                    audioProviderTrackId: link.audioProviderTrackId,
+                    artistName: link.artistName,
+                })),
+            });
         }
     }
 
@@ -989,30 +1120,30 @@ export class RefreshAlbumService {
             ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
-                version = excluded.version,
-                explicit = excluded.explicit,
-                quality = excluded.quality,
-                type = excluded.type,
-                upc = excluded.upc,
-                duration = excluded.duration,
-                volume_count = excluded.volume_count,
-                release_date = excluded.release_date,
-                artist_mbid = excluded.artist_mbid,
-                release_group_mbid = excluded.release_group_mbid,
-                release_mbid = excluded.release_mbid,
+                version = COALESCE(excluded.version, ProviderItems.version),
+                explicit = COALESCE(excluded.explicit, ProviderItems.explicit),
+                quality = COALESCE(excluded.quality, ProviderItems.quality),
+                type = COALESCE(excluded.type, ProviderItems.type),
+                upc = COALESCE(excluded.upc, ProviderItems.upc),
+                duration = COALESCE(excluded.duration, ProviderItems.duration),
+                volume_count = COALESCE(excluded.volume_count, ProviderItems.volume_count),
+                release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
+                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
+                release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
+                release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
                 library_slot = excluded.library_slot,
                 match_status = excluded.match_status,
-                match_confidence = excluded.match_confidence,
-                match_method = excluded.match_method,
-                match_evidence = excluded.match_evidence,
-                cover = excluded.cover,
+                match_confidence = COALESCE(excluded.match_confidence, ProviderItems.match_confidence),
+                match_method = COALESCE(excluded.match_method, ProviderItems.match_method),
+                match_evidence = COALESCE(excluded.match_evidence, ProviderItems.match_evidence),
+                cover = COALESCE(excluded.cover, ProviderItems.cover),
                 updated_at = CURRENT_TIMESTAMP
         `).run(
             providerId,
             String(album.provider_id),
             album.title || null,
             album.version || null,
-            album.explicit ? 1 : 0,
+            album.explicit == null ? null : (album.explicit ? 1 : 0),
             album.quality || null,
             album.type || null,
             album.upc || null,
@@ -1034,19 +1165,21 @@ export class RefreshAlbumService {
                 : (Array.isArray(album.qualityTags) && album.qualityTags.length > 0
                     ? JSON.stringify({ providerQualityTags: album.qualityTags })
                     : null),
-            JSON.stringify({
-                cover: album.cover || album.image_id || album.imageId || null,
-                vibrant_color: album.vibrant_color || album.vibrantColor || null,
-                video_cover: album.video_cover || album.videoCover || null,
-                num_tracks: album.num_tracks || album.trackCount || null,
-                num_volumes: album.num_volumes || album.volumeCount || null,
-                num_videos: album.num_videos || album.videoCount || null,
-                copyright: album.copyright || null,
-                popularity: album.popularity || null,
-                upc: album.upc || null,
-                explicit: album.explicit == null ? null : Boolean(album.explicit),
-                quality: album.quality || null,
-            }),
+            (album.cover || album.image_id || album.imageId)
+                ? JSON.stringify({
+                    cover: album.cover || album.image_id || album.imageId || null,
+                    vibrant_color: album.vibrant_color || album.vibrantColor || null,
+                    video_cover: album.video_cover || album.videoCover || null,
+                    num_tracks: album.num_tracks || album.trackCount || null,
+                    num_volumes: album.num_volumes || album.volumeCount || null,
+                    num_videos: album.num_videos || album.videoCount || null,
+                    copyright: album.copyright || null,
+                    popularity: album.popularity || null,
+                    upc: album.upc || null,
+                    explicit: album.explicit == null ? null : Boolean(album.explicit),
+                    quality: album.quality || null,
+                })
+                : null,
         );
 
         // Additive: also persist the provider album -> MB release match into the

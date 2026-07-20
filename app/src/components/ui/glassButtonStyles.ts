@@ -6,7 +6,7 @@ export const glassButtonStyles = {
   WebkitBackdropFilter: "none",
   ...shorthands.border(tokens.strokeWidthThin, "solid", "transparent"),
   boxShadow: "none",
-  transitionProperty: "background-color, border-color, box-shadow, backdrop-filter, color, transform",
+  transitionProperty: "background-color, border-color, box-shadow, backdrop-filter, color",
   transitionDuration: tokens.durationFast,
   transitionTimingFunction: tokens.curveEasyEase,
   "&:hover": {
@@ -15,7 +15,8 @@ export const glassButtonStyles = {
     WebkitBackdropFilter: "blur(14px) saturate(140%)",
     ...shorthands.borderColor(tokens.colorNeutralStroke1Hover),
     boxShadow: tokens.shadow8,
-    transform: "translateY(-1px)",
+    // Avoid translateY lift — parents with overflow-x:hidden (Layout main)
+    // clip the raised button top into a flat hover pill.
   },
   "&:active": {
     backgroundColor: tokens.colorNeutralBackgroundAlpha2,
@@ -23,10 +24,8 @@ export const glassButtonStyles = {
     WebkitBackdropFilter: "blur(14px) saturate(140%)",
     ...shorthands.borderColor(tokens.colorNeutralStroke1Pressed),
     boxShadow: tokens.shadow2,
-    transform: "translateY(0)",
   },
   "&:disabled": {
-    transform: "none",
     boxShadow: "none",
   },
 } as const;
@@ -43,7 +42,6 @@ export const glassPrimaryButtonStyles = {
     ...shorthands.borderColor(tokens.colorBrandStroke1),
     boxShadow: tokens.shadow16,
     color: tokens.colorBrandForeground1,
-    transform: "translateY(-1px)",
   },
   "&:active": {
     backgroundColor: `color-mix(in srgb, ${tokens.colorBrandBackgroundPressed} 36%, transparent)`,
@@ -52,7 +50,6 @@ export const glassPrimaryButtonStyles = {
     ...shorthands.borderColor(tokens.colorBrandStroke2),
     boxShadow: tokens.shadow4,
     color: tokens.colorBrandForeground1,
-    transform: "translateY(0)",
   },
 } as const;
 
@@ -64,6 +61,5 @@ export const glassDangerButtonStyles = {
     ...shorthands.borderColor(tokens.colorStatusDangerBorder1),
     boxShadow: tokens.shadow8,
     color: tokens.colorStatusDangerForeground2,
-    transform: "translateY(-1px)",
   },
 } as const;

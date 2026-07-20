@@ -19,11 +19,11 @@ const ChevronUp16Regular = bundleIcon(ChevronUp16Filled, ChevronUp16RegularBase)
 
 const useStyles = makeStyles({
     container: {
-        // Small own-margins so the block keeps a little air without doubling up
-        // on the parent's flex gap (which would push the name↔bio / album-review
-        // spacing out too far). Shared by the artist bio and the album review.
-        marginTop: tokens.spacingVerticalXS,
-        marginBottom: tokens.spacingVerticalXS,
+        // Parent flex gaps own the spacing (artist titleBlock XS/SNudge,
+        // albumInfo section M). Extra margins here stacked and pushed name↔bio
+        // / title↔review too far apart.
+        marginTop: tokens.spacingVerticalNone,
+        marginBottom: tokens.spacingVerticalNone,
     },
     content: {
         fontSize: tokens.fontSizeBase300,

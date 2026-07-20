@@ -256,7 +256,7 @@ class LibraryMetadataBackfillService {
                 version: albumData.version || null,
                 release_date: canonicalAlbum?.releaseDate || albumData.release_date || null,
                 num_volumes: canonicalAlbum?.volumeCount || 1,
-                video_cover: canonicalAlbum?.videoCover || albumData.cover || null,
+                video_cover: canonicalAlbum?.videoCover || null,
                 quality: albumProviderItem?.quality || albumData.quality || null,
                 mbid: canonicalAlbum?.albumMbid || null,
                 mb_release_group_id: canonicalReleaseGroupMbid,
@@ -359,6 +359,11 @@ class LibraryMetadataBackfillService {
                                     String(album.video_cover),
                                     "origin",
                                     videoCoverPath,
+                                    {
+                                        provider: album.provider,
+                                        providerAlbumId: String(album.id),
+                                        releaseGroupMbid: canonicalReleaseGroupMbid,
+                                    },
                                 );
                                 if (fs.existsSync(videoCoverPath)) {
                                     this.upsertLibraryFile({

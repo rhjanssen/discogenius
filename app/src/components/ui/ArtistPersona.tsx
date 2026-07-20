@@ -1,5 +1,11 @@
 import React from "react";
-import { Persona, makeStyles, tokens, mergeClasses } from "@fluentui/react-components";
+import {
+  Persona,
+  Link,
+  makeStyles,
+  tokens,
+  mergeClasses,
+} from "@fluentui/react-components";
 import { useNavigate } from "react-router-dom";
 
 interface ArtistPersonaProps {
@@ -10,29 +16,27 @@ interface ArtistPersonaProps {
 }
 
 const useStyles = makeStyles({
+  // Flush left with Title1 — no chip padding/background (that read too tight
+  // around Persona). Interaction follows Fluent Link: underline the name.
   root: {
     display: "inline-flex",
     alignItems: "center",
-    cursor: "pointer",
-    backgroundColor: "transparent",
-    color: "inherit",
-    border: 0,
-    font: "inherit",
-    textAlign: "left",
-    borderRadius: tokens.borderRadiusMedium,
-    padding: `0 ${tokens.spacingHorizontalXS}`,
-    transition: `background-color ${tokens.durationFast} ${tokens.curveEasyEase}`,
-    ":hover": {
-      backgroundColor: tokens.colorNeutralBackgroundAlpha,
-      opacity: 0.9,
-    },
+    minWidth: 0,
+    margin: 0,
+    padding: 0,
   },
-  rootDisabled: {
-    cursor: "default",
-    ":hover": {
-      backgroundColor: "transparent",
-      opacity: 1,
-    },
+  primaryText: {
+    fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase400,
+    lineHeight: tokens.lineHeightBase400,
+    color: "inherit",
+  },
+  // Inherit the persona type ramp; Link owns hover/focus underline.
+  link: {
+    fontWeight: "inherit",
+    fontSize: "inherit",
+    lineHeight: "inherit",
+    color: "inherit",
   },
 });
 
@@ -45,40 +49,36 @@ export const ArtistPersona: React.FC<ArtistPersonaProps> = ({
   const styles = useStyles();
   const navigate = useNavigate();
 
-  const handleClick = (e: React.MouseEvent) => {
+  const isClickable = Boolean(artistId);
+
+  const goToArtist = (e: React.MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
     if (artistId) {
       navigate(`/artist/${artistId}`);
     }
   };
 
-  const isClickable = Boolean(artistId);
-
   return (
-    <button
-      type="button"
-      className={mergeClasses(
-        styles.root,
-        !isClickable && styles.rootDisabled,
-        className
-      )}
-      onClick={isClickable ? handleClick : undefined}
-      disabled={!isClickable}
-    >
-      <Persona
-        name={artistName}
-        avatar={{
-          image: { src: avatarUrl || undefined },
-          size: 24,
-        }}
-        primaryText={{
-          style: {
-            fontWeight: tokens.fontWeightSemibold,
-            fontSize: tokens.fontSizeBase400,
-            lineHeight: tokens.lineHeightBase400,
-          }
-        }}
-      />
-    </button>
+    <Persona
+      className={mergeClasses(styles.root, className)}
+      name={artistName}
+      avatar={{
+        image: { src: avatarUrl || undefined },
+        size: 24,
+      }}
+      primaryText={{
+        className: styles.primaryText,
+        children: isClickable ? (
+          <Link
+            className={styles.link}
+            href={`/artist/${artistId}`}
+            onClick={goToArtist}
+          >
+            {artistName}
+          </Link>
+        ) : undefined,
+      }}
+    />
   );
 };

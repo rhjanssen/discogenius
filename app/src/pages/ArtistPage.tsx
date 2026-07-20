@@ -77,6 +77,7 @@ import { DataGrid, useDataGridCellStyles } from "@/components/DataGrid";
 import type { DataGridColumn } from "@/components/DataGrid";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { albumSelectedQualityOffers } from "@/utils/albumSelectedQualityOffers";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import {
   RenamePreviewDialog,
@@ -163,15 +164,16 @@ const useStyles = makeStyles({
     },
   },
   artistImage: {
-    width: "120px",
-    height: "120px",
+    // Match album-header mobile presence more closely (was 120 / 160).
+    width: "160px",
+    height: "160px",
     borderRadius: tokens.borderRadiusCircular,
     objectFit: "cover",
     boxShadow: tokens.shadow28,
     flexShrink: 0,
     "@media (min-width: 480px)": {
-      width: "160px",
-      height: "160px",
+      width: "180px",
+      height: "180px",
     },
     "@media (min-width: 768px)": {
       width: "200px",
@@ -215,8 +217,8 @@ const useStyles = makeStyles({
   artistInfo: {
     display: "flex",
     flexDirection: "column",
-    // Tighter on mobile so the name sits closer to the bio.
-    gap: tokens.spacingVerticalXS,
+    // Section rhythm (title block → actions). Name↔bio lives in titleBlock.
+    gap: tokens.spacingVerticalM,
     minWidth: 0,
     width: "100%",
     alignItems: "center",
@@ -226,7 +228,20 @@ const useStyles = makeStyles({
       alignItems: "flex-start",
       justifyContent: "flex-end",
       textAlign: "left",
-      gap: tokens.spacingVerticalS,
+    },
+  },
+  // Fluent related-content pair: name + bio share XS/SNudge (same as album
+  // persona↔title), not the section M gap.
+  titleBlock: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: tokens.spacingVerticalXS,
+    width: "100%",
+    minWidth: 0,
+    "@media (min-width: 768px)": {
+      alignItems: "flex-start",
+      gap: tokens.spacingVerticalSNudge,
     },
   },
   artistTitle: {
@@ -851,6 +866,7 @@ const ArtistPage = () => {
       key: "thumb",
       header: "",
       width: "40px",
+      media: true,
       render: (album: any) => {
         const src = renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id);
         return src ? (
@@ -890,7 +906,11 @@ const ArtistPage = () => {
       header: "Tracks",
       width: "60px",
       align: "center",
-      render: (album: any) => <>{album.num_tracks ?? album.track_count ?? 0}</>,
+      render: (album: any) => {
+        const files = Number(album.track_file_count ?? 0);
+        const total = Number(album.track_count ?? album.num_tracks ?? 0);
+        return <>{total > 0 ? `${files} / ${total}` : files}</>;
+      },
     },
     {
       key: "quality",
@@ -898,41 +918,11 @@ const ArtistPage = () => {
       width: "120px",
       align: "left",
       render: (album: any) => {
-        const hasStereoOffer = Boolean(album.stereo_provider_id);
-        const hasSpatialOffer = Boolean(album.spatial_provider_id);
-        const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
-
-        if (hasAnyProviderOffer) {
-          return (
-            <ProviderQualityRow
-              size="small"
-              offers={[
-                ...(hasStereoOffer
-                  ? [{
-                      slot: "stereo",
-                      quality: album.stereo_quality || album.quality,
-                      provider: album.stereo_provider || album.selected_provider,
-                      matchStatus: album.stereo_match_status,
-                      providerAlbumId: album.stereo_provider_id,
-                      selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
-                    }]
-                  : []),
-                ...(hasSpatialOffer
-                  ? [{
-                      slot: "spatial",
-                      quality: album.spatial_quality || "DOLBY_ATMOS",
-                      provider: album.spatial_provider || album.selected_provider,
-                      matchStatus: album.spatial_match_status,
-                      providerAlbumId: album.spatial_provider_id,
-                      selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
-                    }]
-                  : []),
-              ] as any}
-            />
-          );
+        const offers = albumSelectedQualityOffers(album);
+        if (offers.length > 0) {
+          return <ProviderQualityRow size="small" offers={offers} />;
         }
-
-        return album.quality ? <QualityBadge quality={album.quality} /> : null;
+        return album.quality ? <QualityBadge quality={album.quality} size="small" /> : null;
       },
     },
     {
@@ -1053,6 +1043,7 @@ const ArtistPage = () => {
     const statusBadge = stateBadge
       ? <div className={styles.slotBadgeStack}>{stateBadge}</div>
       : undefined;
+    const qualityOffers = albumSelectedQualityOffers(item);
 
     return (
       <MediaCard
@@ -1063,6 +1054,11 @@ const ArtistPage = () => {
         title={albumTitle}
         subtitle={subtitle}
         explicit={item.explicit}
+        qualityBadges={qualityOffers.length > 0 ? (
+          <ProviderQualityRow size="small" offers={qualityOffers} />
+        ) : item.quality ? (
+          <QualityBadge quality={item.quality} size="small" />
+        ) : undefined}
         monitored={isAlbumMonitored}
         onMonitorToggle={isLocked ? undefined : (e) => toggleAlbumMonitored(e, providerId, !isAlbumMonitored)}
         statusBadge={statusBadge}
@@ -1594,17 +1590,17 @@ const ArtistPage = () => {
               )}
             </div>
             <div className={styles.artistInfo}>
-              <Title1 className={styles.artistTitle}>{artistName}</Title1>
-
-              {/* Biography */}
-              {artistBio && (
-                <ExpandableMetadataBlock
-                  content={parseWimpLinks(artistBio, navigate)}
-                  attribution={bioAttribution}
-                  expanded={bioExpanded}
-                  onToggle={() => setBioExpanded(!bioExpanded)}
-                />
-              )}
+              <div className={styles.titleBlock}>
+                <Title1 className={styles.artistTitle}>{artistName}</Title1>
+                {artistBio && (
+                  <ExpandableMetadataBlock
+                    content={parseWimpLinks(artistBio, navigate)}
+                    attribution={bioAttribution}
+                    expanded={bioExpanded}
+                    onToggle={() => setBioExpanded(!bioExpanded)}
+                  />
+                )}
+              </div>
 
               <Overflow minimumVisible={3}>
                 <div className={styles.actions}>

@@ -102,6 +102,9 @@ router.post("/credentials", async (req, res) => {
     if (!provider.saveCredentials) {
       return res.status(400).json({ detail: `provider ${providerId} does not support credential-based authentication.` });
     }
+    if (provider.manifest?.auth.comingSoon) {
+      return res.status(503).json({ detail: `${provider.name} is marked Soon and cannot accept credentials yet.` });
+    }
 
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const credentials = body.credentials && typeof body.credentials === "object"
