@@ -43,11 +43,20 @@ type MediaCoverProxyEntry = {
 
 const MEDIA_COVER_PROXY_TTL_MS = 24 * 60 * 60 * 1000;
 const MEDIA_COVER_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
-const MEDIA_COVER_ROOT = path.join(CONFIG_DIR, "media-cover");
 const MEDIA_COVER_DEFAULT_HEIGHTS = [500, 250] as const;
 const PNG = (pngjs as unknown as { PNG: any }).PNG as any;
 const mediaCoverProxyMemoryCache = new Map<string, MediaCoverProxyEntry>();
 let lastMediaCoverCleanupAt = 0;
+
+/** Resolve at call time so test suites that override DISCOGENIUS_CONFIG_DIR work. */
+function mediaCoverRoot(): string {
+  const override = process.env.DISCOGENIUS_CONFIG_DIR?.trim() || process.env.DISCOGENIUS_APP_DATA?.trim();
+  if (override) {
+    const resolved = path.isAbsolute(override) ? override : path.resolve(override);
+    return path.join(resolved, "media-cover");
+  }
+  return path.join(CONFIG_DIR, "media-cover");
+}
 
 type MediaCoverEntity = "Artist" | "Album" | "Video";
 
@@ -74,13 +83,14 @@ function safeMediaCoverEntityId(entityId: string | number): string {
 
 function mediaCoverFolder(entityId: string | number, coverEntity: MediaCoverEntity): string {
   const safeId = safeMediaCoverEntityId(entityId);
+  const root = mediaCoverRoot();
   if (coverEntity === "Album") {
-    return path.join(MEDIA_COVER_ROOT, "Albums", safeId);
+    return path.join(root, "Albums", safeId);
   }
   if (coverEntity === "Video") {
-    return path.join(MEDIA_COVER_ROOT, "Videos", safeId);
+    return path.join(root, "Videos", safeId);
   }
-  return path.join(MEDIA_COVER_ROOT, safeId);
+  return path.join(root, safeId);
 }
 
 function mediaCoverUrlFolder(entityId: string | number, coverEntity: MediaCoverEntity): string {
@@ -455,16 +465,16 @@ export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
 
   if (parts[2] === "Albums" && parts.length >= 5) {
     const albumId = safeMediaCoverEntityId(parts[3]);
-    return resolveMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Albums", albumId), parts[4]);
+    return resolveMediaCoverFilePath(path.join(mediaCoverRoot(), "Albums", albumId), parts[4]);
   }
 
   if (parts[2] === "Videos" && parts.length >= 5) {
     const videoId = safeMediaCoverEntityId(parts[3]);
-    return resolveMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Videos", videoId), parts[4]);
+    return resolveMediaCoverFilePath(path.join(mediaCoverRoot(), "Videos", videoId), parts[4]);
   }
 
   const artistId = safeMediaCoverEntityId(parts[2]);
-  return resolveMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, artistId), parts[3]);
+  return resolveMediaCoverFilePath(path.join(mediaCoverRoot(), artistId), parts[3]);
 }
 
 export function resolveMediaCoverFilePath(folder: string, filename: string): string | null {

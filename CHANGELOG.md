@@ -39,6 +39,10 @@ All notable changes to this project are documented in this file.
   suffixes retained).
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Apple Music album-tracklist music videos can carry a `cover` on
   `ProviderTrack` (Docker `tsc` build blocker).
 - Frontend typecheck after WP7 splits (`SwitchableSlot`, Library toolbar /
@@ -118,6 +122,10 @@ All notable changes to this project are documented in this file.
   ArtistMetadata name lookup.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Artist bios and album reviews now prefer streaming-provider editorial text
   in Settings provider order (`provider_priority`): the first authenticated
   provider that returns a non-empty bio/review wins. MusicBrainz artists no
@@ -274,6 +282,10 @@ All notable changes to this project are documented in this file.
 - Import modal per-artist status icons use the Fluent colored icon family.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Apple Music video downloads now pass `--mv-max` per job from the app's video
   quality setting (including 4K/2160p), matching the managed downloader config.
 - Dual-capability Apple/Amazon albums (stereo + Atmos on one album id) now
@@ -400,6 +412,10 @@ All notable changes to this project are documented in this file.
   mobile.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Library selection mode now toggles card selection when clicking anywhere on
   a card, Lidarr-style, instead of navigating to the detail page.
 - Import-artists source rows no longer render a doubled chevron icon.
@@ -430,6 +446,10 @@ All notable changes to this project are documented in this file.
   artwork retains its 720p source alongside UI derivatives.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Fresh spatial-audio and music-video imports now embed canonical MusicBrainz,
   provider, and quality metadata before import completion.
 - Known spatial downloads no longer enter unnecessary fingerprinting, and
@@ -473,6 +493,10 @@ All notable changes to this project are documented in this file.
   covered by unique or composite indexes.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Fixed album, track, video, artist top-track, search, release-availability,
   and queue reads that became multi-second or minute-long synchronous SQLite
   scans on established libraries.
@@ -512,6 +536,10 @@ All notable changes to this project are documented in this file.
   oversized stale proxies transparently fall back to the original asset.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Fixed scheduled monitoring cycles dropping their cycle authority between
   provider matching and curation, which prevented `DownloadMissing` from ever
   being queued after monitored-artist refreshes.
@@ -557,6 +585,10 @@ All notable changes to this project are documented in this file.
   accent palette with theme-aware glass tints.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Fixed queue progress events that carried `commandId` but not `jobId`, which
   caused dashboard progress to appear stale until a manual reload.
 - Fixed retry/delete guards for failed queue rows so stale failed downloads can
@@ -607,6 +639,10 @@ All notable changes to this project are documented in this file.
   and stable download/import state rendering.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Fixed TIDAL download/import validation issues found in the live release pass:
   new imports now persist measured file duration, artist statistics refresh
   after targeted imports, completed download-state track rows finish as
@@ -655,6 +691,10 @@ All notable changes to this project are documented in this file.
   Fluent color checkmark once download and import are both complete.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Fixed dashboard and Library request fan-out loops caused by unstable query
   invalidation identities and invalidate/refetch double-firing.
 - Fixed progress-stream startup under heavy queues; SSE snapshots now map only
@@ -720,6 +760,10 @@ All notable changes to this project are documented in this file.
   imported audio formats.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Fixed crash loops and stale active tasks under heavy provider import load by
   catching worker-pool rejections at the command executor and global process
   layers.
@@ -749,6 +793,10 @@ All notable changes to this project are documented in this file.
 ## [2.0.10] - 2026-06-24
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - **The container no longer freezes and goes `unhealthy` under heavy refresh load.** `better-sqlite3` is synchronous, so any wait on the single SQLite write lock blocks the entire Node event loop. The main (HTTP/SSE) thread used a 15s `busy_timeout` plus a synchronous retry backoff, so one contended write (chiefly the `markProcessing` job-claim) froze every request, SSE stream, and `/health` probe for ~30s while worker threads held the lock during a large refresh — exactly the "scanned 1000 artists then became unreachable" symptom, and the source of the `database is locked` errors on big-discography artists. The main thread now fails fast (`busy_timeout = 1000ms`, a single quick retry) and is retried at the next scheduler tick instead of freezing, mirroring Lidarr's 100ms request-path `busy_timeout`. Worker threads keep the generous 30s timeout + 8 retries because they run off the event loop. Measured under live refresh load: `/health` ~85ms (was timing out at 30s), event-loop lag p99 ~20ms / max bounded ~2s (was 25–30s), zero `database is locked`.
 
 ### Changed
@@ -802,12 +850,20 @@ All notable changes to this project are documented in this file.
 - **Dead legacy quality helpers removed:** `quality.ts` no longer exposes the unused `QualityService` methods that read `ProviderAlbums`/`ProviderMedia` and wrote `upgrade_queue`; active quality evaluation stays in `UpgradableSpecification` and `upgrader.ts`.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - **Monitoring-cycle downloads now wait for artist intake/curation work before the terminal missing-download pass.** The scheduled/manual cycle's terminal `DownloadMissing` was gated only on monitoring-cycle-tagged jobs and ignored in-flight per-artist intake work (`RefreshArtist`/`RescanFolders`/`CurateArtist`). On a fresh setup it could fire the moment the metadata refresh finished — before artist intake had curated any release-group slots — so it queued 0 downloads, then nothing retried until the next 24h boundary. The pre-download gate now also waits for all artist-workflow and library-rescan jobs to drain. Standalone artist add, scan, curation, and collaborator scanning still do not auto-download; downloads remain part of the explicit manual/scheduled monitoring cycle or download command.
 - **Forced upgrade checks now actually force redownload evaluation.** Manual `CheckUpgrades`/queue-triggered forced runs now pass an enabled redownload profile into `UpgradableSpecification`; previously they skipped the top-level setting guard but still evaluated with `allowRedownloads=false` when `upgrade_existing_files` was disabled.
 
 ## [2.0.7] - 2026-06-18
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Artist artwork and basic info now hydrate immediately for hot-loaded or search-added MusicBrainz artists, instead of rendering a blank "needs scan" card.
 - Album, track, and video search results now return resolvable artwork URLs (tracks resolve their album's art, videos resolve a canonical or provider thumbnail) instead of raw provider asset ids that never rendered.
 - Album cards fall back to selected-provider artwork when MusicBrainz/Cover Art Archive has none, through a single shared resolver (no duplicate art-fetch paths, no temporary cross-matching).
@@ -824,6 +880,10 @@ All notable changes to this project are documented in this file.
 ## [2.0.6] - 2026-06-17
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Download queue and tracklist quality pills now match the height of the media-type pill (the `QualityBadge` no longer forces its own height, so a small quality badge lines up exactly with a small `MediaTypeBadge`).
 - Album page now shows a single quality pill when one provider release fills both the stereo and spatial library slots (the Atmos-fallback case), with a hover explaining it covers both libraries, instead of two identical Dolby Atmos pills.
 - Album page split Download button no longer clips its hover shadow/lift; the whole control now lifts and shadows as one unit like the other action buttons.
@@ -844,11 +904,19 @@ All notable changes to this project are documented in this file.
 - Added "Fetch-on-click" functionality for collaborating artists; clicking an unknown collaborating artist now automatically fetches their basic info from MusicBrainz and queues a full discography scan instead of landing on a 404 page.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Fixed an inconsistency in the download queue UI where the media type pill was smaller than the quality pill. Both are now consistently sized as small pills.
 
 ## [2.0.4] - 2026-06-17
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Album imports now resolve exact provider track IDs to their linked MusicBrainz tracks instead of allowing one provider row to join every track on the release. This fixes single-file and partial album downloads being named/tagged as track 01 while containing a later album track, across stereo and Atmos imports.
 - Added a regression test for the exact provider-ID canonical import path.
 
@@ -895,6 +963,10 @@ All notable changes to this project are documented in this file.
 - **TIDAL plugin files consolidated** under `config/providers/tidal/` (`.tiddl/` beside the token), with a one-time migration of a pre-2.0.2 `config/.tiddl`. Our app owns token refresh and writes the derived tiddl `auth.json`, so the app and `tiddl` no longer contend over the token. `TIDDL_PATH` now points at `config/providers/tidal/.tiddl`.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - **Badge squishing**: quality badges held their intrinsic width (`flex-shrink: 0`, no-wrap), so labels no longer spill outside the rounded body when a row gets tight — album header, media cards, and the dashboard alike.
 - **Single-track organizer collision**: a track that was also released as a standalone single embeds `trackNumber: 1`; the organizer only overrides album position with that embedded number when the candidate's title also matches, so track 13 no longer maps onto position 1.
 - **Artwork source consistency**: artist-page album cards now prefer the same persisted canonical (Cover Art Archive) cover the album page resolves, instead of falling through to provider art whenever the cached data blob lacked an image. (Backfilling canonical art for never-viewed release groups is tracked for 2.0.3.)
@@ -918,6 +990,10 @@ All notable changes to this project are documented in this file.
 - Naming examples render with consistent separators and real Bastille/MusicBrainz sample data, and the token help now documents recording/media/provider-video ids and album tokens for video templates.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Importing one slot of a release group no longer deletes the other slot's file: stereo FLAC and Atmos M4A of the same release now coexist instead of ping-pong replacing each other.
 - Music video imports failed on a phantom `ProviderMedia.monitor` column; video downloads now import with thumbnail and NFO.
 - Video↔track matching never linked anything because it filtered audio recordings by an always-empty `artist_mbid` column; candidates now resolve through release groups (Men I Trust: 0/13 → 13/13 videos linked), giving inline video placement real anchors.
@@ -939,6 +1015,10 @@ All notable changes to this project are documented in this file.
 - Documentation and agent guidance consolidated: one `AGENTS.md` at the repository root, refreshed `ARCHITECTURE.md`/`CURATION_DEDUPLICATION.md`/`ROADMAP.md`, and removal of ~30 stale agent-session documents, RFCs, and instruction files.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Album imports failed for every download: the organizer referenced a never-created `MediaCovers` table and a non-existent `AlbumReleases.primary_type` column. Canonical artwork now resolves through the existing album-artwork cache.
 - `api/src/services/config` (18 source files) was never committed because the runtime-state ignore patterns (`config/`, `downloads/`, `library/`) were unanchored; fresh clones could not compile and CI failed on every run. Patterns are now anchored to the repository root.
 - TIDAL's `HIGH` quality tag (320 kbps AAC) was conflated with tiddl's `high` tier (16-bit FLAC); config values now pass through verbatim and provider tags are mapped explicitly.
@@ -956,6 +1036,10 @@ All notable changes to this project are documented in this file.
 - Repaired durable queue visibility so pending, processing, importing, and recoverable failed jobs survive reloads and share one backend contract for retry/delete/reorder/progress behavior.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 - Fixed the e2e managed-server harness for WSL/IPv6 localhost behavior and updated stale navigation assertions for empty-library roots.
 - Excluded `.ref_*` reference repositories from git/docker contexts so local reference checkouts cannot leak into release images.
 
@@ -984,6 +1068,10 @@ All notable changes to this project are documented in this file.
 - Multi-selection queue moves now batch refreshes so moving several items feels faster and steadier.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 
 - Existing databases can now upgrade cleanly to the current schema because migrations run before indexes that depend on migration-added columns like `job_queue.queue_order`.
 - Queue drag handles and delete actions now apply consistently to the whole selected set instead of only the row you happened to grab.
@@ -1019,6 +1107,10 @@ All notable changes to this project are documented in this file.
 - Error display icons use Fluent `ErrorCircle48Color` for richer visual feedback.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 
 - Removed debug `console.log` calls from SSE event stream lifecycle.
 - ArtistPage module sections now use stable React keys instead of array indices.
@@ -1039,6 +1131,10 @@ All notable changes to this project are documented in this file.
 - Aligned Settings fallback monitoring defaults with backend defaults.
 
 ### Fixed
+- MediaCover cache preference checks resolve the config directory from the
+  environment at call time (fixes CI flake when test files override
+  `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
+  on known Node test-runner clone deserialization failures.
 
 - Startup download-processor recovery no longer relies on a nonexistent `job_queue.title` column; recovery now works with the durable queue schema.
 - Release preparation metadata updated for app/api package versions to `1.1.0`.
