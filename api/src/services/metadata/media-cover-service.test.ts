@@ -545,7 +545,7 @@ test("provider-fulfilled canonical cache is stale once Servarr imagery exists", 
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(path.join(folder, "cover-250.jpg"), Buffer.alloc(32, 1));
   fs.writeFileSync(
-    path.join(folder, ".Cover.source.json"),
+    path.join(folder, ".cover.source.json"),
     JSON.stringify({ url: providerUrl, preference: "canonical", fulfilledBy: "provider" }),
   );
 
