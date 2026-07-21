@@ -4,7 +4,7 @@ import {
     MusicBrainzReleaseGroupReadService,
     normalizeMusicBrainzReleaseGroupAlbum,
 } from "../metadata/musicbrainz-release-group-read-service.js";
-import type { AlbumTrackContract, AlbumVersionContract, SimilarAlbumContract } from "../../contracts/media.js";
+import type { AlbumTrackContract, AlbumVersionContract } from "../../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../../contracts/catalog.js";
 import type { AlbumPageContract } from "../../contracts/pages.js";
 import { getConfigSection } from "../config/config.js";
@@ -13,10 +13,10 @@ import { AlbumLibraryIndexService } from "./album-library-index-service.js";
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "../metadata/musicbrainz-artist-credit-service.js";
 import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
 const releaseGroupMonitoredExpression = `
-        CASE WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1 ELSE 0 END
+        CASE WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1 ELSE 0 END
 `;
 const releaseGroupMonitoredLockedExpression = `
-        CASE WHEN COALESCE(stereo.monitored_lock, 0) = 1 OR COALESCE(spatial.monitored_lock, 0) = 1 THEN 1 ELSE 0 END
+        CASE WHEN stereo.monitored_lock = 1 OR spatial.monitored_lock = 1 THEN 1 ELSE 0 END
 `;
 
 function selectedProviderAlbumExpressionForFilter(libraryFilter: string): string {
@@ -634,10 +634,6 @@ export class AlbumQueryService {
             tracks: page.tracks.map((track) => sanitizeAlbumTrack(track, includeSpatial)),
             otherVersions: page.otherVersions.map((version) => sanitizeAlbumVersionSpatialFields(version, includeSpatial)),
         };
-    }
-
-    static getSimilarAlbums(_albumId: string): SimilarAlbumContract[] {
-        return [];
     }
 
     static async getAlbumVersions(albumId: string): Promise<AlbumVersionContract[]> {

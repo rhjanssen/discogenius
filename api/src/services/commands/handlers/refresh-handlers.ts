@@ -21,12 +21,10 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
     // MatchArtistProviders → RescanFolders → CurateArtist). refreshArtist returns
     // the context that command needs to stay faithful to the old inline path.
     const { artistMbid, shouldHydrateCatalog, metadataChanged, isNewArtist } = await RefreshArtistService.refreshArtist(job.payload.artistId, {
-        monitorArtist: job.payload.monitorArtist ?? job.payload.monitor ?? false,
+        monitorArtist: job.payload.monitorArtist ?? false,
         monitorAlbums: job.payload.monitorAlbums,
         hydrateCatalog: job.payload.hydrateCatalog,
         hydrateAlbumTracks: job.payload.hydrateAlbumTracks,
-        includeSimilarArtists: job.payload.includeSimilarArtists ?? true,
-        seedSimilarArtists: job.payload.seedSimilarArtists ?? false,
         forceUpdate: job.payload.forceUpdate ?? false,
         deferProviderMatching: true,
         progress: (event) => {
@@ -147,8 +145,6 @@ export const handleRefreshAlbum: CommandHandler<"RefreshAlbum"> = async (job) =>
     // RefreshAlbum means: ensure album metadata (offer, tracks, review).
     await RefreshAlbumService.refreshMetadata(job.payload.albumId, {
         forceUpdate: Boolean(job.payload?.forceUpdate),
-        includeSimilarAlbums: false,
-        seedSimilarAlbums: false,
         provider: job.payload.provider,
     });
 };

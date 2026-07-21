@@ -178,7 +178,7 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
                 WHERE artist_mbid IN (
                     SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
                 )
-                  AND COALESCE(monitored_lock, 0) = 0
+                  AND monitored_lock = 0
             `).run(...artistIds);
 
             db.prepare(`
@@ -188,7 +188,7 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
                   AND artist_mbid IN (
                     SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
                   )
-                  AND COALESCE(monitored_lock, 0) = 0
+                  AND monitored_lock = 0
             `).run(...artistIds);
         }
     });
@@ -304,7 +304,7 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
             const provider = album.selected_provider || "tidal";
             const slot = String(album.slot || "stereo");
             const artistNames = [String(album.artist_name || album.provider_artist_name || "").trim()].filter(Boolean);
-            const title = String(album.provider_title || album.title || "Unknown Album").trim();
+            const title = String(album.title || album.provider_title || "Unknown Album").trim();
             const version = String(album.version || "").trim();
             const displayTitle = version && !title.toLowerCase().includes(version.toLowerCase())
                 ? `${title} (${version})`

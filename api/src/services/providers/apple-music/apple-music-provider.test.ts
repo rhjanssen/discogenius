@@ -149,7 +149,10 @@ test("maps a single Apple track and video", async () => {
   assert.equal(video.providerId, "1452310551");
   assert.equal(video.isrc, "GBUM71300999");
   assert.equal(video.duration, 215);
-  assert.equal(video.quality, "MP4_2160P");
+  assert.equal(video.quality, "UHD");
+  assert.equal(video.albumId, "1440653916");
+  assert.equal(video.relatedTrackId, "1440653947");
+  assert.ok(video.cover && !video.cover.includes("{w}"), "video artwork should be rendered");
 });
 
 test("artist albums returns all offers including spatial", async () => {
@@ -196,6 +199,16 @@ test("Apple quality mapping translates raw traits into the neutral model", () =>
   assert.deepEqual(neutral.spatial, ["atmos"]);
 
   assert.equal(appleMusicQualityMapping.fromNeutralAudio("lossless"), "lossless");
+});
+
+test("Apple music-video quality maps has4K to UHD and everything else to FHD", async () => {
+  const { appleVideoQualityTag } = await import("./apple-music-quality.js");
+  assert.equal(appleVideoQualityTag(true), "UHD");
+  assert.equal(appleVideoQualityTag(false), "FHD");
+  assert.equal(appleVideoQualityTag(undefined), "FHD");
+
+  const video = await getAppleVideo("1452310551", opts());
+  assert.equal(video.quality, "UHD");
 });
 
 test("provider exposes core capability descriptor and conforms to interface", async () => {

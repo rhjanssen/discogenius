@@ -8,9 +8,9 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
-  CheckmarkCircle16Regular as CheckmarkCircle16RegularBase,
+  CheckmarkCircle16Regular,
   Play24Filled,
-  Stop24Regular as Stop24RegularBase,
+  Stop24Regular,
   CheckmarkCircle16Filled,
   Stop24Filled,
   bundleIcon
@@ -27,11 +27,11 @@ import { useTrackPlayback } from "@/hooks/useTrackPlayback";
 import { navigateToAlbum } from "@/utils/albumNavigation";
 import { formatDurationSeconds } from "@/utils/format";
 import { orderedQualityTags } from "@/utils/qualityTags";
-import { renderableArtworkUrl } from "@/utils/artwork";
+import { mediaCoverSrc } from "@/utils/artwork";
 import type { TrackListItem } from "@/types/track-list";
 
-const CheckmarkCircle16Regular = bundleIcon(CheckmarkCircle16Filled, CheckmarkCircle16RegularBase);
-const Stop24Regular = bundleIcon(Stop24Filled, Stop24RegularBase);
+const CheckmarkCircle16 = bundleIcon(CheckmarkCircle16Filled, CheckmarkCircle16Regular);
+const Stop24 = bundleIcon(Stop24Filled, Stop24Regular);
 
 type TrackNumbering = "track" | "index";
 type TrackFiles = NonNullable<TrackListItem["files"]>;
@@ -602,7 +602,7 @@ const TrackList = <T extends TrackListItem>({
             <Text truncate wrap={false} className={styles.titleText}>
               {getDisplayTitle(track)}
             </Text>
-            {track.explicit ? <ExplicitBadge /> : null}
+            {track.explicit ? <ExplicitBadge size="small" /> : null}
           </div>
           {mobileMeta.length > 0 ? (
             <div className={styles.mobileMeta}>
@@ -643,7 +643,7 @@ const TrackList = <T extends TrackListItem>({
     const canPlay = hasPlayableTrackSource(track, audioFile);
     const coverUrl = getAlbumArtworkUrl(track);
     const renderableCoverUrl = coverUrl && !failedCoverUrls.has(coverUrl)
-      ? renderableArtworkUrl(coverUrl)
+      ? mediaCoverSrc({ cover: coverUrl })
       : null;
 
     return (
@@ -673,7 +673,7 @@ const TrackList = <T extends TrackListItem>({
             data-cover-play
           >
             {isPlaying
-              ? <Stop24Regular className={styles.playIcon} />
+              ? <Stop24 className={styles.playIcon} />
               : <Play24Filled className={styles.playIcon} />}
           </span>
         ) : null}
@@ -737,7 +737,7 @@ const TrackList = <T extends TrackListItem>({
                     data-track-play
                   >
                     {isPlaying
-                      ? <Stop24Regular className={styles.playIcon} />
+                      ? <Stop24 className={styles.playIcon} />
                       : <Play24Filled className={styles.playIcon} />}
                   </span>
                 ) : null}
@@ -865,7 +865,7 @@ const TrackList = <T extends TrackListItem>({
           const isDownloaded = isDownloadedTrack(track);
           return (
             <span aria-label={isDownloaded ? "Downloaded" : "Not downloaded"}>
-              {isDownloaded ? <CheckmarkCircle16Regular className={styles.checkIcon} /> : <span className={styles.emptyCheck} />}
+              {isDownloaded ? <CheckmarkCircle16 className={styles.checkIcon} /> : <span className={styles.emptyCheck} />}
             </span>
           );
         },

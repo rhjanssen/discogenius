@@ -10,7 +10,7 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
-  LockClosed24Regular as LockClosed24RegularBase,
+  LockClosed24Regular,
   LockClosed24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
@@ -20,7 +20,7 @@ import {
   useAppAuth,
 } from "@/providers/appAuthContext";
 
-const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
+const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
 
 const useStyles = makeStyles({
   container: {
@@ -128,7 +128,7 @@ export default function AdminLogin() {
         <div className={styles.header}>
           <Title2>
             <span style={{ display: "inline-flex", gap: tokens.spacingHorizontalS, alignItems: "center" }}>
-              <LockClosed24Regular /> Password Required
+              <LockClosed24 /> Password Required
             </span>
           </Title2>
           <Text className={styles.hint}>

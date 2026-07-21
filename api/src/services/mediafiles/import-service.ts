@@ -26,6 +26,7 @@ import {
     matchTrackForFile,
 } from "./import-matching-utils.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
+import { resolveVideoTypeSuffix } from "./library-files.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import type { ImportDecisionMode } from "../import-decision/types.js";
@@ -562,9 +563,18 @@ export class ImportService {
                     ...videoData,
                     provider_id: videoId,
                     title: videoData.title || providerVideo.title || "Unknown Video",
-                    quality: videoData.quality || providerVideo.quality || "MP4_1080P",
+                    quality: videoData.quality || providerVideo.quality || null,
                     provider: streamingProviderManager.getDefaultStreamingProvider().id,
                 }]);
+                const catalogVideo = db.prepare(`
+                    SELECT recording.title, recording.video_variant
+                    FROM ProviderItems pi
+                    JOIN Recordings recording ON recording.id = pi.recording_id
+                    WHERE pi.entity_type = 'video'
+                      AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+                    LIMIT 1
+                `).get(videoId) as { title?: string | null; video_variant?: string | null } | undefined;
+                const catalogVideoTitle = catalogVideo?.title || "Unknown Video";
                 if (monitorValue) {
                     db.prepare(`
                         UPDATE Recordings
@@ -581,15 +591,16 @@ export class ImportService {
                 }
 
                 const videoTemplate = path.join(artistFolder, namingConfig.video_file);
-	                const expectedVideoRel = renderRelativePath(videoTemplate, {
-	                    artistName,
-	                    artistMbId: artistRow?.mbid || null,
-	                    artistId,
-	                    videoTitle: videoData.title || providerVideo.title || "Unknown Video",
-	                    trackId: videoId,
-	                    videoId,
-	                    quality: videoData.quality || providerVideo.quality || "MP4_1080P",
-	                });
+                const expectedVideoRel = renderRelativePath(videoTemplate, {
+                    artistName,
+                    artistMbId: artistRow?.mbid || null,
+                    artistId,
+                    videoTitle: catalogVideoTitle,
+                    videoType: resolveVideoTypeSuffix(catalogVideoTitle, catalogVideo?.video_variant),
+                    trackId: videoId,
+                    videoId,
+                    quality: videoData.quality || providerVideo.quality || null,
+                });
 
                 for (const file of candidate.group.files) {
                     const ext = file.extension;
@@ -628,7 +639,7 @@ export class ImportService {
                         fileSize: file.size,
                         duration: metrics.duration || 0,
                         fileType: "video",
-                        quality: videoData.quality || "MP4_1080P",
+                        quality: videoData.quality || null,
                         needsRename,
                         bitDepth: metrics.bitDepth || null,
                         sampleRate: metrics.sampleRate || null,
@@ -752,15 +763,24 @@ export class ImportService {
                 `).run(monitorValue, albumRow.release_group_mbid);
             }
 
+            // Catalog-first: position comes from Tracks on the canonical release,
+            // never from match_evidence disc/track numbers (native provider-album
+            // layout, which can mis-number hybrid/partial releases).
             const trackRows = db.prepare(`
                 SELECT
-                    provider_id AS id,
-                    title,
-                    CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number,
-                    CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER) AS volume_number
-                FROM ProviderItems
-                WHERE entity_type = 'track' AND provider_album_id = ?
-            `).all(albumId) as any[];
+                    pi.provider_id AS id,
+                    COALESCE(NULLIF(TRIM(t.title), ''), pi.title) AS title,
+                    t.position AS track_number,
+                    t.medium_position AS volume_number
+                FROM ProviderItems pi
+                LEFT JOIN Tracks t
+                    ON t.release_mbid = ?
+                    AND (
+                        (pi.track_mbid IS NOT NULL AND t.mbid = pi.track_mbid)
+                        OR (pi.recording_mbid IS NOT NULL AND t.recording_mbid = pi.recording_mbid)
+                    )
+                WHERE pi.entity_type = 'track' AND pi.provider_album_id = ?
+            `).all(albumRow.release_mbid || null, albumId) as any[];
 
             const trackRowsById = new Map(trackRows.map((row) => [String(row.id), row]));
 

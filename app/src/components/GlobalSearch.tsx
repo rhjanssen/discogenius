@@ -17,9 +17,9 @@ import {
     mergeClasses,
 } from "@fluentui/react-components";
 import {
-  Add24Regular as Add24RegularBase,
-  EyeOff24Regular as EyeOff24RegularBase,
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
+  Add24Regular,
+  EyeOff24Regular,
+  ArrowDownload24Regular,
   Add24Filled,
   EyeOff24Filled,
   ArrowDownload24Filled,
@@ -27,16 +27,16 @@ import {
 } from "@fluentui/react-icons";
 import { useSearch, SearchResultItem } from "@/hooks/useSearch";
 import { MediaCard } from "@/components/cards/MediaCard";
-import { renderableArtworkUrl } from "@/utils/artwork";
+import { mediaCoverSrc } from "@/utils/artwork";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
 
-const Add24Regular = bundleIcon(Add24Filled, Add24RegularBase);
-const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
+const Add24 = bundleIcon(Add24Filled, Add24Regular);
+const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 
 const searchBoxRadius = tokens.borderRadiusCircular;
 const searchUnderlineHeight = "4px";
@@ -590,8 +590,8 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 icon={isProcessing
                     ? <Spinner size="tiny" />
                     : isMonitored
-                        ? <EyeOff24Regular className={styles.monitorIcon} />
-                        : <Add24Regular />}
+                        ? <EyeOff24 className={styles.monitorIcon} />
+                        : <Add24 />}
                 onClick={(e) => handleToggleItem(item, e)}
                 disabled={isProcessing}
                 title={label}
@@ -611,7 +611,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 <MediaCard
                     key={item.providerId}
                     onClick={() => handleItemClick(item)}
-                    imageUrl={renderableArtworkUrl(item.imageId)}
+                    imageUrl={mediaCoverSrc(item)}
                     alt={item.name}
                     title={item.name}
                     subtitle={subtitle}
@@ -626,7 +626,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                 onClick={() => handleItemClick(item)}
             >
                 <Avatar
-                    image={{ src: renderableArtworkUrl(item.imageId) ?? undefined }}
+                    image={{ src: mediaCoverSrc(item) ?? undefined }}
                     name={item.name}
                     size={96}
                     shape="circular"
@@ -659,7 +659,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         const parts = item.subtitle?.split('·').map(s => s.trim()) || [];
         const artistName = parts[1] || "";
         const extraInfo = item.type === "artist" ? "" : parts[2] || ""; // Duration or Year
-        const imageUrl = renderableArtworkUrl(item.imageId);
+        const imageUrl = mediaCoverSrc(item);
 
         return (
             <div
@@ -715,7 +715,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
                     {canDownload && (
                         <Button
                             appearance="subtle"
-                            icon={isDownloading ? <Spinner size="tiny" /> : <ArrowDownload24Regular />}
+                            icon={isDownloading ? <Spinner size="tiny" /> : <ArrowDownload24 />}
                             onClick={(e) => handleDownloadItem(item, e)}
                             disabled={downloadDisabled}
                             title="Download"

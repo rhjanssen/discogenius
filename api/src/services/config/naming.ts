@@ -1,5 +1,6 @@
 import path from "path";
 import { getConfigSection, type NamingConfig } from "./config.js";
+import { streamingProviderManager } from "../providers/index.js";
 
 export type library_root = "music" | "spatial" | "videos";
 
@@ -40,6 +41,8 @@ export type NamingContext = {
   videoId?: string | null;
 
   videoTitle?: string | null;
+  /** Plex extras type suffix including the leading hyphen (e.g. "-video", "-lyrics"). */
+  videoType?: string | null;
 
   // Audio quality metadata (optional, from TrackFiles)
   quality?: string | null;
@@ -174,14 +177,9 @@ function formatQualityValue(value: unknown, format: string): string {
   return String(value);
 }
 
-function getPrettyProviderName(provider: string | null | undefined): string {
-  const lower = String(provider || "").trim().toLowerCase();
-  if (!lower) return "Unknown";
-  if (lower === "tidal") return "TIDAL";
-  if (lower === "apple" || lower === "apple-music" || lower === "applemusic") return "Apple Music";
-  if (lower === "youtube" || lower === "youtube-music" || lower === "youtubemusic") return "YouTube Music";
-  if (lower === "amazon" || lower === "amazon-music" || lower === "amazonmusic") return "Amazon Music";
-  return lower.charAt(0).toUpperCase() + lower.slice(1);
+/** Resolve `{Provider Name}` from the registered provider, not a hardcoded map. */
+export function getPrettyProviderName(provider: string | null | undefined): string {
+  return streamingProviderManager.getProviderDisplayName(provider);
 }
 
 function buildDerived(context: NamingContext) {
@@ -221,6 +219,10 @@ function buildDerived(context: NamingContext) {
 
   const releaseYear = (context.releaseYear ? String(context.releaseYear) : "").toString();
   const videoTitle = context.videoTitle || "Unknown Video";
+  const rawVideoType = String(context.videoType || "").trim();
+  const videoType = rawVideoType
+    ? (rawVideoType.startsWith("-") ? rawVideoType : `-${rawVideoType}`)
+    : "-video";
   const trackId = context.trackId || context.videoId || "";
   const videoId = context.videoId || context.trackId || "";
   const mediaId = context.mediaId || context.providerMediaId || trackId || videoId || "";
@@ -260,6 +262,7 @@ function buildDerived(context: NamingContext) {
     trackNumber,
     volumeNumber,
     videoTitle,
+    videoType,
     trackId,
     videoId,
     providerName,
@@ -444,6 +447,7 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
 
     // Video titles - all variants
     case "videotitle":
+    case "videofulltitle":
       baseValue = derived.videoTitle;
       break;
     case "videocleantitle":
@@ -457,6 +461,9 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
       break;
     case "videoid":
       baseValue = derived.videoId;
+      break;
+    case "videotype":
+      baseValue = derived.videoType;
       break;
     case "providervideoid":
       baseValue = derived.providerTrackId;
@@ -682,6 +689,7 @@ const KNOWN_TOKEN_NAMES = new Set([
   "videotitlethe",
   "videocleantitlethe",
   "videoid",
+  "videotype",
   "tracknumber",
   "track",
   "volumenumber",
@@ -785,7 +793,7 @@ export function validateNamingTemplate(
     }
   }
 
-  if (kind === "video" && !hasAnyToken(tokens, ["videoTitle", "videoCleanTitle", "videoTitleThe", "videoCleanTitleThe", "mediaId", "trackId", "videoId", "providerMediaId", "providerTrackId", "providerVideoId"])) {
+  if (kind === "video" && !hasAnyToken(tokens, ["videoTitle", "videoFullTitle", "videoCleanTitle", "videoTitleThe", "videoCleanTitleThe", "mediaId", "trackId", "videoId", "providerMediaId", "providerTrackId", "providerVideoId"])) {
     errors.push("Video template must include a video title or provider track/video ID token.");
   }
 
@@ -825,8 +833,8 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     releaseGroupMbId: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb",
     releaseYear: "2013",
     trackTitle: "Pompeii",
-    trackVersion: null,
-    trackFullTitle: "Pompeii",
+    trackVersion: "Live From MTV Unplugged",
+    trackFullTitle: "Pompeii (Live From MTV Unplugged)",
     trackArtistName: "Bastille",
     trackArtistMbId: "7808accb-6395-4b25-858c-678bbb73896b",
     trackMbId: "a3a1f1a5-817e-40af-b98a-d5f9b4515ed0",
@@ -838,7 +846,8 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     videoId: "26065587",
     trackNumber: 1,
     volumeNumber: 1,
-    videoTitle: "Pompeii",
+    videoTitle: "Pompeii (Live At The O2)",
+    videoType: "-video",
     explicit: false,
     quality: "LOSSLESS",
     codec: "FLAC",

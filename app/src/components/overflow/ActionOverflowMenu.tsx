@@ -11,13 +11,13 @@ import {
   useOverflowMenu,
 } from "@fluentui/react-components";
 import {
-  MoreHorizontal24Regular as MoreHorizontal24RegularBase,
+  MoreHorizontal24Regular,
   MoreHorizontal24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
-const MoreHorizontal24Regular = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24RegularBase);
+const MoreHorizontal24 = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24Regular);
 
 export interface OverflowAction {
   key: string;
@@ -51,7 +51,7 @@ export const ActionOverflowMenu = ({ actions, className }: { actions: OverflowAc
   return (
     <Menu>
       <MenuTrigger disableButtonEnhancement>
-        <Button ref={ref} appearance="subtle" icon={<MoreHorizontal24Regular />} className={mergeClasses(styles.moreButton, className)}>
+        <Button ref={ref} appearance="subtle" icon={<MoreHorizontal24 />} className={mergeClasses(styles.moreButton, className)}>
           More
         </Button>
       </MenuTrigger>

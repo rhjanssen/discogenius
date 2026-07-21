@@ -68,13 +68,15 @@ const WORKFLOW_PHASES: Record<ArtistWorkflow, WorkflowPhases> = {
     curate: true,
     queueDownloads: false,
   },
+  // Lidarr SearchForMissingAlbums after add+scan: monitored intake ends by
+  // queueing DownloadMissing for that artist (see handleCurateArtist).
   "monitoring-intake": {
     monitorArtist: true,
     refreshMetadata: true,
     scanLibrary: true,
     backfillMetadata: true,
     curate: true,
-    queueDownloads: false,
+    queueDownloads: true,
   },
   "full-monitoring": {
     monitorArtist: true,
@@ -113,8 +115,6 @@ export function buildRefreshArtistCommand(params: {
     hydrateCatalog,
     hydrateAlbumTracks,
     scanLibrary: phases.scanLibrary,
-    includeSimilarArtists: false,
-    seedSimilarArtists: false,
     forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
     monitoringCycle: params.monitoringCycle,

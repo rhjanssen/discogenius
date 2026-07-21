@@ -1054,9 +1054,8 @@ dbModule.db.prepare(`
   };
 
   const expectedSeparated = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
-  // The Plex extras suffix (-video/-lyrics/-live/...) is appended after the
-  // provider tag so Plex can classify the extra from the filename.
-  const expectedSeparatedPath = path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video {TIDAL-video-inline-test}-video.mp4");
+  // Separated layout: {Video Type} comes from the naming template (no post-render append).
+  const expectedSeparatedPath = path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video-video {TIDAL-video-inline-test}.mp4");
   assert.equal(expectedSeparated.expectedPath, expectedSeparatedPath);
 
   const expectedSeparatedThumbnail = libraryFilesModule.LibraryFilesService.computeExpectedPath({
@@ -1067,7 +1066,7 @@ dbModule.db.prepare(`
   });
   assert.equal(
     expectedSeparatedThumbnail.expectedPath,
-    path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video {TIDAL-video-inline-test}-video.jpg"),
+    path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video-video {TIDAL-video-inline-test}.jpg"),
   );
 
   const expectedSeparatedNfo = libraryFilesModule.LibraryFilesService.computeExpectedPath({
@@ -1078,7 +1077,7 @@ dbModule.db.prepare(`
   });
   assert.equal(
     expectedSeparatedNfo.expectedPath,
-    path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video {TIDAL-video-inline-test}-video.nfo"),
+    path.join(tempDir, "library", "videos", "Bastille", "Pompeii Video-video {TIDAL-video-inline-test}.nfo"),
   );
 
   config.path.video_folder_layout = "inline";
@@ -1161,11 +1160,12 @@ dbModule.db.prepare(`
     id: 1003,
     media_id: "video-inline-duplicate",
   });
-  assert.equal(
-    expectedDuplicate.expectedPath,
-    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video {TIDAL-video-inline-duplicate}.mp4"),
-  );
-dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
+  // Same audio stem + same Plex type (-video) always shares one primary path.
+  // Multi-provider / alternate cuts do not create descriptive or provider-tagged
+  // siblings beside the track.
+  assert.equal(expectedDuplicate.expectedPath, expectedInlineMonitoredPath);
+
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
     .run("video-rec-unlinked", "Pompeii (Official Video)", "artist-mbid-bastille");
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
@@ -1179,10 +1179,7 @@ dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
     album_id: null,
     media_id: "video-inline-unlinked",
   });
-  assert.equal(
-    expectedUnlinkedDuplicate.expectedPath,
-    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video {TIDAL-video-inline-unlinked}.mp4"),
-  );
+  assert.equal(expectedUnlinkedDuplicate.expectedPath, expectedInlineMonitoredPath);
 
   const expectedCanonicalOnlyDuplicate = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     ...rowVideoSeparated,
@@ -1190,10 +1187,7 @@ dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
     album_id: null,
     media_id: "video-inline-unlinked",
   });
-  assert.equal(
-    expectedCanonicalOnlyDuplicate.expectedPath,
-    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video {TIDAL-video-inline-unlinked}.mp4"),
-  );
+  assert.equal(expectedCanonicalOnlyDuplicate.expectedPath, expectedInlineMonitoredPath);
 });
 
 

@@ -15,9 +15,9 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
-  ArrowRight16Regular as ArrowRight16RegularBase,
-  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
-  Dismiss24Regular as Dismiss24RegularBase,
+  ArrowRight16Regular,
+  ArrowSortDownLines24Regular,
+  Dismiss24Regular,
   ArrowRight16Filled,
   ArrowSortDownLines24Filled,
   Dismiss24Filled,
@@ -25,9 +25,9 @@ import {
 } from "@fluentui/react-icons";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 
-const ArrowRight16Regular = bundleIcon(ArrowRight16Filled, ArrowRight16RegularBase);
-const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
-const Dismiss24Regular = bundleIcon(Dismiss24Filled, Dismiss24RegularBase);
+const ArrowRight16 = bundleIcon(ArrowRight16Filled, ArrowRight16Regular);
+const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
+const Dismiss24 = bundleIcon(Dismiss24Filled, Dismiss24Regular);
 
 export interface RenamePreviewItem {
   id: number;
@@ -207,7 +207,7 @@ export function RenamePreviewDialog({
               <Button
                 appearance="subtle"
                 aria-label="Close rename preview"
-                icon={<Dismiss24Regular />}
+                icon={<Dismiss24 />}
                 onClick={() => onOpenChange(false)}
               />
             }
@@ -265,7 +265,7 @@ export function RenamePreviewDialog({
             <Button appearance="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
               appearance="primary"
-              icon={applying ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
+              icon={applying ? <Spinner size="tiny" /> : <ArrowSortDownLines24 />}
               disabled={applying || selection.selectedIds.size === 0}
               onClick={() => onApply(Array.from(selection.selectedIds))}
             >
@@ -307,7 +307,7 @@ export function RetagPreviewDialog({
               <Button
                 appearance="subtle"
                 aria-label="Close retag preview"
-                icon={<Dismiss24Regular />}
+                icon={<Dismiss24 />}
                 onClick={() => onOpenChange(false)}
               />
             }
@@ -356,7 +356,7 @@ export function RetagPreviewDialog({
                           <div className={styles.change} key={change.field}>
                             <span className={styles.field}>{change.field}</span>
                             <span className={styles.oldValue}>{change.oldValue || "∅"}</span>
-                            <ArrowRight16Regular />
+                            <ArrowRight16 />
                             <span className={styles.newValue}>{change.newValue || "∅"}</span>
                           </div>
                         ))}
@@ -373,7 +373,7 @@ export function RetagPreviewDialog({
             <Button appearance="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
               appearance="primary"
-              icon={applying ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
+              icon={applying ? <Spinner size="tiny" /> : <ArrowSortDownLines24 />}
               disabled={applying || selection.selectedIds.size === 0}
               onClick={() => onApply(Array.from(selection.selectedIds))}
             >

@@ -62,7 +62,7 @@ test("Servarr Metadata Server selectors return raw URLs for durable storage", ()
   }), remoteUrl);
 });
 
-test("provider artwork ids are not converted by core sync selectors", () => {
+test("albumCoverLocalUrl emits local media-cover URL even without stored image URLs", () => {
   const albumMbid = "album-with-provider-id";
   const artworkUrl = mediaCoverServiceModule.albumCoverLocalUrl({
     albumMbid,
@@ -76,7 +76,7 @@ test("provider artwork ids are not converted by core sync selectors", () => {
     },
   });
 
-  assert.equal(artworkUrl, null);
+  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg?source=canonical`);
 });
 
 test("provider artwork fallbacks only produce browser-renderable URLs", () => {
@@ -537,6 +537,50 @@ test("album artwork resolver caches Cover Art Archive artwork locally when metad
   assert.equal(calls.length, 1);
 });
 
+test("provider-fulfilled canonical cache is stale once Servarr imagery exists", () => {
+  const albumMbid = "stale-provider-fallback-cache";
+  const providerUrl = "https://resources.tidal.com/images/aaaaaaaa/bbbb/cccc/dddd/eeeeeeeeeeee/750x750.jpg";
+  const servarrUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/real-cover.jpg";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, "cover-250.jpg"), Buffer.alloc(32, 1));
+  fs.writeFileSync(
+    path.join(folder, ".Cover.source.json"),
+    JSON.stringify({ url: providerUrl, preference: "canonical", fulfilledBy: "provider" }),
+  );
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("stale-provider-artist", "Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, images) VALUES (?, ?, ?, ?)")
+    .run(
+      albumMbid,
+      "stale-provider-artist",
+      "Stale Provider Cache",
+      JSON.stringify([{ coverType: "Cover", url: providerUrl, source: "provider-fallback" }]),
+    );
+
+  configModule.updateConfig("metadata", { artwork_preference: "canonical" });
+  assert.equal(
+    mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(albumMbid, "Album", "Cover"),
+    true,
+    "provider fallback stays current while no canonical image exists",
+  );
+
+  dbModule.db.prepare("UPDATE Albums SET images = ? WHERE mbid = ?").run(
+    JSON.stringify([
+      { coverType: "Cover", url: servarrUrl },
+      { coverType: "Cover", url: providerUrl, source: "provider-fallback" },
+    ]),
+    albumMbid,
+  );
+
+  assert.equal(
+    mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(albumMbid, "Album", "Cover"),
+    false,
+    "canonical preference must retry once Servarr/CAA imagery appears",
+  );
+});
+
 test("oversized cached derivatives fall back to the smaller original", () => {
   const folder = path.join(tempDir, "media-cover", "Albums", "oversized-proxy");
   fs.mkdirSync(folder, { recursive: true });
@@ -548,5 +592,190 @@ test("oversized cached derivatives fall back to the smaller original", () => {
   assert.equal(
     mediaCoverServiceModule.resolveMediaCoverFilePath(folder, "cover-500.jpg"),
     original,
+  );
+});
+
+test("stable poster.jpg alias resolves to the largest UI derivative", () => {
+  const folder = path.join(tempDir, "media-cover", "artist-poster-alias");
+  fs.mkdirSync(folder, { recursive: true });
+  const poster500 = path.join(folder, "poster-500.jpg");
+  const poster250 = path.join(folder, "poster-250.jpg");
+  fs.writeFileSync(poster500, Buffer.alloc(120, 1));
+  fs.writeFileSync(poster250, Buffer.alloc(40, 2));
+
+  assert.equal(
+    mediaCoverServiceModule.resolveMediaCoverFilePath(folder, "poster.jpg"),
+    poster500,
+  );
+  assert.equal(
+    mediaCoverServiceModule.getMediaCoverFilePathFromUrl("/media-cover/artist-poster-alias/poster.jpg"),
+    poster500,
+  );
+});
+
+test("artist profile selectors never fall back to Fanart or Banner", () => {
+  const fanartUrl = "https://images.lidarr.audio/cache/https://example.test/fanart.jpg";
+  const bannerUrl = "https://images.lidarr.audio/cache/https://example.test/banner.jpg";
+  const posterUrl = "https://images.lidarr.audio/cache/https://example.test/poster.jpg";
+
+  assert.equal(
+    mediaCoverServiceModule.getServarrMetadataArtistImageUrl({
+      Images: [
+        { CoverType: "Banner", Url: bannerUrl, Width: 1381, Height: 575 },
+        { CoverType: "Fanart", Url: fanartUrl, Width: 1920, Height: 1080 },
+        { CoverType: "Poster", Url: posterUrl, Width: 1000, Height: 1000 },
+      ],
+    }),
+    posterUrl,
+  );
+
+  assert.equal(
+    mediaCoverServiceModule.getServarrMetadataArtistImageUrl({
+      Images: [
+        { CoverType: "Banner", Url: bannerUrl, Width: 1381, Height: 575 },
+        { CoverType: "Fanart", Url: fanartUrl, Width: 1920, Height: 1080 },
+      ],
+    }),
+    null,
+  );
+
+  assert.equal(
+    mediaCoverServiceModule.getServarrMetadataArtistImageUrl({
+      Images: [
+        { CoverType: "Banner", Url: bannerUrl, Width: 1381, Height: 575 },
+        { CoverType: "Fanart", Url: fanartUrl, Width: 1920, Height: 1080 },
+      ],
+    }, ["Fanart"]),
+    fanartUrl,
+  );
+});
+
+test("artist provider artwork candidates follow streaming.provider_priority", async () => {
+  const providerModule = await import("../providers/index.js");
+  const artistMbid = "artist-priority-art-mbid";
+  const { db } = dbModule;
+
+  for (const id of ["priority-art-tidal", "priority-art-spotify"]) {
+    providerModule.streamingProviderManager.registerStreamingProvider({
+      id,
+      name: id,
+      capabilities: { artwork: true },
+      getArtworkUrl: () => null,
+    } as any);
+  }
+
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Priority Art Artist");
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, asset_id, match_confidence, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("priority-art-spotify", "artist", "spotify-artist-1", artistMbid, "spotify-pic", 0.99, "2026-01-02T00:00:00Z");
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, asset_id, match_confidence, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("priority-art-tidal", "artist", "tidal-artist-1", artistMbid, "tidal-pic", 0.5, "2026-01-01T00:00:00Z");
+
+  try {
+    configModule.updateConfig("streaming", {
+      provider_priority: ["priority-art-tidal", "priority-art-spotify"],
+    });
+
+    const candidates = mediaCoverServiceModule.loadArtistProviderArtworkCandidates(artistMbid);
+    assert.deepEqual(
+      candidates.map((candidate) => ({ provider: candidate.provider, imageId: candidate.imageId })),
+      [
+        { provider: "priority-art-tidal", imageId: "tidal-pic" },
+        { provider: "priority-art-spotify", imageId: "spotify-pic" },
+      ],
+    );
+  } finally {
+    configModule.updateConfig("streaming", { provider_priority: [] });
+  }
+});
+
+test("album provider artwork candidates prefer stereo slot then spatial then other matches", () => {
+  const { db } = dbModule;
+  const albumMbid = "album-slot-art-mbid";
+  const artistMbid = "album-slot-art-artist";
+
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Slot Art Artist");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(albumMbid, artistMbid, "Slot Art Album");
+
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, cover, match_confidence, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("tidal", "album", "stereo-album-1", artistMbid, albumMbid, "stereo-cover", null, 0.4, "2026-01-01T00:00:00Z");
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, cover, match_confidence, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("spotify", "album", "spatial-album-1", artistMbid, albumMbid, "spatial-cover", null, 0.5, "2026-01-02T00:00:00Z");
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, cover, match_confidence, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("apple-music", "album", "other-album-1", artistMbid, albumMbid, "other-cover", null, 0.99, "2026-01-03T00:00:00Z");
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(artistMbid, albumMbid, "spatial", 1, "spotify", "spatial-album-1");
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(artistMbid, albumMbid, "stereo", 1, "tidal", "stereo-album-1");
+
+  const withStereo = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(albumMbid);
+  assert.deepEqual(
+    withStereo.map((candidate) => ({ provider: candidate.provider, entityId: candidate.entityId, imageId: candidate.imageId })),
+    [
+      { provider: "tidal", entityId: "stereo-album-1", imageId: "stereo-cover" },
+      { provider: "spotify", entityId: "spatial-album-1", imageId: "spatial-cover" },
+      { provider: "apple-music", entityId: "other-album-1", imageId: "other-cover" },
+    ],
+  );
+
+  db.prepare("DELETE FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = ?")
+    .run(albumMbid, "stereo");
+  const spatialOnly = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(albumMbid);
+  assert.equal(spatialOnly[0]?.provider, "spotify");
+  assert.equal(spatialOnly[0]?.imageId, "spatial-cover");
+});
+
+test("album provider artwork candidates expand hybrid selected_provider_id", () => {
+  const { db } = dbModule;
+  const albumMbid = "album-hybrid-art-mbid";
+  const artistMbid = "album-hybrid-art-artist";
+
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Hybrid Art Artist");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(albumMbid, artistMbid, "Hybrid Art Album");
+
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, match_confidence
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("tidal", "album", "hybrid-a", artistMbid, albumMbid, "cover-a", 0.8);
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, match_confidence
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("tidal", "album", "hybrid-b", artistMbid, albumMbid, "cover-b", 0.7);
+
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(artistMbid, albumMbid, "stereo", 1, "tidal", "hybrid-a;hybrid-b");
+
+  const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(albumMbid);
+  assert.deepEqual(
+    candidates.slice(0, 2).map((candidate) => candidate.entityId),
+    ["hybrid-a", "hybrid-b"],
   );
 });

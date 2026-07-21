@@ -17,12 +17,12 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
-  Door24Regular as Door24RegularBase,
-  Open24Regular as Open24RegularBase,
-  ArrowRight24Regular as ArrowRight24RegularBase,
-  WeatherMoon24Regular as WeatherMoon24RegularBase,
-  WeatherSunny24Regular as WeatherSunny24RegularBase,
-  DesktopMac24Regular as DesktopMac24RegularBase,
+  Door24Regular,
+  Open24Regular,
+  ArrowRight24Regular,
+  WeatherMoon24Regular,
+  WeatherSunny24Regular,
+  DesktopMac24Regular,
   Door24Filled,
   Open24Filled,
   ArrowRight24Filled,
@@ -38,12 +38,12 @@ import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import type { AuthStatusContract } from "@contracts/auth";
 import { ProviderMark } from "@/components/ui/ProviderMark";
 
-const Door24Regular = bundleIcon(Door24Filled, Door24RegularBase);
-const Open24Regular = bundleIcon(Open24Filled, Open24RegularBase);
-const ArrowRight24Regular = bundleIcon(ArrowRight24Filled, ArrowRight24RegularBase);
-const WeatherMoon24Regular = bundleIcon(WeatherMoon24Filled, WeatherMoon24RegularBase);
-const WeatherSunny24Regular = bundleIcon(WeatherSunny24Filled, WeatherSunny24RegularBase);
-const DesktopMac24Regular = bundleIcon(DesktopMac24Filled, DesktopMac24RegularBase);
+const Door24 = bundleIcon(Door24Filled, Door24Regular);
+const Open24 = bundleIcon(Open24Filled, Open24Regular);
+const ArrowRight24 = bundleIcon(ArrowRight24Filled, ArrowRight24Regular);
+const WeatherMoon24 = bundleIcon(WeatherMoon24Filled, WeatherMoon24Regular);
+const WeatherSunny24 = bundleIcon(WeatherSunny24Filled, WeatherSunny24Regular);
+const DesktopMac24 = bundleIcon(DesktopMac24Filled, DesktopMac24Regular);
 const logo = "/assets/images/logo.png";
 
 const useStyles = makeStyles({
@@ -1221,19 +1221,19 @@ const Auth = () => {
         <div className={styles.themeToggle}>
           <Button
             appearance={theme === "light" ? "primary" : "subtle"}
-            icon={<WeatherSunny24Regular />}
+            icon={<WeatherSunny24 />}
             onClick={() => setTheme("light")}
             size="small"
           />
           <Button
             appearance={theme === "dark" ? "primary" : "subtle"}
-            icon={<WeatherMoon24Regular />}
+            icon={<WeatherMoon24 />}
             onClick={() => setTheme("dark")}
             size="small"
           />
           <Button
             appearance={theme === "system" ? "primary" : "subtle"}
-            icon={<DesktopMac24Regular />}
+            icon={<DesktopMac24 />}
             onClick={() => setTheme("system")}
             size="small"
           />
@@ -1343,7 +1343,7 @@ const Auth = () => {
                         </Text>
                         <Button
                           appearance="outline"
-                          icon={<Open24Regular />}
+                          icon={<Open24 />}
                           onClick={() => window.open("https://music.apple.com", "_blank", "noopener,noreferrer")}
                           disabled={savingCredentials}
                         >
@@ -1561,7 +1561,7 @@ const Auth = () => {
                               {provider.authenticated ? (
                                 <Badge appearance="tint" color="success">Connected</Badge>
                               ) : provider.management.canAuthenticate ? (
-                                <ArrowRight24Regular />
+                                <ArrowRight24 />
                               ) : (
                                 <span className={styles.providerSoonTag}>Soon</span>
                               )}
@@ -1578,7 +1578,7 @@ const Auth = () => {
                       onClick={navigateAfterAuth}
                       size="large"
                       className={styles.skipButton}
-                      icon={<Door24Regular />}
+                      icon={<Door24 />}
                     >
                       {isAddingProvider ? "Back to Settings" : "Skip for now"}
                     </Button>
@@ -1618,7 +1618,7 @@ const Auth = () => {
 
                   <Button
                     appearance="outline"
-                    icon={<Open24Regular />}
+                    icon={<Open24 />}
                     onClick={() => {
                       if (verificationUrl) {
                         openVerificationWindow(verificationUrl);

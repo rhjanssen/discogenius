@@ -3,7 +3,7 @@ import path from "path";
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
-import { getCurrentLibraryRootPath, resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
+import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import {
   LibraryFilesService,
   removeEmptyParents,
@@ -13,73 +13,17 @@ import {
   type RenameStatusSummary,
 } from "./library-files.js";
 import { normalizeResolvedPath } from "./path-utils.js";
-
-type TableNameType = "TrackFiles" | "MetadataFiles" | "ExtraFiles" | "LyricFiles";
-
-function decodeSyntheticId(syntheticId: number): { id: number; tableName: TableNameType } {
-  if (syntheticId >= 30000000) {
-    return { id: syntheticId - 30000000, tableName: "LyricFiles" };
-  }
-  if (syntheticId >= 20000000) {
-    return { id: syntheticId - 20000000, tableName: "ExtraFiles" };
-  }
-  if (syntheticId >= 10000000) {
-    return { id: syntheticId - 10000000, tableName: "MetadataFiles" };
-  }
-  return { id: syntheticId, tableName: "TrackFiles" };
-}
-
-type RenameLibraryFileRow = {
-  id: number;
-  artist_id: number;
-  album_id: number | null;
-  media_id: number | null;
-  canonical_artist_mbid?: string | null;
-  canonical_release_group_mbid?: string | null;
-  canonical_release_mbid?: string | null;
-  canonical_track_mbid?: string | null;
-  canonical_recording_mbid?: string | null;
-  file_path: string;
-  relative_path: string | null;
-  library_root: string | null;
-  file_type: string;
-  extension: string;
-  library_slot?: string | null;
-  provider?: string | null;
-  provider_entity_type?: string | null;
-  provider_id?: string | null;
-  quality?: string | null;
-  codec?: string | null;
-  bitrate?: number | null;
-  sample_rate?: number | null;
-  bit_depth?: number | null;
-  channels?: number | null;
-};
-
-type RenameFileEvent = {
-  libraryFileId: number;
-  artistId: number;
-  albumId: number | null;
-  mediaId: number | null;
-  fileType: string;
-  filePath: string;
-  libraryRoot: string;
-  previousPath: string;
-};
-
-function getLibraryRootFilterValues(libraryRoot: string | null | undefined): string[] {
-  const raw = String(libraryRoot || "").trim();
-  if (!raw) {
-    return [];
-  }
-
-  const key = resolveLibraryRootKey(raw, raw);
-  if (!key) {
-    return [raw];
-  }
-
-  return Array.from(new Set([key, getCurrentLibraryRootPath(key), raw]));
-}
+import {
+  buildRenameFilters,
+  buildRenameStatusSummary,
+  decodeSyntheticId,
+  isSameScopeSidecarOccupant,
+  isScopedSidecar,
+  tableIdColumn,
+  tableTouchedAtColumn,
+  type RenameFileEvent,
+  type RenameLibraryFileRow,
+} from "./rename-track-file-paths.js";
 
 function moveFileCrossDevice(sourcePath: string, destPath: string) {
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
@@ -92,44 +36,6 @@ function moveFileCrossDevice(sourcePath: string, destPath: string) {
     fs.copyFileSync(sourcePath, destPath, fs.constants.COPYFILE_EXCL);
     fs.rmSync(sourcePath, { force: true });
   }
-}
-
-function buildRenameFilters(options: RenameScopeOptions = {}): { where: string[]; params: any[] } {
-  const where: string[] = [];
-  const params: any[] = [];
-
-  if (options.artistId) {
-    where.push("lf.artist_id = ?");
-    params.push(options.artistId);
-  }
-  if (options.albumId) {
-    where.push(`(
-        lf.canonical_release_group_mbid = ?
-        OR lf.canonical_release_mbid = ?
-        OR EXISTS (
-          SELECT 1
-          FROM ProviderItems scope_item
-          WHERE scope_item.entity_type IN ('track', 'video')
-            AND lf.provider_entity_type = scope_item.entity_type
-            AND CAST(scope_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-            AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
-        )
-      )`);
-    params.push(options.albumId, options.albumId, options.albumId, options.albumId);
-  }
-  if (options.libraryRoot) {
-    const rootValues = getLibraryRootFilterValues(options.libraryRoot);
-    if (rootValues.length > 0) {
-      where.push(`lf.library_root IN (${rootValues.map(() => "?").join(",")})`);
-      params.push(...rootValues);
-    }
-  }
-  if (options.fileTypes && options.fileTypes.length > 0) {
-    where.push(`lf.file_type IN (${options.fileTypes.map(() => "?").join(",")})`);
-    params.push(...options.fileTypes);
-  }
-
-  return { where, params };
 }
 
 export class RenameTrackFileService {
@@ -241,15 +147,13 @@ export class RenameTrackFileService {
       if (expectedPath) {
         const decoded = decodeSyntheticId(row.id);
         const tableName = decoded.tableName;
-        const idCol = tableName === "TrackFiles" ? "id" : "Id";
-        const filePathCol = tableName === "TrackFiles" ? "file_path" : "file_path";
-        const expectedPathCol = tableName === "TrackFiles" ? "expected_path" : "expected_path";
+        const idCol = tableIdColumn(tableName);
 
         const dbConflict = db.prepare(`
           SELECT ${idCol} AS id
           FROM ${tableName}
           WHERE ${idCol} != ?
-            AND (${filePathCol} = ? OR ${expectedPathCol} = ?)
+            AND (file_path = ? OR expected_path = ?)
           LIMIT 1
         `).get(decoded.id, expectedPath, expectedPath);
 
@@ -292,28 +196,24 @@ export class RenameTrackFileService {
     db.transaction(() => {
       for (const row of updates) {
         const decoded = decodeSyntheticId(row.id);
-        const expectedPathCol = decoded.tableName === "TrackFiles" ? "expected_path" : "expected_path";
-        const needsRenameCol = decoded.tableName === "TrackFiles" ? "needs_rename" : "needs_rename";
-        const idCol = decoded.tableName === "TrackFiles" ? "id" : "Id";
+        const idCol = tableIdColumn(decoded.tableName);
 
         db.prepare(`
           UPDATE ${decoded.tableName}
-          SET ${expectedPathCol} = ?,
-              ${needsRenameCol} = ?
+          SET expected_path = ?,
+              needs_rename = ?
           WHERE ${idCol} = ?
         `).run(row.expectedPath, row.needsRename, decoded.id);
       }
 
       for (const row of relativePathUpdates) {
         const decoded = decodeSyntheticId(row.id);
-        const relPathCol = decoded.tableName === "TrackFiles" ? "relative_path" : "relative_path";
-        const libraryRootCol = decoded.tableName === "TrackFiles" ? "library_root" : "library_root";
-        const idCol = decoded.tableName === "TrackFiles" ? "id" : "Id";
+        const idCol = tableIdColumn(decoded.tableName);
 
         db.prepare(`
           UPDATE ${decoded.tableName}
-          SET ${relPathCol} = ?,
-              ${libraryRootCol} = ?
+          SET relative_path = ?,
+              library_root = ?
           WHERE ${idCol} = ?
         `).run(row.relativePath, row.libraryRoot, decoded.id);
       }
@@ -330,17 +230,7 @@ export class RenameTrackFileService {
     const total = this.getRenameCandidateCount(options);
     const scanLimit = Math.max(1, Math.min(1000, options.limit ?? 25));
     const results = this.evaluateRenameRows(this.getRenameRows({ ...options, limit: scanLimit, offset: 0 }, true));
-    const actionable = results.filter((item) => item.needs_rename || item.conflict || item.missing);
-
-    return {
-      total,
-      scanned: results.length,
-      limited: total > results.length,
-      renameNeeded: results.filter((item) => item.needs_rename).length,
-      conflicts: results.filter((item) => item.conflict).length,
-      missing: results.filter((item) => item.missing).length,
-      sample: actionable.slice(0, Math.max(0, sampleLimit)),
-    };
+    return buildRenameStatusSummary(total, results, sampleLimit);
   }
 
   static executeRenameFilesByQuery(options: RenameScopeOptions = {}): RenameApplyResult {
@@ -453,25 +343,22 @@ export class RenameTrackFileService {
         const samePath = normalizeResolvedPath(expectedPath) === normalizeResolvedPath(resolvedFilePath);
         const decoded = decodeSyntheticId(id);
         const tableName = decoded.tableName;
-        const idCol = tableName === "TrackFiles" ? "id" : "Id";
-        const expectedPathCol = tableName === "TrackFiles" ? "expected_path" : "expected_path";
-        const needsRenameCol = tableName === "TrackFiles" ? "needs_rename" : "needs_rename";
+        const idCol = tableIdColumn(tableName);
 
         if (samePath) {
           dbUpdates.push({
-            sql: `UPDATE ${tableName} SET ${expectedPathCol} = ?, ${needsRenameCol} = 0, ${tableName === "TrackFiles" ? "verified_at = CURRENT_TIMESTAMP" : "last_updated = CURRENT_TIMESTAMP"} WHERE ${idCol} = ?`,
+            sql: `UPDATE ${tableName} SET expected_path = ?, needs_rename = 0, ${tableTouchedAtColumn(tableName)} WHERE ${idCol} = ?`,
             args: [expectedPath, decoded.id],
           });
           result.skipped++;
           continue;
         }
 
-        const filePathCol = tableName === "TrackFiles" ? "file_path" : "file_path";
         const dbConflict = db.prepare(`
           SELECT ${idCol} AS id
           FROM ${tableName}
           WHERE ${idCol} != ?
-            AND (${filePathCol} = ? OR ${expectedPathCol} = ?)
+            AND (file_path = ? OR expected_path = ?)
           LIMIT 1
         `).get(decoded.id, expectedPath, expectedPath) as { id: number } | undefined;
 
@@ -482,9 +369,8 @@ export class RenameTrackFileService {
           // from the previously separate roots map to one target path. The
           // destination already holds the same logical artifact, so drop the
           // source duplicate instead of reporting an unresolvable conflict.
-          const isScopedSidecar = row.media_id == null && (row.file_type === "nfo" || row.file_type === "cover");
           let duplicateOfSameScope = false;
-          if (isScopedSidecar) {
+          if (isScopedSidecar(row)) {
             if (dbConflict) {
               const occupant = db.prepare(`
                 SELECT artist_id,
@@ -499,13 +385,7 @@ export class RenameTrackFileService {
                 media_id?: string | number | null;
                 file_type?: string | null;
               } | undefined;
-              duplicateOfSameScope = Boolean(
-                occupant
-                && occupant.media_id == null
-                && occupant.file_type === row.file_type
-                && String(occupant.artist_id ?? "") === String(row.artist_id ?? "")
-                && String(occupant.album_id ?? "") === String(row.album_id ?? ""),
-              );
+              duplicateOfSameScope = isSameScopeSidecarOccupant(row, occupant);
             } else {
               // Target exists on disk at this scope's canonical sidecar path.
               duplicateOfSameScope = true;
@@ -546,7 +426,7 @@ export class RenameTrackFileService {
           }
 
           dbUpdates.push({
-            sql: `UPDATE ${tableName} SET ${expectedPathCol} = ?, ${needsRenameCol} = 1 WHERE ${idCol} = ?`,
+            sql: `UPDATE ${tableName} SET expected_path = ?, needs_rename = 1 WHERE ${idCol} = ?`,
             args: [expectedPath, decoded.id],
           });
           result.conflicts++;

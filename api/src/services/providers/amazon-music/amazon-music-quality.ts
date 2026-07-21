@@ -1,4 +1,5 @@
-import type { NeutralAudioQuality, ProviderQualityMapping } from "../provider-quality.js";
+import type { NeutralAudioQuality, NeutralVideoQuality, ProviderQualityMapping } from "../provider-quality.js";
+import { classifyNeutralVideo, formatNeutralVideoTag } from "../provider-quality.js";
 
 export const amazonMusicQualityMapping: ProviderQualityMapping = {
   provider: "amazon-music",
@@ -29,5 +30,13 @@ export const amazonMusicQualityMapping: ProviderQualityMapping = {
     if (quality === "hires-lossless") return "Max";
     if (quality === "lossless") return "High";
     return "Normal";
+  },
+
+  toNeutralVideo(raw: string | null | undefined): NeutralVideoQuality | null {
+    return classifyNeutralVideo(raw);
+  },
+
+  fromNeutralVideo(quality: NeutralVideoQuality): string {
+    return formatNeutralVideoTag(quality);
   },
 };

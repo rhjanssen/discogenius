@@ -21,7 +21,10 @@ export type NeutralAudioQuality =
 export type NeutralSpatialQuality = "atmos" | "spatial-360";
 
 /** Provider-agnostic video tiers, ordered low -> high resolution. */
-export type NeutralVideoQuality = "sd" | "hd" | "fhd";
+export type NeutralVideoQuality = "sd" | "hd" | "fhd" | "uhd";
+
+/** Canonical persisted video quality tags (UI badge vocabulary). */
+export type NeutralVideoQualityTag = "SD" | "HD" | "FHD" | "UHD";
 
 export const NEUTRAL_AUDIO_QUALITY_RANK: Record<NeutralAudioQuality, number> = {
   lossy: 0,
@@ -33,6 +36,7 @@ export const NEUTRAL_VIDEO_QUALITY_RANK: Record<NeutralVideoQuality, number> = {
   sd: 0,
   hd: 1,
   fhd: 2,
+  uhd: 3,
 };
 
 export interface NeutralQuality {
@@ -55,6 +59,52 @@ export interface ProviderQualityMapping {
   toNeutral(rawTags: Iterable<string | null | undefined>): NeutralQuality;
   /** Map a neutral stereo tier back to the provider's raw audio quality string. */
   fromNeutralAudio(quality: NeutralAudioQuality): string;
+  /** Map a raw provider video tag / height label to a neutral resolution tier. */
+  toNeutralVideo(rawQuality: string | null | undefined): NeutralVideoQuality | null;
+  /** Map a neutral video tier back to a provider download/request string when needed. */
+  fromNeutralVideo(quality: NeutralVideoQuality): string;
+}
+
+/** Persistable uppercase tag for a neutral video tier (`FHD`, `UHD`, …). */
+export function formatNeutralVideoTag(quality: NeutralVideoQuality): NeutralVideoQualityTag {
+  return quality.toUpperCase() as NeutralVideoQualityTag;
+}
+
+/** Parse a stored/UI video tag (incl. legacy `MP4_1080P`) into a neutral tier. */
+export function classifyNeutralVideo(raw: string | null | undefined): NeutralVideoQuality | null {
+  const normalized = normalize(raw);
+  if (!normalized || normalized === "SOURCE" || normalized === "UNKNOWN") return null;
+  if (normalized.includes("2160") || normalized.includes("4K") || normalized === "UHD") return "uhd";
+  if (normalized.includes("1440") || normalized.includes("QHD")) return "fhd";
+  if (normalized.includes("1080") || normalized === "FHD") return "fhd";
+  if (normalized.includes("720") || normalized === "HD") return "hd";
+  if (
+    normalized.includes("480")
+    || normalized.includes("360")
+    || normalized.includes("240")
+    || normalized === "SD"
+  ) {
+    return "sd";
+  }
+  const mp4 = /^MP4_(\d{3,4})P$/.exec(normalized);
+  if (mp4) return neutralVideoFromHeight(Number(mp4[1]));
+  return null;
+}
+
+/** Map a probed pixel height to a neutral video tier. */
+export function neutralVideoFromHeight(height: number | null | undefined): NeutralVideoQuality | null {
+  const value = Number(height);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  if (value >= 2160) return "uhd";
+  if (value >= 1080) return "fhd";
+  if (value >= 720) return "hd";
+  return "sd";
+}
+
+/** Convenience: height → stored tag (`FHD`), or null when unknown. */
+export function neutralVideoTagFromHeight(height: number | null | undefined): NeutralVideoQualityTag | null {
+  const tier = neutralVideoFromHeight(height);
+  return tier ? formatNeutralVideoTag(tier) : null;
 }
 
 const SPATIAL_360_MARKERS = ["360", "SONY_360", "360RA"];

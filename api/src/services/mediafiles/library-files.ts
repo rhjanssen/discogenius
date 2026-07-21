@@ -15,6 +15,113 @@ import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.
 import { ExtraFileService, isExtraFileType, isLyricExtraFileType, isMetadataExtraFileType } from "../extras/files/extra-file-service.js";
 import { LyricFileService } from "../extras/lyrics/lyric-file-service.js";
 import { MetadataFileService } from "../extras/metadata/files/metadata-file-service.js";
+import { resolveVideoTypeSuffix } from "./video-naming.js";
+
+export {
+  VIDEO_TYPE_SUFFIXES,
+  resolveVideoTypeSuffix,
+  stemEndsWithVideoTypeSuffix,
+} from "./video-naming.js";
+
+export type ExistingLibraryFileIdentity = {
+  id: number;
+  artist_id: number;
+  album_id: number | null;
+  media_id: number | null;
+  file_path: string;
+  relative_path: string | null;
+  library_root: string | null;
+  file_type: string;
+  quality: string | null;
+};
+
+export function toTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function getReleaseYear(releaseDate: string | null | undefined): string | null {
+  if (!releaseDate) return null;
+  const match = String(releaseDate).match(/^(\d{4})/);
+  return match ? match[1] : null;
+}
+
+export function splitPathSegments(value: string | null | undefined): string[] {
+  return String(value || "")
+    .split(/[\\/]+/g)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+export function rebaseRelativePathPrefix(relativePath: string, sourcePrefix: string, destinationPrefix: string): string | null {
+  const relativeSegments = splitPathSegments(relativePath);
+  const sourceSegments = splitPathSegments(sourcePrefix);
+  const destinationSegments = splitPathSegments(destinationPrefix);
+
+  if (sourceSegments.length === 0 || relativeSegments.length < sourceSegments.length) {
+    return null;
+  }
+
+  for (let index = 0; index < sourceSegments.length; index += 1) {
+    if (normalizeComparablePath(relativeSegments[index]) !== normalizeComparablePath(sourceSegments[index])) {
+      return null;
+    }
+  }
+
+  const suffix = relativeSegments.slice(sourceSegments.length);
+  return destinationSegments.length > 0 ? path.join(...destinationSegments, ...suffix) : path.join(...suffix);
+}
+
+export function hasMeaningfulLibraryFileChange(
+  existing: ExistingLibraryFileIdentity,
+  next: {
+    artistId: string;
+    albumId?: string | null;
+    mediaId?: string | null;
+    filePath: string;
+    relativePath: string | null;
+    libraryRoot: string | null;
+    fileType: string;
+    quality?: string | null;
+  },
+): boolean {
+  return (
+    existing.artist_id !== Number(next.artistId) ||
+    (existing.album_id ?? null) !== (next.albumId ? Number(next.albumId) : null) ||
+    (existing.media_id ?? null) !== (next.mediaId ? Number(next.mediaId) : null) ||
+    normalizeResolvedPath(existing.file_path) !== normalizeResolvedPath(next.filePath) ||
+    (existing.relative_path ?? null) !== (next.relativePath ?? null) ||
+    (existing.library_root ?? null) !== (next.libraryRoot ?? null) ||
+    existing.file_type !== next.fileType ||
+    (existing.quality ?? null) !== (next.quality ?? null)
+  );
+}
+
+export function removeEmptyParents(startDir: string, stopDir: string) {
+  const stop = path.resolve(stopDir);
+  let current = path.resolve(startDir);
+
+  while (current.startsWith(stop) && current !== stop) {
+    try {
+      const entries = fs.readdirSync(current);
+      if (entries.length > 0) break;
+      fs.rmdirSync(current);
+    } catch {
+      break;
+    }
+    current = path.dirname(current);
+  }
+}
+
+export function normalizeInlineVideoTitle(value: string | null | undefined): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b(?:official|music|lyric|lyrics|visualizer|visualiser|video|hd|4k)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 type LibraryFileRow = {
   id: number;
@@ -53,21 +160,10 @@ type TrackedAssetRow = LibraryFileRow & {
   created_at: string | null;
 };
 
-type ExistingLibraryFileIdentity = {
-  id: number;
-  artist_id: number;
-  album_id: number | null;
-  media_id: number | null;
-  file_path: string;
-  relative_path: string | null;
-  library_root: string | null;
-  file_type: string;
-  quality: string | null;
-};
-
 type CanonicalVideoLookupRow = {
   mbid: string | null;
   title: string | null;
+  video_variant: string | null;
   is_video: number | null;
   metadata_status: string | null;
 };
@@ -111,6 +207,7 @@ function getCanonicalVideoMetadataByMbid(recordingMbid: string | null | undefine
   return (db.prepare(`
     SELECT mbid,
            title,
+           video_variant,
            is_video AS is_video,
            metadata_status AS metadata_status
     FROM Recordings
@@ -143,6 +240,7 @@ function getCanonicalVideoMetadataForRow(row: LibraryFileRow, recordingMbid: str
              THEN COALESCE(NULLIF(TRIM(pi.title), ''), recording.title)
              ELSE recording.title
            END AS title,
+           recording.video_variant AS video_variant,
            recording.is_video AS is_video,
            recording.metadata_status AS metadata_status
     FROM ProviderItems pi
@@ -282,124 +380,6 @@ type RebaseLibraryFileRow = {
   file_type: string;
   quality: string | null;
 };
-
-function toTimestamp(value: string | null | undefined): number {
-  if (!value) return 0;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function getReleaseYear(releaseDate: string | null | undefined): string | null {
-  if (!releaseDate) return null;
-  const match = String(releaseDate).match(/^(\d{4})/);
-  return match ? match[1] : null;
-}
-
-function splitPathSegments(value: string | null | undefined): string[] {
-  return String(value || "")
-    .split(/[\\/]+/g)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-}
-
-function rebaseRelativePathPrefix(relativePath: string, sourcePrefix: string, destinationPrefix: string): string | null {
-  const relativeSegments = splitPathSegments(relativePath);
-  const sourceSegments = splitPathSegments(sourcePrefix);
-  const destinationSegments = splitPathSegments(destinationPrefix);
-
-  if (sourceSegments.length === 0 || relativeSegments.length < sourceSegments.length) {
-    return null;
-  }
-
-  for (let index = 0; index < sourceSegments.length; index += 1) {
-    if (normalizeComparablePath(relativeSegments[index]) !== normalizeComparablePath(sourceSegments[index])) {
-      return null;
-    }
-  }
-
-  const suffix = relativeSegments.slice(sourceSegments.length);
-  return destinationSegments.length > 0 ? path.join(...destinationSegments, ...suffix) : path.join(...suffix);
-}
-
-function hasMeaningfulLibraryFileChange(
-  existing: ExistingLibraryFileIdentity,
-  next: {
-    artistId: string;
-    albumId?: string | null;
-    mediaId?: string | null;
-    filePath: string;
-    relativePath: string | null;
-    libraryRoot: string | null;
-    fileType: string;
-    quality?: string | null;
-  },
-): boolean {
-  return (
-    existing.artist_id !== Number(next.artistId) ||
-    (existing.album_id ?? null) !== (next.albumId ? Number(next.albumId) : null) ||
-    (existing.media_id ?? null) !== (next.mediaId ? Number(next.mediaId) : null) ||
-    normalizeResolvedPath(existing.file_path) !== normalizeResolvedPath(next.filePath) ||
-    (existing.relative_path ?? null) !== (next.relativePath ?? null) ||
-    (existing.library_root ?? null) !== (next.libraryRoot ?? null) ||
-    existing.file_type !== next.fileType ||
-    (existing.quality ?? null) !== (next.quality ?? null)
-  );
-}
-
-export function removeEmptyParents(startDir: string, stopDir: string) {
-  const stop = path.resolve(stopDir);
-  let current = path.resolve(startDir);
-
-  while (current.startsWith(stop) && current !== stop) {
-    try {
-      const entries = fs.readdirSync(current);
-      if (entries.length > 0) break;
-      fs.rmdirSync(current);
-    } catch {
-      break;
-    }
-    current = path.dirname(current);
-  }
-}
-
-function normalizeInlineVideoTitle(value: string | null | undefined): string {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/\b(?:official|music|lyric|lyrics|visualizer|visualiser|video|hd|4k)\b/g, " ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Map a provider video title to a Plex extras suffix
- * (-behindthescenes / -concert / -interview / -live / -lyrics / -video).
- *
- * Classification is best-effort from title qualifiers: providers often title a
- * lyric video plainly ("Pompeii"), which can only default to "-video". Keyword
- * checks are word-bounded and biased toward parenthetical/bracketed qualifiers
- * so song titles like "Oblivion" or "Alive" never classify as live recordings.
- */
-export function resolvePlexVideoSuffix(title: string | null | undefined): string {
-  const text = String(title || "").trim();
-  if (!text) return "-video";
-  const normalized = text.toLowerCase();
-
-  if (/behind[\s-]*the[\s-]*scenes/.test(normalized)) return "-behindthescenes";
-  if (/\binterview\b/.test(normalized)) return "-interview";
-
-  // Qualifier text: parenthetical/bracketed groups plus anything after " - ".
-  const qualifiers = [
-    ...[...normalized.matchAll(/\(([^)]*)\)|\[([^\]]*)\]/g)].map((m) => m[1] || m[2] || ""),
-    ...(normalized.split(/\s+[-–—]\s+/).slice(1)),
-  ].join(" ");
-
-  if (/\blyrics?\b/.test(qualifiers) || /\blyrics?\s+video\b/.test(normalized)) return "-lyrics";
-  if (/\bconcert\b/.test(qualifiers)) return "-concert";
-  if (/\blive\b/.test(qualifiers) || /\blive\s+(at|from|in|session|performance|lounge)\b/.test(normalized)) return "-live";
-
-  return "-video";
-}
 
 function resolveCanonicalInlineAudioExpectedPath(artistId: number, videoTitle: string): string | null {
   if (!videoTitle) return null;
@@ -774,9 +754,11 @@ export class LibraryFilesService {
               JOIN TrackFiles tf
                 ON tf.recording_id = rr.target_recording_id
                AND tf.file_type = 'track'
+              LEFT JOIN Albums a
+                ON a.mbid = tf.canonical_release_group_mbid
               WHERE rr.source_recording_id = ?
                 AND rr.relation_type = 'provider_video_for'
-              ORDER BY rr.confidence DESC, tf.id ASC
+              ORDER BY COALESCE(a.monitored, 0) DESC, rr.confidence DESC, tf.id ASC
               LIMIT 1
             `).get(videoRecordingId) as LibraryFileRow | undefined
           : undefined;
@@ -829,40 +811,13 @@ export class LibraryFilesService {
             return { expectedPath: path.join(path.dirname(trackedVideoExpected), `${path.parse(trackedVideoExpected).name}.${ext}`) };
           }
 
-          const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo.title);
-          const baseExpectedPath = path.join(audioExpectedDir, `${audioExpectedStem}${videoTypeSuffix}.${ext}`);
-          const conflict = row.file_type === "video"
-            ? db.prepare("SELECT id FROM TrackFiles WHERE file_type = 'video' AND file_path = ? AND id != ? LIMIT 1")
-              .get(baseExpectedPath, row.id)
-            : null;
-          if (!conflict) {
-            return { expectedPath: baseExpectedPath };
-          }
-          let conflictProvider = String(row.provider || "").trim();
-          if (!conflictProvider && row.media_id != null) {
-            conflictProvider = String((db.prepare(`
-              SELECT provider FROM ProviderItems
-              WHERE CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                AND entity_type = 'video'
-              ORDER BY updated_at DESC
-              LIMIT 1
-            `).get(String(row.media_id)) as { provider?: string } | undefined)?.provider || "").trim();
-          }
-          const lower = conflictProvider.toLowerCase();
-          const prettyConflictProvider = !lower
-            ? "Unknown"
-            : lower === "tidal"
-              ? "TIDAL"
-              : lower === "apple-music" || lower === "apple"
-                ? "Apple Music"
-                : lower === "youtube-music" || lower === "youtube"
-                  ? "YouTube Music"
-                  : conflictProvider.charAt(0).toUpperCase() + conflictProvider.slice(1);
+          const videoTypeSuffix = resolveVideoTypeSuffix(canonicalVideo.title, canonicalVideo.video_variant);
+          // One primary inline file per audio stem + Plex type (e.g. Track-video.mp4).
+          // Plex allows a descriptive middle segment for multiples, but the UX is weak
+          // and multi-provider offers for the same cut must not litter the album folder.
+          // Different type suffixes (-lyrics / -live) still coexist via this key.
           return {
-            expectedPath: path.join(
-              audioExpectedDir,
-              `${audioExpectedStem}${videoTypeSuffix} {${prettyConflictProvider}-${row.media_id}}.${ext}`,
-            ),
+            expectedPath: path.join(audioExpectedDir, `${audioExpectedStem}${videoTypeSuffix}.${ext}`),
           };
         }
       }
@@ -914,9 +869,11 @@ export class LibraryFilesService {
         return { expectedPath: null, reason: "video_not_found" };
       }
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
+      const videoType = resolveVideoTypeSuffix(canonicalVideo.title, canonicalVideo.video_variant);
       const context: NamingContext = {
         ...contextBase,
         videoTitle: canonicalVideo.title || "Unknown Video",
+        videoType,
         trackId: row.media_id != null ? String(row.media_id) : null,
         videoId: row.media_id != null ? String(row.media_id) : null,
         explicit: false,
@@ -928,10 +885,10 @@ export class LibraryFilesService {
         channels: row.channels || null,
       };
 
+      // Separated layout: the naming template owns the Plex type suffix via
+      // {Video Type}. Do not append a second suffix after render.
       const fileStem = renderFileStem(naming.video_file, context);
-      const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo.title);
-      const suffixToAppend = fileStem.endsWith(videoTypeSuffix) ? "" : videoTypeSuffix;
-      const fileName = `${fileStem}${suffixToAppend}.${ext}`;
+      const fileName = `${fileStem}.${ext}`;
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -943,9 +900,11 @@ export class LibraryFilesService {
         return { expectedPath: null, reason: "video_not_found" };
       }
       const ext = row.extension || "jpg";
+      const videoType = resolveVideoTypeSuffix(canonicalVideo.title, canonicalVideo.video_variant);
       const context: NamingContext = {
         ...contextBase,
         videoTitle: canonicalVideo.title || "Unknown Video",
+        videoType,
         trackId: row.media_id != null ? String(row.media_id) : null,
         videoId: row.media_id != null ? String(row.media_id) : null,
         explicit: false,
@@ -957,12 +916,10 @@ export class LibraryFilesService {
         channels: row.channels || null,
       };
 
-      // Sidecars must share the video file's stem (including the Plex extras
-      // suffix) so Plex/Kodi pair them with the video.
+      // Sidecars must share the video file's stem (including any Plex extras
+      // suffix from the template) so Plex/Kodi pair them with the video.
       const fileStem = renderFileStem(naming.video_file, context);
-      const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo.title);
-      const suffixToAppend = fileStem.endsWith(videoTypeSuffix) ? "" : videoTypeSuffix;
-      const fileName = `${fileStem}${suffixToAppend}.${ext}`;
+      const fileName = `${fileStem}.${ext}`;
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -971,9 +928,11 @@ export class LibraryFilesService {
 
     if (row.file_type === "nfo" && row.media_id) {
       if (canonicalVideo) {
+        const videoType = resolveVideoTypeSuffix(canonicalVideo.title, canonicalVideo.video_variant);
         const context: NamingContext = {
           ...contextBase,
           videoTitle: canonicalVideo.title || "Unknown Video",
+          videoType,
           trackId: String(row.media_id),
           videoId: String(row.media_id),
           explicit: false,
@@ -985,9 +944,7 @@ export class LibraryFilesService {
           channels: row.channels || null,
         };
         const fileStem = renderFileStem(naming.video_file, context);
-        const videoTypeSuffix = resolvePlexVideoSuffix(canonicalVideo.title);
-        const suffixToAppend = fileStem.endsWith(videoTypeSuffix) ? "" : videoTypeSuffix;
-        return { expectedPath: path.join(libraryRootPath, artistFolder, `${fileStem}${suffixToAppend}.nfo`) };
+        return { expectedPath: path.join(libraryRootPath, artistFolder, `${fileStem}.nfo`) };
       }
     }
 
@@ -2192,9 +2149,9 @@ export class LibraryFilesService {
           OR vrec.id IS NOT NULL
         )
         -- and none of the anchors may be monitored or user-locked
-        AND COALESCE(rgs.monitored, 0) = 0 AND COALESCE(rgs.monitored_lock, 0) = 0
-        AND COALESCE(rec.monitored, 0) = 0 AND COALESCE(rec.monitored_lock, 0) = 0
-        AND COALESCE(vrec.monitored, 0) = 0 AND COALESCE(vrec.monitored_lock, 0) = 0
+        AND (rgs.monitored IS NULL OR rgs.monitored = 0) AND (rgs.monitored_lock IS NULL OR rgs.monitored_lock = 0)
+        AND (rec.monitored IS NULL OR rec.monitored = 0) AND (rec.monitored_lock IS NULL OR rec.monitored_lock = 0)
+        AND (vrec.monitored IS NULL OR vrec.monitored = 0) AND (vrec.monitored_lock IS NULL OR vrec.monitored_lock = 0)
     `).all(artistId) as Array<{
       id: number;
       artist_id: number;

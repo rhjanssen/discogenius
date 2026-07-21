@@ -10,7 +10,9 @@ export const useCardStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         height: "100%",
-        backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+        // WinUI CardBackgroundFill on Mica: light ~70% white, dark much more open.
+        // Alpha (not Alpha2) lets UltraBlur tint read through the card chrome.
+        backgroundColor: tokens.colorNeutralBackgroundAlpha,
         backdropFilter: "blur(10px)",
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
         borderRadius: tokens.borderRadiusMedium,
@@ -29,7 +31,7 @@ export const useCardStyles = makeStyles({
         "&:hover": {
             transform: "translateY(-2px)",
             boxShadow: tokens.shadow28,
-            backgroundColor: tokens.colorNeutralBackgroundAlpha,
+            backgroundColor: tokens.colorNeutralBackgroundAlpha2,
             border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
         },
         "&:active": {
@@ -38,12 +40,12 @@ export const useCardStyles = makeStyles({
         },
     },
 
-    // Mini card variant (e.g. similar albums) — less visual weight
+    // Mini card variant (e.g. compact cards) — less visual weight
     cardMini: {
         display: "flex",
         flexDirection: "column",
         height: "100%",
-        backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+        backgroundColor: tokens.colorNeutralBackgroundAlpha,
         backdropFilter: "blur(10px)",
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
         borderRadius: tokens.borderRadiusMedium,
@@ -57,7 +59,7 @@ export const useCardStyles = makeStyles({
         maxWidth: "100%",
         "&:hover": {
             transform: "translateY(-2px)",
-            backgroundColor: tokens.colorNeutralBackgroundAlpha,
+            backgroundColor: tokens.colorNeutralBackgroundAlpha2,
             border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1Hover}`,
         },
     },

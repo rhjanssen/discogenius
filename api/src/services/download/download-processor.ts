@@ -26,8 +26,6 @@ import {
     isKnownProviderVideoOffer,
     resolvePreferredVideoOffer,
 } from '../music/video-offer-resolver.js';
-import { MediaSeedService } from '../music/media-seed-service.js';
-import { RefreshAlbumService } from "../music/refresh-album-service.js";
 import { AlbumQueryService } from "../music/album-query-service.js";
 import { streamingProviderManager } from '../providers/index.js';
 import type {
@@ -44,27 +42,30 @@ import { DownloadedTracksImportService } from '../mediafiles/downloaded-tracks-i
 import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-events.js';
 import { CommandWorkerPool } from '../commands/worker/command-worker-pool.js';
 import type { CacheInvalidateTarget } from '../commands/worker/command-worker-protocol.js';
+
 import {
-    albumCoverLocalUrl,
-    renderableProviderArtworkUrl,
-    videoCoverLocalUrl,
-} from '../metadata/media-cover-service.js';
+    ensureMetadataReady as ensureDownloadMetadataReady,
+    getCanonicalAlbumDownloadProgress as getCanonicalAlbumDownloadProgressFromMetadata,
+    hasAlbumMetadataReady as hasAlbumMetadataReadyFromModule,
+    hasTrackMetadataReady as hasTrackMetadataReadyFromModule,
+    hasVideoMetadataReady as hasVideoMetadataReadyFromModule,
+    isCanonicalProviderItemDownloaded as isCanonicalProviderItemDownloadedFromMetadata,
+    resolveCanonicalProviderOffer as resolveCanonicalProviderOfferFromMetadata,
+    resolveDownloadMetadata as resolveDownloadMetadataFromModule,
+    resolveDownloadQuality as resolveDownloadQualityFromModule,
+    resolvePayloadProvider as resolvePayloadProviderFromMetadata,
+} from './download-metadata.js';
 
-type DownloadCommand = DownloadTrackCommand | DownloadVideoCommand | DownloadAlbumCommand;
-type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
-type DownloadOrImportCommand = DownloadCommand | ImportDownloadCommand;
-
-/** State for a single in-flight download slot (keyed by command id). */
-type ActiveDownload = {
-    provider: string;
-    type: DownloadJobType;
-    providerId: string;
-    abortController: AbortController;
-    downloadPath?: string;
-    cancelRequested: boolean;
+export type QueueTrackRow = {
+    title: string;
+    trackNum?: number;
+    status: string;
+    providerTrackId?: string;
 };
 
-function resetTracksForImportState(tracks?: DownloadTrackStateEntry[]): DownloadTrackStateEntry[] | undefined {
+export function resetTracksForImportState(
+    tracks?: DownloadTrackStateEntry[],
+): DownloadTrackStateEntry[] | undefined {
     if (!tracks?.length) {
         return undefined;
     }
@@ -75,59 +76,7 @@ function resetTracksForImportState(tracks?: DownloadTrackStateEntry[]): Download
     }));
 }
 
-type CanonicalProviderOffer = {
-    provider?: string | null;
-    slot_cover?: string | null;
-    provider_cover?: string | null;
-    provider_id?: string | null;
-    entity_type?: string | null;
-    artist_mbid?: string | null;
-    release_group_mbid?: string | null;
-    release_mbid?: string | null;
-    track_mbid?: string | null;
-    recording_mbid?: string | null;
-    provider_title?: string | null;
-    provider_quality?: string | null;
-    asset_id?: string | null;
-    provider_artist_name?: string | null;
-    slot_provider_artist_name?: string | null;
-    slot_provider_title?: string | null;
-    slot_quality?: string | null;
-    selected_release_mbid?: string | null;
-    canonical_album_title?: string | null;
-    canonical_track_title?: string | null;
-    canonical_recording_title?: string | null;
-    canonical_recording_id?: number | null;
-    artist_name?: string | null;
-};
-
-const POLL_INTERVAL = readIntEnv('DISCOGENIUS_DOWNLOAD_POLL_MS', 2000, 1); // 2 seconds default
-const MAX_RETRY_ATTEMPTS = readIntEnv('DISCOGENIUS_DOWNLOAD_MAX_RETRY_ATTEMPTS', 3, 1);
-const DOWNLOAD_TIMEOUT_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_TIMEOUT_MS', 4 * 60 * 60 * 1000, 0); // 0 = disabled
-const DOWNLOAD_IDLE_TIMEOUT_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_IDLE_TIMEOUT_MS', 10 * 60 * 1000, 0); // 0 = disabled
-const BUSY_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_BUSY_LOG_THROTTLE_MS', 30_000, 0);
-const STUCK_JOB_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_JOB_MS', 15 * 60 * 1000, 0); // 0 = disabled
-const STUCK_CLEANUP_INTERVAL_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_CLEANUP_INTERVAL_MS', 60_000, 1);
-const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 2, 1);
-const MAX_CONCURRENT_DOWNLOADS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_DOWNLOADS', 2, 1);
-export const DOWNLOAD_WORKER_MARKER = "discogeniusDownloadWorker" as const;
-
-// Docker: tiddl/ffmpeg installed globally via Dockerfile. Local dev resolves them from PATH (TIDDL_BIN override supported).
-
-/**
- * Enhanced Download Processor with real-time progress tracking
- * Emits events for SSE streaming to frontend
- */
-
-/** States that must be flushed to DB immediately (terminal / transition states). */
-const IMMEDIATE_FLUSH_STATES = new Set<string>([
-    'completed', 'failed', 'importFailed', 'importPending', 'importing',
-]);
-
-/** Minimum interval between DB writes for a single job's progress (ms). */
-const PROGRESS_WRITE_INTERVAL_MS = 1_000;
-
-function isSqliteBusyError(error: unknown): boolean {
+export function isSqliteBusyError(error: unknown): boolean {
     if (!error || typeof error !== 'object') {
         return false;
     }
@@ -139,9 +88,7 @@ function isSqliteBusyError(error: unknown): boolean {
     return typeof message === 'string' && /database( table)? is locked/i.test(message);
 }
 
-type QueueTrackRow = { title: string; trackNum?: number; status: string; providerTrackId?: string };
-
-function applyTrackStatusByProviderId<T extends QueueTrackRow>(
+export function applyTrackStatusByProviderId<T extends QueueTrackRow>(
     tracks: T[],
     statusByProviderTrackId: Record<string, string>,
 ): T[] | null {
@@ -172,13 +119,46 @@ function applyTrackStatusByProviderId<T extends QueueTrackRow>(
 }
 
 /**
+ * Catalog-anchored X/Y for album jobs. Provider/tiddl queue totals must not
+ * replace the MusicBrainz tracklist length (hybrids/edition mismatches).
+ */
+export function deriveCatalogFileProgress(
+    tracks: Array<{ status?: string | null }> | null | undefined,
+): { totalFiles: number; currentFileNum: number; completed: number } | null {
+    if (!Array.isArray(tracks) || tracks.length === 0) {
+        return null;
+    }
+    const totalFiles = tracks.length;
+    const completed = tracks.filter((track) => {
+        const status = String(track?.status || "");
+        return status === "completed" || status === "skipped";
+    }).length;
+    if (completed >= totalFiles) {
+        return { totalFiles, currentFileNum: totalFiles, completed: totalFiles };
+    }
+    const downloadingIndex = tracks.findIndex((track) => String(track?.status || "") === "downloading");
+    if (downloadingIndex >= 0) {
+        return { totalFiles, currentFileNum: downloadingIndex + 1, completed };
+    }
+    // Next queued/error row, else stay on completed count.
+    const nextIndex = tracks.findIndex((track) => {
+        const status = String(track?.status || "");
+        return status === "queued" || status === "error" || !status;
+    });
+    if (nextIndex >= 0) {
+        return { totalFiles, currentFileNum: nextIndex + 1, completed };
+    }
+    return { totalFiles, currentFileNum: Math.min(totalFiles, completed), completed };
+}
+
+/**
  * Normalize a reported or catalog track title for matching: drop a leading
  * "Artist - " prefix (import filenames), lowercase, and reduce punctuation
  * to spaces so "Save My Love - Acoustic Version" matches
  * "Save My Love (Acoustic Version)". Keep in sync with the client-side copy
  * in QueueStatusProvider.
  */
-function normalizeTrackTitleForMatch(value: string): string {
+export function normalizeTrackTitleForMatch(value: string): string {
     return value
         .toLowerCase()
         .replace(/^[^-]+\s-\s/, "")
@@ -193,7 +173,7 @@ function normalizeTrackTitleForMatch(value: string): string {
  * specific) catalog title. Returns null when nothing matched so the caller
  * can fall back to index-based inference.
  */
-function applyTrackStatusByTitle<T extends QueueTrackRow>(
+export function applyTrackStatusByTitle<T extends QueueTrackRow>(
     tracks: T[],
     statusByTitle: Record<string, string>,
 ): T[] | null {
@@ -228,12 +208,52 @@ function applyTrackStatusByTitle<T extends QueueTrackRow>(
     });
 }
 
-function formatQueueTimestamp(value: unknown): string {
+export function formatQueueTimestamp(value: unknown): string {
     if (!value) return "unknown";
     const date = new Date(String(value));
     if (Number.isNaN(date.getTime())) return "unknown";
     return date.toISOString();
 }
+
+type DownloadCommand = DownloadTrackCommand | DownloadVideoCommand | DownloadAlbumCommand;
+type DownloadJobType = Extract<DownloadMediaType, 'track' | 'video' | 'album'>;
+type DownloadOrImportCommand = DownloadCommand | ImportDownloadCommand;
+
+/** State for a single in-flight download slot (keyed by command id). */
+type ActiveDownload = {
+    provider: string;
+    type: DownloadJobType;
+    providerId: string;
+    abortController: AbortController;
+    downloadPath?: string;
+    cancelRequested: boolean;
+};
+
+const POLL_INTERVAL = readIntEnv('DISCOGENIUS_DOWNLOAD_POLL_MS', 2000, 1); // 2 seconds default
+const MAX_RETRY_ATTEMPTS = readIntEnv('DISCOGENIUS_DOWNLOAD_MAX_RETRY_ATTEMPTS', 3, 1);
+const DOWNLOAD_TIMEOUT_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_TIMEOUT_MS', 4 * 60 * 60 * 1000, 0); // 0 = disabled
+const DOWNLOAD_IDLE_TIMEOUT_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_IDLE_TIMEOUT_MS', 10 * 60 * 1000, 0); // 0 = disabled
+const BUSY_LOG_THROTTLE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_BUSY_LOG_THROTTLE_MS', 30_000, 0);
+const STUCK_JOB_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_JOB_MS', 15 * 60 * 1000, 0); // 0 = disabled
+const STUCK_CLEANUP_INTERVAL_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_STUCK_CLEANUP_INTERVAL_MS', 60_000, 1);
+const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 2, 1);
+const MAX_CONCURRENT_DOWNLOADS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_DOWNLOADS', 2, 1);
+export const DOWNLOAD_WORKER_MARKER = "discogeniusDownloadWorker" as const;
+
+// Docker: tiddl/ffmpeg installed globally via Dockerfile. Local dev resolves them from PATH (TIDDL_BIN override supported).
+
+/**
+ * Enhanced Download Processor with real-time progress tracking
+ * Emits events for SSE streaming to frontend
+ */
+
+/** States that must be flushed to DB immediately (terminal / transition states). */
+const IMMEDIATE_FLUSH_STATES = new Set<string>([
+    'completed', 'failed', 'importFailed', 'importPending', 'importing',
+]);
+
+/** Minimum interval between DB writes for a single job's progress (ms). */
+const PROGRESS_WRITE_INTERVAL_MS = 1_000;
 
 export class DownloadProcessor {
     private isPaused: boolean = false;
@@ -532,7 +552,8 @@ export class DownloadProcessor {
         }
     }
 
-    private pickString(value: unknown): string | null {
+    private pickNestedString(record: Record<string, unknown>, key: string): string | null {
+        const value = record[key];
         if (typeof value === 'number' && Number.isFinite(value)) {
             return String(value);
         }
@@ -543,160 +564,28 @@ export class DownloadProcessor {
         return null;
     }
 
-    private pickNestedString(record: Record<string, unknown>, key: string): string | null {
-        return this.pickString(record[key]);
-    }
-
     private resolvePayloadProvider(payload?: DownloadCommand): string {
-        return this.pickString((payload as Record<string, unknown> | undefined)?.streamingSource)
-            || this.pickString(payload?.provider)
-            || getDefaultStreamingSource();
+        return resolvePayloadProviderFromMetadata(payload);
     }
 
     private resolveCanonicalProviderOffer(
         providerId: string,
         type: DownloadJobType,
         payload?: DownloadCommand,
-    ): CanonicalProviderOffer | null {
-        const entityType = type === 'album' ? 'album' : type === 'video' ? 'video' : 'track';
-        const provider = this.resolvePayloadProvider(payload);
-        const releaseGroupMbid = this.pickString(payload?.releaseGroupMbid);
-        const slot = this.pickString(payload?.slot) || 'stereo';
-
-        if (type === 'album') {
-            const row = db.prepare(`
-                SELECT
-                    pi.provider,
-                    pi.provider_id,
-                    pi.entity_type,
-                    pi.artist_mbid,
-                    pi.release_group_mbid,
-                    pi.release_mbid,
-                    pi.title AS provider_title,
-                    pi.quality AS provider_quality,
-                    pi.asset_id,
-                    pi.provider_artist_name AS provider_artist_name,
-                    rgs.provider_artist_name AS slot_provider_artist_name,
-                    rgs.provider_title AS slot_provider_title,
-                    rgs.cover AS slot_cover,
-                    rgs.quality AS slot_quality,
-                    rgs.selected_release_mbid,
-                    rg.title AS canonical_album_title,
-                    am.name AS artist_name
-                FROM ProviderItems pi
-                LEFT JOIN ReleaseGroupSlots rgs
-                  ON rgs.selected_provider = pi.provider
-                 AND rgs.selected_provider_id = pi.provider_id
-                 AND rgs.release_group_mbid = pi.release_group_mbid
-                 AND (? IS NULL OR rgs.slot = ?)
-                LEFT JOIN Albums rg
-                  ON rg.mbid = COALESCE(pi.release_group_mbid, rgs.release_group_mbid)
-                LEFT JOIN ArtistMetadata am
-                  ON am.mbid = COALESCE(pi.artist_mbid, rgs.artist_mbid, rg.artist_mbid)
-                WHERE pi.provider = ?
-                  AND pi.provider_id = ?
-                  AND pi.entity_type = 'album'
-                  AND (? IS NULL OR pi.release_group_mbid = ?)
-                ORDER BY CASE WHEN rgs.slot = ? THEN 0 ELSE 1 END, pi.updated_at DESC
-                LIMIT 1
-            `).get(slot, slot, provider, providerId, releaseGroupMbid, releaseGroupMbid, slot) as CanonicalProviderOffer | undefined;
-
-            if (row) return row;
-
-            if (releaseGroupMbid) {
-                const slotRow = db.prepare(`
-                    SELECT
-                        rgs.selected_provider AS provider,
-                        rgs.selected_provider_id AS provider_id,
-                        'album' AS entity_type,
-                        rgs.artist_mbid,
-                        rgs.release_group_mbid,
-                        rgs.selected_release_mbid AS release_mbid,
-                        rgs.provider_artist_name AS slot_provider_artist_name,
-                        rgs.provider_title AS slot_provider_title,
-                        rgs.cover AS slot_cover,
-                        rgs.quality AS slot_quality,
-                        rgs.selected_release_mbid,
-                        rg.title AS canonical_album_title,
-                        am.name AS artist_name
-                    FROM ReleaseGroupSlots rgs
-                    LEFT JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
-                    LEFT JOIN ArtistMetadata am ON am.mbid = COALESCE(rgs.artist_mbid, rg.artist_mbid)
-                    WHERE rgs.release_group_mbid = ?
-                      AND rgs.selected_provider = ?
-                      AND rgs.selected_provider_id = ?
-                      AND rgs.slot = ?
-                    LIMIT 1
-                `).get(releaseGroupMbid, provider, providerId, slot) as CanonicalProviderOffer | undefined;
-                return slotRow ?? null;
-            }
-
-            return null;
-        }
-
-        const row = db.prepare(`
-            SELECT
-                pi.provider,
-                pi.provider_id,
-                pi.entity_type,
-                pi.artist_mbid,
-                pi.release_group_mbid,
-                pi.release_mbid,
-                pi.track_mbid,
-                pi.recording_mbid,
-                pi.title AS provider_title,
-                pi.quality AS provider_quality,
-                pi.asset_id,
-                pi.cover AS provider_cover,
-                pi.provider_artist_name AS provider_artist_name,
-                rg.title AS canonical_album_title,
-                t.title AS canonical_track_title,
-                r.title AS canonical_recording_title,
-                r.id AS canonical_recording_id,
-                am.name AS artist_name
-            FROM ProviderItems pi
-            LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
-            LEFT JOIN Tracks t ON t.mbid = pi.track_mbid
-            LEFT JOIN Recordings r ON r.mbid = pi.recording_mbid
-            LEFT JOIN ArtistMetadata am ON am.mbid = pi.artist_mbid
-            WHERE pi.provider = ?
-              AND pi.provider_id = ?
-              AND pi.entity_type = ?
-            ORDER BY pi.updated_at DESC
-            LIMIT 1
-        `).get(provider, providerId, entityType) as CanonicalProviderOffer | undefined;
-        return row ?? null;
+    ) {
+        return resolveCanonicalProviderOfferFromMetadata(providerId, type, payload);
     }
 
     private hasAlbumMetadataReady(albumId: string, payload?: DownloadCommand): boolean {
-        const canonicalOffer = this.resolveCanonicalProviderOffer(albumId, 'album', payload);
-        return Boolean(canonicalOffer);
+        return hasAlbumMetadataReadyFromModule(albumId, payload);
     }
 
     private hasTrackMetadataReady(trackId: string, payload?: DownloadCommand): boolean {
-        const canonicalOffer = this.resolveCanonicalProviderOffer(trackId, 'track', payload);
-        if (canonicalOffer) {
-            return Boolean(
-                canonicalOffer.provider_id
-                && (canonicalOffer.provider_title || canonicalOffer.canonical_track_title || canonicalOffer.canonical_recording_title)
-                && (canonicalOffer.artist_mbid || canonicalOffer.artist_name)
-            );
-        }
-
-        return false;
+        return hasTrackMetadataReadyFromModule(trackId, payload);
     }
 
     private hasVideoMetadataReady(videoId: string, payload?: DownloadCommand): boolean {
-        const canonicalOffer = this.resolveCanonicalProviderOffer(videoId, 'video', payload);
-        if (canonicalOffer) {
-            return Boolean(
-                canonicalOffer.provider_id
-                && (canonicalOffer.provider_title || canonicalOffer.canonical_recording_title)
-                && (canonicalOffer.artist_mbid || canonicalOffer.artist_name)
-            );
-        }
-
-        return false;
+        return hasVideoMetadataReadyFromModule(videoId, payload);
     }
 
     private async ensureMetadataReady(
@@ -704,48 +593,7 @@ export class DownloadProcessor {
         type: 'track' | 'video' | 'album',
         payload?: DownloadCommand,
     ): Promise<void> {
-        switch (type) {
-            case 'album': {
-                const albumIds = providerId.split(";").filter(Boolean);
-                for (const subAlbumId of albumIds) {
-                    if (!this.hasAlbumMetadataReady(subAlbumId, payload)) {
-                        console.log(`[DOWNLOAD-PROCESSOR] Album ${subAlbumId} is missing complete metadata; refreshing album metadata before download`);
-                        await RefreshAlbumService.refreshMetadata(subAlbumId, {
-                            includeSimilarAlbums: false,
-                            seedSimilarAlbums: false,
-                            provider: (payload as any)?.streamingSource || payload?.provider,
-                        });
-                    }
-                }
-                return;
-            }
-            case 'track':
-                if (!this.hasTrackMetadataReady(providerId, payload)) {
-                    console.log(`[DOWNLOAD-PROCESSOR] Track ${providerId} is missing metadata; seeding track before download`);
-                    await MediaSeedService.seedTrack(providerId, {
-                        includeSimilarArtists: false,
-                        seedSimilarArtists: false,
-                        includeSimilarAlbums: false,
-                        seedSimilarAlbums: false,
-                        provider: (payload as any)?.streamingSource || payload?.provider,
-                    });
-                }
-                return;
-            case 'video':
-                if (!this.hasVideoMetadataReady(providerId, payload)) {
-                    console.log(`[DOWNLOAD-PROCESSOR] Video ${providerId} is missing metadata; seeding video before download`);
-                    await MediaSeedService.seedVideo(providerId, {
-                        includeSimilarArtists: false,
-                        seedSimilarArtists: false,
-                        includeSimilarAlbums: false,
-                        seedSimilarAlbums: false,
-                        provider: (payload as any)?.streamingSource || (payload as any)?.provider || undefined,
-                    });
-                }
-                return;
-            default:
-                return;
-        }
+        return ensureDownloadMetadataReady(providerId, type, payload);
     }
 
     private resolveDownloadMetadata(
@@ -753,52 +601,7 @@ export class DownloadProcessor {
         type: DownloadJobType,
         payload: DownloadCommand,
     ): Required<ResolvedDownloadMetadata> {
-        const fallbackTitle = payload?.title;
-        const fallbackArtist = payload?.artist;
-        const fallbackCover = payload?.cover ?? null;
-
-        try {
-            const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, type, payload);
-            if (canonicalOffer) {
-                const title = type === 'album'
-                    ? canonicalOffer.canonical_album_title
-                    : type === 'video'
-                        ? canonicalOffer.canonical_recording_title
-                        : canonicalOffer.canonical_track_title || canonicalOffer.canonical_recording_title;
-                const providerCover = fallbackCover
-                    ?? canonicalOffer.slot_cover
-                    ?? canonicalOffer.provider_cover
-                    ?? canonicalOffer.asset_id
-                    ?? null;
-                const canonicalCover = type === 'video'
-                    ? videoCoverLocalUrl(canonicalOffer.canonical_recording_id)
-                    : albumCoverLocalUrl({ albumMbid: canonicalOffer.release_group_mbid });
-                const cover = canonicalCover
-                    ?? renderableProviderArtworkUrl(providerCover, canonicalOffer.provider);
-
-                return {
-                    title: fallbackTitle || title || canonicalOffer.slot_provider_title || canonicalOffer.provider_title || 'Unknown',
-                    artist: fallbackArtist
-                        || canonicalOffer.artist_name
-                        || canonicalOffer.slot_provider_artist_name
-                        || canonicalOffer.provider_artist_name
-                        || 'Unknown',
-                    cover,
-                };
-            }
-
-            return {
-                title: fallbackTitle || 'Unknown',
-                artist: fallbackArtist || 'Unknown',
-                cover: renderableProviderArtworkUrl(fallbackCover, payload?.provider),
-            };
-        } catch {
-            return {
-                title: fallbackTitle || 'Unknown',
-                artist: fallbackArtist || 'Unknown',
-                cover: renderableProviderArtworkUrl(fallbackCover, payload?.provider),
-            };
-        }
+        return resolveDownloadMetadataFromModule(providerId, type, payload);
     }
 
     private resolveDownloadQuality(
@@ -806,77 +609,14 @@ export class DownloadProcessor {
         type: DownloadJobType,
         payload: DownloadCommand,
     ): string | null {
-        if (payload?.quality) {
-            return payload.quality;
-        }
-
-        try {
-            const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, type, payload);
-            if (canonicalOffer) {
-                return canonicalOffer.slot_quality ?? canonicalOffer.provider_quality ?? null;
-            }
-            return null;
-        } catch {
-            return null;
-        }
+        return resolveDownloadQualityFromModule(providerId, type, payload);
     }
 
     private getCanonicalAlbumDownloadProgress(
         providerId: string,
         payload: DownloadCommand,
     ): { total: number; done: number } | null {
-        const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, 'album', payload);
-        const releaseGroupMbid = this.pickString(payload?.releaseGroupMbid) || canonicalOffer?.release_group_mbid;
-        const releaseMbid = this.pickString(payload?.releaseMbid)
-            || canonicalOffer?.selected_release_mbid
-            || canonicalOffer?.release_mbid;
-        const slot = this.pickString(payload?.slot) || 'stereo';
-
-        if (!releaseGroupMbid && !releaseMbid) {
-            return null;
-        }
-
-        const row = releaseMbid
-            ? db.prepare(`
-                SELECT
-                    COUNT(DISTINCT t.mbid) AS total,
-                    COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN t.mbid END) AS done
-                FROM Tracks t
-                LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-                LEFT JOIN TrackFiles lf
-                  ON (
-                    lf.canonical_track_mbid = t.mbid
-                    OR (
-                      lf.canonical_track_mbid IS NULL
-                      AND lf.canonical_recording_mbid = t.recording_mbid
-                    )
-                  )
-                 AND lf.file_type = 'track'
-                 AND lf.library_slot = ?
-                WHERE t.release_mbid = ?
-                  AND COALESCE(r.is_video, 0) = 0
-            `).get(slot, releaseMbid) as { total?: number; done?: number } | undefined
-            : db.prepare(`
-                SELECT
-                    COUNT(DISTINCT pi.provider_id) AS total,
-                    COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN pi.provider_id END) AS done
-                FROM ProviderItems pi
-                LEFT JOIN TrackFiles lf
-                  ON lf.provider = pi.provider
-                 AND lf.provider_entity_type = pi.entity_type
-                 AND lf.provider_id = pi.provider_id
-                 AND lf.file_type = 'track'
-                 AND lf.library_slot = pi.library_slot
-                WHERE pi.release_group_mbid = ?
-                  AND pi.entity_type = 'track'
-                  AND pi.library_slot = ?
-            `).get(releaseGroupMbid, slot) as { total?: number; done?: number } | undefined;
-
-        if (!row) return null;
-        return {
-            total: Number(row.total || 0),
-            done: Number(row.done || 0),
-        };
+        return getCanonicalAlbumDownloadProgressFromMetadata(providerId, payload);
     }
 
     private isCanonicalProviderItemDownloaded(
@@ -884,34 +624,7 @@ export class DownloadProcessor {
         type: Extract<DownloadJobType, 'track' | 'video'>,
         payload: DownloadCommand,
     ): boolean {
-        const canonicalOffer = this.resolveCanonicalProviderOffer(providerId, type, payload);
-        if (!canonicalOffer) {
-            return false;
-        }
-
-        const fileType = type === 'video' ? 'video' : 'track';
-        const row = db.prepare(`
-            SELECT 1
-            FROM TrackFiles lf
-            WHERE lf.file_type = ?
-              AND (
-                (lf.provider = ? AND lf.provider_entity_type = ? AND lf.provider_id = ?)
-                OR (? IS NOT NULL AND lf.canonical_track_mbid = ?)
-                OR (? IS NOT NULL AND lf.canonical_recording_mbid = ?)
-              )
-            LIMIT 1
-        `).get(
-            fileType,
-            canonicalOffer.provider,
-            canonicalOffer.entity_type,
-            providerId,
-            canonicalOffer.track_mbid,
-            canonicalOffer.track_mbid,
-            canonicalOffer.recording_mbid,
-            canonicalOffer.recording_mbid,
-        ) as { 1?: number } | undefined;
-
-        return Boolean(row);
+        return isCanonicalProviderItemDownloadedFromMetadata(providerId, type, payload);
     }
 
     private persistDownloadState(commandId: number, state: {
@@ -1051,8 +764,8 @@ export class DownloadProcessor {
         // updates remain as a fallback for legacy/partial progress events
         // because tiddl downloads tracks in parallel, so
         // "rows before currentFileNum are complete" mismarks in-flight rows).
-        // Fall back to currentFileNum index inference only when neither exact
-        // identity nor titles match the catalog tracklist.
+        // Fall back to currentFileNum index inference only when the provider
+        // count matches the catalog tracklist length.
         const providerAdjustedTracks = mergedTracks && state.trackStatusByProviderTrackId
             ? applyTrackStatusByProviderId(mergedTracks, state.trackStatusByProviderTrackId)
             : null;
@@ -1060,7 +773,16 @@ export class DownloadProcessor {
             ? applyTrackStatusByTitle(mergedTracks, state.trackStatusByTitle)
             : null;
 
+        const catalogLen = Array.isArray(mergedTracks) ? mergedTracks.length : 0;
+        const incomingTotal = typeof state.totalFiles === "number" && state.totalFiles > 0
+            ? state.totalFiles
+            : null;
+        const providerCountsMatchCatalog = catalogLen > 0
+            && incomingTotal != null
+            && incomingTotal === catalogLen;
+
         if (mergedTracks && state.state === 'completed') {
+            // Terminal post-import completion only.
             mergedTracks = mergedTracks.map((track: any) => ({
                 ...track,
                 status: track.status === 'error' || track.status === 'skipped' ? track.status : 'completed',
@@ -1069,7 +791,7 @@ export class DownloadProcessor {
             mergedTracks = providerAdjustedTracks;
         } else if (titleAdjustedTracks) {
             mergedTracks = titleAdjustedTracks;
-        } else if (mergedTracks && typeof state.currentFileNum === 'number') {
+        } else if (mergedTracks && providerCountsMatchCatalog && typeof state.currentFileNum === 'number') {
             const currentNum = state.currentFileNum;
             const statusState = state.state;
             mergedTracks = mergedTracks.map((t: any, idx: number) => {
@@ -1090,12 +812,36 @@ export class DownloadProcessor {
             });
         }
 
+        const catalogProgress = deriveCatalogFileProgress(mergedTracks);
+        const nextTotalFiles = catalogProgress?.totalFiles
+            ?? state.totalFiles
+            ?? currentDownloadState.totalFiles;
+        const nextCurrentFileNum = catalogProgress?.currentFileNum
+            ?? (providerCountsMatchCatalog ? state.currentFileNum : undefined)
+            ?? currentDownloadState.currentFileNum;
+        // Catalog fraction owns album %, with optional in-file boost for the
+        // active catalog row. Provider queue % is only trusted when counts match.
+        let nextProgress = state.progress ?? currentDownloadState.progress;
+        if (catalogProgress && catalogProgress.totalFiles > 0) {
+            if (providerCountsMatchCatalog && typeof state.progress === "number") {
+                nextProgress = state.progress;
+            } else {
+                const base = catalogProgress.completed / catalogProgress.totalFiles;
+                const trackFrac = typeof state.trackProgress === "number"
+                    ? Math.min(1, Math.max(0, state.trackProgress / 100))
+                    : 0;
+                const inFlight = catalogProgress.currentFileNum > catalogProgress.completed
+                    ? trackFrac / catalogProgress.totalFiles
+                    : 0;
+                nextProgress = Math.min(100, Math.round((base + inFlight) * 100));
+            }
+        }
         const payloadPatch: Record<string, unknown> = {
             downloadState: {
                 ...currentDownloadState,
-                progress: state.progress ?? currentDownloadState.progress,
-                currentFileNum: state.currentFileNum ?? currentDownloadState.currentFileNum,
-                totalFiles: state.totalFiles ?? currentDownloadState.totalFiles,
+                progress: nextProgress,
+                currentFileNum: nextCurrentFileNum,
+                totalFiles: nextTotalFiles,
                 currentTrack: state.currentTrack ?? currentDownloadState.currentTrack,
                 currentProviderTrackId: state.currentProviderTrackId ?? currentDownloadState.currentProviderTrackId,
                 currentTrackNum: state.currentTrackNum ?? currentDownloadState.currentTrackNum,
@@ -1410,7 +1156,12 @@ export class DownloadProcessor {
             // Initialize the tracklist for UI indicators from the canonical
             // MusicBrainz release. Provider rows are still used for the hard
             // provider track id, but display text must stay catalog-native.
-            let initialTracks: { title: string; trackNum?: number; status: 'queued'; providerTrackId?: string }[] | undefined;
+            // Catalog-anchored enqueue may already have seeded downloadState.tracks
+            // (with completed markers for partial libraries) — prefer that.
+            const seededTracks = Array.isArray((payload as DownloadAlbumCommand).downloadState?.tracks)
+                ? (payload as DownloadAlbumCommand).downloadState!.tracks
+                : undefined;
+            let initialTracks: DownloadTrackStateEntry[] | undefined = seededTracks;
             try {
                 const formatTrackDisplayTitle = (title: string | null | undefined, version?: string | null) => {
                     const baseTitle = String(title || '').trim() || 'Unknown Track';
@@ -1421,42 +1172,65 @@ export class DownloadProcessor {
                     return `${baseTitle} (${normalizedVersion})`;
                 };
 
-                if (type === 'track' || type === 'video') {
-                    initialTracks = [{ title: resolved.title, status: 'queued', providerTrackId: providerId }];
-                } else if (type === 'album') {
-                    if (payload.releaseGroupMbid) {
-                        const albumTracks = await AlbumQueryService.getAlbumTracks(payload.releaseGroupMbid);
-                        initialTracks = albumTracks.map(t => ({
-                            title: formatTrackDisplayTitle(t.title, t.version),
-                            trackNum: t.track_number,
-                            status: 'queued',
-                            providerTrackId: t.preview_provider_track_id ?? undefined,
-                        }));
-                    }
+                if (!initialTracks?.length) {
+                    if (type === 'track' || type === 'video') {
+                        initialTracks = [{ title: resolved.title, status: 'queued', providerTrackId: providerId }];
+                    } else if (type === 'album') {
+                        if (payload.releaseGroupMbid) {
+                            const albumTracks = await AlbumQueryService.getAlbumTracks(payload.releaseGroupMbid);
+                            initialTracks = albumTracks.map(t => ({
+                                title: formatTrackDisplayTitle(t.title, t.version),
+                                trackNum: t.track_number,
+                                volumeNum: t.volume_number || undefined,
+                                status: 'queued' as const,
+                                providerTrackId: t.preview_provider_track_id ?? undefined,
+                                canonicalTrackMbid: t.musicbrainz_track_id || t.id,
+                                canonicalRecordingMbid: t.musicbrainz_recording_id,
+                            }));
+                        }
 
-                    if (!initialTracks?.length) {
-                        const providerRows = db.prepare(`
-                            SELECT
-                                CAST(provider_id AS TEXT) AS provider_id,
-                                title,
-                                version,
-                                CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number
-                            FROM ProviderItems
-                            WHERE provider = ?
-                              AND entity_type = 'track'
-                              AND provider_album_id = ?
-                            ORDER BY
-                                CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER),
-                                CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER),
-                                provider_id
-                        `).all(this.resolvePayloadProvider(payload), providerId) as Array<{ provider_id: string; title: string | null; version: string | null; track_number: number | null }>;
+                        if (!initialTracks?.length) {
+                            // Catalog-first: order/number via Tracks on the canonical release
+                            // when known, never via match_evidence disc/track numbers (native
+                            // provider-album layout).
+                            const fallbackReleaseMbid = String((payload as DownloadAlbumCommand).releaseMbid || '').trim() || null;
+                            const providerRows = db.prepare(`
+                                SELECT
+                                    CAST(pi.provider_id AS TEXT) AS provider_id,
+                                    COALESCE(NULLIF(TRIM(t.title), ''), pi.title) AS title,
+                                    pi.version,
+                                    t.position AS track_number,
+                                    t.medium_position AS volume_number
+                                FROM ProviderItems pi
+                                LEFT JOIN Tracks t
+                                    ON t.release_mbid = ?
+                                    AND (
+                                        (pi.track_mbid IS NOT NULL AND t.mbid = pi.track_mbid)
+                                        OR (pi.recording_mbid IS NOT NULL AND t.recording_mbid = pi.recording_mbid)
+                                    )
+                                WHERE pi.provider = ?
+                                  AND pi.entity_type = 'track'
+                                  AND pi.provider_album_id = ?
+                                ORDER BY
+                                    COALESCE(t.medium_position, 1),
+                                    COALESCE(t.position, 999999),
+                                    pi.provider_id
+                            `).all(fallbackReleaseMbid, this.resolvePayloadProvider(payload), providerId) as Array<{
+                                provider_id: string;
+                                title: string | null;
+                                version: string | null;
+                                track_number: number | null;
+                                volume_number: number | null;
+                            }>;
 
-                        initialTracks = providerRows.map((row) => ({
-                            title: formatTrackDisplayTitle(row.title, row.version),
-                            trackNum: row.track_number ?? undefined,
-                            status: 'queued',
-                            providerTrackId: row.provider_id,
-                        }));
+                            initialTracks = providerRows.map((row) => ({
+                                title: formatTrackDisplayTitle(row.title, row.version),
+                                trackNum: row.track_number ?? undefined,
+                                volumeNum: row.volume_number || undefined,
+                                status: 'queued' as const,
+                                providerTrackId: row.provider_id,
+                            }));
+                        }
                     }
                 }
             } catch (error) {
@@ -1466,6 +1240,8 @@ export class DownloadProcessor {
             if (initialTracks && initialTracks.length > 0) {
                 this.persistDownloadState(job.id, {
                     tracks: initialTracks,
+                    currentFileNum: initialTracks.filter((track) => track.status === 'completed' || track.status === 'skipped').length,
+                    totalFiles: initialTracks.length,
                 });
             }
 
@@ -1480,13 +1256,13 @@ export class DownloadProcessor {
                 if (type === 'album') {
                     const row = this.getCanonicalAlbumDownloadProgress(providerId, payload as DownloadCommand);
 
-                    if (payload?.reason !== 'upgrade' && row && row.total > 0 && row.done > 0) {
-                        // Album has at least some tracks downloaded.  The downloader
+                    if (payload?.reason !== 'upgrade' && row && row.total > 0 && row.done >= row.total) {
+                        // Album already fully present in the library. The downloader
                         // couldn't add anything new (items skipped or unavailable).
                         const pct = Math.round(row.done / row.total * 100);
                         console.log(
                             `[DOWNLOAD-PROCESSOR] Download workspace empty but album ${providerId} already has ${row.done}/${row.total} tracks downloaded (${pct}%). ` +
-                            `Remaining tracks may be unavailable on TIDAL — treating as complete.`
+                            `Treating as complete.`
                         );
 
                         // Mark undownloadable tracks so the queue doesn't re-queue endlessly
@@ -1549,6 +1325,10 @@ export class DownloadProcessor {
                 canonicalTrackMbid: payload.canonicalTrackMbid,
                 canonicalRecordingMbid: payload.canonicalRecordingMbid,
                 slot: payload.slot,
+                trackNumber: payload.trackNumber ?? null,
+                volumeNumber: payload.volumeNumber ?? null,
+                trackOffers: (payload as DownloadAlbumCommand).trackOffers,
+                acquisitionMode: (payload as DownloadAlbumCommand).acquisitionMode,
                 type,
                 path: entry.downloadPath,
                 quality: payload.quality ?? null,
@@ -1572,6 +1352,24 @@ export class DownloadProcessor {
                 statusMessage: 'Waiting to import',
                 tracks: importTracks,
                 totalFiles: completedDownloadState.totalFiles,
+            });
+
+            // SSE so the queue UI can leave "Downloading" immediately instead of
+            // waiting for the import slot to start (which can be near-instant and
+            // look like a flicker, or leave a stale "completed" download state).
+            downloadEvents.emitProgress(job.id, {
+                providerId,
+                type,
+                quality: payload.quality ?? null,
+                title: resolved.title,
+                artist: resolved.artist,
+                cover: resolved.cover,
+                progress: completedDownloadState.progress ?? 100,
+                currentFileNum: 0,
+                totalFiles: completedDownloadState.totalFiles ?? importTracks?.length,
+                statusMessage: 'Waiting to import',
+                state: 'importPending',
+                tracks: importTracks,
             });
 
             this.pendingImports.push({
@@ -1641,6 +1439,15 @@ export class DownloadProcessor {
         payload: DownloadCommand,
         entry: ActiveDownload,
     ): Promise<void> {
+        const albumPayload = payload as DownloadAlbumCommand;
+        const acquisitionMode = albumPayload.acquisitionMode
+            || (Array.isArray(albumPayload.trackOffers) && albumPayload.trackOffers.length > 0 ? "trackOffers" : "album");
+
+        if (type === "album" && acquisitionMode === "trackOffers") {
+            await this.downloadAlbumTrackOffers(commandId, albumPayload, entry);
+            return;
+        }
+
         // Download commands carry the slot's selected provider as `provider`
         // (queue-route payloads may use `streamingSource`); only fall back to
         // the default provider when neither is present.
@@ -1660,7 +1467,13 @@ export class DownloadProcessor {
         const signal = controller.signal;
 
         const onProgress = (state: any) => {
-            this.persistDownloadState(commandId, state);
+            // Backends (Amazon/Deezer) sometimes emit state:"completed" when the
+            // download binary exits. Reserve completed for post-import only so the
+            // queue row does not vanish before import starts.
+            const sanitizedState = state?.state === "completed"
+                ? { ...state, state: "downloading" as const, statusMessage: state.statusMessage || "Download finished" }
+                : state;
+            this.persistDownloadState(commandId, sanitizedState);
             downloadEvents.emitProgress(commandId, {
                 providerId: id,
                 type,
@@ -1668,22 +1481,22 @@ export class DownloadProcessor {
                 title: payload.title,
                 artist: payload.artist,
                 cover: payload.cover,
-                progress: state.progress,
-                currentFileNum: state.currentFileNum,
-                totalFiles: state.totalFiles,
-                currentTrack: state.currentTrack,
-                currentProviderTrackId: state.currentProviderTrackId,
-                currentTrackNum: state.currentTrackNum,
-                currentVolumeNum: state.currentVolumeNum,
-                trackProgress: state.trackProgress,
-                trackStatus: state.trackStatus,
-                statusMessage: state.statusMessage,
-                state: state.state,
-                speed: state.speed,
-                eta: state.eta,
-                size: state.size,
-                sizeleft: state.sizeleft,
-                tracks: this.getProgressTracksForEvent(commandId, state.tracks),
+                progress: sanitizedState.progress,
+                currentFileNum: sanitizedState.currentFileNum,
+                totalFiles: sanitizedState.totalFiles,
+                currentTrack: sanitizedState.currentTrack,
+                currentProviderTrackId: sanitizedState.currentProviderTrackId,
+                currentTrackNum: sanitizedState.currentTrackNum,
+                currentVolumeNum: sanitizedState.currentVolumeNum,
+                trackProgress: sanitizedState.trackProgress,
+                trackStatus: sanitizedState.trackStatus,
+                statusMessage: sanitizedState.statusMessage,
+                state: sanitizedState.state,
+                speed: sanitizedState.speed,
+                eta: sanitizedState.eta,
+                size: sanitizedState.size,
+                sizeleft: sanitizedState.sizeleft,
+                tracks: this.getProgressTracksForEvent(commandId, sanitizedState.tracks),
             });
         };
 
@@ -1715,6 +1528,231 @@ export class DownloadProcessor {
             });
         } finally {
             clearInterval(checkCancelInterval);
+        }
+    }
+
+    /**
+     * Hybrid / partial album fetch: download only the missing track offers into
+     * one job workspace, keeping catalog-anchored downloadState.tracks in sync.
+     */
+    private async downloadAlbumTrackOffers(
+        commandId: number,
+        payload: DownloadAlbumCommand,
+        entry: ActiveDownload,
+    ): Promise<void> {
+        const offers = Array.isArray(payload.trackOffers) ? payload.trackOffers : [];
+        if (offers.length === 0) {
+            throw new Error("DownloadAlbum trackOffers mode requires at least one track offer");
+        }
+
+        const defaultProvider = payload.provider || getDefaultStreamingSource();
+        const workspaceKey = String(payload.releaseGroupMbid || payload.providerId || commandId);
+        const baseDownloadPath = getDownloadWorkspacePath("album", workspaceKey, defaultProvider);
+        const downloadPath = path.join(baseDownloadPath, `job_${commandId}`);
+        entry.downloadPath = downloadPath;
+        fs.mkdirSync(downloadPath, { recursive: true });
+
+        const slot = payload.slot || "stereo";
+        const capability = slot === "spatial" ? "spatial" : "stereo";
+        const metadataConfig = getConfigSection("metadata");
+        const controller = entry.abortController;
+        const signal = controller.signal;
+
+        const currentJob = CommandQueueManager.get(commandId);
+        const currentPayload = (currentJob?.payload || payload) as DownloadAlbumCommand;
+        const tracks: DownloadTrackStateEntry[] = Array.isArray(currentPayload.downloadState?.tracks)
+            ? [...currentPayload.downloadState!.tracks!]
+            : offers.map((offer) => ({
+                title: offer.title || "Unknown Track",
+                trackNum: offer.trackNum ?? undefined,
+                volumeNum: offer.volumeNum ?? undefined,
+                status: "queued" as const,
+                providerTrackId: offer.providerTrackId,
+                provider: offer.provider,
+                quality: offer.quality,
+                canonicalTrackMbid: offer.canonicalTrackMbid,
+                canonicalRecordingMbid: offer.canonicalRecordingMbid,
+            }));
+
+        const totalFiles = Math.max(
+            Number(currentPayload.downloadState?.totalFiles) || 0,
+            tracks.length,
+            offers.length,
+        );
+        let completedBefore = tracks.filter((track) => track.status === "completed" || track.status === "skipped").length;
+
+        const emitProgress = (partial: DownloadStatePayload) => {
+            this.persistDownloadState(commandId, partial);
+            downloadEvents.emitProgress(commandId, {
+                providerId: String(payload.providerId || workspaceKey),
+                type: "album",
+                quality: payload.quality ?? null,
+                title: payload.title,
+                artist: payload.artist,
+                cover: payload.cover,
+                progress: partial.progress ?? 0,
+                currentFileNum: partial.currentFileNum ?? 0,
+                totalFiles: partial.totalFiles ?? 0,
+                currentTrack: partial.currentTrack,
+                currentProviderTrackId: partial.currentProviderTrackId,
+                currentTrackNum: partial.currentTrackNum,
+                currentVolumeNum: partial.currentVolumeNum,
+                trackProgress: partial.trackProgress,
+                trackStatus: partial.trackStatus,
+                statusMessage: partial.statusMessage,
+                state: partial.state,
+                speed: partial.speed,
+                eta: partial.eta,
+                size: partial.size,
+                sizeleft: partial.sizeleft,
+                tracks: this.getProgressTracksForEvent(commandId, partial.tracks),
+            });
+        };
+
+        const checkCancelInterval = setInterval(() => {
+            if (entry.cancelRequested) {
+                console.log(`[DOWNLOAD-PROCESSOR] Job #${commandId} cancelled, aborting track-offer download...\n`);
+                controller.abort();
+                clearInterval(checkCancelInterval);
+            }
+        }, 500);
+
+        try {
+            for (let offerIndex = 0; offerIndex < offers.length; offerIndex++) {
+                if (entry.cancelRequested || signal.aborted) {
+                    throw new Error("Download cancelled");
+                }
+
+                const offer = offers[offerIndex];
+                const providerId = offer.provider || defaultProvider;
+                const backend = downloadBackendRegistry.resolve(providerId, capability);
+                if (!backend) {
+                    throw new Error(`No download backend found for provider ${providerId} with capability ${capability}`);
+                }
+
+                const trackIndex = tracks.findIndex((track) => {
+                    if (offer.canonicalTrackMbid && track.canonicalTrackMbid === offer.canonicalTrackMbid) return true;
+                    if (offer.canonicalRecordingMbid && track.canonicalRecordingMbid === offer.canonicalRecordingMbid) return true;
+                    return track.providerTrackId === offer.providerTrackId;
+                });
+
+                if (trackIndex >= 0) {
+                    tracks[trackIndex] = {
+                        ...tracks[trackIndex],
+                        status: "downloading",
+                        providerTrackId: offer.providerTrackId,
+                        provider: providerId,
+                    };
+                }
+
+                const currentFileNum = completedBefore + offerIndex + 1;
+                emitProgress({
+                    state: "downloading",
+                    currentFileNum,
+                    totalFiles,
+                    progress: Math.round(((completedBefore + offerIndex) / totalFiles) * 100),
+                    currentTrack: offer.title || tracks[trackIndex]?.title,
+                    currentProviderTrackId: offer.providerTrackId,
+                    currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
+                    currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
+                    trackStatus: "downloading",
+                    statusMessage: `Downloading track ${currentFileNum}/${totalFiles}`,
+                    tracks,
+                });
+
+                const trackDownloadPath = path.join(downloadPath, `track_${offer.providerTrackId}`);
+                fs.mkdirSync(trackDownloadPath, { recursive: true });
+
+                await backend.download({
+                    provider: providerId,
+                    entityType: "track",
+                    providerId: offer.providerTrackId,
+                    downloadPath: trackDownloadPath,
+                    quality: offer.quality ?? payload.quality,
+                    slot,
+                    metadata: {
+                        artwork_preference: metadataConfig.artwork_preference,
+                        save_lyrics: metadataConfig.save_lyrics,
+                    },
+                }, {
+                    signal,
+                    onProgress: (state: any) => {
+                        emitProgress({
+                            state: "downloading",
+                            currentFileNum,
+                            totalFiles,
+                            progress: Math.round((((completedBefore + offerIndex) + ((state.progress || 0) / 100)) / totalFiles) * 100),
+                            currentTrack: offer.title || state.currentTrack || tracks[trackIndex]?.title,
+                            currentProviderTrackId: offer.providerTrackId,
+                            currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
+                            currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
+                            trackProgress: state.progress,
+                            trackStatus: state.trackStatus || "downloading",
+                            statusMessage: state.statusMessage || `Downloading track ${currentFileNum}/${totalFiles}`,
+                            speed: state.speed,
+                            eta: state.eta,
+                            size: state.size,
+                            sizeleft: state.sizeleft,
+                            tracks,
+                        });
+                    },
+                });
+
+                // Flatten track workspace into the album job folder for import.
+                this.flattenTrackOfferWorkspace(trackDownloadPath, downloadPath);
+
+                if (trackIndex >= 0) {
+                    // Downloaded; stays non-completed until import finishes (orange in UI).
+                    tracks[trackIndex] = {
+                        ...tracks[trackIndex],
+                        status: "queued",
+                        providerTrackId: offer.providerTrackId,
+                        provider: providerId,
+                    };
+                }
+            }
+
+            completedBefore = tracks.filter((track) => track.status === "completed" || track.status === "skipped").length;
+            emitProgress({
+                state: "downloading",
+                currentFileNum: Math.min(totalFiles, completedBefore + offers.length),
+                totalFiles,
+                progress: Math.round(((completedBefore + offers.length) / totalFiles) * 100),
+                trackStatus: "completed",
+                statusMessage: "Download finished, preparing import",
+                tracks,
+            });
+        } finally {
+            clearInterval(checkCancelInterval);
+        }
+    }
+
+    private flattenTrackOfferWorkspace(trackDownloadPath: string, albumDownloadPath: string): void {
+        if (!fs.existsSync(trackDownloadPath)) return;
+        const walk = (dir: string) => {
+            for (const entryName of fs.readdirSync(dir)) {
+                const fullPath = path.join(dir, entryName);
+                const stat = fs.statSync(fullPath);
+                if (stat.isDirectory()) {
+                    walk(fullPath);
+                    continue;
+                }
+                const dest = path.join(albumDownloadPath, entryName);
+                if (path.resolve(fullPath) === path.resolve(dest)) continue;
+                if (fs.existsSync(dest)) {
+                    const base = path.parse(entryName);
+                    const unique = `${base.name}-${Date.now()}${base.ext}`;
+                    fs.renameSync(fullPath, path.join(albumDownloadPath, unique));
+                } else {
+                    fs.renameSync(fullPath, dest);
+                }
+            }
+        };
+        walk(trackDownloadPath);
+        try {
+            fs.rmSync(trackDownloadPath, { recursive: true, force: true });
+        } catch {
+            // Best-effort cleanup of the per-track staging folder.
         }
     }
 

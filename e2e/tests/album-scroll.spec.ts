@@ -186,7 +186,6 @@ async function stubAlbumPageFixtures(page: Page) {
                         monitored_tracks_count: 0,
                     },
                     tracks: trackLists[currentAlbumId as keyof typeof trackLists],
-                    similarAlbums: currentAlbumId === albumId
                         ? [
                             {
                                 id: relatedAlbumId,

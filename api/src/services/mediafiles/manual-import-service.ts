@@ -12,6 +12,7 @@ import {
     type ImportedDirectoryMapping,
 } from "./import-finalize-service.js";
 import type { MetadataConfig } from "../config/config.js";
+import { resolveVideoTypeSuffix } from "./library-files.js";
 
 // Manually-imported files are a user's own pre-existing library files, not a
 // fresh Discogenius download (Lidarr's "not a new download" case) — only
@@ -217,6 +218,20 @@ export class ManualImportService {
                 const trackTemplate = isMultiDisc ? namingConfig.album_track_path_multi : namingConfig.album_track_path_single;
                 const fullPathTemplate = isVideo ? path.join(artistFolder, namingConfig.video_file) : path.join(artistFolder, trackTemplate);
 
+                const videoVariant = isVideo
+                    ? (db.prepare(`
+                        SELECT recording.video_variant AS video_variant, recording.title AS recording_title
+                        FROM ProviderItems pi
+                        LEFT JOIN Recordings recording ON recording.id = pi.recording_id
+                          OR recording.mbid = pi.recording_mbid
+                        WHERE pi.entity_type = 'video'
+                          AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+                        ORDER BY pi.updated_at DESC
+                        LIMIT 1
+                      `).get(item.providerId) as { video_variant?: string | null; recording_title?: string | null } | undefined)
+                    : undefined;
+                const videoTitle = videoVariant?.recording_title || trackData.title;
+
                 const expectedRelPath = renderRelativePath(fullPathTemplate, {
                     artistName: artistRow?.name || trackData.artist?.name || trackData.artist_name || "Unknown Artist",
                     artistMbId: artistRow?.mbid || null,
@@ -227,7 +242,10 @@ export class ManualImportService {
                     trackNumber: canonicalPosition?.trackNumber ?? trackData.trackNumber ?? trackData.track_num ?? 1,
                     volumeNumber: canonicalPosition?.volumeNumber ?? trackData.volumeNumber ?? trackData.volume_num ?? 1,
                     explicit: Boolean(albumRow?.explicit),
-                    videoTitle: trackData.title
+                    videoTitle,
+                    videoType: isVideo
+                        ? resolveVideoTypeSuffix(videoTitle, videoVariant?.video_variant)
+                        : undefined,
                 }) + "." + extension;
 
                 let rootPath = Config.getMusicPath();

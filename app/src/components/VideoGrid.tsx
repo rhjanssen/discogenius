@@ -7,21 +7,21 @@ import {
   Body1,
 } from "@fluentui/react-components";
 import {
-  ArrowDownload16Regular as ArrowDownload16RegularBase,
-  Play24Regular as Play24RegularBase,
+  ArrowDownload16Regular,
+  Play24Regular,
   ArrowDownload16Filled,
   Play24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { useGridStyles } from "@/components/cards/cardStyles";
-import { renderableArtworkUrl } from "@/utils/artwork";
+import { mediaCoverSrc } from "@/utils/artwork";
 import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 
-const ArrowDownload16Regular = bundleIcon(ArrowDownload16Filled, ArrowDownload16RegularBase);
-const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
+const ArrowDownload16 = bundleIcon(ArrowDownload16Filled, ArrowDownload16Regular);
+const Play24 = bundleIcon(Play24Filled, Play24Regular);
 
 const useStyles = makeStyles({
   container: {
@@ -171,7 +171,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
     <div className={styles.container}>
       <div className={gridStyles.grid}>
         {videos.map((video) => {
-          const imageUrl = renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id);
+          const imageUrl = mediaCoverSrc(video);
           const year = video.release_date ? new Date(video.release_date).getFullYear() : null;
           const subtitle = [video.artist_name || "Unknown Artist", year || ""].filter(Boolean).join(" · ");
           // Show only the selected download offer (same as list view / tracks Available).
@@ -207,7 +207,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
               onMonitorToggle={onToggleMonitor ? () => onToggleMonitor(video) : undefined}
               placeholder={(
                 <div className={styles.placeholder}>
-                  <Play24Regular className={styles.placeholderIcon} />
+                  <Play24 className={styles.placeholderIcon} />
                 </div>
               )}
               statusBadge={video.is_downloaded ? (
@@ -215,7 +215,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
               ) : onDownload && video.provider && video.provider_id ? (
                 <Button
                   appearance="subtle"
-                  icon={<ArrowDownload16Regular />}
+                  icon={<ArrowDownload16 />}
                   className={styles.downloadButton}
                   title="Download video"
                   aria-label="Download video"

@@ -117,6 +117,7 @@ test("media contract parsers validate album tracks and video detail payloads", (
     duration: 240,
     artist_id: "303",
     artist_name: "Artist",
+    video_variant: "live",
     quality: "HIRES_LOSSLESS",
     cover_id: "abcdef",
     cover_art_url: "/media-cover/Albums/video-release/cover.jpg",
@@ -125,6 +126,7 @@ test("media contract parsers validate album tracks and video detail payloads", (
     is_downloaded: true,
   });
   assert.equal(video.artist_id, "303");
+  assert.equal(video.video_variant, "live");
   assert.equal(video.cover_art_url, "/media-cover/Albums/video-release/cover.jpg");
   assert.equal(video.downloaded, true);
 });

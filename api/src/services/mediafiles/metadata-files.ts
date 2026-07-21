@@ -14,12 +14,11 @@ import {
     albumProviderArtworkCandidatesFromRow,
     imageContainerFromImagesColumn,
     getMediaCoverFilePathFromUrl,
-    getCoverArtArchiveReleaseGroupUrl,
-    getServarrMetadataAlbumImageUrl,
-    getServarrMetadataArtistImageUrl,
     normalizeArtworkUrl,
     parseJsonObject,
-    configuredArtworkPreference,
+    resolveAlbumArtwork,
+    resolveArtistArtwork,
+    resolveVideoArtwork,
     resolveProviderArtworkUrl,
     resolveMediaCoverProxyUrl,
     type ProviderArtworkCandidate,
@@ -482,35 +481,6 @@ async function downloadProviderArtwork(
     return true;
 }
 
-function artworkImagesByOrigin(
-    container: ServarrMetadataImageContainer | null | undefined,
-    origin: "canonical" | "provider",
-): ServarrMetadataImageContainer {
-    const images = Array.isArray(container?.images)
-        ? container.images
-        : Array.isArray(container?.Images)
-            ? container.Images
-            : [];
-    return {
-        images: images.filter((image) => {
-            const source = String((image as any).source || (image as any).Source || "").trim().toLowerCase();
-            return origin === "provider" ? source === "provider-fallback" : source !== "provider-fallback";
-        }),
-    };
-}
-
-function loadResolvedArtistArtwork(artistId: string): string | null {
-    const row = db.prepare(`
-        SELECT cover_image_url, picture
-        FROM Artists
-        WHERE id = ? OR mbid = ?
-        LIMIT 1
-    `).get(artistId, artistId) as { cover_image_url?: string | null; picture?: string | null } | undefined;
-
-    const resolved = row?.picture || row?.cover_image_url || null;
-    return typeof resolved === "string" && (/^https?:\/\//i.test(resolved) || resolved.startsWith("/media-cover/")) ? resolved : null;
-}
-
 function loadAlbumArtworkContext(albumId: string, provider?: string | null): {
     albumMbid: string | null;
     servarrMetadataData: ServarrMetadataImageContainer | null;
@@ -582,6 +552,7 @@ function loadAlbumArtworkContext(albumId: string, provider?: string | null): {
 }
 
 function loadArtistArtworkContext(artistId: string): {
+    artistMbid: string | null;
     servarrMetadataData: ServarrMetadataImageContainer | null;
     providerCandidates: ProviderArtworkCandidate[];
 } | null {
@@ -615,29 +586,23 @@ function loadArtistArtworkContext(artistId: string): {
     }
 
     return {
+        artistMbid: row.mbid ? String(row.mbid) : (row.id ? String(row.id) : null),
         servarrMetadataData: imageContainerFromImagesColumn(row.artist_metadata_images),
         providerCandidates: [
             {
                 provider: row.provider ? String(row.provider) : "tidal",
                 entityId: row.provider_id == null ? artistId : String(row.provider_id),
+                // Profile / folder.jpg only — never Artists.cover_image_url (fanart/backdrop).
                 imageId: normalizeArtworkUrl(row.picture) ? String(row.picture) : (row.picture == null ? null : String(row.picture)),
-
-            },
-            {
-                provider: row.provider ? String(row.provider) : "tidal",
-                entityId: row.provider_id == null ? artistId : String(row.provider_id),
-                imageId: normalizeArtworkUrl(row.cover_image_url) ? String(row.cover_image_url) : null,
-
             },
         ],
     };
 }
 
 /**
- * Download album cover at specified resolution
- * @param albumId - Tidal album ID
- * @param resolution - Resolution: 80, 160, 320, 640, 1280, or "origin"
- * @param outputPath - Full path where to save the image
+ * Download album cover at specified resolution.
+ * Uses media-cover-service resolveAlbumArtwork (same preference ladder as UI)
+ * then copies from the media-cover cache into the library path.
  */
 export async function downloadAlbumCover(
     albumId: string,
@@ -649,23 +614,21 @@ export async function downloadAlbumCover(
     const providerCandidates = context?.providerCandidates?.length
         ? context.providerCandidates
         : [{ provider: options.provider || streamingProviderManager.getDefaultProviderId(), entityId: albumId }];
-    const canonicalUrl = getServarrMetadataAlbumImageUrl(
-        artworkImagesByOrigin(context?.servarrMetadataData, "canonical"),
-    );
-    const storedProviderUrl = getServarrMetadataAlbumImageUrl(
-        artworkImagesByOrigin(context?.servarrMetadataData, "provider"),
-    );
-    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "album", resolution);
-    const coverArtArchiveUrl = getCoverArtArchiveReleaseGroupUrl(context?.albumMbid);
-    const candidates = configuredArtworkPreference() === "provider"
-        ? [providerUrl, storedProviderUrl, canonicalUrl, coverArtArchiveUrl]
-        : [canonicalUrl, coverArtArchiveUrl, providerUrl, storedProviderUrl];
+    const albumMbid = context?.albumMbid || (/^[0-9a-f-]{36}$/i.test(String(albumId).trim()) ? String(albumId).trim() : null);
 
-    for (const url of Array.from(new Set(candidates.filter((candidate): candidate is string => Boolean(candidate))))) {
-        if (await downloadProviderArtwork(url, outputPath, `album cover for ${albumId}`)) {
-            return;
-        }
+    const localUrl = await resolveAlbumArtwork({
+        albumMbid,
+        servarrMetadataData: context?.servarrMetadataData ?? null,
+        providerCandidates,
+        size: resolution,
+    });
+    if (await downloadProviderArtwork(localUrl, outputPath, `album cover for ${albumId}`)) {
+        return;
     }
+
+    // Last resort: direct provider fetch if resolve returned nothing usable.
+    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "album", resolution);
+    await downloadProviderArtwork(providerUrl, outputPath, `album cover for ${albumId}`);
 }
 
 /**
@@ -823,10 +786,8 @@ export async function downloadAlbumVideoCover(
 }
 
 /**
- * Download artist picture at specified resolution
- * @param artistId - Tidal artist ID
- * @param resolution - Preferred resolution. Servarr Metadata Server/source images are used as-is; provider fallback may quantize.
- * @param outputPath - Full path where to save the image
+ * Download artist picture at specified resolution.
+ * Uses media-cover-service resolveArtistArtwork (same preference ladder as UI).
  */
 export async function downloadArtistPicture(
     artistId: string,
@@ -834,45 +795,56 @@ export async function downloadArtistPicture(
     outputPath: string
 ): Promise<void> {
     const context = loadArtistArtworkContext(artistId);
-    const preferredCoverTypes = ["Poster", "Headshot", "Fanart"];
+    const preferredCoverTypes = ["Poster", "Headshot"];
     const providerCandidates = context?.providerCandidates?.length
         ? context.providerCandidates
         : [{ provider: streamingProviderManager.getDefaultProviderId(), entityId: artistId }];
-    const canonicalUrl = getServarrMetadataArtistImageUrl(
-        artworkImagesByOrigin(context?.servarrMetadataData, "canonical"),
-        preferredCoverTypes,
-    );
-    const storedProviderUrl = getServarrMetadataArtistImageUrl(
-        artworkImagesByOrigin(context?.servarrMetadataData, "provider"),
-        preferredCoverTypes,
-    );
-    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "artist", resolution);
-    const resolvedRowUrl = loadResolvedArtistArtwork(artistId);
-    const candidates = configuredArtworkPreference() === "provider"
-        ? [providerUrl, storedProviderUrl, canonicalUrl, resolvedRowUrl]
-        : [canonicalUrl, providerUrl, storedProviderUrl, resolvedRowUrl];
+    const artistMbid = context?.artistMbid
+        || (/^[0-9a-f-]{36}$/i.test(String(artistId).trim()) ? String(artistId).trim() : null);
 
-    for (const sourceUrl of Array.from(new Set(candidates.filter((candidate): candidate is string => Boolean(candidate))))) {
-        if (await downloadProviderArtwork(sourceUrl, outputPath, `artist picture for ${artistId}`)) {
-            return;
-        }
+    const localUrl = await resolveArtistArtwork({
+        artistMbid,
+        servarrMetadataData: context?.servarrMetadataData ?? null,
+        providerCandidates,
+        preferredCoverTypes,
+        size: resolution,
+    });
+    if (await downloadProviderArtwork(localUrl, outputPath, `artist picture for ${artistId}`)) {
+        return;
     }
+
+    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "artist", resolution);
+    await downloadProviderArtwork(providerUrl, outputPath, `artist picture for ${artistId}`);
 }
 
 /**
- * Download music video thumbnail at specified resolution
+ * Download music video thumbnail at specified resolution.
+ * Prefer resolveVideoArtwork when a recording id is known; otherwise provider imageId.
  * NOTE: Video thumbnails are 3:2 aspect ratio (e.g., 1080x720, 750x500)
- * @param imageId - Video image UUID (from video.imageId)
- * @param resolution - Resolution: "160x107", "480x320", "750x500", or "1080x720"
- * @param outputPath - Full path where to save the image
  */
 export async function downloadVideoThumbnail(
     imageId: string,
     resolution: VideoThumbnailResolution,
     outputPath: string,
-    context: { provider?: string | null; providerId?: string | number | null } = {},
+    context: { provider?: string | null; providerId?: string | number | null; videoId?: string | number | null } = {},
 ): Promise<void> {
     const normalizedResolution = normalizeVideoThumbnailResolution(resolution);
+    const videoId = context.videoId ?? context.providerId;
+    if (videoId != null && String(videoId).trim() !== "") {
+        const localUrl = await resolveVideoArtwork({
+            videoId,
+            providerCandidates: [{
+                provider: context.provider || streamingProviderManager.getDefaultProviderId(),
+                entityId: context.providerId,
+                imageId,
+            }],
+            size: normalizedResolution,
+        });
+        if (await downloadProviderArtwork(localUrl, outputPath, "video thumbnail")) {
+            return;
+        }
+    }
+
     const url = await resolveProviderArtworkUrl([{
         provider: context.provider || streamingProviderManager.getDefaultProviderId(),
         entityId: context.providerId,

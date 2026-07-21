@@ -58,7 +58,10 @@ test("fresh installs use the production monitoring and library defaults", () => 
   assert.equal(config.filtering.include_videos, false);
   assert.equal(config.quality.video_quality, "uhd");
   assert.equal(config.path.create_empty_artist_folders, true);
-  assert.equal(config.naming.video_file, "{Video CleanTitle} {{providerName}-{mediaId}}");
+  assert.equal(config.naming.video_file, "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}");
+  assert.equal(config.naming.album_track_path_single, "{Album FullTitle} ({Release Year})/{track:00} - {Track FullTitle}");
+  assert.equal(config.naming.album_track_path_multi, "{Album FullTitle} ({Release Year})/{medium:0}{track:00} - {Track FullTitle}");
+  assert.equal(config.naming.artist_folder, "{Artist Name} {mbid-{Artist MbId}}");
   assert.equal(config.metadata.enable_fingerprinting, true);
   assert.equal(config.metadata.artwork_preference, "canonical");
   assert.equal(config.catalog.source, "servarr");

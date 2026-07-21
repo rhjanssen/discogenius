@@ -17,16 +17,16 @@ import {
     makeStyles,
 } from "@fluentui/react-components";
 import {
-  ArrowSync24Regular as ArrowSync24RegularBase,
-  ChevronDownRegular as ChevronDownRegularBase,
-  MoreHorizontal24Regular as MoreHorizontal24RegularBase,
-  Play24Regular as Play24RegularBase,
-  Pause24Regular as Pause24RegularBase,
-  FolderSearch24Regular as FolderSearch24RegularBase,
-  Filter24Regular as Filter24RegularBase,
-  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
-  Warning24Regular as Warning24RegularBase,
+  ArrowSync24Regular,
+  ChevronDownRegular,
+  MoreHorizontal24Regular,
+  Play24Regular,
+  Pause24Regular,
+  FolderSearch24Regular,
+  Filter24Regular,
+  ArrowSortDownLines24Regular,
+  ArrowDownload24Regular,
+  Warning24Regular,
   ArrowSync24Filled,
   ChevronDownFilled,
   MoreHorizontal24Filled,
@@ -50,6 +50,8 @@ import { LIBRARY_STATS_QUERY_KEY } from "@/hooks/useLibrary";
 import { useToast } from "@/hooks/useToast";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
+import { useUltraBlurContext } from "@/providers/UltraBlurContext";
+import { useTheme } from "@/providers/themeContext";
 import {
     ACTIVITY_REFRESH_EVENT,
     LIBRARY_UPDATED_EVENT,
@@ -69,17 +71,18 @@ import {
     detailActionGlassButtonStyles,
     detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
+import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 
-const ArrowSync24Regular = bundleIcon(ArrowSync24Filled, ArrowSync24RegularBase);
-const ChevronDownRegular = bundleIcon(ChevronDownFilled, ChevronDownRegularBase);
-const MoreHorizontal24Regular = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24RegularBase);
-const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
-const Pause24Regular = bundleIcon(Pause24Filled, Pause24RegularBase);
-const FolderSearch24Regular = bundleIcon(FolderSearch24Filled, FolderSearch24RegularBase);
-const Filter24Regular = bundleIcon(Filter24Filled, Filter24RegularBase);
-const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
-const Warning24Regular = bundleIcon(Warning24Filled, Warning24RegularBase);
+const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
+const ChevronDown = bundleIcon(ChevronDownFilled, ChevronDownRegular);
+const MoreHorizontal24 = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24Regular);
+const Play24 = bundleIcon(Play24Filled, Play24Regular);
+const Pause24 = bundleIcon(Pause24Filled, Pause24Regular);
+const FolderSearch24 = bundleIcon(FolderSearch24Filled, FolderSearch24Regular);
+const Filter24 = bundleIcon(Filter24Filled, Filter24Regular);
+const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
+const Warning24 = bundleIcon(Warning24Filled, Warning24Regular);
 
 const useStyles = makeStyles({
     container: {
@@ -179,12 +182,12 @@ const useStyles = makeStyles({
         color: "var(--dg-accent-videos)",
     },
     statCard: {
+        ...glassSurfaceStyles,
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalXXS,
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-        backdropFilter: "blur(20px)",
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
     },
     statValue: {
         fontSize: tokens.fontSizeBase600,
@@ -200,16 +203,14 @@ const useStyles = makeStyles({
         color: tokens.colorNeutralForeground3,
     },
     providerNotice: {
+        ...glassSurfaceStyles,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         gap: tokens.spacingHorizontalM,
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         borderRadius: tokens.borderRadiusMedium,
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 58%, transparent)`,
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
         "@media (max-width: 639px)": {
             alignItems: "stretch",
             flexDirection: "column",
@@ -330,6 +331,8 @@ const Dashboard = () => {
     const responsiveTabsStyles = useResponsiveTabsStyles({ collapseOnMobile: false });
     const { toast } = useToast();
     const navigate = useNavigate();
+    const { setArtwork } = useUltraBlurContext();
+    const { setBrandKeyColor } = useTheme();
     const {
         isPaused: queueIsPaused,
         pauseQueue,
@@ -343,6 +346,12 @@ const Dashboard = () => {
     const [mobileTab, setMobileTab] = useState<"queue" | "activity" | "manualImport">(getInitialDashboardTab);
     const [activityFilter, setActivityFilter] = useState<string>('all');
     const { canAccessShell, remoteCatalogAvailable, isSessionExpired } = useProviderConnection();
+
+    // Match Library: default chromatic wash, not the previous artist/album UltraBlur.
+    useEffect(() => {
+        setArtwork(undefined);
+        setBrandKeyColor(null);
+    }, [setArtwork, setBrandKeyColor]);
 
     useEffect(() => {
         sessionStorage.setItem(DASHBOARD_TAB_STORAGE_KEY, mobileTab);
@@ -441,7 +450,7 @@ const Dashboard = () => {
         {
             key: 'refresh',
             label: refreshBusy ? 'Refreshing Metadata...' : 'Refresh Metadata',
-            icon: <ArrowSync24Regular />,
+            icon: <ArrowSync24 />,
             disabled: refreshBusy,
             onClick: handleScanAll,
             priority: 1,
@@ -449,7 +458,7 @@ const Dashboard = () => {
         {
             key: 'scan-files',
             label: scanRootsBusy ? 'Scanning Library Files...' : 'Scan Library Files',
-            icon: <FolderSearch24Regular />,
+            icon: <FolderSearch24 />,
             disabled: scanRootsBusy,
             onClick: handleScanRootFolders,
             priority: 2,
@@ -457,7 +466,7 @@ const Dashboard = () => {
         {
             key: 'curate',
             label: curationBusy ? 'Curating Library...' : 'Curate Library',
-            icon: <ArrowSortDownLines24Regular />,
+            icon: <ArrowSortDownLines24 />,
             disabled: curationBusy,
             onClick: handleQueueCuration,
             priority: 3,
@@ -468,7 +477,7 @@ const Dashboard = () => {
                 const task = runnableTasks.find((t) => t.id === 'download-missing');
                 return (isRunningTaskId === 'download-missing') ? 'Downloading Missing...' : (task?.name ?? 'Download Missing');
             })(),
-            icon: <ArrowDownload24Regular />,
+            icon: <ArrowDownload24 />,
             disabled: isRunningTaskId === 'download-missing' || (runnableTasks.find((t) => t.id === 'download-missing')?.active ?? false),
             onClick: () => void runTask('download-missing'),
             priority: 4,
@@ -553,7 +562,7 @@ const Dashboard = () => {
                         {desktopOverflowActions.length > 0 ? (
                             <Menu>
                                 <MenuTrigger disableButtonEnhancement>
-                                    <Button appearance="subtle" icon={<MoreHorizontal24Regular />} className={styles.headerActionButton}>
+                                    <Button appearance="subtle" icon={<MoreHorizontal24 />} className={styles.headerActionButton}>
                                         More
                                     </Button>
                                 </MenuTrigger>
@@ -587,7 +596,7 @@ const Dashboard = () => {
                         {mobileOverflowActions.length > 0 ? (
                             <Menu>
                                 <MenuTrigger disableButtonEnhancement>
-                                    <Button appearance="subtle" icon={<MoreHorizontal24Regular />} className={styles.headerActionButton}>
+                                    <Button appearance="subtle" icon={<MoreHorizontal24 />} className={styles.headerActionButton}>
                                         More
                                     </Button>
                                 </MenuTrigger>
@@ -623,7 +632,7 @@ const Dashboard = () => {
             {showProviderNotice ? (
                 <div className={styles.providerNotice}>
                     <div className={styles.providerNoticeMain}>
-                        <Warning24Regular className={styles.providerNoticeIcon} />
+                        <Warning24 className={styles.providerNoticeIcon} />
                         <Text className={styles.providerNoticeText}>{providerNoticeText}</Text>
                         <Badge appearance="tint" color="warning">Provider</Badge>
                     </div>
@@ -645,7 +654,7 @@ const Dashboard = () => {
                         <div className={responsiveTabsStyles.mobileSelect}>
                             <Menu>
                                 <MenuTrigger disableButtonEnhancement>
-                                    <Button appearance="subtle" iconPosition="after" icon={<ChevronDownRegular />} className={responsiveTabsStyles.menuButton}>
+                                    <Button appearance="subtle" iconPosition="after" icon={<ChevronDown />} className={responsiveTabsStyles.menuButton}>
                                         {dashboardTabs.find((tab) => tab.key === mobileTab)?.label ?? "Queue"}
                                     </Button>
                                 </MenuTrigger>
@@ -678,7 +687,7 @@ const Dashboard = () => {
                         <Button
                             className={queueIsPaused ? styles.queuePrimaryActionButton : styles.queueActionButton}
                             appearance={queueIsPaused ? "primary" : "outline"}
-                            icon={queueIsPaused ? <Play24Regular /> : <Pause24Regular />}
+                            icon={queueIsPaused ? <Play24 /> : <Pause24 />}
                             onClick={handlePauseResume}
                             size="small"
                         >
@@ -688,7 +697,7 @@ const Dashboard = () => {
                     {mobileTab === "activity" && (
                         <Menu>
                             <MenuTrigger disableButtonEnhancement>
-                                <Button className={styles.queueActionButton} appearance="outline" icon={<Filter24Regular />} size="small" title="Filter Activity">
+                                <Button className={styles.queueActionButton} appearance="outline" icon={<Filter24 />} size="small" title="Filter Activity">
                                     Filter
                                 </Button>
                             </MenuTrigger>

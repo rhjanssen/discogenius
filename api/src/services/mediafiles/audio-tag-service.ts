@@ -21,9 +21,18 @@ import { resolveStoredLibraryPath } from "./library-paths.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
-import { classifyLyricsForSidecar } from "../extras/lyrics/lyric-sidecar.js";
 import { cleanProviderText, downloadAlbumCover } from "./metadata-files.js";
 import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
+import { classifyLyricsForSidecar } from "../extras/lyrics/lyric-sidecar.js";
+
+export type ManagedTag = {
+  key: string;
+  label: string;
+  ffmpegKey: string;
+  targetValue: string;
+  aliases?: string[];
+  writeAliases?: string[];
+};
 
 export function selectEmbeddedLyricsText(lyrics: { subtitles?: string | null; text?: string | null } | null | undefined): string {
   return classifyLyricsForSidecar(lyrics)?.content || "";
@@ -40,6 +49,68 @@ export function buildEmbeddedLyricsManagedTag(
     targetValue,
     aliases: ["lyrics", "LYRICS", "unsyncedlyrics"],
   } : null;
+}
+
+export function buildFullTitle(title: string | null | undefined, version: string | null | undefined): string {
+  const baseTitle = String(title || "").trim() || "Unknown Track";
+  const normalizedVersion = String(version || "").trim();
+
+  if (!normalizedVersion) {
+    return baseTitle;
+  }
+
+  return baseTitle.toLowerCase().includes(normalizedVersion.toLowerCase())
+    ? baseTitle
+    : `${baseTitle} (${normalizedVersion})`;
+}
+
+export function formatPosition(no: number | null | undefined, of: number | null | undefined): string | null {
+  const position = Number(no || 0);
+  const total = Number(of || 0);
+
+  if (position <= 0 && total <= 0) {
+    return null;
+  }
+
+  if (total > 0) {
+    return `${Math.max(position, 0)}/${total}`;
+  }
+
+  return String(position);
+}
+
+export function formatPositiveNumber(value: number | null | undefined): string | null {
+  const numeric = Number(value || 0);
+  return numeric > 0 ? String(numeric) : null;
+}
+
+export function formatReplayGain(value: number | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  // Skip placeholder zeros providers emit when they have no real ReplayGain.
+  if (Math.abs(numeric) < 0.0005) {
+    return null;
+  }
+
+  const prefix = numeric >= 0 ? "+" : "";
+  return `${prefix}${numeric.toFixed(2)} dB`;
+}
+
+export function formatReplayPeak(value: number | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  // Skip unset placeholders (0.0 / 1.0) that are not real measured peaks.
+  if (numeric <= 0 || Math.abs(numeric - 1) < 0.0000005) {
+    return null;
+  }
+
+  return numeric.toFixed(6);
 }
 
 type RetagTrackRow = {
@@ -100,15 +171,6 @@ type RetagTrackRow = {
   canonical_recording_mbid: string | null;
   recording_artist_credit: string | null;
   recording_data: string | null;
-};
-
-export type ManagedTag = {
-  key: string;
-  label: string;
-  ffmpegKey: string;
-  targetValue: string;
-  aliases?: string[];
-  writeAliases?: string[];
 };
 
 export type RetagDifference = {
@@ -223,19 +285,6 @@ async function resolveLyricsForRetagRow(
   const lyrics = await getLyricsForProviderMedia(row.file_provider_id, row.file_provider);
   cache?.set(key, lyrics);
   return lyrics;
-}
-
-function buildFullTitle(title: string | null | undefined, version: string | null | undefined): string {
-  const baseTitle = String(title || "").trim() || "Unknown Track";
-  const normalizedVersion = String(version || "").trim();
-
-  if (!normalizedVersion) {
-    return baseTitle;
-  }
-
-  return baseTitle.toLowerCase().includes(normalizedVersion.toLowerCase())
-    ? baseTitle
-    : `${baseTitle} (${normalizedVersion})`;
 }
 
 function buildProviderTrackUrl(row: RetagTrackRow): string {
@@ -370,55 +419,6 @@ function normalizeComparableValue(value: string | null): string | null {
 
   const normalized = collapseWhitespace(value);
   return normalized ? normalized : null;
-}
-
-function formatPosition(no: number | null | undefined, of: number | null | undefined): string | null {
-  const position = Number(no || 0);
-  const total = Number(of || 0);
-
-  if (position <= 0 && total <= 0) {
-    return null;
-  }
-
-  if (total > 0) {
-    return `${Math.max(position, 0)}/${total}`;
-  }
-
-  return String(position);
-}
-
-function formatPositiveNumber(value: number | null | undefined): string | null {
-  const numeric = Number(value || 0);
-  return numeric > 0 ? String(numeric) : null;
-}
-
-function formatReplayGain(value: number | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return null;
-  }
-  // Skip placeholder zeros providers emit when they have no real ReplayGain.
-  if (Math.abs(numeric) < 0.0005) {
-    return null;
-  }
-
-  const prefix = numeric >= 0 ? "+" : "";
-  return `${prefix}${numeric.toFixed(2)} dB`;
-}
-
-function formatReplayPeak(value: number | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return null;
-  }
-  // Skip unset placeholders (0.0 / 1.0) that are not real measured peaks.
-  if (numeric <= 0 || Math.abs(numeric - 1) < 0.0000005) {
-    return null;
-  }
-
-  return numeric.toFixed(6);
 }
 
 /** Normalize AlbumReleases.country (plain code or JSON array string) for tags. */
@@ -877,13 +877,14 @@ export class AudioTagService {
       where.push(`(
         lf.canonical_release_group_mbid = ?
         OR lf.canonical_release_mbid = ?
-        OR EXISTS (
-          SELECT 1
-          FROM ProviderItems scope_item
-          WHERE scope_item.entity_type = 'track'
-            AND lf.provider_entity_type = 'track'
-            AND CAST(scope_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-            AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+        OR (
+          lf.provider_entity_type = 'track'
+          AND CAST(lf.provider_id AS TEXT) IN (
+            SELECT CAST(scope_item.provider_id AS TEXT)
+            FROM ProviderItems scope_item
+            WHERE scope_item.entity_type = 'track'
+              AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+          )
         )
       )`);
       params.push(options.albumId, options.albumId, options.albumId, options.albumId);
@@ -912,13 +913,14 @@ export class AudioTagService {
       where.push(`(
         lf.canonical_release_group_mbid = ?
         OR lf.canonical_release_mbid = ?
-        OR EXISTS (
-          SELECT 1
-          FROM ProviderItems scope_item
-          WHERE scope_item.entity_type = 'track'
-            AND lf.provider_entity_type = 'track'
-            AND CAST(scope_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-            AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+        OR (
+          lf.provider_entity_type = 'track'
+          AND CAST(lf.provider_id AS TEXT) IN (
+            SELECT CAST(scope_item.provider_id AS TEXT)
+            FROM ProviderItems scope_item
+            WHERE scope_item.entity_type = 'track'
+              AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+          )
         )
       )`);
       params.push(options.albumId, options.albumId, options.albumId, options.albumId);
@@ -1081,8 +1083,8 @@ export class AudioTagService {
             album_candidate.provider_id ASC
           LIMIT 1
         )
-      LEFT JOIN AlbumReleases ar ON ar.mbid = COALESCE(provider_album.release_mbid, provider_track.release_mbid)
-      LEFT JOIN Albums alb ON alb.mbid = COALESCE(provider_album.release_group_mbid, provider_track.release_group_mbid)
+      LEFT JOIN AlbumReleases ar ON ar.mbid = COALESCE(lf.canonical_release_mbid, provider_album.release_mbid, provider_track.release_mbid)
+      LEFT JOIN Albums alb ON alb.mbid = COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid, provider_track.release_group_mbid)
       WHERE ${whereClause}
         AND (provider_track.provider_id IS NOT NULL OR canonical_track.mbid IS NOT NULL OR provider_canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR provider_recording.mbid IS NOT NULL)
       ORDER BY lf.artist_id, COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid), COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id

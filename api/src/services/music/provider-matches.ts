@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
+import { normalizeIsrc } from "../mediafiles/import-matching-utils.js";
 
 /**
  * Provider item -> MusicBrainz match graph (the `ProviderItemMatches` table).
@@ -197,10 +198,6 @@ interface TargetTrackRow {
   medium_position: number | null;
   position: number | null;
   isrcs: Set<string>;
-}
-
-function normalizeIsrc(value: unknown): string {
-  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 function parseIsrcSet(value: unknown): Set<string> {
@@ -497,15 +494,11 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
        -- Composite matches (a joined provider-album set) have no single
        -- ProviderItems row; they carry their own coverage in evidence.
        instr(pm.provider_item_id, ';') > 0
-       OR EXISTS (
-         SELECT 1
+       OR pm.provider_item_id IN (
+         SELECT current_pi.provider_id
          FROM ProviderItems current_pi
          WHERE current_pi.provider = pm.provider
            AND current_pi.entity_type = 'album'
-           -- Both ids are canonical TEXT columns. Comparing them directly lets
-           -- SQLite use ProviderItems' (provider, entity_type, provider_id)
-           -- primary key instead of scanning/casting the offer table once for
-           -- every candidate edge.
            AND current_pi.provider_id = pm.provider_item_id
            AND (
              current_pi.release_mbid IS NULL

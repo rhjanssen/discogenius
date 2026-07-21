@@ -128,6 +128,14 @@ export const VIDEO_RESPONSE = {
         url: "https://music.apple.com/us/music-video/pompeii/1452310551",
         artwork: { url: "https://is1-ssl.mzstatic.com/image/thumb/v/{w}x{h}bb.{f}" },
       },
+      relationships: {
+        albums: {
+          data: [{ id: "1440653916", type: "albums" }],
+        },
+        songs: {
+          data: [{ id: "1440653947", type: "songs" }],
+        },
+      },
     },
   ],
 };

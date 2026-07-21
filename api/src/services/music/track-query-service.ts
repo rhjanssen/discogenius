@@ -290,7 +290,13 @@ function getTrackSelectSql(whereClause: string): string {
       track.mbid AS id,
       release_group.mbid AS album_id,
       track.title,
-      NULL AS version,
+      CASE
+        WHEN provider_track.version IS NOT NULL
+          AND TRIM(provider_track.version) != ''
+          AND INSTR(LOWER(track.title), LOWER(TRIM(provider_track.version))) = 0
+        THEN TRIM(provider_track.version)
+        ELSE NULL
+      END AS version,
       COALESCE(
         ROUND(COALESCE(track.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0),
         0

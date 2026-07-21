@@ -13,10 +13,6 @@ export interface RefreshOptions {
     resolveMusicBrainz?: boolean;
     forceUpdate?: boolean;
     forceAlbumUpdate?: boolean;
-    includeSimilarArtists?: boolean;
-    seedSimilarArtists?: boolean;
-    includeSimilarAlbums?: boolean;
-    seedSimilarAlbums?: boolean;
     /**
      * When true, artist refresh performs metadata intake only and skips the inline
      * provider-matching step, returning the context a caller needs to enqueue a

@@ -6,8 +6,9 @@ import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
-import { queueTrackAcquisitionPlan } from "./release-group-acquisition-plan.js";
+import { queueCatalogAlbumDownload } from "./release-group-acquisition-plan.js";
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
+import { resolveVideoTypeSuffix } from "../mediafiles/video-naming.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -49,22 +50,6 @@ type ArtistCurationIdentity = {
 };
 
 export class DownloadMissingService {
-    static readonly DEFAULT_MAX_BUFFERED_DOWNLOADS = 50;
-
-    static countActiveDownloadCommands(): number {
-        const placeholders = [CommandNames.DownloadAlbum, CommandNames.DownloadTrack, CommandNames.DownloadVideo]
-            .map(() => "?")
-            .join(", ");
-        const row = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM commands
-            WHERE name IN (${placeholders})
-              AND status IN ('queued', 'started')
-        `).get(CommandNames.DownloadAlbum, CommandNames.DownloadTrack, CommandNames.DownloadVideo) as { count?: number } | undefined;
-
-        return Number(row?.count || 0);
-    }
-
     static async queueMonitoredItems(
         artistId?: string,
         options: { limit?: number } = {},
@@ -73,6 +58,9 @@ export class DownloadMissingService {
 
         const filteringConfig = getConfigSection("filtering");
         const allowVideos = filteringConfig?.include_videos !== false;
+        // Optional limit remains for tests / callers that want a soft cap; the
+        // DownloadMissing command itself queues without chunking (worker
+        // concurrency is the active-slot limit, like qBittorrent).
         const maxToQueue = Number.isInteger(options.limit) && Number(options.limit) > 0
             ? Number(options.limit)
             : Number.POSITIVE_INFINITY;
@@ -116,7 +104,7 @@ export class DownloadMissingService {
         }): boolean => isMusicBrainzReleaseGroupIncluded(row, filteringConfig);
 
         let albumJobs = 0;
-        let trackJobs = 0;
+        const trackJobs = 0;
         let videoJobs = 0;
         const albumQueuedAsAlbum = new Set<string>();
 
@@ -174,7 +162,7 @@ export class DownloadMissingService {
         };
 
         const slotParams: any[] = [];
-        let slotArtistWhere = "COALESCE(monitored_artist.monitored, 0) = 1";
+        let slotArtistWhere = "monitored_artist.monitored = 1";
         if (artistId) {
             slotArtistWhere = "monitored_artist.id = ?";
             slotParams.push(artistId);
@@ -215,22 +203,21 @@ export class DownloadMissingService {
               AND rgs.selected_release_mbid IS NOT NULL
               AND ${slotArtistWhere}
               AND (
-                NOT EXISTS (
-                  SELECT 1 FROM Tracks selected_track
-                  WHERE selected_track.album_release_id = rgs.selected_album_release_id
+                rgs.selected_album_release_id NOT IN (
+                  SELECT selected_track.album_release_id
+                  FROM Tracks selected_track
+                  WHERE selected_track.album_release_id IS NOT NULL
                 )
-                OR EXISTS (
-                  SELECT 1
+                OR rgs.selected_album_release_id IN (
+                  SELECT missing_track.album_release_id
                   FROM Tracks missing_track
-                  WHERE missing_track.album_release_id = rgs.selected_album_release_id
-                    AND missing_track.id NOT IN (
+                  WHERE missing_track.id NOT IN (
                       SELECT downloaded_file.track_id
                       FROM TrackFiles downloaded_file
                       WHERE downloaded_file.file_type = 'track'
                         AND downloaded_file.library_slot = COALESCE(rgs.slot, 'stereo')
                         AND downloaded_file.track_id IS NOT NULL
                     )
-                  LIMIT 1
                 )
               )
             ORDER BY rg.first_release_date DESC, rg.title ASC, rgs.slot ASC
@@ -250,25 +237,43 @@ export class DownloadMissingService {
             }
 
             const artistNames = [slot.artist_name || slot.provider_artist_name].filter(Boolean);
-            const plannedTracks = queueTrackAcquisitionPlan(slot, {
+            const queued = queueCatalogAlbumDownload({
+                slot: slot.slot || "stereo",
+                selected_provider: slot.selected_provider || null,
+                selected_provider_id: slot.selected_provider_id || null,
+                selected_release_mbid: slot.selected_release_mbid || null,
+                release_group_mbid: slot.release_group_mbid || null,
+                match_method: slot.match_method || null,
+                match_evidence: slot.match_evidence || null,
+                quality: slot.quality || null,
+                provider_cover: slot.provider_cover || null,
+                provider_artist_name: slot.provider_artist_name || null,
+                artist_name: slot.artist_name || null,
+                title: slot.title || slot.provider_title || null,
+                provider_title: slot.provider_title || null,
+            }, {
                 canQueue: hasBatchCapacity,
-                onQueued: () => { trackJobs += 1; },
+                onQueued: () => { albumJobs += 1; },
             });
-            if (plannedTracks.recognized) {
+            if (queued.queued) {
                 continue;
             }
-            queueAlbumDownload({
-                id: String(slot.selected_provider_id),
-                title: slot.title || slot.provider_title || null,
-                version: null,
-                cover: slot.provider_cover || null,
-                quality: slot.quality || null,
-                artist_name: slot.artist_name || slot.provider_artist_name || null,
-                provider: slot.selected_provider || null,
-                releaseGroupMbid: slot.release_group_mbid || null,
-                releaseMbid: slot.selected_release_mbid || null,
-                slot: slot.slot || null,
-            }, artistNames);
+            // Fallback for slots that could not build a catalog-anchored plan
+            // (missing release/catalog rows): keep the legacy album push.
+            if (!queued.recognizedHybrid) {
+                queueAlbumDownload({
+                    id: String(slot.selected_provider_id),
+                    title: slot.title || slot.provider_title || null,
+                    version: null,
+                    cover: slot.provider_cover || null,
+                    quality: slot.quality || null,
+                    artist_name: slot.artist_name || slot.provider_artist_name || null,
+                    provider: slot.selected_provider || null,
+                    releaseGroupMbid: slot.release_group_mbid || null,
+                    releaseMbid: slot.selected_release_mbid || null,
+                    slot: slot.slot || null,
+                }, artistNames);
+            }
         }
 
         if (allowVideos) {
@@ -299,12 +304,13 @@ export class DownloadMissingService {
                     CAST(r.id AS TEXT) as recording_id,
                     r.mbid as recording_mbid,
                     r.title as video_title,
+                    r.video_variant as video_variant,
                     r.artist_mbid as artist_mbid,
                     r.cover_image_url as cover_image_url,
                     artist.name as artist_name,
                     pi.provider,
                     pi.provider_id,
-                    pi.quality as video_quality
+                    pi.quality as quality
                 FROM Recordings r
                 LEFT JOIN ArtistMetadata artist ON artist.mbid = r.artist_mbid
                 LEFT JOIN Artists managed_artist ON managed_artist.mbid = r.artist_mbid
@@ -340,11 +346,28 @@ export class DownloadMissingService {
 
             const videos = db.prepare(videosQuery).all(...videoParams) as any[];
 
-            // One job per canonical video recording. Distinct lyric/live/audio
-            // variants intentionally have distinct recording ids after video
-            // clustering, so title-based grouping here would collapse them all
-            // over again. Within one recording, choose the highest-priority
-            // provider deterministically while preserving canonical title order.
+            // Within one video recording, keep the best provider offer. Then collapse
+            // further to one job per related audio track + Plex type suffix so inline
+            // layout never queues TIDAL + Apple copies of the same official MV.
+            // Distinct lyric/live variants keep different suffixes and stay separate.
+            const sortOffers = (
+                left: { video: any; index: number },
+                right: { video: any; index: number },
+            ) =>
+                compareVideoOffersByQualityThenProvider(
+                    {
+                        provider: String(left.video.provider || ""),
+                        quality: left.video.quality,
+                        provider_id: String(left.video.provider_id || ""),
+                    },
+                    {
+                        provider: String(right.video.provider || ""),
+                        quality: right.video.quality,
+                        provider_id: String(right.video.provider_id || ""),
+                    },
+                )
+                || left.index - right.index;
+
             const offersByRecording = new Map<string, Array<{ video: any; index: number }>>();
             videos.forEach((video, index) => {
                 const recordingId = String(video.recording_id || "");
@@ -353,22 +376,69 @@ export class DownloadMissingService {
                 offers.push({ video, index });
                 offersByRecording.set(recordingId, offers);
             });
-            const preferredVideos = Array.from(offersByRecording.values()).map((offers) => {
-                offers.sort((left, right) =>
-                    compareVideoOffersByQualityThenProvider(
-                        {
-                            provider: String(left.video.provider || ""),
-                            quality: left.video.quality,
-                            provider_id: String(left.video.provider_id || ""),
-                        },
-                        {
-                            provider: String(right.video.provider || ""),
-                            quality: right.video.quality,
-                            provider_id: String(right.video.provider_id || ""),
-                        },
-                    )
-                    || left.index - right.index);
-                return offers[0].video;
+            const preferredPerRecording = Array.from(offersByRecording.values()).map((offers) => {
+                offers.sort(sortOffers);
+                return { video: offers[0].video, index: offers[0].index };
+            });
+
+            const relatedAudioStmt = db.prepare(`
+                SELECT CAST(target_recording_id AS TEXT) AS audio_recording_id
+                FROM RecordingRelations
+                WHERE CAST(source_recording_id AS TEXT) = ?
+                  AND relation_type = 'provider_video_for'
+                ORDER BY COALESCE(confidence, 0) DESC, id ASC
+                LIMIT 1
+            `);
+            const importedVideosForAudioStmt = db.prepare(`
+                SELECT
+                    COALESCE(r.title, '') AS video_title,
+                    r.video_variant AS video_variant
+                FROM TrackFiles lf
+                LEFT JOIN ProviderItems pi
+                  ON pi.entity_type = 'video'
+                 AND pi.provider = lf.provider
+                 AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+                LEFT JOIN Recordings r
+                  ON r.id = COALESCE(lf.recording_id, pi.recording_id)
+                JOIN RecordingRelations rr
+                  ON CAST(rr.source_recording_id AS TEXT) = CAST(COALESCE(lf.recording_id, pi.recording_id) AS TEXT)
+                 AND rr.relation_type = 'provider_video_for'
+                WHERE lf.file_type = 'video'
+                  AND CAST(rr.target_recording_id AS TEXT) = ?
+            `);
+            const offersByInlineSlot = new Map<string, Array<{ video: any; index: number }>>();
+            for (const entry of preferredPerRecording) {
+                const recordingId = String(entry.video.recording_id || "");
+                const related = relatedAudioStmt.get(recordingId) as { audio_recording_id?: string } | undefined;
+                const plexType = resolveVideoTypeSuffix(entry.video.video_title, entry.video.video_variant);
+                const slotKey = related?.audio_recording_id
+                    ? `audio:${related.audio_recording_id}:${plexType}`
+                    : `video:${recordingId}:${plexType}`;
+                const bucket = offersByInlineSlot.get(slotKey) ?? [];
+                bucket.push(entry);
+                offersByInlineSlot.set(slotKey, bucket);
+            }
+            const preferredVideos = Array.from(offersByInlineSlot.values()).flatMap((offers) => {
+                offers.sort(sortOffers);
+                const winner = offers[0].video;
+                const recordingId = String(winner.recording_id || "");
+                const related = relatedAudioStmt.get(recordingId) as { audio_recording_id?: string } | undefined;
+                if (related?.audio_recording_id) {
+                    const plexType = resolveVideoTypeSuffix(winner.video_title, winner.video_variant);
+                    const imported = importedVideosForAudioStmt.all(related.audio_recording_id) as Array<{
+                        video_title?: string;
+                        video_variant?: string | null;
+                    }>;
+                    // Slot already filled by another recording (e.g. TIDAL official
+                    // MV imported while Apple's sibling still looks "missing").
+                    // Upgrades are handled by CheckUpgrades, not download-missing.
+                    if (imported.some((row) =>
+                        resolveVideoTypeSuffix(row.video_title, row.video_variant) === plexType
+                    )) {
+                        return [];
+                    }
+                }
+                return [winner];
             });
 
             for (const video of preferredVideos) {

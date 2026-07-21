@@ -326,16 +326,12 @@ export function deriveVideoQuality(metrics: AudioMetrics): string | null {
         return null;
     }
 
-    if (height >= 1000 || width >= 1900) {
-        return "MP4_1080P";
-    }
-    if (height >= 700 || width >= 1200) {
-        return "MP4_720P";
-    }
-    if (height >= 470 || width >= 840) {
-        return "MP4_480P";
-    }
-    return "MP4_360P";
+    // Prefer height; fall back to width-derived estimate for odd anamorphic files.
+    const effectiveHeight = height > 0 ? height : Math.round(width * 9 / 16);
+    if (effectiveHeight >= 2160) return "UHD";
+    if (effectiveHeight >= 1080 || width >= 1900) return "FHD";
+    if (effectiveHeight >= 720 || width >= 1200) return "HD";
+    return "SD";
 }
 
 export async function lookupAcoustId(fingerprint: string, duration: number): Promise<string | null> {

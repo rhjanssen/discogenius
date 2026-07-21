@@ -29,7 +29,26 @@ export interface DownloadTrackStateEntry {
   status: DownloadTrackStatus;
   /** Provider track id (staged file name); the hard link for per-track state. */
   providerTrackId?: string;
+  /** Provider plugin id for this track offer (hybrid albums may mix albums within one provider). */
+  provider?: string;
+  quality?: string | null;
+  canonicalTrackMbid?: string | null;
+  canonicalRecordingMbid?: string | null;
 }
+
+/** Per-track provider tip used when an album job fetches missing tracks individually. */
+export interface DownloadTrackOffer {
+  provider: string;
+  providerTrackId: string;
+  canonicalTrackMbid?: string | null;
+  canonicalRecordingMbid?: string | null;
+  title?: string;
+  quality?: string | null;
+  trackNum?: number | null;
+  volumeNum?: number | null;
+}
+
+export type DownloadAlbumAcquisitionMode = "album" | "trackOffers";
 
 export interface DownloadStatePayload {
   progress?: number;
@@ -86,14 +105,11 @@ export interface CommandBodyCommon {
   artist_id?: string;
   workflow?: ArtistWorkflowValue;
   monitoringCycle?: MonitoringPassWorkflowValue;
-  monitor?: boolean;
   monitorArtist?: boolean;
   monitorAlbums?: boolean;
   hydrateCatalog?: boolean;
   hydrateAlbumTracks?: boolean;
   scanLibrary?: boolean;
-  includeSimilarArtists?: boolean;
-  seedSimilarArtists?: boolean;
   forceUpdate?: boolean;
   forceDownloadQueue?: boolean;
   skipDownloadQueue?: boolean;
@@ -132,8 +148,6 @@ export interface RefreshArtistCommand extends CommandBodyCommon {
   hydrateCatalog: boolean;
   hydrateAlbumTracks: boolean;
   scanLibrary: boolean;
-  includeSimilarArtists?: boolean;
-  seedSimilarArtists?: boolean;
   forceDownloadQueue: boolean;
   forceUpdate: boolean;
 }
@@ -195,6 +209,14 @@ export interface DownloadVideoCommand extends CommandBodyCommon {
 
 export interface DownloadAlbumCommand extends CommandBodyCommon {
   type?: "album";
+  /**
+   * How the processor fetches media for this catalog-anchored album job.
+   * - `album`: single provider album download (normal full-missing match).
+   * - `trackOffers`: download only the listed missing tracks (hybrid / partial).
+   */
+  acquisitionMode?: DownloadAlbumAcquisitionMode;
+  /** Missing-track provider offers when `acquisitionMode` is `trackOffers`. */
+  trackOffers?: DownloadTrackOffer[];
 }
 
 export interface CurateArtistCommand extends CommandBodyCommon {
@@ -226,6 +248,8 @@ export interface ImportDownloadCommand extends CommandBodyCommon {
   providerId: string;
   resolved?: ResolvedDownloadMetadata;
   originalJobId?: number;
+  acquisitionMode?: DownloadAlbumAcquisitionMode;
+  trackOffers?: DownloadTrackOffer[];
 }
 
 export type ConfigPruneCommand = CommandBodyCommon;

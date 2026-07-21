@@ -36,14 +36,13 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("provider videos create canonical recordings and link to matching audio recordings", () => {
-  const audio = dbModule.db.prepare(`
+test("provider videos create canonical recordings without artist-wide audio linking", () => {
+  dbModule.db.prepare(`
     INSERT INTO Recordings (
       foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status, isrcs
     )
     VALUES ('audio-recording-1', 'audio-recording-1', 'artist-mbid', 'Pompeii', 214000, 0, 'musicbrainz', '["GBUM71300354"]')
-    RETURNING id
-  `).get() as { id: number };
+  `).run();
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
@@ -58,18 +57,20 @@ test("provider videos create canonical recordings and link to matching audio rec
   }]);
 
   const video = dbModule.db.prepare(`
-    SELECT id, title, is_video, metadata_status, release_date, cover_image_id
+    SELECT id, title, video_variant, is_video, metadata_status, release_date, cover_image_id
     FROM Recordings
     WHERE is_video = 1
   `).get() as {
     id: number;
     title: string;
+    video_variant: string | null;
     is_video: number;
     metadata_status: string;
     release_date: string;
     cover_image_id: string;
   };
-  assert.equal(video.title, "Pompeii (Official Music Video)");
+  assert.equal(video.title, "Pompeii");
+  assert.equal(video.video_variant, "official");
   assert.equal(video.metadata_status, "provider_only");
   assert.equal(video.release_date, "2013-02-24");
   assert.equal(video.cover_image_id, "cover-id");
@@ -87,20 +88,11 @@ test("provider videos create canonical recordings and link to matching audio rec
   });
 
   const relation = dbModule.db.prepare(`
-    SELECT source_recording_id, target_recording_id, relation_type, source, confidence
+    SELECT source_recording_id
     FROM RecordingRelations
     WHERE relation_type = 'provider_video_for'
-  `).get() as {
-    source_recording_id: number;
-    target_recording_id: number;
-    relation_type: string;
-    source: string;
-    confidence: number;
-  };
-  assert.equal(relation.source_recording_id, video.id);
-  assert.equal(relation.target_recording_id, audio.id);
-  assert.equal(relation.source, "tidal");
-  assert.equal(relation.confidence, 0.95);
+  `).get();
+  assert.equal(relation, undefined, "orphan videos must not artist-wide match on title/ISRC/duration");
 
   const retiredTables = dbModule.db.prepare(`
     SELECT name
@@ -385,12 +377,12 @@ test("refresh retro-merges pre-existing duplicate provider-only video recordings
     RETURNING id
   `).get() as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, recording_id)
-    VALUES ('tidal', 'video', 'tidal-video-sms', 'artist-mbid', 'SAVE MY SOUL', ?)
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, duration, recording_id)
+    VALUES ('tidal', 'video', 'tidal-video-sms', 'artist-mbid', 'SAVE MY SOUL', 256, ?)
   `).run(tidalRec.id);
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, recording_id)
-    VALUES ('apple-music', 'video', 'apple-video-sms', 'artist-mbid', 'SAVE MY SOUL ("FROM ALL SIDES" Tour)', ?)
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, duration, recording_id)
+    VALUES ('apple-music', 'video', 'apple-video-sms', 'artist-mbid', 'SAVE MY SOUL ("FROM ALL SIDES" Tour)', 256, ?)
   `).run(appleRec.id);
 
   // Any video refresh for the artist sweeps and heals the duplicates.
@@ -402,15 +394,317 @@ test("refresh retro-merges pre-existing duplicate provider-only video recordings
     duration: 256,
   }]);
 
-  const videos = dbModule.db.prepare(`
-    SELECT id FROM Recordings WHERE is_video = 1
-  `).all() as Array<{ id: number }>;
-  assert.equal(videos.length, 1);
-  assert.equal(videos[0].id, tidalRec.id);
-
   const offers = dbModule.db.prepare(`
     SELECT provider, recording_id AS recordingId FROM ProviderItems WHERE entity_type = 'video' ORDER BY provider
   `).all() as Array<{ provider: string; recordingId: number }>;
   assert.equal(offers.length, 2);
-  assert.ok(offers.every((offer) => offer.recordingId === tidalRec.id));
+  assert.equal(offers[0].recordingId, offers[1].recordingId);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number }>;
+  assert.equal(videos.length, 1);
+  assert.equal(videos[0].id, offers[0].recordingId);
+});
+
+test("lyric and unlabeled merge when durations agree within 5s", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-oblivion",
+    title: "Oblivion",
+    artist_name: "Bastille",
+    duration: 201,
+  }]);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "apple-music",
+    provider_id: "apple-oblivion-lyric",
+    title: "Oblivion (Lyric Video)",
+    artist_name: "Bastille",
+    duration: 201,
+  }]);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id, title, video_variant FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number; title: string; video_variant: string | null }>;
+  assert.equal(videos.length, 1);
+  assert.equal(videos[0].title, "Oblivion");
+  assert.equal(videos[0].video_variant, "lyric");
+
+  const offers = dbModule.db.prepare(`
+    SELECT provider, recording_id AS recordingId FROM ProviderItems WHERE entity_type = 'video'
+  `).all() as Array<{ provider: string; recordingId: number }>;
+  assert.equal(offers.length, 2);
+  assert.equal(offers[0].recordingId, offers[1].recordingId);
+});
+
+test("lyric and unlabeled stay separate when duration delta exceeds 5s", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-oblivion",
+    title: "Oblivion",
+    artist_name: "Bastille",
+    duration: 201,
+  }, {
+    provider: "apple-music",
+    provider_id: "apple-oblivion-lyric",
+    title: "Oblivion (Lyric Video)",
+    artist_name: "Bastille",
+    duration: 208,
+  }]);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number }>;
+  assert.equal(videos.length, 2);
+});
+
+test("live and unlabeled at exactly 10s do not merge; within 5s still can", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "youtube-music",
+    provider_id: "yt-oblivion-studio",
+    title: "Oblivion",
+    artist_name: "Bastille",
+    duration: 197,
+  }, {
+    provider: "youtube-music",
+    provider_id: "yt-oblivion-live-capitol",
+    title: "Oblivion (Live From Capitol Studios, USA / 2013)",
+    artist_name: "Bastille",
+    duration: 187,
+  }]);
+
+  const atTenSeconds = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number }>;
+  assert.equal(atTenSeconds.length, 2, "10s live delta must stay separate");
+
+  dbModule.db.prepare("DELETE FROM ProviderItems").run();
+  dbModule.db.prepare("DELETE FROM Recordings").run();
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-good-grief",
+    title: "Good Grief",
+    artist_name: "Bastille",
+    duration: 278,
+  }, {
+    provider: "apple-music",
+    provider_id: "apple-good-grief-live",
+    title: "Good Grief (Live From O2)",
+    artist_name: "Bastille",
+    duration: 280,
+  }]);
+
+  const withinFive = dbModule.db.prepare(`
+    SELECT id, title, video_variant FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number; title: string; video_variant: string | null }>;
+  assert.equal(withinFive.length, 1, "live↔unlabeled within 5s still merges");
+  assert.equal(withinFive[0].title, "Good Grief (Live From O2)");
+  assert.equal(withinFive[0].video_variant, "live");
+});
+
+test("official music video still does not absorb a same-duration live cut", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-pompeii-omv",
+    title: "Pompeii (Official Music Video)",
+    artist_name: "Bastille",
+    duration: 214,
+  }, {
+    provider: "apple-music",
+    provider_id: "apple-pompeii-live",
+    title: "Pompeii (Live)",
+    artist_name: "Bastille",
+    duration: 214,
+  }]);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number }>;
+  assert.equal(videos.length, 2);
+});
+
+test("refresh splits a live offer wrongly glued onto a studio recording", () => {
+  const studio = dbModule.db.prepare(`
+    INSERT INTO Recordings (artist_mbid, title, length_ms, is_video, metadata_status)
+    VALUES ('artist-mbid', 'Oblivion', 197000, 1, 'provider_only')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, duration, recording_id)
+    VALUES ('youtube-music', 'video', 'yt-oblivion-studio', 'artist-mbid', 'Oblivion', 197, ?)
+  `).run(studio.id);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, duration, recording_id)
+    VALUES ('youtube-music', 'video', 'yt-oblivion-live', 'artist-mbid', 'Oblivion (Live From Capitol Studios, USA / 2013)', 187, ?)
+  `).run(studio.id);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "youtube-music",
+    provider_id: "yt-oblivion-studio",
+    title: "Oblivion",
+    artist_name: "Bastille",
+    duration: 197,
+  }]);
+
+  const liveOffer = dbModule.db.prepare(`
+    SELECT recording_id AS recordingId FROM ProviderItems
+    WHERE provider_id = 'yt-oblivion-live'
+  `).get() as { recordingId: number };
+  assert.notEqual(liveOffer.recordingId, studio.id);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number }>;
+  assert.equal(videos.length, 2);
+});
+
+test("provider video related_track_id links directly to the matched audio recording", () => {
+  const audio = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
+    )
+    VALUES ('audio-related-1', 'audio-related-1', 'artist-mbid', 'Pompeii', 214000, 0, 'musicbrainz')
+    RETURNING id
+  `).get() as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_id, title, duration
+    ) VALUES ('apple-music', 'track', 'apple-song-1', 'apple-album-1', 'artist-mbid', ?, 'Pompeii', 214)
+  `).run(audio.id);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "apple-music",
+    provider_id: "apple-video-related",
+    title: "Pompeii (Official Music Video)",
+    artist_name: "Bastille",
+    duration: 225,
+    album_id: "apple-album-1",
+    related_track_id: "apple-song-1",
+  }]);
+
+  const relation = dbModule.db.prepare(`
+    SELECT target_recording_id AS audioId, confidence, data
+    FROM RecordingRelations
+    WHERE relation_type = 'provider_video_for'
+  `).get() as { audioId: number; confidence: number; data: string };
+  assert.equal(relation.audioId, audio.id);
+  assert.equal(relation.confidence, 0.96);
+  assert.match(relation.data, /provider-video-related-track/);
+
+  const offer = dbModule.db.prepare(`
+    SELECT provider_album_id AS albumId FROM ProviderItems
+    WHERE provider = 'apple-music' AND provider_id = 'apple-video-related'
+  `).get() as { albumId: string };
+  assert.equal(offer.albumId, "apple-album-1");
+});
+
+test("provider video album_id scopes title matching to that album's tracks", () => {
+  const onAlbum = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
+    )
+    VALUES ('audio-on-album', 'audio-on-album', 'artist-mbid', 'Romeo & Juliet', 457000, 0, 'musicbrainz')
+    RETURNING id
+  `).get() as { id: number };
+  const offAlbum = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
+    )
+    VALUES ('audio-off-album', 'audio-off-album', 'artist-mbid', 'Romeo & Juliet', 457000, 0, 'musicbrainz')
+    RETURNING id
+  `).get() as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_id, title, duration
+    ) VALUES
+      ('tidal', 'track', 'tidal-track-on', 'tidal-album-42', 'artist-mbid', ?, 'Romeo & Juliet', 457),
+      ('tidal', 'track', 'tidal-track-off', 'tidal-album-99', 'artist-mbid', ?, 'Romeo & Juliet', 457)
+  `).run(onAlbum.id, offAlbum.id);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-video-album",
+    title: "Romeo & Juliet (Live At The Hammersmith Odeon)",
+    artist_name: "Bastille",
+    duration: 457,
+    album_id: "tidal-album-42",
+  }]);
+
+  const relation = dbModule.db.prepare(`
+    SELECT target_recording_id AS audioId, data
+    FROM RecordingRelations
+    WHERE relation_type = 'provider_video_for'
+  `).get() as { audioId: number; data: string };
+  assert.equal(relation.audioId, onAlbum.id);
+  assert.match(relation.data, /provider-video-album-/);
+  assert.match(relation.data, /tidal-album-42/);
+});
+
+test("album-linked video does not fall back to artist-wide audio when in-album title misses", () => {
+  const onAlbum = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
+    )
+    VALUES ('audio-album-hit', 'audio-album-hit', 'artist-mbid', 'Other Song', 200000, 0, 'musicbrainz')
+    RETURNING id
+  `).get() as { id: number };
+  const artistWide = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
+    )
+    VALUES ('audio-artist-wide', 'audio-artist-wide', 'artist-mbid', 'Romeo & Juliet', 457000, 0, 'musicbrainz')
+    RETURNING id
+  `).get() as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_id, title, duration
+    ) VALUES
+      ('tidal', 'track', 'tidal-track-miss', 'tidal-album-miss', 'artist-mbid', ?, 'Other Song', 200),
+      ('tidal', 'track', 'tidal-track-wide', 'tidal-album-other', 'artist-mbid', ?, 'Romeo & Juliet', 457)
+  `).run(onAlbum.id, artistWide.id);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-video-miss",
+    title: "Romeo & Juliet (Live At The Hammersmith Odeon)",
+    artist_name: "Bastille",
+    duration: 457,
+    album_id: "tidal-album-miss",
+  }]);
+
+  const relation = dbModule.db.prepare(`
+    SELECT target_recording_id AS audioId
+    FROM RecordingRelations
+    WHERE relation_type = 'provider_video_for'
+  `).get() as { audioId: number } | undefined;
+  assert.equal(relation, undefined, "must not artist-wide match when album association is present");
+});
+
+test("orphan artist video does not link via title+duration even within 5s", () => {
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
+    )
+    VALUES ('audio-studio-yk', 'audio-studio-yk', 'artist-mbid', 'You Know I''m No Good', 216000, 0, 'musicbrainz')
+  `).run();
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "apple-music",
+    provider_id: "apple-live-yk",
+    title: "You Know I'm No Good (Live)",
+    artist_name: "Amy Winehouse",
+    duration: 218,
+  }]);
+
+  const relation = dbModule.db.prepare(`
+    SELECT target_recording_id AS audioId
+    FROM RecordingRelations
+    WHERE relation_type = 'provider_video_for'
+  `).get();
+  assert.equal(relation, undefined, "must not artist-wide match live MV to studio audio");
 });

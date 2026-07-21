@@ -10,12 +10,14 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let refreshServiceModule: typeof import("./refresh-artist-service.js");
+let refreshMatchModule: typeof import("./refresh-artist-match.js");
 let providersModule: typeof import("../providers/index.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   refreshServiceModule = await import("./refresh-artist-service.js");
+  refreshMatchModule = await import("./refresh-artist-match.js");
   providersModule = await import("../providers/index.js");
 });
 
@@ -230,7 +232,7 @@ test("provider release-group matching passes spatial quality and release disambi
     "MTV Unplugged – Live in London",
   );
 
-  const matches = (refreshServiceModule.RefreshArtistService as any).buildProviderReleaseGroupMatches(
+  const matches = refreshMatchModule.buildProviderReleaseGroupMatches(
     artistMbid,
     [{
       provider_id: "291445075",

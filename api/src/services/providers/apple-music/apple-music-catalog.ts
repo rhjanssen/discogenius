@@ -6,6 +6,7 @@ import {
   ProviderVideo,
 } from "../streaming-provider.js";
 import { appleMusicApiRequest, AppleMusicApiOptions, storefrontFor } from "./apple-music-api.js";
+import { appleVideoQualityTag } from "./apple-music-quality.js";
 
 /**
  * Apple Music catalog resources are JSON:API-style objects:
@@ -197,6 +198,8 @@ export function mapAppleTrack(resource: AppleResource): ProviderTrack {
     isrc: attrs.isrc || null,
     releaseDate: attrs.releaseDate || null,
     copyright: attrs.copyright || null,
+    // Music-video rows in album tracklists need artwork for sidecar thumbnails.
+    cover: renderAppleArtwork(attrs.artwork, resource.type === "music-videos" ? 1080 : 1200),
     quality: bestAppleAudioQuality(traits),
     qualityTags: traits,
     // Apple bundles music videos into album tracklists (type "music-videos"
@@ -220,6 +223,8 @@ export function mapAppleVideo(resource: AppleResource): ProviderVideo {
     has4K?: boolean;
   };
   const artistResource = resource.relationships?.artists?.data?.[0];
+  const albumResource = resource.relationships?.albums?.data?.[0];
+  const songResource = resource.relationships?.songs?.data?.[0];
   const artist: ProviderArtist = artistResource
     ? mapAppleArtist(artistResource)
     : { providerId: "", name: attrs.artistName || "Unknown Artist" };
@@ -233,10 +238,10 @@ export function mapAppleVideo(resource: AppleResource): ProviderVideo {
     explicit: attrs.contentRating ? attrs.contentRating === "explicit" : null,
     url: attrs.url,
     isrc: attrs.isrc || null,
-    // Apple exposes this per music-video resource. Do not invent a 1080p
-    // quality when it is false; the imported file is probed for its actual
-    // resolution after download.
-    quality: attrs.has4K === true ? "MP4_2160P" : null,
+    // Catalog only exposes has4K; non-4K MVs still resolve to FHD (see appleVideoQualityTag).
+    quality: appleVideoQualityTag(attrs.has4K),
+    albumId: albumResource?.id || null,
+    relatedTrackId: songResource?.type === "songs" ? songResource.id : null,
     raw: resource,
   };
 }
@@ -270,7 +275,7 @@ export async function getAppleArtistAlbums(id: string, options: AppleMusicApiOpt
 export async function getAppleArtistVideos(id: string, options: AppleMusicApiOptions = {}): Promise<ProviderVideo[]> {
   const sf = storefrontFor(options.token);
   const res = await appleMusicApiRequest<AppleDataResponse>(
-    `/v1/catalog/${sf}/artists/${id}/music-videos?limit=100`,
+    `/v1/catalog/${sf}/artists/${id}/music-videos?limit=100&include=albums,songs`,
     options,
   );
   return (res.data ?? []).map(mapAppleVideo);
@@ -306,7 +311,10 @@ export async function getAppleTrack(id: string, options: AppleMusicApiOptions = 
 
 export async function getAppleVideo(id: string, options: AppleMusicApiOptions = {}): Promise<ProviderVideo> {
   const sf = storefrontFor(options.token);
-  const res = await appleMusicApiRequest<AppleDataResponse>(`/v1/catalog/${sf}/music-videos/${id}`, options);
+  const res = await appleMusicApiRequest<AppleDataResponse>(
+    `/v1/catalog/${sf}/music-videos/${id}?include=albums,songs`,
+    options,
+  );
   const resource = first(res);
   if (!resource) throw new Error(`Apple Music video not found: ${id}`);
   return mapAppleVideo(resource);

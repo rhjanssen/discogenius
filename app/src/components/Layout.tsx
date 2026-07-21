@@ -9,9 +9,9 @@ import {
   mergeClasses,
 } from "@fluentui/react-components";
 import {
-  Settings24Regular as Settings24RegularBase,
-  DataUsage24Regular as DataUsage24RegularBase,
-  Library24Regular as Library24RegularBase,
+  Settings24Regular,
+  DataUsage24Regular,
+  Library24Regular,
   Settings24Filled,
   DataUsage24Filled,
   Library24Filled,
@@ -27,9 +27,9 @@ import { OPEN_ACTIVITY_QUEUE_EVENT } from "@/utils/appEvents";
 import { useTheme } from "@/providers/themeContext";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
-const Settings24Regular = bundleIcon(Settings24Filled, Settings24RegularBase);
-const DataUsage24Regular = bundleIcon(DataUsage24Filled, DataUsage24RegularBase);
-const Library24Regular = bundleIcon(Library24Filled, Library24RegularBase);
+const Settings24 = bundleIcon(Settings24Filled, Settings24Regular);
+const DataUsage24 = bundleIcon(DataUsage24Filled, DataUsage24Regular);
+const Library24 = bundleIcon(Library24Filled, Library24Regular);
 
 function isStandaloneDisplayMode(): boolean {
   // iOS Safari uses `navigator.standalone`, other browsers support the media query.
@@ -92,11 +92,10 @@ const useStyles = makeStyles({
     paddingRight: "env(safe-area-inset-right)",
     display: "block",
   },
-  navDark: {
-    backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 70%, transparent)`,
-  },
-  navLight: {
-    backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 85%, transparent)`,
+  // WinUI commanding layer on Mica Alt → Fluent colorNeutralBackgroundAlpha2.
+  // Content cards use Alpha; UltraBlur is the opaque foundation.
+  navSurface: {
+    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
   },
   container: {
     maxWidth: "1320px",
@@ -309,7 +308,7 @@ const Layout = () => {
       <UltraBlurBackground colors={colors} isDarkMode={ultraBlurIsDarkMode} />
       <div className={mergeClasses(styles.wrapper, isAuthRoute && styles.authWrapper)}>
         {!isAuthRoute ? (
-          <nav className={mergeClasses(styles.nav, isDarkMode ? styles.navDark : styles.navLight)}>
+          <nav className={mergeClasses(styles.nav, styles.navSurface)}>
             <div className={styles.container}>
               <div className={styles.headerRow}>
                 <button
@@ -330,7 +329,7 @@ const Layout = () => {
               <div className={styles.desktopActions}>
                 <Button
                   appearance="subtle"
-                  icon={<DataUsage24Regular />}
+                  icon={<DataUsage24 />}
                   onClick={() => navigate("/dashboard")}
                   title="Dashboard"
                   aria-label="Dashboard"
@@ -351,7 +350,7 @@ const Layout = () => {
                 </Button>
                 <Button
                   appearance="subtle"
-                  icon={<Library24Regular />}
+                  icon={<Library24 />}
                   onClick={() => navigate("/")}
                   title="Library"
                   aria-label="Library"
@@ -359,7 +358,7 @@ const Layout = () => {
                 />
                 <Button
                   appearance="subtle"
-                  icon={<Settings24Regular />}
+                  icon={<Settings24 />}
                   onClick={() => navigate("/settings")}
                   title="Settings"
                   aria-label="Settings"

@@ -271,7 +271,6 @@ test.describe('Content state surfaces', () => {
           },
           tracks: [],
           otherVersions: [],
-          similarAlbums: [],
           artistPicture: null,
           artistCoverImageUrl: null,
         }),

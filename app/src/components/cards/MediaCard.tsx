@@ -7,9 +7,9 @@ import { Card, mergeClasses } from "@fluentui/react-components";
 import { useNavigate } from "react-router-dom";
 import {
   CheckmarkCircle24Filled,
-  Circle24Regular as Circle24RegularBase,
-  Eye16Regular as Eye16RegularBase,
-  EyeOff16Regular as EyeOff16RegularBase,
+  Circle24Regular,
+  Eye16Regular,
+  EyeOff16Regular,
   Circle24Filled,
   Eye16Filled,
   EyeOff16Filled,
@@ -20,9 +20,9 @@ import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { DownloadOverlay } from "@/components/ui/DownloadOverlay";
 import { useCardStyles } from "./cardStyles";
 
-const Circle24Regular = bundleIcon(Circle24Filled, Circle24RegularBase);
-const Eye16Regular = bundleIcon(Eye16Filled, Eye16RegularBase);
-const EyeOff16Regular = bundleIcon(EyeOff16Filled, EyeOff16RegularBase);
+const Circle24 = bundleIcon(Circle24Filled, Circle24Regular);
+const Eye16 = bundleIcon(Eye16Filled, Eye16Regular);
+const EyeOff16 = bundleIcon(EyeOff16Filled, EyeOff16Regular);
 
 export interface MediaCardProps {
     /** Navigation path on click (optional if onClick is provided) */
@@ -274,7 +274,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                         aria-label={selection.label}
                         aria-pressed={selection.selected}
                     >
-                        {selection.selected ? <CheckmarkCircle24Filled /> : <Circle24Regular />}
+                        {selection.selected ? <CheckmarkCircle24Filled /> : <Circle24 />}
                     </button>
                 ) : null}
 
@@ -302,9 +302,9 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                         title={monitoringLocked ? "Monitoring is locked" : monitored ? "Unmonitor" : "Monitor"}
                     >
                         {monitored ? (
-                            <EyeOff16Regular className={styles.monitorIcon} />
+                            <EyeOff16 className={styles.monitorIcon} />
                         ) : (
-                            <Eye16Regular className={styles.monitorIcon} />
+                            <Eye16 className={styles.monitorIcon} />
                         )}
                     </button>
                 )}
@@ -324,7 +324,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                         {title}
                     </div>
                     {showExplicitBadge ? (
-                        <ExplicitBadge className={styles.explicitBadge} />
+                        <ExplicitBadge size="small" className={styles.explicitBadge} />
                     ) : null}
                 </div>
                 {subtitle && (

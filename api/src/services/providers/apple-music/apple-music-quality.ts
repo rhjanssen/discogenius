@@ -2,7 +2,10 @@ import {
   NeutralAudioQuality,
   NeutralQuality,
   NeutralSpatialQuality,
+  NeutralVideoQuality,
   ProviderQualityMapping,
+  classifyNeutralVideo,
+  formatNeutralVideoTag,
 } from "../provider-quality.js";
 
 /**
@@ -67,4 +70,22 @@ export const appleMusicQualityMapping: ProviderQualityMapping = {
         return "hi-res-lossless";
     }
   },
+
+  toNeutralVideo(raw: string | null | undefined): NeutralVideoQuality | null {
+    return classifyNeutralVideo(raw);
+  },
+
+  fromNeutralVideo(quality: NeutralVideoQuality): string {
+    // Catalog only distinguishes 4K vs not; downloads probe the file for the rest.
+    return quality === "uhd" ? "MP4_2160P" : formatNeutralVideoTag(quality);
+  },
 };
+
+/**
+ * Apple catalog only exposes `has4K` for music videos (no height).
+ * 4K → UHD; otherwise advertise FHD — Apple's typical non-4K MV ceiling
+ * (matches the downloader's default `mv-max: 1080`).
+ */
+export function appleVideoQualityTag(has4K: boolean | null | undefined): string {
+  return has4K === true ? formatNeutralVideoTag("uhd") : formatNeutralVideoTag("fhd");
+}

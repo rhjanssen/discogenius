@@ -1,8 +1,10 @@
 import type {
   NeutralAudioQuality,
   NeutralQuality,
+  NeutralVideoQuality,
   ProviderQualityMapping,
 } from "../provider-quality.js";
+import { classifyNeutralVideo, formatNeutralVideoTag } from "../provider-quality.js";
 
 /**
  * The baseline Spotify integration intentionally exposes only Votify's
@@ -36,6 +38,14 @@ export const spotifyQualityMapping: ProviderQualityMapping = {
       throw new Error(`Spotify's baseline Votify backend does not support ${quality}`);
     }
     return "VORBIS_MEDIUM";
+  },
+
+  toNeutralVideo(raw: string | null | undefined): NeutralVideoQuality | null {
+    return classifyNeutralVideo(raw);
+  },
+
+  fromNeutralVideo(quality: NeutralVideoQuality): string {
+    return formatNeutralVideoTag(quality);
   },
 };
 

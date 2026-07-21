@@ -6,10 +6,10 @@ import {
     Text,
 } from "@fluentui/react-components";
 import {
-  ArrowClockwise24Regular as ArrowClockwise24RegularBase,
+  ArrowClockwise24Regular,
   CheckmarkCircle16Filled,
-  Clock16Regular as Clock16RegularBase,
-  Clock24Regular as Clock24RegularBase,
+  Clock16Regular,
+  Clock24Regular,
   DismissCircle16Filled,
   DismissCircle24Filled,
   Warning16Filled,
@@ -35,9 +35,9 @@ import {
     matchesActivityFilter,
 } from "./dashboardUtils";
 
-const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
-const Clock16Regular = bundleIcon(Clock16Filled, Clock16RegularBase);
-const Clock24Regular = bundleIcon(Clock24Filled, Clock24RegularBase);
+const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
+const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
+const Clock24 = bundleIcon(Clock24Filled, Clock24Regular);
 
 type ActivityTabProps = {
     activityFilter: string;
@@ -234,7 +234,7 @@ const ActivityTab = ({
             case "error":
                 return <DismissCircle16Filled className={styles.statusIconError} />;
             default:
-                return <Clock16Regular className={styles.statusIconNeutral} />;
+                return <Clock16 className={styles.statusIconNeutral} />;
         }
     };
 
@@ -290,7 +290,7 @@ const ActivityTab = ({
                                 <Button
                                     size="small"
                                     appearance="subtle"
-                                    icon={<ArrowClockwise24Regular />}
+                                    icon={<ArrowClockwise24 />}
                                     title="Retry Job"
                                     onClick={() => retryItem(retryJobId)}
                                 />
@@ -396,7 +396,7 @@ const ActivityTab = ({
                         ) : (
                             <EmptyState
                                 title="No active jobs"
-                                icon={<Clock24Regular />}
+                                icon={<Clock24 />}
                                 minHeight="220px"
                                 compactMobile
                             />
@@ -427,7 +427,7 @@ const ActivityTab = ({
                         ) : (
                             <EmptyState
                                 title="No job history yet"
-                                icon={<Clock24Regular />}
+                                icon={<Clock24 />}
                                 minHeight="220px"
                                 compactMobile
                             />

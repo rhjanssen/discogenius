@@ -12,6 +12,7 @@ import {
   setArtistMonitoredState,
 } from "../../services/music/artist-monitoring.js";
 import { MoveArtistService } from "../../services/mediafiles/move-artist-service.js";
+import { deleteArtistLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { ArtistQueryService } from "../../services/music/artist-query-service.js";
 import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
 import { CommandNames } from "../../services/commands/command-names.js";
@@ -522,6 +523,26 @@ router.patch("/:artistId", async (req, res) => {
   }
 });
 
+router.delete("/:artistId/files", (req, res) => {
+  try {
+    const body = getObjectBody(req.body ?? {});
+    rejectUnknownKeys(body, ["unmonitor"], "Artist delete files");
+    const unmonitor = getOptionalBoolean(body, "unmonitor") === true
+      || parseOptionalQueryBoolean(req.query.unmonitor) === true;
+    const result = deleteArtistLibraryFiles(req.params.artistId, { unmonitor });
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    if (error?.status === 404) {
+      return res.status(404).json({ detail: error.message || "Artist not found" });
+    }
+    console.error(`[Artists] Failed to delete artist files:`, error);
+    res.status(500).json({ detail: error.message });
+  }
+});
+
 router.delete("/:artistId", (req, res) => {
   try {
     db.prepare("DELETE FROM artists WHERE id = ?").run(req.params.artistId);
@@ -651,21 +672,6 @@ router.post("/", async (req, res) => {
 
     console.error(`[Artists] Failed to add artist:`, error);
     res.status(500).json({ detail: error.message });
-  }
-});
-
-// Get artist details from local database (grouped by module)
-router.get("/:id/detail", async (req, res) => {
-  try {
-    const detail = await ArtistQueryService.getArtistDetail(req.params.id);
-    if (!detail) {
-      return res.status(404).json({ error: 'Artist not found' });
-    }
-
-    res.json(detail);
-  } catch (error: any) {
-    console.error('Error fetching artist details:', error);
-    res.status(500).json({ error: error.message });
   }
 });
 

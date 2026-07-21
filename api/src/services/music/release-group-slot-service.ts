@@ -5,6 +5,7 @@ import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-
 import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from "./provider-track-matcher.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { streamingProviderManager } from "../providers/index.js";
+import { normalizeIsrc } from "../mediafiles/import-matching-utils.js";
 import {
     upsertProviderReleaseMatch,
     aggregateExplicitFlags,
@@ -222,10 +223,6 @@ function scoreCandidate(
     ).toFixed(3));
 }
 
-function normalizeIsrc(isrc: string | null | undefined): string {
-    return String(isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
 type TargetTrack = {
     trackMbid: string;
     recordingMbid: string | null;
@@ -353,7 +350,7 @@ function loadReleaseTrackTargets(releaseGroupMbid: string): ReleaseTrackTargets[
         JOIN AlbumReleases r ON r.mbid = t.release_mbid
         LEFT JOIN Recordings rec ON rec.mbid = t.recording_mbid
         WHERE r.release_group_mbid = ?
-          AND COALESCE(rec.is_video, 0) = 0
+          AND (rec.is_video IS NULL OR rec.is_video = 0)
         ORDER BY t.release_mbid ASC, t.medium_position ASC, t.position ASC
     `).all(releaseGroupMbid) as Array<{
         release_mbid: string;

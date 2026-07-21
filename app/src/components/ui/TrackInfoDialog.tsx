@@ -12,7 +12,7 @@ import {
     tokens,
 } from "@fluentui/react-components";
 import {
-  Dismiss24Regular as Dismiss24RegularBase,
+  Dismiss24Regular,
   Dismiss24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
@@ -21,7 +21,7 @@ import { QualityBadge } from "@/components/ui/QualityBadge";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { api } from "@/services/api";
 
-const Dismiss24Regular = bundleIcon(Dismiss24Filled, Dismiss24RegularBase);
+const Dismiss24 = bundleIcon(Dismiss24Filled, Dismiss24Regular);
 
 export interface TrackFileInfo {
     id: number;
@@ -394,7 +394,7 @@ export const TrackInfoDialog: React.FC<TrackInfoDialogProps> = ({
                             <Button
                                 appearance="transparent"
                                 aria-label="Close track info"
-                                icon={<Dismiss24Regular />}
+                                icon={<Dismiss24 />}
                                 className={styles.dismiss}
                                 onClick={onClose}
                             />

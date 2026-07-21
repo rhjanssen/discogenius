@@ -1,7 +1,8 @@
 import React from "react";
-import { Button, Link, Tooltip, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
+import { Badge, Button, Link, Tooltip, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
 import { Checkmark12Filled } from "@fluentui/react-icons";
 import { QualityBadge } from "./QualityBadge";
+import { ExplicitBadge } from "./ExplicitBadge";
 import { ProviderMark } from "./ProviderMark";
 import { providerAlbumUrl, providerKey, providerMarkFor, providerVideoUrl } from "./providerMarks";
 import { tidalBadgeColor, tidalBadgeColorLight } from "@/theme/theme";
@@ -11,6 +12,8 @@ import {
     PROVIDER_GLYPH_SIZE_PX,
     type DiscogeniusBadgeSize,
 } from "./badgeSizes";
+import { badgeGlassFill } from "./badgeChrome";
+import { isUnknownQualityTag } from "@/utils/qualityTier";
 
 type SlotName = "stereo" | "spatial" | "video";
 type BadgeSize = DiscogeniusBadgeSize;
@@ -61,18 +64,6 @@ interface ProviderQualityRowProps {
 const PILL_DIAMETER = BADGE_HEIGHT_PX;
 const GLYPH_SIZE = PROVIDER_GLYPH_SIZE_PX;
 
-function transparentHex(hex: string, alpha: number): string {
-    const normalized = hex.replace("#", "");
-    if (!/^[\da-f]{6}$/i.test(normalized)) {
-        return hex;
-    }
-    const value = Number.parseInt(normalized, 16);
-    const r = (value >> 16) & 255;
-    const g = (value >> 8) & 255;
-    const b = value & 255;
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
 const useStyles = makeStyles({
     row: {
         display: "inline-flex",
@@ -97,12 +88,13 @@ const useStyles = makeStyles({
         flexShrink: 0,
         boxSizing: "border-box",
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
-        // Theme-aware fill matching the Dolby Atmos chip — light chip + dark glyph
-        // in light mode, dark chip + white glyph in dark mode (colours applied
-        // inline from the badge palette).
+        // Theme-aware glass fill matching quality chips (SpatialBackground @ badgeGlassAlpha).
+        // badgeFill marks (Apple/Spotify/YouTube) override to transparent and cover the circle.
         fontSize: tokens.fontSizeBase200,
         fontWeight: tokens.fontWeightSemibold,
         cursor: "default",
+        lineHeight: 0,
+        overflow: "hidden",
     },
     providerPillLink: {
         display: "inline-flex",
@@ -116,6 +108,41 @@ const useStyles = makeStyles({
     badge: {
         cursor: "default",
     },
+    // Fallback chip when a video offer has no resolution quality (YouTube).
+    // Keeps each selectable offer visible beside the provider mark.
+    videoOfferChip: {
+        fontWeight: tokens.fontWeightSemibold,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxSizing: "border-box",
+        flexShrink: 0,
+        whiteSpace: "nowrap",
+        lineHeight: 1,
+        verticalAlign: "middle",
+        ...shorthands.borderRadius(tokens.borderRadiusCircular),
+        paddingLeft: tokens.spacingHorizontalSNudge,
+        paddingRight: tokens.spacingHorizontalSNudge,
+        "::after": {
+            display: "none",
+        },
+    },
+    videoOfferChipSmall: {
+        height: `${BADGE_HEIGHT_PX.small}px`,
+        fontSize: tokens.fontSizeBase100,
+    },
+    videoOfferChipMedium: {
+        height: `${BADGE_HEIGHT_PX.medium}px`,
+        fontSize: tokens.fontSizeBase200,
+    },
+    videoOfferChipLarge: {
+        height: `${BADGE_HEIGHT_PX.large}px`,
+        fontSize: tokens.fontSizeBase200,
+    },
+    videoOfferChipLabel: {
+        opacity: 1,
+        lineHeight: 1,
+    },
     // A mark with its own coloured background owns the full badge circle.
     badgeFillMark: {
         width: "100%",
@@ -123,24 +150,24 @@ const useStyles = makeStyles({
         objectFit: "cover",
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
     },
-    // Interactive (release-switcher) badges: same visual as the display badge,
-    // wrapped in an unstyled button with a hover lift and a selected surface.
-    // A 1px transparent border + snug padding is reserved on every offer so the
-    // selected brand hairline never shifts the row's layout.
+    // Interactive (release-switcher) badges: hug the QualityBadge height so the
+    // row matches album-header display pills. Selection uses a box-shadow ring
+    // (not padding + border growth) so layout never shifts or vertically drifts.
     offerSelectButton: {
         display: "inline-flex",
         alignItems: "center",
         minWidth: 0,
+        minHeight: "unset",
         height: "auto",
-        paddingTop: "2px",
-        paddingBottom: "2px",
-        paddingLeft: "2px",
-        paddingRight: "2px",
-        ...shorthands.border("1px", "solid", "transparent"),
+        paddingTop: "0",
+        paddingBottom: "0",
+        paddingLeft: "0",
+        paddingRight: "0",
+        ...shorthands.border("0", "solid", "transparent"),
         backgroundColor: "transparent",
         cursor: "pointer",
         ...shorthands.borderRadius(tokens.borderRadiusCircular),
-        transitionProperty: "background-color, box-shadow, border-color",
+        transitionProperty: "background-color, box-shadow",
         transitionDuration: tokens.durationFaster,
         transitionTimingFunction: tokens.curveEasyEase,
         ":hover": {
@@ -161,8 +188,7 @@ const useStyles = makeStyles({
     // album-accent re-theming or the badge's own colour.
     offerSelectButtonSelected: {
         backgroundColor: tokens.colorNeutralBackground1Selected,
-        ...shorthands.borderColor(tokens.colorBrandStroke1),
-        boxShadow: tokens.shadow2,
+        boxShadow: `0 0 0 1px ${tokens.colorBrandStroke1}, ${tokens.shadow2}`,
         ":hover": {
             backgroundColor: tokens.colorNeutralBackground1Hover,
         },
@@ -179,24 +205,10 @@ const useStyles = makeStyles({
         marginRight: "1px",
         color: tokens.colorBrandForeground1,
     },
-    // The standard "explicit" square (Apple/Spotify style) — a compact neutral
-    // edition marker that distinguishes otherwise-identical explicit and clean
-    // cuts on the same MusicBrainz release (the "two identical MAX badges"
-    // case). Both states render, so absence means genuinely unknown metadata.
-    explicitMark: {
+    explicitSlot: {
         display: "inline-flex",
         alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-        marginLeft: "1px",
-        width: "1.15em",
-        height: "1.15em",
-        fontSize: tokens.fontSizeBase100,
-        fontWeight: tokens.fontWeightBold,
-        lineHeight: 1,
-        ...shorthands.borderRadius(tokens.borderRadiusSmall),
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralForeground3} 22%, transparent)`,
-        color: tokens.colorNeutralForeground2,
+        marginLeft: "2px",
     },
     tooltipBody: {
         display: "flex",
@@ -221,6 +233,18 @@ function providerDisplayName(provider?: string | null): string {
     if (normalized === "youtube" || normalized === "youtube_music" || normalized === "youtube-music") return "YouTube Music";
     if (normalized === "deezer") return "Deezer";
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+/** Compact chip label for video offers without a resolution quality tag. */
+function providerShortChipLabel(provider?: string | null): string {
+    const normalized = providerKey(provider);
+    if (normalized === "tidal") return "TIDAL";
+    if (normalized.startsWith("apple")) return "Apple";
+    if (normalized === "amazon" || normalized === "amazon_music" || normalized === "amazon-music") return "Amazon";
+    if (normalized === "spotify") return "Spotify";
+    if (normalized === "youtube" || normalized === "youtube_music" || normalized === "youtube-music") return "YT";
+    if (normalized === "deezer") return "Deezer";
+    return providerDisplayName(provider);
 }
 
 function slotDisplayName(slot: SlotName): string {
@@ -421,9 +445,8 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
     const styles = useStyles();
     const { isDarkMode } = useTheme();
     const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
-    const badgeAlpha = isDarkMode ? 0.72 : 0.82;
     const pillStyle = {
-        backgroundColor: transparentHex(palette.SpatialBackground, badgeAlpha),
+        backgroundColor: badgeGlassFill(palette.SpatialBackground, isDarkMode),
         color: palette.SpatialText,
     };
 
@@ -515,11 +538,43 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             interactive: Boolean(onSelectOffer),
         });
 
-        const badge = <QualityBadge quality={offer.quality || "Unknown"} size={size} className={styles.badge} />;
+        const hasKnownQuality = !isUnknownQualityTag(offer.quality);
+        const chipSizeClass = size === "small"
+            ? styles.videoOfferChipSmall
+            : size === "large"
+                ? styles.videoOfferChipLarge
+                : styles.videoOfferChipMedium;
+        const badge = hasKnownQuality
+            ? <QualityBadge quality={String(offer.quality)} size={size} className={styles.badge} />
+            : offer.slot === "video"
+                ? (
+                    <Badge
+                        shape="circular"
+                        appearance="tint"
+                        size="medium"
+                        className={mergeClasses(styles.videoOfferChip, chipSizeClass, styles.badge)}
+                        style={{
+                            backgroundColor: badgeGlassFill(palette.SpatialBackground, isDarkMode),
+                            color: palette.SpatialText,
+                        }}
+                        aria-label={`${providerDisplayName(offer.provider)} video offer`}
+                    >
+                        <span className={styles.videoOfferChipLabel}>{providerShortChipLabel(offer.provider)}</span>
+                    </Badge>
+                )
+                : null;
         // Only mark explicit editions. Clean is the default assumption — no "C" badge.
         const explicitMark = offer.explicit === true
-            ? <span className={styles.explicitMark} aria-hidden="true" title="Explicit edition">E</span>
+            ? (
+                <span className={styles.explicitSlot}>
+                    <ExplicitBadge size={size} />
+                </span>
+            )
             : null;
+
+        if (!badge && !explicitMark) {
+            return null;
+        }
 
         return (
             <Tooltip

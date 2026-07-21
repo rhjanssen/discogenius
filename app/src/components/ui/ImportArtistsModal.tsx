@@ -19,20 +19,20 @@ import {
 } from "@fluentui/react-components";
 import {
   AppsList24Filled,
-  AppsList24Regular as AppsList24RegularBase,
+  AppsList24Regular,
   ArrowLeft24Filled,
-  ArrowLeft24Regular as ArrowLeft24RegularBase,
+  ArrowLeft24Regular,
   CheckmarkCircle24Color,
   ChevronRight20Filled,
-  ChevronRight20Regular as ChevronRight20RegularBase,
-  Clock24Regular as Clock24RegularBase,
+  ChevronRight20Regular,
+  Clock24Regular,
   DismissCircle24Color,
   Heart24Filled,
-  Heart24Regular as Heart24RegularBase,
+  Heart24Regular,
   MusicNote224Filled,
-  MusicNote224Regular as MusicNote224RegularBase,
+  MusicNote224Regular,
   PeopleTeam24Filled,
-  PeopleTeam24Regular as PeopleTeam24RegularBase,
+  PeopleTeam24Regular,
   QuestionCircle24Color,
   Warning24Color,
   bundleIcon,
@@ -49,13 +49,13 @@ import {
     type StreamingProviderStatus,
 } from "@/services/api";
 
-const AppsList24Regular = bundleIcon(AppsList24Filled, AppsList24RegularBase);
-const ArrowLeft24Regular = bundleIcon(ArrowLeft24Filled, ArrowLeft24RegularBase);
-const ChevronRight20Regular = bundleIcon(ChevronRight20Filled, ChevronRight20RegularBase);
-const Clock24Regular = bundleIcon(Clock24Filled, Clock24RegularBase);
-const Heart24Regular = bundleIcon(Heart24Filled, Heart24RegularBase);
-const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
-const PeopleTeam24Regular = bundleIcon(PeopleTeam24Filled, PeopleTeam24RegularBase);
+const AppsList24 = bundleIcon(AppsList24Filled, AppsList24Regular);
+const ArrowLeft24 = bundleIcon(ArrowLeft24Filled, ArrowLeft24Regular);
+const ChevronRight20 = bundleIcon(ChevronRight20Filled, ChevronRight20Regular);
+const Clock24 = bundleIcon(Clock24Filled, Clock24Regular);
+const Heart24 = bundleIcon(Heart24Filled, Heart24Regular);
+const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
+const PeopleTeam24 = bundleIcon(PeopleTeam24Filled, PeopleTeam24Regular);
 
 interface ImportArtistsModalProps {
     open: boolean;
@@ -85,12 +85,12 @@ interface ImportProgressArtist extends ImportPreviewArtist {
     detail?: string;
 }
 
-const ArrowLeftIcon = ArrowLeft24Regular;
-const ChevronRightIcon = ChevronRight20Regular;
-const PeopleTeamIcon = PeopleTeam24Regular;
-const HeartIcon = Heart24Regular;
-const MusicNoteIcon = MusicNote224Regular;
-const AppsListIcon = AppsList24Regular;
+const ArrowLeftIcon = ArrowLeft24;
+const ChevronRightIcon = ChevronRight20;
+const PeopleTeamIcon = PeopleTeam24;
+const HeartIcon = Heart24;
+const MusicNoteIcon = MusicNote224;
+const AppsListIcon = AppsList24;
 
 const CATEGORY_ICONS: Record<string, React.ReactElement> = {
     "library-artists": <PeopleTeamIcon />,
@@ -180,7 +180,7 @@ function statusIcon(status: ArtistResultStatus, styles: ReturnType<typeof useSty
         case "skipped": return <Warning24Color />;
         case "unmatched": return <QuestionCircle24Color />;
         case "failed": return <DismissCircle24Color />;
-        default: return <Clock24Regular className={styles.pending} />;
+        default: return <Clock24 className={styles.pending} />;
     }
 }
 

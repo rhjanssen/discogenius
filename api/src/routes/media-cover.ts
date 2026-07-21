@@ -28,7 +28,10 @@ const UI_COVER_HEIGHTS = [500, 250] as const;
  * already small enough no resized file exists and we fall back to the original.
  */
 function resolveUiMediaCoverFilePath(folder: string, filename: string): string | null {
-  const coverType = String(filename || "").replace(/\.[a-z0-9]+$/i, "");
+  // Strip optional `-<height>` so cover-250.jpg still maps to cover-500/cover-250.
+  const coverType = String(filename || "")
+    .replace(/-\d+(?=\.[a-z0-9]+$)/i, "")
+    .replace(/\.[a-z0-9]+$/i, "");
   for (const height of UI_COVER_HEIGHTS) {
     const resized = resolveMediaCoverFilePath(folder, `${coverType}-${height}.jpg`);
     if (resized) {

@@ -644,7 +644,9 @@ test("artist page uses selected provider artwork for blank release-group artwork
       .find((module: any) => module.title === "Albums")?.items || [];
 
     assert.equal(albums.length, 1);
-    assert.equal(albums[0].cover_art_url, null);
+    // Local media-cover URL is always emitted for the album MBID (bytes fill
+    // lazily). Blank Albums.images must not trigger read-time Servarr hydration.
+    assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
     assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
     assert.equal(syncCalled, false);
   } finally {

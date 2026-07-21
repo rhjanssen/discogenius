@@ -8,7 +8,7 @@ import { streamingProviderManager } from "../providers/index.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "../config/naming.js";
 import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
-import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
+import { LibraryFilesService, removeEmptyParents, resolveVideoTypeSuffix } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import { getDefaultStreamingSource, getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
@@ -19,6 +19,7 @@ import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { albumCoverLocalUrl } from "../metadata/media-cover-service.js";
+import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
 import {
   findAdjacentLyricSidecar,
   LYRIC_SIDECAR_EXTENSIONS,
@@ -26,7 +27,156 @@ import {
   SYNCHRONIZED_LYRIC_EXTENSION,
   type LyricSidecarExtension,
 } from "../extras/lyrics/lyric-sidecar.js";
+import {
+  loadProviderTrackIdSet,
+  matchAlbumFilesByProviderId,
+  matchAppleMusicBundledVideoFiles,
+  resolveMatchedCanonicalAlbumTrackRow,
+  type MatchedAlbumTrackRow,
+} from "./album-organize.js";
+import {
+  loadBundledVideoTrackCandidates,
+  lookupCatalogVideoAfterUpsert,
+  normalizeBundledVideoTitle,
+  resolveCanonicalVideoArtistId,
+  resolveOrganizeVideoTitle,
+} from "./video-organize.js";
 
+export {
+  loadBundledVideoTrackCandidates,
+  lookupCatalogVideoAfterUpsert,
+  normalizeBundledVideoTitle,
+  resolveCanonicalVideoArtistId,
+  resolveOrganizeVideoTitle,
+} from "./video-organize.js";
+
+export function parseJsonObject(value: unknown): Record<string, any> {
+  if (!value) {
+    return {};
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, any>;
+  }
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+// ArtistMetadata.genres / Albums.genres store a JSON array of strings.
+// Naming tokens use the primary (first) genre, matching Lidarr's
+// `Genres?.FirstOrDefault()` convention.
+export function firstGenre(genresJson: string | null | undefined): string | null {
+  if (!genresJson) return null;
+  try {
+    const parsed = JSON.parse(genresJson);
+    return Array.isArray(parsed) && typeof parsed[0] === "string" && parsed[0].trim() ? parsed[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getAlbumVideoCoverName(albumCoverName: string): string {
+  const parsedName = path.parse(albumCoverName);
+  return `${parsedName.name}.mp4`;
+}
+
+/**
+ * Prefer the canonical Albums.video_cover id/URL. When missing (common after a
+ * list-only artist scan that omitted motion art), ask the provider plugin and
+ * home the result onto Albums so later imports/backfills reuse it.
+ */
+export async function resolveAlbumVideoCoverForLibrary(options: {
+  storedVideoCover?: string | null;
+  provider?: string | null;
+  providerAlbumId?: string | null;
+  releaseGroupMbid?: string | null;
+}): Promise<string | null> {
+  const stored = String(options.storedVideoCover || "").trim();
+  if (stored) {
+    return stored;
+  }
+
+  const providerId = String(options.provider || "").trim();
+  const providerAlbumId = String(options.providerAlbumId || "").trim();
+  if (!providerId || !providerAlbumId) {
+    return null;
+  }
+
+  try {
+    const provider = streamingProviderManager.getStreamingProvider(providerId);
+    if (typeof provider.getAlbum !== "function") {
+      return null;
+    }
+    const album = await provider.getAlbum(providerAlbumId);
+    const videoCover = String(album?.videoCover || "").trim() || null;
+    const releaseGroupMbid = String(options.releaseGroupMbid || "").trim();
+    if (videoCover && releaseGroupMbid) {
+      db.prepare(`
+        UPDATE Albums
+        SET video_cover = COALESCE(NULLIF(?, ''), video_cover),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE mbid = ?
+      `).run(videoCover, releaseGroupMbid);
+    }
+    return videoCover;
+  } catch (error) {
+    console.warn(
+      `[Organizer] Failed to resolve animated cover from ${providerId} album ${providerAlbumId}:`,
+      error,
+    );
+    return null;
+  }
+}
+
+export function sanitizeFilename(name: string): string {
+  return (name || "Unknown").replace(/[<>:"/\\|?*]/g, "").trim();
+}
+
+export function getReleaseYear(releaseDate: string | null | undefined): string | null {
+  if (!releaseDate) return null;
+  const match = releaseDate.match(/^(\d{4})/);
+  return match ? match[1] : null;
+}
+
+export function commonPathPrefix(paths: string[]): string {
+  if (paths.length === 0) return "";
+
+  const split = (p: string) =>
+    p
+      .split(/[\\/]+/g)
+      .filter(Boolean)
+      .filter((seg) => seg !== "." && seg !== "..");
+
+  let prefix = split(paths[0]);
+  for (const p of paths.slice(1)) {
+    const segs = split(p);
+    while (prefix.length > 0 && !prefix.every((seg, i) => segs[i] === seg)) {
+      prefix = prefix.slice(0, -1);
+    }
+    if (prefix.length === 0) break;
+  }
+
+  return prefix.length > 0 ? path.join(...prefix) : "";
+}
+
+export function deriveAlbumDirRelativeFromTrackPath(trackTemplate: string, relativeTrackPath: string): string {
+  const renderedSegments = relativeTrackPath.split(/[\\/]+/g).filter(Boolean);
+  const dirSegments = renderedSegments.slice(0, -1);
+  if (dirSegments.length === 0) return "";
+
+  const templateSegments = (trackTemplate || "").split(/[\\/]+/g).filter(Boolean);
+  const templateDirSegments = templateSegments.slice(0, -1);
+
+  const volumeDirIndex = templateDirSegments.findIndex((seg) => /\{[^}]*?(?:volumeNumber|medium)/i.test(seg));
+  if (volumeDirIndex >= 0) {
+    return volumeDirIndex > 0 ? path.join(...dirSegments.slice(0, volumeDirIndex)) : "";
+  }
+
+  return path.join(...dirSegments);
+}
 
 type OrganizeType = "album" | "track" | "video";
 
@@ -36,8 +186,24 @@ type OrganizeRequest = {
   provider?: string | null;
   releaseGroupMbid?: string | null;
   releaseMbid?: string | null;
+  canonicalTrackMbid?: string | null;
+  canonicalRecordingMbid?: string | null;
   albumId?: string | null;
+  albumTitle?: string | null;
   slot?: string | null;
+  trackNumber?: number | null;
+  volumeNumber?: number | null;
+  /** Hybrid / partial album jobs: map provider track ids → catalog identity. */
+  trackOffers?: Array<{
+    provider?: string;
+    providerTrackId: string;
+    canonicalTrackMbid?: string | null;
+    canonicalRecordingMbid?: string | null;
+    title?: string;
+    quality?: string | null;
+    trackNum?: number | null;
+    volumeNum?: number | null;
+  }>;
   downloadPath?: string;
   onProgress?: (progress: {
     phase: "importing" | "finalizing";
@@ -55,21 +221,6 @@ export type OrganizeResult = {
   processedTrackIds: string[];   // Track IDs that were successfully organized
   totalTracksInStaging: number;  // How many media files were found in the download workspace
   expectedTracks?: number;       // How many tracks the album should have (for albums)
-};
-
-type MatchedAlbumTrackRow = {
-  id: string | number;
-  album_id: string | number | null;
-  artist_id: string | number | null;
-  title: string | null;
-  version: string | null;
-  explicit: number | null;
-  quality: string | null;
-  track_number: number | null;
-  volume_number: number | null;
-  mbid: string | null;
-  canonical_track_mbid: string | null;
-  canonical_recording_mbid: string | null;
 };
 
 type OrganizerArtistContext = {
@@ -97,39 +248,10 @@ type CanonicalAlbumImportContext = {
   albumType: string | null;
 };
 
-const getAlbumVideoCoverName = (albumCoverName: string) => {
-  const parsedName = path.parse(albumCoverName);
-  return `${parsedName.name}.mp4`;
-};
-
-// ArtistMetadata.genres / Albums.genres store a JSON array of strings.
-// Naming tokens use the primary (first) genre, matching Lidarr's
-// `Genres?.FirstOrDefault()` convention.
-const firstGenre = (genresJson: string | null | undefined): string | null => {
-  if (!genresJson) return null;
-  try {
-    const parsed = JSON.parse(genresJson);
-    return Array.isArray(parsed) && typeof parsed[0] === "string" && parsed[0].trim() ? parsed[0] : null;
-  } catch {
-    return null;
-  }
-};
-
 export class OrganizerService {
+  /** Facade over video-organize-helpers (kept for callers/tests that poke the class). */
   private static resolveCanonicalVideoArtistId(provider: string, providerId: string): string | null {
-    const row = db.prepare(`
-      SELECT managed_artist.id
-      FROM ProviderItems provider_item
-      JOIN Recordings recording ON recording.id = provider_item.recording_id
-      JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
-      WHERE provider_item.provider = ?
-        AND provider_item.entity_type = 'video'
-        AND provider_item.provider_id = ?
-      ORDER BY CASE WHEN managed_artist.id = managed_artist.mbid THEN 0 ELSE 1 END
-      LIMIT 1
-    `).get(provider, providerId) as { id: string | number } | undefined;
-
-    return row?.id != null ? String(row.id) : null;
+    return resolveCanonicalVideoArtistId(provider, providerId);
   }
 
   private static readonly AUDIO_EXTENSIONS = new Set([
@@ -326,25 +448,6 @@ export class OrganizerService {
     };
   }
 
-  private static sanitizeFilename(name: string): string {
-    return (name || "Unknown").replace(/[<>:"/\\|?*]/g, "").trim();
-  }
-
-  private static parseJsonObject(value: unknown): Record<string, any> {
-    if (!value) {
-      return {};
-    }
-    if (typeof value === "object" && !Array.isArray(value)) {
-      return value as Record<string, any>;
-    }
-    try {
-      const parsed = JSON.parse(String(value));
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-
   private static resolveCanonicalAlbumImportContext(raw: OrganizeRequest, providerAlbumId: string): CanonicalAlbumImportContext | null {
     const provider = String(raw.provider || getDefaultStreamingSource()).trim() || getDefaultStreamingSource();
     const releaseGroupMbid = String(raw.releaseGroupMbid || raw.albumId || "").trim();
@@ -361,7 +464,7 @@ export class OrganizerService {
         rg.artist_mbid AS artistMbid,
         am.name AS artistName,
         COALESCE(rgs.cover, pi.cover) AS providerCover,
-        rgs.cover AS videoCover,
+        rg.video_cover AS videoCover,
         selected_release.date AS releaseDate,
         rg.primary_type AS albumType,
         COALESCE(
@@ -454,6 +557,7 @@ export class OrganizerService {
    * album-bundled video names as `NN. Title.mp4`, so those files get a narrow,
    * provider-aware exact-title/position fallback against materialized VIDEO
    * offers. Ambiguous names remain staged for manual recovery.
+   * Refresh orchestration stays here; matching lives in album-organize-helpers.
    */
   private static async matchAlbumFilesToTracks(
     albumId: string,
@@ -483,66 +587,19 @@ export class OrganizerService {
       await refreshProviderTrackIds();
     }
 
-    const matchByProviderId = () => {
-      const matched = new Map<string, string>();
-      const missingProviderIds = new Set<string>();
-      for (const filePath of files) {
-        const baseName = path.basename(filePath, path.extname(filePath));
-        if (!baseName) {
-          continue;
-        }
-
-        if (providerTrackIds.has(baseName)) {
-          matched.set(filePath, baseName);
-        } else if (/^\d+$/.test(baseName)) {
-          missingProviderIds.add(baseName);
-        }
-      }
-      return { matched, missingProviderIds };
-    };
-
-    let result = matchByProviderId();
+    let result = matchAlbumFilesByProviderId(files, providerTrackIds);
     if (result.missingProviderIds.size > 0) {
       await refreshProviderTrackIds();
-      result = matchByProviderId();
+      result = matchAlbumFilesByProviderId(files, providerTrackIds);
     }
 
-    if (provider.toLowerCase() === "apple-music") {
-      const candidates = this.loadBundledVideoTrackCandidates(provider, albumIds);
-      const usedProviderIds = new Set(result.matched.values());
-      for (const filePath of files) {
-        if (result.matched.has(filePath) || !this.VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
-          continue;
-        }
-
-        const baseName = path.basename(filePath, path.extname(filePath));
-        const filenameMatch = /^(\d+)\.\s+(.+)$/.exec(baseName);
-        if (!filenameMatch) {
-          continue;
-        }
-
-        const taskPosition = Number(filenameMatch[1]);
-        const normalizedTitle = this.normalizeBundledVideoTitle(filenameMatch[2]);
-        if (!normalizedTitle) {
-          continue;
-        }
-
-        const titleMatches = candidates.filter((candidate) =>
-          !usedProviderIds.has(candidate.provider_id)
-          && this.normalizeBundledVideoTitle(candidate.title) === normalizedTitle
-        );
-        const positionedMatches = titleMatches.filter((candidate) => candidate.track_number === taskPosition);
-        const matchedCandidate = positionedMatches.length === 1
-          ? positionedMatches[0]
-          : (positionedMatches.length === 0 && titleMatches.length === 1 ? titleMatches[0] : null);
-        if (!matchedCandidate) {
-          continue;
-        }
-
-        result.matched.set(filePath, matchedCandidate.provider_id);
-        usedProviderIds.add(matchedCandidate.provider_id);
-      }
-    }
+    matchAppleMusicBundledVideoFiles({
+      files,
+      matched: result.matched,
+      provider,
+      albumIds,
+      videoExtensions: this.VIDEO_EXTENSIONS,
+    });
     return result.matched;
   }
 
@@ -567,14 +624,20 @@ export class OrganizerService {
     videoRoot: string;
   }): Promise<boolean> {
     const row = db.prepare(`
-      SELECT title, duration, explicit, quality, recording_mbid, recording_id, artist_mbid, release_group_mbid
-      FROM ProviderItems
-      WHERE provider = ? AND entity_type = 'track'
-        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        AND library_slot = 'video'
+      SELECT
+        COALESCE(NULLIF(TRIM(recording.title), ''), pi.title) AS title,
+        recording.video_variant AS video_variant,
+        pi.duration, pi.explicit, pi.quality,
+        pi.recording_mbid, pi.recording_id, pi.artist_mbid, pi.release_group_mbid
+      FROM ProviderItems pi
+      LEFT JOIN Recordings recording ON recording.id = pi.recording_id
+      WHERE pi.provider = ? AND pi.entity_type = 'track'
+        AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+        AND pi.library_slot = 'video'
       LIMIT 1
     `).get(params.provider, params.providerTrackId) as {
       title?: string | null;
+      video_variant?: string | null;
       duration?: number | null;
       explicit?: number | null;
       quality?: string | null;
@@ -601,6 +664,7 @@ export class OrganizerService {
       trackId: params.providerTrackId,
       videoId: params.providerTrackId,
       videoTitle: title,
+      videoType: resolveVideoTypeSuffix(title, row.video_variant),
       explicit: Number(row.explicit || 0) === 1,
       quality: sourceVideoQuality,
       codec: sourceMetrics.codec || null,
@@ -627,6 +691,15 @@ export class OrganizerService {
     });
     const dest = inlineExpected.expectedPath || separatedDest;
     const organizedVideoRoot = this.resolveLibraryRoot(dest) || params.videoRoot;
+    if (this.resolvePrimaryVideoDestinationConflict({
+      destPath: dest,
+      incomingProvider: params.provider,
+      incomingProviderId: params.providerTrackId,
+      incomingQuality: sourceVideoQuality,
+    }) === "skip") {
+      try { fs.rmSync(params.src, { force: true }); } catch { /* staging cleanup is best-effort */ }
+      return false;
+    }
     this.ensureDir(path.dirname(dest));
 
     if (path.extname(params.src).toLowerCase() !== ".mp4") {
@@ -643,6 +716,7 @@ export class OrganizerService {
     const derivedVideoQuality = deriveVideoQuality(metrics) ?? row.quality ?? null;
     const albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
 
+    let libraryFileId: number | null = null;
     db.transaction(() => {
       // Surface the provider VIDEO offer on the canonical recording so the
       // video library and video page list this source, deduped with any
@@ -671,7 +745,7 @@ export class OrganizerService {
         row.recording_id || null,
       );
 
-      const libraryFileId = this.upsertLibraryFile({
+      libraryFileId = this.upsertLibraryFile({
         artistId: params.artistId,
         albumId: albumIdForFile,
         mediaId: params.providerTrackId,
@@ -704,56 +778,28 @@ export class OrganizerService {
       }
     })();
 
+    await this.ensureVideoThumbnailSidecar({
+      artistId: params.artistId,
+      albumId: albumIdForFile,
+      mediaId: params.providerTrackId,
+      mediaPath: dest,
+      libraryRoot: organizedVideoRoot,
+      provider: params.provider,
+      providerId: params.providerTrackId,
+      quality: derivedVideoQuality,
+      namingTemplate: videoNamingTemplate,
+      libraryFileId,
+    });
+
     return true;
   }
 
-  private static normalizeBundledVideoTitle(value: unknown): string {
-    return String(value || "")
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, " ")
-      .trim();
-  }
-
-  private static loadBundledVideoTrackCandidates(
-    provider: string,
-    albumIds: string[],
-  ): Array<{ provider_id: string; title: string; track_number: number | null }> {
-    if (!provider || albumIds.length === 0) {
-      return [];
-    }
-    const placeholders = albumIds.map(() => "?").join(", ");
-    return db.prepare(`
-      SELECT
-        CAST(provider_id AS TEXT) AS provider_id,
-        COALESCE(title, '') AS title,
-        track_number
-      FROM ProviderItems
-      WHERE provider = ?
-        AND entity_type = 'track'
-        AND library_slot = 'video'
-        AND provider_album_id IN (${placeholders})
-      ORDER BY volume_number ASC, track_number ASC, provider_id ASC
-    `).all(provider, ...albumIds) as Array<{ provider_id: string; title: string; track_number: number | null }>;
-  }
-
-  /** Provider track ids that have a materialized offer row for the album(s). */
+  /** Facade over album-organize-helpers (kept for callers/tests that poke the class). */
   private static loadProviderTrackIdSet(albumIds: string[], provider = ""): Set<string> {
-    if (albumIds.length === 0) {
-      return new Set();
-    }
-    const placeholders = albumIds.map(() => '?').join(', ');
-    const rows = db.prepare(`
-      SELECT CAST(provider_id AS TEXT) AS provider_id
-      FROM ProviderItems
-      WHERE entity_type = 'track'
-        AND provider_album_id IN (${placeholders})
-        AND (? = '' OR provider = ?)
-    `).all(...albumIds, provider, provider) as Array<{ provider_id: string }>;
-    return new Set(rows.map((row) => String(row.provider_id)));
+    return loadProviderTrackIdSet(albumIds, provider);
   }
 
+  /** Facade over album-organize-helpers (kept for callers/tests that poke the class). */
   private static resolveMatchedCanonicalAlbumTrackRow(params: {
     provider: string;
     trackId: string;
@@ -763,125 +809,7 @@ export class OrganizerService {
     fallbackArtistId: string;
     fallbackQuality: string | null;
   }): MatchedAlbumTrackRow | null {
-    const providerTrack = db.prepare(`
-      SELECT
-        pi.provider_id,
-        pi.title,
-        pi.version,
-        pi.explicit,
-        pi.quality,
-        pi.album_id,
-        pi.track_mbid,
-        pi.recording_mbid,
-        pi.match_evidence,
-        json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
-      FROM ProviderItems pi
-      WHERE pi.provider = ?
-        AND pi.entity_type = 'track'
-        AND pi.provider_id = ?
-        AND pi.release_mbid = ?
-      LIMIT 1
-    `).get(params.provider, params.trackId, params.releaseMbid) as any
-    // Hybrid composites often source tracks from a different provider release
-    // than the selected canonical release_mbid. Fall back to the provider id
-    // alone so organize still attaches the file instead of reporting 0 tracks.
-    ?? db.prepare(`
-      SELECT
-        pi.provider_id,
-        pi.title,
-        pi.version,
-        pi.explicit,
-        pi.quality,
-        pi.album_id,
-        pi.track_mbid,
-        pi.recording_mbid,
-        pi.match_evidence,
-        json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
-      FROM ProviderItems pi
-      WHERE pi.provider = ?
-        AND pi.entity_type = 'track'
-        AND pi.provider_id = ?
-      ORDER BY
-        CASE WHEN pi.release_mbid = ? THEN 0 ELSE 1 END,
-        pi.updated_at DESC
-      LIMIT 1
-    `).get(params.provider, params.trackId, params.releaseMbid) as any;
-
-    if (providerTrack) {
-      const evidence = this.parseJsonObject(providerTrack.match_evidence);
-      const mediumPosition = Number(evidence.mediumPosition || 0);
-      const trackPosition = Number(evidence.trackPosition || 0);
-      const canonicalTrack = db.prepare(`
-        SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
-        FROM Tracks t
-        WHERE t.release_mbid = ?
-          AND (
-            (? IS NOT NULL AND t.mbid = ?)
-            OR (
-              ? IS NULL
-              AND ? > 0
-              AND ? > 0
-              AND t.medium_position = ?
-              AND t.position = ?
-            )
-          )
-        ORDER BY t.medium_position, t.position
-        LIMIT 1
-      `).get(
-        params.releaseMbid,
-        providerTrack.track_mbid || null,
-        providerTrack.track_mbid || null,
-        providerTrack.track_mbid || null,
-        mediumPosition,
-        trackPosition,
-        mediumPosition,
-        trackPosition,
-      ) as any;
-
-      return {
-        id: providerTrack.provider_id || params.trackId,
-        album_id: providerTrack.album_id || providerTrack.evidence_album_id || params.fallbackAlbumId,
-        artist_id: params.fallbackArtistId,
-        title: providerTrack.title || canonicalTrack?.title || null,
-        version: providerTrack.version || null,
-        explicit: providerTrack.explicit ?? null,
-        quality: providerTrack.quality || params.fallbackQuality,
-        track_number: canonicalTrack?.position ?? (trackPosition > 0 ? trackPosition : null),
-        volume_number: canonicalTrack?.medium_position ?? (mediumPosition > 0 ? mediumPosition : null),
-        mbid: providerTrack.recording_mbid || canonicalTrack?.recording_mbid || null,
-        canonical_track_mbid: canonicalTrack?.mbid || providerTrack.track_mbid || null,
-        canonical_recording_mbid: canonicalTrack?.recording_mbid || providerTrack.recording_mbid || null,
-      };
-    }
-
-    // Last resort: treat trackId as a canonical MB track id on the release.
-    const canonicalTrack = db.prepare(`
-      SELECT
-        CAST(t.id AS TEXT) AS id,
-        ? AS album_id,
-        ? AS artist_id,
-        t.title,
-        NULL AS version,
-        NULL AS explicit,
-        ? AS quality,
-        t.position AS track_number,
-        t.medium_position AS volume_number,
-        t.recording_mbid AS mbid,
-        t.mbid AS canonical_track_mbid,
-        t.recording_mbid AS canonical_recording_mbid
-      FROM Tracks t
-      WHERE t.release_mbid = ?
-        AND CAST(t.id AS TEXT) = ?
-      LIMIT 1
-    `).get(
-      params.fallbackAlbumId,
-      params.fallbackArtistId,
-      params.fallbackQuality,
-      params.releaseMbid,
-      params.trackId,
-    ) as MatchedAlbumTrackRow | undefined;
-
-    return canonicalTrack || null;
+    return resolveMatchedCanonicalAlbumTrackRow(params);
   }
 
   /**
@@ -1007,43 +935,6 @@ export class OrganizerService {
     return results;
   }
 
-  private static commonPathPrefix(paths: string[]): string {
-    if (paths.length === 0) return "";
-
-    const split = (p: string) =>
-      p
-        .split(/[\\/]+/g)
-        .filter(Boolean)
-        .filter((seg) => seg !== "." && seg !== "..");
-
-    let prefix = split(paths[0]);
-    for (const p of paths.slice(1)) {
-      const segs = split(p);
-      while (prefix.length > 0 && !prefix.every((seg, i) => segs[i] === seg)) {
-        prefix = prefix.slice(0, -1);
-      }
-      if (prefix.length === 0) break;
-    }
-
-    return prefix.length > 0 ? path.join(...prefix) : "";
-  }
-
-  private static deriveAlbumDirRelativeFromTrackPath(trackTemplate: string, relativeTrackPath: string): string {
-    const renderedSegments = relativeTrackPath.split(/[\\/]+/g).filter(Boolean);
-    const dirSegments = renderedSegments.slice(0, -1);
-    if (dirSegments.length === 0) return "";
-
-    const templateSegments = (trackTemplate || "").split(/[\\/]+/g).filter(Boolean);
-    const templateDirSegments = templateSegments.slice(0, -1);
-
-    const volumeDirIndex = templateDirSegments.findIndex((seg) => /\{[^}]*?(?:volumeNumber|medium)/i.test(seg));
-    if (volumeDirIndex >= 0) {
-      return volumeDirIndex > 0 ? path.join(...dirSegments.slice(0, volumeDirIndex)) : "";
-    }
-
-    return path.join(...dirSegments);
-  }
-
   private static findDirectoryByName(rootDir: string, dirName: string): string | null {
     if (!fs.existsSync(rootDir)) return null;
 
@@ -1167,6 +1058,155 @@ export class OrganizerService {
     }
 
     return path.join(path.dirname(mediaPath), `${path.parse(mediaPath).name}.jpg`);
+  }
+
+  /**
+   * Always fetch a video thumbnail when Settings → Save video thumbnails is on
+   * (and/or Embed is on). Resolves cover from DB hints, then provider getVideo.
+   */
+  private static async ensureVideoThumbnailSidecar(params: {
+    artistId: string;
+    albumId?: string | null;
+    mediaId: string;
+    mediaPath: string;
+    libraryRoot: string;
+    provider: string;
+    providerId: string;
+    quality?: string | null;
+    namingTemplate?: string | null;
+    coverHint?: string | null;
+    libraryFileId?: number | null;
+  }): Promise<void> {
+    const metadataConfig = Config.getMetadataConfig();
+    if (!metadataConfig.save_video_thumbnail && metadataConfig.embed_video_thumbnail === false) {
+      return;
+    }
+
+    const persistentCoverPath = metadataConfig.save_video_thumbnail
+      ? this.relocateLinkedSidecar({
+        artistId: params.artistId,
+        albumId: params.albumId || null,
+        mediaId: params.mediaId,
+        mediaPath: params.mediaPath,
+        libraryRoot: params.libraryRoot,
+        fileType: "video_thumbnail",
+        quality: params.quality || null,
+        namingTemplate: params.namingTemplate || null,
+      })
+      : null;
+    const transientCoverPath = persistentCoverPath
+      ? null
+      : path.join(path.dirname(params.mediaPath), `.${path.parse(params.mediaPath).name}.embed-thumb.jpg`);
+    const coverPath = persistentCoverPath || transientCoverPath;
+    if (!coverPath) {
+      return;
+    }
+
+    let coverId = String(params.coverHint || "").trim() || null;
+    if (!coverId) {
+      const stored = db.prepare(`
+        SELECT
+          COALESCE(
+            NULLIF(TRIM(r.cover_image_id), ''),
+            NULLIF(TRIM(video_item.asset_id), ''),
+            NULLIF(TRIM(video_item.cover), ''),
+            NULLIF(TRIM(track_item.asset_id), ''),
+            NULLIF(TRIM(track_item.cover), '')
+          ) AS cover
+        FROM (
+          SELECT ? AS provider, CAST(? AS TEXT) AS provider_id
+        ) key
+        LEFT JOIN ProviderItems video_item
+          ON video_item.provider = key.provider
+         AND video_item.entity_type = 'video'
+         AND CAST(video_item.provider_id AS TEXT) = key.provider_id
+        LEFT JOIN ProviderItems track_item
+          ON track_item.provider = key.provider
+         AND track_item.entity_type = 'track'
+         AND CAST(track_item.provider_id AS TEXT) = key.provider_id
+        LEFT JOIN Recordings r
+          ON r.id = COALESCE(video_item.recording_id, track_item.recording_id)
+        LIMIT 1
+      `).get(params.provider, params.providerId) as { cover?: string | null } | undefined;
+      coverId = String(stored?.cover || "").trim() || null;
+    }
+
+    if (!coverId) {
+      try {
+        const fetched = await this.fetchProviderVideo(params.providerId, params.provider);
+        coverId = String(fetched?.cover || fetched?.image_id || fetched?.imageId || "").trim() || null;
+        if (coverId) {
+          db.prepare(`
+            UPDATE Recordings SET cover_image_id = COALESCE(?, cover_image_id), updated_at = CURRENT_TIMESTAMP
+            WHERE id = (
+              SELECT recording_id FROM ProviderItems
+              WHERE provider = ?
+                AND entity_type IN ('video', 'track')
+                AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                AND recording_id IS NOT NULL
+              ORDER BY CASE entity_type WHEN 'video' THEN 0 ELSE 1 END
+              LIMIT 1
+            )
+          `).run(coverId, params.provider, params.providerId);
+          db.prepare(`
+            UPDATE ProviderItems
+            SET
+              asset_id = COALESCE(asset_id, ?),
+              cover = COALESCE(cover, ?),
+              updated_at = CURRENT_TIMESTAMP
+            WHERE provider = ?
+              AND entity_type IN ('video', 'track')
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+          `).run(coverId, coverId, params.provider, params.providerId);
+        }
+      } catch (error) {
+        console.warn(`[Organizer] Failed to resolve video thumbnail source for ${params.provider}:${params.providerId}:`, error);
+      }
+    }
+
+    if (coverId && !fs.existsSync(coverPath)) {
+      const videoThumbnailResolution = metadataConfig.video_thumbnail_resolution || "1080x720";
+      try {
+        await downloadVideoThumbnail(coverId, videoThumbnailResolution as any, coverPath, {
+          provider: params.provider,
+          providerId: params.providerId,
+        });
+      } catch (error) {
+        console.warn(`[Organizer] Failed to download video thumbnail for ${params.provider}:${params.providerId}:`, error);
+      }
+    }
+
+    if (persistentCoverPath && fs.existsSync(persistentCoverPath)) {
+      this.upsertLibraryFile({
+        artistId: params.artistId,
+        albumId: params.albumId || null,
+        mediaId: params.mediaId,
+        filePath: persistentCoverPath,
+        libraryRoot: params.libraryRoot,
+        fileType: "video_thumbnail",
+        quality: params.quality || null,
+        namingTemplate: params.namingTemplate || null,
+        expectedPath: persistentCoverPath,
+      });
+    }
+
+    if (metadataConfig.embed_video_thumbnail !== false && fs.existsSync(coverPath)) {
+      const embedded = await embedVideoThumbnail(params.mediaPath, coverPath);
+      if (!embedded) {
+        console.warn(`[Organizer] Failed to embed video thumbnail for ${params.providerId}`);
+      } else if (params.libraryFileId != null) {
+        const stat = fs.statSync(params.mediaPath);
+        db.prepare(`
+          UPDATE TrackFiles
+          SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(stat.size, stat.mtime.toISOString(), params.libraryFileId);
+      }
+    }
+
+    if (!persistentCoverPath && transientCoverPath && fs.existsSync(transientCoverPath)) {
+      fs.rmSync(transientCoverPath, { force: true });
+    }
   }
 
   private static relocateLinkedSidecar(params: {
@@ -1524,6 +1564,120 @@ export class OrganizerService {
     return !existing || String(existing.media_id ?? "") !== String(mediaId);
   }
 
+  /**
+   * Inline layout uses one primary path per audio stem + Plex type. When another
+   * provider already owns that path, keep the better offer and drop the worse
+   * import (including its TrackFiles row / on-disk file).
+   */
+  private static resolvePrimaryVideoDestinationConflict(params: {
+    destPath: string;
+    incomingProvider: string;
+    incomingProviderId: string;
+    incomingQuality: string | null;
+  }): "proceed" | "skip" {
+    const existing = db.prepare(`
+      SELECT id, artist_id, NULL AS album_id, provider, CAST(provider_id AS TEXT) AS provider_id,
+             quality, file_path, library_root
+      FROM TrackFiles
+      WHERE file_type = 'video'
+        AND (
+          file_path = ?
+          OR expected_path = ?
+        )
+      LIMIT 1
+    `).get(params.destPath, params.destPath) as {
+      id: number;
+      artist_id: number | string;
+      album_id: number | string | null;
+      provider: string | null;
+      provider_id: string | null;
+      quality: string | null;
+      file_path: string;
+      library_root: string | null;
+    } | undefined;
+
+    if (!existing) {
+      return "proceed";
+    }
+    if (String(existing.provider_id || "") === String(params.incomingProviderId)) {
+      return "proceed";
+    }
+
+    const compare = compareVideoOffersByQualityThenProvider(
+      {
+        provider: params.incomingProvider,
+        quality: params.incomingQuality,
+        provider_id: params.incomingProviderId,
+      },
+      {
+        provider: String(existing.provider || ""),
+        quality: existing.quality,
+        provider_id: String(existing.provider_id || ""),
+      },
+    );
+    // compare < 0 ⇒ incoming ranks better; >= 0 ⇒ keep the occupant.
+    if (compare >= 0) {
+      console.log(
+        `[Organizer] Skipping video ${params.incomingProviderId}; preferred offer already at ${params.destPath}`,
+      );
+      return "skip";
+    }
+
+    const resolvedExisting = resolveStoredLibraryPath({
+      filePath: existing.file_path,
+      libraryRoot: existing.library_root,
+    });
+    try {
+      recordHistoryEvent({
+        artistId: existing.artist_id,
+        albumId: existing.album_id,
+        mediaId: existing.provider_id,
+        libraryFileId: existing.id,
+        eventType: HISTORY_EVENT_TYPES.TrackFileDeleted,
+        quality: existing.quality,
+        data: {
+          deletedPath: resolvedExisting,
+          replacementPath: params.destPath,
+          fileType: "video",
+          reason: "primary_inline_video_upgrade",
+        },
+      });
+    } catch (historyError) {
+      console.warn(`[Organizer] Failed to record replaced video history for ${existing.provider_id}:`, historyError);
+    }
+    try {
+      if (fs.existsSync(resolvedExisting)) {
+        fs.rmSync(resolvedExisting, { force: true });
+      }
+      for (const sidecarExt of [".jpg", ".png", ".nfo"]) {
+        const sidecar = resolvedExisting.replace(/\.mp4$/i, sidecarExt);
+        if (fs.existsSync(sidecar)) {
+          fs.rmSync(sidecar, { force: true });
+        }
+      }
+    } catch (error) {
+      console.warn(`[Organizer] Failed to delete displaced video at ${resolvedExisting}:`, error);
+    }
+    db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(existing.id);
+    const stemPrefix = resolvedExisting.replace(/\.mp4$/i, "");
+    db.prepare(`
+      DELETE FROM TrackFiles
+      WHERE file_type IN ('video_thumbnail', 'nfo')
+        AND (
+          file_path = ?
+          OR file_path = ?
+          OR (
+            provider_entity_type = 'video'
+            AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+          )
+        )
+    `).run(`${stemPrefix}.jpg`, `${stemPrefix}.nfo`, String(existing.provider_id || ""));
+    console.log(
+      `[Organizer] Replacing video at ${params.destPath} with better offer ${params.incomingProviderId}`,
+    );
+    return "proceed";
+  }
+
   /** Return the library root that contains the given absolute path, or null. */
   private static resolveLibraryRoot(filePath: string, libraryRoot?: string | null): string | null {
     const mappedRoot = resolveLibraryRootPath(libraryRoot, filePath);
@@ -1589,12 +1743,6 @@ export class OrganizerService {
       ...params,
       removeFromUnmapped: true,
     });
-  }
-
-  private static getReleaseYear(releaseDate: string | null | undefined): string | null {
-    if (!releaseDate) return null;
-    const match = releaseDate.match(/^(\d{4})/);
-    return match ? match[1] : null;
   }
 
   /**
@@ -1769,6 +1917,12 @@ export class OrganizerService {
         statusMessage: "Importing downloaded album files",
       });
 
+      const trackOffersByProviderId = new Map<string, NonNullable<OrganizeRequest["trackOffers"]>[number]>();
+      for (const offer of raw.trackOffers || []) {
+        const key = String(offer.providerTrackId || "").trim();
+        if (key) trackOffersByProviderId.set(key, offer);
+      }
+
       const renderedTrackDirs: string[] = [];
       const destFiles: Array<{ trackId: string; destFile: string; ext: string }> = [];
       let sampleRelativeTrackPath: string | null = null;
@@ -1798,58 +1952,145 @@ export class OrganizerService {
 
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         const placeholders = albumIds.map(() => '?').join(', ');
-        const trackRow = trackId && canonicalContext?.releaseMbid
-          ? this.resolveMatchedCanonicalAlbumTrackRow({
-              provider: canonicalContext.provider,
-              trackId,
-              releaseMbid: canonicalContext.releaseMbid,
-              fallbackAlbumId: albumIds[0],
-              fallbackAlbumIds: albumIds,
-              fallbackArtistId: artistId,
-              fallbackQuality: canonicalContext.quality || album.quality || null,
-            })
-          : trackId
-            ? (db.prepare(`
-                SELECT
-                  provider_album_id AS album_id,
-                  quality,
-                  track_mbid AS canonical_track_mbid,
-                  recording_mbid AS canonical_recording_mbid
-                FROM ProviderItems
-                WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT) AND provider_album_id IN (${placeholders})
-                LIMIT 1
-              `).get(trackId, ...albumIds) as any)
-            : null;
+        const trackOffer = trackId ? trackOffersByProviderId.get(String(trackId)) : undefined;
+        // Catalog-first: bind position/title via Tracks on the best-known release
+        // (canonical context, else the album's own release mbid). Acquisition-plan
+        // offers supply the catalog MBIDs — never trust ProviderItems track/RG
+        // MBIDs for hybrid composites (those can point at unrelated singles).
+        const fallbackReleaseMbid = canonicalContext?.releaseMbid || album.mbid || null;
+        const offerTrackMbid = String(trackOffer?.canonicalTrackMbid || "").trim() || null;
+        const offerRecordingMbid = String(trackOffer?.canonicalRecordingMbid || "").trim() || null;
+
+        let trackRow: MatchedAlbumTrackRow | null = null;
+        if (trackId && fallbackReleaseMbid && (offerTrackMbid || offerRecordingMbid)) {
+          const offered = db.prepare(`
+            SELECT
+              t.mbid AS canonical_track_mbid,
+              t.recording_mbid AS canonical_recording_mbid,
+              t.title,
+              t.position AS track_number,
+              t.medium_position AS volume_number
+            FROM Tracks t
+            WHERE t.release_mbid = ?
+              AND (
+                (? IS NOT NULL AND t.mbid = ?)
+                OR (? IS NOT NULL AND t.recording_mbid = ?)
+              )
+            ORDER BY
+              CASE WHEN ? IS NOT NULL AND t.mbid = ? THEN 0 ELSE 1 END,
+              t.medium_position,
+              t.position
+            LIMIT 1
+          `).get(
+            fallbackReleaseMbid,
+            offerTrackMbid,
+            offerTrackMbid,
+            offerRecordingMbid,
+            offerRecordingMbid,
+            offerTrackMbid,
+            offerTrackMbid,
+          ) as {
+            canonical_track_mbid: string;
+            canonical_recording_mbid: string;
+            title: string;
+            track_number: number;
+            volume_number: number;
+          } | undefined;
+          if (offered) {
+            trackRow = {
+              id: trackId,
+              album_id: canonicalContext?.releaseGroupMbid || albumIds[0],
+              artist_id: artistId,
+              title: offered.title,
+              version: null,
+              explicit: null,
+              quality: trackOffer?.quality || canonicalContext?.quality || album.quality || null,
+              track_number: offered.track_number,
+              volume_number: offered.volume_number,
+              mbid: offered.canonical_recording_mbid,
+              canonical_track_mbid: offered.canonical_track_mbid,
+              canonical_recording_mbid: offered.canonical_recording_mbid,
+            };
+          }
+        }
+
+        if (!trackRow) {
+          trackRow = trackId && fallbackReleaseMbid
+            ? this.resolveMatchedCanonicalAlbumTrackRow({
+                provider: canonicalContext?.provider || streamingProviderId,
+                trackId,
+                releaseMbid: fallbackReleaseMbid,
+                fallbackAlbumId: albumIds[0],
+                fallbackAlbumIds: albumIds,
+                fallbackArtistId: artistId,
+                fallbackQuality: canonicalContext?.quality || album.quality || null,
+              })
+            : trackId
+              ? (db.prepare(`
+                  SELECT
+                    provider_album_id AS album_id,
+                    quality,
+                    title,
+                    version,
+                    explicit,
+                    NULL AS track_number,
+                    NULL AS volume_number,
+                    track_mbid AS canonical_track_mbid,
+                    recording_mbid AS canonical_recording_mbid,
+                    artist_mbid AS artist_id
+                  FROM ProviderItems
+                  WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT) AND provider_album_id IN (${placeholders})
+                  LIMIT 1
+                `).get(trackId, ...albumIds) as any)
+              : null;
+        }
 
         if (!trackId || !trackRow) {
           continue;
         }
 
+        // Acquisition-plan offers outrank native ProviderItems identity for
+        // hybrid/partial albums (correct catalog MBID + disc/track numbers).
+        const resolvedCanonicalTrackMbid = offerTrackMbid || trackRow.canonical_track_mbid || null;
+        const resolvedCanonicalRecordingMbid = offerRecordingMbid || trackRow.canonical_recording_mbid || null;
+        // Hybrid jobs must keep the monitored RG even when ProviderItems children
+        // still carry a mismatched single/EP release_group_mbid.
+        const jobReleaseGroupMbid = canonicalContext?.releaseGroupMbid
+          || String(raw.releaseGroupMbid || "").trim()
+          || null;
+
         const canonicalIdentity = resolveLibraryFileIdentity({
           artistId,
-          albumId: String(trackRow.album_id || albumIds[0]),
+          albumId: String(jobReleaseGroupMbid || trackRow.album_id || albumIds[0]),
           mediaId: trackId,
           fileType: "track",
-          quality: trackRow.quality || album.quality,
+          quality: trackOffer?.quality || trackRow.quality || album.quality,
           libraryRoot: targetRoot,
           provider: canonicalContext?.provider || raw.provider || getDefaultStreamingSource(),
           providerEntityType: "track",
           providerId: trackId,
           librarySlot: canonicalContext?.slot || (isSpatial ? "spatial" : "stereo"),
           canonicalArtistMbid: canonicalContext?.artistMbid || artistMbId || null,
-          canonicalReleaseGroupMbid: canonicalContext?.releaseGroupMbid || null,
+          canonicalReleaseGroupMbid: jobReleaseGroupMbid,
           canonicalReleaseMbid: canonicalContext?.releaseMbid || null,
-          canonicalTrackMbid: trackRow.canonical_track_mbid || null,
-          canonicalRecordingMbid: trackRow.canonical_recording_mbid || null,
+          canonicalTrackMbid: resolvedCanonicalTrackMbid,
+          canonicalRecordingMbid: resolvedCanonicalRecordingMbid,
         });
         const canonicalPosition = getCanonicalTrackPosition(canonicalIdentity.canonicalTrackMbid);
         const canonicalAlbum = getCanonicalAlbumMetadata({
           canonicalReleaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid,
           canonicalReleaseMbid: canonicalIdentity.canonicalReleaseMbid,
         });
-        const trackTitle = canonicalPosition?.title || trackRow.title || "Unknown Track";
-        const trackNumber = canonicalPosition?.trackNumber ?? Number(trackRow.track_number || 0);
-        const volumeNumber = canonicalPosition?.volumeNumber ?? Number(trackRow.volume_number || 1);
+        const trackTitle = canonicalPosition?.title
+          || trackRow.title
+          || "Unknown Track";
+        const trackNumber = canonicalPosition?.trackNumber
+          ?? (Number(trackRow.track_number || 0) > 0 ? Number(trackRow.track_number) : null)
+          ?? 0;
+        const volumeNumber = canonicalPosition?.volumeNumber
+          ?? (Number(trackRow.volume_number || 0) > 0 ? Number(trackRow.volume_number) : null)
+          ?? 1;
+        const libraryAlbumId = canonicalIdentity.canonicalReleaseGroupMbid || String(trackRow.album_id || albumIds[0]);
         const trackArtistId = String(trackRow.artist_id || artistId);
         const trackArtist = db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(trackArtistId) as any;
         const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
@@ -1862,17 +2103,17 @@ export class OrganizerService {
           artistId,
           artistMbId,
           artistGenre: artistContext.artistGenre,
-          albumTitle: canonicalAlbum?.title || album.title,
-          albumId: String(trackRow.album_id || albumIds[0]),
+          albumTitle: canonicalAlbum?.title || "Unknown Album",
+          albumId: libraryAlbumId,
           albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
           albumMbId: canonicalAlbum?.albumMbid || album.mbid || null,
           albumVersion: canonicalAlbum ? null : album.version || null,
           albumDisambiguation: canonicalAlbum?.disambiguation || null,
           albumGenre: firstGenre(canonicalAlbum?.genres),
-          releaseYear: this.getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
+          releaseYear: getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
           trackTitle,
           trackId,
-          trackMbId: trackRow.mbid || null,
+          trackMbId: canonicalIdentity.canonicalTrackMbid || trackRow.mbid || null,
           trackArtistName: resolvedTrackArtistName,
           trackArtistMbId,
           trackVersion: canonicalPosition ? null : trackRow.version || null,
@@ -1938,7 +2179,7 @@ export class OrganizerService {
         db.transaction(() => {
           const libraryFileId = this.upsertLibraryFile({
             artistId,
-            albumId: String(trackRow.album_id || albumIds[0]),
+            albumId: libraryAlbumId,
             mediaId: mediaIdStr,
             filePath: destFile,
             libraryRoot: targetRoot,
@@ -1968,7 +2209,7 @@ export class OrganizerService {
           try {
             recordHistoryEvent({
               artistId,
-              albumId: String(trackRow.album_id || albumIds[0]),
+              albumId: libraryAlbumId,
               mediaId: mediaIdStr,
               libraryFileId,
               eventType: HISTORY_EVENT_TYPES.TrackFileImported,
@@ -1998,7 +2239,7 @@ export class OrganizerService {
           try {
             const lyricPath = this.relocateLinkedSidecar({
               artistId,
-              albumId: String(trackRow.album_id || albumIds[0]),
+              albumId: libraryAlbumId,
               mediaId: trackId,
               mediaPath: destFile,
               libraryRoot: targetRoot,
@@ -2014,7 +2255,7 @@ export class OrganizerService {
             if (fs.existsSync(lyricPath)) {
               this.upsertLibraryFile({
                 artistId,
-                albumId: String(trackRow.album_id || albumIds[0]),
+                albumId: libraryAlbumId,
                 mediaId: trackId,
                 trackFileId: importedTrackFileId,
                 filePath: lyricPath,
@@ -2058,8 +2299,8 @@ export class OrganizerService {
       });
 
       const albumDirRelative = sampleRelativeTrackPath
-        ? this.deriveAlbumDirRelativeFromTrackPath(trackTemplate, sampleRelativeTrackPath)
-        : this.commonPathPrefix(renderedTrackDirs);
+        ? deriveAlbumDirRelativeFromTrackPath(trackTemplate, sampleRelativeTrackPath)
+        : commonPathPrefix(renderedTrackDirs);
       const targetAlbumDir = path.join(targetRoot, artistFolder, albumDirRelative);
       this.ensureDir(targetAlbumDir);
 
@@ -2142,7 +2383,14 @@ export class OrganizerService {
 
       const albumVideoCoverName = getAlbumVideoCoverName(metadataConfig.album_cover_name || "cover.jpg");
       const albumVideoCoverPath = path.join(targetAlbumDir, albumVideoCoverName);
-      const albumVideoCoverId = canonicalAlbumForNaming?.videoCover || null;
+      const albumVideoCoverId = metadataConfig.save_album_cover
+        ? await resolveAlbumVideoCoverForLibrary({
+            storedVideoCover: canonicalAlbumForNaming?.videoCover || null,
+            provider: streamingProviderId,
+            providerAlbumId: albumIds[0],
+            releaseGroupMbid: canonicalContext?.releaseGroupMbid || album.mb_release_group_id || null,
+          })
+        : null;
       if (metadataConfig.save_album_cover && albumVideoCoverId) {
         this.relocateSingletonSidecar({
           artistId,
@@ -2328,22 +2576,35 @@ export class OrganizerService {
       `).get(streamingProviderId, albumId) as any;
       if (!album) throw new Error(`Album ${albumId} offer not found in ProviderItems after scan`);
 
+      // Catalog-first: resolve title/position via the Tracks table on the
+      // best-known release (job-supplied release mbid, else the album's own).
+      // Never use match_evidence or live provider-native disc/track numbers.
+      const trackPositionReleaseMbid = String(raw.releaseMbid || "").trim() || album.mbid || null;
       const trackRow = db.prepare(`
         SELECT
-          provider_id AS id,
-          provider_album_id AS album_id,
-          quality, title,
-          track_mbid AS mbid,
-          artist_mbid AS artist_id,
-          CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number,
-          CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER) AS volume_number
-        FROM ProviderItems
-        WHERE provider = ?
-          AND entity_type = 'track'
-          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        ORDER BY updated_at DESC
+          pi.provider_id AS id,
+          pi.provider_album_id AS album_id,
+          pi.quality,
+          COALESCE(NULLIF(TRIM(t.title), ''), pi.title) AS title,
+          pi.version,
+          pi.explicit,
+          pi.track_mbid AS mbid,
+          pi.artist_mbid AS artist_id,
+          t.position AS track_number,
+          t.medium_position AS volume_number
+        FROM ProviderItems pi
+        LEFT JOIN Tracks t
+          ON t.release_mbid = ?
+          AND (
+            (pi.track_mbid IS NOT NULL AND t.mbid = pi.track_mbid)
+            OR (pi.recording_mbid IS NOT NULL AND t.recording_mbid = pi.recording_mbid)
+          )
+        WHERE pi.provider = ?
+          AND pi.entity_type = 'track'
+          AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY pi.updated_at DESC
         LIMIT 1
-      `).get(streamingProviderId, providerId) as any;
+      `).get(trackPositionReleaseMbid, streamingProviderId, providerId) as any;
       if (!trackRow) throw new Error(`Track ${providerId} offer not found in ProviderItems after scan`);
 
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
@@ -2357,33 +2618,55 @@ export class OrganizerService {
         path: artistContext.artistPath || null,
       });
 
-      const isSpatial = isSpatialAudioQuality(album.quality);
+      const isSpatial = (String(raw.slot || "").toLowerCase() === "spatial")
+        || isSpatialAudioQuality(album.quality);
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
 
+      const jobReleaseGroupMbid = String(raw.releaseGroupMbid || "").trim() || null;
+      const jobReleaseMbid = String(raw.releaseMbid || "").trim() || null;
+      const jobCanonicalTrackMbid = String(raw.canonicalTrackMbid || "").trim() || null;
+      const jobCanonicalRecordingMbid = String(raw.canonicalRecordingMbid || "").trim() || null;
+      const jobSlot = String(raw.slot || "").trim() || null;
+      const jobTrackNumber = Number(raw.trackNumber || 0) > 0 ? Number(raw.trackNumber) : null;
+      const jobVolumeNumber = Number(raw.volumeNumber || 0) > 0 ? Number(raw.volumeNumber) : null;
+
+      const identityInput = {
+        artistId,
+        albumId,
+        mediaId: providerId,
+        fileType: "track" as const,
+        quality: trackRow.quality || album.quality,
+        libraryRoot: targetRoot,
+        provider: streamingProviderId,
+        providerEntityType: "track" as const,
+        providerId,
+        librarySlot: jobSlot,
+        canonicalReleaseGroupMbid: jobReleaseGroupMbid,
+        canonicalReleaseMbid: jobReleaseMbid,
+        canonicalTrackMbid: jobCanonicalTrackMbid,
+        canonicalRecordingMbid: jobCanonicalRecordingMbid,
+      };
+
       const ext = path.extname(src);
-      const canonicalPosition = resolveCanonicalTrackPosition({
-        artistId,
-        albumId,
-        mediaId: providerId,
-        fileType: "track",
-        quality: trackRow.quality || album.quality,
-        libraryRoot: targetRoot,
-      });
-      const canonicalIdentity = resolveLibraryFileIdentity({
-        artistId,
-        albumId,
-        mediaId: providerId,
-        fileType: "track",
-        quality: trackRow.quality || album.quality,
-        libraryRoot: targetRoot,
-      });
+      const canonicalPosition = resolveCanonicalTrackPosition(identityInput);
+      const canonicalIdentity = resolveLibraryFileIdentity(identityInput);
       const canonicalAlbum = getCanonicalAlbumMetadata({
         canonicalReleaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid,
         canonicalReleaseMbid: canonicalIdentity.canonicalReleaseMbid,
       });
-      const trackTitle = canonicalPosition?.title || trackRow.title || trackData.title || path.basename(src, ext);
-      const trackNumber = canonicalPosition?.trackNumber ?? Number(trackRow.track_number || trackData.track_number || 0);
-      const volumeNumber = canonicalPosition?.volumeNumber ?? Number(trackRow.volume_number || trackData.volume_number || 1);
+      // Hybrid DownloadTrack jobs carry monitored composite positions; prefer
+      // those and Tracks-table lookup. Never fall back to live provider-native
+      // album numbering (trackData.track_number) — that mis-numbers Softly/etc.
+      const trackTitle = canonicalPosition?.title
+        || trackRow.title
+        || trackData.title
+        || path.basename(src, ext);
+      const trackNumber = canonicalPosition?.trackNumber
+        ?? jobTrackNumber
+        ?? (Number(trackRow.track_number || 0) > 0 ? Number(trackRow.track_number) : 0);
+      const volumeNumber = canonicalPosition?.volumeNumber
+        ?? jobVolumeNumber
+        ?? (Number(trackRow.volume_number || 0) > 0 ? Number(trackRow.volume_number) : 1);
       const trackArtistId = String(trackRow.artist_id || artistId);
       const trackArtist = db.prepare("SELECT name, mbid FROM Artists WHERE id = ?").get(trackArtistId) as any;
       const resolvedTrackArtistName = (trackArtist?.name as string | undefined) || resolvedArtistName;
@@ -2397,33 +2680,29 @@ export class OrganizerService {
       const derivedQuality = deriveQuality(ext, metrics);
 
       const trackIdentity = resolveLibraryFileIdentity({
-        artistId,
-        albumId,
-        mediaId: providerId,
-        libraryRoot: targetRoot,
-        fileType: "track",
+        ...identityInput,
         quality: derivedQuality,
-        provider: streamingProviderId,
-        providerEntityType: "track",
-        providerId,
       });
+      // Prefer the hybrid/monitored release-group as the library album key so
+      // covers, history, and folder identity follow the composite, not Pompeii etc.
+      const libraryAlbumId = trackIdentity.canonicalReleaseGroupMbid || albumId;
 
       const renderedTrackPath = renderRelativePath(trackTemplate, {
         artistName: resolvedArtistName,
         artistId,
         artistMbId,
         artistGenre: artistContext.artistGenre,
-        albumTitle: canonicalAlbum?.title || album.title,
-        albumId,
+        albumTitle: canonicalAlbum?.title || "Unknown Album",
+        albumId: libraryAlbumId,
         albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
-        albumMbId: canonicalAlbum?.albumMbid || album.mbid || null,
+        albumMbId: canonicalAlbum?.albumMbid || trackIdentity.canonicalReleaseMbid || album.mbid || null,
         albumVersion: canonicalAlbum ? null : album.version || null,
         albumDisambiguation: canonicalAlbum?.disambiguation || null,
         albumGenre: firstGenre(canonicalAlbum?.genres),
-        releaseYear: this.getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
+        releaseYear: getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
         trackTitle,
         trackId: providerId,
-        trackMbId: trackRow.mbid || null,
+        trackMbId: trackIdentity.canonicalTrackMbid || trackRow.mbid || null,
         trackArtistName: resolvedTrackArtistName,
         trackArtistMbId,
         trackNumber,
@@ -2469,7 +2748,7 @@ export class OrganizerService {
       db.transaction(() => {
         const libraryFileId = this.upsertLibraryFile({
           artistId,
-          albumId,
+          albumId: libraryAlbumId,
           mediaId: providerId,
           filePath: dest,
           libraryRoot: targetRoot,
@@ -2499,7 +2778,7 @@ export class OrganizerService {
         try {
           recordHistoryEvent({
             artistId,
-            albumId,
+            albumId: libraryAlbumId,
             mediaId: providerId,
             libraryFileId,
             eventType: HISTORY_EVENT_TYPES.TrackFileImported,
@@ -2523,7 +2802,7 @@ export class OrganizerService {
         try {
           const lyricPath = this.relocateLinkedSidecar({
             artistId,
-            albumId,
+            albumId: libraryAlbumId,
             mediaId: providerId,
             mediaPath: dest,
             libraryRoot: targetRoot,
@@ -2537,7 +2816,7 @@ export class OrganizerService {
           if (fs.existsSync(lyricPath)) {
             this.upsertLibraryFile({
               artistId,
-              albumId,
+              albumId: libraryAlbumId,
               mediaId: providerId,
               trackFileId: importedTrackFileId,
               filePath: lyricPath,
@@ -2602,7 +2881,7 @@ export class OrganizerService {
         }
       }
 
-      const albumDirRelative = this.deriveAlbumDirRelativeFromTrackPath(trackTemplate, relativeTrackPath);
+      const albumDirRelative = deriveAlbumDirRelativeFromTrackPath(trackTemplate, relativeTrackPath);
       const targetAlbumDir = path.join(targetRoot, artistFolder, albumDirRelative);
       this.ensureDir(targetAlbumDir);
 
@@ -2610,7 +2889,7 @@ export class OrganizerService {
       if (metadataConfig.save_album_cover) {
         this.relocateSingletonSidecar({
           artistId,
-          albumId,
+          albumId: libraryAlbumId,
           expectedPath: albumCoverPath,
           libraryRoot: targetRoot,
           fileType: "cover",
@@ -2620,11 +2899,11 @@ export class OrganizerService {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.album_cover_resolution (which only caps the
         // UI's cached display thumbnail — see media-cover-service.ts).
-        await downloadAlbumCover(albumId, "origin", albumCoverPath);
+        await downloadAlbumCover(libraryAlbumId, "origin", albumCoverPath, { provider: streamingProviderId });
         if (fs.existsSync(albumCoverPath)) {
           this.upsertLibraryFile({
             artistId,
-            albumId,
+            albumId: libraryAlbumId,
             mediaId: null,
             filePath: albumCoverPath,
             libraryRoot: targetRoot,
@@ -2638,11 +2917,18 @@ export class OrganizerService {
 
       const albumVideoCoverName = getAlbumVideoCoverName(metadataConfig.album_cover_name || "cover.jpg");
       const albumVideoCoverPath = path.join(targetAlbumDir, albumVideoCoverName);
-      const albumVideoCoverId = canonicalAlbum?.videoCover || null;
+      const albumVideoCoverId = metadataConfig.save_album_cover
+        ? await resolveAlbumVideoCoverForLibrary({
+            storedVideoCover: canonicalAlbum?.videoCover || null,
+            provider: streamingProviderId,
+            providerAlbumId: albumId,
+            releaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid || album.mb_release_group_id || null,
+          })
+        : null;
       if (metadataConfig.save_album_cover && albumVideoCoverId) {
         this.relocateSingletonSidecar({
           artistId,
-          albumId,
+          albumId: libraryAlbumId,
           expectedPath: albumVideoCoverPath,
           libraryRoot: targetRoot,
           fileType: "video_cover",
@@ -2656,12 +2942,12 @@ export class OrganizerService {
           await downloadAlbumVideoCover(String(albumVideoCoverId), "origin", albumVideoCoverPath, {
             provider: streamingProviderId,
             providerAlbumId: albumId,
-            releaseGroupMbid: canonicalIdentity.canonicalReleaseGroupMbid || album.mb_release_group_id || null,
+            releaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid || album.mb_release_group_id || null,
           });
           if (fs.existsSync(albumVideoCoverPath)) {
             this.upsertLibraryFile({
               artistId,
-              albumId,
+              albumId: libraryAlbumId,
               mediaId: null,
               filePath: albumVideoCoverPath,
               libraryRoot: targetRoot,
@@ -2672,7 +2958,7 @@ export class OrganizerService {
             });
           }
         } catch (error) {
-          console.warn(`[Organizer] Failed to fetch album video cover for ${albumId}; import already complete:`, error);
+          console.warn(`[Organizer] Failed to fetch album video cover for ${libraryAlbumId}; import already complete:`, error);
         }
       }
 
@@ -2697,10 +2983,10 @@ export class OrganizerService {
         }
 
         try {
-          await saveAlbumNfoFile(albumId, albumNfoPath);
+          await saveAlbumNfoFile(libraryAlbumId, albumNfoPath);
           this.upsertLibraryFile({
             artistId,
-            albumId,
+            albumId: libraryAlbumId,
             mediaId: null,
             filePath: albumNfoPath,
             libraryRoot: targetRoot,
@@ -2710,7 +2996,7 @@ export class OrganizerService {
             expectedPath: albumNfoPath,
           });
         } catch (error) {
-          console.warn(`[Organizer] Failed to write album NFO for ${albumId}:`, error);
+          console.warn(`[Organizer] Failed to write album NFO for ${libraryAlbumId}:`, error);
         }
       }
 
@@ -2747,46 +3033,19 @@ export class OrganizerService {
       // Ensure the video is in the canonical graph: a Recordings(is_video=1) row +
       // a ProviderItems video offer, via RefreshVideoService — no legacy ProviderMedia.
       const videoData = await this.fetchProviderVideo(providerId, streamingProviderId);
-      let fetchedVideoData: any | null = videoData;
+      const fetchedVideoData: any | null = videoData;
       const videoProvider = streamingProviderId;
 
       // Prefer a real provider title over an empty/placeholder payload so
       // filenames never stick on "Unknown Video" when the download source
       // (or a peer ProviderItems row) already knows the name.
-      const resolveVideoTitle = (): string => {
-        const candidates = [
-          videoData?.title,
-          videoData?.name,
-          (db.prepare(`
-            SELECT title FROM ProviderItems
-            WHERE provider = ? AND entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-            LIMIT 1
-          `).get(videoProvider, providerId) as { title?: string | null } | undefined)?.title,
-          (db.prepare(`
-            SELECT recording.title AS title
-            FROM ProviderItems provider_item
-            JOIN Recordings recording ON recording.id = provider_item.recording_id
-            WHERE provider_item.provider = ?
-              AND provider_item.entity_type = 'video'
-              AND CAST(provider_item.provider_id AS TEXT) = CAST(? AS TEXT)
-            LIMIT 1
-          `).get(videoProvider, providerId) as { title?: string | null } | undefined)?.title,
-        ];
-        for (const candidate of candidates) {
-          const title = String(candidate || "").trim();
-          if (title && title.toLowerCase() !== "unknown video") {
-            return title;
-          }
-        }
-        return "Unknown Video";
-      };
-      const resolvedVideoTitle = resolveVideoTitle();
+      const resolvedVideoTitle = resolveOrganizeVideoTitle(videoProvider, providerId, videoData);
       if (videoData && resolvedVideoTitle !== "Unknown Video") {
         videoData.title = resolvedVideoTitle;
       }
 
       // Try to find the canonical local artist id via the DB
-      let canonicalArtistId = this.resolveCanonicalVideoArtistId(videoProvider, providerId);
+      let canonicalArtistId = resolveCanonicalVideoArtistId(videoProvider, providerId);
       
       if (!canonicalArtistId) {
         // Fallback: look up ProviderItems artist_mbid directly
@@ -2848,11 +3107,14 @@ export class OrganizerService {
         provider: videoProvider,
       }]);
 
+      const catalogVideo = lookupCatalogVideoAfterUpsert(videoProvider, providerId);
+
       const video: any = {
         id: providerId,
         artist_id: resolvedVideoArtistId,
         album_id: videoData?.album?.providerId || videoData?.album_id || null,
-        title: resolvedVideoTitle,
+        title: catalogVideo?.title || resolvedVideoTitle,
+        video_variant: catalogVideo?.video_variant || null,
         explicit: videoData.explicit ? 1 : 0,
         quality: videoData.quality || null,
       };
@@ -2911,6 +3173,7 @@ export class OrganizerService {
         trackId: providerId,
         videoId: providerId,
         videoTitle: video.title,
+        videoType: resolveVideoTypeSuffix(video.title, video.video_variant),
         explicit: video.explicit === 1,
         quality: sourceVideoQuality,
         codec: sourceMetrics.codec || null,
@@ -2937,6 +3200,22 @@ export class OrganizerService {
       });
       const dest = inlineExpected.expectedPath || separatedDest;
       const organizedVideoRoot = this.resolveLibraryRoot(dest) || videoRoot;
+      if (this.resolvePrimaryVideoDestinationConflict({
+        destPath: dest,
+        incomingProvider: videoProvider,
+        incomingProviderId: providerId,
+        incomingQuality: sourceVideoQuality,
+      }) === "skip") {
+        try { fs.rmSync(src, { force: true }); } catch (e) {
+          console.warn("Failed to delete skipped video source", e);
+        }
+        return {
+          type: "video",
+          providerId,
+          processedTrackIds: [],
+          totalTracksInStaging: 1,
+        };
+      }
       this.ensureDir(path.dirname(dest));
 
       // Convert to MP4 directly from source into destination if not already MP4
@@ -3018,89 +3297,19 @@ export class OrganizerService {
         this.cleanupSiblingMediaVariants(dest, "video");
       })();
 
-      if (metadataConfig.save_video_thumbnail || metadataConfig.embed_video_thumbnail !== false) {
-        const persistentCoverPath = metadataConfig.save_video_thumbnail
-          ? this.relocateLinkedSidecar({
-            artistId,
-            albumId: video.album_id ? String(video.album_id) : null,
-            mediaId: providerId,
-            mediaPath: dest,
-            libraryRoot: organizedVideoRoot,
-            fileType: "video_thumbnail",
-            quality: derivedVideoQuality,
-            namingTemplate: videoNamingTemplate,
-          })
-          : null;
-        const transientCoverPath = persistentCoverPath ? null : path.join(path.dirname(dest), `.${path.parse(dest).name}.embed-thumb.jpg`);
-        const coverPath = persistentCoverPath || transientCoverPath;
-        let coverId = video.cover ? String(video.cover) : (fetchedVideoData?.image_id || null);
-        if (!coverId) {
-          try {
-            fetchedVideoData = fetchedVideoData ?? await this.fetchProviderVideo(providerId, streamingProviderId);
-            coverId = fetchedVideoData?.image_id || null;
-            if (coverId) {
-              // Home the cover onto the canonical video Recording (via its offer's
-              // recording_id) instead of the retired ProviderMedia row.
-              db.prepare(`
-                UPDATE Recordings SET cover_image_id = COALESCE(?, cover_image_id), updated_at = CURRENT_TIMESTAMP
-                WHERE id = (
-                  SELECT recording_id FROM ProviderItems
-                  WHERE provider = ?
-                    AND entity_type = 'video'
-                    AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                    AND recording_id IS NOT NULL
-                  LIMIT 1
-                )
-              `).run(coverId, videoProvider, providerId);
-              video.cover = coverId;
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        if (coverId) {
-          const videoThumbnailResolution = metadataConfig.video_thumbnail_resolution || "1080x720";
-          if (coverPath && !fs.existsSync(coverPath)) {
-            await downloadVideoThumbnail(coverId, videoThumbnailResolution as any, coverPath, {
-              provider: videoProvider,
-              providerId,
-            });
-          }
-        }
-
-        if (persistentCoverPath && fs.existsSync(persistentCoverPath)) {
-          this.upsertLibraryFile({
-            artistId,
-            albumId: video.album_id ? String(video.album_id) : null,
-            mediaId: providerId,
-            filePath: persistentCoverPath,
-            libraryRoot: organizedVideoRoot,
-            fileType: "video_thumbnail",
-            quality: derivedVideoQuality,
-            namingTemplate: videoNamingTemplate,
-            expectedPath: persistentCoverPath,
-          });
-        }
-
-        if (metadataConfig.embed_video_thumbnail !== false && coverPath && fs.existsSync(coverPath)) {
-          const embedded = await embedVideoThumbnail(dest, coverPath);
-          if (!embedded) {
-            console.warn(`[Organizer] Failed to embed video thumbnail for ${providerId}`);
-          } else if (libraryFileId !== null) {
-            const stat = fs.statSync(dest);
-            db.prepare(`
-              UPDATE TrackFiles
-              SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `).run(stat.size, stat.mtime.toISOString(), libraryFileId);
-          }
-        }
-
-        if (!persistentCoverPath && transientCoverPath && fs.existsSync(transientCoverPath)) {
-          fs.rmSync(transientCoverPath, { force: true });
-        }
-      }
+      await this.ensureVideoThumbnailSidecar({
+        artistId,
+        albumId: video.album_id ? String(video.album_id) : null,
+        mediaId: providerId,
+        mediaPath: dest,
+        libraryRoot: organizedVideoRoot,
+        provider: videoProvider,
+        providerId,
+        quality: derivedVideoQuality,
+        namingTemplate: videoNamingTemplate,
+        coverHint: video.cover || fetchedVideoData?.cover || fetchedVideoData?.image_id || null,
+        libraryFileId,
+      });
 
       if (metadataConfig.save_nfo) {
         const videoNfoPath = path.join(path.dirname(dest), `${path.parse(dest).name}.nfo`);

@@ -384,6 +384,112 @@ test("DownloadMissing keeps distinct video variants separate when one sibling is
   assert.equal(JSON.parse(jobs[0].payload).providerId, "apple-pompeii-lyric");
 });
 
+test("DownloadMissing collapses multi-provider official videos for the same audio stem", async () => {
+  const { db } = dbModule;
+  writeTestConfig({ filtering: { include_videos: true } });
+
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)")
+    .run("artist-1", "Amy Winehouse", "artist-mbid-1");
+  db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (?, ?, ?)")
+    .run(101, "artist-mbid-1", "Amy Winehouse");
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
+      title, length_ms, is_video, video_variant, metadata_status, monitored
+    ) VALUES
+      (400, 'audio-yking', 'audio-yking', 101, 'artist-mbid-1',
+       'You Know I''m No Good', 256000, 0, NULL, 'musicbrainz', 1),
+      (501, 'video-tidal', 'video-tidal', 101, 'artist-mbid-1',
+       'You Know I''m No Good', 256000, 1, 'official', 'provider_only', 1),
+      (502, 'video-apple', 'video-apple', 101, 'artist-mbid-1',
+       'You Know I''m No Good', 256000, 1, 'official', 'provider_only', 1)
+  `).run();
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid,
+      title, quality, artist_metadata_id, recording_id, availability
+    ) VALUES
+      ('tidal', 'video', 'tidal-yking', 'artist-mbid-1', 'video-tidal',
+       'You Know I''m No Good', 'MP4_1080P', 101, 501, 'available'),
+      ('apple-music', 'video', 'apple-yking', 'artist-mbid-1', 'video-apple',
+       'You Know I''m No Good', 'MP4_720P', 101, 502, 'available')
+  `).run();
+  db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, confidence
+    ) VALUES
+      (501, 400, 'provider_video_for', 0.95),
+      (502, 400, 'provider_video_for', 0.9)
+  `).run();
+
+  const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
+  assert.equal(queued.videos, 1);
+
+  const jobs = db.prepare(`
+    SELECT ref_id AS refId, payload
+    FROM commands
+    WHERE name = ?
+  `).all(queueModule.CommandNames.DownloadVideo) as Array<{ refId: string; payload: string }>;
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].refId, "recording:501:video");
+  assert.equal(JSON.parse(jobs[0].payload).providerId, "tidal-yking");
+});
+
+test("DownloadMissing skips official MV when the same audio stem already has one imported", async () => {
+  const { db } = dbModule;
+  writeTestConfig({ filtering: { include_videos: true } });
+
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)")
+    .run("artist-1", "Amy Winehouse", "artist-mbid-1");
+  db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (?, ?, ?)")
+    .run(101, "artist-mbid-1", "Amy Winehouse");
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
+      title, length_ms, is_video, video_variant, metadata_status, monitored
+    ) VALUES
+      (400, 'audio-yking', 'audio-yking', 101, 'artist-mbid-1',
+       'You Know I''m No Good', 256000, 0, NULL, 'musicbrainz', 1),
+      (501, 'video-tidal', 'video-tidal', 101, 'artist-mbid-1',
+       'You Know I''m No Good', 256000, 1, 'official', 'provider_only', 1),
+      (502, 'video-apple', 'video-apple', 101, 'artist-mbid-1',
+       'You Know I''m No Good', 256000, 1, 'official', 'provider_only', 1)
+  `).run();
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid,
+      title, quality, artist_metadata_id, recording_id, availability
+    ) VALUES
+      ('tidal', 'video', 'tidal-yking', 'artist-mbid-1', 'video-tidal',
+       'You Know I''m No Good', 'MP4_1080P', 101, 501, 'available'),
+      ('apple-music', 'video', 'apple-yking', 'artist-mbid-1', 'video-apple',
+       'You Know I''m No Good', 'MP4_720P', 101, 502, 'available')
+  `).run();
+  db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, confidence
+    ) VALUES
+      (501, 400, 'provider_video_for', 0.95),
+      (502, 400, 'provider_video_for', 0.9)
+  `).run();
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, recording_id, canonical_recording_mbid,
+      provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension, file_type, quality
+    ) VALUES (
+      'artist-1', 501, 'video-tidal',
+      'tidal', 'video', 'tidal-yking', 'video',
+      'C:/Music/Amy/01 - You Know I''m No Good-video.mp4',
+      '01 - You Know I''m No Good-video.mp4', 'C:/Music',
+      '01 - You Know I''m No Good-video.mp4', '.mp4', 'video', 'MP4_1080P'
+    )
+  `).run();
+
+  const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
+  assert.equal(queued.videos, 0);
+});
+
 test("CurationService queues spatial slot when only the stereo selected release is imported", async () => {
   const { db } = dbModule;
 
@@ -548,19 +654,34 @@ test("DownloadMissingService queues quality-aware composite plans as canonical t
   );
 
   const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
-  assert.deepEqual(queued, { albums: 0, tracks: 2, videos: 0 });
+  // Hybrid composites queue one catalog-anchored DownloadAlbum with trackOffers
+  // (not N DownloadTrack jobs) so import keeps hybrid disc/track numbering.
+  assert.deepEqual(queued, { albums: 1, tracks: 0, videos: 0 });
 
-  const jobs = db.prepare(`
+  const albumJobs = db.prepare(`
     SELECT ref_id AS refId, payload
     FROM commands
     WHERE name = ?
     ORDER BY id
-  `).all(queueModule.CommandNames.DownloadTrack) as Array<{ refId: string; payload: string }>;
-  assert.deepEqual(jobs.map((job) => job.refId), ["amy-track-1:stereo", "amy-track-2:stereo"]);
-  assert.deepEqual(jobs.map((job) => JSON.parse(job.payload).quality), ["HIRES_LOSSLESS", "LOSSLESS"]);
+  `).all(queueModule.CommandNames.DownloadAlbum) as Array<{ refId: string; payload: string }>;
+  assert.equal(albumJobs.length, 1);
+  assert.equal(albumJobs[0].refId, "rg-back-to-black:stereo");
+  const payload = JSON.parse(albumJobs[0].payload);
+  assert.equal(payload.acquisitionMode, "trackOffers");
+  assert.equal(payload.trackOffers.length, 2);
+  assert.deepEqual(
+    payload.trackOffers.map((offer: { providerTrackId: string; quality: string }) => ({
+      id: offer.providerTrackId,
+      quality: offer.quality,
+    })),
+    [
+      { id: "tidal-hires-rehab", quality: "HIRES_LOSSLESS" },
+      { id: "tidal-lossless-valerie", quality: "LOSSLESS" },
+    ],
+  );
   assert.equal(
     (db.prepare("SELECT COUNT(*) AS count FROM commands WHERE name = ?")
-      .get(queueModule.CommandNames.DownloadAlbum) as { count: number }).count,
+      .get(queueModule.CommandNames.DownloadTrack) as { count: number }).count,
     0,
   );
 });

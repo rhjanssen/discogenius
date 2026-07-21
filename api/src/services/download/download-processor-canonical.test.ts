@@ -380,7 +380,7 @@ test("download processor scopes provider offers when services reuse the same res
   assert.deepEqual(processor.resolveDownloadMetadata("7", "track", appleTrackPayload), {
     title: "Apple Track",
     artist: "Apple Artist",
-    cover: null,
+    cover: "/media-cover/Albums/rg-apple/cover.jpg?source=canonical",
   });
   assert.equal(processor.resolveDownloadQuality("7", "track", appleTrackPayload), "HIRES_LOSSLESS");
   assert.equal(processor.isCanonicalProviderItemDownloaded("7", "track", appleTrackPayload), false);

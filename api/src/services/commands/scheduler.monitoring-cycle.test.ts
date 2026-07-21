@@ -160,7 +160,10 @@ function pendingDownloadMissing() {
     );
 }
 
-test("standalone monitored artist workflows do not queue DownloadMissing", () => {
+test("queueNextMonitoringPass ignores untagged CurateArtist (downloads come from handleCurateArtist)", () => {
+    // Cycle chaining only applies to monitoringCycle-tagged jobs. Standalone
+    // monitored intake queues DownloadMissing from handleCurateArtist when
+    // forceDownloadQueue is set — not from queueNextMonitoringPass.
     const workflows = ["monitoring-intake", "full-monitoring"] as const;
 
     for (const [index, workflow] of workflows.entries()) {
@@ -173,7 +176,7 @@ test("standalone monitored artist workflows do not queue DownloadMissing", () =>
         assert.ok(curateId > 0);
 
         completeAndAdvance(curateId);
-        assert.equal(pendingDownloadMissing().length, 0, `${workflow} should wait for an explicit monitoring cycle`);
+        assert.equal(pendingDownloadMissing().length, 0, `${workflow} should not chain via monitoring-cycle scheduler`);
     }
 });
 

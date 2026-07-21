@@ -170,12 +170,14 @@ test("manual album download uses the shared hybrid per-track acquisition plan", 
   db.prepare(`
     UPDATE ReleaseGroupSlots
     SET monitored = 1,
+        selected_provider = ?,
         selected_provider_id = ?,
         selected_release_mbid = ?,
         match_method = ?,
         match_evidence = ?
     WHERE release_group_mbid = ? AND slot = 'stereo'
   `).run(
+    "tidal",
     "provider-hires-album;provider-deluxe-album",
     "release-mbid-1",
     "quality_optimized_composite_track_coverage",
@@ -185,14 +187,28 @@ test("manual album download uses the shared hybrid per-track acquisition plan", 
 
   const result = await serviceModule.AlbumCommandService.addAlbum("release-group-mbid-1", true, "stereo");
   assert.equal(result.success, true);
-  assert.equal(result.commandIds?.length, 2);
+  assert.equal(result.commandIds?.length, 1);
 
   const jobs = db.prepare("SELECT name, ref_id AS refId, payload FROM commands ORDER BY id").all() as Array<{
     name: string;
     refId: string;
     payload: string;
   }>;
-  assert.deepEqual(jobs.map((job) => job.name), [queueModule.CommandNames.DownloadTrack, queueModule.CommandNames.DownloadTrack]);
-  assert.deepEqual(jobs.map((job) => job.refId), ["track-mbid-1:stereo", "track-mbid-2:stereo"]);
-  assert.deepEqual(jobs.map((job) => JSON.parse(job.payload).quality), ["HI_RES_LOSSLESS", "LOSSLESS"]);
+  assert.deepEqual(jobs.map((job) => job.name), [queueModule.CommandNames.DownloadAlbum]);
+  assert.equal(jobs[0]?.refId, "release-group-mbid-1:stereo");
+  const payload = JSON.parse(jobs[0]?.payload || "{}") as {
+    acquisitionMode?: string;
+    trackOffers?: Array<{ providerTrackId?: string; quality?: string | null }>;
+  };
+  assert.equal(payload.acquisitionMode, "trackOffers");
+  assert.deepEqual(
+    (payload.trackOffers || []).map((offer) => ({
+      providerTrackId: offer.providerTrackId,
+      quality: offer.quality,
+    })),
+    [
+      { providerTrackId: "provider-hires-track-1", quality: "HI_RES_LOSSLESS" },
+      { providerTrackId: "provider-deluxe-track-2", quality: "LOSSLESS" },
+    ],
+  );
 });

@@ -1,8 +1,11 @@
 import {
   NeutralAudioQuality,
   NeutralQuality,
+  NeutralVideoQuality,
   ProviderQualityMapping,
   classifyNeutralQuality,
+  classifyNeutralVideo,
+  formatNeutralVideoTag,
 } from "../provider-quality.js";
 import { isSpatialAudioQuality } from "../../../utils/spatial-audio.js";
 
@@ -68,4 +71,28 @@ export const tidalQualityMapping: ProviderQualityMapping = {
         return "HI_RES_LOSSLESS";
     }
   },
+
+  toNeutralVideo(raw: string | null | undefined): NeutralVideoQuality | null {
+    return classifyNeutralVideo(raw);
+  },
+
+  fromNeutralVideo(quality: NeutralVideoQuality): string {
+    // TIDAL's catalog still speaks MP4_* heights for download requests.
+    switch (quality) {
+      case "uhd":
+        return "MP4_2160P";
+      case "fhd":
+        return "MP4_1080P";
+      case "hd":
+        return "MP4_720P";
+      case "sd":
+        return "MP4_480P";
+    }
+  },
 };
+
+/** Map a TIDAL catalog video quality into the persisted neutral tag. */
+export function tidalVideoQualityTag(raw: string | null | undefined): string | null {
+  const tier = tidalQualityMapping.toNeutralVideo(raw);
+  return tier ? formatNeutralVideoTag(tier) : null;
+}

@@ -119,6 +119,21 @@ test("artist album upsert stores allowed provider supplements on catalog album a
   assert.equal(albumRow.video_cover, "provider-video-cover-id");
 });
 
+test("providerAlbumToAlbumMetadataRow keeps animated videoCover for catalog supplements", () => {
+  const mapped = refreshServiceModule.providerAlbumToAlbumMetadataRow({
+    providerId: "1440904699",
+    title: "Motion Art Album",
+    artist: { providerId: "1", name: "Artist" },
+    cover: "still-cover-id",
+    videoCover: "https://example.test/editorial-motion.m3u8",
+    trackCount: 10,
+  });
+
+  assert.equal(mapped.cover, "still-cover-id");
+  assert.equal(mapped.video_cover, "https://example.test/editorial-motion.m3u8");
+  assert.equal(mapped.videoCover, "https://example.test/editorial-motion.m3u8");
+});
+
 test("album track scan stores provider track offers linked to the selected canonical release tracks", async () => {
   const { streamingProviderManager } = await import("../providers/index.js");
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";

@@ -1,8 +1,8 @@
 import React from "react";
 import { Button, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import {
-  Eye24Regular as Eye24RegularBase,
-  EyeOff24Regular as EyeOff24RegularBase,
+  Eye24Regular,
+  EyeOff24Regular,
   Eye24Filled,
   EyeOff24Filled,
   bundleIcon
@@ -10,8 +10,8 @@ import {
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { glassButtonStyles, glassPrimaryButtonStyles } from "@/components/ui/glassButtonStyles";
 
-const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
-const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
+const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
+const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
 
 interface MonitorButtonProps {
     id: string;
@@ -65,7 +65,7 @@ export const MonitorButton: React.FC<MonitorButtonProps> = ({
     ) as "primary" | "outline" | "subtle" | "transparent" | "secondary";
 
     const label = isMonitored ? "Unmonitor" : "Monitor";
-    const Icon = isMonitored ? EyeOff24Regular : Eye24Regular;
+    const Icon = isMonitored ? EyeOff24 : Eye24;
 
     return (
         <Button

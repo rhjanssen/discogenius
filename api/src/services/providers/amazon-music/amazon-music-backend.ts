@@ -277,6 +277,6 @@ export class AmazonMusicBackend implements DownloadBackend {
     if (named.length === 0) {
       throw new Error("Amazon Music downloader produced no provider-identifiable media files.");
     }
-    options.onProgress({ progress: 100, state: "completed", statusMessage: "Amazon Music download complete" });
+    options.onProgress({ progress: 100, state: "downloading", statusMessage: "Amazon Music download complete" });
   }
 }

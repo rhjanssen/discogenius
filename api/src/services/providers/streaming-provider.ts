@@ -116,7 +116,6 @@ export interface StreamingProvider {
   getArtist(id: string | number): Promise<ProviderArtist>;
   getArtistAlbums(id: string | number): Promise<ProviderAlbum[]>;
   getArtistVideos?(id: string | number): Promise<ProviderVideo[]>;
-  getArtistCatalogPage?(id: string | number): Promise<any>;
   /** Categories of artist-import lists this provider supports (followed, playlists, mixes, …). */
   listImportSources?(): Promise<ProviderImportSource[]>;
   /** Distinct artists for a chosen import source/selection (e.g. a playlist's artists). */
@@ -138,9 +137,7 @@ export interface StreamingProvider {
   getVideoPlaybackInfo?(id: string | number): Promise<ProviderVideoPlaybackInfo | null>;
 
   getArtistBio?(id: string | number): Promise<string | null>;
-  getSimilarArtists?(id: string | number): Promise<ProviderArtist[]>;
   getAlbumReview?(id: string | number): Promise<string | null>;
-  getSimilarAlbums?(id: string | number): Promise<ProviderAlbum[]>;
   getAlbumCredits?(id: string | number): Promise<any[]>;
   getAlbumTrackCredits?(id: string | number): Promise<Map<string, any[]>>;
   getArtworkUrl?(request: ProviderArtworkRequest): Promise<string | null> | string | null;
@@ -363,6 +360,12 @@ export interface ProviderTrack {
   quality?: string | null;
   qualityTags?: string[];
   /**
+   * Artwork for album-tracklist entries that are music videos (Apple bundles
+   * videos into deluxe editions). Optional for normal audio tracks — album
+   * cover usually comes from `album.cover`.
+   */
+  cover?: string | null;
+  /**
    * True when this album-tracklist entry is a music video (providers like
    * Apple Music bundle videos at the end of deluxe/festival editions). The
    * import pipeline routes such tracks through the video path — video file
@@ -391,6 +394,18 @@ export interface ProviderVideo {
   url?: string;
   isrc?: string | null;
   recordingMbid?: string | null;
+  /**
+   * Provider album id when the catalog links this video to an album
+   * (TIDAL `album.id`, Apple `relationships.albums`, YouTube album browse id
+   * after counterpart upsert). Never a MusicBrainz id.
+   */
+  albumId?: string | null;
+  /**
+   * Provider song/track id when the catalog links this video to a related
+   * audio track (Apple `relationships.songs`). Used to attach
+   * `provider_video_for` without fuzzy title matching.
+   */
+  relatedTrackId?: string | null;
   /**
    * Provider-native classification of the entry (e.g. YouTube Music's
    * MUSIC_VIDEO_TYPE_OMV / _ATV / _UGC). Providers whose catalogs mix real music

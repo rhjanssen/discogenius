@@ -19,8 +19,8 @@ import {
 } from "../metadata/provider-release-group-matcher.js";
 import { ProviderArtistIdentityService, normalizeProviderArtist } from "../metadata/provider-artist-identity-service.js";
 import { streamingProviderManager } from "../providers/index.js";
-import type { StreamingProvider, ProviderAlbum, ProviderArtist, ProviderTrack, ProviderVideo } from "../providers/streaming-provider.js";
-import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate, type ProviderTrackDetail } from "./release-group-slot-service.js";
+import type { StreamingProvider, ProviderAlbum } from "../providers/streaming-provider.js";
+import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate } from "./release-group-slot-service.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import {
@@ -33,135 +33,33 @@ import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-c
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { upsertProviderReleaseMatch, persistCompositeReleaseMatchesForArtist } from "./provider-matches.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
-import { firstProviderEditorialText } from "../providers/provider-editorial-text.js";
+import {
+    completeBulkTrackList,
+    isCoreVideoCatalogProvider,
+    isMusicBrainzMbid,
+    normalizeIsrc,
+    normalizeMatchText,
+    providerAlbumToOfferRow,
+    providerVideoToOfferRow,
+    slotTrack,
+    type SlotTrack,
+} from "./refresh-artist-support.js";
+import {
+    buildProviderReleaseGroupMatches,
+    buildStoredProviderAlbumSelections,
+} from "./refresh-artist-match.js";
+import {
+    artistCatalogFingerprint,
+    refreshArtistBiography,
+    resolveProviderArtistId,
+    resolveProviderArtistIds,
+} from "./refresh-artist-bio.js";
 
-const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-/**
- * Providers whose music-video catalog is treated as a CORE metadata source —
- * always consulted for video discovery, exactly like MusicBrainz/Servarr, even
- * when the user has not connected that provider's download plugin. YouTube is
- * the canonical public music-video catalog; downloading or previewing one of its
- * videos still requires the YouTube Music plugin to be configured.
- */
-function isCoreVideoCatalogProvider(providerId: string): boolean {
-    return String(providerId || "").trim().toLowerCase() === "youtube-music";
-}
-
-function artistCatalogFingerprint(artistMbid: string | null): string | null {
-    if (!artistMbid) return null;
-    const artist = db.prepare("SELECT content_hash FROM ArtistMetadata WHERE mbid = ?")
-        .get(artistMbid) as { content_hash?: string | null } | undefined;
-    const releaseGroups = db.prepare(`
-        SELECT rg.mbid, rg.content_hash
-        FROM Albums rg
-        LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
-        WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
-        GROUP BY rg.mbid, rg.content_hash
-        ORDER BY rg.mbid
-    `).all(artistMbid, artistMbid) as Array<{ mbid: string; content_hash: string | null }>;
-    return JSON.stringify({ artist: artist?.content_hash || null, releaseGroups });
-}
-
-export function isMusicBrainzMbid(value: string | number | null | undefined): boolean {
-    return MUSICBRAINZ_MBID_RE.test(String(value || "").trim());
-}
-
-export function providerAlbumToOfferRow(providerAlbum: ProviderAlbum, fallbackArtistId: string): any {
-    const raw = providerAlbum.raw;
-    if (raw && typeof raw === "object" && "provider_id" in raw) {
-        return {
-            ...raw,
-            provider_id: String((raw as any).provider_id),
-            video_cover: (raw as any).video_cover || (raw as any).videoCover || providerAlbum.videoCover || null,
-            qualityTags: Array.isArray(providerAlbum.qualityTags)
-                ? providerAlbum.qualityTags
-                : Array.isArray((raw as any).qualityTags)
-                    ? (raw as any).qualityTags
-                    : [],
-        };
-    }
-
-    return {
-        provider: (providerAlbum as any).provider || (providerAlbum.raw as any)?.provider || null,
-        provider_id: providerAlbum.providerId,
-        artist_id: providerAlbum.artist?.providerId || fallbackArtistId,
-        artist_name: providerAlbum.artist?.name || "Unknown Artist",
-        artists: providerAlbum.artist ? [{ id: providerAlbum.artist.providerId, name: providerAlbum.artist.name }] : [],
-        title: providerAlbum.title || "Unknown Album",
-        release_date: providerAlbum.releaseDate || null,
-        cover: providerAlbum.cover || null,
-        vibrant_color: null,
-        video_cover: providerAlbum.videoCover || null,
-        num_tracks: providerAlbum.trackCount || 0,
-        num_videos: 0,
-        num_volumes: providerAlbum.volumeCount || 1,
-        duration: providerAlbum.duration || 0,
-        type: providerAlbum.type || "ALBUM",
-        version: providerAlbum.version || null,
-        explicit: providerAlbum.explicit || false,
-        quality: providerAlbum.quality || "LOSSLESS",
-        qualityTags: Array.isArray(providerAlbum.qualityTags) ? providerAlbum.qualityTags : [],
-        url: providerAlbum.url || null,
-        popularity: 0,
-        copyright: providerAlbum.copyright || null,
-        upc: providerAlbum.upc || null,
-        _group_type: "ALBUMS",
-        _module: providerAlbum.type === "EP" ? "EP" : providerAlbum.type === "SINGLE" ? "SINGLE" : "ALBUM",
-    };
-}
-
-function providerVideoToOfferRow(providerVideo: ProviderVideo, fallbackArtistId: string): any {
-    return {
-        provider_id: providerVideo.providerId,
-        title: providerVideo.title,
-        duration: providerVideo.duration || 0,
-        release_date: providerVideo.releaseDate || null,
-        explicit: providerVideo.explicit || false,
-        quality: providerVideo.quality || "MP4_1080P",
-        image_id: providerVideo.cover || null,
-        artist_id: providerVideo.artist?.providerId || fallbackArtistId,
-        artist_name: providerVideo.artist?.name || "Unknown Artist",
-        artists: providerVideo.artists || [],
-        url: providerVideo.url,
-        isrc: providerVideo.isrc || null,
-        recording_mbid: providerVideo.recordingMbid || null,
-        type: "Music Video",
-    };
-}
-
-function parseJsonObject(value: unknown): Record<string, any> {
-    if (!value) {
-        return {};
-    }
-    if (typeof value === "object") {
-        return value as Record<string, any>;
-    }
-    try {
-        const parsed = JSON.parse(String(value));
-        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-    } catch {
-        return {};
-    }
-}
-
-function providerArtistArtworkSnapshot(artist: ProviderArtist): string {
-    return JSON.stringify({
-        picture: artist.picture || null,
-        popularity: artist.popularity ?? null,
-        url: artist.url || null,
-    });
-}
-
-export function completeBulkTrackList<T>(expectedTrackCount: unknown, tracks: T[] | undefined): T[] | null {
-    const expected = Number(expectedTrackCount);
-    return Array.isArray(tracks)
-        && Number.isFinite(expected)
-        && expected > 0
-        && tracks.length === expected
-        ? tracks
-        : null;
-}
+export {
+    completeBulkTrackList,
+    isMusicBrainzMbid,
+    providerAlbumToOfferRow,
+} from "./refresh-artist-support.js";
 
 export class RefreshArtistService {
     private static getArtistMusicBrainzId(artistId: string): string | null {
@@ -374,68 +272,6 @@ export class RefreshArtistService {
         return localArtistId;
     }
 
-    private static buildProviderReleaseGroupMatches(
-        artistMbid: string | null,
-        albums: any[],
-    ): Map<string, ProviderReleaseGroupMatch> {
-        if (!artistMbid || albums.length === 0) {
-            return new Map();
-        }
-
-        const releaseGroups = servarrMetadata.getCachedReleaseGroupsForArtist(artistMbid);
-        if (releaseGroups.length === 0) {
-            return new Map();
-        }
-
-        return matchProviderAlbumsToReleaseGroups(
-            albums.map((album) => ({
-                provider: String(album.provider || "tidal"),
-                providerId: String(album.provider_id),
-                providerUrl: album.url ?? null,
-                title: String(album.title || ""),
-                version: album.version ?? null,
-                releaseDate: album.release_date ?? null,
-                type: album.type ?? null,
-                quality: album.quality ?? null,
-                qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
-                explicit: album.explicit ?? null,
-                upc: album.upc ?? null,
-                trackCount: album.num_tracks ?? null,
-                volumeCount: album.num_volumes ?? null,
-                isrcs: Array.isArray(album._provider_tracks)
-                    ? album._provider_tracks.map((t: any) => String(t.isrc || "")).filter(Boolean)
-                    : [],
-            })),
-            releaseGroups,
-        );
-    }
-
-    private static normalizeRecordingText(value: unknown): string {
-        return String(value || "")
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, " ")
-            .trim();
-    }
-
-    private static normalizeIsrc(value: unknown): string {
-        return String(value || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
-    }
-
-    private static slotTrack(track: ProviderTrack) {
-        return {
-            mbid: null,
-            providerId: track.providerId || null,
-            provider_id: track.providerId || null,
-            isrc: this.normalizeIsrc(track.isrc) || null,
-            title: track.title || null,
-            track_number: track.trackNumber || null,
-            volume_number: track.volumeNumber || 1,
-            duration: track.duration || null,
-        };
-    }
-
     private static async addSupplementalProviderOffers(
         provider: StreamingProvider,
         albums: any[],
@@ -463,9 +299,9 @@ export class RefreshArtistService {
                 .map((match) => albumsById.get(String(match.providerId)))
                 .filter(Boolean);
             const targetTrackCount = Number(representative.track_count || 0);
-            const hydratedTracks = new Map<string, ReturnType<typeof RefreshArtistService.slotTrack>[]>();
+            const hydratedTracks = new Map<string, SlotTrack[]>();
 
-            const hydrateAlbum = async (albumId: string): Promise<ReturnType<typeof RefreshArtistService.slotTrack>[]> => {
+            const hydrateAlbum = async (albumId: string): Promise<SlotTrack[]> => {
                 const cached = hydratedTracks.get(albumId);
                 if (cached) {
                     return cached;
@@ -491,7 +327,7 @@ export class RefreshArtistService {
                 } catch (error) {
                     console.warn(`[RefreshArtistService] Failed to persist provider track offers for album ${albumId}:`, error);
                 }
-                const tracks = rawTracks.map((track) => this.slotTrack(track));
+                const tracks = rawTracks.map((track) => slotTrack(track));
                 hydratedTracks.set(albumId, tracks);
                 if (album) {
                     album._provider_tracks = tracks;
@@ -535,19 +371,19 @@ export class RefreshArtistService {
                 let isrcs: string[] = [];
                 try {
                     const parsed = JSON.parse(String(target.isrcs || "[]"));
-                    isrcs = Array.isArray(parsed) ? parsed.map(this.normalizeIsrc).filter(Boolean) : [];
+                    isrcs = Array.isArray(parsed) ? parsed.map(normalizeIsrc).filter(Boolean) : [];
                 } catch {
                     isrcs = [];
                 }
                 return {
                     title: target.title,
-                    normalizedTitle: this.normalizeRecordingText(target.title),
+                    normalizedTitle: normalizeMatchText(target.title),
                     isrcs: new Set(isrcs),
                 };
             });
-            const coversTarget = (track: ReturnType<typeof RefreshArtistService.slotTrack>, target: typeof targetRows[number]) =>
+            const coversTarget = (track: SlotTrack, target: typeof targetRows[number]) =>
                 Boolean(track.isrc && target.isrcs.has(track.isrc))
-                || this.normalizeRecordingText(track.title) === target.normalizedTitle;
+                || normalizeMatchText(track.title) === target.normalizedTitle;
 
             for (const album of initialAlbums) {
                 await hydrateAlbum(String(album.provider_id));
@@ -575,8 +411,8 @@ export class RefreshArtistService {
                         }
                     }
 
-                    const slotTrack = this.slotTrack(track);
-                    if (!coversTarget(slotTrack, target)) {
+                    const shapedTrack = slotTrack(track);
+                    if (!coversTarget(shapedTrack, target)) {
                         continue;
                     }
                     const providerAlbumId = String(track.album?.providerId || "").trim();
@@ -854,179 +690,9 @@ export class RefreshArtistService {
         }
     }
 
-    private static buildStoredProviderAlbumSelections(
-        artistMbid: string | null,
-    ): Array<{ provider: string; album: ProviderAlbumSlotCandidate; match: ProviderReleaseGroupMatch }> {
-        if (!artistMbid) {
-            return [];
-        }
-
-        const rows = db.prepare(`
-            SELECT
-                pi.provider,
-                pi.provider_id,
-                pi.title,
-                pi.version,
-                pi.explicit,
-                pi.quality,
-                pi.release_date,
-                pi.release_group_mbid,
-                pi.release_mbid,
-                pi.match_status,
-                pi.match_confidence,
-                pi.match_method,
-                pi.match_evidence,
-                pi.provider_artist_name,
-                rg.title AS release_group_title,
-                rg.primary_type,
-                rg.secondary_types,
-                rg.first_release_date,
-                rg.disambiguation
-            FROM ProviderItems pi
-            JOIN Albums rg
-              ON rg.mbid = pi.release_group_mbid
-            LEFT JOIN ArtistReleaseGroups scope
-              ON scope.release_group_mbid = rg.mbid
-             AND scope.artist_mbid = ?
-            WHERE pi.entity_type = 'album'
-              AND pi.release_group_mbid IS NOT NULL
-              AND pi.match_status IN ('verified', 'probable', 'candidate')
-              AND (
-                pi.artist_mbid = ?
-                OR rg.artist_mbid = ?
-                OR scope.artist_mbid IS NOT NULL
-              )
-        `).all(artistMbid, artistMbid, artistMbid) as Array<{
-            provider: string;
-            provider_id: string | number;
-            title: string | null;
-            version: string | null;
-            explicit: number | null;
-            quality: string | null;
-            release_date: string | null;
-            release_group_mbid: string;
-            release_mbid: string | null;
-            match_status: ProviderReleaseGroupMatch["status"];
-            match_confidence: number | null;
-            match_method: string | null;
-            match_evidence: string | null;
-            provider_artist_name: string | null;
-            release_group_title: string;
-            primary_type: string | null;
-            secondary_types: string | null;
-            first_release_date: string | null;
-            disambiguation: string | null;
-        }>;
-
-        // Load each offer's provider tracks so the slot selector can validate
-        // candidates against a release's actual tracklist (title/ISRC/version)
-        // rather than falling back to album-shape scoring. Without this a
-        // same-titled remix and the radio edit are indistinguishable when the
-        // catalog strips UPC/ISRC (Servarr mode). Batched to avoid a per-album N+1.
-        const tracksByAlbum = new Map<string, ProviderTrackDetail[]>();
-        const albumProviderIds = rows.map((row) => String(row.provider_id));
-        if (albumProviderIds.length > 0) {
-            const placeholders = albumProviderIds.map(() => "?").join(",");
-            const trackRows = db.prepare(`
-                SELECT provider, provider_album_id, provider_id, title, version, isrc, duration, track_number, volume_number, track_mbid, recording_mbid
-                FROM ProviderItems
-                WHERE entity_type = 'track'
-                  AND provider_album_id IN (${placeholders})
-            `).all(...albumProviderIds) as Array<{
-                provider: string;
-                provider_album_id: string | null;
-                provider_id: string | null;
-                title: string | null;
-                version: string | null;
-                isrc: string | null;
-                duration: number | null;
-                track_number: number | null;
-                volume_number: number | null;
-                track_mbid: string | null;
-                recording_mbid: string | null;
-            }>;
-            for (const track of trackRows) {
-                const providerAlbumId = String(track.provider_album_id || "");
-                if (!providerAlbumId) {
-                    continue;
-                }
-                const key = `${track.provider}:${providerAlbumId}`;
-                const list = tracksByAlbum.get(key) || [];
-                list.push({
-                    mbid: track.track_mbid || track.recording_mbid || null,
-                    // The acquisition plan queues per-track downloads by this id;
-                    // without it every trackSource is unqueueable (providerTrackId
-                    // ends up null in the slot evidence).
-                    provider_id: track.provider_id || null,
-                    isrc: track.isrc || null,
-                    title: track.title || "",
-                    version: track.version || null,
-                    track_number: track.track_number ?? null,
-                    volume_number: track.volume_number ?? null,
-                    duration: track.duration ?? null,
-                });
-                tracksByAlbum.set(key, list);
-            }
-        }
-
-        return rows.map((row) => {
-            const evidence = parseJsonObject(row.match_evidence);
-            let secondaryTypes: string[] = [];
-            try {
-                const parsed = JSON.parse(String(row.secondary_types || "[]"));
-                secondaryTypes = Array.isArray(parsed) ? parsed.map((type) => String(type)) : [];
-            } catch {
-                secondaryTypes = [];
-            }
-
-            const providerId = String(row.provider_id);
-            const providerTrackCount = Number(evidence.providerTrackCount || 0);
-            const providerVolumeCount = Number(evidence.providerVolumeCount || 0);
-            const evidencePayload: Record<string, any> & { providerTitle: string } = {
-                providerTitle: row.title || "",
-                ...evidence,
-            };
-
-            return {
-                provider: row.provider,
-                album: {
-                    providerId,
-                    providerArtistName: row.provider_artist_name || null,
-                    title: row.title || "",
-                    version: row.version || null,
-                    releaseDate: row.release_date || null,
-                    quality: row.quality || null,
-                    qualityTags: Array.isArray(evidence.providerQualityTags)
-                        ? evidence.providerQualityTags.map((tag: unknown) => String(tag))
-                        : [],
-                    explicit: row.explicit,
-                    trackCount: providerTrackCount > 0 ? providerTrackCount : null,
-                    volumeCount: providerVolumeCount > 0 ? providerVolumeCount : null,
-                    tracks: tracksByAlbum.get(`${row.provider}:${providerId}`) || [],
-                },
-                match: {
-                    providerId,
-                    status: row.match_status,
-                    confidence: Number(row.match_confidence || 0),
-                    method: row.match_method || "stored-provider-offer",
-                    releaseMbid: row.release_mbid || evidencePayload.matchedReleaseMbid || null,
-                    releaseGroup: {
-                        mbid: row.release_group_mbid,
-                        title: row.release_group_title,
-                        primaryType: row.primary_type,
-                        secondaryTypes,
-                        firstReleaseDate: row.first_release_date,
-                        disambiguation: row.disambiguation,
-                    },
-                    evidence: evidencePayload as ProviderReleaseGroupMatch["evidence"],
-                },
-            };
-        });
-    }
-
     static syncProviderSelectionsFromStoredOffers(artistMbid: string | null): { stereo: number; spatial: number } {
         persistCompositeReleaseMatchesForArtist(artistMbid);
-        const candidates = this.buildStoredProviderAlbumSelections(artistMbid);
+        const candidates = buildStoredProviderAlbumSelections(artistMbid);
         if (candidates.length === 0) {
             return { stereo: 0, spatial: 0 };
         }
@@ -1038,148 +704,6 @@ export class RefreshArtistService {
         });
     }
 
-    private static normalizeProviderMatchText(value: unknown): string {
-        return String(value || "")
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, " ")
-            .trim();
-    }
-
-    private static getLinkedProviderArtistId(artistMbid: string, providerId: string): string | null {
-        const row = db.prepare("SELECT links FROM ArtistMetadata WHERE mbid = ? LIMIT 1")
-            .get(artistMbid) as { links?: string | null } | undefined;
-        if (!row?.links) {
-            return null;
-        }
-
-        try {
-            const parsed = JSON.parse(row.links);
-            const linkType = providerId === "apple-music" ? "apple" : providerId;
-            const links = Array.isArray(parsed) ? parsed : [];
-            for (const link of links) {
-                if (String(link?.type || "").trim().toLowerCase() !== linkType) {
-                    continue;
-                }
-                const target = String(link?.target || "").trim();
-                const match = providerId === "apple-music"
-                    ? target.match(/(?:artist\/[^/]+\/|artist\/|id)(\d+)(?:[/?#]|$)/i)
-                    : target.match(/artist\/(\d+)(?:[/?#]|$)/i);
-                if (match?.[1]) {
-                    return match[1];
-                }
-            }
-        } catch {
-            // Ignore malformed cached metadata and fall back to verified search.
-        }
-
-        return null;
-    }
-
-    private static storeProviderArtistMatch(provider: StreamingProvider, artistMbid: string, artist: ProviderArtist, status: "verified" | "probable"): void {
-        db.prepare(`
-            INSERT INTO ProviderItems (
-                provider, entity_type, provider_id, artist_mbid,
-                title, match_status, match_confidence, match_method, cover, popularity, updated_at
-            )
-            VALUES (?, 'artist', ?, ?, ?, ?, ?, 'artist-name-search', ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
-                title = excluded.title,
-                match_status = excluded.match_status,
-                match_confidence = excluded.match_confidence,
-                match_method = excluded.match_method,
-                cover = COALESCE(excluded.cover, ProviderItems.cover),
-                popularity = COALESCE(excluded.popularity, ProviderItems.popularity),
-                updated_at = CURRENT_TIMESTAMP
-        `).run(
-            provider.id,
-            artist.providerId,
-            artistMbid,
-            artist.name || null,
-            status,
-            status === "verified" ? 1 : 0.75,
-            artist.picture || null,
-            artist.popularity ?? null,
-        );
-
-        const updatePopularity = artist.popularity ?? 0;
-        db.prepare(`
-            UPDATE Artists
-            SET picture = COALESCE(?, picture),
-                cover_image_url = COALESCE(?, cover_image_url),
-                popularity = MAX(COALESCE(popularity, 0), ?)
-            WHERE mbid = ?
-        `).run(artist.picture || null, artist.picture || null, updatePopularity, artistMbid);
-
-        db.prepare(`
-            UPDATE ArtistMetadata
-            SET picture = COALESCE(?, picture),
-                cover_image_url = COALESCE(?, cover_image_url),
-                popularity = MAX(COALESCE(popularity, 0), ?)
-            WHERE mbid = ?
-        `).run(artist.picture || null, artist.picture || null, updatePopularity, artistMbid);
-
-    }
-
-    private static async resolveProviderArtistId(provider: StreamingProvider, artistId: string, artistMbid: string | null): Promise<string | null> {
-        if (!artistMbid) {
-            return artistId;
-        }
-
-        const cached = db.prepare(`
-            SELECT provider_id
-            FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = 'artist'
-              AND artist_mbid = ?
-            ORDER BY updated_at DESC
-            LIMIT 1
-        `).get(provider.id, artistMbid) as { provider_id?: string | number | null } | undefined;
-        if (cached?.provider_id != null) {
-            return String(cached.provider_id);
-        }
-
-        const linkedProviderArtistId = this.getLinkedProviderArtistId(artistMbid, provider.id);
-        if (linkedProviderArtistId) {
-            return linkedProviderArtistId;
-        }
-
-        const localArtist = db.prepare("SELECT name FROM Artists WHERE id = ? OR mbid = ? LIMIT 1")
-            .get(artistId, artistMbid) as { name?: string | null } | undefined;
-        const artistName = String(localArtist?.name || "").trim();
-        if (!artistName) {
-            return null;
-        }
-
-        try {
-            const results = await provider.search(artistName, { types: ["artists"], limit: 8 });
-            const artists = Array.isArray(results.artists) ? results.artists : [];
-            const normalizedName = this.normalizeProviderMatchText(artistName);
-            const exact = artists.find((artist) => this.normalizeProviderMatchText(artist.name) === normalizedName);
-            const selected = exact || artists[0] || null;
-            if (!selected?.providerId) {
-                return null;
-            }
-
-            const resolution = await ProviderArtistIdentityService.resolve(provider.id, normalizeProviderArtist(selected));
-            if (resolution.mbid !== artistMbid) {
-                console.warn(
-                    `[RefreshArtistService] Skipping ${provider.name} artist "${selected.name}" (${selected.providerId}) for ${artistName}: ` +
-                    `provider identity resolved to ${resolution.mbid || resolution.status}, expected ${artistMbid}.`
-                );
-                return null;
-            }
-
-            this.storeProviderArtistMatch(provider, artistMbid, selected, resolution.status === "verified" ? "verified" : "probable");
-            return selected.providerId;
-        } catch (error) {
-            console.warn(`[RefreshArtistService] Failed to resolve ${provider.name} artist for ${artistName} (${artistMbid}):`, error);
-            return null;
-        }
-    }
-
     /**
      * ALL provider identities linked to this canonical artist, not just the
      * most recent one. Providers sometimes split one real-world artist into
@@ -1188,27 +712,6 @@ export class RefreshArtistService {
      * its own releases, so hydration must union their catalogs or half the
      * discography never shows up as offers.
      */
-    private static async resolveProviderArtistIds(provider: StreamingProvider, artistId: string, artistMbid: string | null): Promise<string[]> {
-        const primary = await this.resolveProviderArtistId(provider, artistId, artistMbid);
-        if (!artistMbid) {
-            return primary ? [primary] : [];
-        }
-
-        const linked = db.prepare(`
-            SELECT DISTINCT provider_id
-            FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = 'artist'
-              AND artist_mbid = ?
-        `).all(provider.id, artistMbid) as Array<{ provider_id: string | number }>;
-
-        const ids = new Set<string>();
-        if (primary) ids.add(String(primary));
-        for (const row of linked) {
-            if (row.provider_id != null) ids.add(String(row.provider_id));
-        }
-        return [...ids];
-    }
 
     private static reapplyArtistPathAfterIdentity(artistId: string): void {
         const artist = db.prepare(`
@@ -1354,60 +857,6 @@ export class RefreshArtistService {
      * `provider_priority` order. First non-empty bio wins. Servarr/MB overview
      * remains the hole-fill fallback when no provider returns text.
      */
-    private static async refreshArtistBiography(artistId: string, options: RefreshOptions = {}): Promise<void> {
-        const existing = db.prepare("SELECT bio_text, bio_source, mbid FROM Artists WHERE id = ?")
-            .get(artistId) as {
-                bio_text?: string | null;
-                bio_source?: string | null;
-                mbid?: string | null;
-            } | undefined;
-        const existingBio = String(existing?.bio_text || "").trim();
-        const artistMbid = existing?.mbid || (isMusicBrainzMbid(artistId) ? artistId : null);
-        const priority = options.provider
-            ? [options.provider, ...streamingProviderManager.getProviderPriority().filter((id) => id !== options.provider)]
-            : streamingProviderManager.getProviderPriority();
-
-        const candidates: Array<{ provider: string; providerId: string }> = [];
-        for (const providerId of priority) {
-            let provider;
-            try {
-                provider = streamingProviderManager.getStreamingProvider(providerId);
-            } catch {
-                continue;
-            }
-            if (typeof provider.getArtistBio !== "function") {
-                continue;
-            }
-            const providerArtistIds = await this.resolveProviderArtistIds(provider, artistId, artistMbid);
-            for (const providerArtistId of providerArtistIds) {
-                candidates.push({ provider: provider.id, providerId: providerArtistId });
-            }
-        }
-
-        try {
-            const editorial = await firstProviderEditorialText({
-                kind: "artistBio",
-                candidates,
-            });
-
-            if (editorial) {
-                db.prepare(`
-                    UPDATE Artists SET
-                        bio_text = ?,
-                        bio_source = ?,
-                        bio_last_updated = ?
-                    WHERE id = ?
-                `).run(editorial.text, editorial.source, new Date().toISOString(), artistId);
-                return;
-            }
-
-            if (!existingBio) {
-                console.log(`[RefreshArtistService] No provider biography found for ${artistId}`);
-            }
-        } catch (error) {
-            console.warn(`[RefreshArtistService] Failed to fetch bio for ${artistId}:`, error);
-        }
-    }
 
     static async refreshArtist(artistId: string, options: RefreshOptions = {}): Promise<ArtistRefreshResult> {
         console.log(`[RefreshArtistService] refreshArtist for ${artistId}`);
@@ -1444,20 +893,14 @@ export class RefreshArtistService {
             };
         }
 
-        const includeSimilarArtists = options.includeSimilarArtists !== false;
-        const seedSimilarArtists = options.seedSimilarArtists !== false;
         // Past the staleness gate, refresh always re-syncs canonical stubs/videos
         // and re-reconciles every scoped release group; content_hash skips
         // unchanged payloads so the write cost stays bounded.
         const shouldHydrateCatalog = true;
 
         // Canonical identity + biography.
-        await this.refreshArtistMetadata(artistId, {
-            ...options,
-            includeSimilarArtists,
-            seedSimilarArtists,
-        });
-        await this.refreshArtistBiography(artistId, options);
+        await this.refreshArtistMetadata(artistId, options);
+        await refreshArtistBiography(artistId, options);
 
         let artistMbid = resolveArtistMbid();
 
@@ -1600,7 +1043,7 @@ export class RefreshArtistService {
         // not serialize wall-clock matching time against TIDAL.
         await Promise.all(videoOnlyProviders.map(async (provider) => {
             try {
-                const providerArtistIds = await this.resolveProviderArtistIds(provider, artistId, artistMbid);
+                const providerArtistIds = await resolveProviderArtistIds(provider, artistId, artistMbid);
                 if (providerArtistIds.length > 0) {
                     await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
                 }
@@ -1610,7 +1053,7 @@ export class RefreshArtistService {
         }));
 
         await Promise.all(connectedProviders.map(async (provider) => {
-            const providerArtistIds = await this.resolveProviderArtistIds(provider, artistId, artistMbid);
+            const providerArtistIds = await resolveProviderArtistIds(provider, artistId, artistMbid);
             if (providerArtistIds.length === 0) {
                 console.log(`[RefreshArtistService] Skipping catalog hydration on ${provider.name} for ${artistId} (no provider artist match)`);
                 return;
@@ -1659,11 +1102,11 @@ export class RefreshArtistService {
                         title,
                         isrc,
                         duration,
-                        CAST(json_extract(match_evidence, '$.trackPosition') AS INTEGER) AS track_number,
-                        CAST(json_extract(match_evidence, '$.mediumPosition') AS INTEGER) AS volume_number
+                        track_number,
+                        volume_number
                     FROM ProviderItems
                     WHERE provider = ? AND entity_type = 'track' AND provider_album_id = ?
-                    ORDER BY volume_number, track_number
+                    ORDER BY COALESCE(volume_number, 1), COALESCE(track_number, 0)
                 `);
                 for (const album of albums) {
                     const numTracks = Number(album.num_tracks);
@@ -1685,7 +1128,7 @@ export class RefreshArtistService {
                         album._provider_tracks = materialized.map((row) => ({
                             mbid: null,
                             provider_id: row.provider_id || null,
-                            isrc: this.normalizeIsrc(row.isrc) || null,
+                            isrc: normalizeIsrc(row.isrc) || null,
                             title: row.title || null,
                             track_number: row.track_number || null,
                             volume_number: row.volume_number || 1,
@@ -1702,7 +1145,7 @@ export class RefreshArtistService {
                 // tracklists only for plausible MusicBrainz release-group candidates.
                 // Canonical MB tracklists remain complete; this only avoids detailed
                 // provider calls for releases the metadata matcher cannot associate.
-                const preliminaryMatches = this.buildProviderReleaseGroupMatches(artistMbid, albums);
+                const preliminaryMatches = buildProviderReleaseGroupMatches(artistMbid, albums);
                 const candidateAlbumIds = new Set(
                     Array.from(preliminaryMatches.values())
                         .filter((match) => Boolean(match.releaseGroup))
@@ -1753,7 +1196,7 @@ export class RefreshArtistService {
                                     const rawTracks = completeBatch
                                         ? completeBatch
                                         : await provider.getAlbumTracks(album.provider_id);
-                                    album._provider_tracks = rawTracks.map((t: any) => this.slotTrack(t));
+                                    album._provider_tracks = rawTracks.map((t: any) => slotTrack(t));
                                     // Keep the raw provider tracks so we can persist them as
                                     // track offer rows once the album offers exist (below).
                                     album._provider_raw_tracks = rawTracks;
@@ -1776,7 +1219,7 @@ export class RefreshArtistService {
                     }
                 }
 
-                const providerReleaseGroupMatches = this.buildProviderReleaseGroupMatches(artistMbid, albums);
+                const providerReleaseGroupMatches = buildProviderReleaseGroupMatches(artistMbid, albums);
                 console.log(`[RefreshArtistService] Found ${albums.length} albums on ${provider.name} for artist ${artistId}`);
 
                 totalAlbumsCount += albums.length;
@@ -1889,7 +1332,7 @@ export class RefreshArtistService {
         }
 
         await Promise.all(providers.map(async (provider) => {
-            const providerArtistId = await this.resolveProviderArtistId(provider, artistId, artistMbid);
+            const providerArtistId = await resolveProviderArtistId(provider, artistId, artistMbid);
             if (!providerArtistId) {
                 return;
             }
@@ -1917,24 +1360,42 @@ export class RefreshArtistService {
                     ...providerVideoToOfferRow(video, artistId),
                     _provider: provider.id,
                 }));
-            // Artist video lists often omit publish/release dates (especially
-            // YouTube). Fill gaps with a bounded getVideo pass so VideoPage years
-            // and ordering have something to show after refresh.
+            // Artist video lists often omit publish/release dates and (for YouTube)
+            // concrete resolution. Fill gaps with a bounded getVideo pass — the
+            // YouTube adapter probes yt-dlp inside getVideo when needed.
             if (provider.getVideo) {
-                const missingDates = videos
-                    .filter((video) => !String(video.release_date || "").trim())
+                const missingFacts = videos
+                    .filter((video) =>
+                        !String(video.release_date || "").trim()
+                        || video.duration == null
+                        || !String(video.quality || "").trim())
                     .slice(0, 60);
-                if (missingDates.length > 0) {
+                if (missingFacts.length > 0) {
                     const limit = pLimit(4);
-                    await Promise.all(missingDates.map((video) => limit(async () => {
+                    await Promise.all(missingFacts.map((video) => limit(async () => {
                         try {
                             const detailed = await provider.getVideo!(String(video.provider_id));
                             if (detailed.releaseDate) {
                                 video.release_date = detailed.releaseDate;
                             }
+                            if (detailed.duration != null) {
+                                video.duration = Number(detailed.duration);
+                            }
+                            if (detailed.quality) {
+                                video.quality = detailed.quality;
+                            }
+                            if (detailed.albumId) {
+                                video.album_id = detailed.albumId;
+                            }
+                            if (detailed.relatedTrackId) {
+                                video.related_track_id = detailed.relatedTrackId;
+                            }
+                            if (detailed.isrc) {
+                                video.isrc = detailed.isrc;
+                            }
                         } catch (error) {
                             console.warn(
-                                `[RefreshArtistService] Failed to enrich video date for ${provider.name}:${video.provider_id}:`,
+                                `[RefreshArtistService] Failed to enrich video facts for ${provider.name}:${video.provider_id}:`,
                                 error,
                             );
                         }

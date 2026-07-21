@@ -3,13 +3,13 @@ import {
   Button,
 } from "@fluentui/react-components";
 import {
-  ArrowClockwise24Regular as ArrowClockwise24RegularBase,
+  ArrowClockwise24Regular,
   ArrowClockwise24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { ErrorState } from "@/components/ui/ContentState";
 
-const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
+const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
 
 interface Props {
   children: ReactNode;
@@ -39,7 +39,7 @@ const ErrorFallback = ({
         <>
         <Button
           appearance="primary"
-          icon={<ArrowClockwise24Regular />}
+          icon={<ArrowClockwise24 />}
           onClick={onReset}
         >
           Try Again

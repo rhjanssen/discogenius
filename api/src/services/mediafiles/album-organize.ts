@@ -1,0 +1,288 @@
+import path from "path";
+import { db } from "../../database.js";
+
+/**
+ * Album organize: file↔provider matching + catalog-first track row resolution.
+ * DB reads only — no FS side effects or Organizer class state.
+ */
+
+export function normalizeBundledVideoTitle(value: unknown): string {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+export function loadBundledVideoTrackCandidates(
+  provider: string,
+  albumIds: string[],
+): Array<{ provider_id: string; title: string; track_number: number | null }> {
+  if (!provider || albumIds.length === 0) {
+    return [];
+  }
+  const placeholders = albumIds.map(() => "?").join(", ");
+  return db.prepare(`
+    SELECT
+      CAST(provider_id AS TEXT) AS provider_id,
+      COALESCE(title, '') AS title,
+      track_number
+    FROM ProviderItems
+    WHERE provider = ?
+      AND entity_type = 'track'
+      AND library_slot = 'video'
+      AND provider_album_id IN (${placeholders})
+    ORDER BY volume_number ASC, track_number ASC, provider_id ASC
+  `).all(provider, ...albumIds) as Array<{ provider_id: string; title: string; track_number: number | null }>;
+}
+
+export type MatchedAlbumTrackRow = {
+  id: string | number;
+  album_id: string | number | null;
+  artist_id: string | number | null;
+  title: string | null;
+  version: string | null;
+  explicit: number | null;
+  quality: string | null;
+  track_number: number | null;
+  volume_number: number | null;
+  mbid: string | null;
+  canonical_track_mbid: string | null;
+  canonical_recording_mbid: string | null;
+};
+
+/** Provider track ids that have a materialized offer row for the album(s). */
+export function loadProviderTrackIdSet(albumIds: string[], provider = ""): Set<string> {
+  if (albumIds.length === 0) {
+    return new Set();
+  }
+  const placeholders = albumIds.map(() => "?").join(", ");
+  const rows = db.prepare(`
+    SELECT CAST(provider_id AS TEXT) AS provider_id
+    FROM ProviderItems
+    WHERE entity_type = 'track'
+      AND provider_album_id IN (${placeholders})
+      AND (? = '' OR provider = ?)
+  `).all(...albumIds, provider, provider) as Array<{ provider_id: string }>;
+  return new Set(rows.map((row) => String(row.provider_id)));
+}
+
+/**
+ * Fast path: basename === provider track id. Numeric basenames with no offer
+ * are reported so the caller can refresh and retry.
+ */
+export function matchAlbumFilesByProviderId(
+  files: string[],
+  providerTrackIds: Set<string>,
+): { matched: Map<string, string>; missingProviderIds: Set<string> } {
+  const matched = new Map<string, string>();
+  const missingProviderIds = new Set<string>();
+  for (const filePath of files) {
+    const baseName = path.basename(filePath, path.extname(filePath));
+    if (!baseName) {
+      continue;
+    }
+
+    if (providerTrackIds.has(baseName)) {
+      matched.set(filePath, baseName);
+    } else if (/^\d+$/.test(baseName)) {
+      missingProviderIds.add(baseName);
+    }
+  }
+  return { matched, missingProviderIds };
+}
+
+/**
+ * Apple Music album-bundled videos stage as `NN. Title.mp4`. Match against
+ * materialized VIDEO-slot track offers by exact normalized title (+ optional
+ * position). Ambiguous titles are left unmatched for manual recovery.
+ * Mutates `matched` in place.
+ */
+export function matchAppleMusicBundledVideoFiles(params: {
+  files: string[];
+  matched: Map<string, string>;
+  provider: string;
+  albumIds: string[];
+  videoExtensions: Set<string>;
+}): void {
+  const { files, matched, provider, albumIds, videoExtensions } = params;
+  if (provider.toLowerCase() !== "apple-music" || albumIds.length === 0) {
+    return;
+  }
+
+  const candidates = loadBundledVideoTrackCandidates(provider, albumIds);
+  const usedProviderIds = new Set(matched.values());
+  for (const filePath of files) {
+    if (matched.has(filePath) || !videoExtensions.has(path.extname(filePath).toLowerCase())) {
+      continue;
+    }
+
+    const baseName = path.basename(filePath, path.extname(filePath));
+    const filenameMatch = /^(\d+)\.\s+(.+)$/.exec(baseName);
+    if (!filenameMatch) {
+      continue;
+    }
+
+    const taskPosition = Number(filenameMatch[1]);
+    const normalizedTitle = normalizeBundledVideoTitle(filenameMatch[2]);
+    if (!normalizedTitle) {
+      continue;
+    }
+
+    const titleMatches = candidates.filter((candidate) =>
+      !usedProviderIds.has(candidate.provider_id)
+      && normalizeBundledVideoTitle(candidate.title) === normalizedTitle
+    );
+    const positionedMatches = titleMatches.filter((candidate) => candidate.track_number === taskPosition);
+    const matchedCandidate = positionedMatches.length === 1
+      ? positionedMatches[0]
+      : (positionedMatches.length === 0 && titleMatches.length === 1 ? titleMatches[0] : null);
+    if (!matchedCandidate) {
+      continue;
+    }
+
+    matched.set(filePath, matchedCandidate.provider_id);
+    usedProviderIds.add(matchedCandidate.provider_id);
+  }
+}
+
+/**
+ * Resolve a staged provider track id to a catalog Tracks row on the selected
+ * release. Positions always come from Tracks — never from provider
+ * match_evidence disc/track numbers (native album layout ≠ hybrid release).
+ */
+export function resolveMatchedCanonicalAlbumTrackRow(params: {
+  provider: string;
+  trackId: string;
+  releaseMbid: string;
+  fallbackAlbumId: string;
+  fallbackAlbumIds?: string[];
+  fallbackArtistId: string;
+  fallbackQuality: string | null;
+}): MatchedAlbumTrackRow | null {
+  const providerTrack = db.prepare(`
+    SELECT
+      pi.provider_id,
+      pi.version,
+      pi.explicit,
+      pi.quality,
+      pi.album_id,
+      pi.track_mbid,
+      pi.recording_mbid,
+      json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
+    FROM ProviderItems pi
+    WHERE pi.provider = ?
+      AND pi.entity_type = 'track'
+      AND pi.provider_id = ?
+      AND pi.release_mbid = ?
+    LIMIT 1
+  `).get(params.provider, params.trackId, params.releaseMbid) as any
+  // Hybrid composites often source tracks from a different provider release
+  // than the selected canonical release_mbid. Fall back to the provider id
+  // alone so organize still attaches the file instead of reporting 0 tracks.
+  ?? db.prepare(`
+    SELECT
+      pi.provider_id,
+      pi.version,
+      pi.explicit,
+      pi.quality,
+      pi.album_id,
+      pi.track_mbid,
+      pi.recording_mbid,
+      json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
+    FROM ProviderItems pi
+    WHERE pi.provider = ?
+      AND pi.entity_type = 'track'
+      AND pi.provider_id = ?
+    ORDER BY
+      CASE WHEN pi.release_mbid = ? THEN 0 ELSE 1 END,
+      pi.updated_at DESC
+    LIMIT 1
+  `).get(params.provider, params.trackId, params.releaseMbid) as any;
+
+  if (providerTrack) {
+    // Catalog-first: bind via Tracks on the selected/hybrid release only.
+    // Never use provider match_evidence disc/track numbers — those are the
+    // native album layout (e.g. Come As You Are #1) and mis-number Softly.
+    const canonicalTrack = db.prepare(`
+      SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
+      FROM Tracks t
+      WHERE t.release_mbid = ?
+        AND (
+          (? IS NOT NULL AND t.mbid = ?)
+          OR (? IS NOT NULL AND t.recording_mbid = ?)
+        )
+      ORDER BY
+        CASE
+          WHEN ? IS NOT NULL AND t.mbid = ? THEN 0
+          ELSE 1
+        END,
+        t.medium_position,
+        t.position
+      LIMIT 1
+    `).get(
+      params.releaseMbid,
+      providerTrack.track_mbid || null,
+      providerTrack.track_mbid || null,
+      providerTrack.recording_mbid || null,
+      providerTrack.recording_mbid || null,
+      providerTrack.track_mbid || null,
+      providerTrack.track_mbid || null,
+    ) as {
+      mbid: string;
+      recording_mbid: string;
+      title: string;
+      position: number;
+      medium_position: number;
+    } | undefined;
+
+    if (!canonicalTrack) {
+      return null;
+    }
+
+    return {
+      id: providerTrack.provider_id || params.trackId,
+      album_id: providerTrack.album_id || providerTrack.evidence_album_id || params.fallbackAlbumId,
+      artist_id: params.fallbackArtistId,
+      title: canonicalTrack.title,
+      version: providerTrack.version || null,
+      explicit: providerTrack.explicit ?? null,
+      quality: providerTrack.quality || params.fallbackQuality,
+      track_number: canonicalTrack.position,
+      volume_number: canonicalTrack.medium_position,
+      mbid: canonicalTrack.recording_mbid,
+      canonical_track_mbid: canonicalTrack.mbid,
+      canonical_recording_mbid: canonicalTrack.recording_mbid,
+    };
+  }
+
+  // Last resort: treat trackId as a canonical MB track id on the release.
+  const canonicalTrack = db.prepare(`
+    SELECT
+      CAST(t.id AS TEXT) AS id,
+      ? AS album_id,
+      ? AS artist_id,
+      t.title,
+      NULL AS version,
+      NULL AS explicit,
+      ? AS quality,
+      t.position AS track_number,
+      t.medium_position AS volume_number,
+      t.recording_mbid AS mbid,
+      t.mbid AS canonical_track_mbid,
+      t.recording_mbid AS canonical_recording_mbid
+    FROM Tracks t
+    WHERE t.release_mbid = ?
+      AND CAST(t.id AS TEXT) = ?
+    LIMIT 1
+  `).get(
+    params.fallbackAlbumId,
+    params.fallbackArtistId,
+    params.fallbackQuality,
+    params.releaseMbid,
+    params.trackId,
+  ) as MatchedAlbumTrackRow | undefined;
+
+  return canonicalTrack || null;
+}

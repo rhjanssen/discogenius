@@ -87,7 +87,7 @@ export function getTidalAlbumDownloadTrackInfo(providerIds: string[]): TidalAlbu
     LEFT JOIN Artists canonical_artist
       ON canonical_artist.mbid = COALESCE(recording.artist_mbid, release.artist_mbid)
     WHERE matched_releases.release_mbid IS NOT NULL
-      AND COALESCE(recording.is_video, 0) = 0
+      AND (recording.is_video IS NULL OR recording.is_video = 0)
     ORDER BY matched_releases.ord ASC, COALESCE(track.medium_position, 1) ASC, track.position ASC
   `).all(...params) as Array<TidalAlbumDownloadTrackInfo & { ord: number }>;
 
@@ -253,10 +253,6 @@ export class TidalProvider implements StreamingProvider {
     return (await tidal.getArtistVideos(String(id))).map((video: any) => this.mapVideo(video));
   }
 
-  async getArtistCatalogPage(id: string | number): Promise<any> {
-    return tidal.getArtistPage(String(id));
-  }
-
   async listImportSources(): Promise<ProviderImportSource[]> {
     const sources: ProviderImportSource[] = [
       {
@@ -398,19 +394,9 @@ export class TidalProvider implements StreamingProvider {
     return res?.text ?? null;
   }
 
-  async getSimilarArtists(id: string | number): Promise<ProviderArtist[]> {
-    const res = await tidal.getArtistSimilar(String(id));
-    return (Array.isArray(res) ? res : []).map((artist: any) => this.mapArtist(artist));
-  }
-
   async getAlbumReview(id: string | number): Promise<string | null> {
     const res = await tidal.getAlbumReview(String(id));
     return res?.text ?? null;
-  }
-
-  async getSimilarAlbums(id: string | number): Promise<ProviderAlbum[]> {
-    const res = await tidal.getAlbumSimilar(String(id));
-    return (Array.isArray(res) ? res : []).map((album: any) => this.mapAlbum(album));
   }
 
   async getAlbumCredits(id: string | number): Promise<any[]> {
@@ -856,6 +842,8 @@ export class TidalProvider implements StreamingProvider {
       url: video.url,
       isrc: video.isrc || null,
       recordingMbid: video.mbid || video.recording_mbid || null,
+      // TIDAL sometimes nests album.id on /videos; keep the provider album id only.
+      albumId: this.providerId(video.albumId, video.album_id, video.album?.id) || null,
       raw: video,
     };
   }

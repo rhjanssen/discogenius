@@ -8,6 +8,13 @@ import {
   Spinner,
   Card,
   Badge,
+  Dialog,
+  DialogSurface,
+  DialogBody,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Checkbox,
   makeStyles,
   tokens,
   Overflow,
@@ -15,18 +22,19 @@ import {
   mergeClasses,
 } from "@fluentui/react-components";
 import {
-  ArrowSync24Regular as ArrowSync24RegularBase,
-  Eye24Regular as Eye24RegularBase,
-  EyeOff24Regular as EyeOff24RegularBase,
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
-  LockClosed24Regular as LockClosed24RegularBase,
-  LockOpen24Regular as LockOpen24RegularBase,
-  Grid24Regular as Grid24RegularBase,
-  AppsListDetail24Regular as AppsListDetail24RegularBase,
-  Play24Regular as Play24RegularBase,
-  Info24Regular as Info24RegularBase,
-  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
-  FolderSync24Regular as FolderSync24RegularBase,
+  ArrowSync24Regular,
+  Eye24Regular,
+  EyeOff24Regular,
+  ArrowDownload24Regular,
+  LockClosed24Regular,
+  LockOpen24Regular,
+  Grid24Regular,
+  AppsListDetail24Regular,
+  Play24Regular,
+  Info24Regular,
+  Tag24Regular,
+  ArrowSortDownLines24Regular,
+  FolderSync24Regular,
   ArrowSync24Filled,
   Eye24Filled,
   EyeOff24Filled,
@@ -37,6 +45,7 @@ import {
   AppsListDetail24Filled,
   Play24Filled,
   Info24Filled,
+  Tag24Filled,
   ArrowSortDownLines24Filled,
   FolderSync24Filled,
   bundleIcon
@@ -48,7 +57,7 @@ import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
-import { renderableArtworkUrl } from "@/utils/artwork";
+import { mediaCoverSrc } from "@/utils/artwork";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -65,6 +74,7 @@ import { formatMetadataAttribution } from "@/utils/date";
 import { DownloadOverlay } from "@/components/ui/DownloadOverlay";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
+import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
 import { getAlbumPath, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { isSpatialAudioQuality } from "@/utils/spatialAudio";
 import {
@@ -96,18 +106,19 @@ import {
   type MonitorStateChangedDetail,
 } from "@/utils/appEvents";
 
-const ArrowSync24Regular = bundleIcon(ArrowSync24Filled, ArrowSync24RegularBase);
-const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
-const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
-const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
-const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
-const Grid24Regular = bundleIcon(Grid24Filled, Grid24RegularBase);
-const AppsListDetail24Regular = bundleIcon(AppsListDetail24Filled, AppsListDetail24RegularBase);
-const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
-const Info24Regular = bundleIcon(Info24Filled, Info24RegularBase);
-const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
-const FolderSync24Regular = bundleIcon(FolderSync24Filled, FolderSync24RegularBase);
+const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
+const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
+const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
+const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
+const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
+const Grid24 = bundleIcon(Grid24Filled, Grid24Regular);
+const AppsListDetail24 = bundleIcon(AppsListDetail24Filled, AppsListDetail24Regular);
+const Play24 = bundleIcon(Play24Filled, Play24Regular);
+const Info24 = bundleIcon(Info24Filled, Info24Regular);
+const Tag24 = bundleIcon(Tag24Filled, Tag24Regular);
+const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
+const FolderSync24 = bundleIcon(FolderSync24Filled, FolderSync24Regular);
 
 const useStyles = makeStyles({
   container: {
@@ -475,6 +486,9 @@ const ArtistPage = () => {
   const [retagPreviewOpen, setRetagPreviewOpen] = useState(false);
   const [retagPreviewItems, setRetagPreviewItems] = useState<RetagPreviewItem[]>([]);
   const [retagApplying, setRetagApplying] = useState(false);
+  const [deleteFilesOpen, setDeleteFilesOpen] = useState(false);
+  const [deleteFilesUnmonitor, setDeleteFilesUnmonitor] = useState(false);
+  const [deleteFilesApplying, setDeleteFilesApplying] = useState(false);
   const [bioExpanded, setBioExpanded] = useState(false);
   const [monitorOverride, setMonitorOverride] = useState<boolean | null>(() => (
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
@@ -569,13 +583,19 @@ const ArtistPage = () => {
   const hasLocalArtistPicture = artistLocalFiles.some((file: any) => file.file_type === "cover");
   const bioAttribution = formatMetadataAttribution(artistInfo?.bio_source, artistInfo?.bio_last_updated);
   const artistPictureUrl = artistInfo
-    ? renderableArtworkUrl(artistInfo.picture || (pageData?.artistInfo as any)?.picture || (artistInfo as any).cover_image_url || (pageData?.artistInfo as any)?.cover_image_url)
+    ? (mediaCoverSrc({
+        picture: artistInfo.picture || (pageData?.artistInfo as any)?.picture,
+      }) || null)
     : undefined;
   const [artistPictureFailed, setArtistPictureFailed] = useState(false);
   const artistBrandColor = useArtworkBrandColor({
     artworkUrl: artistPictureFailed ? null : artistPictureUrl,
     deriveBrandFromArtwork: true,
+    ownsAmbience: true,
   });
+  const { heroProps: ultraBlurHeroProps } = useUltraBlurHero(
+    artistPictureFailed ? null : artistPictureUrl,
+  );
   const isMonitored = monitorOverride ?? Boolean(artistInfo?.is_monitored);
 
   useEffect(() => {
@@ -868,7 +888,7 @@ const ArtistPage = () => {
       width: "40px",
       media: true,
       render: (album: any) => {
-        const src = renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id);
+        const src = mediaCoverSrc(album);
         return src ? (
           <img
             src={src}
@@ -938,20 +958,20 @@ const ArtistPage = () => {
               {
                 key: "download",
                 label: "Download album",
-                icon: <ArrowDownload24Regular />,
+                icon: <ArrowDownload24 />,
                 onClick: (event) => handleDownloadAlbumRow(event, album),
               },
               {
                 key: "monitor",
                 label: isLocked ? "Monitoring is locked" : (album.is_monitored ? "Unmonitor" : "Monitor"),
-                icon: album.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />,
+                icon: album.is_monitored ? <EyeOff24 /> : <Eye24 />,
                 onClick: (event) => toggleAlbumMonitored(event, String(album.id), !album.is_monitored),
                 disabled: isLocked,
               },
               {
                 key: "lock",
                 label: isLocked ? "Unlock" : "Lock",
-                icon: isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />,
+                icon: isLocked ? <LockOpen24 /> : <LockClosed24 />,
                 onClick: (event) => handleToggleAlbumLock(event, String(album.id), isLocked),
               },
             ]}
@@ -1023,7 +1043,7 @@ const ArtistPage = () => {
     if (libraryFilter === 'stereo' && !hasStereoOffer && isSpatial) return null;
     if (libraryFilter === 'spatial' && !hasSpatialOffer && !isSpatial) return null;
 
-    const imageUrl = renderableArtworkUrl(item.cover_art_url || item.cover || item.cover_id);
+    const imageUrl = mediaCoverSrc(item);
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = item.source === "musicbrainz"
       ? [year || ""].filter(Boolean).join(' · ')
@@ -1032,7 +1052,7 @@ const ArtistPage = () => {
       || getProgressByProviderId(String(item.spatial_provider_id || ""))
       || getProgressByProviderId(String(providerId));
     const stateBadge = isLocked ? (
-      <Badge appearance="filled" color="informative" icon={<LockClosed24Regular />}>
+      <Badge appearance="filled" color="informative" icon={<LockClosed24 />}>
         Locked
       </Badge>
     ) : (isRedundant && !isAlbumMonitored ? (
@@ -1069,7 +1089,7 @@ const ArtistPage = () => {
     );
   };
 
-  // Render an artist card (for Similar Artists, Influencers sections)
+  // Render an artist card (ARTIST_LIST modules)
   const renderArtistCard = (item: any) => {
     const providerId = item.id?.toString?.() ?? String(item.id);
     const name = item.name || "Unknown Artist";
@@ -1104,7 +1124,7 @@ const ArtistPage = () => {
     const isVideoMonitored = Boolean(item.is_monitored);
     const isLocked = Boolean(item.monitored_lock);
     const isDownloaded = Boolean(item.is_downloaded ?? item.downloaded);
-    const imageUrl = renderableArtworkUrl(item.cover_art_url || item.cover || item.cover_id);
+    const imageUrl = mediaCoverSrc(item);
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = [artistName, year || ''].filter(Boolean).join(' · ');
 
@@ -1147,7 +1167,7 @@ const ArtistPage = () => {
               <img src={imageUrl} alt={title} className={cardStyles.cardImage} loading="lazy" />
             ) : (
               <div className={cardStyles.placeholderBg}>
-                <Play24Regular className={styles.playIcon} />
+                <Play24 className={styles.playIcon} />
               </div>
             )}
             {isLocked && (
@@ -1155,7 +1175,7 @@ const ArtistPage = () => {
                 appearance="filled"
                 color="informative"
                 className={styles.lockedBadge}
-                icon={<LockClosed24Regular />}
+                icon={<LockClosed24 />}
               >
                 Locked
               </Badge>
@@ -1169,9 +1189,9 @@ const ArtistPage = () => {
               style={{ cursor: isLocked ? 'not-allowed' : 'pointer', opacity: isLocked ? 0.5 : 1 }}
             >
               {isVideoMonitored ? (
-                <EyeOff24Regular className={cardStyles.monitorIcon} />
+                <EyeOff24 className={cardStyles.monitorIcon} />
               ) : (
-                <Eye24Regular className={cardStyles.monitorIcon} />
+                <Eye24 className={cardStyles.monitorIcon} />
               )}
             </button>
             {(() => {
@@ -1252,7 +1272,7 @@ const ArtistPage = () => {
       />
       <Button
         appearance="subtle"
-        icon={viewMode === 'grid' ? <AppsListDetail24Regular /> : viewMode === 'list' ? <Grid24Regular /> : <Grid24Regular />}
+        icon={viewMode === 'grid' ? <AppsListDetail24 /> : viewMode === 'list' ? <Grid24 /> : <Grid24 />}
         onClick={() => setViewMode(prev => prev === 'carousel' ? 'grid' : prev === 'grid' ? 'list' : 'carousel')}
         title={`Switch to ${viewMode === 'carousel' ? 'grid' : viewMode === 'grid' ? 'list' : 'carousel'} view`}
         className={mergeClasses(styles.actionButton, styles.transparentButton)}
@@ -1536,7 +1556,33 @@ const ArtistPage = () => {
     { key: 'download-missing', label: 'Download Missing', disabled: downloadActionDisabled, onClick: startDownloads },
     { key: 'rename-files', label: renameApplying ? 'Loading rename...' : 'Preview Rename', disabled: renameApplying, onClick: openRenamePreview },
     { key: 'retag-files', label: retagApplying ? 'Loading tags...' : 'Write Tags', disabled: retagApplying, onClick: openRetagPreview },
+    { key: 'delete-files', label: 'Delete files…', disabled: deleteFilesApplying, onClick: () => setDeleteFilesOpen(true) },
   ];
+
+  const handleDeleteArtistFiles = async () => {
+    if (!artistId) return;
+    setDeleteFilesApplying(true);
+    try {
+      const result: any = await api.deleteArtistFiles(artistId, { unmonitor: deleteFilesUnmonitor });
+      toast({
+        title: "Artist files deleted",
+        description: `Removed ${result?.deleted ?? 0} file(s)${result?.unmonitored ? " and unmonitored the artist" : ""}.`,
+      });
+      setDeleteFilesOpen(false);
+      setDeleteFilesUnmonitor(false);
+      dispatchLibraryUpdated();
+      dispatchActivityRefresh();
+      queryClient.invalidateQueries({ queryKey: ["artist-page", artistId] });
+    } catch (error) {
+      toast({
+        title: "Failed to delete artist files",
+        description: error instanceof Error ? error.message : "Could not delete artist files.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteFilesApplying(false);
+    }
+  };
 
   // Reset mobile filter/view tracking each render so it appears on the first visible section
   mobileFilterViewRendered.current = false;
@@ -1560,16 +1606,58 @@ const ArtistPage = () => {
           onOpenChange={setRetagPreviewOpen}
           onApply={handleApplyRetags}
         />
+        <Dialog
+          open={deleteFilesOpen}
+          onOpenChange={(_, data) => {
+            if (!data.open && !deleteFilesApplying) {
+              setDeleteFilesOpen(false);
+              setDeleteFilesUnmonitor(false);
+            }
+          }}
+        >
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>Delete artist files</DialogTitle>
+              <DialogContent>
+                Delete all imported library files for <strong>{artistName || "this artist"}</strong> from disk
+                and remove them from Discogenius tracking. Catalog metadata is kept.
+                <div style={{ marginTop: 12 }}>
+                  <Checkbox
+                    checked={deleteFilesUnmonitor}
+                    onChange={(_, data) => setDeleteFilesUnmonitor(Boolean(data.checked))}
+                    label="Also unmonitor this artist"
+                  />
+                </div>
+              </DialogContent>
+              <DialogActions>
+                <Button
+                  appearance="secondary"
+                  disabled={deleteFilesApplying}
+                  onClick={() => {
+                    setDeleteFilesOpen(false);
+                    setDeleteFilesUnmonitor(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button appearance="primary" disabled={deleteFilesApplying} onClick={() => void handleDeleteArtistFiles()}>
+                  {deleteFilesApplying ? "Deleting…" : "Delete files"}
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
         {/* Header */}
         <div className={styles.header}>
           <div className={styles.headerContent}>
             {/* Artist Avatar */}
             <div className={styles.artistImageShell}>
               {artistPictureUrl && !artistPictureFailed ? (
-                <img 
+                <img
+                  {...ultraBlurHeroProps}
                   src={artistPictureUrl} 
                   className={styles.artistImage} 
-                  alt={artistName} 
+                  alt={artistName}
                   onError={() => setArtistPictureFailed(true)}
                 />
               ) : (
@@ -1585,7 +1673,7 @@ const ArtistPage = () => {
                   onClick={() => setArtistInfoOpen(true)}
                   title="Artwork info"
                 >
-                  <Info24Regular className={styles.artworkInfoIcon} />
+                  <Info24 className={styles.artworkInfoIcon} />
                 </div>
               )}
             </div>
@@ -1607,7 +1695,7 @@ const ArtistPage = () => {
                   <OverflowItem id="monitor" priority={4}>
                     <Button
                       appearance={isMonitored ? "subtle" : "primary"}
-                      icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
+                      icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
                       onClick={toggleMonitoring}
                       title={isMonitored ? "Click to stop monitoring" : "Click to enable monitoring"}
                       className={mergeClasses(
@@ -1622,7 +1710,7 @@ const ArtistPage = () => {
                   <OverflowItem id="refresh-scan" priority={3}>
                     <Button
                       appearance={!hasBeenScanned ? "primary" : "subtle"}
-                      icon={isScanBusy ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                      icon={isScanBusy ? <Spinner size="tiny" /> : <ArrowSync24 />}
                       onClick={syncArtist}
                       disabled={isScanBusy}
                       className={mergeClasses(
@@ -1638,7 +1726,7 @@ const ArtistPage = () => {
                   <OverflowItem id="curate" priority={2}>
                     <Button
                       appearance={(hasAlbums && !hasMonitoredAlbums) ? "primary" : "subtle"}
-                      icon={isCurateBusy ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
+                      icon={isCurateBusy ? <Spinner size="tiny" /> : <ArrowSortDownLines24 />}
                       onClick={curateArtist}
                       disabled={isCurateBusy || isScanBusy || !hasAlbums}
                       className={mergeClasses(
@@ -1654,7 +1742,7 @@ const ArtistPage = () => {
                   <OverflowItem id="download-missing" priority={1}>
                     <Button
                       appearance="subtle"
-                      icon={<ArrowDownload24Regular />}
+                      icon={<ArrowDownload24 />}
                       onClick={startDownloads}
                       disabled={downloadActionDisabled}
                       title={downloadActionTitle}
@@ -1667,7 +1755,7 @@ const ArtistPage = () => {
                   <OverflowItem id="rename-files" priority={0}>
                     <Button
                       appearance="subtle"
-                      icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24Regular />}
+                      icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24 />}
                       onClick={openRenamePreview}
                       disabled={renameApplying}
                       title="Preview artist file renames"
@@ -1680,7 +1768,7 @@ const ArtistPage = () => {
                   <OverflowItem id="retag-files" priority={0}>
                     <Button
                       appearance="subtle"
-                      icon={retagApplying ? <Spinner size="tiny" /> : <Info24Regular />}
+                      icon={retagApplying ? <Spinner size="tiny" /> : <Tag24 />}
                       onClick={openRetagPreview}
                       disabled={retagApplying}
                       title="Preview artist metadata tag changes"
@@ -1705,7 +1793,7 @@ const ArtistPage = () => {
 
                     <Button
                       appearance="subtle"
-                      icon={viewMode === 'grid' ? <AppsListDetail24Regular /> : <Grid24Regular />}
+                      icon={viewMode === 'grid' ? <AppsListDetail24 /> : <Grid24 />}
                       onClick={() => setViewMode(prev => prev === 'grid' ? 'carousel' : 'grid')}
                       title={viewMode === 'grid' ? "Switch to carousel view" : "Switch to grid view"}
                       className={mergeClasses(styles.actionButton, styles.transparentButton)}
@@ -1731,7 +1819,7 @@ const ArtistPage = () => {
           <EmptyState
             title="No content found"
             description={!hasBeenScanned ? "Try getting metadata first." : "This artist does not have any surfaced modules yet."}
-            icon={<FolderSync24Regular />}
+            icon={<FolderSync24 />}
             minHeight="220px"
           />
         )}

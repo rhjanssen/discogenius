@@ -269,6 +269,6 @@ export class StreamripDeezerBackend implements DownloadBackend {
     if (mediaFilesUnder(request.downloadPath).length === 0) {
       throw new Error("Streamrip exited successfully but produced no Deezer media files.");
     }
-    options.onProgress({ progress: 100, state: "completed", statusMessage: "Deezer download complete" });
+    options.onProgress({ progress: 100, state: "downloading", statusMessage: "Deezer download complete" });
   }
 }

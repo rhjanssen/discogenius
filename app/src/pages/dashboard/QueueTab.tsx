@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type SyntheticEvent, type TouchEvent as ReactTouchEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from "react";
 import {
     Badge,
     Button,
@@ -18,16 +18,16 @@ import {
 import {
   CheckmarkCircle16Filled,
   DismissCircle16Filled,
-  ArrowClockwise24Regular as ArrowClockwise24RegularBase,
-  Clock16Regular as Clock16RegularBase,
-  Delete24Regular as Delete24RegularBase,
-  MusicNote224Regular as MusicNote224RegularBase,
-  Video24Regular as Video24RegularBase,
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
-  ArrowUpload24Regular as ArrowUpload24RegularBase,
-  MoreHorizontal24Regular as MoreHorizontal24RegularBase,
-  ArrowUp24Regular as ArrowUp24RegularBase,
-  ArrowDown24Regular as ArrowDown24RegularBase,
+  ArrowClockwise24Regular,
+  Clock16Regular,
+  Delete24Regular,
+  MusicNote224Regular,
+  Video24Regular,
+  ArrowDownload24Regular,
+  ArrowUpload24Regular,
+  MoreHorizontal24Regular,
+  ArrowUp24Regular,
+  ArrowDown24Regular,
   ArrowClockwise24Filled,
   Clock16Filled,
   Delete24Filled,
@@ -51,23 +51,24 @@ import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QueueListSkeleton } from "@/components/ui/LoadingSkeletons";
-import { renderableArtworkUrl } from "@/utils/artwork";
+import { mediaCoverSrc } from "@/utils/artwork";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type { DownloadProgress } from "@/queue/queueProgress";
 import { useDashboardStyles } from "./dashboardStyles";
-import { formatRelativeTime } from "./dashboardUtils";
 import { ProviderMark } from "@/components/ui/ProviderMark";
+import { QueueHistoryPanel } from "./QueueHistoryPanel";
+import { isInteractiveElementTarget, stopQueueControlEvent } from "./queueTabShared";
 
-const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
-const Clock16Regular = bundleIcon(Clock16Filled, Clock16RegularBase);
-const Delete24Regular = bundleIcon(Delete24Filled, Delete24RegularBase);
-const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
-const Video24Regular = bundleIcon(Video24Filled, Video24RegularBase);
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
-const ArrowUpload24Regular = bundleIcon(ArrowUpload24Filled, ArrowUpload24RegularBase);
-const MoreHorizontal24Regular = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24RegularBase);
-const ArrowUp24Regular = bundleIcon(ArrowUp24Filled, ArrowUp24RegularBase);
-const ArrowDown24Regular = bundleIcon(ArrowDown24Filled, ArrowDown24RegularBase);
+const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
+const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
+const Delete24 = bundleIcon(Delete24Filled, Delete24Regular);
+const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
+const Video24 = bundleIcon(Video24Filled, Video24Regular);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
+const ArrowUpload24 = bundleIcon(ArrowUpload24Filled, ArrowUpload24Regular);
+const MoreHorizontal24 = bundleIcon(MoreHorizontal24Filled, MoreHorizontal24Regular);
+const ArrowUp24 = bundleIcon(ArrowUp24Filled, ArrowUp24Regular);
+const ArrowDown24 = bundleIcon(ArrowDown24Filled, ArrowDown24Regular);
 
 function normalizeTrackLabel(value?: string | null): string {
     return String(value || "")
@@ -91,6 +92,27 @@ function matchesProviderTrackId(trackProviderId?: string | null, currentProvider
     const left = String(trackProviderId || "").trim();
     const right = String(currentProviderTrackId || "").trim();
     return Boolean(left && right && left === right);
+}
+
+/** Show V-T for every disc when the album has more than one volume. */
+function formatQueueTrackNumber(
+    trackNum: number | string | null | undefined,
+    volumeNum: number | null | undefined,
+    tracks?: Array<{ volumeNum?: number | null }>,
+    fallbackIndex?: number,
+): string {
+    const track = trackNum != null && String(trackNum).trim() !== ""
+        ? String(trackNum)
+        : (fallbackIndex != null ? String(fallbackIndex) : "");
+    const volumes = (tracks || [])
+        .map((row) => Number(row.volumeNum || 0))
+        .filter((value) => Number.isFinite(value) && value > 0);
+    const multiVolume = volumes.length > 0 && (new Set(volumes).size > 1 || volumes.some((value) => value > 1));
+    const volume = Number(volumeNum || 0);
+    if (multiVolume && volume > 0 && track) {
+        return `${volume}-${track}`;
+    }
+    return track;
 }
 
 function findProgressTrackState(
@@ -165,8 +187,17 @@ function inferAlbumTrackStatus(
     tracks: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
     persistedStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped',
 ): 'queued' | 'downloading' | 'completed' | 'error' | 'skipped' {
+    if (persistedStatus === 'skipped') {
+        return 'skipped';
+    }
+
     if (progress?.state === 'completed') {
         return 'completed';
+    }
+
+    // Unmatched sibling rows must stay pending — never treat -1 as "already done".
+    if (trackIndex < 0) {
+        return persistedStatus && persistedStatus !== 'queued' ? persistedStatus : 'queued';
     }
 
     const activeTrackIndex = findActiveAlbumTrackIndex(progress, tracks);
@@ -184,7 +215,7 @@ function inferAlbumTrackStatus(
         : 0;
 
     if (isImportPhase) {
-        if (persistedStatus === 'error' || persistedStatus === 'skipped') {
+        if (persistedStatus === 'error') {
             return persistedStatus;
         }
 
@@ -239,7 +270,7 @@ function inferAlbumTrackStatus(
 }
 
 function renderPendingIndicator(styles: ReturnType<typeof useDashboardStyles>) {
-    return <Clock16Regular className={styles.downloadStatusPendingIcon} />;
+    return <Clock16 className={styles.downloadStatusPendingIcon} />;
 }
 
 /**
@@ -277,7 +308,7 @@ function renderTrackStatusIndicator(
     }
 
     if (options.isSkipped) {
-        return null;
+        return <CheckmarkCircle16Filled className={styles.downloadStatusColorIcon} title="Already in library" />;
     }
 
     if (options.isQueued) {
@@ -295,22 +326,6 @@ function getMovablePendingJobIds(
     return items
         .filter((item) => item.status === 'queued' && item.stage !== 'import')
         .map((item) => item.id);
-}
-
-function renderHistoryStatusIndicator(
-    styles: ReturnType<typeof useDashboardStyles>,
-    status?: string,
-    error?: string | null,
-) {
-    if (error || status === "failed") {
-        return <DismissCircle16Filled className={styles.downloadStatusErrorIcon} />;
-    }
-
-    if (status === "completed") {
-        return <CheckmarkCircle16Filled className={styles.downloadStatusColorIcon} title="Completed" />;
-    }
-
-    return <Clock16Regular className={styles.downloadStatusPendingIcon} />;
 }
 
 function getOptionalIdentifier(value: unknown): string | null {
@@ -363,78 +378,6 @@ function getQueueItemSlotKey(item: QueueItem): string | null {
     }
 
     return 'stereo';
-}
-
-function getQueueHistoryNavPath(item: QueueItem): string | null {
-    if (item.type === 'video') {
-        return buildVideoNavPath(item.providerId);
-    }
-
-    if (item.type === 'album') {
-        return buildAlbumNavPath(item.album_id ?? item.providerId);
-    }
-
-    if (item.type === 'track') {
-        return buildAlbumNavPath(item.album_id);
-    }
-
-    return null;
-}
-
-function isInteractiveElementTarget(target: EventTarget | null): target is HTMLElement {
-    return target instanceof HTMLElement
-        && Boolean(target.closest('button,a,input,label,[role="menuitem"],[data-queue-control="true"]'));
-}
-
-type QueueHistoryMediaBadge = {
-    kind: 'album' | 'track' | 'video';
-    label?: string;
-};
-
-type QueueHistoryRowModel = {
-    title: string;
-    subtitle: string | null;
-    coverUrl: string | null;
-    isVideo: boolean;
-    mediaBadge: QueueHistoryMediaBadge | null;
-    navPath: string | null;
-    quality: string | null;
-    timeLabel: string;
-    error: string | null;
-};
-
-function getQueueHistoryMediaBadge(item: QueueItem): QueueHistoryMediaBadge | null {
-    switch (item.type) {
-        case 'album':
-            return { kind: 'album' };
-        case 'video':
-            return { kind: 'video' };
-        case 'track':
-            return { kind: 'track' };
-        default:
-            return null;
-    }
-}
-
-function mapQueueHistoryItemToRow(item: QueueItem): QueueHistoryRowModel {
-    const mediaBadge = getQueueHistoryMediaBadge(item);
-    const title = item.title || item.album_title || 'Unknown item';
-    const subtitle = item.artist || null;
-    const coverUrl = renderableArtworkUrl(item.cover);
-    const navPath = getQueueHistoryNavPath(item);
-    const timeSource = item.completed_at || item.updated_at || item.started_at || item.created_at;
-
-    return {
-        title,
-        subtitle,
-        coverUrl,
-        isVideo: mediaBadge?.kind === 'video',
-        mediaBadge,
-        navPath,
-        quality: item.quality ?? null,
-        timeLabel: formatRelativeTime(timeSource),
-        error: item.error ?? null,
-    };
 }
 
 type ReorderableQueueItem = {
@@ -510,13 +453,18 @@ function mergeQueueItemsWithProgress(
 
         const liveStatus = getLiveQueueItemStatus(progress);
         const liveStage = getLiveQueueItemStage(progress);
+        // Progress-state "completed" must not yank an Active row while the
+        // command is still started (download backends used to emit that early).
+        const status = (liveStatus === "completed" && (item.status === "started" || item.status === "downloading"))
+            ? (item.status === "downloading" ? "downloading" : "started")
+            : liveStatus;
 
         return {
             ...item,
-            status: liveStatus,
+            status,
             stage: liveStage ?? item.stage,
             progress: progress.progress ?? item.progress,
-            error: liveStatus === "failed"
+            error: status === "failed"
                 ? progress.statusMessage ?? item.error ?? null
                 : item.error ?? null,
             quality: progress.quality ?? item.quality ?? null,
@@ -536,7 +484,9 @@ function mergeQueueItemsWithProgress(
             eta: progress.eta ?? item.eta,
             size: progress.size ?? item.size,
             sizeleft: progress.sizeleft ?? item.sizeleft,
-            state: progress.state ?? item.state,
+            state: (progress.state === "completed" && (item.status === "started" || item.status === "downloading"))
+                ? (item.state === "importPending" || item.state === "importing" ? item.state : "downloading")
+                : (progress.state ?? item.state),
             tracks: progress.tracks ?? item.tracks,
         };
     });
@@ -683,7 +633,9 @@ function mergeProgressSnapshots(
             case "importing":
                 return 3;
             case "completed":
-                return 4;
+                // Prefer live import phases over a stale/premature completed
+                // snapshot from the download backend.
+                return 1.5;
             case "failed":
             case "importFailed":
                 return 5;
@@ -871,7 +823,6 @@ const QueueTab = () => {
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const activeSentinelRef = useRef<HTMLDivElement | null>(null);
-    const historySentinelRef = useRef<HTMLDivElement | null>(null);
 
     const liveQueueItems = useMemo(
         () => mergeQueueItemsWithProgress(downloadQueue, progressByJobId),
@@ -885,43 +836,26 @@ const QueueTab = () => {
             || i.status === 'queued'
         ));
 
-        const albumTrackCounts = new Map<string, number>();
-
-        filteredQueue.forEach((item) => {
-            if (item.type === 'track' && item.album_id) {
-                albumTrackCounts.set(item.album_id, (albumTrackCounts.get(item.album_id) ?? 0) + 1);
-            }
-        });
-
         const groups: Record<string, QueueGroup> = {};
 
         filteredQueue.forEach((item, index) => {
             const isAlbum = item.type === 'album';
             const isVideo = item.type === 'video';
             const albumSlotKey = isAlbum ? getQueueItemSlotKey(item) : null;
-            const shouldGroupTrackAsAlbum = item.type === 'track'
-                && Boolean(item.album_id)
-                && (albumTrackCounts.get(item.album_id as string) ?? 0) > 1;
+            // Catalog-anchored albums are one DownloadAlbum command. Standalone
+            // DownloadTrack rows stay individual track cards (no fake album grouping).
             const groupId = isAlbum
                 ? `album-${item.album_id ?? item.providerId}-${albumSlotKey ?? 'default'}`
                 : isVideo
                     ? `video-${item.providerId}`
-                    : shouldGroupTrackAsAlbum
-                        ? `album-${item.album_id}`
-                        : `track-${item.providerId}`;
+                    : `track-${item.id}-${item.providerId}`;
 
             if (!groups[groupId]) {
-                const groupType = isAlbum
-                    ? 'album'
-                    : isVideo
-                        ? 'video'
-                        : shouldGroupTrackAsAlbum
-                            ? 'album'
-                            : 'track';
+                const groupType = isAlbum ? 'album' : isVideo ? 'video' : 'track';
                 groups[groupId] = {
                     id: groupId,
                     title: groupType === 'album'
-                        ? (isAlbum ? item.title || "Unknown Album" : item.album_title || item.title || "Unknown Album")
+                        ? (item.title || item.album_title || "Unknown Album")
                         : item.title || "Unknown Track",
                     artist: item.artist || "Unknown",
                     cover: item.cover || null,
@@ -982,28 +916,20 @@ const QueueTab = () => {
                             void loadMoreQueueItems();
                         }
                     }
-                    if (entry.target === historySentinelRef.current && hasMoreQueueHistory && !isLoadingMoreQueueHistory) {
-                        void loadMoreQueueHistory();
-                    }
                 }
             },
             { rootMargin: "200px" },
         );
 
         const activeSentinel = activeSentinelRef.current;
-        const historySentinel = historySentinelRef.current;
         if (activeSentinel) observer.observe(activeSentinel);
-        if (historySentinel) observer.observe(historySentinel);
 
         return () => observer.disconnect();
     }, [
         hasMoreActiveGroups,
         hasMoreLocalActiveGroups,
-        hasMoreQueueHistory,
         hasMoreQueueItems,
         isLoadingMoreQueueItems,
-        isLoadingMoreQueueHistory,
-        loadMoreQueueHistory,
         loadMoreQueueItems,
     ]);
 
@@ -1097,10 +1023,6 @@ const QueueTab = () => {
             longPressTimerRef.current = null;
         }
     }, []);
-
-    const stopQueueControlEvent = (event: SyntheticEvent<HTMLElement>) => {
-        event.stopPropagation();
-    };
 
     const getDraggedGroupIds = useCallback((movingGroupId: string, event?: DragEvent<HTMLDivElement>): string[] => {
         if (isSelectionMode && selectedPendingGroupIdSet.has(movingGroupId)) {
@@ -1347,7 +1269,6 @@ const QueueTab = () => {
     };
 
     const hasQueueRows = groupedDownloads.length > 0;
-    const hasHistoryRows = queueHistoryItems.length > 0;
     const isInitialLoading = (loading && !hasQueueRows) || (!hasQueueRows && isQueueHistoryInitialLoading && !hasQueueRefreshError);
     // Shared delayed-loading policy: no skeleton flash for sub-second loads.
     const showInitialSkeleton = useDelayedVisible(isInitialLoading);
@@ -1424,7 +1345,7 @@ const QueueTab = () => {
                         <div className={styles.downloadList}>
                             {visibleGroupedDownloads.map((group) => {
                                 const isVideo = group.type === 'video';
-                                const coverUrl = renderableArtworkUrl(group.cover);
+                                const coverUrl = mediaCoverSrc(group);
                                 const isDownloading = group.status === 'downloading';
                                 const isFailed = group.status === 'failed';
                                 const groupedTrackItems = group.items.filter((item) => item.type === 'track');
@@ -1534,7 +1455,7 @@ const QueueTab = () => {
                                                 <img src={coverUrl} alt="" className={isVideo ? styles.downloadCoverVideo : styles.downloadCover} />
                                             ) : (
                                                 <div className={isVideo ? styles.downloadCoverPlaceholderVideo : styles.downloadCoverPlaceholder}>
-                                                    {isVideo ? <Video24Regular style={{ width: 16, height: 16 }} /> : <MusicNote224Regular style={{ width: 16, height: 16 }} />}
+                                                    {isVideo ? <Video24 style={{ width: 16, height: 16 }} /> : <MusicNote224 style={{ width: 16, height: 16 }} />}
                                                 </div>
                                             )}
                                             <div className={styles.downloadInfo}>
@@ -1564,7 +1485,16 @@ const QueueTab = () => {
                                                         <Text className={styles.progressText}>
                                                             {prog.progress !== undefined ? `${prog.progress}%` : "…"}
                                                             {group.type === "album"
-                                                                ? ` · ${prog.currentFileNum ?? "…"}/${prog.totalFiles ?? "…"} files`
+                                                                ? (() => {
+                                                                    const catalogTotal = prog.tracks?.length || 0;
+                                                                    const total = catalogTotal > 0
+                                                                        ? catalogTotal
+                                                                        : (prog.totalFiles ?? null);
+                                                                    const current = total != null && prog.currentFileNum != null
+                                                                        ? Math.min(prog.currentFileNum, total)
+                                                                        : prog.currentFileNum;
+                                                                    return ` · ${current ?? "…"}/${total ?? "…"} files`;
+                                                                })()
                                                                 : ""}
                                                         </Text>
                                                     </div>
@@ -1603,7 +1533,7 @@ const QueueTab = () => {
                                                         <Button
                                                             size="small"
                                                             appearance="subtle"
-                                                            icon={<ArrowUpload24Regular />}
+                                                            icon={<ArrowUpload24 />}
                                                             aria-label={`Move ${group.title} to top`}
                                                             title="Move to top"
                                                             disabled={disableMoveTop}
@@ -1613,7 +1543,7 @@ const QueueTab = () => {
                                                         <Button
                                                             size="small"
                                                             appearance="subtle"
-                                                            icon={<ArrowUp24Regular />}
+                                                            icon={<ArrowUp24 />}
                                                             aria-label={`Move ${group.title} up`}
                                                             title="Move up"
                                                             disabled={disableMoveUp}
@@ -1623,7 +1553,7 @@ const QueueTab = () => {
                                                         <Button
                                                             size="small"
                                                             appearance="subtle"
-                                                            icon={<ArrowDown24Regular />}
+                                                            icon={<ArrowDown24 />}
                                                             aria-label={`Move ${group.title} down`}
                                                             title="Move down"
                                                             disabled={disableMoveDown}
@@ -1633,7 +1563,7 @@ const QueueTab = () => {
                                                         <Button
                                                             size="small"
                                                             appearance="subtle"
-                                                            icon={<ArrowDownload24Regular />}
+                                                            icon={<ArrowDownload24 />}
                                                             aria-label={`Move ${group.title} to bottom`}
                                                             title="Move to bottom"
                                                             disabled={disableMoveBottom}
@@ -1645,7 +1575,7 @@ const QueueTab = () => {
                                                                 <Button
                                                                     size="small"
                                                                     appearance="subtle"
-                                                                    icon={<MoreHorizontal24Regular />}
+                                                                    icon={<MoreHorizontal24 />}
                                                                     aria-label={`Queue actions for ${group.title}`}
                                                                     disabled={isQueueMutationPending}
                                                                     className={styles.reorderMobileOnly}
@@ -1671,9 +1601,9 @@ const QueueTab = () => {
                                                     </div>
                                                 ) : null}
                                                 {isFailed && group.items.length === 1 && (
-                                                    <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} onClick={() => retryItem(group.items[0].id)} />
+                                                    <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => retryItem(group.items[0].id)} />
                                                 )}
-                                                <Button size="small" appearance="subtle" icon={<Delete24Regular />} onClick={() => { void handleDeleteAction(group); }} />
+                                                <Button size="small" appearance="subtle" icon={<Delete24 />} onClick={() => { void handleDeleteAction(group); }} />
                                             </div>
                                             {isFailed && groupError ? (
                                                 <Text className={styles.downloadErrorText}>{groupError}</Text>
@@ -1722,9 +1652,11 @@ const QueueTab = () => {
                                                             })}
                                                         </div>
                                                         <Text className={styles.downloadTrackNumber}>
-                                                            {item.currentVolumeNum && item.currentVolumeNum > 1
-                                                                ? `${item.currentVolumeNum}-${item.currentTrackNum || ""}`
-                                                                : String(item.currentTrackNum || matchedTrack?.trackNum || "")}
+                                                            {formatQueueTrackNumber(
+                                                                item.currentTrackNum || matchedTrack?.trackNum,
+                                                                item.currentVolumeNum || matchedTrack?.volumeNum,
+                                                                prog?.tracks,
+                                                            )}
                                                         </Text>
                                                     </div>
                                                     <div className={styles.downloadInfo}>
@@ -1737,9 +1669,9 @@ const QueueTab = () => {
                                                     </div>
                                                     <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
                                                         {isItemFailed && (
-                                                            <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} onClick={() => retryItem(item.id)} />
+                                                            <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => retryItem(item.id)} />
                                                         )}
-                                                        <Button size="small" appearance="subtle" icon={<Delete24Regular />} onClick={() => deleteItem(item.id)} />
+                                                        <Button size="small" appearance="subtle" icon={<Delete24 />} onClick={() => deleteItem(item.id)} />
                                                     </div>
                                                 </div>
                                             );
@@ -1753,9 +1685,12 @@ const QueueTab = () => {
                                                     const isTrackDownloading = visualStatus === 'downloading';
                                                     const isTrackCompleted = visualStatus === 'completed';
                                                     const isTrackFailed = visualStatus === 'error';
-                                                    const trackLabel = t.volumeNum && t.volumeNum > 1
-                                                        ? `${t.volumeNum}-${t.trackNum || idx + 1}`
-                                                        : String(t.trackNum || idx + 1);
+                                                    const trackLabel = formatQueueTrackNumber(
+                                                        t.trackNum,
+                                                        t.volumeNum,
+                                                        tracks,
+                                                        idx + 1,
+                                                    );
 
                                                     return (
                                                         <div key={idx} className={styles.downloadSubItem} onClick={() => { if (groupNavPath) navigate(groupNavPath); }}>
@@ -1832,148 +1767,23 @@ const QueueTab = () => {
                         ) : (
                             <EmptyState
                                 title="No items in queue"
-                                icon={<ArrowDownload24Regular />}
+                                icon={<ArrowDownload24 />}
                                 compactMobile
                             />
                         )}
                     </section>
                 )}
 
-                {hasHistoryRows ? (
-                    <section className={styles.queueSection} aria-label="Queue history">
-                        <div className={styles.queueSectionHeader}>
-                            <div className={styles.queueSectionHeading}>
-                                <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
-                            </div>
-                        </div>
-                        <div className={styles.downloadList}>
-                            {queueHistoryItems.map((item) => {
-                                const row = mapQueueHistoryItemToRow(item);
-                                const isVideo = row.isVideo;
-                                const isFailed = item.status === 'failed' || Boolean(item.error);
-
-                                const handleHistoryRowClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-                                    if (!row.navPath || isInteractiveElementTarget(event.target)) {
-                                        return;
-                                    }
-
-                                    navigate(row.navPath);
-                                };
-                                const handleHistoryRowKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-                                    if (!row.navPath || isInteractiveElementTarget(event.target)) {
-                                        return;
-                                    }
-
-                                    if (event.key === 'Enter' || event.key === ' ') {
-                                        event.preventDefault();
-                                        navigate(row.navPath);
-                                    }
-                                };
-
-                                return (
-                                    <div
-                                        key={`queue-history-${String(item.id)}`}
-                                        className={mergeClasses(
-                                            styles.downloadItem,
-                                            styles.queueHistoryItem,
-                                            row.navPath ? styles.queueHistoryItemClickable : styles.queueHistoryItemStatic,
-                                        )}
-                                        onClick={row.navPath ? handleHistoryRowClick : undefined}
-                                        onKeyDown={row.navPath ? handleHistoryRowKeyDown : undefined}
-                                        role={row.navPath ? 'link' : undefined}
-                                        tabIndex={row.navPath ? 0 : undefined}
-                                        aria-label={row.navPath ? `Open ${row.title}` : undefined}
-                                    >
-                                        {row.coverUrl ? (
-                                            <img src={row.coverUrl} alt="" className={isVideo ? styles.downloadCoverVideo : styles.downloadCover} />
-                                        ) : (
-                                            <div className={isVideo ? styles.downloadCoverPlaceholderVideo : styles.downloadCoverPlaceholder}>
-                                                {isVideo
-                                                    ? <Video24Regular style={{ width: 16, height: 16 }} />
-                                                    : <MusicNote224Regular style={{ width: 16, height: 16 }} />}
-                                            </div>
-                                        )}
-                                        <div className={styles.downloadInfo}>
-                                            <div className={mergeClasses(styles.downloadHeaderRow, styles.downloadHeaderRowInline)}>
-                                                <div className={mergeClasses(styles.downloadTitleRow, styles.downloadTitleRowInline)}>
-                                                    <Text className={styles.downloadTitle} truncate>{row.title}</Text>
-                                                </div>
-                                                <div className={mergeClasses(styles.downloadArtistMetaRow, styles.downloadArtistMetaRowInline)}>
-                                                    {row.subtitle ? (
-                                                        <Text className={styles.downloadArtist} truncate>{row.subtitle}</Text>
-                                                    ) : null}
-                                                    <div className={mergeClasses(styles.downloadBadgeRow, styles.downloadBadgeRowInline)}>
-                                                        {item.providerId ? <ProviderMark provider={item.providerId} size={16} /> : null}
-                                                        {row.quality ? <QualityBadge quality={row.quality} size="small" /> : null}
-                                                        {row.mediaBadge ? (
-                                                            <MediaTypeBadge kind={row.mediaBadge.kind} label={row.mediaBadge.label} size="small" />
-                                                        ) : null}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className={styles.queueHistoryTrailing}>
-                                            <Text className={styles.queueHistoryTime}>{row.timeLabel}</Text>
-                                            <div className={styles.queueHistoryStatus}>
-                                                {renderHistoryStatusIndicator(styles, item.status, item.error)}
-                                            </div>
-                                        </div>
-                                        {isFailed ? (
-                                            <div className={styles.downloadActions} data-queue-control="true" onClick={stopQueueControlEvent}>
-                                                <Button size="small" appearance="subtle" icon={<ArrowClockwise24Regular />} onClick={() => retryItem(item.id)} title="Retry" />
-                                            </div>
-                                        ) : null}
-                                        {row.error ? (
-                                            <Text className={styles.queueHistoryErrorText}>{row.error}</Text>
-                                        ) : null}
-                                    </div>
-                                );
-                            })}
-                            {hasMoreQueueHistory ? (
-                                <>
-                                    <div ref={historySentinelRef} aria-hidden="true" />
-                                    <div className={styles.loadMoreRow}>
-                                        <Button appearance="subtle" onClick={() => void loadMoreQueueHistory()} disabled={isLoadingMoreQueueHistory}>
-                                            {isLoadingMoreQueueHistory ? "Loading..." : "Load more"}
-                                        </Button>
-                                    </div>
-                                </>
-                            ) : null}
-                        </div>
-                    </section>
-                ) : hasQueueHistoryRefreshError ? (
-                    <section className={styles.queueSection} aria-label="Queue history">
-                        <div className={styles.queueSectionHeader}>
-                            <div className={styles.queueSectionHeading}>
-                                <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
-                            </div>
-                        </div>
-                        <ErrorState
-                            title="Queue history unavailable"
-                            description={queueHistoryRefreshErrorMessage ?? "The queue history feed did not finish loading."}
-                            minHeight="220px"
-                            actions={(
-                                <Button appearance="primary" onClick={() => { void handleRetryQueueFeeds(); }}>
-                                    Retry
-                                </Button>
-                            )}
-                        />
-                    </section>
-                ) : (
-                    <section className={styles.queueSection} aria-label="Queue history">
-                        <div className={styles.queueSectionHeader}>
-                            <div className={styles.queueSectionHeading}>
-                                <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
-                            </div>
-                        </div>
-                        <EmptyState
-                            title="No history yet"
-                            icon={<ArrowClockwise24Regular />}
-                            minHeight="220px"
-                            compactMobile
-                        />
-                    </section>
-                )}
+                <QueueHistoryPanel
+                    items={queueHistoryItems}
+                    hasMore={hasMoreQueueHistory}
+                    isLoadingMore={isLoadingMoreQueueHistory}
+                    onLoadMore={() => { void loadMoreQueueHistory(); }}
+                    hasRefreshError={hasQueueHistoryRefreshError}
+                    refreshErrorMessage={queueHistoryRefreshErrorMessage}
+                    onRetryFeeds={handleRetryQueueFeeds}
+                    onRetryItem={retryItem}
+                />
             </div>
         </div>
     );

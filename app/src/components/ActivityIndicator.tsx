@@ -7,16 +7,16 @@ import {
     mergeClasses,
 } from "@fluentui/react-components";
 import {
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
-  ErrorCircle24Regular as ErrorCircle24RegularBase,
+  ArrowDownload24Regular,
+  ErrorCircle24Regular,
   ArrowDownload24Filled,
   ErrorCircle24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { useStatusOverview } from "@/hooks/useStatusOverview";
 
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
-const ErrorCircle24Regular = bundleIcon(ErrorCircle24Filled, ErrorCircle24RegularBase);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
+const ErrorCircle24 = bundleIcon(ErrorCircle24Filled, ErrorCircle24Regular);
 
 const useStyles = makeStyles({
     container: {
@@ -77,7 +77,7 @@ export const ActivityIndicator = () => {
         return (
             <Tooltip content="Cannot reach server status endpoint" relationship="label">
                 <div className={styles.container}>
-                    <ErrorCircle24Regular className={styles.icon} style={{ color: tokens.colorPaletteRedForeground1 }} />
+                    <ErrorCircle24 className={styles.icon} style={{ color: tokens.colorPaletteRedForeground1 }} />
                     <Text>Status unavailable</Text>
                 </div>
             </Tooltip>
@@ -89,7 +89,7 @@ export const ActivityIndicator = () => {
         return (
             <Tooltip content={subtitle} relationship="label">
                 <div className={mergeClasses(styles.container, styles.active)}>
-                    {downloadingCount > 0 ? <Spinner size="tiny" /> : <ArrowDownload24Regular className={styles.icon} />}
+                    {downloadingCount > 0 ? <Spinner size="tiny" /> : <ArrowDownload24 className={styles.icon} />}
                     <Text>
                         {downloadingCount > 0
                             ? `${downloadingCount} downloading${backgroundProcessing > 0 ? ` + ${backgroundProcessing} bg` : ""}`

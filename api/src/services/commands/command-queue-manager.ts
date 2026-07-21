@@ -153,8 +153,6 @@ function normalizeRefreshArtistPayload(
         hydrateCatalog: Boolean(hydrateCatalog),
         hydrateAlbumTracks,
         scanLibrary: Boolean(scanLibrary),
-        includeSimilarArtists: Boolean(payload.includeSimilarArtists),
-        seedSimilarArtists: Boolean(payload.seedSimilarArtists),
         forceDownloadQueue: Boolean(payload.forceDownloadQueue),
         forceUpdate: Boolean(payload.forceUpdate),
         monitoringCycle: payload.monitoringCycle,
@@ -170,8 +168,6 @@ function areEquivalentRefreshArtistPayloads(
         && left.hydrateCatalog === right.hydrateCatalog
         && left.hydrateAlbumTracks === right.hydrateAlbumTracks
         && left.scanLibrary === right.scanLibrary
-        && left.includeSimilarArtists === right.includeSimilarArtists
-        && left.seedSimilarArtists === right.seedSimilarArtists
         && left.forceDownloadQueue === right.forceDownloadQueue
         && left.forceUpdate === right.forceUpdate;
 }
@@ -918,14 +914,6 @@ ${buildExecutionOrderClause()}
         if (!job) return null;
 
         return hydrateJobRow(job as { name: string; payload: unknown; id: number } & Record<string, unknown>);
-    }
-
-    /**
-     * Clear all download jobs (pending/failed)
-     */
-    static clearDownloadJobs() {
-        const placeholders = buildTypeInClause(DOWNLOAD_OR_IMPORT_COMMAND_NAMES);
-        db.prepare(`DELETE FROM commands WHERE name IN (${placeholders}) AND status IN ('queued', 'failed')`).run(...DOWNLOAD_OR_IMPORT_COMMAND_NAMES);
     }
 
     /**

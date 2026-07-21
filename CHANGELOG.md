@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.5.0] - 2026-07-21
+
+### Added
+- `SeedVideo` command executor so queued video seed jobs actually run.
+- Database schema modules under `api/src/database/schema/` (catalog / files /
+  commands / projections / search) with a thinner `database.ts` entrypoint.
+- Frontend page splits for Settings sections, Library toolbar/artists tab,
+  Album release switcher, Queue history panel, and UltraBlur helpers
+  (`useUltraBlurHero`, color extract / bitmap render).
+
+### Changed
+- Catalog-first hybrid identity for download/import/organize/rename/retag:
+  track numbers, titles, and slot binding come from `Tracks`/`Recordings` on
+  the selected MusicBrainz release — never provider `match_evidence` positions.
+- Hybrid album acquisition queues one `DownloadAlbum` with
+  `acquisitionMode: "trackOffers"` (shared plan for manual + download-missing)
+  instead of exploding into separate queue cards per source album.
+- Inline music videos use one primary Plex file per audio stem + type suffix
+  (`01 - Track-video.mp4`): download-missing collapses multi-provider offers for
+  the same related audio/`-video`/`-lyrics`/`-live` slot (quality then provider
+  preference), skips when that slot is already imported, and organize replaces
+  a worse occupant at the primary path instead of writing descriptive or
+  `{Provider-id}` siblings.
+- Prefer-provider artist artwork walks `streaming.provider_priority`; album
+  covers prefer the stereo slot's selected provider offer, then spatial, then
+  other matches, then Servarr/canonical.
+- UltraBlur heroes seed immediately when cached images are already complete,
+  set `crossOrigin` before `src`, and stop remapping to slow on-the-fly
+  `-250` cover derivatives.
+- SQLite hot-path hygiene: prefer `col = 1` over `COALESCE(col,0)=1` and
+  `IN (subquery)` over `OR EXISTS` on monitored/video filters.
+- Removed dead similar-albums/artists surfaces, unused FileList, check-stream
+  diagnostics, and dual monitor command-body keys.
+- Video type filename helpers renamed to `resolveVideoTypeSuffix` (Plex-style
+  suffixes retained).
+
+### Fixed
+- Apple Music album-tracklist music videos can carry a `cover` on
+  `ProviderTrack` (Docker `tsc` build blocker).
+- Frontend typecheck after WP7 splits (`SwitchableSlot`, Library toolbar /
+  FilterMenu types, Queue history `onLoadMore`).
+
 ## [2.4.0] - 2026-07-20
 
 ### Added

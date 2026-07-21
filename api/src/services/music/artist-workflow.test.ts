@@ -43,7 +43,7 @@ test("unmonitored artist intake reuses metadata refresh without collaborator sno
   }
 });
 
-test("monitoring intake hydrates provider offers without queuing downloads", () => {
+test("monitoring intake hydrates provider offers and marks post-curate download queue", () => {
   const payload = buildRefreshArtistCommand({
     artistId: "artist-mbid",
     artistName: "Bastille",
@@ -54,5 +54,5 @@ test("monitoring intake hydrates provider offers without queuing downloads", () 
   assert.equal(payload.hydrateCatalog, true);
   assert.equal(payload.hydrateAlbumTracks, true);
   assert.equal(payload.monitorAlbums, true);
-  assert.equal(payload.forceDownloadQueue, false);
+  assert.equal(payload.forceDownloadQueue, true);
 });

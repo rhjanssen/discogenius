@@ -154,7 +154,19 @@ class FixtureBridge implements YtMusicBridge {
             lengthSeconds: "233",
             thumbnail: { thumbnails: videoFixture.thumbnails },
           },
-          microformat: { playerMicroformatRenderer: { publishDate: "2013-01-21" } },
+          // ytmusicapi get_song shape (Music client), not WEB playerMicroformatRenderer.
+          microformat: {
+            microformatDataRenderer: {
+              publishDate: "2013-01-21T08:00:00-08:00",
+              uploadDate: "2013-01-21T08:00:00-08:00",
+            },
+          },
+          streamingData: {
+            adaptiveFormats: [
+              { height: 720, mimeType: "video/mp4" },
+              { height: 1080, mimeType: "video/mp4" },
+            ],
+          },
         };
         break;
       case "get_lyrics":
@@ -216,6 +228,7 @@ test("fixture-backed catalog maps search, album tracks, artists, and videos", as
   const video = await catalog.getVideo(VIDEO_ID);
   assert.equal(video.releaseDate, "2013-01-21");
   assert.equal(video.duration, 233);
+  assert.equal(video.quality, "FHD");
 
   const lyrics = await catalog.getLyrics(TRACK_ID);
   assert.equal(lyrics?.subtitles, "[00:00.00]I was left to my own devices");

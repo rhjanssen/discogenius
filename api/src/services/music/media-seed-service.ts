@@ -23,15 +23,11 @@ export class MediaSeedService {
         await RefreshArtistService.refreshArtistMetadata(artistId, {
             ...options,
             provider: providerClient.id,
-            includeSimilarArtists: false,
-            seedSimilarArtists: false,
         });
 
         await RefreshAlbumService.refreshMetadata(albumId, {
             ...options,
             provider: providerClient.id,
-            includeSimilarAlbums: false,
-            seedSimilarAlbums: false,
         });
 
         return trackData;
@@ -72,16 +68,12 @@ export class MediaSeedService {
         await RefreshArtistService.refreshArtistMetadata(artistId, {
             ...options,
             provider: providerClient.id,
-            includeSimilarArtists: false,
-            seedSimilarArtists: false,
         });
 
         if (albumId) {
             await RefreshAlbumService.refreshOffer(albumId, artistId, undefined, {
                 ...options,
                 provider: providerClient.id,
-                includeSimilarAlbums: false,
-                seedSimilarAlbums: false,
             });
         }
 

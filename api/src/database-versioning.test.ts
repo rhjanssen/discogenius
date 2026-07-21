@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 38;
+const CURRENT_SCHEMA_VERSION = 39;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -60,7 +60,7 @@ test("fresh database initializes the current development baseline", () => {
   }
 });
 
-test("re-initializing an existing schema-38 database opens it without a wipe", () => {
+test("re-initializing an existing schema-39 database opens it without a wipe", () => {
   // Seed a row so we can prove the open-only path never drops/recreates tables.
   dbModule.db
     .prepare("INSERT INTO config (key, value, description) VALUES (?, ?, ?)")

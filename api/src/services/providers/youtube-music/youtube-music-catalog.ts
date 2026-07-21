@@ -10,6 +10,7 @@ import type {
   ProviderVideo,
 } from "../streaming-provider.js";
 import { PythonYtMusicBridge, type YtMusicBridge } from "./ytmusicapi-bridge.js";
+import { youtubeVideoQualityTagFromHeight } from "./youtube-music-quality.js";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -72,9 +73,41 @@ function imageFrom(raw: UnknownRecord): string | null {
 
 function releaseDate(raw: UnknownRecord): string | null {
   const fullDate = nullableText(raw.releaseDate, raw.publishDate, raw.uploadDate);
-  if (fullDate) return fullDate;
+  if (fullDate) {
+    // ytmusicapi/yt-dlp return ISO timestamps; persist calendar day for matching.
+    const day = fullDate.match(/^(\d{4}-\d{2}-\d{2})/);
+    return day ? day[1] : fullDate;
+  }
   const year = numeric(raw.year);
   return year && year >= 1000 && year <= 9999 ? `${Math.trunc(year)}-01-01` : null;
+}
+
+/**
+ * ytmusicapi `get_song` returns Music's `microformatDataRenderer`; yt-dlp's WEB
+ * player path uses `playerMicroformatRenderer`. Both carry publish/upload dates.
+ */
+function microformatRecord(raw: UnknownRecord): UnknownRecord {
+  const microformat = record(raw.microformat);
+  const music = record(microformat.microformatDataRenderer);
+  if (Object.keys(music).length > 0) return music;
+  return record(microformat.playerMicroformatRenderer);
+}
+
+/** Max progressive/adaptive height from Innertube `streamingData` (same source yt-dlp uses). */
+function maxHeightFromStreamingData(raw: UnknownRecord): number | null {
+  const streaming = record(raw.streamingData);
+  const formats = [
+    ...records(streaming.adaptiveFormats),
+    ...records(streaming.formats),
+  ];
+  let maxHeight: number | null = null;
+  for (const format of formats) {
+    const height = numeric(format.height);
+    if (height != null && height > (maxHeight ?? 0)) {
+      maxHeight = height;
+    }
+  }
+  return maxHeight;
 }
 
 function artistId(raw: UnknownRecord): string {
@@ -215,26 +248,26 @@ export function isYouTubeMusicVideoType(videoType: string | null | undefined): b
 export function mapYouTubeMusicVideo(rawValue: unknown, fallbackArtist?: ProviderArtist): ProviderVideo {
   const raw = record(rawValue);
   const videoDetails = record(raw.videoDetails);
-  const microformat = record(record(raw.microformat).playerMicroformatRenderer);
-  const merged = Object.keys(videoDetails).length > 0
+  const microformat = microformatRecord(raw);
+  const merged = Object.keys(videoDetails).length > 0 || Object.keys(microformat).length > 0
     ? { ...raw, ...microformat, ...videoDetails }
     : raw;
   const artists = artistList(merged, fallbackArtist);
-  const providerId = text(merged.videoId, merged.id);
+  const providerId = text(merged.videoId, merged.id, videoDetails.videoId);
+  const probedHeight = maxHeightFromStreamingData(raw);
   return {
     providerId,
-    title: text(merged.title, merged.name) || "Untitled YouTube video",
+    title: text(merged.title, merged.name, videoDetails.title) || "Untitled YouTube video",
     artist: artists[0],
     artists,
-    duration: durationSeconds(merged) || null,
-    releaseDate: releaseDate(merged),
-    cover: imageFrom(merged),
-    // Catalog rarely exposes a concrete height; omit rather than SOURCE (which
-    // previously rendered as a misleading stereo NORMAL badge).
-    quality: null,
+    duration: durationSeconds(merged) || durationSeconds(videoDetails) || null,
+    releaseDate: releaseDate(merged) || releaseDate(microformat),
+    cover: imageFrom(merged) || imageFrom(videoDetails),
+    // Prefer Innertube streamingData height (catalog); never invent TIDAL MP4_*.
+    quality: youtubeVideoQualityTagFromHeight(probedHeight),
     explicit: typeof merged.isExplicit === "boolean" ? merged.isExplicit : null,
     url: providerId ? `https://www.youtube.com/watch?v=${encodeURIComponent(providerId)}` : undefined,
-    videoType: text(merged.videoType, merged.musicVideoType) || null,
+    videoType: text(merged.videoType, merged.musicVideoType, videoDetails.musicVideoType) || null,
     raw: rawValue,
   };
 }

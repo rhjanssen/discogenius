@@ -5,9 +5,7 @@ import { formatDurationSeconds } from "@/utils/format";
 import {
   AvatarGroup,
   AvatarGroupItem,
-  Badge,
   Button,
-  Card,
   Text,
   Title1,
   Title2,
@@ -18,6 +16,13 @@ import {
   MenuList,
   MenuItem,
   Spinner,
+  Dialog,
+  DialogSurface,
+  DialogBody,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Checkbox,
   makeStyles,
   tokens,
   Overflow,
@@ -26,22 +31,24 @@ import {
 } from "@fluentui/react-components";
 import { MediaCard } from "@/components/cards/MediaCard";
 import {
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
-  Eye24Regular as Eye24RegularBase,
-  EyeOff24Regular as EyeOff24RegularBase,
-  LockClosed24Regular as LockClosed24RegularBase,
-  LockOpen24Regular as LockOpen24RegularBase,
-  Info24Regular as Info24RegularBase,
-  MusicNote224Regular as MusicNote224RegularBase,
-  ChevronDown16Regular as ChevronDown16RegularBase,
+  ArrowDownload24Regular,
+  Eye24Regular,
+  EyeOff24Regular,
+  LockClosed24Regular,
+  LockOpen24Regular,
+  Info24Regular,
+  Tag24Regular,
+  MusicNote224Regular,
+  ChevronDown16Regular,
   CheckmarkCircle16Filled,
-  FolderSync24Regular as FolderSync24RegularBase,
+  FolderSync24Regular,
   ArrowDownload24Filled,
   Eye24Filled,
   EyeOff24Filled,
   LockClosed24Filled,
   LockOpen24Filled,
   Info24Filled,
+  Tag24Filled,
   MusicNote224Filled,
   ChevronDown16Filled,
   FolderSync24Filled,
@@ -71,10 +78,10 @@ import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
-import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
+import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
 import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
-import { renderableArtworkUrl } from "@/utils/artwork";
+import { mediaCoverSrc } from "@/utils/artwork";
 import {
   detailActionGlassButtonStyles,
   detailActionPrimaryButtonStyles,
@@ -87,16 +94,18 @@ import {
   type RenamePreviewItem,
   type RetagPreviewItem,
 } from "@/components/mediafiles/FileMaintenanceDialogs";
+import { ReleaseSwitcher, selectedOfferExplicitForSlot, type SwitchableSlot } from "@/pages/album/ReleaseSwitcher";
 
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
-const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
-const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
-const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
-const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
-const Info24Regular = bundleIcon(Info24Filled, Info24RegularBase);
-const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
-const ChevronDown16Regular = bundleIcon(ChevronDown16Filled, ChevronDown16RegularBase);
-const FolderSync24Regular = bundleIcon(FolderSync24Filled, FolderSync24RegularBase);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
+const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
+const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
+const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
+const Info24 = bundleIcon(Info24Filled, Info24Regular);
+const Tag24 = bundleIcon(Tag24Filled, Tag24Regular);
+const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
+const ChevronDown16 = bundleIcon(ChevronDown16Filled, ChevronDown16Regular);
+const FolderSync24 = bundleIcon(FolderSync24Filled, FolderSync24Regular);
 
 const useStyles = makeStyles({
   container: {
@@ -424,7 +433,6 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     lineHeight: tokens.lineHeightBase200,
   },
-  // Similar Albums Section
   sectionHeader: {
     marginBottom: tokens.spacingVerticalM,
   },
@@ -441,10 +449,9 @@ const useStyles = makeStyles({
       gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
-  // Edition cards in the "Other releases" / "Similar albums" grids use the
-  // shared card surface from useCardStyles (components/cards/cardStyles.ts) via
-  // MediaCard. This page-specific key only highlights the edition currently
-  // being viewed.
+  // Edition cards in the "Other releases" grid use the shared card surface
+  // from useCardStyles (components/cards/cardStyles.ts) via MediaCard. This
+  // page-specific key only highlights the edition currently being viewed.
   currentEdition: {
     outlineWidth: tokens.strokeWidthThick,
     outlineStyle: "solid",
@@ -474,7 +481,7 @@ const useStyles = makeStyles({
   },
   albumFilesCard: {
     padding: tokens.spacingHorizontalM,
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+    backgroundColor: tokens.colorNeutralBackgroundAlpha,
     backdropFilter: "blur(10px)",
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
   },
@@ -482,81 +489,6 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
-  },
-  releaseSwitcher: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalS,
-    width: "100%",
-  },
-  releaseRow: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr)",
-    gap: tokens.spacingVerticalS,
-    paddingTop: tokens.spacingVerticalM,
-    paddingRight: tokens.spacingHorizontalM,
-    paddingBottom: tokens.spacingVerticalM,
-    paddingLeft: tokens.spacingHorizontalM,
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-    "@media (min-width: 820px)": {
-      gridTemplateColumns: "minmax(0, 1fr) auto",
-      alignItems: "center",
-      gap: tokens.spacingHorizontalL,
-    },
-  },
-  releaseMain: {
-    minWidth: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXS,
-  },
-  releaseTitleRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalS,
-    flexWrap: "wrap",
-  },
-  releaseTitle: {
-    minWidth: 0,
-    overflowWrap: "anywhere",
-  },
-  releaseMeta: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalS,
-    flexWrap: "wrap",
-    color: tokens.colorNeutralForeground2,
-    minWidth: 0,
-  },
-  releaseAvailability: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "stretch",
-    gap: tokens.spacingVerticalXS,
-    minWidth: 0,
-    width: "100%",
-  },
-  slotOfferRow: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: tokens.spacingHorizontalS,
-    minWidth: 0,
-    width: "100%",
-  },
-  slotOfferLabel: {
-    color: tokens.colorNeutralForeground3,
-    minWidth: "52px",
-    flexShrink: 0,
-    paddingTop: tokens.spacingVerticalXXS,
-  },
-  slotOfferPills: {
-    flex: "1 1 0",
-    minWidth: 0,
-  },
-  unavailableText: {
-    color: tokens.colorNeutralForeground3,
   },
   lockColorRed: {
     color: tokens.colorPaletteRedForeground1,
@@ -600,296 +532,6 @@ const useStyles = makeStyles({
 /* ── Album overflow helpers ─────────────────────────────────── */
 
 const EMPTY_ALBUM_TRACKS: AlbumTrack[] = [];
-const SWITCHABLE_SLOTS = ["stereo", "spatial"] as const;
-type SwitchableSlot = (typeof SWITCHABLE_SLOTS)[number];
-
-function activeSwitchableSlots(includeSpatial: boolean): SwitchableSlot[] {
-  return includeSpatial ? [...SWITCHABLE_SLOTS] : ["stereo"];
-}
-
-function slotLabel(slot: SwitchableSlot): string {
-  return slot === "spatial" ? "Spatial" : "Stereo";
-}
-
-function releaseYear(date?: string | null): string | null {
-  if (!date) return null;
-  const year = new Date(date).getFullYear();
-  return Number.isFinite(year) ? String(year) : date.slice(0, 4) || null;
-}
-
-function releaseCountryLabel(country?: string | null): string | null {
-  const text = String(country || "").trim();
-  if (!text || text === "[]") return null;
-
-  const normalizeList = (values: unknown[]): string[] => values
-    .map((item) => String(item || "").replace(/^\[|\]$/g, "").trim())
-    .filter(Boolean);
-
-  let countries: string[] = [];
-  if (text.startsWith("[") && text.endsWith("]")) {
-    try {
-      const parsed = JSON.parse(text) as unknown;
-      if (Array.isArray(parsed)) {
-        countries = normalizeList(parsed);
-      }
-    } catch {
-      countries = normalizeList(text.replace(/^\[|\]$/g, "").split(","));
-    }
-  } else {
-    countries = normalizeList(text.split(","));
-  }
-
-  if (countries.length === 0) {
-    return null;
-  }
-  // Long worldwide territory dumps blow up mobile release cards — summarize.
-  if (countries.length > 4) {
-    return `${countries.length} countries`;
-  }
-  return countries.join(", ");
-}
-
-function releaseDisambiguationLabel(disambiguation?: string | null): string | null {
-  const text = String(disambiguation || "").trim();
-  if (!text) return null;
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function releaseCountLabel(count: number | null | undefined, singular: string, plural: string): string | null {
-  if (count == null || !Number.isFinite(count) || count <= 0) return null;
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
-function releaseStatusLabel(status?: string | null): string | null {
-  const text = String(status || "").trim();
-  if (!text || text.toLowerCase() === "official") return null;
-  return text;
-}
-
-function releaseMetaParts(release: ReleaseGroupAvailability["releases"][number]): string[] {
-  return [
-    releaseYear(release.date),
-    releaseCountryLabel(release.country),
-    releaseCountLabel(release.mediumCount, "medium", "media"),
-    releaseCountLabel(release.trackCount, "track", "tracks"),
-    release.format ? `[${release.format}]` : null,
-    release.duration ? formatDurationSeconds(release.duration) : null,
-    releaseStatusLabel(release.status),
-  ].filter((part): part is string => Boolean(part));
-}
-
-function isSpatialQuality(quality?: string | null): boolean {
-  const normalized = String(quality || "").toUpperCase();
-  return normalized.includes("ATMOS") || normalized.includes("SPATIAL") || normalized.includes("360");
-}
-
-/** Normalized provider-album id set comparison ("id1;id2" composites included). */
-function sameProviderAlbumSelection(left: string | null | undefined, right: string | null | undefined): boolean {
-  const split = (value: string | null | undefined) => String(value || "")
-    .split(/[;+]/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .sort();
-  const a = split(left);
-  const b = split(right);
-  return a.length > 0 && a.length === b.length && a.every((id, index) => id === b[index]);
-}
-
-/** All of a release's offers that can fill the given slot, deduped per provider album set. */
-function offersForSlot(
-  release: ReleaseGroupAvailability["releases"][number],
-  slot: SwitchableSlot,
-): Array<ReleaseGroupAvailability["releases"][number]["availability"][number]> {
-  const exact = release.availability.filter((offer) => String(offer.librarySlot || "").toLowerCase() === slot);
-  const pool = exact.length > 0
-    ? exact
-    : release.availability.filter((offer) => slot === "spatial" ? isSpatialQuality(offer.quality) : !isSpatialQuality(offer.quality));
-  const deduped = new Map<string, ReleaseGroupAvailability["releases"][number]["availability"][number]>();
-  for (const offer of pool) {
-    const key = `${offer.provider || ""}|${String(offer.providerAlbumId || "")}`;
-    if (!deduped.has(key)) {
-      deduped.set(key, offer);
-    }
-  }
-  return Array.from(deduped.values());
-}
-
-function selectedOfferExplicitForSlot(
-  availability: ReleaseGroupAvailability | null,
-  slot: SwitchableSlot,
-  fallback: { provider?: string | null; providerAlbumId?: string | null; releaseMbid?: string | null },
-): boolean | null {
-  if (!availability) {
-    return null;
-  }
-
-  const selectedReleaseMbid = availability.selectedReleaseBySlot[slot] || fallback.releaseMbid;
-  const selectedOffer = availability.selectedOfferBySlot?.[slot];
-  const provider = selectedOffer?.provider || fallback.provider;
-  const providerAlbumId = selectedOffer?.providerAlbumId || fallback.providerAlbumId;
-  if (!selectedReleaseMbid || !provider || !providerAlbumId) {
-    return null;
-  }
-
-  const release = availability.releases.find((candidate) => candidate.releaseMbid === selectedReleaseMbid);
-  const offer = release && offersForSlot(release, slot).find((candidate) => (
-    candidate.provider === provider
-    && sameProviderAlbumSelection(candidate.providerAlbumId, providerAlbumId)
-  ));
-  return offer?.explicit ?? null;
-}
-
-function sortReleasesForSwitcher(
-  releases: ReleaseGroupAvailability["releases"],
-  selectedReleaseBySlot: ReleaseGroupAvailability["selectedReleaseBySlot"],
-  includeSpatial: boolean,
-): ReleaseGroupAvailability["releases"] {
-  const slots = activeSwitchableSlots(includeSpatial);
-  return releases
-    .map((release, index) => {
-      const selected = slots.some((slot) => selectedReleaseBySlot[slot] === release.releaseMbid);
-      const available = release.availability.length > 0;
-      return { release, index, rank: selected ? 0 : available ? 1 : 2 };
-    })
-    .sort((a, b) => a.rank - b.rank || a.index - b.index)
-    .map((item) => item.release);
-}
-
-interface ReleaseSwitcherProps {
-  availability: ReleaseGroupAvailability;
-  currentReleaseMbid?: string | null;
-  includeSpatial: boolean;
-  pendingSelectionKey?: string | null;
-  onSelect: (slot: SwitchableSlot, releaseMbid: string, offer: ReleaseGroupAvailability["releases"][number]["availability"][number]) => void;
-}
-
-function ReleaseSwitcher({
-  availability,
-  currentReleaseMbid,
-  includeSpatial,
-  pendingSelectionKey,
-  onSelect,
-}: ReleaseSwitcherProps) {
-  const styles = useStyles();
-  const slots = activeSwitchableSlots(includeSpatial);
-  const releases = sortReleasesForSwitcher(availability.releases, availability.selectedReleaseBySlot, includeSpatial);
-
-  if (releases.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className={styles.releaseSwitcher}>
-      {releases.map((release) => {
-        const disambiguation = releaseDisambiguationLabel(release.disambiguation);
-        const metaParts = releaseMetaParts(release);
-        const selectedSlots = slots.filter((slot) => availability.selectedReleaseBySlot[slot] === release.releaseMbid);
-        const providerOffers = Array.from(release.availability.reduce((deduped, offer) => {
-          const slot = String(offer.librarySlot || "").toLowerCase();
-          if (slot !== "stereo" && slot !== "spatial") {
-            return deduped;
-          }
-          if (!includeSpatial && slot === "spatial") {
-            return deduped;
-          }
-          const key = `${offer.provider || ""}|${slot}|${offer.quality || ""}`;
-          if (!deduped.has(key)) {
-            deduped.set(key, {
-              slot,
-              quality: offer.quality,
-              provider: offer.provider,
-              matchStatus: offer.status,
-              matchKind: offer.matchKind,
-              coverageSummary: offer.coverageSummary,
-              providerAlbumId: offer.providerAlbumId,
-              providerAlbumIds: offer.providerAlbumIds,
-              selectedReleaseMbid: release.releaseMbid,
-            } satisfies ProviderQualityOffer);
-          }
-          return deduped;
-        }, new Map<string, ProviderQualityOffer>()).values());
-
-        return (
-          <Card key={release.releaseMbid} className={styles.releaseRow}>
-            <div className={styles.releaseMain}>
-              <div className={styles.releaseTitleRow}>
-                <Text weight="semibold" className={styles.releaseTitle}>
-                  {release.title || "Untitled release"}
-                </Text>
-                {disambiguation ? (
-                  <Badge appearance="outline" color="subtle">{disambiguation}</Badge>
-                ) : null}
-                {release.releaseMbid === currentReleaseMbid ? (
-                  <Badge appearance="outline" color="subtle">Current page</Badge>
-                ) : null}
-                {selectedSlots.map((slot) => (
-                  <Badge key={slot} appearance="tint" color="success">{slotLabel(slot)}</Badge>
-                ))}
-              </div>
-              <div className={styles.releaseMeta}>
-                {metaParts.length > 0 ? <Text size={200}>{metaParts.join(" · ")}</Text> : null}
-                <Tooltip content={release.releaseMbid} relationship="label">
-                  <Text size={100}>{release.releaseMbid}</Text>
-                </Tooltip>
-              </div>
-              {/* One row per slot: every matched provider offer renders as the
-                  same provider-pill + quality-badge unit the album header uses,
-                  but selectable — the user picks BOTH the edition and the source. */}
-              <div className={styles.releaseAvailability}>
-                {providerOffers.length === 0 ? (
-                  <Text size={200} className={styles.unavailableText}>No matched provider offer</Text>
-                ) : slots.map((slot) => {
-                  const slotOffers = offersForSlot(release, slot);
-                  if (slotOffers.length === 0) {
-                    return null;
-                  }
-                  const releaseSelectedForSlot = availability.selectedReleaseBySlot[slot] === release.releaseMbid;
-                  const selectedOffer = availability.selectedOfferBySlot?.[slot];
-                  const rowOffers: ProviderQualityOffer[] = slotOffers.map((offer) => ({
-                    slot,
-                    quality: offer.quality,
-                    provider: offer.provider,
-                    matchStatus: offer.status,
-                    matchKind: offer.matchKind,
-                    coverageSummary: offer.coverageSummary,
-                    providerAlbumId: offer.providerAlbumId,
-                    providerAlbumIds: offer.providerAlbumIds,
-                    selectedReleaseMbid: release.releaseMbid,
-                    explicit: offer.explicit,
-                  }));
-                  const pending = pendingSelectionKey === `${slot}:${release.releaseMbid}`;
-                  return (
-                    <div key={slot} className={styles.slotOfferRow}>
-                      <Text size={200} className={styles.slotOfferLabel}>
-                        {pending ? "Saving..." : slotLabel(slot)}
-                      </Text>
-                      <div className={styles.slotOfferPills}>
-                        <ProviderQualityRow
-                          offers={rowOffers}
-                          size="small"
-                          onSelectOffer={pendingSelectionKey ? undefined : (picked) => {
-                            const source = slotOffers.find((offer) =>
-                              offer.provider === picked.provider
-                              && sameProviderAlbumSelection(offer.providerAlbumId, picked.providerAlbumId));
-                            if (source) {
-                              onSelect(slot, release.releaseMbid, source);
-                            }
-                          }}
-                          selectedOfferAlbumId={releaseSelectedForSlot ? selectedOffer?.providerAlbumId ?? null : null}
-                          selectedOfferProvider={releaseSelectedForSlot ? selectedOffer?.provider ?? null : null}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
 
 const AlbumPage = () => {
   const styles = useStyles();
@@ -901,7 +543,6 @@ const AlbumPage = () => {
   const { toggleMonitor, toggleLock, isTogglingMonitor, isTogglingLock } = useMonitoring();
   const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
 
-  const { getProgressByProviderId } = useQueueStatus();
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
@@ -912,6 +553,9 @@ const AlbumPage = () => {
   const [retagPreviewOpen, setRetagPreviewOpen] = useState(false);
   const [retagPreviewItems, setRetagPreviewItems] = useState<RetagPreviewItem[]>([]);
   const [retagApplying, setRetagApplying] = useState(false);
+  const [deleteFilesOpen, setDeleteFilesOpen] = useState(false);
+  const [deleteFilesUnmonitor, setDeleteFilesUnmonitor] = useState(false);
+  const [deleteFilesApplying, setDeleteFilesApplying] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const handledTrackScrollKeyRef = useRef<string | null>(null);
 
@@ -936,21 +580,6 @@ const AlbumPage = () => {
     staleTime: 10_000,
     retry: 1,
   }) as { data: { scanning?: boolean; curating?: boolean; downloading?: boolean; libraryScan?: boolean; totalActive?: number } | null };
-  const similarAlbums = useMemo(() => {
-    const items = pageData?.similarAlbums ?? [];
-
-    return items
-      .map((item, index) => ({ item, index }))
-      .sort((left, right) => {
-        const popularityDiff = (Number(right.item.popularity || 0) - Number(left.item.popularity || 0));
-        if (popularityDiff !== 0) {
-          return popularityDiff;
-        }
-
-        return left.index - right.index;
-      })
-      .map(({ item }) => item);
-  }, [pageData?.similarAlbums]);
   const otherVersions = pageData?.otherVersions ?? [];
   const releaseAvailability = pageData?.releaseAvailability ?? null;
   const artistImage = pageData?.artistImage ?? undefined;
@@ -964,9 +593,7 @@ const AlbumPage = () => {
           picture: artistImage,
         }]
       : [];
-  const albumCanonicalArtworkUrl = album
-    ? renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id)
-    : null;
+  const albumCanonicalArtworkUrl = album ? mediaCoverSrc(album) : null;
   const albumArtworkUrl = album
     ? (albumCanonicalArtworkUrl && !coverImageFailed ? albumCanonicalArtworkUrl : null)
     : undefined;
@@ -978,7 +605,9 @@ const AlbumPage = () => {
     // brand-driven UI (seekbar, buttons) stays on the default orange while
     // UltraBlur already shows the artwork tint.
     deriveBrandFromArtwork: true,
+    ownsAmbience: true,
   });
+  const { heroProps: ultraBlurHeroProps } = useUltraBlurHero(albumArtworkUrl);
 
   useEffect(() => {
     setCoverImageFailed(false);
@@ -1367,6 +996,31 @@ const AlbumPage = () => {
     }
   };
 
+  const handleDeleteAlbumFiles = async () => {
+    if (!albumId) return;
+    setDeleteFilesApplying(true);
+    try {
+      const result: any = await api.deleteAlbumFiles(albumId, { unmonitor: deleteFilesUnmonitor });
+      toast({
+        title: "Album files deleted",
+        description: `Removed ${result?.deleted ?? 0} file(s)${result?.unmonitored ? " and unmonitored the album" : ""}.`,
+      });
+      setDeleteFilesOpen(false);
+      setDeleteFilesUnmonitor(false);
+      await refetch();
+      dispatchLibraryUpdated();
+      dispatchActivityRefresh();
+    } catch (error) {
+      toast({
+        title: "Failed to delete album files",
+        description: error instanceof Error ? error.message : "Could not delete album files.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteFilesApplying(false);
+    }
+  };
+
   const albumActions: OverflowAction[] = [
     { key: 'monitor', label: isMonitored ? 'Unmonitor' : 'Monitor', disabled: isTogglingMonitor || isLocked, onClick: handleToggleMonitor },
     { key: 'lock', label: isLocked ? 'Unlock' : 'Lock', disabled: isTogglingLock, onClick: handleToggleLock },
@@ -1375,6 +1029,7 @@ const AlbumPage = () => {
     ...(album?.spatial_provider_id ? [{ key: 'download-spatial', label: 'Download spatial', disabled: downloadingAlbum, onClick: () => handleDownloadAlbum('spatial') }] : []),
     { key: 'rename-files', label: renameApplying ? 'Loading rename...' : 'Preview Rename', disabled: renameApplying, onClick: openRenamePreview },
     { key: 'retag-files', label: retagApplying ? 'Loading tags...' : 'Write Tags', disabled: retagApplying, onClick: openRetagPreview },
+    { key: 'delete-files', label: 'Delete files…', disabled: deleteFilesApplying, onClick: () => setDeleteFilesOpen(true) },
   ];
 
   /** Open track info dialog */
@@ -1474,7 +1129,7 @@ const AlbumPage = () => {
         key={item.id}
         className={isCurrent ? styles.currentEdition : undefined}
         to={target}
-        imageUrl={renderableArtworkUrl(item.cover_art_url || item.cover || item.cover_id)}
+        imageUrl={mediaCoverSrc(item)}
         alt={item.title}
         title={item.title}
         subtitle={subtitle}
@@ -1505,6 +1160,47 @@ const AlbumPage = () => {
           onOpenChange={setRetagPreviewOpen}
           onApply={handleApplyRetags}
         />
+        <Dialog
+          open={deleteFilesOpen}
+          onOpenChange={(_, data) => {
+            if (!data.open && !deleteFilesApplying) {
+              setDeleteFilesOpen(false);
+              setDeleteFilesUnmonitor(false);
+            }
+          }}
+        >
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>Delete album files</DialogTitle>
+              <DialogContent>
+                Delete imported library files for <strong>{album?.title || "this album"}</strong> from disk
+                and remove them from Discogenius tracking. Catalog metadata is kept.
+                <div style={{ marginTop: 12 }}>
+                  <Checkbox
+                    checked={deleteFilesUnmonitor}
+                    onChange={(_, data) => setDeleteFilesUnmonitor(Boolean(data.checked))}
+                    label="Also unmonitor this album"
+                  />
+                </div>
+              </DialogContent>
+              <DialogActions>
+                <Button
+                  appearance="secondary"
+                  disabled={deleteFilesApplying}
+                  onClick={() => {
+                    setDeleteFilesOpen(false);
+                    setDeleteFilesUnmonitor(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button appearance="primary" disabled={deleteFilesApplying} onClick={() => void handleDeleteAlbumFiles()}>
+                  {deleteFilesApplying ? "Deleting…" : "Delete files"}
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
         {/* Header Section */}
         <div className={styles.header}>
           <div className={styles.headerContent}>
@@ -1519,15 +1215,15 @@ const AlbumPage = () => {
                   {albumArtworkUrl ? (
                     <img
                       key={albumArtworkUrl}
+                      {...ultraBlurHeroProps}
                       src={albumArtworkUrl}
                       alt={album.title}
                       className={styles.coverArt}
-                      decoding="async"
                       onError={() => setCoverImageFailed(true)}
                     />
                   ) : (
                     <div className={styles.coverPlaceholder}>
-                      <MusicNote224Regular />
+                      <MusicNote224 />
                     </div>
                   )}
                   {hasCoverFile && (
@@ -1536,7 +1232,7 @@ const AlbumPage = () => {
                       onClick={() => setCoverInfoOpen(true)}
                       title="Artwork info"
                     >
-                      <Info24Regular className={styles.coverInfoIcon} />
+                      <Info24 className={styles.coverInfoIcon} />
                     </div>
                   )}
                 </div>
@@ -1633,7 +1329,7 @@ const AlbumPage = () => {
                   <OverflowItem id="monitor" priority={3}>
                     <Button
                       appearance={isMonitored ? "subtle" : "primary"}
-                      icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
+                      icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
                       onClick={handleToggleMonitor}
                       disabled={isTogglingMonitor || isLocked}
                       title={isLocked ? "Unlock to change monitoring" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
@@ -1651,7 +1347,7 @@ const AlbumPage = () => {
                     <Tooltip content={isLocked ? "Unlock to allow auto-filters to change status" : "Lock to prevent auto-filters from changing status"} relationship="label">
                       <Button
                         appearance="subtle"
-                        icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
+                        icon={isLocked ? <LockOpen24 /> : <LockClosed24 />}
                         onClick={handleToggleLock}
                         disabled={isTogglingLock}
                         className={mergeClasses(styles.actionButton, styles.transparentButton)}
@@ -1666,7 +1362,7 @@ const AlbumPage = () => {
                     {hasStereoOffer && hasSpatialOffer ? (
                       <div className={styles.splitDownload}>
                         <Button
-                          icon={<ArrowDownload24Regular />}
+                          icon={<ArrowDownload24 />}
                           appearance="subtle"
                           onClick={handleDownloadPrimary}
                           disabled={downloadingAlbum}
@@ -1680,7 +1376,7 @@ const AlbumPage = () => {
                             <Button
                               appearance="subtle"
                               aria-label="Choose download version"
-                              icon={<ChevronDown16Regular />}
+                              icon={<ChevronDown16 />}
                               disabled={downloadingAlbum}
                               className={mergeClasses(styles.actionButton, styles.transparentButton, styles.splitDownloadMenu)}
                             />
@@ -1696,7 +1392,7 @@ const AlbumPage = () => {
                       </div>
                     ) : (
                       <Button
-                        icon={<ArrowDownload24Regular />}
+                        icon={<ArrowDownload24 />}
                         appearance="subtle"
                         onClick={handleDownloadPrimary}
                         disabled={downloadingAlbum || !hasAnyProviderOffer}
@@ -1711,7 +1407,7 @@ const AlbumPage = () => {
                   <OverflowItem id="rename-files" priority={0}>
                     <Button
                       appearance="subtle"
-                      icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24Regular />}
+                      icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24 />}
                       onClick={openRenamePreview}
                       disabled={renameApplying}
                       title="Preview album file renames"
@@ -1724,7 +1420,7 @@ const AlbumPage = () => {
                   <OverflowItem id="retag-files" priority={0}>
                     <Button
                       appearance="subtle"
-                      icon={retagApplying ? <Spinner size="tiny" /> : <Info24Regular />}
+                      icon={retagApplying ? <Spinner size="tiny" /> : <Tag24 />}
                       onClick={openRetagPreview}
                       disabled={retagApplying}
                       title="Preview album metadata tag changes"
@@ -1746,7 +1442,7 @@ const AlbumPage = () => {
           <EmptyState
             title="No tracks found"
             description="This album doesn't have any surfaced tracks yet."
-            icon={<MusicNote224Regular />}
+            icon={<MusicNote224 />}
             minHeight="220px"
           />
         ) : (
@@ -1817,25 +1513,6 @@ const AlbumPage = () => {
             </div>
           </div>
         ) : null}
-
-        {/* Similar Albums Section */}
-        {
-          similarAlbums.length > 0 && (
-            <div className={styles.sectionSpacing}>
-              <div className={styles.sectionHeader}>
-                <Title2>Similar Albums</Title2>
-              </div>
-              <div className={styles.carousel}>
-                {similarAlbums.map((similarAlbum) => {
-                  const year = similarAlbum.release_date ? new Date(similarAlbum.release_date).getFullYear() : '';
-                  const subtitle = [similarAlbum.artist_name, year].filter(Boolean).join(' · ');
-                  const sProgress = getProgressByProviderId(String(similarAlbum.id));
-                  return renderMiniAlbumCard(similarAlbum, subtitle, sProgress);
-                })}
-              </div>
-            </div>
-          )
-        }
       </div >
     </DynamicBrandProvider>
   );

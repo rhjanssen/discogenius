@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { AlbumQueryService } from "../../services/music/album-query-service.js";
 import { AlbumCommandService } from "../../services/music/album-command-service.js";
+import { deleteReleaseGroupLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { getReleaseGroupAvailability, setSlotSelection } from "../../services/music/provider-matches.js";
 import {
   getObjectBody,
@@ -122,15 +123,6 @@ router.post("/:albumId/monitor", async (req, res) => {
   }
 });
 
-router.get("/:albumId/similar", (req, res) => {
-  try {
-    res.json(AlbumQueryService.getSimilarAlbums(req.params.albumId));
-  } catch (error: any) {
-    res.status(500).json({ detail: error.message });
-  }
-});
-
-
 // Get MusicBrainz releases belonging to the release group.
 router.get("/:albumId/versions", async (req, res) => {
   try {
@@ -239,6 +231,27 @@ router.patch("/:albumId", async (req, res) => {
       return res.status(400).json({ detail: error.message });
     }
 
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+/**
+ * Lidarr-style Manage → Delete files for a release group.
+ * Query: slot=stereo|spatial (optional), unmonitor=true (optional).
+ */
+router.delete("/:albumId/files", (req, res) => {
+  try {
+    const albumId = req.params.albumId;
+    const slotRaw = typeof req.query.slot === "string" ? req.query.slot.trim().toLowerCase() : "";
+    const slot = slotRaw === "stereo" || slotRaw === "spatial" ? slotRaw : undefined;
+    const unmonitor = parseOptionalQueryBoolean(req.query.unmonitor) === true;
+    const result = deleteReleaseGroupLibraryFiles(albumId, { slot, unmonitor });
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    if (error?.status === 404) {
+      return res.status(404).json({ detail: error.message || "Album not found" });
+    }
+    console.error(`[Albums] Failed to delete album files:`, error);
     res.status(500).json({ detail: error.message });
   }
 });

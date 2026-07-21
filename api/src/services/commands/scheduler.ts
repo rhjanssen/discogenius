@@ -717,8 +717,6 @@ export async function checkNow(): Promise<{ newAlbums: number; artists: number }
                 monitorArtist: isMonitored,
                 hydrateCatalog: true,
                 hydrateAlbumTracks: false,
-                includeSimilarArtists: false,
-                seedSimilarArtists: false,
             });
         } catch (error) {
             console.error(`  ❌ Error checking ${artist.name}:`, error);
@@ -742,74 +740,6 @@ export async function queueCheckNow(): Promise<{ success: boolean; commandId?: n
     );
 
     return { success: commandId > 0, commandId };
-}
-
-export async function checkNowStreaming(sendEvent: (event: string, data: any) => void): Promise<{ newAlbums: number; artists: number }> {
-    sendEvent("status", { message: "Refreshing MusicBrainz metadata and provider availability..." });
-
-    const artists = getManagedArtists({ orderByLastScanned: true }) as any[];
-
-    if (artists.length === 0) {
-        sendEvent("status", { message: "No artists with monitored items found" });
-        sendEvent("complete", { newAlbums: 0, artists: 0 });
-        return { newAlbums: 0, artists: 0 };
-    }
-
-    const artistsWithPendingJobs = getArtistsWithPendingJobs();
-
-    const scanTargets = artists;
-    const monitoredCount = artists.filter((artist: any) => artist.monitor).length;
-    sendEvent("total", { total: scanTargets.length, monitored: monitoredCount });
-
-    let skippedCount = 0;
-
-    for (let index = 0; index < scanTargets.length; index += 1) {
-        const artist = scanTargets[index];
-
-        if (artistsWithPendingJobs.has(String(artist.id))) {
-            console.log(`[Monitoring] Skipping ${artist.name} (id=${artist.id}) - pending scan/curation job`);
-            sendEvent("artist-skipped", {
-                name: artist.name,
-                reason: "pending_jobs",
-                progress: index + 1,
-                total: scanTargets.length,
-            });
-            skippedCount += 1;
-            continue;
-        }
-
-        try {
-            const isMonitored = Boolean(artist.monitor);
-            sendEvent("artist-progress", {
-                name: artist.name,
-                progress: index + 1,
-                total: scanTargets.length,
-            });
-
-            await RefreshArtistService.refreshArtist(artist.id, {
-                monitorArtist: isMonitored,
-                hydrateCatalog: true,
-                hydrateAlbumTracks: false,
-                includeSimilarArtists: false,
-                seedSimilarArtists: false,
-            });
-
-            sendEvent("artist-checked", {
-                name: artist.name,
-                progress: index + 1,
-                total: scanTargets.length,
-            });
-        } catch (error) {
-            console.error(`Error checking ${artist.name}:`, error);
-            sendEvent("error", {
-                message: `Failed to check ${artist.name}`,
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
-    }
-
-    sendEvent("complete", { artists: artists.length, skipped: skippedCount });
-    return { newAlbums: 0, artists: artists.length };
 }
 
 export async function downloadMissing(): Promise<{ albums: number; tracks: number; videos: number }> {

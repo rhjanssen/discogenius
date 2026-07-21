@@ -17,21 +17,28 @@ import {
     listReleaseGroupAlbumOfferCandidates,
 } from "../providers/provider-editorial-text.js";
 
-type SimilarAlbumSeed = {
-    albumId: string;
-    artistId: string;
-};
-
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isMusicBrainzMbid(value: string | number | null | undefined): boolean {
     return MUSICBRAINZ_MBID_RE.test(String(value || "").trim());
 }
 
-function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
+export function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
     const raw = providerAlbum.raw;
     if (raw && typeof raw === "object" && "provider_id" in raw) {
-        return raw;
+        return {
+            ...raw,
+            // Always prefer the typed ProviderAlbum field — list/raw payloads often
+            // omit or rename animated-cover ids.
+            video_cover: providerAlbum.videoCover
+                || (raw as any).video_cover
+                || (raw as any).videoCover
+                || null,
+            videoCover: providerAlbum.videoCover
+                || (raw as any).videoCover
+                || (raw as any).video_cover
+                || null,
+        };
     }
 
     return {
@@ -45,6 +52,8 @@ function providerAlbumToAlbumMetadataRow(providerAlbum: ProviderAlbum): any {
         title: providerAlbum.title,
         release_date: providerAlbum.releaseDate || null,
         cover: providerAlbum.cover || null,
+        video_cover: providerAlbum.videoCover || null,
+        videoCover: providerAlbum.videoCover || null,
         num_tracks: providerAlbum.trackCount || 0,
         num_videos: 0,
         num_volumes: providerAlbum.volumeCount || 1,
@@ -320,8 +329,6 @@ export class RefreshAlbumService {
         const { RefreshArtistService } = await import("./refresh-artist-service.js");
         return RefreshArtistService.upsertMusicBrainzArtist(artistMbid, {
             monitorArtist,
-            includeSimilarArtists: false,
-            seedSimilarArtists: false,
         });
     }
 
@@ -505,33 +512,6 @@ export class RefreshAlbumService {
               AND entity_type = 'album'
               AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
         `).run(provider.id, albumId);
-
-        const includeSimilar = options.includeSimilarAlbums !== false || options.seedSimilarAlbums === true;
-        const similarAlbums = includeSimilar
-            ? await this.storeSimilarAlbums(albumId, forceUpdate)
-            : [];
-
-        if (options.seedSimilarAlbums !== false) {
-            const { RefreshArtistService } = await import("./refresh-artist-service.js");
-
-            for (const similar of similarAlbums) {
-                try {
-                    await RefreshArtistService.refreshArtistMetadata(similar.artistId, {
-                        monitorArtist: false,
-                        includeSimilarArtists: false,
-                        seedSimilarArtists: false,
-                        provider: provider.id,
-                    });
-                    await this.refreshMetadata(similar.albumId, {
-                        includeSimilarAlbums: false,
-                        seedSimilarAlbums: false,
-                        provider: provider.id,
-                    });
-                } catch (error) {
-                    console.warn(`[RefreshAlbumService] Failed to seed similar album ${similar.albumId}:`, error);
-                }
-            }
-        }
 
         console.log(`[RefreshAlbumService] refreshOffer complete for ${albumId}`);
     }
@@ -817,7 +797,7 @@ export class RefreshAlbumService {
             WHERE t.release_mbid = ?
               AND t.medium_position = ?
               AND t.position = ?
-              AND COALESCE(r.is_video, 0) = 0
+              AND (r.is_video IS NULL OR r.is_video = 0)
             LIMIT 1
         `);
         // Album-bundled music videos map against the release's VIDEO tracks:
@@ -834,7 +814,7 @@ export class RefreshAlbumService {
             WHERE t.release_mbid = ?
               AND t.medium_position = ?
               AND t.position = ?
-              AND COALESCE(r.is_video, 0) = 1
+              AND r.is_video = 1
             LIMIT 1
         `);
         const upsertProviderTrackOffer = db.prepare(`
@@ -919,10 +899,11 @@ export class RefreshAlbumService {
                             } | undefined
                             : null;
                         const counterpartVideoId = textOrNull(currentTrack.counterpart_video_id);
+                        // Provider-native disc/track numbers live on ProviderItems columns.
+                        // match_evidence is for counterpart / album linkage only — never for
+                        // catalog filename, tags, or slot binding.
                         const evidence: Record<string, unknown> = {
                             albumProviderId: albumId,
-                            mediumPosition: Number(currentTrack.volume_number || 1),
-                            trackPosition: Number(currentTrack.track_number || 0),
                         };
                         if (counterpartVideoId) {
                             evidence.counterpartVideoId = counterpartVideoId;
@@ -958,7 +939,7 @@ export class RefreshAlbumService {
                             canonicalTrack?.track_mbid ? "selected-release-position" : "provider-album-tracklist",
                             JSON.stringify(evidence),
                             currentTrack.artist?.name || currentTrack.artist_name || null,
-                            null,
+                            textOrNull(currentTrack.cover, currentTrack.image_id, currentTrack.imageId),
                             textOrNull(currentTrack.copyright),
                             positiveNumberOrNull(currentTrack.popularity),
                             finiteNumberOrNull(currentTrack.replay_gain),
@@ -1021,7 +1002,7 @@ export class RefreshAlbumService {
                                         counterpartKind,
                                     }),
                                     currentTrack.artist?.name || currentTrack.artist_name || null,
-                                    null,
+                                    textOrNull(currentTrack.cover, currentTrack.image_id, currentTrack.imageId),
                                     textOrNull(currentTrack.copyright),
                                     positiveNumberOrNull(currentTrack.popularity),
                                     null,
@@ -1052,17 +1033,43 @@ export class RefreshAlbumService {
         }
 
         if (counterpartLinks.length > 0) {
+            const counterparts = await RefreshVideoService.enrichVideoFactsFromProvider(
+                providerId,
+                counterpartLinks.map((link) => ({
+                    providerId: link.counterpartVideoId,
+                    albumId: String(albumId),
+                    title: link.title,
+                    // Prefer OMV facts from getVideo; audio-track duration is only a fallback.
+                    duration: null as number | null,
+                    releaseDate: null as string | null,
+                    quality: null as string | null,
+                    cover: link.cover,
+                    url: link.url,
+                    audioRecordingId: link.audioRecordingId,
+                    audioRecordingMbid: link.audioRecordingMbid,
+                    audioProviderTrackId: link.audioProviderTrackId,
+                    artistName: link.artistName,
+                    _audioDurationFallback: link.duration == null ? null : Number(link.duration),
+                })),
+            );
+            for (const item of counterparts) {
+                if (item.duration == null && item._audioDurationFallback != null) {
+                    item.duration = item._audioDurationFallback;
+                }
+            }
             RefreshVideoService.upsertAlbumTrackCounterpartVideos({
                 artistId: String(selectedRelease?.artist_mbid || fallbackArtistId || ""),
                 provider: providerId,
                 albumId: String(albumId),
                 releaseGroupMbid: selectedRelease?.release_group_mbid || null,
                 releaseMbid: selectedRelease?.release_mbid || null,
-                counterparts: counterpartLinks.map((link) => ({
-                    providerId: link.counterpartVideoId,
+                counterparts: counterparts.map((link) => ({
+                    providerId: link.providerId,
                     albumId: String(albumId),
                     title: link.title,
                     duration: link.duration,
+                    releaseDate: link.releaseDate,
+                    quality: link.quality,
                     cover: link.cover,
                     url: link.url,
                     audioRecordingId: link.audioRecordingId,
@@ -1217,15 +1224,6 @@ export class RefreshAlbumService {
         }
 
         return !offerExisted;
-    }
-
-    private static async storeSimilarAlbums(
-        albumId: string,
-        forceUpdate: boolean = false,
-    ): Promise<SimilarAlbumSeed[]> {
-        void albumId;
-        void forceUpdate;
-        return [];
     }
 
     private static getMusicBrainzPrimary(tidalType: string | undefined, module: string | undefined, title: string = ""): string {

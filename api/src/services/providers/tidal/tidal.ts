@@ -7,6 +7,7 @@ import {
   clearStoredTidalToken,
   refreshStoredTidalToken,
 } from "./tidal-auth.js";
+import { tidalVideoQualityTag } from "./tidal-quality.js";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 const TIDAL_API_BASE_V2 = "https://api.tidal.com/v2";
 // TIDAL's JSON:API developer platform. Our device-flow token is accepted here
@@ -982,7 +983,7 @@ export async function searchTidal(query: string, type: string | string[], limit:
       image_id: item.imageId || item.image || null,  // UUID for video thumbnail
       vibrant_color: item.vibrantColor || null,
       duration: item.duration,
-      quality: item.quality || 'MP4_1080P',
+      quality: tidalVideoQualityTag(item.quality),
     };
   };
 
@@ -996,35 +997,6 @@ export async function searchTidal(query: string, type: string | string[], limit:
   const tracks = data.tracks?.items?.map(mapTrack) || [];
   const videos = data.videos?.items?.map(mapVideo) || [];
   return [...artists, ...albums, ...tracks, ...videos];
-}
-
-export async function getArtistSimilar(artistId: string) {
-  const token = loadToken();
-  if (!token?.access_token) throw new Error("Not authenticated");
-  const cc = getCountryCode();
-
-  // Similar artists are returned in the page API under the "ARTIST_SIMILAR_ARTISTS" module
-  // Using the page endpoint is more reliable than the direct /similar endpoint
-  const res = await tidalFetchWithRetry(`${TIDAL_API_BASE}/artists/${artistId}/similar?countryCode=${cc}&limit=10`, {
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      Accept: "application/json",
-      "X-Tidal-Token": TIDAL_CLIENT_TOKEN,
-    },
-  }, `artists/${artistId}/similar`);
-
-  if (!res.ok) {
-    if (res.status === 404) return [];
-    throw new Error(`Failed to fetch similar artists: ${res.statusText}`);
-  }
-
-  const data = await res.json() as any;
-  return (data.items || []).map((item: any) => ({
-    provider_id: item.id?.toString(),
-    name: item.name,
-    picture: item.picture || null,  // UUID for artist picture
-    popularity: item.popularity || 0,
-  }));
 }
 
 export function getCountryCode(): string {
@@ -1181,45 +1153,6 @@ export async function getAlbumReview(albumId: string): Promise<TidalTextMeta | n
     throw error;
   }
 }
-
-export async function getAlbumSimilar(albumId: string) {
-  const cc = getCountryCode();
-  const token = loadToken();
-  if (!token?.access_token) throw new Error("Not authenticated");
-
-  try {
-    const res = await tidalFetchWithRetry(`${TIDAL_API_BASE}/albums/${albumId}/similar?countryCode=${cc}&limit=10`, {
-      headers: {
-        Authorization: `Bearer ${token.access_token}`,
-        Accept: "application/json",
-        "X-Tidal-Token": TIDAL_CLIENT_TOKEN,
-      },
-    }, `albums/${albumId}/similar`);
-
-    if (!res.ok) {
-      if (res.status === 404) return [];
-      throw new Error(`Failed to fetch similar albums: ${res.statusText}`);
-    }
-
-    const data = await res.json() as any;
-    return (data.items || []).map((item: any) => ({
-      provider_id: item.id?.toString(),
-      title: item.title,
-      artist_id: item.artist?.id?.toString(),
-      artist_name: item.artist?.name,
-      cover: item.cover || null,
-      release_date: item.releaseDate,
-      type: item.type || 'ALBUM',
-      quality: deriveQuality(item) || 'LOSSLESS',
-      explicit: item.explicit || false,
-      popularity: item.popularity || 0,
-    }));
-  } catch (e) {
-    console.warn(`[getAlbumSimilar] Failed for ${albumId}:`, e);
-    return [];
-  }
-}
-
 
 // Helper function to rank audio quality for deduplication
 // Used when the same album appears multiple times in API results
@@ -1664,7 +1597,7 @@ export async function getAlbumItems(albumId: string) {
         volume_number: item.volumeNumber || 1,
         version: item.version || null,
         explicit: item.explicit || false,
-        quality: item.quality || 'MP4_1080P',
+        quality: tidalVideoQualityTag(item.quality),
         image_id: item.imageId || item.image || null,
         artist_id: item.artist?.id?.toString() || null,
         artist_name: item.artist?.name || 'Unknown Artist',
@@ -1723,7 +1656,7 @@ export async function getArtistVideos(artistId: string) {
     release_date: item.releaseDate || item.streamStartDate || null,
     version: item.version || null,
     explicit: item.explicit || false,
-    quality: item.quality || 'MP4_1080P',  // Video quality like MP4_1080P
+    quality: tidalVideoQualityTag(item.quality),  // Video quality like MP4_1080P
     image_id: item.imageId || item.image || null,  // UUID for video thumbnail
     vibrant_color: item.vibrantColor || null,  // Hex color code
     artist_id: item.artist?.id?.toString() || artistId,
@@ -1754,7 +1687,7 @@ export async function getVideo(videoId: string) {
     release_date: data.releaseDate || data.streamStartDate || null,
     image_id: data.imageId || data.image || null,  // UUID for video thumbnail
     vibrant_color: data.vibrantColor || null,  // Hex color code
-    quality: data.quality || 'MP4_1080P',  // Video quality
+    quality: tidalVideoQualityTag(data.quality),
     explicit: data.explicit || false,
     popularity: data.popularity || 0,
     url: `https://listen.tidal.com/video/${data.id}`,

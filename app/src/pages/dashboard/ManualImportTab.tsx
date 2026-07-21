@@ -18,11 +18,11 @@ import {
   tokens,
   } from '@fluentui/react-components';
 import {
-  Delete24Regular as Delete24RegularBase,
-  DocumentSearch24Regular as DocumentSearch24RegularBase,
-  Eye24Regular as Eye24RegularBase,
-  EyeOff24Regular as EyeOff24RegularBase,
-  Search24Regular as Search24RegularBase,
+  Delete24Regular,
+  DocumentSearch24Regular,
+  Eye24Regular,
+  EyeOff24Regular,
+  Search24Regular,
   DocumentSearch24Filled,
   Eye24Filled,
   EyeOff24Filled,
@@ -36,6 +36,7 @@ import { MediaTypeBadge } from '@/components/ui/MediaTypeBadge';
 import { EmptyState } from '@/components/ui/ContentState';
 import { DataGridSkeleton } from '@/components/ui/LoadingSkeletons';
 import { glassButtonStyles, glassDangerButtonStyles, glassPrimaryButtonStyles } from '@/components/ui/glassButtonStyles';
+import { glassSurfaceStyles } from '@/components/ui/glassSurfaceStyles';
 import { useDelayedVisible } from '@/hooks/useDelayedVisible';
 import { useGlobalEvents } from '@/hooks/useGlobalEvents';
 import { useSelectableCollection } from '@/hooks/useSelectableCollection';
@@ -44,12 +45,12 @@ import { api } from '@/services/api';
 import { isSpatialAudioQuality } from '@/utils/spatialAudio';
 import ManualImportModal from './ManualImportModal';
 
-const Delete24Regular = bundleIcon(Delete24Filled, Delete24RegularBase);
+const Delete24 = bundleIcon(Delete24Filled, Delete24Regular);
 
-const DocumentSearch24Regular = bundleIcon(DocumentSearch24Filled, DocumentSearch24RegularBase);
-const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
-const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
-const Search24Regular = bundleIcon(Search24Filled, Search24RegularBase);
+const DocumentSearch24 = bundleIcon(DocumentSearch24Filled, DocumentSearch24Regular);
+const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
+const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const Search24 = bundleIcon(Search24Filled, Search24Regular);
 
 const GROUP_MIN_FILES = 2;
 const GROUP_MIN_RATIO = 0.6;
@@ -121,9 +122,8 @@ const useStyles = makeStyles({
         gap: tokens.spacingHorizontalM,
         flexWrap: 'wrap',
         padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+        ...glassSurfaceStyles,
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 72%, transparent)`,
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
         borderRadius: tokens.borderRadiusLarge,
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
@@ -175,6 +175,7 @@ const useStyles = makeStyles({
         paddingRight: tokens.spacingHorizontalS,
     },
     tableShell: {
+        ...glassSurfaceStyles,
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 72%, transparent)`,
         borderRadius: tokens.borderRadiusLarge,
         maxWidth: '100%',
@@ -184,8 +185,6 @@ const useStyles = makeStyles({
         touchAction: 'pan-x pan-y',
         scrollbarGutter: 'stable both-edges',
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
         boxShadow: tokens.shadow8,
     },
     tableGrid: {
@@ -803,7 +802,7 @@ const ManualImportTab = () => {
             <Button
                 appearance="subtle"
                 size="small"
-                icon={<Search24Regular />}
+                icon={<Search24 />}
                 title={row.kind === 'group' ? 'Review grouped files' : 'Search mapping'}
                 aria-label={`Review ${row.title}`}
                 className={styles.actionButton}
@@ -817,7 +816,7 @@ const ManualImportTab = () => {
                 <Button
                     appearance="subtle"
                     size="small"
-                    icon={<Eye24Regular />}
+                    icon={<Eye24 />}
                     title="Restore file"
                     aria-label={`Restore ${row.title}`}
                     className={styles.actionButton}
@@ -831,7 +830,7 @@ const ManualImportTab = () => {
                 <Button
                     appearance="subtle"
                     size="small"
-                    icon={<EyeOff24Regular />}
+                    icon={<EyeOff24 />}
                     title="Ignore file"
                     aria-label={`Ignore ${row.title}`}
                     className={styles.actionButton}
@@ -845,7 +844,7 @@ const ManualImportTab = () => {
             <Button
                 appearance="subtle"
                 size="small"
-                icon={<Delete24Regular />}
+                icon={<Delete24 />}
                 title="Delete file"
                 aria-label={`Delete ${row.title}`}
                 className={styles.destructiveButton}
@@ -1012,7 +1011,7 @@ const ManualImportTab = () => {
                     description={fileList.length === 0
                         ? 'There are no files waiting for review in your library folders.'
                         : 'No active unmapped files match this view. Show ignored files to review the remaining items.'}
-                    icon={<DocumentSearch24Regular />}
+                    icon={<DocumentSearch24 />}
                 />
             ) : (
                 <>
@@ -1045,7 +1044,7 @@ const ManualImportTab = () => {
                                     <Button
                                         appearance="subtle"
                                         size="small"
-                                        icon={<EyeOff24Regular />}
+                                        icon={<EyeOff24 />}
                                         className={styles.actionButton}
                                         disabled={mutationPending}
                                         onClick={() => runBulkAction(selectedFileIds.filter((id) => selectedFiles.some((file) => file.id === id && !file.ignored)), 'ignore')}
@@ -1057,7 +1056,7 @@ const ManualImportTab = () => {
                                     <Button
                                         appearance="subtle"
                                         size="small"
-                                        icon={<Eye24Regular />}
+                                        icon={<Eye24 />}
                                         className={styles.actionButton}
                                         disabled={mutationPending}
                                         onClick={() => runBulkAction(selectedFileIds.filter((id) => selectedFiles.some((file) => file.id === id && file.ignored)), 'unignore')}
@@ -1069,7 +1068,7 @@ const ManualImportTab = () => {
                                     <Button
                                         appearance="subtle"
                                         size="small"
-                                        icon={<Delete24Regular />}
+                                        icon={<Delete24 />}
                                         className={styles.destructiveButton}
                                         disabled={mutationPending}
                                         onClick={() => runBulkAction(selectedFileIds, 'delete')}
@@ -1120,7 +1119,7 @@ const ManualImportTab = () => {
                             <Button
                                 appearance="primary"
                                 className={styles.destructiveButton}
-                                icon={<Delete24Regular />}
+                                icon={<Delete24 />}
                                 disabled={mutationPending}
                                 onClick={confirmPendingDelete}
                             >

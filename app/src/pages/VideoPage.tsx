@@ -15,13 +15,13 @@ import {
     tokens,
 } from "@fluentui/react-components";
 import {
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
-  Eye24Regular as Eye24RegularBase,
-  EyeOff24Regular as EyeOff24RegularBase,
-  LockClosed24Regular as LockClosed24RegularBase,
-  LockOpen24Regular as LockOpen24RegularBase,
+  ArrowDownload24Regular,
+  Eye24Regular,
+  EyeOff24Regular,
+  LockClosed24Regular,
+  LockOpen24Regular,
   Play24Filled,
-  Video24Regular as Video24RegularBase,
+  Video24Regular,
   ArrowDownload24Filled,
   Eye24Filled,
   EyeOff24Filled,
@@ -31,7 +31,7 @@ import {
   bundleIcon
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
-import { renderableArtworkUrl } from "@/utils/artwork";
+import { mediaCoverSrc } from "@/utils/artwork";
 import { formatDurationSeconds } from "@/utils/format";
 import {
     selectVideoDownloadOffer,
@@ -45,6 +45,7 @@ import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalida
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
+import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
 import type { Artist } from "@/hooks/useLibrary";
 import type { LibraryFilesListResponseContract, VideoDetailContract } from "@contracts/media";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
@@ -66,12 +67,30 @@ import {
     dispatchLibraryUpdated,
 } from "@/utils/appEvents";
 
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
-const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
-const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
-const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
-const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
-const Video24Regular = bundleIcon(Video24Filled, Video24RegularBase);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
+const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
+const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
+const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
+const Video24 = bundleIcon(Video24Filled, Video24Regular);
+
+/** Human label for Recordings.video_variant (Discogenius catalog class). */
+function videoVariantLabel(variant: string | null | undefined): string {
+    switch (String(variant || "").trim().toLowerCase()) {
+        case "official":
+            return "Official";
+        case "lyric":
+            return "Lyric";
+        case "live":
+            return "Live";
+        case "audio":
+            return "Audio";
+        case "visualizer":
+            return "Visualizer";
+        default:
+            return "Video";
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Styles                                                            */
@@ -167,12 +186,12 @@ const useStyles = makeStyles({
         display: "flex",
         flexDirection: "column",
         // Section rhythm; persona↔title uses the tighter titleBlock gap.
+        // No glass card — match AlbumPage header (open on the page surface).
         gap: tokens.spacingVerticalM,
-        padding: tokens.spacingHorizontalL,
-        backgroundColor: tokens.colorNeutralBackgroundAlpha2,
-        backdropFilter: "blur(10px)",
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-        borderRadius: tokens.borderRadiusXLarge,
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalXXS}`,
+        "@media (min-width: 768px)": {
+            padding: `${tokens.spacingVerticalM} 0`,
+        },
     },
     // Related-content pair (Fluent XS / SNudge): artist byline belongs to the title.
     titleBlock: {
@@ -205,7 +224,7 @@ const useStyles = makeStyles({
     },
     metadataRow: {
         display: "flex",
-        alignItems: "flex-start",
+        alignItems: "center",
         justifyContent: "space-between",
         flexWrap: "wrap",
         columnGap: tokens.spacingHorizontalL,
@@ -218,14 +237,23 @@ const useStyles = makeStyles({
         rowGap: tokens.spacingVerticalS,
         flexWrap: "wrap",
     },
-
+    // Match AlbumPage header facts: centered text + medium quality pills.
     metaItems: {
-        display: "flex",
-        alignItems: "flex-start",
+        display: "inline-flex",
+        alignItems: "center",
         columnGap: tokens.spacingHorizontalS,
-        rowGap: tokens.spacingVerticalXS,
+        rowGap: tokens.spacingVerticalXXS,
         flexWrap: "wrap",
         color: tokens.colorNeutralForeground2,
+        fontSize: tokens.fontSizeBase300,
+        lineHeight: tokens.lineHeightBase300,
+    },
+    metaSeparator: {
+        width: "4px",
+        height: "4px",
+        flexShrink: 0,
+        borderRadius: tokens.borderRadiusCircular,
+        backgroundColor: tokens.colorNeutralForeground2,
     },
     rightActions: {
         display: "flex",
@@ -317,11 +345,13 @@ const VideoPage = () => {
         const files = filesData?.items ?? [];
         return files.find((file) => file.file_type === "video");
     }, [filesData]);
-    const coverUrl = video ? renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id) || undefined : undefined;
+    const coverUrl = video ? (mediaCoverSrc(video) || null) : undefined;
     const videoBrandColor = useArtworkBrandColor({
         artworkUrl: coverUrl,
         deriveBrandFromArtwork: true,
+        ownsAmbience: true,
     });
+    const { heroProps: ultraBlurHeroProps } = useUltraBlurHero(coverUrl);
 
     // Toggle monitor mutation
     const toggleMonitor = useMutation({
@@ -436,7 +466,7 @@ const VideoPage = () => {
         ? api.getStreamUrl(videoFile.id)
         : (remoteStreamUrl || '');
 
-    const artistPicUrl = renderableArtworkUrl(artistData?.picture || artistData?.cover_image_url);
+    const artistPicUrl = mediaCoverSrc(artistData);
 
     useEffect(() => {
         const videoElement = videoRef.current;
@@ -550,10 +580,16 @@ const VideoPage = () => {
                             aria-label={isDownloaded || previewOffer ? `Play ${video.title}` : `Preview unavailable for ${video.title}`}
                         >
                             {coverUrl ? (
-                                <img src={coverUrl} alt="" aria-hidden="true" className={styles.thumbnailImage} />
+                                <img
+                                    {...ultraBlurHeroProps}
+                                    src={coverUrl}
+                                    alt=""
+                                    aria-hidden="true"
+                                    className={styles.thumbnailImage}
+                                />
                             ) : (
                                 <div className={styles.thumbnailPlaceholder} aria-hidden="true">
-                                    <Video24Regular style={{ width: 64, height: 64 }} />
+                                    <Video24 style={{ width: 64, height: 64 }} />
                                 </div>
                             )}
                             <div className={styles.playOverlay} aria-hidden="true">
@@ -587,28 +623,21 @@ const VideoPage = () => {
 
                         <div className={styles.titleRow}>
                             <Title1 className={styles.videoTitle}>{video.title}</Title1>
-                            {video.explicit ? <ExplicitBadge /> : null}
+                            {video.explicit ? <ExplicitBadge size="small" /> : null}
                         </div>
-
-                        {(video.albums?.length ?? 0) > 0 ? (
-                            <VideoAlbumAffiliation
-                                className={styles.albumAffiliation}
-                                albums={video.albums ?? []}
-                            />
-                        ) : null}
                     </div>
 
                     <div className={styles.metadataRow}>
                         <div className={styles.leftMeta}>
                             <div className={styles.metaItems}>
-                                {year && (
-                                    <>
-                                        <Text>{year}</Text>
-                                        <Text>•</Text>
-                                    </>
-                                )}
+                                {year ? <Text>{year}</Text> : null}
+                                {year ? <div className={styles.metaSeparator} /> : null}
                                 <Text>{formatDurationSeconds(video.duration)}</Text>
-                                <Text>•</Text>
+                                <div className={styles.metaSeparator} />
+                                <Text title="Discogenius video type">{videoVariantLabel(video.video_variant)}</Text>
+                                {(offers.length > 0 || video.quality) ? (
+                                    <div className={styles.metaSeparator} />
+                                ) : null}
                                 {offers.length > 0 ? (
                                     <ProviderQualityRow
                                         offers={offers.map((offer): ProviderQualityOffer => ({
@@ -634,7 +663,7 @@ const VideoPage = () => {
                         <div className={styles.rightActions}>
                             <Button
                                 appearance={isMonitored ? "subtle" : "primary"}
-                                icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
+                                icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
                                 disabled={isLocked}
                                 onClick={() => toggleMonitor.mutate(!isMonitored)}
                                 className={mergeClasses(styles.actionButton, isMonitored ? styles.transparentButton : styles.primaryButton)}
@@ -645,7 +674,7 @@ const VideoPage = () => {
 
                             <Button
                                 appearance="subtle"
-                                icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
+                                icon={isLocked ? <LockOpen24 /> : <LockClosed24 />}
                                 onClick={() => toggleLock.mutate(!isLocked)}
                                 style={isLocked ? { color: tokens.colorPaletteRedForeground1 } : undefined}
                                 className={mergeClasses(styles.actionButton, styles.transparentButton)}
@@ -657,7 +686,7 @@ const VideoPage = () => {
                             {!isDownloaded && (
                                 <Button
                                     appearance="subtle"
-                                    icon={<ArrowDownload24Regular />}
+                                    icon={<ArrowDownload24 />}
                                     onClick={handleDownload}
                                     disabled={!downloadOffer}
                                     title={downloadOffer ? "Download from the selected provider" : "No provider offer supports video downloads"}
@@ -668,6 +697,13 @@ const VideoPage = () => {
                             )}
                         </div>
                     </div>
+
+                    {(video.albums?.length ?? 0) > 0 ? (
+                        <VideoAlbumAffiliation
+                            className={styles.albumAffiliation}
+                            albums={video.albums ?? []}
+                        />
+                    ) : null}
                 </div>
             </div>
         </DynamicBrandProvider>

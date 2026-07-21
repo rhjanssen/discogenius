@@ -8,7 +8,6 @@ import {
   updateMonitoringConfig,
   startMonitoring,
   stopMonitoring,
-  checkNowStreaming,
   queueMonitoringCyclePass,
   queueMetadataRefreshPass,
   queueCurationPass,
@@ -147,41 +146,8 @@ router.post("/trigger-all", (_, res) => {
   }
 });
 
-// Streaming version of check for real-time progress
-router.get("/check-stream", async (_, res) => {
-  // Set up SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  const sendEvent = (event: string, data: any) => {
-    res.write(`event: ${event}\n`);
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  try {
-    const result = await checkNowStreaming(sendEvent);
-
-    sendEvent('complete', {
-      success: true,
-      newAlbums: result.newAlbums,
-      artists: result.artists,
-      message: `Found ${result.newAlbums} new album(s) from ${result.artists} monitored artist(s)`
-    });
-
-    res.end();
-  } catch (error: any) {
-    sendEvent('error', {
-      message: 'Failed to check for new releases',
-      error: error.message
-    });
-    res.end();
-  }
-});
-
-// Queue downloads for all monitored but missing items
-// Separate from scanning - allows user to review curation before downloading
+// Queue downloads for all monitored but missing items (manual Wanted search).
+// Monitored artist add already queues a scoped DownloadMissing after CurateArtist.
 router.post("/download-missing", async (_, res) => {
   try {
     const commandId = queueDownloadMissingPass({ trigger: CommandTrigger.Manual });

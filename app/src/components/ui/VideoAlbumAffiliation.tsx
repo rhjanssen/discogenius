@@ -8,7 +8,7 @@ import {
 import { MusicNote224Regular } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
 import type { VideoAlbumRefContract } from "@contracts/media";
-import { renderableArtworkUrl } from "@/utils/artwork";
+import { mediaCoverSrc } from "@/utils/artwork";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 
 const useStyles = makeStyles({
@@ -103,11 +103,17 @@ function formatTrackPosition(album: VideoAlbumRefContract): string | null {
   if (track <= 0) {
     return null;
   }
+  const total = album.track_count == null || !Number.isFinite(album.track_count)
+    ? null
+    : Math.trunc(album.track_count);
+  const trackLabel = total != null && total > 0
+    ? `Track ${track} of ${total}`
+    : `Track ${track}`;
   const volume = album.volume_number == null ? null : Math.trunc(album.volume_number);
   if (volume != null && volume > 1) {
-    return `Disc ${volume} · Track ${track}`;
+    return `Disc ${volume} · ${trackLabel}`;
   }
-  return `Track ${track}`;
+  return trackLabel;
 }
 
 export function VideoAlbumAffiliation({
@@ -131,7 +137,7 @@ export function VideoAlbumAffiliation({
       </Caption1>
       <div className={styles.list}>
         {albums.map((album) => {
-          const coverUrl = renderableArtworkUrl(album.cover_id) || undefined;
+          const coverUrl = mediaCoverSrc(album) || undefined;
           const position = formatTrackPosition(album);
           const goToAlbum = () => {
             if (album.track_mbid) {

@@ -138,7 +138,7 @@ function loadMissingAlbums(ids: readonly string[], context: DescriptionLookupCon
         const rows = db.prepare(`
             SELECT
                 pi.provider_id AS id,
-                COALESCE(pi.title, release.title, album.title) AS title,
+                COALESCE(album.title, release.title, pi.title) AS title,
                 pi.version AS version,
                 artist.name AS artist_name
             FROM ProviderItems pi
@@ -184,7 +184,7 @@ function loadMissingTracks(ids: readonly string[], context: DescriptionLookupCon
         const rows = db.prepare(`
             SELECT
                 pi.provider_id AS id,
-                COALESCE(pi.title, recording.title, track.title) AS track_title,
+                COALESCE(track.title, recording.title, pi.title) AS track_title,
                 pi.version AS track_version,
                 COALESCE(release.title, album.title) AS album_title,
                 release.disambiguation AS album_version,
@@ -239,7 +239,7 @@ function loadMissingVideos(ids: readonly string[], context: DescriptionLookupCon
         const rows = db.prepare(`
             SELECT
                 pi.provider_id AS id,
-                COALESCE(pi.title, recording.title) AS title,
+                COALESCE(recording.title, pi.title) AS title,
                 artist.name AS artist_name
             FROM ProviderItems pi
             LEFT JOIN Recordings recording ON recording.mbid = pi.recording_mbid

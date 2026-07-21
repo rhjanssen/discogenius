@@ -40,8 +40,8 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         a.picture AS artist_picture,
         a.cover_image_url AS artist_cover_image_url,
         a.monitored AS artist_monitor,
-        CASE WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1 ELSE 0 END AS wanted,
-        CASE WHEN COALESCE(stereo.monitored_lock, 0) = 1 OR COALESCE(spatial.monitored_lock, 0) = 1 THEN 1 ELSE 0 END AS monitored_lock,
+        CASE WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1 ELSE 0 END AS wanted,
+        CASE WHEN stereo.monitored_lock = 1 OR spatial.monitored_lock = 1 THEN 1 ELSE 0 END AS monitored_lock,
         COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
         COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
         COALESCE(stereo.selected_release_mbid, spatial.selected_release_mbid) AS selected_release_mbid,
@@ -1060,7 +1060,6 @@ export class MusicBrainzReleaseGroupReadService {
             tracks: release
                 ? await buildReleaseGroupTrackContracts(releaseGroup, release, album)
                 : [],
-            similarAlbums: [],
             otherVersions: listMusicBrainzReleaseVersions(releaseGroup, album.cover_id || coverUrl),
             artistPicture: album.album_artists?.[0]?.picture || localArtistArtworkUrl(releaseGroup.artist_mbid, releaseGroup.artist_picture, releaseGroup.artist_cover_image_url),
             artistCoverImageUrl: album.album_artists?.[0]?.cover_image_url || localArtistArtworkUrl(releaseGroup.artist_mbid, releaseGroup.artist_cover_image_url),

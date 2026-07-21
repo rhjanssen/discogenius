@@ -1244,7 +1244,6 @@ test.describe('Dashboard queue and activity tabs', () => {
           },
           tracks: [],
           otherVersions: [],
-          similarAlbums: [],
           artistPicture: null,
           artistCoverImageUrl: null,
         }),

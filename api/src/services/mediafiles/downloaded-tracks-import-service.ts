@@ -239,7 +239,7 @@ function resolveExpectedRecoveredTracks(
         FROM selected_releases sr
         JOIN Tracks track ON track.release_mbid = sr.release_mbid
         LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
-        WHERE COALESCE(recording.is_video, 0) = 0
+        WHERE (recording.is_video IS NULL OR recording.is_video = 0)
     `).get(
         ...albumIds,
         provider || null,
@@ -380,8 +380,14 @@ export class DownloadedTracksImportService {
                 provider: job.payload.provider || null,
                 releaseGroupMbid: job.payload.releaseGroupMbid || null,
                 releaseMbid: job.payload.releaseMbid || null,
+                canonicalTrackMbid: job.payload.canonicalTrackMbid || null,
+                canonicalRecordingMbid: job.payload.canonicalRecordingMbid || null,
                 albumId: job.payload.albumId || null,
+                albumTitle: job.payload.albumTitle || job.payload.album_title || null,
                 slot: job.payload.slot || null,
+                trackNumber: job.payload.trackNumber ?? null,
+                volumeNumber: job.payload.volumeNumber ?? null,
+                trackOffers: Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : undefined,
                 downloadPath,
                 onProgress: (progress) => {
                     // Organizer progress is emitted before each album track move
@@ -592,7 +598,21 @@ export class DownloadedTracksImportService {
         }
 
         const expectedProcessedTracks = organizeResult.expectedTracks ?? 0;
-        if (type === "album" && expectedProcessedTracks > 0 && organizeResult.processedTrackIds.length < expectedProcessedTracks) {
+        const trackOfferCount = Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers.length : 0;
+        const acquisitionMode = String(job.payload.acquisitionMode || "").trim();
+        const isTrackOffersJob = acquisitionMode === "trackOffers" || trackOfferCount > 0;
+        // Soft-incomplete for normal full-album downloads (bonus files, etc.).
+        // Hybrid trackOffers must not green-check when most catalog tracks never landed.
+        const softIncomplete = type === "album"
+            && !isTrackOffersJob
+            && expectedProcessedTracks > 0
+            && organizeResult.processedTrackIds.length < expectedProcessedTracks;
+        const hardIncomplete = type === "album"
+            && isTrackOffersJob
+            && trackOfferCount > 0
+            && organizeResult.processedTrackIds.length < trackOfferCount;
+
+        if (softIncomplete || hardIncomplete) {
             try {
                 recordHistoryEvent({
                     artistId: historyContext.artistId,
@@ -607,13 +627,23 @@ export class DownloadedTracksImportService {
                         originalJobId: originalJobId ?? null,
                         processedTrackIds: {
                             count: organizeResult.processedTrackIds.length,
-                            expected: expectedProcessedTracks,
+                            expected: isTrackOffersJob
+                                ? trackOfferCount
+                                : expectedProcessedTracks,
                         },
                     },
                 });
             } catch (historyError) {
                 console.warn(`[ImportDownload] Failed to write AlbumImportIncomplete history event for ${type} ${providerId}:`, historyError);
             }
+        }
+
+        if (hardIncomplete) {
+            const processed = organizeResult.processedTrackIds.length;
+            throw new Error(
+                `Hybrid album import incomplete for ${providerId}: organized ${processed}/${trackOfferCount} offered tracks. ` +
+                `Refusing to mark the job complete.`,
+            );
         }
 
         cancellationCheckpoint("before completing import");

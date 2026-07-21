@@ -80,7 +80,7 @@ export class VideoTagService {
         COALESCE(file.provider_id, provider_item.provider_id) AS provider_id,
         provider_item.provider_url,
         COALESCE(file.quality, provider_item.quality) AS quality,
-        COALESCE(provider_item.title, recording.title) AS title,
+        COALESCE(recording.title, provider_item.title) AS title,
         provider_item.release_date,
         COALESCE(provider_item.copyright, recording.copyright) AS copyright,
         artist.name AS artist_name,

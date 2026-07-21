@@ -1,3 +1,11 @@
+import path from "path";
+import type { LocalFile } from "./import-types.js";
+
+/** Uppercase alphanumeric ISRC (shared by matchers / slot planners). */
+export function normalizeIsrc(value: unknown): string {
+    return String(value || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+
 // Helper to extract Release Group from filename (Scene/P2P standard)
 // Handles: "Artist - Title [Source-Group]", "File [Group] [FLAC]", "File [Group-FLAC]"
 export function extractReleaseGroup(filename: string): string | null {
@@ -64,9 +72,6 @@ export function extractReleaseGroup(filename: string): string | null {
 
     return null;
 }
-
-import path from "path";
-import type { LocalFile } from "./import-types.js";
 
 export type AlbumTrackLike = {
     id: string;

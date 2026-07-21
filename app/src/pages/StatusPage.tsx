@@ -16,15 +16,16 @@ import {
     type UnmatchedArtistTarget,
 } from "@/components/settings/UnmatchedArtistMatchDialog";
 import {
-  CheckmarkCircle16Regular as CheckmarkCircle16RegularBase,
-  ErrorCircle16Regular as ErrorCircle16RegularBase,
-  Warning16Regular as Warning16RegularBase,
+  CheckmarkCircle16Regular,
+  ErrorCircle16Regular,
+  Warning16Regular,
   CheckmarkCircle16Filled,
   ErrorCircle16Filled,
   Warning16Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
+import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import { api } from "@/services/api";
 import type {
     HealthCheckResultContract,
@@ -33,9 +34,9 @@ import type {
 } from "@contracts/system-status";
 import type { ProviderDiagnosticResult, ProviderDiagnosticsResponse, StreamingProviderStatus } from "@/services/api";
 
-const CheckmarkCircle16Regular = bundleIcon(CheckmarkCircle16Filled, CheckmarkCircle16RegularBase);
-const ErrorCircle16Regular = bundleIcon(ErrorCircle16Filled, ErrorCircle16RegularBase);
-const Warning16Regular = bundleIcon(Warning16Filled, Warning16RegularBase);
+const CheckmarkCircle16 = bundleIcon(CheckmarkCircle16Filled, CheckmarkCircle16Regular);
+const ErrorCircle16 = bundleIcon(ErrorCircle16Filled, ErrorCircle16Regular);
+const Warning16 = bundleIcon(Warning16Filled, Warning16Regular);
 
 const useStyles = makeStyles({
     container: {
@@ -58,12 +59,8 @@ const useStyles = makeStyles({
         color: tokens.colorNeutralForeground3,
     },
     card: {
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
-        borderRadius: tokens.borderRadiusMedium,
+        ...glassSurfaceStyles,
         overflow: "hidden",
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     row: {
         display: "flex",
@@ -143,22 +140,22 @@ const useStyles = makeStyles({
 
 function statusIcon(status: HealthCheckStatusContract, styles: ReturnType<typeof useStyles>) {
     if (status === "ok") {
-        return <CheckmarkCircle16Regular className={styles.statusIconOk} />;
+        return <CheckmarkCircle16 className={styles.statusIconOk} />;
     }
     if (status === "warning") {
-        return <Warning16Regular className={styles.statusIconWarning} />;
+        return <Warning16 className={styles.statusIconWarning} />;
     }
-    return <ErrorCircle16Regular className={styles.statusIconError} />;
+    return <ErrorCircle16 className={styles.statusIconError} />;
 }
 
 function diagnosticIcon(status: ProviderDiagnosticResult["status"], styles: ReturnType<typeof useStyles>) {
     if (status === "ok") {
-        return <CheckmarkCircle16Regular className={styles.statusIconOk} />;
+        return <CheckmarkCircle16 className={styles.statusIconOk} />;
     }
     if (status === "warning" || status === "disabled" || status === "unknown") {
-        return <Warning16Regular className={styles.statusIconWarning} />;
+        return <Warning16 className={styles.statusIconWarning} />;
     }
-    return <ErrorCircle16Regular className={styles.statusIconError} />;
+    return <ErrorCircle16 className={styles.statusIconError} />;
 }
 
 function overallBadgeColor(status: HealthOverallStatusContract): "success" | "warning" | "danger" {
@@ -222,10 +219,10 @@ function ProviderRow({
         >
             <div className={styles.rowMain}>
                 {hasDiagnosticError
-                    ? <ErrorCircle16Regular className={styles.statusIconError} />
+                    ? <ErrorCircle16 className={styles.statusIconError} />
                     : provider.authenticated && !hasDiagnosticWarning
-                    ? <CheckmarkCircle16Regular className={styles.statusIconOk} />
-                    : <Warning16Regular className={styles.statusIconWarning} />}
+                    ? <CheckmarkCircle16 className={styles.statusIconOk} />
+                    : <Warning16 className={styles.statusIconWarning} />}
                 <div className={styles.rowContent}>
                     <Text size={300} weight="semibold">{provider.name}</Text>
                     <Caption1 className={styles.mutedText}>
@@ -465,7 +462,7 @@ const StatusPage = () => {
                                         )}
                                     >
                                         <div className={styles.rowMain}>
-                                            <Warning16Regular className={styles.statusIconWarning} />
+                                            <Warning16 className={styles.statusIconWarning} />
                                             <div className={styles.rowContent}>
                                                 <Text size={300}>{artist.name}</Text>
                                                 <Caption1 className={styles.mutedText}>

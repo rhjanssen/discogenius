@@ -31,7 +31,6 @@ import statusRouter from "./routes/status.js";
 import systemStatusRouter from "./routes/system-status.js";
 import systemTaskRouter from "./routes/system-task.js";
 import tracksRouter from "./routes/v1/track.js";
-import ultraBlurRouter from "./routes/ultrablur.js";
 import unmappedRouter from "./routes/unmapped.js";
 import videosRouter from "./routes/v1/video.js";
 import { closeAppLogging, initAppLogging } from "./services/config/app-logger.js";
@@ -196,7 +195,6 @@ app.use((req, res, next) => {
 
 app.use("/app-auth", appAuthRouter);
 app.use("/api/app-auth", appAuthRouter);
-app.use("/services/ultrablur", ultraBlurRouter);
 app.use("/media-cover", mediaCoverRouter);
 app.use("/media-cover-proxy", mediaCoverProxyRouter);
 

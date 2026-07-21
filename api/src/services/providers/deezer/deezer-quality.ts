@@ -1,7 +1,9 @@
 import type {
   NeutralAudioQuality,
+  NeutralVideoQuality,
   ProviderQualityMapping,
 } from "../provider-quality.js";
+import { classifyNeutralVideo, formatNeutralVideoTag } from "../provider-quality.js";
 
 /** Deezer exposes MP3 tiers plus 16-bit FLAC (HiFi). */
 export const deezerQualityMapping: ProviderQualityMapping = {
@@ -26,5 +28,13 @@ export const deezerQualityMapping: ProviderQualityMapping = {
 
   fromNeutralAudio(quality: NeutralAudioQuality): string {
     return quality === "lossless" || quality === "hires-lossless" ? "FLAC" : "MP3_320";
+  },
+
+  toNeutralVideo(raw: string | null | undefined): NeutralVideoQuality | null {
+    return classifyNeutralVideo(raw);
+  },
+
+  fromNeutralVideo(quality: NeutralVideoQuality): string {
+    return formatNeutralVideoTag(quality);
   },
 };

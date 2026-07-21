@@ -114,6 +114,30 @@ class StreamingProviderManager {
     const index = priority.indexOf(String(providerId || "").trim());
     return index === -1 ? priority.length : index;
   }
+
+  /**
+   * Human-facing provider label for naming tokens / conflict messages.
+   * Uses each provider's registered `name` (not a hardcoded map).
+   */
+  getProviderDisplayName(providerId: string | null | undefined): string {
+    const raw = String(providerId || "").trim();
+    if (!raw) return "Unknown";
+    const lower = raw.toLowerCase();
+    const aliases: Record<string, string> = {
+      apple: "apple-music",
+      applemusic: "apple-music",
+      youtube: "youtube-music",
+      youtubemusic: "youtube-music",
+      amazon: "amazon-music",
+      amazonmusic: "amazon-music",
+    };
+    const resolvedId = aliases[lower] || lower;
+    try {
+      return this.getStreamingProvider(resolvedId).name;
+    } catch {
+      return raw.charAt(0).toUpperCase() + raw.slice(1);
+    }
+  }
 }
 
 export const streamingProviderManager = new StreamingProviderManager();

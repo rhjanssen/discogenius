@@ -242,7 +242,7 @@ export function getAlbumDownloadStatsMap(albumIds: Array<string | number>): Map<
        AND lf_recording.canonical_track_mbid IS NULL
        AND lf_recording.file_type = 'track'
        AND lf_recording.library_slot = sr.slot
-      WHERE COALESCE(r.is_video, 0) = 0
+      WHERE (r.is_video IS NULL OR r.is_video = 0)
       GROUP BY sr.release_group_mbid
     `).all(...missing) as Array<{
       album_id: string;
@@ -419,16 +419,16 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
        AND lf.file_type = 'track'
        AND lf.library_slot = rgs.slot
       WHERE rgs.artist_mbid IN (${mbidMarks})
-        AND (rgs.monitored = 1 OR COALESCE(rgs.monitored_lock, 0) = 1)
+        AND (rgs.monitored = 1 OR rgs.monitored_lock = 1)
         AND rgs.slot IN ('stereo', 'spatial')
         AND rgs.selected_release_mbid IS NOT NULL
-        AND COALESCE(recording.is_video, 0) = 0
+        AND (recording.is_video IS NULL OR recording.is_video = 0)
       GROUP BY rgs.artist_mbid, rgs.release_group_mbid, rgs.slot
     `).all(...mbids) as Array<{ artist_mbid: string; total_tracks: number; downloaded_tracks: number }>;
 
     // 2. Monitored videos — one indexed query per artist-link column instead of
     //    an OR-join that defeats both indexes.
-    const monitoredVideoFlag = "(COALESCE(recording.monitored, 0) = 1 OR COALESCE(recording.monitored_lock, 0) = 1)";
+    const monitoredVideoFlag = "(recording.monitored = 1 OR recording.monitored_lock = 1)";
     const videosLinkedByMbid = mbids.length === 0 ? [] : db.prepare(`
       SELECT recording.artist_mbid AS link, recording.id AS recording_id
       FROM Recordings recording

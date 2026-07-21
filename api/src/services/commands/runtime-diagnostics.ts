@@ -38,7 +38,6 @@ function isStreamingLikePath(path: string) {
   return (
     path === "/api/v1/events" ||
     path === "/api/v1/queue/progress-stream" ||
-    path === "/api/v1/monitoring/check-stream" ||
     path === "/api/v1/artist/import-stream"
   );
 }

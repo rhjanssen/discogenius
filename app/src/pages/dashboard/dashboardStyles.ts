@@ -1,5 +1,6 @@
 import { makeStyles, tokens } from "@fluentui/react-components";
 import { collectionRowPadding } from "@/components/ui/sharedLayoutStyles";
+import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 
 export const useDashboardStyles = makeStyles({
     brandHeader: {
@@ -35,6 +36,7 @@ export const useDashboardStyles = makeStyles({
         color: "var(--dg-accent-videos)",
     },
     emptyState: {
+        ...glassSurfaceStyles,
         textAlign: "center",
         padding: tokens.spacingVerticalXXL,
         color: tokens.colorNeutralForeground3,
@@ -42,9 +44,6 @@ export const useDashboardStyles = makeStyles({
         flexDirection: "column",
         alignItems: "center",
         gap: tokens.spacingVerticalM,
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
         borderRadius: tokens.borderRadiusMedium,
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         overflow: "hidden",
@@ -142,20 +141,18 @@ export const useDashboardStyles = makeStyles({
 
     // Queue styles
     queueCard: {
+        ...glassSurfaceStyles,
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-        backdropFilter: "blur(20px)",
         borderRadius: tokens.borderRadiusMedium,
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     downloadList: {
+        ...glassSurfaceStyles,
         display: "flex",
         flexDirection: "column",
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-        backdropFilter: "blur(20px)",
         borderRadius: tokens.borderRadiusMedium,
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         overflow: "hidden",
@@ -548,10 +545,9 @@ export const useDashboardStyles = makeStyles({
 
     // Activity styles
     activityList: {
+        ...glassSurfaceStyles,
         display: "flex",
         flexDirection: "column",
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-        backdropFilter: "blur(20px)",
         borderRadius: tokens.borderRadiusMedium,
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
         overflow: "hidden",

@@ -3,28 +3,43 @@ import { dominantUltraBlurColor } from "@/providers/DynamicBrandProvider";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 
 interface UseArtworkBrandColorOptions {
+  /**
+   * Cover URL for ambience.
+   * - string: apply this artwork
+   * - null: page resolved and has no cover — clear to theme defaults when ownsAmbience
+   * - undefined: still loading — hold the previous page's ultrablur (no neutral dip)
+   */
   artworkUrl?: string | null;
   brandKeyColor?: string | null;
   deriveBrandFromArtwork?: boolean;
+  /**
+   * When true (album/artist/video detail), clear ambience only once artwork is
+   * known missing (`null`). While `artworkUrl` is `undefined` (data still
+   * loading), keep the previous blur so artist→album does not flash neutral.
+   * List/dashboard pages leave this false.
+   */
+  ownsAmbience?: boolean;
 }
 
 export function useArtworkBrandColor({
   artworkUrl,
   brandKeyColor,
   deriveBrandFromArtwork = false,
+  ownsAmbience = false,
 }: UseArtworkBrandColorOptions): string | null {
   const { setArtwork, colors } = useUltraBlurContext();
 
   useEffect(() => {
-    // Only push real artwork into the global UltraBlur state — and keep the
-    // previous ambience alive on unmount. Resetting to the theme default here
-    // made the background snap to neutral between page navigations (and on
-    // dashboard/settings) while the brand accent persisted, which read as the
-    // blur "disappearing" and the next page's blur "popping in".
     if (artworkUrl) {
       setArtwork(artworkUrl);
+      return;
     }
-  }, [artworkUrl, setArtwork]);
+    // Only clear when the page has settled with no cover. `undefined` means
+    // still loading — hold the prior page's ultrablur until the new cover is ready.
+    if (ownsAmbience && artworkUrl === null) {
+      setArtwork(undefined);
+    }
+  }, [artworkUrl, ownsAmbience, setArtwork]);
 
   return useMemo(() => {
     if (brandKeyColor) {

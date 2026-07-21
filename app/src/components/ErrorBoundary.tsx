@@ -9,12 +9,12 @@ import {
 } from "@fluentui/react-components";
 import {
   ErrorCircle48Color,
-  ArrowClockwise24Regular as ArrowClockwise24RegularBase,
+  ArrowClockwise24Regular,
   ArrowClockwise24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 
-const ArrowClockwise24Regular = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24RegularBase);
+const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
 
 const useStyles = makeStyles({
   container: {
@@ -112,7 +112,7 @@ const ErrorDisplay = ({
         <div className={styles.actions}>
           <Button
             appearance="primary"
-            icon={<ArrowClockwise24Regular />}
+            icon={<ArrowClockwise24 />}
             onClick={() => window.location.reload()}
           >
             Refresh Page

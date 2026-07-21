@@ -4,9 +4,7 @@ Outstanding work only. Shipped history belongs in `CHANGELOG.md`.
 
 Status: pending | in progress | decided | revisit
 
-## Before / with 2.4.0 release
-
-### Live provider validation (needs Robert)
+## Manual validation (needs Robert)
 
 - **Spatial audio:** turn Spatial audio ON if Atmos chips are missing on albums
   with matched Atmos offers, then confirm TIDAL + Apple Atmos on Bastille.
@@ -18,27 +16,6 @@ Status: pending | in progress | decided | revisit
 - **Amazon Music / Spotify:** Auth shows **Soon** — no live validation until
   re-enabled.
 
-### Metadata tagging (still broken)
-
-Genre / LABEL embedding and Library empty-state import already shipped — not
-listed here.
-
-- done (this cycle): `RELEASECOUNTRY` serialized as a plain country code (not a
-  JSON array string).
-- done (this cycle): write `INITIALKEY` from `ProviderItems.musical_key`.
-- done (this cycle): never write ReplayGain peak placeholders (`1.0` / `0.0`) or
-  `+0.00 dB` when the provider did not supply real values.
-- pending (later): Lidarr `WriteAudioTagsType.Sync` — retag files when curated
-  MB columns change on refresh (`write_audio_tags_policy` has no `sync` yet).
-
-### Schema baseline (2.4.0)
-
-- done (this cycle): fresh DBs create schema **v38** in one plain-`CREATE` pass
-  (indexes for artist-scoped ProviderItems slot filters + ArtistMetadata name
-  lookup). Existing v38 DBs open without re-running ensure*/repairs. Servarr
-  refresh preserves barcodes via `COALESCE` (same pattern as ISRCs). Migrations
-  from this floor onward are the upgrade path after 2.4.0.
-
 ## Post-2.4.0 priorities
 
 ### Performance and intake (top)
@@ -47,12 +24,12 @@ listed here.
   release-type filters or that failed cheap provider-match narrowing. Today
   `hydrateScopedReleaseGroups` still syncs every scoped RG (Servarr-mode cost).
   Document MB-local as recommended for very large imports.
-- pending: bound artist-wide retag preview/status on large libraries.
 - revisit: Housekeeping exclusive slot — add progress/cancel or split if large
   catalogs block user commands too long.
 - pending: replace tidal-shaped `health.ts` `backends.tiddl` with a
-  backend-id-keyed projection from provider diagnostics; split large modules
-  (`organizer.ts`, `tiddl.ts`, `SettingsPage.tsx`) alongside feature work.
+  backend-id-keyed projection from provider diagnostics; continue splitting
+  large modules (`organizer.ts`, Settings page — sections already extracted)
+  alongside feature work. (`tiddl.ts` / `tiddl-backend.ts` already split.)
 
 ### Matching and curation
 
@@ -82,10 +59,13 @@ listed here.
   video-page “Appears on” already shipped.
 - pending: playlist **SYNC** (recurring ImportList-style sync + exclusions),
   not only one-shot import.
-- pending: finish removing dead provider editorial surfaces
-  (`getArtistCatalogPage` / similar-* hooks still partially present).
 
-### Catalog source modes (was “3.0”)
+### Metadata tagging
+
+- pending (later): Lidarr `WriteAudioTagsType.Sync` — retag files when curated
+  MB columns change on refresh (`write_audio_tags_policy` has no `sync` yet).
+
+### Catalog source modes
 
 Runtime wiring, Settings selection, and SQLite hydration from either source
 already shipped. Current behavior (correct mental model):
@@ -112,27 +92,31 @@ Remaining work:
   suffice (notably release `country` stored as a JSON array string). ProviderItems
   typed promotion is largely done.
 
-### Configurable library types (was “2.3”)
+### Configurable library types
 
 - pending: replace fixed stereo/spatial/video slots with named library types
   (name, root, content kind, desired quality).
 - pending: migrate `ReleaseGroupSlots` off fixed slot names; download/curate
   per library type; keep release-type filters global.
 
-### Load / UI stabilization (was “2.3.1”)
+### Load / UI stabilization
 
 Shipped pieces (not pending): Library one-at-a-time infinite scroll, lazy card
-artwork, shared quality columns, empty-state import button.
+artwork, shared quality columns, empty-state import button, client-only
+UltraBlur (no backend `/ultrablur`), Fluent Alpha layer surfaces on nav/cards,
+bounded artist retag preview/status (`scanLimit`).
 
 Still open:
 
 - pending: catalog diff — reconcile removals; do not stamp `last_scanned` after
   partial refresh failures.
-- pending: richer track-level / mixed-quality coverage in the release switcher.
+- pending: richer track-level / mixed-quality coverage in the release switcher
+  (`coverageSummary` is persisted but not rendered).
 - pending: replace availability/match edges cleanly on refresh (not upsert-only
   accumulation); partition composites by library slot.
-- pending: remove unused `monitoring/check-stream`; revisioned artwork cache
-  keys; split `TrackList` without visual change.
+- pending: revisioned artwork cache keys (preference/`fulfilledBy` invalidation
+  shipped; URLs still lack content-revision hashes for browser cache busting).
+- pending: split `TrackList` without visual change.
 - pending: DataGrid keyboard resize/ARIA; Unmapped Files repair; mobile
   tracklist duration/actions; detail overflow earlier by width; Bakermat “The
   Spirit” year; album `9aad95d9-…` version matching; sidecar path vs naming
@@ -155,8 +139,9 @@ Still open:
   audio/video; sidecars in separate tables).
 - No multi-user / roles for the foreseeable future (Lidarr posture:
   single-operator). Auth stays the app/session gate.
-- Schema **v38** is the upgrade floor. After 2.4.0, schema changes use forward
-  migrations (not wipe), once the migration runner lands.
+- Schema **v39** is the upgrade floor (adds `Recordings.video_variant`). After
+  2.4.0’s v38 baseline, schema changes use forward migrations (not wipe), once
+  the migration runner lands.
 
 ## Deprioritized
 

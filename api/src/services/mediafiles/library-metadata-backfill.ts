@@ -22,6 +22,7 @@ import {
     lyricSidecarPath,
     SYNCHRONIZED_LYRIC_EXTENSION,
 } from "../extras/lyrics/lyric-sidecar.js";
+import { resolveAlbumVideoCoverForLibrary } from "./organizer.js";
 
 
 
@@ -347,7 +348,13 @@ class LibraryMetadataBackfillService {
                         result.skipped++;
                     }
 
-                    if (album.video_cover) {
+                    const resolvedVideoCover = await resolveAlbumVideoCoverForLibrary({
+                        storedVideoCover: album.video_cover,
+                        provider: album.provider,
+                        providerAlbumId: String(album.id),
+                        releaseGroupMbid: canonicalReleaseGroupMbid,
+                    });
+                    if (resolvedVideoCover) {
                         const videoCoverName = `${path.parse(coverName).name}.mp4`;
                         const videoCoverPath = path.join(albumDir, videoCoverName);
                         if (!fs.existsSync(videoCoverPath)) {
@@ -356,7 +363,7 @@ class LibraryMetadataBackfillService {
                                 // resolution, independent of metadata.album_cover_resolution
                                 // (which only caps the UI's cached display thumbnail).
                                 await downloadAlbumVideoCover(
-                                    String(album.video_cover),
+                                    String(resolvedVideoCover),
                                     "origin",
                                     videoCoverPath,
                                     {
@@ -595,22 +602,28 @@ class LibraryMetadataBackfillService {
         lf.canonical_recording_mbid,
         COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
         COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
-        pi.album_id AS album_id,
-        r.cover_image_id AS cover
+        pi.provider_album_id AS album_id,
+        COALESCE(
+          NULLIF(TRIM(r.cover_image_id), ''),
+          NULLIF(TRIM(pi.asset_id), ''),
+          NULLIF(TRIM(pi.cover), '')
+        ) AS cover
       FROM TrackFiles lf
-      JOIN ProviderItems pi ON pi.rowid = (
+      LEFT JOIN ProviderItems pi ON pi.rowid = (
         SELECT candidate.rowid
         FROM ProviderItems candidate
-        WHERE candidate.entity_type = 'video'
-          AND CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+        WHERE CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
           AND (lf.provider IS NULL OR candidate.provider = lf.provider)
-        ORDER BY candidate.updated_at DESC
+          AND (
+            candidate.entity_type = 'video'
+            OR (candidate.entity_type = 'track' AND candidate.library_slot = 'video')
+          )
+        ORDER BY CASE candidate.entity_type WHEN 'video' THEN 0 ELSE 1 END, candidate.updated_at DESC
         LIMIT 1
       )
-      JOIN Recordings r ON r.id = pi.recording_id
+      LEFT JOIN Recordings r ON r.id = pi.recording_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
-        AND r.cover_image_id IS NOT NULL
         AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
     `).all(artistId) as Array<{
                 track_file_id: number;
@@ -623,7 +636,7 @@ class LibraryMetadataBackfillService {
                 provider: string | null;
                 provider_id: string;
                 album_id: string | null;
-                cover: string;
+                cover: string | null;
             }>;
 
             for (const video of thumbnailVideos) {
@@ -639,8 +652,57 @@ class LibraryMetadataBackfillService {
                         : true;
                     const needsEmbedding = metadataConfig.embed_video_thumbnail !== false && !alreadyEmbedded;
                     let downloadedThumbnail = false;
-                    if (!fs.existsSync(thumbPath) && (metadataConfig.save_video_thumbnail || needsEmbedding)) {
-                        await downloadVideoThumbnail(video.cover, resolution as any, thumbPath, {
+                    let coverId = String(video.cover || "").trim() || null;
+
+                    if (!coverId && (metadataConfig.save_video_thumbnail || needsEmbedding) && !fs.existsSync(thumbPath)) {
+                        try {
+                            const { streamingProviderManager } = await import("../providers/index.js");
+                            const provider = video.provider
+                                ? streamingProviderManager.getStreamingProvider(video.provider)
+                                : streamingProviderManager.getDefaultStreamingProvider();
+                            const fetched = provider.getVideo
+                                ? await provider.getVideo(video.provider_id)
+                                : null;
+                            coverId = String(fetched?.cover || "").trim() || null;
+                            if (coverId) {
+                                db.prepare(`
+                                  UPDATE Recordings
+                                  SET cover_image_id = COALESCE(?, cover_image_id), updated_at = CURRENT_TIMESTAMP
+                                  WHERE id = (
+                                    SELECT recording_id FROM ProviderItems
+                                    WHERE provider = ?
+                                      AND entity_type IN ('video', 'track')
+                                      AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                                      AND recording_id IS NOT NULL
+                                    ORDER BY CASE entity_type WHEN 'video' THEN 0 ELSE 1 END
+                                    LIMIT 1
+                                  )
+                                `).run(coverId, video.provider, video.provider_id);
+                                db.prepare(`
+                                  UPDATE ProviderItems
+                                  SET
+                                    asset_id = COALESCE(asset_id, ?),
+                                    cover = COALESCE(cover, ?),
+                                    updated_at = CURRENT_TIMESTAMP
+                                  WHERE provider = ?
+                                    AND entity_type IN ('video', 'track')
+                                    AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                                `).run(coverId, coverId, video.provider, video.provider_id);
+                            }
+                        } catch (error) {
+                            console.warn(`[MetadataBackfill] Failed to resolve video cover for ${video.provider}:${video.provider_id}:`, error);
+                        }
+                    }
+
+                    // No artwork available yet — skip rather than fail; import/refresh
+                    // will populate cover and a later backfill can finish the sidecar.
+                    if (!coverId && !fs.existsSync(thumbPath)) {
+                        result.skipped++;
+                        continue;
+                    }
+
+                    if (!fs.existsSync(thumbPath) && coverId && (metadataConfig.save_video_thumbnail || needsEmbedding)) {
+                        await downloadVideoThumbnail(coverId, resolution as any, thumbPath, {
                             provider: video.provider,
                             providerId: video.provider_id,
                         });

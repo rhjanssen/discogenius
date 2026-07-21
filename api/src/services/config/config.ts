@@ -198,12 +198,15 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     video_folder_layout: "separated",
   },
   naming: {
-    artist_folder: "{artistName} {mbid-{artistMbId}}",
-    album_track_path_single: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}",
-    album_track_path_multi: "{Album CleanTitle} ({Release Year})/{medium:0}{track:00} - {Track CleanTitle}",
+    artist_folder: "{Artist Name} {mbid-{Artist MbId}}",
+    album_track_path_single: "{Album FullTitle} ({Release Year})/{track:00} - {Track FullTitle}",
+    album_track_path_multi: "{Album FullTitle} ({Release Year})/{medium:0}{track:00} - {Track FullTitle}",
     // The default "separated" layout already puts video files in per-artist
-    // folders, so the artist prefix in the filename is redundant.
-    video_file: "{Video CleanTitle} {{providerName}-{mediaId}}",
+    // folders, so the artist prefix in the filename is redundant. Include
+    // {Video Type} so Plex/Jellyfin extras classification is template-owned
+    // (no hardcoded suffix append after render). Prefer full video title so
+    // shared venue/live parentheticals survive rename.
+    video_file: "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}",
   },
   metadata: {
     artwork_preference: "canonical",
@@ -357,13 +360,17 @@ function normalizeQualityConfig(raw?: Partial<QualityConfig>): QualityConfig {
   };
 }
 
+function normalizeNamingConfig(raw?: Partial<NamingConfig> | null): NamingConfig {
+  return { ...DEFAULT_CONFIG.naming, ...(raw || {}) };
+}
+
 function normalizeConfig(config: Partial<DiscoGeniusConfig>): DiscoGeniusConfig {
   return {
     app: { ...DEFAULT_CONFIG.app, ...(config.app || {}) },
     monitoring: normalizeMonitoringConfig(config.monitoring),
     filtering: normalizeFilteringConfig(config.filtering),
     path: { ...DEFAULT_CONFIG.path, ...(config.path || {}) },
-    naming: { ...DEFAULT_CONFIG.naming, ...(config.naming || {}) },
+    naming: normalizeNamingConfig(config.naming),
     metadata: normalizeMetadataConfig(config.metadata),
     quality: normalizeQualityConfig(config.quality),
     streaming: { ...DEFAULT_CONFIG.streaming, ...(config.streaming || {}) },

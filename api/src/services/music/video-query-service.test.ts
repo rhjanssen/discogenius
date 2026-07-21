@@ -116,7 +116,7 @@ test("video list and detail use canonical video recordings with provider offers"
     provider_id: "yt-video-01",
     quality: null,
   }]);
-  assert.equal(list.items[0]?.cover, "canonical-cover");
+  assert.equal(list.items[0]?.cover, `/media-cover/Videos/${recording.id}/cover.jpg`);
   assert.equal(list.items[0]?.cover_art_url, `/media-cover/Videos/${recording.id}/cover.jpg`);
   assert.equal(list.items[0]?.is_monitored, true);
   assert.equal(list.items[0]?.is_downloaded, true);
@@ -127,6 +127,7 @@ test("video list and detail use canonical video recordings with provider offers"
   assert.equal(detail?.title, "Canonical Video");
   assert.equal(detail?.artist_id, "artist-mbid");
   assert.equal(detail?.duration, 215);
+  assert.equal(detail?.video_variant, "video");
   assert.equal(detail?.cover_art_url, `/media-cover/Videos/${recording.id}/cover.jpg`);
   assert.deepEqual(detail?.offers, [{
     provider: "apple-music",
@@ -220,7 +221,7 @@ test("video downloaded state treats provider ids as provider-scoped", () => {
   assert.equal(list.items[0]?.is_downloaded, false);
 });
 
-test("video detail resolves its provider album by composite provider identity", () => {
+test("video detail appears-on follows related audio via provider_video_for, not provider album id stamps", () => {
   const artist = dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES ('artist-mbid', 'Video Artist')
@@ -236,16 +237,28 @@ test("video detail resolves its provider album by composite provider identity", 
       ('rg-apple', 'artist-mbid', 'Apple Album', 'album'),
       ('rg-tidal', 'artist-mbid', 'TIDAL Album', 'album')
   `).run();
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count)
+    VALUES
+      ('rel-apple', 'rg-apple', 'artist-mbid', 'Apple Album', '2024-01-01', 1),
+      ('rel-tidal', 'rg-tidal', 'artist-mbid', 'TIDAL Album', '2024-01-01', 1)
+  `).run();
 
   // Provider resource IDs are only stable within a provider. Both services can
-  // legitimately expose album "42"; the video belongs to Apple's offer.
+  // legitimately expose album "42"; membership comes from the related audio
+  // track on Apple's release, not from stamping provider_album_id on the video.
+  const audio = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-audio-99', ?, 'artist-mbid', 'Canonical Song', 0, 'complete')
+    RETURNING id
+  `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, title
-    ) VALUES
-      ('apple-music', 'album', '42', 'artist-mbid', 'rg-apple', 'Apple Album'),
-      ('tidal', 'album', '42', 'artist-mbid', 'rg-tidal', 'TIDAL Album')
-  `).run();
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, recording_id,
+      medium_position, position, number, title
+    ) VALUES ('track-apple-1', 'rel-apple', 'rec-audio-99', ?, 1, 1, '1', 'Canonical Song')
+  `).run(audio.id);
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -259,16 +272,23 @@ test("video detail resolves its provider album by composite provider identity", 
       recording_id, title, quality
     ) VALUES ('apple-music', 'video', '99', '42', 'artist-mbid', ?, 'Canonical Video', 'FHD')
   `).run(recording.id);
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (?, ?, 'provider_video_for', 'apple-music', 0.9)
+  `).run(recording.id, audio.id);
 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
 
   assert.deepEqual(detail?.albums, [{
     id: "rg-apple",
     title: "Apple Album",
-    cover_id: null,
-    track_mbid: null,
-    track_number: null,
-    volume_number: null,
+    cover_id: "/media-cover/Albums/rg-apple/cover.jpg?source=canonical",
+    cover_art_url: "/media-cover/Albums/rg-apple/cover.jpg?source=canonical",
+    track_mbid: "track-apple-1",
+    track_number: 1,
+    volume_number: 1,
+    track_count: 1,
   }]);
 });
 
@@ -308,14 +328,92 @@ test("video detail surfaces album track position when the video is on a release 
   `).run(recording.id);
 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
-  assert.deepEqual(detail?.albums, [{
-    id: "rg-track-pos",
-    title: "Video Album",
-    cover_id: "cover-42",
-    track_mbid: "track-video-3",
-    track_number: 3,
-    volume_number: 2,
-  }]);
+  const expectedCover = `/media-cover/Albums/rg-track-pos/cover.jpg`;
+  assert.equal(detail?.albums?.[0]?.id, "rg-track-pos");
+  assert.equal(detail?.albums?.[0]?.title, "Video Album");
+  assert.equal(detail?.albums?.[0]?.track_mbid, "track-video-3");
+  assert.equal(detail?.albums?.[0]?.track_number, 3);
+  assert.equal(detail?.albums?.[0]?.volume_number, 2);
+  assert.equal(detail?.albums?.[0]?.track_count, 2);
+  // Affiliation covers are local /media-cover URLs, not raw asset ids.
+  assert.ok(
+    detail?.albums?.[0]?.cover_id === expectedCover
+      || detail?.albums?.[0]?.cover_art_url === expectedCover
+      || String(detail?.albums?.[0]?.cover_id || "").startsWith("/media-cover/Albums/"),
+    `expected local album cover URL, got ${detail?.albums?.[0]?.cover_id}`,
+  );
+});
+
+test("video detail appears-on follows related audio recordings and prefers monitored albums", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-affil', 'Affil Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('artist-affil', 'artist-affil', 'Affil Artist')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, monitored)
+    VALUES
+      ('rg-affil-single', 'artist-affil', 'Part Two', 'single', 0),
+      ('rg-affil-album', 'artist-affil', 'Ampersand', 'album', 1)
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count)
+    VALUES
+      ('rel-affil-single', 'rg-affil-single', 'artist-affil', 'Part Two', '2024-01-01', 3),
+      ('rel-affil-album', 'rg-affil-album', 'artist-affil', 'Ampersand', '2024-06-01', 12)
+  `).run();
+
+  const audio = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-affil-audio', ?, 'artist-affil', 'Song', 0, 'complete')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const video = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES (?, 'artist-affil', 'Song', 1, 'provider_only')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, recording_id,
+      medium_position, position, number, title
+    ) VALUES
+      ('track-affil-2', 'rel-affil-single', 'rec-affil-audio', ?, 1, 2, '2', 'Song'),
+      ('track-affil-5', 'rel-affil-album', 'rec-affil-audio', ?, 1, 5, '5', 'Song')
+  `).run(audio.id, audio.id);
+
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (?, ?, 'provider_video_for', 'youtube-music', 0.98)
+  `).run(video.id, audio.id);
+
+  // Relation alone surfaces both albums; stamped release_group_mbid on the
+  // video offer is not consulted for Appears On.
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_id,
+      title, quality
+    ) VALUES (
+      'youtube-music', 'video', 'yt-affil-omv', 'artist-affil', ?,
+      'Song', 'UHD'
+    )
+  `).run(video.id);
+
+  const detail = videoQueryModule.getVideoDetail(String(video.id));
+  assert.equal(detail?.albums?.length, 2);
+  assert.equal(detail?.albums?.[0]?.id, "rg-affil-album", "monitored album sorts first");
+  assert.equal(detail?.albums?.[0]?.track_number, 5);
+  assert.equal(detail?.albums?.[0]?.track_count, 12);
+  assert.equal(detail?.albums?.[1]?.id, "rg-affil-single");
+  assert.equal(detail?.albums?.[1]?.track_number, 2);
 });
 
 test("video detail prefers provider title when recording title is Unknown Video", () => {

@@ -2,7 +2,7 @@ import { db } from "../../database.js";
 import type { VideoContract, VideosListResponseContract } from "../../contracts/catalog.js";
 import type { VideoAlbumRefContract, VideoDetailContract, VideoProviderOfferContract } from "../../contracts/media.js";
 import { streamingProviderManager } from "../providers/index.js";
-import { videoCoverLocalUrl } from "../metadata/media-cover-service.js";
+import { videoCoverLocalUrl, albumCoverLocalUrl, imageContainerFromImagesColumn } from "../metadata/media-cover-service.js";
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
@@ -13,6 +13,7 @@ type VideoRow = {
   duration: number;
   release_date?: string | null;
   version?: string | null;
+  video_variant?: string | null;
   explicit?: number | boolean | null;
   quality?: string | null;
   current_quality?: string | null;
@@ -75,7 +76,8 @@ function mapVideoRow(
   groupedOffers: GroupedVideoOfferRow[] = [],
   preferredProvider?: string,
 ): VideoContract {
-  const coverArtUrl = videoCoverLocalUrl(row.id) ?? row.cover_art_url ?? null;
+  // UI cover fields are always the local /media-cover URL — never raw provider UUIDs.
+  const coverArtUrl = videoCoverLocalUrl(row.id);
   const normalizedPreferredProvider = String(preferredProvider || "").trim();
   const preferredOffer = groupedOffers.find((offer) => offer.provider === normalizedPreferredProvider)
     ?? groupedOffers[0];
@@ -95,8 +97,8 @@ function mapVideoRow(
       provider_id: offer.provider_id,
       quality: offer.quality,
     })),
-    cover: row.cover ?? null,
-    cover_id: row.cover ?? null,
+    cover: coverArtUrl,
+    cover_id: coverArtUrl,
     cover_art_url: coverArtUrl,
     url: row.url ?? null,
     path: row.path ?? null,
@@ -113,6 +115,7 @@ function mapVideoRow(
 
 function mapVideoDetail(row: VideoRow, isDownloaded: boolean): VideoDetailContract {
   const mapped = mapVideoRow(row, isDownloaded);
+  const variant = String(row.video_variant || "").trim().toLowerCase() || "video";
 
   return {
     id: mapped.id,
@@ -122,6 +125,7 @@ function mapVideoDetail(row: VideoRow, isDownloaded: boolean): VideoDetailContra
     artist_name: mapped.artist_name,
     release_date: mapped.release_date,
     version: mapped.version,
+    video_variant: variant,
     explicit: mapped.explicit,
     quality: mapped.quality,
     cover: mapped.cover,
@@ -170,6 +174,7 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
       ) AS duration,
       COALESCE(recording.release_date, provider_item.release_date) AS release_date,
       provider_item.version AS version,
+      recording.video_variant AS video_variant,
       provider_item.explicit AS explicit,
       provider_item.quality AS quality,
       provider_item.quality AS current_quality,
@@ -181,8 +186,8 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
       NULL AS path,
       CAST(COALESCE(managed_artist.id, artist.mbid, recording.artist_mbid, recording.artist_metadata_id, artist.id) AS TEXT) AS artist_id,
       COALESCE(managed_artist.name, artist.name) AS artist_name,
-      COALESCE(recording.monitored, 0) AS monitored,
-      COALESCE(recording.monitored_lock, 0) AS monitored_lock,
+      recording.monitored AS monitored,
+      recording.monitored_lock AS monitored_lock,
       recording.updated_at AS created_at,
       recording.updated_at AS updated_at,
       recording.updated_at AS last_scanned,
@@ -474,24 +479,59 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
 }
 
 /**
- * Albums (release groups) this video appears on: canonical release VIDEO
- * tracks pointing at the recording, plus provider album linkage on the video
- * offers themselves (Apple bundles MVs inside albums). When the video sits on
- * a release tracklist, also surface disc/track position for the video page.
+ * Albums (release groups) this video appears on.
+ *
+ * Sources (unioned):
+ *  1. Canonical release tracks pointing at this video recording (MB video tracks)
+ *  2. Related audio recordings (`RecordingRelations.provider_video_for`) — album
+ *     membership lives on the audio tracklist (YouTube ATV↔OMV counterparts,
+ *     Apple/TIDAL title+duration links, etc.)
+ *
+ * Provider video offers may carry stamped `release_group_mbid` /
+ * `provider_album_id` after album refresh, but those are processing artifacts,
+ * not native provider MB identity — Appears On follows catalog Tracks + the
+ * audio relation instead.
+ *
+ * Track/disc position prefers a video tracklist row, then the related audio
+ * track on that same release group. Monitored albums sort first.
  */
 function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
-  const recordingMatch = `
+  const videoOrRelatedAudio = `
     CAST(t.recording_id AS TEXT) = CAST(? AS TEXT)
     OR t.recording_mbid = (
       SELECT mbid FROM Recordings
       WHERE CAST(id AS TEXT) = CAST(? AS TEXT) AND mbid IS NOT NULL
     )
+    OR t.recording_id IN (
+      SELECT rr.target_recording_id
+      FROM RecordingRelations rr
+      WHERE CAST(rr.source_recording_id AS TEXT) = CAST(? AS TEXT)
+        AND rr.relation_type = 'provider_video_for'
+        AND rr.target_recording_id IS NOT NULL
+    )
+  `;
+  // Prefer a track row that belongs to the video recording itself; fall back to
+  // the related audio recording's position on the same release group.
+  const trackPickOrder = `
+    CASE
+      WHEN CAST(t.recording_id AS TEXT) = CAST(? AS TEXT) THEN 0
+      WHEN t.recording_mbid = (
+        SELECT mbid FROM Recordings
+        WHERE CAST(id AS TEXT) = CAST(? AS TEXT) AND mbid IS NOT NULL
+      ) THEN 0
+      ELSE 1
+    END ASC,
+    CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
+    ar.date ASC,
+    t.medium_position ASC,
+    t.position ASC
   `;
   const rows = db.prepare(`
     SELECT
       a.mbid AS id,
       a.title,
-      a.cover_image_id AS cover_id,
+      a.images AS album_images,
+      a.monitored AS monitored,
       (
         SELECT t.mbid
         FROM Tracks t
@@ -499,12 +539,8 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
           ON ar.id = t.album_release_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = a.mbid
-          AND (${recordingMatch})
-        ORDER BY
-          CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
-          ar.date ASC,
-          t.medium_position ASC,
-          t.position ASC
+          AND (${videoOrRelatedAudio})
+        ORDER BY ${trackPickOrder}
         LIMIT 1
       ) AS track_mbid,
       (
@@ -514,12 +550,8 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
           ON ar.id = t.album_release_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = a.mbid
-          AND (${recordingMatch})
-        ORDER BY
-          CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
-          ar.date ASC,
-          t.medium_position ASC,
-          t.position ASC
+          AND (${videoOrRelatedAudio})
+        ORDER BY ${trackPickOrder}
         LIMIT 1
       ) AS track_number,
       (
@@ -529,14 +561,29 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
           ON ar.id = t.album_release_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = a.mbid
-          AND (${recordingMatch})
-        ORDER BY
-          CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
-          ar.date ASC,
-          t.medium_position ASC,
-          t.position ASC
+          AND (${videoOrRelatedAudio})
+        ORDER BY ${trackPickOrder}
         LIMIT 1
-      ) AS volume_number
+      ) AS volume_number,
+      (
+        SELECT COALESCE(
+          NULLIF(ar.track_count, 0),
+          (
+            SELECT COUNT(*)
+            FROM Tracks t2
+            WHERE t2.album_release_id = ar.id
+               OR (t2.release_mbid IS NOT NULL AND t2.release_mbid = ar.mbid)
+          )
+        )
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = a.mbid
+          AND (${videoOrRelatedAudio})
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS track_count
     FROM Albums a
     WHERE a.mbid IN (
       SELECT ar.release_group_mbid
@@ -544,55 +591,46 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       JOIN AlbumReleases ar
         ON ar.id = t.album_release_id
         OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
-      WHERE ${recordingMatch}
-
-      UNION
-
-      SELECT v.release_group_mbid
-      FROM ProviderItems v
-      WHERE v.entity_type = 'video'
-        AND CAST(v.recording_id AS TEXT) = CAST(? AS TEXT)
-        AND v.release_group_mbid IS NOT NULL
-
-      UNION
-
-      SELECT alb.release_group_mbid
-      FROM ProviderItems v
-      JOIN ProviderItems alb
-        ON alb.entity_type = 'album'
-        AND alb.provider = v.provider
-        AND CAST(alb.provider_id AS TEXT) = CAST(v.provider_album_id AS TEXT)
-      WHERE v.entity_type = 'video'
-        AND CAST(v.recording_id AS TEXT) = CAST(? AS TEXT)
-        AND v.provider_album_id IS NOT NULL
-        AND alb.release_group_mbid IS NOT NULL
+      WHERE ${videoOrRelatedAudio}
     )
-    ORDER BY a.title COLLATE NOCASE ASC
+    ORDER BY a.monitored DESC, a.title COLLATE NOCASE ASC
   `).all(
-    // Subquery params (track_mbid / track_number / volume_number) × recordingMatch (2 each)
-    recordingId, recordingId,
-    recordingId, recordingId,
-    recordingId, recordingId,
-    // IN-clause Tracks branch
-    recordingId, recordingId,
-    // Provider release_group_mbid + provider_album_id branches
-    recordingId, recordingId,
+    // Per position subquery: videoOrRelatedAudio (3) + trackPickOrder (2)
+    // × 4 subqueries (track_mbid, track_number, volume_number, track_count)
+    recordingId, recordingId, recordingId, recordingId, recordingId,
+    recordingId, recordingId, recordingId, recordingId, recordingId,
+    recordingId, recordingId, recordingId, recordingId, recordingId,
+    recordingId, recordingId, recordingId, recordingId, recordingId,
+    // IN-clause Tracks branch: videoOrRelatedAudio (3)
+    recordingId, recordingId, recordingId,
   ) as Array<{
     id: string;
     title: string;
-    cover_id: string | null;
+    album_images: string | null;
+    monitored: number;
     track_mbid: string | null;
     track_number: number | null;
     volume_number: number | null;
+    track_count: number | null;
   }>;
-  return rows.map((row) => ({
-    id: String(row.id),
-    title: row.title,
-    cover_id: row.cover_id ?? null,
-    track_mbid: row.track_mbid ?? null,
-    track_number: row.track_number == null ? null : Number(row.track_number),
-    volume_number: row.volume_number == null ? null : Number(row.volume_number),
-  }));
+  return rows.map((row) => {
+    const coverArtUrl = albumCoverLocalUrl({
+      albumMbid: row.id,
+      images: imageContainerFromImagesColumn(row.album_images),
+    });
+    return {
+      id: String(row.id),
+      title: row.title,
+      cover_id: coverArtUrl,
+      cover_art_url: coverArtUrl,
+      track_mbid: row.track_mbid ?? null,
+      track_number: row.track_number == null ? null : Number(row.track_number),
+      volume_number: row.volume_number == null ? null : Number(row.volume_number),
+      track_count: row.track_count == null || Number(row.track_count) <= 0
+        ? null
+        : Number(row.track_count),
+    };
+  });
 }
 
 function resolveVideoRecordingId(videoId: string): string | null {

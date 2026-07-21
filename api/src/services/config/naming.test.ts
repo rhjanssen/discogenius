@@ -208,6 +208,24 @@ test("named variables: {videoCleanTitle} produces CleanTitle result", () => {
   assert.equal(rendered, "Music Video #1");
 });
 
+test("named variables: {videoType} / {Video Type} render Plex extras suffix", () => {
+  const rendered = renderFileStem("{videoCleanTitle}{videoType} {{providerName}-{mediaId}}", {
+    artistName: "Bastille",
+    videoTitle: "Pompeii",
+    videoType: "-video",
+    provider: "tidal",
+    mediaId: "123",
+  });
+  assert.equal(rendered, "Pompeii-video {TIDAL-123}");
+
+  const lyrics = renderFileStem("{videoCleanTitle}{Video Type}", {
+    artistName: "Bastille",
+    videoTitle: "Pompeii (Lyrics)",
+    videoType: "-lyrics",
+  });
+  assert.equal(lyrics, "Pompeii Lyrics-lyrics");
+});
+
 test("named variables: {videoTitleThe} produces TitleThe result", () => {
   const rendered = renderFileStem("{videoTitleThe}", {
     artistName: "Test Artist",
@@ -336,7 +354,7 @@ test("validateNamingConfig accepts Lidarr-style templates and returns backend pr
       artistFolder: "Bastille",
       standardTrack: "Bad Blood (2013)/01 - Pompeii.flac",
       multiDiscTrack: "Bad Blood (2013)/203 - Pompeii.flac",
-      video: "Bastille - Pompeii [26065587].mp4",
+      video: "Bastille - Pompeii Live At The O2 [26065587].mp4",
     }
   );
 });
@@ -389,6 +407,28 @@ test("provider-neutral tokens and double-bracket nested expressions render corre
   );
   assert.equal(renderedNestedMultiple, "{Apple Music-445566; 778899}");
 
+});
+
+test("spaced Lidarr-style provider/video tokens resolve via the provider registry", () => {
+  const rendered = renderFileStem(
+    "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}",
+    {
+      provider: "tidal",
+      artistName: "Bastille",
+      videoTitle: "Pompeii (Live At The O2)",
+      videoType: "-live",
+      mediaId: "44187439",
+      providerMediaId: "44187439",
+      videoId: "44187439",
+    },
+  );
+  assert.equal(rendered, "Pompeii (Live At The O2)-live {TIDAL-44187439}");
+
+  const apple = renderFileStem("{Provider Name}", {
+    provider: "apple-music",
+    artistName: "Bastille",
+  });
+  assert.equal(apple, "Apple Music");
 });
 
 test("validateNamingConfig accepts provider-neutral tokens", () => {

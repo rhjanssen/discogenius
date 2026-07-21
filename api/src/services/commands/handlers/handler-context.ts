@@ -28,5 +28,3 @@ export type CommandHandler<K extends CommandName = CommandName> = (
   job: CommandModelOf<K>,
   ctx: CommandHandlerContext,
 ) => Promise<void>;
-
-export type CommandHandlerRegistry = { [K in CommandName]?: CommandHandler<K> };

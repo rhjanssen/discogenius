@@ -32,18 +32,16 @@ export function buildManagedArtistPredicate(alias: string = "a", options: Manage
 export function buildArtistCompletionPredicate(alias: string = "a"): string {
   return `(
     ${alias}.monitored = 1
-    OR EXISTS (
-      SELECT 1
+    OR ${alias}.mbid IN (
+      SELECT slot.artist_mbid
       FROM ReleaseGroupSlots slot
-      WHERE slot.artist_mbid = ${alias}.mbid
-        AND COALESCE(slot.monitored_lock, 0) = 1
+      WHERE slot.monitored_lock = 1
     )
-    OR EXISTS (
-      SELECT 1
+    OR ${alias}.mbid IN (
+      SELECT recording.artist_mbid
       FROM Recordings recording
-      WHERE recording.artist_mbid = ${alias}.mbid
-        AND recording.is_video = 1
-        AND COALESCE(recording.monitored_lock, 0) = 1
+      WHERE recording.is_video = 1
+        AND recording.monitored_lock = 1
     )
   )`;
 }

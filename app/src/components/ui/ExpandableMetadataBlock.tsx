@@ -6,16 +6,16 @@ import {
   mergeClasses,
   tokens } from '@fluentui/react-components';
 import {
-  ChevronDown16Regular as ChevronDown16RegularBase,
-  ChevronUp16Regular as ChevronUp16RegularBase,
+  ChevronDown16Regular,
+  ChevronUp16Regular,
   ChevronUp16Filled,
   bundleIcon,
   ChevronDown16Filled
 } from "@fluentui/react-icons";
 
-const ChevronDown16Regular = bundleIcon(ChevronDown16Filled, ChevronDown16RegularBase);
+const ChevronDown16 = bundleIcon(ChevronDown16Filled, ChevronDown16Regular);
 
-const ChevronUp16Regular = bundleIcon(ChevronUp16Filled, ChevronUp16RegularBase);
+const ChevronUp16 = bundleIcon(ChevronUp16Filled, ChevronUp16Regular);
 
 const useStyles = makeStyles({
     container: {
@@ -110,7 +110,7 @@ export function ExpandableMetadataBlock({
                 size="small"
                 className={styles.toggleButton}
                 onClick={onToggle}
-                icon={expanded ? <ChevronUp16Regular /> : <ChevronDown16Regular />}
+                icon={expanded ? <ChevronUp16 /> : <ChevronDown16 />}
             >
                 {expanded ? 'Show less' : 'Read more'}
             </Button>

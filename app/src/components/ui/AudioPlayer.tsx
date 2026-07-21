@@ -7,7 +7,7 @@ import {
 } from "@fluentui/react-components";
 import {
   Pause24Filled,
-  Play24Regular as Play24RegularBase,
+  Play24Regular,
   Play24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
@@ -15,7 +15,7 @@ import Hls from "hls.js";
 import { formatDurationSeconds } from "@/utils/format";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
-const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
+const Play24 = bundleIcon(Play24Filled, Play24Regular);
 
 interface AudioPlayerProps {
     src: string;
@@ -357,7 +357,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 aria-label={isPlaying ? "Pause playback" : "Resume playback"}
                 data-testid={isPlaying ? "playback-pause" : "playback-resume"}
                 className={styles.playButton}
-                icon={isPlaying ? <Pause24Filled /> : <Play24Regular />}
+                icon={isPlaying ? <Pause24Filled /> : <Play24 />}
                 onClick={handleTogglePlayback}
             />
             <Text className={styles.timeText}>{formatDurationSeconds(currentTime)}</Text>

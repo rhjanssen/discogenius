@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { UltraBlurColors, getThemeDefaultColors } from '@/ultrablur/colors';
-import { getApiBaseUrl } from '@/utils/apiBaseUrl';
+import { extractUltraBlurColorsFromImage, ultrablurSourceUrl } from '@/ultrablur/extractColorsFromImage';
 
 interface UseUltraBlurOptions {
   imageUrl?: string;
@@ -13,42 +13,44 @@ interface UseUltraBlurResult {
   error: Error | null;
 }
 
-// Cache for extracted colors to avoid re-processing
+// Cache for extracted colors to avoid re-processing.
+// Bump key prefix when extraction/bake algorithm changes so old muddy palettes
+// are not reused across a hot reload of the SPA shell.
+const COLOR_CACHE_VERSION = "ub8";
 const colorCache = new Map<string, UltraBlurColors>();
 
+function cacheKey(imageUrl: string): string {
+  return `${COLOR_CACHE_VERSION}:${imageUrl}`;
+}
+
+/** Seed the client cache (e.g. from hero img onLoad) so ambience skips a second decode. */
+export function seedUltraBlurColorCache(imageUrl: string, colors: UltraBlurColors): void {
+  const key = String(imageUrl || "").trim();
+  if (!key || !colors?.topLeft) return;
+  colorCache.set(cacheKey(key), colors);
+}
+
 /**
- * Hook to extract and manage UltraBlur colors from images
- * 
- * @param options.imageUrl - URL of the image to extract colors from
- * @param options.enabled - Whether to extract colors (default: true)
- * @returns colors, loading state, and error
- * 
- * @example
- * ```tsx
- * const { colors, isLoading } = useUltraBlur({
- *   imageUrl: albumArt,
- *   enabled: !!albumArt
- * });
- * ```
+ * Extract UltraBlur colours entirely in the browser (no backend round-trip).
+ * Prefer seeding via setArtworkFromImage on hero onLoad (and complete-ref);
+ * this hook only loads the image when only a URL is available.
  */
-export function useUltraBlur({ 
-  imageUrl, 
-  enabled = true 
+export function useUltraBlur({
+  imageUrl,
+  enabled = true,
 }: UseUltraBlurOptions = {}): UseUltraBlurResult {
-  // Detect dark mode for theme-aware defaults
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window === 'undefined') return true;
     return document.documentElement.classList.contains('dark') ||
       (!document.documentElement.classList.contains('light') &&
        window.matchMedia('(prefers-color-scheme: dark)').matches);
   });
-  
+
   const [colors, setColors] = useState<UltraBlurColors>(() => getThemeDefaultColors(isDarkMode));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const abortRef = useRef(0);
 
-  // Listen for theme changes
   useEffect(() => {
     const checkTheme = () => {
       const isDark = document.documentElement.classList.contains('dark') ||
@@ -60,7 +62,7 @@ export function useUltraBlur({
     const observer = new MutationObserver(checkTheme);
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['class']
+      attributeFilter: ['class'],
     });
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -74,8 +76,8 @@ export function useUltraBlur({
 
   useEffect(() => {
     const defaultColors = getThemeDefaultColors(isDarkMode);
-    
-    // If no image URL or extraction disabled, use theme-aware default colors
+    const generation = ++abortRef.current;
+
     if (!imageUrl || !enabled) {
       setColors(defaultColors);
       setIsLoading(false);
@@ -83,117 +85,86 @@ export function useUltraBlur({
       return;
     }
 
-    // Check cache first
-    if (colorCache.has(imageUrl)) {
-      const cachedColors = colorCache.get(imageUrl)!;
-      setColors(cachedColors);
+    // Same URL as the hero so a cache/HTTP hit is shared (no cover-250 detour).
+    const loadUrl = ultrablurSourceUrl(imageUrl);
+
+    if (colorCache.has(cacheKey(imageUrl)) || colorCache.has(cacheKey(loadUrl))) {
+      setColors(colorCache.get(cacheKey(imageUrl)) ?? colorCache.get(cacheKey(loadUrl))!);
       setIsLoading(false);
       setError(null);
       return;
     }
 
-    // Cancel any pending extraction
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-
-    // Create new abort controller for this request
-    abortControllerRef.current = new AbortController();
-    const currentAbortController = abortControllerRef.current;
-
-    // Extract colors from the image
+    // Keep the previous palette visible while the new cover loads — do not
+    // snap to theme defaults between artist/album/video navigations.
     setIsLoading(true);
     setError(null);
 
-    const apiBaseUrl = getApiBaseUrl();
+    const img = new Image();
+    img.decoding = "async";
+    if (!loadUrl.startsWith("data:") && !loadUrl.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
 
-    // Plex-aligned flow only: always ask the backend service to extract colors.
-    // If it fails, fall back to theme defaults (no client-side extraction).
-    const colorsUrl = `${apiBaseUrl}/services/ultrablur/colors?url=${encodeURIComponent(imageUrl)}`;
-
-    // High fetch priority: this tiny request paints the page background and
-    // must not queue behind the section queries and cover-image flood that
-    // start at the same time.
-    fetch(colorsUrl, { signal: currentAbortController.signal, priority: "high" } as RequestInit)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`UltraBlur colors service error: ${r.status}`);
-        const data = await r.json();
-        const maybeColors: UltraBlurColors = {
-          topLeft: data?.topLeft,
-          topRight: data?.topRight,
-          bottomLeft: data?.bottomLeft,
-          bottomRight: data?.bottomRight,
-        };
-        if (!maybeColors.topLeft || !maybeColors.topRight || !maybeColors.bottomLeft || !maybeColors.bottomRight) {
-          throw new Error('UltraBlur colors service returned invalid payload');
-        }
-        return maybeColors;
-      })
-      .then((extractedColors) => {
-        if (currentAbortController.signal.aborted) return;
-        colorCache.set(imageUrl, extractedColors);
-        setColors(extractedColors);
-        setIsLoading(false);
-      })
-      .catch((err) => {
-        if (currentAbortController.signal.aborted) return;
-        console.error('Failed to extract UltraBlur colors:', err);
-        setError(err);
+    const finish = (extracted: UltraBlurColors | null, err?: Error) => {
+      if (abortRef.current !== generation) return;
+      if (extracted) {
+        colorCache.set(cacheKey(imageUrl), extracted);
+        colorCache.set(cacheKey(loadUrl), extracted);
+        setColors(extracted);
+        setError(null);
+      } else {
         setColors(defaultColors);
-        setIsLoading(false);
-      });
-
-    // Cleanup function
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+        setError(err || new Error("Failed to extract UltraBlur colors"));
       }
+      setIsLoading(false);
+    };
+
+    img.onload = () => {
+      try {
+        finish(extractUltraBlurColorsFromImage(img));
+      } catch (e) {
+        finish(null, e as Error);
+      }
+    };
+    img.onerror = () => finish(null, new Error("UltraBlur image failed to load"));
+    img.src = loadUrl;
+
+    return () => {
+      abortRef.current += 1;
+      img.onload = null;
+      img.onerror = null;
     };
   }, [imageUrl, enabled, isDarkMode]);
 
   return { colors, isLoading, error };
 }
 
-/**
- * Clear the color extraction cache
- * Useful for memory management or forcing re-extraction
- */
 export function clearUltraBlurCache() {
   colorCache.clear();
 }
 
-/**
- * Pre-cache colors for multiple images
- * Useful for pre-loading colors for a list of albums
- */
 export async function precacheUltraBlurColors(imageUrls: string[]): Promise<void> {
-  const apiBaseUrl = getApiBaseUrl();
-
-  const promises = imageUrls
-    .filter(url => !colorCache.has(url))
-    .map(async (url) => {
-      try {
-        const colorsUrl = `${apiBaseUrl}/services/ultrablur/colors?url=${encodeURIComponent(url)}`;
-
-        const r = await fetch(colorsUrl);
-        if (!r.ok) throw new Error(String(r.status));
-        const data = await r.json();
-        const colors: UltraBlurColors = {
-          topLeft: data?.topLeft,
-          topRight: data?.topRight,
-          bottomLeft: data?.bottomLeft,
-          bottomRight: data?.bottomRight,
-        };
-
-        if (!colors.topLeft || !colors.topRight || !colors.bottomLeft || !colors.bottomRight) {
-          throw new Error('invalid payload');
-        }
-
-        colorCache.set(url, colors);
-      } catch (err) {
-        console.error(`Failed to precache colors for ${url}:`, err);
-      }
-    });
-
-  await Promise.all(promises);
+  await Promise.all(
+    imageUrls
+      .filter((url) => url && !colorCache.has(cacheKey(url)))
+      .map(
+        (url) =>
+          new Promise<void>((resolve) => {
+            const loadUrl = ultrablurSourceUrl(url);
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => {
+              const extracted = extractUltraBlurColorsFromImage(img);
+              if (extracted) {
+                colorCache.set(cacheKey(url), extracted);
+                colorCache.set(cacheKey(loadUrl), extracted);
+              }
+              resolve();
+            };
+            img.onerror = () => resolve();
+            img.src = loadUrl;
+          }),
+      ),
+  );
 }

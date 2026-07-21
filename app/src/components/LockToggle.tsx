@@ -1,8 +1,8 @@
 import React from "react";
 import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import {
-  LockClosed24Regular as LockClosed24RegularBase,
-  LockOpen24Regular as LockOpen24RegularBase,
+  LockClosed24Regular,
+  LockOpen24Regular,
   LockClosed24Filled,
   LockOpen24Filled,
   bundleIcon
@@ -10,8 +10,8 @@ import {
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
-const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
-const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
+const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
+const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
 
 
 interface LockToggleProps {
@@ -37,7 +37,7 @@ export const LockToggle: React.FC<LockToggleProps> = ({
         toggleLock({ id, type, isLocked });
     };
 
-    const Icon = isLocked ? LockOpen24Regular : LockClosed24Regular;
+    const Icon = isLocked ? LockOpen24 : LockClosed24;
     const label = isLocked ? "Unlock" : "Lock";
     const tooltipText = isLocked
         ? "Item is locked (Auto-filters won't change it)"

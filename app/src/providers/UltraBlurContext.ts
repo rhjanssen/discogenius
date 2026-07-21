@@ -6,8 +6,13 @@ export interface UltraBlurContextValue {
   colors: UltraBlurColors;
   /** Optional artwork URL for blurred background layer */
   artworkUrl?: string;
-  /** Set the current artwork (triggers color extraction) */
+  /** Set the current artwork (triggers color extraction; uses cache when seeded) */
   setArtwork: (url?: string) => void;
+  /**
+   * Prefer on detail heroes: one-shot client extract from the painted image so
+   * ultrablur switches with the cover (no backend /colors round-trip).
+   */
+  setArtworkFromImage: (url: string, image: HTMLImageElement) => void;
   /** Loading state for color extraction */
   isLoading: boolean;
   /** Whether the app is in dark mode */

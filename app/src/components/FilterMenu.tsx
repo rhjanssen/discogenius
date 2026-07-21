@@ -14,17 +14,17 @@ import {
     mergeClasses,
 } from "@fluentui/react-components";
 import {
-  Filter24Regular as Filter24RegularBase,
-  Checkmark24Regular as Checkmark24RegularBase,
-  Circle24Regular as Circle24RegularBase,
-  Grid24Regular as Grid24RegularBase,
-  AppsListDetail24Regular as AppsListDetail24RegularBase,
-  Eye24Regular as Eye24RegularBase,
-  EyeOff24Regular as EyeOff24RegularBase,
-  LockClosed24Regular as LockClosed24RegularBase,
-  LockOpen24Regular as LockOpen24RegularBase,
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
-  CloudArrowDown24Regular as CloudArrowDown24RegularBase,
+  Filter24Regular,
+  Checkmark24Regular,
+  Circle24Regular,
+  Grid24Regular,
+  AppsListDetail24Regular,
+  Eye24Regular,
+  EyeOff24Regular,
+  LockClosed24Regular,
+  LockOpen24Regular,
+  ArrowDownload24Regular,
+  CloudArrowDown24Regular,
   Filter24Filled,
   Checkmark24Filled,
   Circle24Filled,
@@ -41,17 +41,17 @@ import {
 import type { StatusFilters } from "@/utils/statusFilters";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
-const Filter24Regular = bundleIcon(Filter24Filled, Filter24RegularBase);
-const Checkmark24Regular = bundleIcon(Checkmark24Filled, Checkmark24RegularBase);
-const Circle24Regular = bundleIcon(Circle24Filled, Circle24RegularBase);
-const Grid24Regular = bundleIcon(Grid24Filled, Grid24RegularBase);
-const AppsListDetail24Regular = bundleIcon(AppsListDetail24Filled, AppsListDetail24RegularBase);
-const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
-const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
-const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
-const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
-const CloudArrowDown24Regular = bundleIcon(CloudArrowDown24Filled, CloudArrowDown24RegularBase);
+const Filter24 = bundleIcon(Filter24Filled, Filter24Regular);
+const Checkmark24 = bundleIcon(Checkmark24Filled, Checkmark24Regular);
+const Circle24 = bundleIcon(Circle24Filled, Circle24Regular);
+const Grid24 = bundleIcon(Grid24Filled, Grid24Regular);
+const AppsListDetail24 = bundleIcon(AppsListDetail24Filled, AppsListDetail24Regular);
+const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
+const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
+const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
+const CloudArrowDown24 = bundleIcon(CloudArrowDown24Filled, CloudArrowDown24Regular);
 
 export interface ProviderFilterOption {
     id: string;
@@ -209,7 +209,7 @@ const FilterMenu = ({
         >
             <MenuTrigger>
                 <Button
-                    icon={<Filter24Regular />}
+                    icon={<Filter24 />}
                     appearance="subtle"
                     className={mergeClasses(
                         styles.triggerButton,
@@ -233,25 +233,25 @@ const FilterMenu = ({
                             </Text>
                             <MenuItem
                                 onClick={() => onLibraryFilterChange?.('all')}
-                                icon={libraryFilter === 'all' ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                icon={libraryFilter === 'all' ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                             >
                                 All Types
                             </MenuItem>
                             <MenuItem
                                 onClick={() => onLibraryFilterChange?.('stereo')}
-                                icon={libraryFilter === 'stereo' ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                icon={libraryFilter === 'stereo' ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                             >
                                 Stereo Only
                             </MenuItem>
                             <MenuItem
                                 onClick={() => onLibraryFilterChange?.('spatial')}
-                                icon={libraryFilter === 'spatial' ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                icon={libraryFilter === 'spatial' ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                             >
                                 Spatial Only
                             </MenuItem>
                             <MenuItem
                                 onClick={() => onLibraryFilterChange?.('video')}
-                                icon={libraryFilter === 'video' ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                icon={libraryFilter === 'video' ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                             >
                                 Videos Only
                             </MenuItem>
@@ -267,7 +267,7 @@ const FilterMenu = ({
                             </Text>
                             <MenuItem
                                 onClick={() => onProviderFilterChange?.(undefined)}
-                                icon={!providerFilter ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                icon={!providerFilter ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                             >
                                 All Providers
                             </MenuItem>
@@ -275,7 +275,7 @@ const FilterMenu = ({
                                 <MenuItem
                                     key={option.id}
                                     onClick={() => onProviderFilterChange?.(option.id)}
-                                    icon={providerFilter === option.id ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                    icon={providerFilter === option.id ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                                 >
                                     {option.name}
                                 </MenuItem>
@@ -292,7 +292,7 @@ const FilterMenu = ({
                             </Text>
                             <MenuItem
                                 onClick={() => onQualityTierFilterChange?.(undefined)}
-                                icon={!qualityTierFilter ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                icon={!qualityTierFilter ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                             >
                                 All Qualities
                             </MenuItem>
@@ -300,7 +300,7 @@ const FilterMenu = ({
                                 <MenuItem
                                     key={tier}
                                     onClick={() => onQualityTierFilterChange?.(tier)}
-                                    icon={qualityTierFilter === tier ? <Checkmark24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                    icon={qualityTierFilter === tier ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                                 >
                                     {tier}
                                 </MenuItem>
@@ -318,14 +318,14 @@ const FilterMenu = ({
                             <MenuItemCheckbox
                                 name="monitoring"
                                 value="monitored"
-                                icon={<Eye24Regular />}
+                                icon={<Eye24 />}
                             >
                                 Monitored
                             </MenuItemCheckbox>
                             <MenuItemCheckbox
                                 name="monitoring"
                                 value="unmonitored"
-                                icon={<EyeOff24Regular />}
+                                icon={<EyeOff24 />}
                             >
                                 Unmonitored
                             </MenuItemCheckbox>
@@ -342,14 +342,14 @@ const FilterMenu = ({
                             <MenuItemCheckbox
                                 name="lock"
                                 value="locked"
-                                icon={<LockClosed24Regular />}
+                                icon={<LockClosed24 />}
                             >
                                 Locked
                             </MenuItemCheckbox>
                             <MenuItemCheckbox
                                 name="lock"
                                 value="unlocked"
-                                icon={<LockOpen24Regular />}
+                                icon={<LockOpen24 />}
                             >
                                 Unlocked
                             </MenuItemCheckbox>
@@ -366,14 +366,14 @@ const FilterMenu = ({
                             <MenuItemCheckbox
                                 name="download"
                                 value="downloaded"
-                                icon={<ArrowDownload24Regular />}
+                                icon={<ArrowDownload24 />}
                             >
                                 Downloaded
                             </MenuItemCheckbox>
                             <MenuItemCheckbox
                                 name="download"
                                 value="notDownloaded"
-                                icon={<CloudArrowDown24Regular />}
+                                icon={<CloudArrowDown24 />}
                             >
                                 Not Downloaded
                             </MenuItemCheckbox>
@@ -389,13 +389,13 @@ const FilterMenu = ({
                             </Text>
                             <MenuItem
                                 onClick={() => onViewModeChange?.('grid')}
-                                icon={viewMode === 'grid' ? <Grid24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                icon={viewMode === 'grid' ? <Grid24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                             >
                                 Grid
                             </MenuItem>
                             <MenuItem
                                 onClick={() => onViewModeChange?.('list')}
-                                icon={viewMode === 'list' ? <AppsListDetail24Regular /> : <Circle24Regular style={{ opacity: 0.3 }} />}
+                                icon={viewMode === 'list' ? <AppsListDetail24 /> : <Circle24 style={{ opacity: 0.3 }} />}
                             >
                                 List
                             </MenuItem>

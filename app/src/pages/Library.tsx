@@ -1,78 +1,48 @@
 import {
-  TabList,
-  Tab,
   Button,
   Text,
   makeStyles,
   tokens,
-  Menu,
-  MenuTrigger,
-  MenuPopover,
-  MenuList,
-  MenuItem,
-  MenuDivider,
-  MenuItemRadio,
-  MenuGroup,
-  MenuGroupHeader,
   mergeClasses,
 } from "@fluentui/react-components";
 import {
-  ArrowSync24Regular as ArrowSync24RegularBase,
-  Search24Regular as Search24RegularBase,
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
-  Eye24Regular as Eye24RegularBase,
-  EyeOff24Regular as EyeOff24RegularBase,
-  ChevronDownRegular as ChevronDownRegularBase,
-  Grid24Regular as Grid24RegularBase,
-  AppsListDetail24Regular as AppsListDetail24RegularBase,
-  Speaker224Regular as Speaker224RegularBase,
-  ArrowSortUp24Regular as ArrowSortUp24RegularBase,
-  ArrowSortDown24Regular as ArrowSortDown24RegularBase,
-  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
-  ArrowImport24Regular as ArrowImport24RegularBase,
-  MusicNote224Regular as MusicNote224RegularBase,
-  Person24Regular as Person24RegularBase,
-  LockClosed24Regular as LockClosed24RegularBase,
-  LockOpen24Regular as LockOpen24RegularBase,
-  CheckmarkCircle24Filled,
-  CheckmarkCircle24Regular as CheckmarkCircle24RegularBase,
+  Search24Regular,
+  ArrowDownload24Regular,
+  Eye24Regular,
+  EyeOff24Regular,
+  Speaker224Regular,
+  MusicNote224Regular,
+  Person24Regular,
+  LockClosed24Regular,
+  LockOpen24Regular,
   bundleIcon,
-  ArrowSync24Filled,
   Search24Filled,
   ArrowDownload24Filled,
   Eye24Filled,
   EyeOff24Filled,
-  ChevronDownFilled,
-  Grid24Filled,
-  AppsListDetail24Filled,
-  Speaker224Filled,
-  ArrowSortUp24Filled,
-  ArrowSortDown24Filled,
-  ArrowSortDownLines24Filled,
   ArrowImport24Filled,
+  ArrowImport24Regular,
   MusicNote224Filled,
   Person24Filled,
   LockClosed24Filled,
-  LockOpen24Filled
+  LockOpen24Filled,
+  Speaker224Filled,
 } from "@fluentui/react-icons";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { albumSelectedQualityOffers } from "@/utils/albumSelectedQualityOffers";
 import { DownloadedBadge, NotScannedBadge } from "@/components/ui/StatusBadges";
-import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { useCardStyles } from "@/components/cards/cardStyles";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import { LibrarySelectionBar } from "@/components/library/LibrarySelectionBar";
-import FilterMenu from "@/components/FilterMenu";
 import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
 import TrackList from "@/components/TrackList";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import { navigateToAlbumTrack } from "@/utils/albumNavigation";
 import VideoGrid from "@/components/VideoGrid";
-import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useLibrary } from "@/hooks/useLibrary";
 import { ImportArtistsModal } from "@/components/ui/ImportArtistsModal";
 import { useTracks } from "@/hooks/useTracks";
@@ -90,7 +60,7 @@ import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { api, type StreamingProviderStatus } from "@/services/api";
-import { renderableArtworkUrl } from "@/utils/artwork";
+import { mediaCoverSrc } from "@/utils/artwork";
 import {
   dispatchActivityRefresh,
   dispatchLibraryUpdated,
@@ -99,25 +69,23 @@ import {
 import { formatDurationSeconds } from "@/utils/format";
 import { CardGridSkeleton, DataGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { collectionContentInset } from "@/components/ui/sharedLayoutStyles";
+import {
+  LibraryArtistsNoResults,
+  LibraryArtistsSelectionBar,
+  useLibraryArtistColumns,
+} from "@/pages/library/LibraryArtistsTab";
+import { LibraryToolbar } from "@/pages/library/LibraryToolbar";
 
-const ArrowSync24Regular = bundleIcon(ArrowSync24Filled, ArrowSync24RegularBase);
-const Search24Regular = bundleIcon(Search24Filled, Search24RegularBase);
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
-const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
-const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
-const ChevronDownRegular = bundleIcon(ChevronDownFilled, ChevronDownRegularBase);
-const Grid24Regular = bundleIcon(Grid24Filled, Grid24RegularBase);
-const AppsListDetail24Regular = bundleIcon(AppsListDetail24Filled, AppsListDetail24RegularBase);
-const Speaker224Regular = bundleIcon(Speaker224Filled, Speaker224RegularBase);
-const ArrowSortUp24Regular = bundleIcon(ArrowSortUp24Filled, ArrowSortUp24RegularBase);
-const ArrowSortDown24Regular = bundleIcon(ArrowSortDown24Filled, ArrowSortDown24RegularBase);
-const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
-const ArrowImport24Regular = bundleIcon(ArrowImport24Filled, ArrowImport24RegularBase);
-const MusicNote224Regular = bundleIcon(MusicNote224Filled, MusicNote224RegularBase);
-const Person24Regular = bundleIcon(Person24Filled, Person24RegularBase);
-const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
-const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
-const CheckmarkCircle24Regular = bundleIcon(CheckmarkCircle24Filled, CheckmarkCircle24RegularBase);
+const Search24 = bundleIcon(Search24Filled, Search24Regular);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
+const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
+const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const Speaker224 = bundleIcon(Speaker224Filled, Speaker224Regular);
+const ArrowImport24 = bundleIcon(ArrowImport24Filled, ArrowImport24Regular);
+const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
+const Person24 = bundleIcon(Person24Filled, Person24Regular);
+const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
+const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
 
 const downloadableVideoOffer = (video: any): { provider: string; providerId: string } | null => {
   const provider = String(video?.provider || "").trim();
@@ -152,69 +120,6 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: tokens.spacingVerticalM,
     height: "100%",
-  },
-  toolbar: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalXS,
-    alignItems: "center",
-    width: "100%",
-    // Room for glass-button hover shadow so Layout's overflow-x clipping
-    // does not flat-top the toolbar icons.
-    paddingTop: tokens.spacingVerticalXS,
-    paddingBottom: tokens.spacingVerticalXS,
-    "@media (min-width: 640px)": {
-      gap: tokens.spacingHorizontalS,
-      justifyContent: "space-between",
-    },
-    "@media (max-width: 639px)": {
-      alignItems: "center",
-      rowGap: tokens.spacingVerticalXS,
-    },
-  },
-  desktopControlsRow: {
-    display: "none",
-    "@media (min-width: 640px)": {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "flex-end",
-      gap: tokens.spacingHorizontalS,
-      minWidth: 0,
-      flex: "0 1 auto",
-    },
-  },
-  mobileControlsRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    flex: "0 0 auto",
-    "@media (min-width: 640px)": {
-      display: "none",
-    },
-  },
-  controlsRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalS,
-    flexWrap: "wrap",
-    minWidth: 0,
-    justifyContent: "flex-end",
-    "@media (max-width: 639px)": {
-      flex: "1 1 auto",
-      gap: tokens.spacingHorizontalXS,
-      justifyContent: "flex-end",
-      alignItems: "flex-start",
-    },
-  },
-  compactActions: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalXS,
-    flexWrap: "nowrap",
-    "@media (max-width: 639px)": {
-      flex: "0 0 auto",
-      marginLeft: "auto",
-    },
   },
   virtuosoContainer: {
     flexGrow: 1,
@@ -282,33 +187,10 @@ const useStyles = makeStyles({
   dimmedIcon: {
     opacity: 0.6,
   },
-  menuButtonIconOnly: {
-    ...glassButtonStyles,
-    minHeight: "36px",
-    "@media (max-width: 639px)": {
-      minHeight: "40px",
-      minWidth: "40px",
-      paddingLeft: tokens.spacingHorizontalS,
-      paddingRight: tokens.spacingHorizontalS,
-    },
-  },
-  mobileHiddenLabel: {
-    "@media (max-width: 639px)": {
-      display: "none",
-    },
-  },
 });
-
-const LIBRARY_TABS = [
-  { key: "artists", label: "Artists" },
-  { key: "albums", label: "Albums" },
-  { key: "tracks", label: "Tracks" },
-  { key: "videos", label: "Videos" },
-] as const;
 
 const LIBRARY_SETTINGS_STORAGE_KEY = "discogenius_library_settings";
 const LIBRARY_SETTINGS_VERSION = 2;
-const SelectItemsIcon = CheckmarkCircle24Regular;
 
 function loadPersistedLibrarySettings() {
   try {
@@ -327,7 +209,6 @@ function loadPersistedLibrarySettings() {
 
 const Library = () => {
   const styles = useStyles();
-  const responsiveTabsStyles = useResponsiveTabsStyles();
   const cardStyles = useCardStyles();
   const dgCell = useDataGridCellStyles();
   const navigate = useNavigate();
@@ -423,13 +304,6 @@ const Library = () => {
       console.warn('Failed to save library settings to localStorage:', e);
     }
   }, [selectedTab, libraryFilter, statusFilters, viewMode, sortBy, sortDirection]);
-
-  const sortDirectionOptions: Array<'asc' | 'desc'> = sortBy === 'name' ? ['asc', 'desc'] : ['desc', 'asc'];
-  const getSortDirectionLabel = (dir: 'asc' | 'desc') => {
-    if (sortBy === 'name') return dir === 'asc' ? 'A → Z' : 'Z → A';
-    if (sortBy === 'popularity') return dir === 'asc' ? 'Low → High' : 'High → Low';
-    return dir === 'asc' ? 'Oldest → Newest' : 'Newest → Oldest';
-  };
 
   const monitoredFilter = useMemo(() => {
     if (effectiveStatusFilters.onlyMonitored && !effectiveStatusFilters.onlyUnmonitored) return true;
@@ -958,7 +832,7 @@ const Library = () => {
   const renderEmptyLibraryAction = () => (
     <Button
       appearance="secondary"
-      icon={importProvider ? <ArrowImport24Regular /> : undefined}
+      icon={importProvider ? <ArrowImport24 /> : undefined}
       onClick={() => (importProvider ? setImportModalOpen(true) : navigate("/settings"))}
       title={importProvider ? "Import artists from a connected service" : "Connect a provider to import artists"}
     >
@@ -983,7 +857,7 @@ const Library = () => {
         onMonitorToggle={() => toggleArtistMonitored(artist.id, !artist.is_monitored)}
         placeholder={
           <div className={cardStyles.placeholderBg}>
-            <Person24Regular className={styles.placeholderIcon} />
+            <Person24 className={styles.placeholderIcon} />
           </div>
         }
         statusBadge={
@@ -1003,19 +877,6 @@ const Library = () => {
   };
 
   const renderNotScannedBadge = useCallback(() => <NotScannedBadge />, []);
-
-  // Render artist as datagrid row
-  const formatLastScanned = useCallback((date: string | null) => {
-    if (!date) return null;
-    const d = new Date(date);
-    const now = new Date();
-    const diff = now.getTime() - d.getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    if (days === 0) return 'Today';
-    if (days === 1) return 'Yesterday';
-    if (days < 7) return `${days}d ago`;
-    return d.toLocaleDateString();
-  }, []);
 
   const handleArtistScan = useCallback(async (e: React.MouseEvent, artist: any) => {
     e.stopPropagation();
@@ -1055,127 +916,12 @@ const Library = () => {
     }
   }, [toast]);
 
-  /** Column definitions for artist datagrid */
-  const artistColumns = useMemo<DataGridColumn[]>(() => [
-    {
-      key: "thumb",
-      header: "",
-      width: "40px",
-      media: true,
-      render: (artist: any) => {
-        const src = artist.picture || artist.cover_image_url;
-        return src ? (
-          <img src={src} alt={artist.name} className={dgCell.thumbnailCircle} />
-        ) : (
-          <div className={mergeClasses(dgCell.thumbnailCircle, dgCell.thumbnailPlaceholder)}>
-            {artist.name?.charAt(0)?.toUpperCase() || '?'}
-          </div>
-        );
-      },
-    },
-    {
-      key: "name",
-      header: "Name",
-      // minmax(0, 1fr) so the name column can shrink on narrow viewports;
-      // Albums/Scanned stack under the name below 768px (Fluent list pattern).
-      width: "minmax(0, 1fr)",
-      wrap: true,
-      render: (artist: any) => {
-        const albumLabel = `${artist.monitored_album_count ?? "--"} / ${artist.album_count ?? "--"} albums`;
-        const scannedLabel = artist.last_scanned
-          ? formatLastScanned(artist.last_scanned)
-          : "Not scanned";
-        return (
-          <div className={dgCell.nameStack}>
-            <span className={dgCell.nameCell} title={artist.name}>{artist.name}</span>
-            <div className={dgCell.mobileMetaLine}>
-              <span className={dgCell.mobileMetaText}>{albumLabel}</span>
-              <span className={dgCell.mobileMetaText}>·</span>
-              <span className={dgCell.mobileMetaText}>{scannedLabel}</span>
-            </div>
-          </div>
-        );
-      },
-    },
-    {
-      key: "albums",
-      header: "Albums",
-      width: "70px",
-      align: "center",
-      minWidth: 768,
-      className: dgCell.hideOnMobile,
-      render: (artist: any) => (
-        <>
-          <span className={dgCell.statPrimary}>{artist.monitored_album_count ?? "--"}</span>
-          <span className={dgCell.statSecondary}> / {artist.album_count ?? "--"}</span>
-        </>
-      ),
-    },
-    {
-      key: "tracks",
-      header: "Tracks",
-      width: "70px",
-      align: "center",
-      minWidth: 768,
-      className: dgCell.hideOnMobile,
-      render: (artist: any) => (
-        <>
-          <span className={dgCell.statPrimary}>{artist.monitored_track_count ?? "--"}</span>
-          <span className={dgCell.statSecondary}> / {artist.track_count ?? "--"}</span>
-        </>
-      ),
-    },
-    {
-      key: "scanned",
-      header: "Scanned",
-      width: "132px",
-      align: "center",
-      minWidth: 768,
-      className: dgCell.hideOnMobile,
-      render: (artist: any) => artist.last_scanned
-        ? <Text size={200}>{formatLastScanned(artist.last_scanned)}</Text>
-        : renderNotScannedBadge(),
-    },
-    {
-      key: "actions",
-      header: "",
-      width: "max-content",
-      align: "right",
-      render: (artist: any) => (
-        <LibraryRowActions
-          actions={[
-            {
-              key: "scan",
-              label: "Refresh & scan",
-              icon: <ArrowSync24Regular />,
-              onClick: (event) => handleArtistScan(event, artist),
-            },
-            {
-              key: "curate",
-              label: "Curate artist",
-              icon: <ArrowSortDownLines24Regular />,
-              onClick: (event) => handleArtistCurate(event, artist),
-            },
-            {
-              key: "download",
-              label: "Download missing",
-              icon: <ArrowDownload24Regular />,
-              onClick: (event) => handleArtistDownload(event, artist),
-            },
-            {
-              key: "monitor",
-              label: artist.is_monitored ? "Unmonitor" : "Monitor",
-              icon: artist.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />,
-              onClick: (event) => {
-                event.stopPropagation();
-                toggleArtistMonitored(artist.id, !artist.is_monitored);
-              },
-            },
-          ]}
-        />
-      ),
-    },
-  ], [dgCell, formatLastScanned, handleArtistScan, handleArtistCurate, handleArtistDownload, renderNotScannedBadge, toggleArtistMonitored]);
+  const artistColumns = useLibraryArtistColumns({
+    onScan: handleArtistScan,
+    onCurate: handleArtistCurate,
+    onDownload: handleArtistDownload,
+    onToggleMonitored: toggleArtistMonitored,
+  });
 
   const handleToggleAlbumMonitored = useCallback(async (e: React.MouseEvent, album: any) => {
     e.stopPropagation();
@@ -1209,7 +955,7 @@ const Library = () => {
     const year = album.release_date ? album.release_date.split('-')[0] : '';
     const subtitle = [album.artist_name, year].filter(Boolean).join(' · ');
     const isLocked = Boolean(album.monitored_lock);
-    const imageUrl = renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id);
+    const imageUrl = mediaCoverSrc(album);
     const itemProgress = getProgressByProviderId(String(album.id));
     const qualityOffers = albumSelectedQualityOffers(album);
     return (
@@ -1230,7 +976,7 @@ const Library = () => {
         onMonitorToggle={isLocked ? undefined : (e) => handleToggleAlbumMonitored(e, album)}
         placeholder={
           <div className={cardStyles.placeholderBg}>
-            <MusicNote224Regular className={styles.placeholderIcon} />
+            <MusicNote224 className={styles.placeholderIcon} />
           </div>
         }
         downloadStatus={itemProgress?.state}
@@ -1269,7 +1015,7 @@ const Library = () => {
       width: "40px",
       media: true,
       render: (album: any) => {
-        const src = renderableArtworkUrl(album.cover_art_url || album.cover || album.cover_id);
+        const src = mediaCoverSrc(album);
         return src ? (
           <img
             src={src}
@@ -1353,20 +1099,20 @@ const Library = () => {
               {
                 key: "download",
                 label: "Download album",
-                icon: <ArrowDownload24Regular />,
+                icon: <ArrowDownload24 />,
                 onClick: (event) => handleDownloadAlbumRow(event, album),
               },
               {
                 key: "monitor",
                 label: isLocked ? "Monitoring is locked" : (album.is_monitored ? "Unmonitor" : "Monitor"),
-                icon: album.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />,
+                icon: album.is_monitored ? <EyeOff24 /> : <Eye24 />,
                 onClick: (event) => handleToggleAlbumMonitored(event, album),
                 disabled: isLocked,
               },
               {
                 key: "lock",
                 label: isLocked ? "Unlock" : "Lock",
-                icon: isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />,
+                icon: isLocked ? <LockOpen24 /> : <LockClosed24 />,
                 onClick: (event) => handleToggleAlbumLock(event, album),
               },
             ]}
@@ -1400,12 +1146,12 @@ const Library = () => {
       width: "64px",
       media: true,
       render: (video: any) => {
-        const src = renderableArtworkUrl(video.cover_art_url || video.cover || video.cover_id);
+        const src = mediaCoverSrc(video);
         return src ? (
           <img src={src} alt={video.title} className={dgCell.thumbnailWide} />
         ) : (
           <div className={mergeClasses(dgCell.thumbnailWide, dgCell.thumbnailPlaceholder)}>
-            <Speaker224Regular className={styles.compactIcon} />
+            <Speaker224 className={styles.compactIcon} />
           </div>
         );
       },
@@ -1479,7 +1225,7 @@ const Library = () => {
               {
                 key: "download",
                 label: "Download video",
-                icon: <ArrowDownload24Regular />,
+                icon: <ArrowDownload24 />,
                 onClick: (event) => {
                   event.stopPropagation();
                   if (!downloadOffer) return;
@@ -1499,7 +1245,7 @@ const Library = () => {
               {
                 key: "monitor",
                 label: isLocked ? "Monitoring is locked" : (video.is_monitored ? "Unmonitor" : "Monitor"),
-                icon: video.is_monitored ? <EyeOff24Regular /> : <Eye24Regular />,
+                icon: video.is_monitored ? <EyeOff24 /> : <Eye24 />,
                 onClick: (event) => {
                   event.stopPropagation();
                   toggleVideoMonitor(video.id, !video.is_monitored);
@@ -1509,7 +1255,7 @@ const Library = () => {
               {
                 key: "lock",
                 label: isLocked ? "Unlock" : "Lock",
-                icon: isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />,
+                icon: isLocked ? <LockOpen24 /> : <LockClosed24 />,
                 onClick: (event) => {
                   event.stopPropagation();
                   toggleVideoLock(video.id, !isLocked);
@@ -1546,7 +1292,7 @@ const Library = () => {
         <EmptyState
           title="Your library is empty"
           description="Add an artist from MusicBrainz, or import followed artists from a connected provider."
-          icon={<MusicNote224Regular />}
+          icon={<MusicNote224 />}
           minHeight="320px"
           actions={renderEmptyLibraryAction()}
         />
@@ -1627,7 +1373,7 @@ const Library = () => {
     <EmptyState
       title={`No ${mediaLabel} found`}
       description={`No ${mediaLabel} match your current filters.`}
-      icon={<Search24Regular />}
+      icon={<Search24 />}
       minHeight="220px"
     />
   );
@@ -1645,64 +1391,6 @@ const Library = () => {
     />
   );
 
-  const renderSortMenu = () => (
-    <Menu>
-      <MenuTrigger disableButtonEnhancement>
-        <Button
-          appearance="subtle"
-          icon={sortDirection === 'asc' ? <ArrowSortUp24Regular /> : <ArrowSortDown24Regular />}
-          className={styles.menuButtonIconOnly}
-          aria-label="Sort library"
-          title="Sort library"
-        >
-          <span className={styles.mobileHiddenLabel}>Sort</span>
-        </Button>
-      </MenuTrigger>
-      <MenuPopover>
-        <MenuList
-          checkedValues={{
-            sortBy: [sortBy],
-            sortDirection: [sortDirection],
-          }}
-          onCheckedValueChange={(_, data) => {
-            if (data.name === 'sortBy') {
-              const nextSort = data.checkedItems[0] as typeof sortBy;
-              setSortBy(nextSort);
-              setSortDirection(nextSort === 'name' ? 'asc' : 'desc');
-            } else if (data.name === 'sortDirection') {
-              setSortDirection(data.checkedItems[0] as typeof sortDirection);
-            }
-          }}
-        >
-          <MenuGroup>
-            <MenuGroupHeader>Sort By</MenuGroupHeader>
-            <MenuItemRadio name="sortBy" value="name">
-              Alphabetical
-            </MenuItemRadio>
-            <MenuItemRadio name="sortBy" value="releaseDate">
-              {selectedTab === 'artists' ? 'Date Added' : 'Release Date'}
-            </MenuItemRadio>
-            <MenuItemRadio name="sortBy" value="popularity">
-              Popularity
-            </MenuItemRadio>
-            <MenuItemRadio name="sortBy" value="scannedAt">
-              Last Scanned
-            </MenuItemRadio>
-          </MenuGroup>
-          <MenuDivider />
-          <MenuGroup>
-            <MenuGroupHeader>Direction</MenuGroupHeader>
-            {sortDirectionOptions.map((dir) => (
-              <MenuItemRadio key={dir} name="sortDirection" value={dir}>
-                {getSortDirectionLabel(dir)}
-              </MenuItemRadio>
-            ))}
-          </MenuGroup>
-        </MenuList>
-      </MenuPopover>
-    </Menu>
-  );
-
   const renderSelectionBar = () => {
     if (!isSelectionMode) {
       return null;
@@ -1710,49 +1398,17 @@ const Library = () => {
 
     if (selectedTab === "artists") {
       return (
-        <LibrarySelectionBar
+        <LibraryArtistsSelectionBar
           selectedCount={artistSelection.selectedCount}
           allVisibleSelected={artistSelection.allVisibleSelected}
           someVisibleSelected={artistSelection.someVisibleSelected}
           onSelectAllVisible={artistSelection.selectAllVisible}
           onClearSelection={artistSelection.clearSelection}
-          actions={[
-            {
-              key: "scan",
-              label: "Refresh & scan",
-              icon: <ArrowSync24Regular />,
-              onClick: queueSelectedArtistScan,
-              disabled: artistSelection.selectedCount === 0,
-            },
-            {
-              key: "curate",
-              label: "Curate selected",
-              icon: <ArrowSortDownLines24Regular />,
-              onClick: queueSelectedArtistCurate,
-              disabled: artistSelection.selectedCount === 0,
-            },
-            {
-              key: "download",
-              label: "Download missing",
-              icon: <ArrowDownload24Regular />,
-              onClick: queueSelectedArtistDownload,
-              disabled: artistSelection.selectedCount === 0,
-            },
-            {
-              key: "monitor",
-              label: "Monitor",
-              icon: <Eye24Regular />,
-              onClick: () => void setSelectedArtistMonitoring(true),
-              disabled: artistSelection.selectedCount === 0,
-            },
-            {
-              key: "unmonitor",
-              label: "Unmonitor",
-              icon: <EyeOff24Regular />,
-              onClick: () => void setSelectedArtistMonitoring(false),
-              disabled: artistSelection.selectedCount === 0,
-            },
-          ]}
+          onScan={queueSelectedArtistScan}
+          onCurate={queueSelectedArtistCurate}
+          onDownload={queueSelectedArtistDownload}
+          onMonitor={() => void setSelectedArtistMonitoring(true)}
+          onUnmonitor={() => void setSelectedArtistMonitoring(false)}
         />
       );
     }
@@ -1769,35 +1425,35 @@ const Library = () => {
             {
               key: "download",
               label: "Download selected",
-              icon: <ArrowDownload24Regular />,
+              icon: <ArrowDownload24 />,
               onClick: queueSelectedAlbumDownload,
               disabled: albumSelection.selectedCount === 0,
             },
             {
               key: "monitor",
               label: "Monitor",
-              icon: <Eye24Regular />,
+              icon: <Eye24 />,
               onClick: () => void setSelectedAlbumMonitoring(true),
               disabled: albumSelection.selectedCount === 0,
             },
             {
               key: "unmonitor",
               label: "Unmonitor",
-              icon: <EyeOff24Regular />,
+              icon: <EyeOff24 />,
               onClick: () => void setSelectedAlbumMonitoring(false),
               disabled: albumSelection.selectedCount === 0,
             },
             {
               key: "lock",
               label: "Lock",
-              icon: <LockClosed24Regular />,
+              icon: <LockClosed24 />,
               onClick: () => void setSelectedAlbumLockState(true),
               disabled: albumSelection.selectedCount === 0,
             },
             {
               key: "unlock",
               label: "Unlock",
-              icon: <LockOpen24Regular />,
+              icon: <LockOpen24 />,
               onClick: () => void setSelectedAlbumLockState(false),
               disabled: albumSelection.selectedCount === 0,
             },
@@ -1818,35 +1474,35 @@ const Library = () => {
             {
               key: "download",
               label: "Download selected",
-              icon: <ArrowDownload24Regular />,
+              icon: <ArrowDownload24 />,
               onClick: queueSelectedTrackDownload,
               disabled: trackSelection.selectedCount === 0,
             },
             {
               key: "monitor",
               label: "Monitor",
-              icon: <Eye24Regular />,
+              icon: <Eye24 />,
               onClick: () => void setSelectedTrackMonitoring(true),
               disabled: trackSelection.selectedCount === 0,
             },
             {
               key: "unmonitor",
               label: "Unmonitor",
-              icon: <EyeOff24Regular />,
+              icon: <EyeOff24 />,
               onClick: () => void setSelectedTrackMonitoring(false),
               disabled: trackSelection.selectedCount === 0,
             },
             {
               key: "lock",
               label: "Lock",
-              icon: <LockClosed24Regular />,
+              icon: <LockClosed24 />,
               onClick: () => void setSelectedTrackLockState(true),
               disabled: trackSelection.selectedCount === 0,
             },
             {
               key: "unlock",
               label: "Unlock",
-              icon: <LockOpen24Regular />,
+              icon: <LockOpen24 />,
               onClick: () => void setSelectedTrackLockState(false),
               disabled: trackSelection.selectedCount === 0,
             },
@@ -1867,35 +1523,35 @@ const Library = () => {
             {
               key: "download",
               label: "Download selected",
-              icon: <ArrowDownload24Regular />,
+              icon: <ArrowDownload24 />,
               onClick: queueSelectedVideoDownload,
               disabled: videoSelection.selectedCount === 0,
             },
             {
               key: "monitor",
               label: "Monitor",
-              icon: <Eye24Regular />,
+              icon: <Eye24 />,
               onClick: () => void setSelectedVideoMonitoring(true),
               disabled: videoSelection.selectedCount === 0,
             },
             {
               key: "unmonitor",
               label: "Unmonitor",
-              icon: <EyeOff24Regular />,
+              icon: <EyeOff24 />,
               onClick: () => void setSelectedVideoMonitoring(false),
               disabled: videoSelection.selectedCount === 0,
             },
             {
               key: "lock",
               label: "Lock",
-              icon: <LockClosed24Regular />,
+              icon: <LockClosed24 />,
               onClick: () => void setSelectedVideoLockState(true),
               disabled: videoSelection.selectedCount === 0,
             },
             {
               key: "unlock",
               label: "Unlock",
-              icon: <LockOpen24Regular />,
+              icon: <LockOpen24 />,
               onClick: () => void setSelectedVideoLockState(false),
               disabled: videoSelection.selectedCount === 0,
             },
@@ -1935,165 +1591,33 @@ const Library = () => {
   return (
     <div className={styles.container}>
       <div className={styles.pageBody}>
-        <div className={styles.toolbar}>
-          <div className={responsiveTabsStyles.tabSlot}>
-            {/* Mobile dropdown */}
-            <div className={responsiveTabsStyles.mobileSelect}>
-              <Menu>
-                <MenuTrigger disableButtonEnhancement>
-                  <Button appearance="subtle" iconPosition="after" icon={<ChevronDownRegular />} className={responsiveTabsStyles.menuButton}>
-                    {LIBRARY_TABS.find((tab) => tab.key === selectedTab)?.label ?? "Artists"}
-                  </Button>
-                </MenuTrigger>
-                <MenuPopover>
-                  <MenuList>
-                    {LIBRARY_TABS.map((tab) => (
-                      <MenuItem key={tab.key} onClick={() => setSelectedTab(tab.key)}>
-                        {tab.label}
-                      </MenuItem>
-                    ))}
-                  </MenuList>
-                </MenuPopover>
-              </Menu>
-            </div>
-            {/* Desktop tabs */}
-            <div className={responsiveTabsStyles.desktopTabs}>
-              <TabList selectedValue={selectedTab} onTabSelect={(_, data) => setSelectedTab(data.value as string)}>
-                {LIBRARY_TABS.map((tab) => {
-                  const statKey = tab.key as keyof Pick<NonNullable<typeof stats>, 'artists' | 'albums' | 'tracks' | 'videos'>;
-                  const tabStats = stats?.[statKey];
-                  return (
-                    <Tab key={tab.key} value={tab.key} title={tabStats ? `${tabStats.monitored} monitored, ${tabStats.total} in database` : undefined}>
-                      {tab.label}
-                    </Tab>
-                  );
-                })}
-              </TabList>
-            </div>
-          </div>
-
-          <div className={styles.mobileControlsRow}>
-            <div className={styles.compactActions}>
-              {importProvider ? (
-                <Button
-                  appearance="subtle"
-                  icon={<ArrowImport24Regular />}
-                  onClick={() => setImportModalOpen(true)}
-                  className={styles.menuButtonIconOnly}
-                  title="Import artists from a connected service"
-                  aria-label="Import artists"
-                >
-                  <span className={styles.mobileHiddenLabel}>Import</span>
-                </Button>
-              ) : null}
-              <Button
-                appearance="subtle"
-                icon={<SelectItemsIcon />}
-                onClick={toggleSelectionMode}
-                className={styles.menuButtonIconOnly}
-                title={isSelectionMode ? "Stop selecting" : `Select ${selectedTab}`}
-                aria-label={isSelectionMode ? "Stop selecting" : `Select ${selectedTab}`}
-                aria-pressed={isSelectionMode}
-              >
-                <span className={styles.mobileHiddenLabel}>{isSelectionMode ? "Done" : "Select"}</span>
-              </Button>
-              {renderSortMenu()}
-
-              <FilterMenu
-                libraryFilter={libraryFilter}
-                onLibraryFilterChange={setLibraryFilter}
-                providerFilter={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? albumProviderFilter : undefined}
-                onProviderFilterChange={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? setAlbumProviderFilter : undefined}
-                providerOptions={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? providerFilterOptions : undefined}
-                qualityTierFilter={selectedTab === 'albums' || selectedTab === 'tracks' ? albumQualityTierFilter : undefined}
-                onQualityTierFilterChange={selectedTab === 'albums' || selectedTab === 'tracks' ? setAlbumQualityTierFilter : undefined}
-                statusFilters={effectiveStatusFilters}
-                onStatusFiltersChange={setStatusFilters}
-                showDownloadFilter={showDownloadFilter}
-                showLockFilter={showLockFilter}
-                className={styles.menuButtonIconOnly}
-                hideLabelOnMobile
-              />
-
-              {/* View Mode Toggle */}
-              {canToggleView ? (
-                <Button
-                  appearance="subtle"
-                  icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
-                  onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-                  className={styles.menuButtonIconOnly}
-                  title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-                  aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-                >
-                  <span className={styles.mobileHiddenLabel}>
-                    {viewMode === 'grid' ? 'Grid' : 'List'}
-                  </span>
-                </Button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className={styles.desktopControlsRow}>
-            <div className={styles.compactActions}>
-              {importProvider ? (
-                <Button
-                  appearance="subtle"
-                  icon={<ArrowImport24Regular />}
-                  onClick={() => setImportModalOpen(true)}
-                  className={styles.menuButtonIconOnly}
-                  title="Import artists from a connected service"
-                  aria-label="Import artists"
-                >
-                  <span className={styles.mobileHiddenLabel}>Import</span>
-                </Button>
-              ) : null}
-              <Button
-                appearance="subtle"
-                icon={<SelectItemsIcon />}
-                onClick={toggleSelectionMode}
-                className={styles.menuButtonIconOnly}
-                title={isSelectionMode ? "Stop selecting" : `Select ${selectedTab}`}
-                aria-label={isSelectionMode ? "Stop selecting" : `Select ${selectedTab}`}
-                aria-pressed={isSelectionMode}
-              >
-                <span className={styles.mobileHiddenLabel}>{isSelectionMode ? "Done" : "Select"}</span>
-              </Button>
-              {renderSortMenu()}
-
-              <FilterMenu
-                libraryFilter={libraryFilter}
-                onLibraryFilterChange={setLibraryFilter}
-                providerFilter={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? albumProviderFilter : undefined}
-                onProviderFilterChange={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? setAlbumProviderFilter : undefined}
-                providerOptions={selectedTab === 'albums' || selectedTab === 'tracks' || selectedTab === 'videos' ? providerFilterOptions : undefined}
-                qualityTierFilter={selectedTab === 'albums' || selectedTab === 'tracks' ? albumQualityTierFilter : undefined}
-                onQualityTierFilterChange={selectedTab === 'albums' || selectedTab === 'tracks' ? setAlbumQualityTierFilter : undefined}
-                statusFilters={effectiveStatusFilters}
-                onStatusFiltersChange={setStatusFilters}
-                showDownloadFilter={showDownloadFilter}
-                showLockFilter={showLockFilter}
-                className={styles.menuButtonIconOnly}
-                hideLabelOnMobile
-              />
-
-              {/* View Mode Toggle */}
-              {canToggleView ? (
-                <Button
-                  appearance="subtle"
-                  icon={viewMode === 'grid' ? <Grid24Regular /> : <AppsListDetail24Regular />}
-                  onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-                  className={styles.menuButtonIconOnly}
-                  title={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-                  aria-label={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
-                >
-                  <span className={styles.mobileHiddenLabel}>
-                    {viewMode === 'grid' ? 'Grid' : 'List'}
-                  </span>
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        </div>
+        <LibraryToolbar
+          selectedTab={selectedTab}
+          onSelectedTabChange={setSelectedTab}
+          stats={stats}
+          importProvider={importProvider}
+          onOpenImport={() => setImportModalOpen(true)}
+          isSelectionMode={isSelectionMode}
+          onToggleSelectionMode={toggleSelectionMode}
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSortByChange={setSortBy}
+          onSortDirectionChange={setSortDirection}
+          libraryFilter={libraryFilter}
+          onLibraryFilterChange={setLibraryFilter}
+          albumProviderFilter={albumProviderFilter}
+          onAlbumProviderFilterChange={setAlbumProviderFilter}
+          providerFilterOptions={providerFilterOptions}
+          albumQualityTierFilter={albumQualityTierFilter}
+          onAlbumQualityTierFilterChange={setAlbumQualityTierFilter}
+          statusFilters={effectiveStatusFilters}
+          onStatusFiltersChange={setStatusFilters}
+          showDownloadFilter={showDownloadFilter}
+          showLockFilter={showLockFilter}
+          canToggleView={canToggleView}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
+        />
 
         {selectedTab === "artists" && (
           <div className={styles.virtuosoContainer}>
@@ -2108,7 +1632,7 @@ const Library = () => {
                 () => { void refetchArtists(); },
               )
             ) : artists.length === 0 ? (
-              renderNoResultsContent("artists")
+              <LibraryArtistsNoResults />
             ) : (
               renderPane({
                 sentinelRef: activeSentinelRef,

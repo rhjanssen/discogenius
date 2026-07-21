@@ -198,20 +198,30 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
     librarySlot: input.librarySlot ?? providerMedia?.library_slot ?? providerAlbum?.library_slot,
     quality: input.quality,
   });
-  const releaseGroupSlot = albumId
+  // Prefer an explicit job/import RG (hybrid composites) when looking up the slot,
+  // then fall back to matching the native provider album id inside a composite id.
+  const releaseGroupMbidHint = nullableText(input.canonicalReleaseGroupMbid);
+  const releaseGroupSlot = releaseGroupMbidHint
     ? (db.prepare(`
         SELECT release_group_mbid, selected_release_mbid, selected_provider, slot
         FROM ReleaseGroupSlots
-        WHERE selected_provider_id = ?
-           OR selected_provider_id LIKE ?
-           OR selected_provider_id LIKE ?
-           OR selected_provider_id LIKE ?
+        WHERE release_group_mbid = ?
         ORDER BY CASE WHEN slot = ? THEN 0 ELSE 1 END
         LIMIT 1
-      `).get(albumId, `${albumId};%`, `%;${albumId};%`, `%;${albumId}`, preferredSlot) as ReleaseGroupSlotRow | undefined) ?? null
-    : null;
-  // Resolve the exact track for the selected release via the provider offer's
-  // recording mbid (no provider-catalog position matching needed).
+      `).get(releaseGroupMbidHint, preferredSlot) as ReleaseGroupSlotRow | undefined) ?? null
+    : albumId
+      ? (db.prepare(`
+          SELECT release_group_mbid, selected_release_mbid, selected_provider, slot
+          FROM ReleaseGroupSlots
+          WHERE selected_provider_id = ?
+             OR selected_provider_id LIKE ?
+             OR selected_provider_id LIKE ?
+             OR selected_provider_id LIKE ?
+          ORDER BY CASE WHEN slot = ? THEN 0 ELSE 1 END
+          LIMIT 1
+        `).get(albumId, `${albumId};%`, `%;${albumId};%`, `%;${albumId}`, preferredSlot) as ReleaseGroupSlotRow | undefined) ?? null
+      : null;
+  // Resolve the exact track for the selected (hybrid) release via recording mbid.
   const offerRecordingMbid = nullableText(input.canonicalRecordingMbid) ?? nullableText(providerMedia?.recording_mbid);
   const selectedTrack = releaseGroupSlot?.selected_release_mbid && offerRecordingMbid
     ? (db.prepare(`
@@ -224,6 +234,31 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
       `).get(releaseGroupSlot.selected_release_mbid, offerRecordingMbid) as MbTrackRow | undefined) ?? null
     : null;
 
+  // When a ReleaseGroupSlot is bound (especially composite hybrids), slot /
+  // remapped track identity outranks native ProviderItems RG/track MBIDs so
+  // organize/naming/tags follow the monitored hybrid, not the source albums.
+  const slotReleaseGroupMbid = nullableText(releaseGroupSlot?.release_group_mbid);
+  const slotReleaseMbid = nullableText(releaseGroupSlot?.selected_release_mbid);
+  const slotTrackMbid = nullableText(selectedTrack?.mbid);
+  const inputTrackMbid = nullableText(input.canonicalTrackMbid);
+  // Explicit job track MBIDs win only when they belong on the selected
+  // release. Hybrid downloads often carry the *native* source-album track
+  // MBID (Pompeii=1 on its single); keeping that here produced `01 - Pompeii`
+  // on Killing Me Softly instead of hybrid track 2.
+  const inputTrackOnSelectedRelease = Boolean(
+    inputTrackMbid
+    && slotReleaseMbid
+    && (db.prepare(`
+      SELECT mbid FROM Tracks WHERE release_mbid = ? AND mbid = ? LIMIT 1
+    `).get(slotReleaseMbid, inputTrackMbid) as MbTrackRow | undefined),
+  );
+  const resolvedTrackMbid = inputTrackOnSelectedRelease
+    ? inputTrackMbid
+    : (slotTrackMbid
+      ?? (slotReleaseMbid ? null : inputTrackMbid)
+      ?? nullableText(providerMedia?.track_mbid)
+      ?? null);
+
   return {
     canonicalArtistMbid:
       nullableText(input.canonicalArtistMbid)
@@ -233,25 +268,23 @@ export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): Lib
       ?? null,
     canonicalReleaseGroupMbid:
       nullableText(input.canonicalReleaseGroupMbid)
-      ?? nullableText(providerMedia?.release_group_mbid)
+      ?? slotReleaseGroupMbid
+      // Prefer the album offer's RG over the track row's. Hybrid source tracks
+      // are often mis-matched onto unrelated singles (Rehab vs Back to Black).
       ?? nullableText(providerAlbum?.release_group_mbid)
-      ?? nullableText(releaseGroupSlot?.release_group_mbid)
+      ?? nullableText(providerMedia?.release_group_mbid)
       ?? null,
     canonicalReleaseMbid:
       nullableText(input.canonicalReleaseMbid)
-      ?? nullableText(releaseGroupSlot?.selected_release_mbid)
+      ?? slotReleaseMbid
       ?? nullableText(providerMedia?.release_mbid)
       ?? nullableText(providerAlbum?.release_mbid)
       ?? null,
-    canonicalTrackMbid:
-      nullableText(input.canonicalTrackMbid)
-      ?? nullableText(providerMedia?.track_mbid)
-      ?? nullableText(selectedTrack?.mbid)
-      ?? null,
+    canonicalTrackMbid: resolvedTrackMbid,
     canonicalRecordingMbid:
       nullableText(input.canonicalRecordingMbid)
-      ?? nullableText(providerMedia?.recording_mbid)
       ?? nullableText(selectedTrack?.recording_mbid)
+      ?? nullableText(providerMedia?.recording_mbid)
       ?? null,
     provider: providerMedia?.provider ?? providerAlbum?.provider ?? provider ?? null,
     providerEntityType,

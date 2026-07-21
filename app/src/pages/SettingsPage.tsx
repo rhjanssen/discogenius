@@ -1,79 +1,51 @@
 import {
     Button,
     Badge,
-    Field,
     Input,
     Select,
     Switch,
-    Checkbox,
     Radio,
     RadioGroup,
     Spinner,
     Text,
     Title1,
-    Divider,
     makeStyles,
     tokens,
-    Caption1,
-    Tooltip,
-    Dialog,
-    DialogSurface,
-    DialogBody,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
     Link,
 } from "@fluentui/react-components";
 import {
-  DoorArrowLeft24Regular as DoorArrowLeft24RegularBase,
-  ArrowImport24Regular as ArrowImport24RegularBase,
-  WeatherMoon24Regular as WeatherMoon24RegularBase,
-  WeatherSunny24Regular as WeatherSunny24RegularBase,
-  DesktopMac24Regular as DesktopMac24RegularBase,
-  ArrowSync24Regular as ArrowSync24RegularBase,
-  ArrowSortDownLines24Regular as ArrowSortDownLines24RegularBase,
-  QuestionCircle24Regular as QuestionCircle24RegularBase,
-  Dismiss24Regular as Dismiss24RegularBase,
-  Open24Regular as Open24RegularBase,
-  ChevronDown24Regular as ChevronDown24RegularBase,
-  ChevronUp24Regular as ChevronUp24RegularBase,
+  DoorArrowLeft24Regular,
+  ArrowSync24Regular,
+  ArrowSortDownLines24Regular,
   DoorArrowLeft24Filled,
-  ArrowImport24Filled,
-  WeatherMoon24Filled,
-  WeatherSunny24Filled,
-  DesktopMac24Filled,
   ArrowSync24Filled,
   ArrowSortDownLines24Filled,
-  QuestionCircle24Filled,
-  Dismiss24Filled,
-  Open24Filled,
-  ChevronDown24Filled,
-  ChevronUp24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
-import { ProviderMark } from "@/components/ui/ProviderMark";
-import { providerMarkFor } from "@/components/ui/providerMarks";
-import { QualityBadge } from "@/components/ui/QualityBadge";
-import { ImportArtistsModal } from "@/components/ui/ImportArtistsModal";
-import { videoCapabilityLabel, videoTierFromMaxHeight } from "@/utils/qualityTier";
+import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import { useProviderConnection } from "@/hooks/useProviderConnection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useAppAuth } from "@/providers/appAuthContext";
 import { useTheme } from "@/providers/themeContext";
+import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useQuery } from "@tanstack/react-query";
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { api, type StreamingProviderStatus } from "@/services/api";
+import React, { useState, useEffect, useCallback } from "react";
+import { api } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
 import { ErrorState } from "@/components/ui/ContentState";
 import {
-    RenamePreviewDialog,
     RetagPreviewDialog,
-    type RenamePreviewItem,
     type RetagPreviewItem,
 } from "@/components/mediafiles/FileMaintenanceDialogs";
+import { AppearanceSettingsSection } from "@/pages/settings/AppearanceSettingsSection";
+import { AudioQualitySettingsSection } from "@/pages/settings/AudioQualitySettingsSection";
+import { CurationSettingsSection } from "@/pages/settings/CurationSettingsSection";
+import { MetadataSourceSettingsSection } from "@/pages/settings/MetadataSourceSettingsSection";
+import { NamingSettingsSection } from "@/pages/settings/NamingSettingsSection";
+import { ProvidersSettingsSection } from "@/pages/settings/ProvidersSettingsSection";
 
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type {
@@ -81,165 +53,14 @@ import type {
     FilteringConfigContract,
     MonitoringConfigContract,
     MonitoringStatusResponseContract,
-    NamingConfigContract,
 } from "@contracts/config";
 import type { AppReleaseInfoContract } from "@contracts/release";
 
-const DoorArrowLeft24Regular = bundleIcon(DoorArrowLeft24Filled, DoorArrowLeft24RegularBase);
-const ArrowImport24Regular = bundleIcon(ArrowImport24Filled, ArrowImport24RegularBase);
-const WeatherMoon24Regular = bundleIcon(WeatherMoon24Filled, WeatherMoon24RegularBase);
-const WeatherSunny24Regular = bundleIcon(WeatherSunny24Filled, WeatherSunny24RegularBase);
-const DesktopMac24Regular = bundleIcon(DesktopMac24Filled, DesktopMac24RegularBase);
-const ArrowSync24Regular = bundleIcon(ArrowSync24Filled, ArrowSync24RegularBase);
-const ArrowSortDownLines24Regular = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24RegularBase);
-const QuestionCircle24Regular = bundleIcon(QuestionCircle24Filled, QuestionCircle24RegularBase);
-const Dismiss24Regular = bundleIcon(Dismiss24Filled, Dismiss24RegularBase);
-const Open24Regular = bundleIcon(Open24Filled, Open24RegularBase);
-const ChevronDown24Regular = bundleIcon(ChevronDown24Filled, ChevronDown24RegularBase);
-const ChevronUp24Regular = bundleIcon(ChevronUp24Filled, ChevronUp24RegularBase);
-
-type NamingFieldKey =
-    | "artist_folder"
-    | "album_track_path_single"
-    | "album_track_path_multi"
-    | "video_file";
-
-type NamingToken = {
-    token: string;
-    example: string;
-    section: string;
-    mode?: "insert" | "replace";
-};
+const DoorArrowLeft24 = bundleIcon(DoorArrowLeft24Filled, DoorArrowLeft24Regular);
+const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
+const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
 
 const MIN_RUN_NOW_FEEDBACK_MS = 600;
-const ARTIST_NAMING_TOKENS: NamingToken[] = [
-    { section: "Artist", token: "{Artist Name}", example: "Daft Punk" },
-    { section: "Artist", token: "{Artist CleanName}", example: "Daft Punk" },
-    { section: "Artist", token: "{Artist NameThe}", example: "Daft Punk" },
-    { section: "Artist", token: "{Artist CleanNameThe}", example: "Daft Punk" },
-    { section: "Artist", token: "{Artist NameFirstCharacter}", example: "D" },
-    { section: "Artist", token: "{Artist MbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
-    { section: "Artist", token: "{Artist Disambiguation}", example: "French electronic music duo" },
-    { section: "Artist", token: "{Artist Genre}", example: "Electronic" },
-    { section: "Artist", token: "{mbid-{Artist MbId}}", example: "{mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}" },
-    { section: "Artist", token: "{Artist Id}", example: "8847" },
-];
-
-const ALBUM_NAMING_TOKENS: NamingToken[] = [
-    { section: "Album", token: "{Album Title}", example: "Discovery" },
-    { section: "Album", token: "{Album CleanTitle}", example: "Discovery" },
-    { section: "Album", token: "{Album TitleThe}", example: "Discovery" },
-    { section: "Album", token: "{Album CleanTitleThe}", example: "Discovery" },
-    { section: "Album", token: "{Album Type}", example: "Album" },
-    { section: "Album", token: "{Album Disambiguation}", example: "limited edition" },
-    { section: "Album", token: "{Album Genre}", example: "Electronic" },
-    { section: "Album", token: "{Album MbId}", example: "0ca7fd24-dc0f-4d16-a5f0-550ad6dd6e53" },
-    { section: "Album", token: "{Release Group MbId}", example: "1d5f10c6-4d7f-4f94-b76f-2f61fb5c42f8" },
-    { section: "Album", token: "{Album FullTitle}", example: "Discovery (Deluxe)" },
-    { section: "Album", token: "{Release Year}", example: "2001" },
-    { section: "Album", token: "{Album Id}", example: "1550545" },
-];
-
-const TRACK_NAMING_TOKENS: NamingToken[] = [
-    { section: "Track", token: "{Track Title}", example: "One More Time" },
-    { section: "Track", token: "{Track CleanTitle}", example: "One More Time" },
-    { section: "Track", token: "{Track TitleThe}", example: "One More Time" },
-    { section: "Track", token: "{Track CleanTitleThe}", example: "One More Time" },
-    { section: "Track", token: "{Track FullTitle}", example: "One More Time (Radio Edit)" },
-    { section: "Track", token: "{Track ArtistName}", example: "Daft Punk" },
-    { section: "Track", token: "{Track ArtistCleanName}", example: "Daft Punk" },
-    { section: "Track", token: "{Track ArtistNameThe}", example: "Daft Punk" },
-    { section: "Track", token: "{Track ArtistCleanNameThe}", example: "Daft Punk" },
-    { section: "Track", token: "{Track ArtistMbId}", example: "056e4f3e-d505-4dad-8ec1-d04f521cbb56" },
-    { section: "Track", token: "{Track MbId}", example: "8f1b4f76-8c53-4f28-bb73-0e1d1b97a3ef" },
-    { section: "Track", token: "{Track Id}", example: "1550546" },
-    { section: "Track", token: "{Recording MbId}", example: "9f2c5e0a-32b1-4f30-9d96-1c8a2c1efb10" },
-    { section: "Track", token: "{Recording Id}", example: "42" },
-    { section: "Track", token: "{Media Id}", example: "1550546" },
-    { section: "Numbering", token: "{track:00}", example: "01" },
-    { section: "Numbering", token: "{track:000}", example: "001" },
-    { section: "Numbering", token: "{medium:00}", example: "01" },
-    { section: "Numbering", token: "{medium:000}", example: "001" },
-];
-
-const QUALITY_NAMING_TOKENS: NamingToken[] = [
-    { section: "Quality", token: "{Quality}", example: "HIRES_LOSSLESS" },
-    { section: "Quality", token: "{Codec}", example: "FLAC" },
-    { section: "Quality", token: "{Bitrate}", example: "1800000" },
-    { section: "Quality", token: "{SampleRate}", example: "96000" },
-    { section: "Quality", token: "{SampleRate:kHz}", example: "96" },
-    { section: "Quality", token: "{BitDepth}", example: "24" },
-    { section: "Quality", token: "{Channels}", example: "2" },
-    { section: "Quality", token: "{Explicit}", example: "(Explicit) or empty" },
-    { section: "Quality", token: "{E}", example: "[E] or empty" },
-];
-
-const PROVIDER_NAMING_TOKENS: NamingToken[] = [
-    { section: "Provider", token: "{Provider Name}", example: "TIDAL" },
-    { section: "Provider", token: "{Provider ArtistId}", example: "8847" },
-    { section: "Provider", token: "{Provider AlbumId}", example: "1550545" },
-    { section: "Provider", token: "{Provider TrackId}", example: "1550546" },
-    { section: "Provider", token: "{Provider MediaId}", example: "1550546" },
-    { section: "Provider", token: "{Provider VideoId}", example: "44187439" },
-];
-
-const NAMING_HELP: Record<
-    NamingFieldKey,
-    { title: string; description: string; tokens: NamingToken[] }
-> = {
-    artist_folder: {
-        title: "Artist folder",
-        description: "Name of the artist folder under each library root.",
-        tokens: [
-            { section: "Formats", token: "{Artist Name} {mbid-{Artist MbId}}", example: "Daft Punk {mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}", mode: "replace" },
-            { section: "Formats", token: "{Artist CleanNameThe} {mbid-{Artist MbId}}", example: "Daft Punk {mbid-056e4f3e-d505-4dad-8ec1-d04f521cbb56}", mode: "replace" },
-            ...ARTIST_NAMING_TOKENS,
-        ],
-    },
-    album_track_path_single: {
-        title: "Album track path (single disc)",
-        description: "Path under the artist folder for tracks on single-disc albums (album folder + filename, no extension).",
-        tokens: [
-            { section: "Formats", token: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}", example: "Discovery (2001)/01 - One More Time", mode: "replace" },
-            { section: "Formats", token: "{Album Title} ({Release Year})/{Artist Name} - {Album Title} - {track:00} - {Track Title}", example: "Discovery (2001)/Daft Punk - Discovery - 01 - One More Time", mode: "replace" },
-            ...ARTIST_NAMING_TOKENS,
-            ...ALBUM_NAMING_TOKENS,
-            ...TRACK_NAMING_TOKENS,
-            ...QUALITY_NAMING_TOKENS,
-            ...PROVIDER_NAMING_TOKENS,
-        ],
-    },
-    album_track_path_multi: {
-        title: "Album track path (multi disc)",
-        description: "Path under the artist folder for multi-disc albums (album folder, optional disc folder, filename).",
-        tokens: [
-            { section: "Formats", token: "{Album CleanTitle} ({Release Year})/{medium:0}{track:00} - {Track CleanTitle}", example: "Discovery (2001)/201 - One More Time", mode: "replace" },
-            { section: "Formats", token: "{Album Title} ({Release Year})/{medium:00}/{Artist Name} - {Album Title} - {track:00} - {Track Title}", example: "Discovery (2001)/02/Daft Punk - Discovery - 01 - One More Time", mode: "replace" },
-            ...ARTIST_NAMING_TOKENS,
-            ...ALBUM_NAMING_TOKENS,
-            ...TRACK_NAMING_TOKENS,
-            ...QUALITY_NAMING_TOKENS,
-            ...PROVIDER_NAMING_TOKENS,
-        ],
-    },
-    video_file: {
-        title: "Music video file",
-        description: "Filename for music videos (no extension). A type suffix such as -video, -live, or -lyrics is added automatically so media servers can recognize extras.",
-        tokens: [
-            { section: "Formats", token: "{Artist CleanName} - {Video CleanTitle} {{ProviderName}-{ProviderVideoId}}", example: "Daft Punk - Around the World {Apple Music-12345}", mode: "replace" },
-            ...ARTIST_NAMING_TOKENS,
-            { section: "Video", token: "{Video Title}", example: "Around the World" },
-            { section: "Video", token: "{Video CleanTitle}", example: "Around the World" },
-            { section: "Video", token: "{Video TitleThe}", example: "Around the World" },
-            { section: "Video", token: "{Video CleanTitleThe}", example: "Around the World" },
-            { section: "Video", token: "{Video Id}", example: "44187439" },
-            { section: "Video", token: "{Track Id}", example: "1550546" },
-            ...ALBUM_NAMING_TOKENS,
-            ...QUALITY_NAMING_TOKENS,
-            ...PROVIDER_NAMING_TOKENS,
-        ],
-    },
-};
 
 // Section layout helpers
 const MEDIA = {
@@ -248,14 +69,16 @@ const MEDIA = {
 };
 const MODAL_LAYOUT = {
     rowPadding: {
-        // Fluent settings rows: equal vertical padding so title/description
-        // sit balanced with the trailing control (not cramped toward the bottom).
-        base: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
+        // Fluent SettingsCard-style rows: modest equal padding so the title/
+        // description stay balanced with the trailing control without looking airy.
+        base: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         mobile: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     },
     qualityPadding: {
-        base: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
-        mobile: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+        // Radio options inside a Settings card — WinUI SettingsExpander density
+        // uses ~4px card spacing; keep option padding to XS so lists stay compact.
+        base: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+        mobile: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
     },
     controlWidth: {
         compact: '64px',
@@ -330,20 +153,11 @@ const useStyles = makeStyles({
         marginBottom: tokens.spacingVerticalM,
     },
     card: {
-        backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
+        ...glassSurfaceStyles,
         borderRadius: tokens.borderRadiusMedium,
         padding: tokens.spacingVerticalNone,
         overflow: 'hidden',
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    },
-    subsectionHeader: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalXXS,
-        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
     },
     // Standard row: horizontal layout with title/description left, control right
     row: {
@@ -352,6 +166,14 @@ const useStyles = makeStyles({
         '&:last-child': {
             borderBottom: 'none',
         },
+    },
+    // Nested form fields that follow a radio group inside the same card.
+    nestedFields: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: tokens.spacingVerticalXS,
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     fullWidthButton: {
         ...glassButtonStyles,
@@ -384,123 +206,11 @@ const useStyles = makeStyles({
         minHeight: '32px',
         paddingTop: tokens.spacingVerticalXXS,
     },
-    templateControl: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalXXS,
-        flex: 1,
-        minWidth: 0,
-    },
-    templateInputRow: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: tokens.spacingHorizontalXS,
-        width: '100%',
-    },
-    templateHelpButton: {
-        ...glassButtonStyles,
-        flexShrink: 0,
-        minWidth: '36px',
-        minHeight: '36px',
-        [MEDIA.mobile]: {
-            minWidth: '40px',
-            minHeight: '40px',
-        },
-    },
-    templatePreview: {
-        color: tokens.colorNeutralForeground2,
-    },
-    templateError: {
-        color: tokens.colorPaletteRedForeground1,
-    },
-    // Naming template row - stacked vertical layout (heading/description on top, input below)
-    namingRow: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalS,
-        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        '&:last-child': {
-            borderBottom: 'none',
-        },
-        [MEDIA.mobile]: {
-            padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-        },
-    },
-    namingMaintenance: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalS,
-    },
     namingBadgeRow: {
         display: 'flex',
         flexWrap: 'wrap',
         gap: tokens.spacingHorizontalXS,
         rowGap: tokens.spacingVerticalXS,
-    },
-    previewList: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalXS,
-        marginTop: tokens.spacingVerticalXS,
-    },
-    previewItem: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '2px',
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
-        borderRadius: tokens.borderRadiusMedium,
-        background: tokens.colorNeutralBackground3,
-        fontFamily: tokens.fontFamilyMonospace,
-        fontSize: tokens.fontSizeBase100,
-        overflow: 'hidden',
-    },
-    previewOld: {
-        color: tokens.colorPaletteRedForeground1,
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-    },
-    previewNew: {
-        color: tokens.colorPaletteGreenForeground1,
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-    },
-    previewFilename: {
-        color: tokens.colorNeutralForeground1,
-        fontWeight: tokens.fontWeightSemibold,
-        fontFamily: tokens.fontFamilyBase,
-        fontSize: tokens.fontSizeBase100,
-        marginBottom: '2px',
-    },
-    previewConflict: {
-        color: tokens.colorPaletteYellowForeground1,
-        fontSize: tokens.fontSizeBase100,
-    },
-    maintenanceDialog: {
-        width: 'min(860px, calc(100vw - 32px))',
-        maxWidth: '860px',
-    },
-    maintenanceDialogList: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalXS,
-        maxHeight: '56vh',
-        overflowY: 'auto',
-        marginTop: tokens.spacingVerticalM,
-    },
-    maintenanceDialogRow: {
-        display: 'grid',
-        gridTemplateColumns: '32px minmax(0, 1fr)',
-        gap: tokens.spacingHorizontalS,
-        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    },
-    maintenanceDialogSummary: {
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: tokens.spacingHorizontalXS,
     },
     namingActionGroup: {
         display: 'flex',
@@ -511,67 +221,9 @@ const useStyles = makeStyles({
             width: '100%',
         },
     },
-    namingHelpContent: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalM,
-    },
-    tokenGroup: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalS,
-    },
-    tokenList: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalS,
-    },
-    tokenRow: {
-        display: 'grid',
-        gridTemplateColumns: 'max-content 1fr',
-        columnGap: tokens.spacingHorizontalM,
-        alignItems: 'center',
-    },
-    tokenCode: {
-        fontFamily: tokens.fontFamilyMonospace,
-        overflowWrap: 'anywhere',
-        whiteSpace: 'normal',
-    },
     // Row without bottom border divider
     rowNoDivider: {
         ...rowBase,
-    },
-    // Dense checklist (release types): single-line labels, not full settings rows.
-    checkboxList: {
-        display: 'grid',
-        gridTemplateColumns: '1fr',
-        paddingTop: tokens.spacingVerticalXS,
-        paddingBottom: tokens.spacingVerticalS,
-        [MEDIA.desktop]: {
-            gridTemplateColumns: '1fr 1fr',
-        },
-    },
-    checkboxRow: {
-        display: 'flex',
-        alignItems: 'center',
-        minHeight: '28px',
-        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}`,
-        [MEDIA.mobile]: {
-            padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
-        },
-    },
-    checkboxRowWithDescription: {
-        ...rowBase,
-        alignItems: 'flex-start',
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        '&:last-child': {
-            borderBottom: 'none',
-        },
-    },
-    checkboxLabelStack: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalXXS,
     },
     aboutBadgeRow: {
         display: 'flex',
@@ -595,94 +247,6 @@ const useStyles = makeStyles({
     aboutLink: {
         color: tokens.colorNeutralForeground2Link,
     },
-    profileRow: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
-        flexWrap: 'wrap',
-        columnGap: tokens.spacingHorizontalM,
-        rowGap: tokens.spacingVerticalS,
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        [MEDIA.mobile]: {
-            columnGap: tokens.spacingHorizontalS,
-            rowGap: tokens.spacingVerticalS,
-            padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXS}`,
-        },
-    },
-    profileInfo: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: tokens.spacingHorizontalM,
-        flex: 1,
-    },
-    profileDetails: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalS,
-        flex: 1,
-    },
-    profileActions: {
-        display: 'flex',
-        justifyContent: 'flex-end',
-        gap: tokens.spacingHorizontalS,
-        flexWrap: 'wrap',
-        marginLeft: 'auto',
-        flexShrink: 0,
-    },
-    providerStatusRow: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: tokens.spacingHorizontalM,
-        flex: 1,
-        minWidth: '220px',
-    },
-    providerIconBox: {
-        width: '48px',
-        height: '48px',
-        display: 'grid',
-        placeItems: 'center',
-        flexShrink: 0,
-    },
-    providerIcon: {
-        width: '30px',
-        height: '30px',
-        objectFit: 'contain',
-    },
-    capabilitySummaryGrid: {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, minmax(140px, 1fr))',
-        gap: tokens.spacingHorizontalS,
-        width: '100%',
-        [MEDIA.mobile]: {
-            gridTemplateColumns: '1fr',
-        },
-    },
-    capabilitySummaryItem: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '2px',
-        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-        borderRadius: tokens.borderRadiusMedium,
-        backgroundColor: tokens.colorNeutralBackground2,
-        minWidth: 0,
-    },
-    capabilitySummaryValue: {
-        fontWeight: tokens.fontWeightSemibold,
-        display: 'flex',
-        alignItems: 'center',
-        gap: tokens.spacingHorizontalXS,
-        minHeight: '22px',
-    },
-    providerActionRow: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: tokens.spacingHorizontalM,
-        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
-        borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    },
     signOutButton: {
         minHeight: '36px',
         [MEDIA.mobile]: {
@@ -696,6 +260,7 @@ const useStyles = makeStyles({
         gap: tokens.spacingHorizontalM,
         cursor: 'pointer',
         width: '100%',
+        boxSizing: 'border-box',
         '&:hover': {
             backgroundColor: tokens.colorNeutralBackground1Hover,
         },
@@ -707,12 +272,23 @@ const useStyles = makeStyles({
     qualityOptionDisabled: {
         opacity: 0.5,
     },
+    // Collapse Fluent RadioGroup's default item gap — option padding already
+    // provides the touch/scan spacing (SettingsCard stacked radios).
+    qualityRadioGroup: {
+        display: 'flex',
+        flexDirection: 'column',
+        rowGap: tokens.spacingVerticalNone,
+        gap: tokens.spacingVerticalNone,
+        '& > *': {
+            marginTop: tokens.spacingVerticalNone,
+            marginBottom: tokens.spacingVerticalNone,
+        },
+    },
     qualityContent: {
         display: 'flex',
         flexDirection: 'column',
-        gap: tokens.spacingVerticalXXS,
+        gap: tokens.spacingVerticalNone,
         flex: 1,
-        paddingTop: tokens.spacingVerticalXXS,
     },
     pathInput: {
         flex: 1,
@@ -726,25 +302,6 @@ const useStyles = makeStyles({
     },
     mutedText: {
         color: tokens.colorNeutralForeground2,
-    },
-    mutedTextBlock: {
-        color: tokens.colorNeutralForeground2,
-        display: 'block',
-    },
-    divider: {
-        marginTop: tokens.spacingVerticalS,
-        marginBottom: tokens.spacingVerticalS,
-    },
-    dialogTitleRow: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: tokens.spacingHorizontalM,
-    },
-    optionIconRow: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: tokens.spacingHorizontalS,
     },
     selectCompact: {
         minWidth: MODAL_LAYOUT.controlWidth.standard,
@@ -787,22 +344,6 @@ const useStyles = makeStyles({
     },
 });
 
-type NamingRenameSample = RenamePreviewItem;
-
-interface NamingRenameStatus {
-    total: number;
-    scanned: number;
-    limited: boolean;
-    renameNeeded: number;
-    conflicts: number;
-    missing: number;
-    sample: NamingRenameSample[];
-}
-
-interface NamingRenamePreviewResponse {
-    items: NamingRenameSample[];
-}
-
 type RetagStatusSample = RetagPreviewItem;
 
 interface RetagStatus {
@@ -819,37 +360,9 @@ interface RetagPreviewResponse {
     items: RetagStatusSample[];
 }
 
-type NamingPreviewResponse = Awaited<ReturnType<typeof api.previewNamingConfig>>;
-
-const reorderConnectedProviderIds = (
-    providers: Array<Pick<StreamingProviderStatus, "id" | "authenticated">>,
-    providerId: string,
-    direction: -1 | 1,
-): string[] | null => {
-    const connectedIds = providers
-        .filter((provider) => provider.authenticated)
-        .map((provider) => provider.id);
-    const connectedIndex = connectedIds.indexOf(providerId);
-    const targetProviderId = connectedIds[connectedIndex + direction];
-    if (connectedIndex === -1 || !targetProviderId) return null;
-
-    const ids = providers.map((provider) => provider.id);
-    const from = ids.indexOf(providerId);
-    const to = ids.indexOf(targetProviderId);
-    const fromId = ids[from];
-    const toId = ids[to];
-    if (!fromId || !toId) return null;
-    ids[from] = toId;
-    ids[to] = fromId;
-    return ids;
-};
-
 const SettingsPage = () => {
     const styles = useStyles();
     const navigate = useNavigate();
-    const openProviderAuth = () => navigate("/auth", {
-        state: { mode: "add-provider", from: { pathname: "/settings" } },
-    });
     const { toast } = useToast();
     const appVersion = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
     const {
@@ -879,7 +392,8 @@ const SettingsPage = () => {
         refetchOnWindowFocus: false,
     });
     const { isAuthActive, signOut } = useAppAuth();
-    const { theme, setTheme } = useTheme();
+    const { theme, setTheme, setBrandKeyColor } = useTheme();
+    const { setArtwork } = useUltraBlurContext();
     const [monitoringConfig, setMonitoringConfig] = useState<MonitoringConfigContract | null>(null);
     const [monitoringStatus, setMonitoringStatus] = useState<Pick<MonitoringStatusResponseContract, "running" | "checking">>({
         running: false,
@@ -890,188 +404,18 @@ const SettingsPage = () => {
     const [catalogTest, setCatalogTest] = useState<{ status: "idle" | "testing" | "ok" | "error"; message?: string }>({ status: "idle" });
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
-    const [importProviderId, setImportProviderId] = useState<string | null>(null);
-    const [detailsProviderId, setDetailsProviderId] = useState<string | null>(null);
-    const [draggingProviderId, setDraggingProviderId] = useState<string | null>(null);
-    const [savingProviderOrder, setSavingProviderOrder] = useState(false);
-    const [namingHelpField, setNamingHelpField] = useState<NamingFieldKey | null>(null);
     const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfoContract | null>(null);
-    const [renameStatus, setRenameStatus] = useState<NamingRenameStatus | null>(null);
-    const [renameStatusLoading, setRenameStatusLoading] = useState(false);
-    const [renameApplying, setRenameApplying] = useState(false);
-    const [renameStatusInitialized, setRenameStatusInitialized] = useState(false);
-    const [renamePreviewOpen, setRenamePreviewOpen] = useState(false);
-    const [renamePreviewItems, setRenamePreviewItems] = useState<NamingRenameSample[]>([]);
     const [retagStatus, setRetagStatus] = useState<RetagStatus | null>(null);
     const [retagStatusLoading, setRetagStatusLoading] = useState(false);
     const [retagApplying, setRetagApplying] = useState(false);
     const [retagStatusInitialized, setRetagStatusInitialized] = useState(false);
     const [retagPreviewOpen, setRetagPreviewOpen] = useState(false);
     const [retagPreviewItems, setRetagPreviewItems] = useState<RetagStatusSample[]>([]);
-    const [namingPreviewResponse, setNamingPreviewResponse] = useState<NamingPreviewResponse | null>(null);
-    const namingPreviewRequestRef = useRef(0);
-    const namingInputRefs = useRef<Record<NamingFieldKey, HTMLInputElement | null>>({
-        artist_folder: null,
-        album_track_path_single: null,
-        album_track_path_multi: null,
-        video_file: null,
-    });
-    const namingSelectionRef = useRef<Record<NamingFieldKey, { start: number; end: number } | null>>({
-        artist_folder: null,
-        album_track_path_single: null,
-        album_track_path_multi: null,
-        video_file: null,
-    });
-
-    const [localNaming, setLocalNaming] = useState<Partial<NamingConfigContract>>({});
     const writeAudioTagsPolicy = metadataSettings?.write_audio_tags_policy ?? "no";
     const audioRetaggingEnabled =
         metadataSettings?.enable_fingerprinting === true
         || writeAudioTagsPolicy !== "no"
         || metadataSettings?.embed_replaygain !== false;
-
-    useEffect(() => {
-        if (namingSettings) {
-            setLocalNaming(namingSettings);
-        }
-    }, [namingSettings]);
-
-    const handleNamingChange = (key: keyof NamingConfigContract, value: string) => {
-        setLocalNaming((prev) => ({ ...prev, [key]: value }));
-        setRenameStatus(null);
-        setRenameStatusInitialized(false);
-    };
-
-    const handleNamingCommit = (key: keyof NamingConfigContract) => {
-        if (!namingSettings) {
-            return;
-        }
-
-        if (localNaming[key] !== namingSettings[key] && !namingPreviewResponse) {
-            toast({
-                title: "Naming not saved",
-                description: "Wait for the preview to finish before saving.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        if (namingPreviewResponse?.valid === false) {
-            toast({
-                title: "Naming not saved",
-                description: "Fix the template validation errors before saving.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        if (localNaming[key] !== namingSettings[key]) {
-            updateNamingSettings({ [key]: localNaming[key] });
-        }
-    };
-
-    const getCurrentNamingSettings = useCallback((): Partial<NamingConfigContract> => ({
-        ...localNaming,
-        artist_folder: namingInputRefs.current.artist_folder?.value ?? localNaming.artist_folder,
-        album_track_path_single: namingInputRefs.current.album_track_path_single?.value ?? localNaming.album_track_path_single,
-        album_track_path_multi: namingInputRefs.current.album_track_path_multi?.value ?? localNaming.album_track_path_multi,
-        video_file: namingInputRefs.current.video_file?.value ?? localNaming.video_file,
-    }), [localNaming]);
-
-    const loadRenameStatus = useCallback(async () => {
-        if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
-            toast({
-                title: "Rename plan blocked",
-                description: namingPreviewResponse
-                    ? "Fix the naming template errors before refreshing the rename plan."
-                    : "Wait for the naming preview before refreshing the rename plan.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        setRenameStatusLoading(true);
-        try {
-            await flushNamingSettings(getCurrentNamingSettings());
-            const status = await api.getLibraryRenameStatus({ sampleLimit: 8, scanLimit: 1000 });
-            setRenameStatus(status as NamingRenameStatus);
-        } catch (error: any) {
-            toast({
-                title: "Rename preview failed",
-                description: error.message || "Could not load the rename plan.",
-                variant: "destructive",
-            });
-        } finally {
-            setRenameStatusLoading(false);
-            setRenameStatusInitialized(true);
-        }
-    }, [flushNamingSettings, getCurrentNamingSettings, namingPreviewResponse, toast]);
-
-    const openRenamePreview = async () => {
-        if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
-            toast({
-                title: "Rename preview blocked",
-                description: namingPreviewResponse
-                    ? "Fix the naming template errors before previewing naming changes."
-                    : "Wait for the naming preview before previewing naming changes.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        setRenameStatusLoading(true);
-        try {
-            await flushNamingSettings(getCurrentNamingSettings());
-            const response = await api.getLibraryRenamePreview({ limit: 1000 }) as NamingRenamePreviewResponse;
-            const items = response.items.filter((item) => item.missing || item.conflict || item.needs_rename);
-            setRenamePreviewItems(items);
-            setRenamePreviewOpen(true);
-            await loadRenameStatus();
-        } catch (error: any) {
-            toast({
-                title: "Rename preview failed",
-                description: error.message || "Could not load the rename preview.",
-                variant: "destructive",
-            });
-        } finally {
-            setRenameStatusLoading(false);
-        }
-    };
-
-    const handleApplyLibraryNaming = async (ids?: number[]) => {
-        if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
-            toast({
-                title: "Rename blocked",
-                description: namingPreviewResponse
-                    ? "Fix the naming template errors before applying naming to the library."
-                    : "Wait for the naming preview before applying naming to the library.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        setRenameApplying(true);
-        try {
-            await flushNamingSettings(getCurrentNamingSettings());
-            const result: any = await api.applyLibraryRenames(ids ? { ids } : { applyAll: true });
-            toast({
-                title: "Rename queued",
-                description: result?.message || "Queued the library rename task.",
-            });
-            dispatchActivityRefresh();
-            setRenamePreviewOpen(false);
-            window.setTimeout(() => void loadRenameStatus(), 1500);
-            window.setTimeout(() => void loadRenameStatus(), 5000);
-        } catch (error: any) {
-            toast({
-                title: "Failed to queue rename",
-                description: error.message || "Could not apply the current naming templates.",
-                variant: "destructive",
-            });
-        } finally {
-            setRenameApplying(false);
-        }
-    };
 
     const loadRetagStatus = useCallback(async () => {
         setRetagStatusLoading(true);
@@ -1133,13 +477,11 @@ const SettingsPage = () => {
         fetchConfigs();
     }, []);
 
+    // Match Library: default chromatic wash, not the previous artist/album UltraBlur.
     useEffect(() => {
-        if (!namingSettings || !namingPreviewResponse?.valid || renameStatus || renameStatusLoading || renameStatusInitialized) {
-            return;
-        }
-
-        loadRenameStatus().catch(() => undefined);
-    }, [loadRenameStatus, namingPreviewResponse?.valid, namingSettings, renameStatus, renameStatusInitialized, renameStatusLoading]);
+        setArtwork(undefined);
+        setBrandKeyColor(null);
+    }, [setArtwork, setBrandKeyColor]);
 
     useEffect(() => {
         if (audioRetaggingEnabled) {
@@ -1173,38 +515,6 @@ const SettingsPage = () => {
             active = false;
         };
     }, []);
-
-    const effectiveNamingSettings = useMemo(
-        () => namingSettings ? { ...namingSettings, ...localNaming } : null,
-        [localNaming, namingSettings],
-    );
-
-	    useEffect(() => {
-	        if (!effectiveNamingSettings) {
-	            namingPreviewRequestRef.current += 1;
-	            setNamingPreviewResponse(null);
-	            return;
-	        }
-
-        const requestId = namingPreviewRequestRef.current + 1;
-        namingPreviewRequestRef.current = requestId;
-        setNamingPreviewResponse(null);
-        const timeout = setTimeout(() => {
-            api.previewNamingConfig(effectiveNamingSettings)
-	                .then((response) => {
-	                    if (namingPreviewRequestRef.current === requestId) {
-	                        setNamingPreviewResponse(response);
-	                    }
-	                })
-	                .catch(() => {
-	                    if (namingPreviewRequestRef.current === requestId) {
-	                        setNamingPreviewResponse(null);
-	                    }
-	                });
-	        }, 250);
-
-        return () => clearTimeout(timeout);
-    }, [effectiveNamingSettings]);
 
     const fetchConfigs = async () => {
         try {
@@ -1336,35 +646,9 @@ const SettingsPage = () => {
         }
     };
 
-    const handleDisconnectProvider = async (providerId: string, providerName: string) => {
-        try {
-            await api.logoutProvider(providerId);
-            await refetchStreamingProviders();
-            toast({
-                title: `${providerName} disconnected`,
-                description: "Provider availability, previews, followed artists, and downloads are disabled until you reconnect.",
-            });
-        } catch (error) {
-            console.error(`Error disconnecting ${providerName}:`, error);
-            toast({
-                title: "Disconnect failed",
-                description: error instanceof Error ? error.message : `Could not disconnect ${providerName}.`,
-                variant: "destructive",
-            });
-        }
-    };
-
     const handleSignOut = () => {
         signOut();
         navigate("/login");
-    };
-
-    const handleImportComplete = () => {
-        dispatchActivityRefresh();
-        toast({
-            title: "Import complete",
-            description: "The artist list has been refreshed.",
-        });
     };
 
     if (loading || providerLoading || providersLoading) {
@@ -1387,13 +671,6 @@ const SettingsPage = () => {
         );
     }
 
-    const qualityOptions = [
-        { value: 'low', label: 'Low', description: 'Smaller files, lower quality' },
-        { value: 'normal', label: 'Normal', description: 'Good quality for everyday listening' },
-        { value: 'high', label: 'High', description: 'CD quality (lossless)' },
-        { value: 'max', label: 'Max', description: 'Highest available quality (hi-res when offered)' },
-    ];
-
     const videoQualityOptions = [
         { value: 'sd', label: 'SD (480p)', disabled: false },
         { value: 'hd', label: 'HD (720p)', disabled: false },
@@ -1401,86 +678,7 @@ const SettingsPage = () => {
         { value: 'uhd', label: 'Ultra HD (2160p)', disabled: false },
     ];
 
-    const namingHelpMeta = namingHelpField ? NAMING_HELP[namingHelpField] : null;
     const isScanInProgress = checkingNow || monitoringStatus.checking || monitoringConfig?.checkInProgress;
-
-    const setNamingInputRef = (field: NamingFieldKey) => (element: HTMLInputElement | null) => {
-        namingInputRefs.current[field] = element;
-    };
-
-    const captureNamingSelection = (field: NamingFieldKey) => {
-        const input = namingInputRefs.current[field];
-        if (!input) return;
-        namingSelectionRef.current[field] = {
-            start: input.selectionStart ?? input.value.length,
-            end: input.selectionEnd ?? input.value.length,
-        };
-    };
-
-    const insertNamingToken = (item: NamingToken) => {
-        if (!namingHelpField || !namingSettings) return;
-        const current = (localNaming as any)[namingHelpField] || "";
-        const range = namingSelectionRef.current[namingHelpField];
-        const hasSelection = Boolean(
-            range
-            && range.start >= 0
-            && range.end >= range.start
-            && range.end <= current.length,
-        );
-        const next = item.mode === "replace"
-            ? item.token
-            : hasSelection
-                ? `${current.slice(0, range!.start)}${item.token}${current.slice(range!.end)}`
-                : `${current}${item.token}`;
-        const cursor = item.mode === "replace"
-            ? item.token.length
-            : hasSelection
-                ? range!.start + item.token.length
-                : next.length;
-
-        setLocalNaming((prev) => ({ ...prev, [namingHelpField]: next }));
-        namingSelectionRef.current[namingHelpField] = { start: cursor, end: cursor };
-        setRenameStatus(null);
-        setRenameStatusInitialized(false);
-    };
-
-    const namingTokenGroups = (() => {
-        if (!namingHelpMeta) return [];
-        const groups: Array<{ section: string; tokens: NamingToken[] }> = [];
-        for (const item of namingHelpMeta.tokens) {
-            let group = groups.find((candidate) => candidate.section === item.section);
-            if (!group) {
-                group = { section: item.section, tokens: [] };
-                groups.push(group);
-            }
-            group.tokens.push(item);
-        }
-        return groups;
-    })();
-
-    const namingExamples = namingPreviewResponse?.preview ? (() => {
-        const artistFolder = namingPreviewResponse.preview.artistFolder;
-        const trackPathSingle = namingPreviewResponse.preview.standardTrack;
-        const trackPathMulti = namingPreviewResponse.preview.multiDiscTrack;
-        const videoFile = namingPreviewResponse.preview.video;
-        return {
-            artistFolder,
-            videoFile,
-            trackPathSingle,
-            trackPathMulti,
-            fullSingleTrackPath: [artistFolder, trackPathSingle].filter(Boolean).join("/"),
-            fullMultiTrackPath: [artistFolder, trackPathMulti].filter(Boolean).join("/"),
-            videoPath: [artistFolder, videoFile].filter(Boolean).join("/"),
-        };
-    })() : null;
-    const namingIsInvalid = namingPreviewResponse?.valid === false;
-    const namingPreviewPending = Boolean(effectiveNamingSettings && !namingPreviewResponse);
-    const namingActionsDisabled = namingIsInvalid || namingPreviewPending;
-
-    const getNamingFieldErrors = (field: NamingFieldKey): string[] => {
-        const result = namingPreviewResponse?.validation?.[field];
-        return Array.isArray(result?.errors) ? result.errors : [];
-    };
 
     const currentVersionLabel = releaseInfo?.version || appVersion;
     const versionStatusColor: "warning" | "success" | "informative" = releaseInfo?.updateStatus === "update-available"
@@ -1532,439 +730,6 @@ const SettingsPage = () => {
         </div>
     );
 
-    const renderCheckboxRow = ({
-        title,
-        description,
-        checked,
-        onChange,
-        rowKey,
-    }: {
-        title: string;
-        description?: React.ReactNode;
-        checked: boolean;
-        onChange: (checked: boolean) => void;
-        rowKey?: string;
-    }) => (
-        <div
-            key={rowKey}
-            className={description ? styles.checkboxRowWithDescription : styles.checkboxRow}
-        >
-            <Checkbox
-                checked={checked}
-                onChange={(_, data) => onChange(Boolean(data.checked))}
-                label={description ? (
-                    <span className={styles.checkboxLabelStack}>
-                        <Text weight="semibold">{title}</Text>
-                        <Text size={200} className={styles.mutedTextBlock}>
-                            {description}
-                        </Text>
-                    </span>
-                ) : title}
-            />
-        </div>
-    );
-
-    const primaryReleaseTypeRows = [
-        { key: "include_album", title: "Albums" },
-        { key: "include_ep", title: "EPs" },
-        { key: "include_single", title: "Singles" },
-        { key: "include_broadcast", title: "Broadcasts" },
-        { key: "include_other", title: "Other primary types" },
-    ] as const;
-
-    const secondaryReleaseTypeRows = [
-        { key: "include_compilation", title: "Compilations" },
-        { key: "include_soundtrack", title: "Soundtracks" },
-        { key: "include_live", title: "Live" },
-        { key: "include_remix", title: "Remix" },
-        { key: "include_dj_mix", title: "DJ-mix" },
-        { key: "include_mixtape_street", title: "Mixtape/Street" },
-        { key: "include_demo", title: "Demo" },
-    ] as const;
-
-    // The list order IS the provider preference: first = default provider and
-    // the winner of equal-quality matching tie-breaks.
-    const persistProviderOrder = async (orderedIds: string[]) => {
-        setSavingProviderOrder(true);
-        try {
-            await api.updateProviderPriority(orderedIds);
-            await refetchStreamingProviders();
-        } catch (error: any) {
-            toast({
-                title: "Failed to reorder providers",
-                description: error?.message || "Please try again",
-                variant: "destructive",
-            });
-        } finally {
-            setSavingProviderOrder(false);
-        }
-    };
-
-    const moveProvider = (providerId: string, direction: -1 | 1) => {
-        const providers = streamingProviders?.providers ?? [];
-        // Swap the two connected providers in their full registry slots. This
-        // keeps every disconnected provider in the persisted priority list
-        // while still making one button press visibly move by one connected row.
-        const ids = reorderConnectedProviderIds(providers, providerId, direction);
-        if (!ids) return;
-        void persistProviderOrder(ids);
-    };
-
-    const dropProviderOn = (targetProviderId: string) => {
-        if (!draggingProviderId || draggingProviderId === targetProviderId) {
-            setDraggingProviderId(null);
-            return;
-        }
-        const ids = (streamingProviders?.providers ?? []).map((provider) => provider.id);
-        const from = ids.indexOf(draggingProviderId);
-        const to = ids.indexOf(targetProviderId);
-        setDraggingProviderId(null);
-        if (from === -1 || to === -1) return;
-        ids.splice(from, 1);
-        ids.splice(to, 0, draggingProviderId);
-        void persistProviderOrder(ids);
-    };
-
-    const getProviderCapabilitySummary = (provider: StreamingProviderStatus) => {
-        const caps = provider.capabilities;
-
-        const stereoBadge = caps.hiResStereo
-            ? "HIRES_LOSSLESS"
-            : caps.losslessStereo
-                ? "LOSSLESS"
-                : caps.lossyStereo
-                    ? (provider.id === "youtube-music" ? "YOUTUBE_LOSSY" : "MP3_320")
-                    : null;
-        const spatialBadge = caps.spatialAudio
-            ? (caps.spatialFormats?.includes("DOLBY_ATMOS") ? "DOLBY_ATMOS" : "SPATIAL")
-            : null;
-        const videoTier = videoTierFromMaxHeight(caps.maxVideoResolution);
-        const videoBadge = videoTier === "UHD"
-            ? "MP4_2160P"
-            : videoTier === "FHD"
-                ? "MP4_1080P"
-                : videoTier === "HD"
-                    ? "MP4_720P"
-                    : videoTier === "SD"
-                        ? "MP4_480P"
-                        : null;
-
-        const stereoCaption = caps.stereoQuality
-            ?? (stereoBadge ? undefined : "Not available");
-        const spatialCaption = caps.spatialQuality
-            ?? (spatialBadge ? "Dolby Atmos" : "Not available");
-        const videoCaption = caps.videoQuality
-            ?? videoCapabilityLabel(caps.maxVideoResolution);
-
-        return [
-            { label: "Stereo quality", badgeQuality: stereoBadge, caption: stereoCaption || "Not available" },
-            { label: "Spatial audio", badgeQuality: spatialBadge, caption: spatialCaption },
-            { label: "Music video", badgeQuality: videoBadge, caption: videoCaption },
-        ];
-    };
-
-    const metadataSource = catalogConfig?.source ?? "servarr";
-    const metadataSourceSection = (
-        <SettingsSection
-            id="metadata-source"
-            title="Metadata source"
-            description="Choose where artist, album, and track details come from."
-            className={styles.section}
-        >
-            <div className={styles.card}>
-                <RadioGroup
-                    value={metadataSource}
-                    onChange={(_, data) => updateCatalog({ source: data.value as "servarr" | "musicbrainz" })}
-                >
-                    <label className={styles.qualityOption} htmlFor="metadata-source-servarr">
-                        <Radio value="servarr" id="metadata-source-servarr" />
-                        <div className={styles.qualityContent}>
-                            <Text weight="semibold">Servarr Metadata</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Hosted catalog — easy setup. Some releases and codes (ISRC/UPC) may be missing.
-                            </Text>
-                        </div>
-                    </label>
-                    <label className={styles.qualityOption} htmlFor="metadata-source-musicbrainz">
-                        <Radio value="musicbrainz" id="metadata-source-musicbrainz" />
-                        <div className={styles.qualityContent}>
-                            <Text weight="semibold">MusicBrainz (local)</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Your own MusicBrainz mirror — fuller release data and better matching.
-                            </Text>
-                        </div>
-                    </label>
-                </RadioGroup>
-                {metadataSource === "musicbrainz" ? (
-                    <>
-                        <Divider className={styles.divider} />
-                        <Field
-                            label="MusicBrainz host"
-                            hint="Hostname or IP only. Discogenius uses the standard MusicBrainz ports automatically."
-                            validationState={
-                                catalogTest.status === "ok" ? "success"
-                                    : catalogTest.status === "error" ? "error"
-                                        : "none"
-                            }
-                            validationMessage={
-                                catalogTest.status === "ok" || catalogTest.status === "error"
-                                    ? catalogTest.message
-                                    : undefined
-                            }
-                        >
-                            <Input
-                                value={catalogConfig?.musicbrainz_host ?? ""}
-                                placeholder="192.168.1.100 or musicbrainz.mydomain.com"
-                                onChange={(_, data) => setCatalogConfig((current) => (current ? { ...current, musicbrainz_host: data.value } : current))}
-                                onBlur={() => { if (catalogConfig) { void updateCatalog({ musicbrainz_host: catalogConfig.musicbrainz_host }); } }}
-                            />
-                        </Field>
-                        <Button
-                            appearance="secondary"
-                            style={{ marginTop: tokens.spacingVerticalS, alignSelf: "flex-start" }}
-                            disabled={catalogTest.status === "testing" || !catalogConfig?.musicbrainz_host}
-                            icon={catalogTest.status === "testing" ? <Spinner size="tiny" /> : undefined}
-                            onClick={() => { void testCatalogConnection(); }}
-                        >
-                            Test connection
-                        </Button>
-                    </>
-                ) : null}
-            </div>
-        </SettingsSection>
-    );
-
-    const detailsProvider = (streamingProviders?.providers ?? []).find((provider) => provider.id === detailsProviderId) || null;
-
-    const streamingProvidersSection = (
-        <SettingsSection
-            id="streaming-providers"
-            title="Streaming Providers"
-            description="Connect download services. Drag to set preference — higher entries win when quality is equal."
-            className={styles.section}
-        >
-            <div className={styles.card}>
-                {(() => {
-                    const allProviders = streamingProviders?.providers ?? [];
-                    // Only connected services get a row; everything else is
-                    // reachable through the always-visible "Add Provider" flow.
-                    const activeProviders = allProviders.filter(p => p.authenticated);
-
-                    if (providersLoadFailed) {
-                        return (
-                            <ErrorState
-                                minHeight="220px"
-                                title="Streaming providers unavailable"
-                                error={providersLoadError instanceof Error
-                                    ? providersLoadError
-                                    : "Discogenius could not load the provider registry."}
-                                actions={(
-                                    <Button
-                                        appearance="outline"
-                                        icon={providersFetching ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
-                                        disabled={providersFetching}
-                                        onClick={() => { void refetchStreamingProviders(); }}
-                                    >
-                                        Retry
-                                    </Button>
-                                )}
-                            />
-                        );
-                    }
-
-                    if (activeProviders.length === 0 && !providersLoading) {
-                        return (
-                            <div className={styles.profileRow} style={{ justifyContent: 'center', padding: '32px 16px' }}>
-                                <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                                    <div>
-                                        <Text weight="semibold" size={400} block style={{ marginBottom: '4px' }}>
-                                            No Provider Connected
-                                        </Text>
-                                        <Caption1 className={styles.mutedTextBlock}>
-                                            Connect a streaming service to enable downloads and metadata features.
-                                        </Caption1>
-                                    </div>
-                                    <Button
-                                        appearance="primary"
-                                        onClick={openProviderAuth}
-                                        size="large"
-                                        icon={<Open24Regular />}
-                                    >
-                                        Add Provider
-                                    </Button>
-                                </div>
-                            </div>
-                        );
-                    }
-
-                    const reorderable = activeProviders.length > 1;
-
-                    return (
-                        <>
-                            {activeProviders.map((provider, index) => {
-                                const hasMark = Boolean(providerMarkFor(provider.id));
-                                const publiclyAvailable = provider.authenticated
-                                    && !provider.management.canAuthenticate
-                                    && !provider.management.canDisconnect;
-
-                                return (
-                                    <div
-                                        key={provider.id}
-                                        className={styles.profileRow}
-                                        draggable={reorderable && !savingProviderOrder}
-                                        onDragStart={() => setDraggingProviderId(provider.id)}
-                                        onDragEnd={() => setDraggingProviderId(null)}
-                                        onDragOver={(event) => { if (draggingProviderId) event.preventDefault(); }}
-                                        onDrop={() => dropProviderOn(provider.id)}
-                                        style={draggingProviderId === provider.id ? { opacity: 0.5 } : undefined}
-                                    >
-                                        <div className={styles.providerStatusRow}>
-                                            {reorderable ? (
-                                                <div style={{ display: 'flex', flexDirection: 'column' }} aria-label={`Reorder ${provider.name}`}>
-                                                    <Button
-                                                        appearance="subtle"
-                                                        size="small"
-                                                        icon={<ChevronUp24Regular />}
-                                                        aria-label={`Move ${provider.name} up`}
-                                                        disabled={savingProviderOrder || index === 0}
-                                                        onClick={() => moveProvider(provider.id, -1)}
-                                                    />
-                                                    <Button
-                                                        appearance="subtle"
-                                                        size="small"
-                                                        icon={<ChevronDown24Regular />}
-                                                        aria-label={`Move ${provider.name} down`}
-                                                        disabled={savingProviderOrder || index === activeProviders.length - 1}
-                                                        onClick={() => moveProvider(provider.id, 1)}
-                                                    />
-                                                </div>
-                                            ) : null}
-                                            <div className={styles.providerIconBox}>
-                                                {hasMark ? (
-                                                    <ProviderMark provider={provider.id} size={30} />
-                                                ) : (
-                                                    <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
-                                                )}
-                                            </div>
-                                            <div className={styles.profileDetails}>
-                                                <div className={styles.optionIconRow}>
-                                                    <Text weight="semibold" size={400}>{provider.name}</Text>
-                                                    {provider.isDefault ? (
-                                                        <Badge appearance="tint" color="informative">Default</Badge>
-                                                    ) : null}
-                                                </div>
-                                                <Caption1 className={styles.mutedText}>
-                                                    {publiclyAvailable
-                                                        ? "Ready to search and browse."
-                                                        : "Ready to search, browse, and download."}
-                                                </Caption1>
-                                            </div>
-                                        </div>
-                                        <div className={styles.profileActions}>
-                                            {provider.management.canImportArtists ? (
-                                                <Button
-                                                    appearance="outline"
-                                                    className={styles.signOutButton}
-                                                    icon={<ArrowImport24Regular />}
-                                                    onClick={() => setImportProviderId(provider.id)}
-                                                    disabled={!provider.authenticated}
-                                                >
-                                                    Import artists
-                                                </Button>
-                                            ) : null}
-                                            <Button
-                                                appearance="subtle"
-                                                className={styles.signOutButton}
-                                                onClick={() => setDetailsProviderId(provider.id)}
-                                            >
-                                                Details
-                                            </Button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                            {activeProviders.length > 0 && (
-                                <div className={styles.profileRow} style={{ justifyContent: 'center' }}>
-                                    <Button
-                                        appearance="outline"
-                                        icon={<Open24Regular />}
-                                        onClick={openProviderAuth}
-                                    >
-                                        Add Provider
-                                    </Button>
-                                </div>
-                            )}
-                        </>
-                    );
-                })()}
-            </div>
-
-            <Dialog open={detailsProvider !== null} onOpenChange={(_, data) => { if (!data.open) setDetailsProviderId(null); }}>
-                <DialogSurface>
-                    <DialogBody>
-                        <DialogTitle>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}>
-                                {detailsProvider && providerMarkFor(detailsProvider.id) ? (
-                                    <ProviderMark provider={detailsProvider.id} size={24} />
-                                ) : null}
-                                {detailsProvider?.name}
-                            </span>
-                        </DialogTitle>
-                        <DialogContent>
-                            {detailsProvider ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                                    <div className={styles.optionIconRow}>
-                                        <Badge appearance="filled" color={detailsProvider.authenticated ? "success" : "subtle"}>
-                                            {detailsProvider.authenticated ? "Connected" : "Not connected"}
-                                        </Badge>
-                                        {detailsProvider.isDefault ? (
-                                            <Badge appearance="tint" color="informative">Default provider</Badge>
-                                        ) : null}
-                                    </div>
-                                    <div className={styles.capabilitySummaryGrid}>
-                                        {getProviderCapabilitySummary(detailsProvider).map((capability) => (
-                                            <div key={capability.label} className={styles.capabilitySummaryItem}>
-                                                <Caption1 className={styles.mutedText}>{capability.label}</Caption1>
-                                                <div className={styles.capabilitySummaryValue}>
-                                                    {capability.badgeQuality ? (
-                                                        <QualityBadge quality={capability.badgeQuality} size="large" />
-                                                    ) : (
-                                                        <Text size={200}>Not available</Text>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <Text size={200} className={styles.mutedText}>
-                                        For connection and download health, see{" "}
-                                        <Link onClick={() => { setDetailsProviderId(null); navigate("/system/status"); }}>System Status</Link>.
-                                    </Text>
-                                </div>
-                            ) : null}
-                        </DialogContent>
-                        <DialogActions>
-                            {detailsProvider?.management.canAuthenticate && !detailsProvider.authenticated ? (
-                                <Button appearance="primary" onClick={openProviderAuth}>Connect</Button>
-                            ) : null}
-                            {detailsProvider?.management.canDisconnect && detailsProvider.authenticated ? (
-                                <Button
-                                    appearance="outline"
-                                    icon={<DoorArrowLeft24Regular />}
-                                    onClick={() => {
-                                        setDetailsProviderId(null);
-                                        handleDisconnectProvider(detailsProvider.id, detailsProvider.name);
-                                    }}
-                                >
-                                    Disconnect
-                                </Button>
-                            ) : null}
-                            <Button appearance="secondary" onClick={() => setDetailsProviderId(null)}>Close</Button>
-                        </DialogActions>
-                    </DialogBody>
-                </DialogSurface>
-            </Dialog>
-        </SettingsSection>
-    );
 
     return (
         <div className={styles.container}>
@@ -1994,7 +759,7 @@ const SettingsPage = () => {
                                 <Button
                                     appearance="outline"
                                     className={styles.signOutButton}
-                                    icon={<DoorArrowLeft24Regular />}
+                                    icon={<DoorArrowLeft24 />}
                                     onClick={handleSignOut}
                                 >
                                     Sign out
@@ -2005,41 +770,12 @@ const SettingsPage = () => {
                     </SettingsSection>
                 ) : null}
 
-                {/* Audio Quality */}
-                <SettingsSection
-                    id="audio-quality"
-                    title="Audio quality"
-                    description="Preferred quality for new stereo downloads and upgrades."
-                    className={styles.section}
-                >
-                    <div className={styles.card}>
-                        <RadioGroup
-                            value={qualitySettings?.audio_quality || 'max'}
-                            onChange={(_, data) => updateQualitySettings({
-                                audio_quality: data.value as "low" | "normal" | "high" | "max"
-                            })}
-                        >
-                            {qualityOptions.map((option) => (
-                                <label key={option.value} className={styles.qualityOption} htmlFor={`quality-${option.value}`}>
-                                    <Radio value={option.value} id={`quality-${option.value}`} />
-                                    <div className={styles.qualityContent}>
-                                        <Text weight="semibold">{option.label}</Text>
-                                        <Text size={200} className={styles.mutedText}>
-                                            {option.description}
-                                        </Text>
-                                    </div>
-                                </label>
-                            ))}
-                        </RadioGroup>
-                        <Divider className={styles.divider} />
-                        {renderToggleRow({
-                            title: "Spatial audio",
-                            description: "Also keep Dolby Atmos or other spatial versions when available.",
-                            checked: curationConfig?.include_spatial === true,
-                            onChange: (checked) => updateCuration({ include_spatial: checked }),
-                        })}
-                    </div>
-                </SettingsSection>
+                <AudioQualitySettingsSection
+                    audioQuality={qualitySettings?.audio_quality || "max"}
+                    includeSpatial={curationConfig?.include_spatial === true}
+                    onAudioQualityChange={(audio_quality) => updateQualitySettings({ audio_quality })}
+                    onIncludeSpatialChange={(include_spatial) => updateCuration({ include_spatial })}
+                />
                 {/* Video Quality */}
                 <SettingsSection
                     id="video-quality"
@@ -2055,6 +791,7 @@ const SettingsPage = () => {
                             onChange: (checked) => updateCuration({ include_videos: checked }),
                         })}
                         <RadioGroup
+                            className={styles.qualityRadioGroup}
                             value={qualitySettings?.video_quality || 'uhd'}
                             onChange={(_, data) => updateQualitySettings({
                                 video_quality: data.value as "sd" | "hd" | "fhd" | "uhd"
@@ -2082,68 +819,12 @@ const SettingsPage = () => {
                 </SettingsSection>
 
                 {/* Curation Section */}
-                <SettingsSection
-                    id="curation"
-                    title="Curation"
-                    description="Which release types to keep, and how to choose between versions."
-                    className={styles.section}
-                >
-                    <div className={styles.card}>
-                        <div className={styles.subsectionHeader}>
-                            <Text weight="semibold">Primary release types</Text>
-                        </div>
-                        <div className={styles.checkboxList}>
-                            {primaryReleaseTypeRows.map((row) => renderCheckboxRow({
-                                rowKey: row.key,
-                                title: row.title,
-                                checked: curationConfig?.[row.key] !== false,
-                                onChange: (checked) => updateCuration({ [row.key]: checked }),
-                            }))}
-                        </div>
-                        <Divider className={styles.divider} />
-                        <div className={styles.subsectionHeader}>
-                            <Text weight="semibold">Secondary release types</Text>
-                        </div>
-                        <div className={styles.checkboxList}>
-                            {secondaryReleaseTypeRows.map((row) => renderCheckboxRow({
-                                rowKey: row.key,
-                                title: row.title,
-                                checked: curationConfig?.[row.key] === true,
-                                onChange: (checked) => updateCuration({ [row.key]: checked }),
-                            }))}
-                        </div>
-                        <Divider className={styles.divider} />
-                        {renderToggleRow({
-                            title: "Prefer explicit",
-                            description: "Choose explicit editions when both clean and explicit are available.",
-                            checked: curationConfig?.prefer_explicit !== false,
-                            onChange: (checked) => updateCuration({ prefer_explicit: checked }),
-                        })}
-                        {renderToggleRow({
-                            title: "Hide redundant singles",
-                            description: "Skip singles when those tracks already appear on an album.",
-                            checked: curationConfig?.enable_redundancy_filter !== false,
-                            onChange: (checked) => updateCuration({ enable_redundancy_filter: checked }),
-                        })}
-                        {renderToggleRow({
-                            title: "Require a download source",
-                            description: "Only keep releases that at least one connected service can download.",
-                            checked: curationConfig?.require_provider_availability === true,
-                            onChange: (checked) => updateCuration({ require_provider_availability: checked }),
-                        })}
-                        <div className={styles.row}>
-                            <Button
-                                appearance="outline"
-                                className={styles.fullWidthButton}
-                                icon={searchingMissingAlbums ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
-                                onClick={handleQueueCuration}
-                                disabled={searchingMissingAlbums}
-                            >
-                                {searchingMissingAlbums ? "Queueing..." : "Curate Library"}
-                            </Button>
-                        </div>
-                    </div>
-                </SettingsSection>
+                <CurationSettingsSection
+                    curationConfig={curationConfig}
+                    updating={searchingMissingAlbums}
+                    onUpdate={updateCuration}
+                    onQueueCuration={handleQueueCuration}
+                />
 
                 {/* Monitoring Section */}
                 <SettingsSection
@@ -2181,7 +862,7 @@ const SettingsPage = () => {
                             <Button
                                 appearance="outline"
                                 className={styles.fullWidthButton}
-                                icon={isScanInProgress ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                                icon={isScanInProgress ? <Spinner size="tiny" /> : <ArrowSync24 />}
                                 onClick={async () => {
                                     const startedAt = Date.now();
                                     setCheckingNow(true);
@@ -2358,7 +1039,7 @@ const SettingsPage = () => {
                             <div className={styles.namingActionGroup}>
                                 <Button
                                     appearance="outline"
-                                    icon={retagStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                                    icon={retagStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24 />}
                                     onClick={() => void loadRetagStatus()}
                                     disabled={retagStatusLoading || retagApplying || !audioRetaggingEnabled}
                                 >
@@ -2366,7 +1047,7 @@ const SettingsPage = () => {
                                 </Button>
                                 <Button
                                     appearance="outline"
-                                    icon={retagStatusLoading ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
+                                    icon={retagStatusLoading ? <Spinner size="tiny" /> : <ArrowSortDownLines24 />}
                                     onClick={() => openRetagPreview()}
                                     disabled={retagStatusLoading || retagApplying || !audioRetaggingEnabled}
                                 >
@@ -2398,7 +1079,6 @@ const SettingsPage = () => {
                                 className={styles.pathInput}
                             />
                         </div>
-                        <div className={styles.divider} />
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
                                 <Text weight="semibold">Spatial Library Path</Text>
@@ -2412,7 +1092,6 @@ const SettingsPage = () => {
                                 className={styles.pathInput}
                             />
                         </div>
-                        <div className={styles.divider} />
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
                                 <Text weight="semibold">Video Library Path</Text>
@@ -2426,7 +1105,6 @@ const SettingsPage = () => {
                                 className={styles.pathInput}
                             />
                         </div>
-                        <div className={styles.divider} />
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
                                 <Text weight="semibold">Video Folder Layout</Text>
@@ -2443,7 +1121,6 @@ const SettingsPage = () => {
                                 <option value="inline">Inline with Audio Tracks</option>
                             </Select>
                         </div>
-                        <div className={styles.divider} />
                         <div className={styles.row}>
                             <div className={styles.rowContent}>
                                 <Text weight="semibold">Create Empty Artist Folders</Text>
@@ -2459,313 +1136,33 @@ const SettingsPage = () => {
                     </div>
                 </SettingsSection>
 
-                {/* Naming */}
-                <SettingsSection
-                    id="naming"
-                    title="Naming"
-                    description="Templates for artist folders, album tracks, and music video filenames. Use ? for tokens and examples."
-                    className={styles.section}
-                >
-                    <div className={styles.card}>
-                        <div className={styles.namingRow}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Artist Folder</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Template for artist folder name
-                                </Text>
-                            </div>
-                            <div className={styles.templateControl}>
-                                <div className={styles.templateInputRow}>
-                                    <Input
-                                        ref={setNamingInputRef("artist_folder")}
-                                        value={localNaming?.artist_folder ?? ''}
-                                        onChange={(_, data) => handleNamingChange("artist_folder", data.value)}
-                                        onFocus={() => captureNamingSelection("artist_folder")}
-                                        onSelect={() => captureNamingSelection("artist_folder")}
-                                        onKeyUp={() => captureNamingSelection("artist_folder")}
-                                        onBlur={() => handleNamingCommit("artist_folder")}
-                                        onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("artist_folder"); }}
-                                        className={styles.pathInput}
-                                        disabled={!namingSettings}
-                                    />
-                                    <Tooltip content="Show tokens" relationship="label">
-                                        <Button
-                                            appearance="subtle"
-                                            icon={<QuestionCircle24Regular />}
-                                            className={styles.templateHelpButton}
-                                            onClick={() => setNamingHelpField("artist_folder")}
-                                        />
-                                    </Tooltip>
-                                </div>
-                                <Caption1 className={styles.templatePreview}>
-                                    Example: <span className={styles.tokenCode}>{namingExamples?.artistFolder ?? "—"}</span>
-                                </Caption1>
-                                {getNamingFieldErrors("artist_folder").map((error) => (
-                                    <Caption1 key={error} className={styles.templateError}>{error}</Caption1>
-                                ))}
-                            </div>
-                        </div>
-                        <div className={styles.namingRow}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Single-volume Album Track Path</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Album folder + track filename (without extension)
-                                </Text>
-                            </div>
-                            <div className={styles.templateControl}>
-                                <div className={styles.templateInputRow}>
-                                    <Input
-                                        ref={setNamingInputRef("album_track_path_single")}
-                                        value={localNaming?.album_track_path_single ?? ''}
-                                        onChange={(_, data) => handleNamingChange("album_track_path_single", data.value)}
-                                        onFocus={() => captureNamingSelection("album_track_path_single")}
-                                        onSelect={() => captureNamingSelection("album_track_path_single")}
-                                        onKeyUp={() => captureNamingSelection("album_track_path_single")}
-                                        onBlur={() => handleNamingCommit("album_track_path_single")}
-                                        onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("album_track_path_single"); }}
-                                        className={styles.pathInput}
-                                        disabled={!namingSettings}
-                                    />
-                                    <Tooltip content="Show tokens" relationship="label">
-                                        <Button
-                                            appearance="subtle"
-                                            icon={<QuestionCircle24Regular />}
-                                            className={styles.templateHelpButton}
-                                            onClick={() => setNamingHelpField("album_track_path_single")}
-                                        />
-                                    </Tooltip>
-                                </div>
-                                <Caption1 className={styles.templatePreview}>
-                                    Example: <span className={styles.tokenCode}>{namingExamples?.fullSingleTrackPath ?? "—"}</span>
-                                </Caption1>
-                                {getNamingFieldErrors("album_track_path_single").map((error) => (
-                                    <Caption1 key={error} className={styles.templateError}>{error}</Caption1>
-                                ))}
-                            </div>
-                        </div>
-                        <div className={styles.namingRow}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Multi-volume Album Track Path</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Album folder + optional disc folder + track filename (without extension)
-                                </Text>
-                            </div>
-                            <div className={styles.templateControl}>
-                                <div className={styles.templateInputRow}>
-                                    <Input
-                                        ref={setNamingInputRef("album_track_path_multi")}
-                                        value={localNaming?.album_track_path_multi ?? ''}
-                                        onChange={(_, data) => handleNamingChange("album_track_path_multi", data.value)}
-                                        onFocus={() => captureNamingSelection("album_track_path_multi")}
-                                        onSelect={() => captureNamingSelection("album_track_path_multi")}
-                                        onKeyUp={() => captureNamingSelection("album_track_path_multi")}
-                                        onBlur={() => handleNamingCommit("album_track_path_multi")}
-                                        onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("album_track_path_multi"); }}
-                                        className={styles.pathInput}
-                                        disabled={!namingSettings}
-                                    />
-                                    <Tooltip content="Show tokens" relationship="label">
-                                        <Button
-                                            appearance="subtle"
-                                            icon={<QuestionCircle24Regular />}
-                                            className={styles.templateHelpButton}
-                                            onClick={() => setNamingHelpField("album_track_path_multi")}
-                                        />
-                                    </Tooltip>
-                                </div>
-                                <Caption1 className={styles.templatePreview}>
-                                    Example: <span className={styles.tokenCode}>{namingExamples?.fullMultiTrackPath ?? "—"}</span>
-                                </Caption1>
-                                {getNamingFieldErrors("album_track_path_multi").map((error) => (
-                                    <Caption1 key={error} className={styles.templateError}>{error}</Caption1>
-                                ))}
-                            </div>
-                        </div>
-                        <div className={styles.namingRow}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Video File</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Video filename (without extension)
-                                </Text>
-                            </div>
-                            <div className={styles.templateControl}>
-                                <div className={styles.templateInputRow}>
-                                    <Input
-                                        ref={setNamingInputRef("video_file")}
-                                        value={localNaming?.video_file ?? ''}
-                                        onChange={(_, data) => handleNamingChange("video_file", data.value)}
-                                        onFocus={() => captureNamingSelection("video_file")}
-                                        onSelect={() => captureNamingSelection("video_file")}
-                                        onKeyUp={() => captureNamingSelection("video_file")}
-                                        onBlur={() => handleNamingCommit("video_file")}
-                                        onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("video_file"); }}
-                                        className={styles.pathInput}
-                                        disabled={!namingSettings}
-                                    />
-                                    <Tooltip content="Show tokens" relationship="label">
-                                        <Button
-                                            appearance="subtle"
-                                            icon={<QuestionCircle24Regular />}
-                                            className={styles.templateHelpButton}
-                                            onClick={() => setNamingHelpField("video_file")}
-                                        />
-                                    </Tooltip>
-                                </div>
-                                <Caption1 className={styles.templatePreview}>
-                                    Example: <span className={styles.tokenCode}>{namingExamples?.videoPath ?? "—"}</span>
-                                </Caption1>
-                                {getNamingFieldErrors("video_file").map((error) => (
-                                    <Caption1 key={error} className={styles.templateError}>{error}</Caption1>
-                                ))}
-                            </div>
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Apply Current Naming To Library</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Refresh the rename plan after changing templates, then apply it to move existing files and remove empty leftover folders.
-                                </Text>
-                                <div className={styles.namingBadgeRow}>
-                                    <Badge appearance="outline" color="brand">
-                                        {renameStatus?.total ?? 0} tracked
-                                    </Badge>
-                                    {renameStatus?.limited ? (
-                                        <Badge appearance="outline" color="informative">
-                                            {renameStatus.scanned} scanned
-                                        </Badge>
-                                    ) : null}
-                                    <Badge appearance="outline" color={(renameStatus?.renameNeeded ?? 0) > 0 ? "warning" : "success"}>
-                                        {renameStatus?.renameNeeded ?? 0}{renameStatus?.limited ? " in scan" : ""} need rename
-                                    </Badge>
-                                    <Badge appearance="outline" color={(renameStatus?.conflicts ?? 0) > 0 ? "warning" : "informative"}>
-                                        {renameStatus?.conflicts ?? 0}{renameStatus?.limited ? " in scan" : ""} conflicts
-                                    </Badge>
-                                    <Badge appearance="outline" color={(renameStatus?.missing ?? 0) > 0 ? "warning" : "informative"}>
-                                        {renameStatus?.missing ?? 0}{renameStatus?.limited ? " in scan" : ""} missing
-                                    </Badge>
-                                </div>
-                                {renameStatus && !renameStatusLoading && (renameStatus.renameNeeded ?? 0) === 0 ? (
-                                    <Text size={200} className={styles.mutedText}>
-                                        {renameStatus.limited
-                                            ? "No rename work detected in the fast scan."
-                                            : "No rename work detected for the current naming templates."}
-                                    </Text>
-                                ) : null}
-                            </div>
-                                <div className={styles.namingActionGroup}>
-                                <Button
-                                    appearance="outline"
-                                    icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
-                                    onClick={() => void loadRenameStatus()}
-                                    disabled={renameStatusLoading || renameApplying || !namingSettings || namingActionsDisabled}
-                                >
-                                    Scan library
-                                </Button>
-                                <Button
-                                    appearance="outline"
-                                    icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSortDownLines24Regular />}
-                                    onClick={() => openRenamePreview()}
-                                    disabled={renameStatusLoading || renameApplying || !namingSettings || namingActionsDisabled}
-                                >
-                                    Preview changes
-                                </Button>
-                                </div>
-                        </div>
-                    </div>
+                <NamingSettingsSection
+                    namingSettings={namingSettings}
+                    updateNamingSettings={updateNamingSettings}
+                    flushNamingSettings={flushNamingSettings}
+                />
 
-                    <Dialog
-                        open={Boolean(namingHelpMeta)}
-                        onOpenChange={(_, data) => {
-                            if (!data.open) setNamingHelpField(null);
-                        }}
-                    >
-                        <DialogSurface>
-                            <DialogBody>
-                                <DialogTitle>
-                                    <div className={styles.dialogTitleRow}>
-                                        <span>{namingHelpMeta?.title}</span>
-                                        <Button appearance="subtle" icon={<Dismiss24Regular />} onClick={() => setNamingHelpField(null)} />
-                                    </div>
-                                </DialogTitle>
-                                <DialogContent>
-                                    <div className={styles.namingHelpContent}>
-                                        <Text className={styles.mutedText}>
-                                            {namingHelpMeta?.description}
-                                        </Text>
-                                        {namingTokenGroups.map((group) => (
-                                            <div key={group.section} className={styles.tokenGroup}>
-                                                <Text size={200} weight="semibold">{group.section}</Text>
-                                                <div className={styles.tokenList}>
-                                                    {group.tokens.map((t) => (
-                                                        <div key={`${group.section}-${t.token}`} className={styles.tokenRow}>
-                                                            <Button
-                                                                appearance="subtle"
-                                                                size="small"
-                                                                onClick={() => insertNamingToken(t)}
-                                                            >
-                                                                <span className={styles.tokenCode}>{t.token}</span>
-                                                            </Button>
-                                                            <Text size={200} className={styles.mutedText}>
-                                                                Example: <span className={styles.tokenCode}>{t.example}</span>
-                                                            </Text>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </DialogContent>
-                            </DialogBody>
-                        </DialogSurface>
-                    </Dialog>
-                </SettingsSection>
+                <AppearanceSettingsSection
+                    theme={theme}
+                    onThemeChange={setTheme}
+                />
 
-                {/* Appearance */}
-                <SettingsSection
-                    id="appearance"
-                    title="Appearance"
-                    description="Choose the theme used across the app."
-                    className={styles.section}
-                >
-                    <div className={styles.card}>
-                        <RadioGroup
-                            value={theme}
-                            onChange={(_, data) => setTheme(data.value as any)}
-                        >
-                            <label className={styles.qualityOption} htmlFor="theme-light">
-                                <Radio value="light" id="theme-light" />
-                                <div className={styles.qualityContent}>
-                                    <div className={styles.optionIconRow}>
-                                        <WeatherSunny24Regular />
-                                        <Text weight="semibold">Light</Text>
-                                    </div>
-                                </div>
-                            </label>
-                            <label className={styles.qualityOption} htmlFor="theme-dark">
-                                <Radio value="dark" id="theme-dark" />
-                                <div className={styles.qualityContent}>
-                                    <div className={styles.optionIconRow}>
-                                        <WeatherMoon24Regular />
-                                        <Text weight="semibold">Dark</Text>
-                                    </div>
-                                </div>
-                            </label>
-                            <label className={styles.qualityOption} htmlFor="theme-system">
-                                <Radio value="system" id="theme-system" />
-                                <div className={styles.qualityContent}>
-                                    <div className={styles.optionIconRow}>
-                                        <DesktopMac24Regular />
-                                        <Text weight="semibold">System</Text>
-                                    </div>
-                                </div>
-                            </label>
-                        </RadioGroup>
-                    </div>
-                </SettingsSection>
+                <MetadataSourceSettingsSection
+                    catalogConfig={catalogConfig}
+                    catalogTest={catalogTest}
+                    onUpdateCatalog={updateCatalog}
+                    onHostChange={(host) => setCatalogConfig((current) => (current ? { ...current, musicbrainz_host: host } : current))}
+                    onTestConnection={testCatalogConnection}
+                />
 
-                {metadataSourceSection}
-
-                {streamingProvidersSection}
+                <ProvidersSettingsSection
+                    providers={streamingProviders?.providers ?? []}
+                    loadFailed={providersLoadFailed}
+                    loadError={providersLoadError}
+                    fetching={providersFetching}
+                    loading={providersLoading}
+                    onRefetch={refetchStreamingProviders}
+                />
 
                 {/* About */}
                 <SettingsSection
@@ -2821,25 +1218,12 @@ const SettingsPage = () => {
                     </div>
                 </SettingsSection>
 
-                <RenamePreviewDialog
-                    open={renamePreviewOpen}
-                    items={renamePreviewItems}
-                    applying={renameApplying}
-                    onOpenChange={setRenamePreviewOpen}
-                    onApply={handleApplyLibraryNaming}
-                />
                 <RetagPreviewDialog
                     open={retagPreviewOpen}
                     items={retagPreviewItems}
                     applying={retagApplying}
                     onOpenChange={setRetagPreviewOpen}
                     onApply={handleApplyRetags}
-                />
-                <ImportArtistsModal
-                    open={Boolean(importProviderId)}
-                    onClose={() => setImportProviderId(null)}
-                    providerId={importProviderId}
-                    onImported={handleImportComplete}
                 />
             </div >
         </div >

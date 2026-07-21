@@ -23,8 +23,8 @@ import {
   tokens,
   } from '@fluentui/react-components';
 import {
-  ArrowImport24Regular as ArrowImport24RegularBase,
-  Search24Regular as Search24RegularBase,
+  ArrowImport24Regular,
+  Search24Regular,
   Search24Filled,
   bundleIcon,
   ArrowImport24Filled
@@ -35,11 +35,12 @@ import { glassButtonStyles } from '@/components/ui/glassButtonStyles';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
 import { dispatchActivityRefresh } from '@/utils/appEvents';
+import { mediaCoverSrc, renderableArtworkUrl } from '@/utils/artwork';
 import { type UnmappedFile } from './ManualImportTab';
 
-const ArrowImport24Regular = bundleIcon(ArrowImport24Filled, ArrowImport24RegularBase);
+const ArrowImport24 = bundleIcon(ArrowImport24Filled, ArrowImport24Regular);
 
-const Search24Regular = bundleIcon(Search24Filled, Search24RegularBase);
+const Search24 = bundleIcon(Search24Filled, Search24Regular);
 
 const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'mkv', 'mov', 'webm', 'ts']);
 
@@ -224,11 +225,6 @@ const isVideoCandidate = (file: UnmappedFile | null) => {
     return file.library_root.includes('video') || VIDEO_EXTENSIONS.has(file.extension.toLowerCase());
 };
 
-const buildResourceImage = (imageId?: string | null, dimensions = '160x160') => {
-    if (!imageId) return null;
-    return `https://resources.tidal.com/images/${imageId.replace(/-/g, '/')}/${dimensions}.jpg`;
-};
-
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const buildInitialSearchQuery = (file: UnmappedFile, isVideoImport: boolean) => {
@@ -252,13 +248,10 @@ const getResultTitle = (result: any) => result.name || result.title || 'Unknown 
 const getResultSubtitle = (result: any) =>
     result.subtitle || result.artist_name || result.artist?.name || result.artists?.[0]?.name || 'Unknown Artist';
 
-const getResultImage = (result: any, isVideoImport: boolean) => {
-    if (isVideoImport) {
-        return buildResourceImage(result.image_id || result.imageId || result.cover_id || result.cover, '320x180');
-    }
-
-    return buildResourceImage(result.imageId || result.cover_id || result.cover, '160x160');
-};
+const getResultImage = (result: any) =>
+    mediaCoverSrc(result)
+    ?? renderableArtworkUrl(result.image_id)
+    ?? null;
 
 const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allFiles }) => {
     const styles = useStyles();
@@ -468,7 +461,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                         className={styles.searchButton}
                                         size="large"
                                         appearance="primary"
-                                        icon={<Search24Regular />}
+                                        icon={<Search24 />}
                                         disabled={isSearching}
                                         onClick={() => void handleSearch()}
                                     >
@@ -500,7 +493,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                     </div>
                                 ) : hasSearched && searchResults.length === 0 ? (
                                     <div className={styles.emptyState}>
-                                        <Search24Regular style={{ fontSize: '48px', color: tokens.colorNeutralForeground4 }} />
+                                        <Search24 style={{ fontSize: '48px', color: tokens.colorNeutralForeground4 }} />
                                         <Text size={400}>
                                             No {isVideoImport ? 'videos' : 'albums'} found matching "{searchQuery}"
                                         </Text>
@@ -514,7 +507,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                                     videoAspect={isVideoImport}
                                                     title={getResultTitle(result)}
                                                     subtitle={getResultSubtitle(result)}
-                                                    imageUrl={getResultImage(result, isVideoImport)}
+                                                    imageUrl={getResultImage(result)}
                                                     alt={getResultTitle(result)}
                                                     quality={result.quality}
                                                     explicit={result.explicit}
@@ -532,7 +525,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                 <div className={styles.mappingHeader}>
                                     <div className={styles.mappingHeaderInfo}>
                                         <img
-                                            src={getResultImage(selectedMatch, isVideoImport) || '/assets/images/default-album.png'}
+                                            src={getResultImage(selectedMatch) || '/assets/images/default-album.png'}
                                             alt=""
                                             className={styles.mappingHeaderArt}
                                         />
@@ -653,7 +646,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                         <Button appearance="secondary" onClick={onClose} disabled={importMutation.isPending}>Cancel</Button>
                         <Button
                             appearance="primary"
-                            icon={importMutation.isPending ? <Spinner size="tiny" /> : <ArrowImport24Regular />}
+                            icon={importMutation.isPending ? <Spinner size="tiny" /> : <ArrowImport24 />}
                             disabled={!canImport || importMutation.isPending || !selectedMatch}
                             onClick={handleImport}
                         >

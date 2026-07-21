@@ -2,6 +2,7 @@ export { RefreshArtistCommand } from './refresh-artist-command.js';
 export { MatchArtistProvidersCommand } from './match-artist-providers-command.js';
 export { RefreshAlbumCommand } from './refresh-album-command.js';
 export { RefreshMetadataCommand } from './refresh-metadata-command.js';
+export { SeedVideoCommand } from './seed-video-command.js';
 export { ApplyCurationCommand } from './apply-curation-command.js';
 export { DownloadMissingCommand } from './download-missing-command.js';
 export { CheckUpgradesCommand } from './check-upgrades-command.js';

@@ -43,20 +43,14 @@ import {
   parseVideosListResponseContract,
 } from '@contracts/catalog';
 import type {
-  AlbumTrackContract,
-  AlbumVersionContract,
   LibraryFilesListResponseContract,
   ReleaseGroupAvailabilityContract,
-  SimilarAlbumContract,
   VideoDetailContract,
   VideoUpdateContract,
 } from '@contracts/media';
 import {
-  parseAlbumTracksContract,
-  parseAlbumVersionsContract,
   parseLibraryFilesListResponseContract,
   parseReleaseGroupAvailabilityContract,
-  parseSimilarAlbumsContract,
   parseVideoDetailContract,
 } from '@contracts/media';
 import type { AlbumPageContract } from '@contracts/pages';
@@ -80,13 +74,6 @@ import {
   parseQueueStatusContract,
   parseStatusOverviewContract,
 } from '@contracts/status';
-import type {
-  HistoryEventItemContract,
-  ListHistoryEventsResponseContract,
-} from '@contracts/history';
-import {
-  parseHistoryEventsResponseContract,
-} from '@contracts/history';
 import type {
   RunSystemTaskResponseContract,
   SystemTaskContract,
@@ -370,10 +357,6 @@ class ApiClient {
     this.authToken = token;
   }
 
-  getAuthToken(): string | null {
-    return this.authToken;
-  }
-
   public async request<T>(
     endpoint: string,
     options: ApiRequestOptions = {},
@@ -606,11 +589,6 @@ class ApiClient {
     return this.request('/v1/config/about', {}, parseAppReleaseInfoContract);
   }
 
-  async getMonitoringConfig(): Promise<MonitoringConfigContract> {
-    const status = await this.request('/monitoring/status', {}, parseMonitoringStatusResponseContract);
-    return status.config;
-  }
-
   async updateMonitoringConfig(config: Partial<MonitoringConfigContract>): Promise<MonitoringConfigUpdateResponseContract> {
     return this.request('/monitoring/config', {
       method: 'POST',
@@ -662,13 +640,6 @@ class ApiClient {
     });
   }
 
-  async validateNamingConfig(config: Partial<NamingConfigContract>) {
-    return this.request('/v1/config/naming/validate', {
-      method: 'POST',
-      body: JSON.stringify(config),
-    });
-  }
-
   async previewNamingConfig(config: Partial<NamingConfigContract>): Promise<{
     valid: boolean;
     validation: Record<string, { valid: boolean; errors: string[]; unknownTokens: string[]; tokens: string[] }>;
@@ -682,18 +653,6 @@ class ApiClient {
     return this.request('/v1/config/naming/preview', {
       method: 'POST',
       body: JSON.stringify(config),
-    });
-  }
-
-  // Config TOML raw content endpoints
-  async getConfigToml() {
-    return this.request('/v1/config/toml');
-  }
-
-  async updateConfigToml(toml: string) {
-    return this.request('/v1/config/toml', {
-      method: 'POST',
-      body: JSON.stringify({ toml }),
     });
   }
 
@@ -722,18 +681,6 @@ class ApiClient {
       params.set('remote', '1');
     }
     return this.request(`/search?${params}`, { signal }, parseSearchResponseContract);
-  }
-
-  async lookupArtists(
-    query: string,
-    limit: number = 10,
-    signal?: AbortSignal,
-  ): Promise<SearchResponseContract> {
-    const params = new URLSearchParams({
-      term: query,
-      limit: limit.toString(),
-    });
-    return this.request(`/v1/artist/lookup?${params}`, { signal }, parseSearchResponseContract);
   }
 
   // Artist endpoints
@@ -783,11 +730,6 @@ class ApiClient {
     return this.request(`/v1/artist/${artistId}/page${query}`, requestOptions);
   }
 
-  async getArtistDetail(artistId: string) {
-    return this.request(`/v1/artist/${artistId}/detail`);
-  }
-
-
   async addArtist(providerId: string, name?: string) {
     return this.request(`/v1/artist`, {
       method: 'POST',
@@ -805,10 +747,6 @@ class ApiClient {
 
   async monitorAlbum(albumId: string) {
     return this.request(`/v1/album/${albumId}/monitor`, { method: 'POST' });
-  }
-
-  async getArtistAlbums(artistId: string, qualityFilter: 'all' | 'stereo' | 'spatial' = 'all') {
-    return this.request(`/v1/artist/${artistId}/albums?quality_filter=${qualityFilter}`);
   }
 
   async getProviderAlbumTracks(providerId: string, albumId: string) {
@@ -880,20 +818,19 @@ class ApiClient {
     });
   }
 
-  async deleteAlbum(albumId: string) {
-    return this.request(`/v1/album/${albumId}`, { method: 'DELETE' });
+  async deleteAlbumFiles(albumId: string, options?: { slot?: 'stereo' | 'spatial'; unmonitor?: boolean }) {
+    const params = new URLSearchParams();
+    if (options?.slot) params.set('slot', options.slot);
+    if (options?.unmonitor) params.set('unmonitor', 'true');
+    const query = params.toString();
+    return this.request(`/v1/album/${albumId}/files${query ? `?${query}` : ''}`, { method: 'DELETE' });
   }
 
-  async getAlbumTracks(albumId: string, options: RequestControlOptions = {}): Promise<AlbumTrackContract[]> {
-    return this.request(`/v1/album/${albumId}/tracks`, options, parseAlbumTracksContract);
-  }
-
-  async getAlbumSimilar(albumId: string, options: RequestControlOptions = {}): Promise<SimilarAlbumContract[]> {
-    return this.request(`/v1/album/${albumId}/similar`, options, parseSimilarAlbumsContract);
-  }
-
-  async getAlbumVersions(albumId: string, options: RequestControlOptions = {}): Promise<AlbumVersionContract[]> {
-    return this.request(`/v1/album/${albumId}/versions`, options, parseAlbumVersionsContract);
+  async deleteArtistFiles(artistId: string, options?: { unmonitor?: boolean }) {
+    return this.request(`/v1/artist/${artistId}/files`, {
+      method: 'DELETE',
+      body: JSON.stringify({ unmonitor: options?.unmonitor === true }),
+    });
   }
 
   async getAlbumReleaseAvailability(albumId: string, options: RequestControlOptions = {}): Promise<ReleaseGroupAvailabilityContract> {
@@ -967,10 +904,6 @@ class ApiClient {
     });
   }
 
-  async deleteTrack(trackId: string) {
-    return this.request(`/v1/track/${trackId}`, { method: 'DELETE' });
-  }
-
   async getVideos(params?: {
     limit?: number;
     offset?: number;
@@ -1018,10 +951,6 @@ class ApiClient {
       method: 'PATCH',
       body: JSON.stringify(updates),
     });
-  }
-
-  async deleteVideo(videoId: string) {
-    return this.request(`/v1/video/${videoId}`, { method: 'DELETE' });
   }
 
   // Managed media-file endpoints
@@ -1122,18 +1051,6 @@ class ApiClient {
     return this.request('/retag/apply', {
       method: 'POST',
       body: JSON.stringify(params),
-    });
-  }
-
-  async libraryScan(artistId: string, options?: {
-    skipDownloadQueue?: boolean;
-    skipCuration?: boolean;
-    skipMetadataBackfill?: boolean;
-  }) {
-    return this.request(`/mediaFile/scan/${artistId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(options || {}),
     });
   }
 
@@ -1251,17 +1168,6 @@ class ApiClient {
     });
   }
 
-  async updateArtistPath(artistId: string, updates: {
-    path?: string;
-    moveFiles?: boolean;
-    applyNamingTemplate?: boolean;
-  }) {
-    return this.request(`/v1/artist/${artistId}/path`, {
-      method: 'POST',
-      body: JSON.stringify(updates),
-    });
-  }
-
   async curateArtist(artistId: string) {
     return this.request(`/v1/artist/${artistId}/curate`, { method: 'POST' });
   }
@@ -1334,24 +1240,6 @@ class ApiClient {
     return this.request(`/v1/history/activity${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseActivityListResponseContract);
   }
 
-  async getTasks(params?: {
-    limit?: number;
-    offset?: number;
-    statuses?: string[];
-    categories?: string[];
-    types?: string[];
-    timeoutMs?: number | null;
-  }): Promise<ActivityListResponseContract> {
-    const queryParams = new URLSearchParams();
-    if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
-    if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
-    if (params?.statuses && params.statuses.length > 0) queryParams.set('statuses', params.statuses.join(','));
-    if (params?.categories && params.categories.length > 0) queryParams.set('categories', params.categories.join(','));
-    if (params?.types && params.types.length > 0) queryParams.set('types', params.types.join(','));
-    const query = queryParams.toString();
-    return this.request(`/v1/queue/tasks${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseActivityListResponseContract);
-  }
-
   async getSystemTasks(): Promise<SystemTaskContract[]> {
     return this.request('/v1/system/task', {}, parseSystemTaskListContract);
   }
@@ -1389,25 +1277,6 @@ class ApiClient {
     return this.request(`/v1/system/task/${id}/run`, {
       method: 'POST',
     }, parseRunSystemTaskResponseContract);
-  }
-
-  async getHistoryEvents(params?: {
-    limit?: number;
-    offset?: number;
-    artistId?: number;
-    albumId?: number;
-    mediaId?: number;
-    eventType?: HistoryEventItemContract['eventType'];
-  }): Promise<ListHistoryEventsResponseContract> {
-    const queryParams = new URLSearchParams();
-    if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
-    if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
-    if (params?.artistId !== undefined) queryParams.set('artistId', params.artistId.toString());
-    if (params?.albumId !== undefined) queryParams.set('albumId', params.albumId.toString());
-    if (params?.mediaId !== undefined) queryParams.set('mediaId', params.mediaId.toString());
-    if (params?.eventType) queryParams.set('eventType', params.eventType);
-    const query = queryParams.toString();
-    return this.request(`/v1/history${query ? `?${query}` : ''}`, {}, parseHistoryEventsResponseContract);
   }
 
   async addToQueue(url: string | null | undefined, type: string, providerId?: string | null, payload?: Partial<QueueDownloadRequest> | Record<string, unknown>) {
@@ -1463,24 +1332,12 @@ class ApiClient {
 
 
 
-  async startMonitoring() {
-    return this.request('/monitoring/start', { method: 'POST' });
-  }
-
-  async stopMonitoring() {
-    return this.request('/monitoring/stop', { method: 'POST' });
-  }
-
   async triggerAllMonitoring() {
     return this.request('/monitoring/trigger-all', { method: 'POST' });
   }
 
   async checkMonitoringNow() {
     return this.request('/monitoring/check', { method: 'POST' });
-  }
-
-  async downloadMissing() {
-    return this.request('/monitoring/download-missing', { method: 'POST' });
   }
 
   async queueCuration() {
@@ -1568,80 +1425,6 @@ class ApiClient {
     });
 
     return { close };
-  }
-
-  createMonitoringCheckStream(onEvent: (event: string, data: any) => void, onError?: (error: Error) => void): EventSource {
-    // Add auth token to URL query params since EventSource can't send custom headers
-    let url = `${this.baseUrl}${API_PREFIX}/monitoring/check-stream`;
-    if (this.authToken) {
-      url += `?token=${encodeURIComponent(this.authToken)}`;
-    }
-    const eventSource = createManagedEventSource(url);
-
-    // Set up event listeners for all event types
-    const eventTypes = ['status', 'total', 'artist-progress', 'artist-checked', 'artist-complete', 'album-found', 'album-queued', 'complete', 'error'];
-
-    eventTypes.forEach(eventType => {
-      eventSource.addEventListener(eventType, (e: MessageEvent) => {
-        try {
-          const data = JSON.parse(e.data);
-          onEvent(eventType, data);
-        } catch (error) {
-          console.error(`Failed to parse SSE data for event ${eventType}:`, error);
-        }
-      });
-    });
-
-    eventSource.onerror = (error) => {
-      if (isExpectedEventSourceClose(eventSource)) {
-        return;
-      }
-
-      console.error('SSE error:', error);
-      if (onError) {
-        onError(new Error('Stream connection failed'));
-      }
-      eventSource.close();
-    };
-
-    return eventSource;
-  }
-
-  createArtistScanStream(artistId: string, onEvent: (event: string, data: any) => void, onError?: (error: Error) => void): EventSource {
-    // Add auth token to URL query params since EventSource can't send custom headers
-    let url = `${this.baseUrl}${API_V1_PREFIX}/artist/${artistId}/scan`;
-    if (this.authToken) {
-      url += `?token=${encodeURIComponent(this.authToken)}`;
-    }
-    const eventSource = createManagedEventSource(url);
-
-    // Set up event listeners for all event types
-    const eventTypes = ['status', 'total', 'album-progress', 'album-added', 'album-skipped', 'complete', 'error'];
-
-    eventTypes.forEach(eventType => {
-      eventSource.addEventListener(eventType, (e: MessageEvent) => {
-        try {
-          const data = JSON.parse(e.data);
-          onEvent(eventType, data);
-        } catch (error) {
-          console.error(`Failed to parse SSE data for event ${eventType}:`, error);
-        }
-      });
-    });
-
-    eventSource.onerror = (error) => {
-      if (isExpectedEventSourceClose(eventSource)) {
-        return;
-      }
-
-      console.error('SSE error:', error);
-      if (onError) {
-        onError(new Error('Stream connection failed'));
-      }
-      eventSource.close();
-    };
-
-    return eventSource;
   }
 
   /**
@@ -1738,19 +1521,6 @@ class ApiClient {
     return eventSource;
   }
 
-
-   /**
-   * Execute a system command (Phase 1 scheduler commands)
-   * POST /api/v1/command
-   * Examples: BulkRefreshArtist, DownloadMissingForce, RescanAllRoots, CheckHealth,
-   * CompactDatabase, CleanupTempFiles, UpdateLibraryMetadata, ConfigPrune
-   */
-  async executeCommand(commandName: string): Promise<{ id: number }> {
-    return this.request('/v1/command', {
-      method: 'POST',
-      body: JSON.stringify({ name: commandName }),
-    });
-  }
 
   // Import endpoints handled earlier in this class
 }

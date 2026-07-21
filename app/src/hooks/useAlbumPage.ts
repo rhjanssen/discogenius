@@ -10,20 +10,17 @@ import type {
     AlbumTrackContract as AlbumTrack,
     AlbumVersionContract as AlbumVersion,
     ReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
-    SimilarAlbumContract as SimilarAlbum,
 } from '@contracts/media';
 
 export type {
     AlbumTrackContract as AlbumTrack,
     AlbumVersionContract as AlbumVersion,
     ReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
-    SimilarAlbumContract as SimilarAlbum,
 } from '@contracts/media';
 
 export interface AlbumPageData {
     album: Album;
     tracks: AlbumTrack[];
-    similarAlbums: SimilarAlbum[];
     otherVersions: AlbumVersion[];
     releaseAvailability: ReleaseGroupAvailability | null;
     artistImage: string | null;
@@ -69,7 +66,6 @@ export function useAlbumPage(albumId: string | undefined) {
                 album: response.album as Album,
                 tracks: response.tracks,
                 otherVersions: response.otherVersions,
-                similarAlbums: response.similarAlbums,
                 releaseAvailability,
                 artistImage,
             };

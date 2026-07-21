@@ -6,29 +6,24 @@ export interface UltraBlurColors {
 }
 
 /**
- * Generate default colors for UltraBlur background
- * Uses the Discogenius logo colors.
- * 
- * NOTE: The same colors are used for both light and dark mode.
- * Theme adaptation is handled by the overlay layer in UltraBlurBackground.tsx
- * (overlayDark/overlayLight, vignette, noise, etc.)
- * 
- * @param _isDarkMode - Whether the active Fluent theme is dark
- * @returns UltraBlurColors based on the brand seed colors
+ * Default UltraBlur corner colours when no artwork is set (e.g. Library root).
+ * Use chromatic logo-adjacent seeds — not greys — so the Fluent brand remap
+ * still produces a tinted wash instead of a muddy neutral field.
+ * Theme smoked-glass dimming lives in `renderUltraBlurDataUrl`.
  */
 export function getThemeDefaultColors(isDarkMode: boolean): UltraBlurColors {
   if (isDarkMode) {
     return {
-      topLeft: "#0a0c10",
-      topRight: "#12141a",
-      bottomLeft: "#08090c",
-      bottomRight: "#15181e",
+      topLeft: "#1a0f2e",
+      topRight: "#0d1a2e",
+      bottomLeft: "#1a1208",
+      bottomRight: "#0a1a1c",
     };
   }
   return {
-    topLeft: "#e0e3e8",
-    topRight: "#ebedf0",
-    bottomLeft: "#d8dce2",
-    bottomRight: "#f4f5f7",
+    topLeft: "#fc7134",
+    topRight: "#8532ce",
+    bottomLeft: "#2353ca",
+    bottomRight: "#00bddf",
   };
 }

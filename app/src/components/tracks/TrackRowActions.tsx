@@ -1,13 +1,13 @@
 import type { MouseEvent } from "react";
 import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import {
-  ArrowDownload24Regular as ArrowDownload24RegularBase,
-  Eye24Regular as Eye24RegularBase,
-  EyeOff24Regular as EyeOff24RegularBase,
-  Info24Regular as Info24RegularBase,
-  LockClosed24Regular as LockClosed24RegularBase,
-  LockOpen24Regular as LockOpen24RegularBase,
-  Play24Regular as Play24RegularBase,
+  ArrowDownload24Regular,
+  Eye24Regular,
+  EyeOff24Regular,
+  Info24Regular,
+  LockClosed24Regular,
+  LockOpen24Regular,
+  Play24Regular,
   Stop24Filled,
   ArrowDownload24Filled,
   Eye24Filled,
@@ -20,13 +20,13 @@ import {
 } from "@fluentui/react-icons";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 
-const ArrowDownload24Regular = bundleIcon(ArrowDownload24Filled, ArrowDownload24RegularBase);
-const Eye24Regular = bundleIcon(Eye24Filled, Eye24RegularBase);
-const EyeOff24Regular = bundleIcon(EyeOff24Filled, EyeOff24RegularBase);
-const Info24Regular = bundleIcon(Info24Filled, Info24RegularBase);
-const LockClosed24Regular = bundleIcon(LockClosed24Filled, LockClosed24RegularBase);
-const LockOpen24Regular = bundleIcon(LockOpen24Filled, LockOpen24RegularBase);
-const Play24Regular = bundleIcon(Play24Filled, Play24RegularBase);
+const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
+const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
+const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
+const Info24 = bundleIcon(Info24Filled, Info24Regular);
+const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
+const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
+const Play24 = bundleIcon(Play24Filled, Play24Regular);
 
 interface TrackRowActionsProps {
   isPlaying?: boolean;
@@ -81,7 +81,7 @@ export function TrackRowActions({
           <Button
             appearance="subtle"
             aria-label={isPlaying ? "Stop track" : "Play track"}
-            icon={isPlaying ? <Stop24Filled /> : <Play24Regular />}
+            icon={isPlaying ? <Stop24Filled /> : <Play24 />}
             size="small"
             onClick={onPlay}
             className={styles.actionButton}
@@ -96,7 +96,7 @@ export function TrackRowActions({
         >
           <Button
             appearance="subtle"
-            icon={isMonitored ? <EyeOff24Regular /> : <Eye24Regular />}
+            icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
             size="small"
             disabled={isLocked}
             onClick={onToggleMonitor}
@@ -109,7 +109,7 @@ export function TrackRowActions({
         <Tooltip content={isLocked ? "Unlock" : "Lock"} relationship="label">
           <Button
             appearance="subtle"
-            icon={isLocked ? <LockOpen24Regular /> : <LockClosed24Regular />}
+            icon={isLocked ? <LockOpen24 /> : <LockClosed24 />}
             size="small"
             onClick={onToggleLock}
             className={styles.actionButton}
@@ -123,7 +123,7 @@ export function TrackRowActions({
         <Tooltip content="Track info" relationship="label">
           <Button
             appearance="subtle"
-            icon={<Info24Regular />}
+            icon={<Info24 />}
             size="small"
             onClick={onShowInfo}
             className={styles.actionButton}
@@ -134,7 +134,7 @@ export function TrackRowActions({
           <Button
             appearance="subtle"
             aria-label="Download track"
-            icon={<ArrowDownload24Regular />}
+            icon={<ArrowDownload24 />}
             size="small"
             disabled={isDownloading || !onDownload}
             onClick={onDownload}

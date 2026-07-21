@@ -2,7 +2,7 @@ import { db, runChunkedWrite } from "../../database.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
-import { LibraryFilesService, resolvePlexVideoSuffix } from "../mediafiles/library-files.js";
+import { LibraryFilesService } from "../mediafiles/library-files.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
@@ -468,7 +468,7 @@ export class CurationService {
             WHERE is_video = 1
               AND artist_mbid = ?
               AND (monitored_lock = 0 OR monitored_lock IS NULL)
-              AND COALESCE(monitored, 0) != ${targetMonitoredExpression}
+              AND monitored != ${targetMonitoredExpression}
         `).run(artistMbid).changes;
     }
 

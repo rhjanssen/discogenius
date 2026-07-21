@@ -1,10 +1,10 @@
 import { db } from "../../database.js";
-import {CommandNames} from "../commands/command-names.js";
-import {CommandQueueManager} from "../commands/command-queue-manager.js";
+import { CommandNames } from "../commands/command-names.js";
+import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
 import { getConfigSection } from "../config/config.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
-import { queueTrackAcquisitionPlan } from "./release-group-acquisition-plan.js";
+import { queueCatalogAlbumDownload } from "./release-group-acquisition-plan.js";
 
 type AlbumSlotSelection = {
     slot: "stereo" | "spatial";
@@ -259,32 +259,13 @@ export class AlbumCommandService {
         const commandIds: number[] = [];
         if (shouldDownload) {
             for (const selection of selections) {
-                const planned = queueTrackAcquisitionPlan(selection);
-                if (planned.recognized) {
-                    commandIds.push(...planned.commandIds);
-                    continue;
+                const queued = queueCatalogAlbumDownload({
+                    ...selection,
+                    release_group_mbid: selection.release_group_mbid || albumId,
+                });
+                if (queued.commandId != null) {
+                    commandIds.push(queued.commandId);
                 }
-                const providerAlbumId = selection.selected_provider_id;
-                const artistName = selection.artist_name || selection.provider_artist_name || 'Unknown Artist';
-                const provider = selection.selected_provider || "tidal";
-                const commandId = CommandQueueManager.push(CommandNames.DownloadAlbum, {
-                    url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
-                    type: 'album',
-                    provider,
-                    providerId: providerAlbumId,
-                    releaseGroupMbid: albumId,
-                    releaseMbid: selection.selected_release_mbid || null,
-                    albumId,
-                    libraryRoot: selection.slot === "spatial" ? "spatial" : "music",
-                    slot: selection.slot,
-                    title: selection.title || selection.provider_title || 'Unknown Album',
-                    artist: artistName,
-                    artists: [artistName].filter(Boolean),
-                    cover: selection.provider_cover || null,
-                    quality: selection.quality || null,
-                    description: `${selection.title || selection.provider_title || 'Unknown Album'} by ${artistName} (${selection.slot})`,
-                }, `${albumId}:${selection.slot}`, 0, 1);
-                commandIds.push(commandId);
             }
         }
 

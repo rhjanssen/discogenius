@@ -46,7 +46,16 @@ function buildProviderPreferenceOrderSql(providerColumn: string): string {
 function artistArtworkUrl(artistMbid: unknown, ...values: unknown[]): string | null {
     return mapArtistArtworkToLocalUrl({
         artistMbid: artistMbid == null ? null : String(artistMbid),
+        preferredCoverTypes: ["Poster", "Headshot"],
         sourceUrls: values.map((value) => value == null ? null : String(value)),
+    });
+}
+
+function artistFanartUrl(artistMbid: unknown, value: unknown): string | null {
+    return mapArtistArtworkToLocalUrl({
+        artistMbid: artistMbid == null ? null : String(artistMbid),
+        preferredCoverTypes: ["Fanart"],
+        sourceUrls: [value == null ? null : String(value)],
     });
 }
 
@@ -105,7 +114,7 @@ function buildArtistReleaseGroupCountMap(artistMbids: string[]): Map<string, Art
         )
         SELECT scope.artist_mbid AS artist_id,
                COUNT(*) AS cnt,
-               SUM(CASE WHEN COALESCE(slot_state.monitored, 0) = 1 THEN 1 ELSE 0 END) AS monitored_cnt
+               SUM(CASE WHEN slot_state.monitored = 1 THEN 1 ELSE 0 END) AS monitored_cnt
         FROM artist_scope scope
         LEFT JOIN slot_state ON slot_state.release_group_mbid = scope.release_group_mbid
         GROUP BY scope.artist_mbid
@@ -193,7 +202,7 @@ function artistMusicBrainzId(artist: ArtistMonitorRow | undefined, fallbackArtis
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function hasArtistArtworkGap(artist: ArtistMonitorRow): boolean {
-    return !artistArtworkUrl(artist.mbid, artist.picture, artist.cover_image_url);
+    return !artistArtworkUrl(artist.mbid, artist.picture);
 }
 
 function shouldHydrateArtistDisplayMetadata(artist: ArtistMonitorRow | undefined, artistId: string): boolean {
@@ -513,7 +522,7 @@ const duplicateProviderArtistPredicate = `NOT (
 const unhydratedArtistShellPredicate = `NOT (
     a.name = CAST(a.mbid AS TEXT)
     AND a.path IS NULL
-    AND COALESCE(a.monitored, 0) = 0
+    AND (a.monitored IS NULL OR a.monitored = 0)
 )`;
 
 export class ArtistQueryService {
@@ -591,7 +600,7 @@ export class ArtistQueryService {
             items: artists.map((artist) => {
                 const artistId = String(artist.id);
                 const statistics = artistStatisticsById.get(artistId);
-                const resolvedArtistPicture = artistArtworkUrl(artist.mbid, artist.picture, artist.cover_image_url);
+                const resolvedArtistPicture = artistArtworkUrl(artist.mbid, artist.picture);
                 const countFields = includeCounts
                     ? {
                         album_count: Number(statistics?.album_count || 0),
@@ -604,7 +613,7 @@ export class ArtistQueryService {
                 return {
                     ...artist,
                     picture: resolvedArtistPicture,
-                    cover_image_url: artistArtworkUrl(artist.mbid, artist.cover_image_url),
+                    cover_image_url: artistFanartUrl(artist.mbid, artist.cover_image_url),
                     ...countFields,
                     downloaded: includeDownloadStats
                         ? artistDownloadStats?.get(artistId)?.downloadedPercent ?? 0
@@ -630,7 +639,7 @@ export class ArtistQueryService {
         // — staleness refresh is the scheduler's job.
         if (!artist) {
             try {
-                await RefreshArtistService.refreshArtistMetadata(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
+                await RefreshArtistService.refreshArtistMetadata(artistId, {});
                 artist = loadArtistWithEffectiveMonitor(artistId);
             } catch { /* TIDAL lookup failed — fall through to 404 */ }
         }
@@ -651,8 +660,8 @@ export class ArtistQueryService {
         return {
             id: String(artist.id),
             name: artist.name ?? "Unknown Artist",
-            picture: artistArtworkUrl(artist.mbid, artist.picture, artist.cover_image_url),
-            cover_image_url: artistArtworkUrl(artist.mbid, artist.cover_image_url),
+            picture: artistArtworkUrl(artist.mbid, artist.picture),
+            cover_image_url: artistFanartUrl(artist.mbid, artist.cover_image_url),
             last_scanned: artist.last_scanned == null ? null : String(artist.last_scanned),
             bio: biography,
             biography,
@@ -696,7 +705,7 @@ export class ArtistQueryService {
         album_offer.cover AS provider_cover,
         CASE
           WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
-          WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1
+          WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1
           ELSE 0
         END AS wanted
       FROM Albums rg
@@ -711,11 +720,10 @@ export class ArtistQueryService {
        AND album_offer.provider = COALESCE(stereo.selected_provider, spatial.selected_provider)
        AND CAST(album_offer.provider_id AS TEXT) = CAST(COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS TEXT)
       WHERE rg.artist_mbid = ?
-         OR EXISTS (
-           SELECT 1
+         OR rg.mbid IN (
+           SELECT scope.release_group_mbid
            FROM ArtistReleaseGroups scope
-           WHERE scope.release_group_mbid = rg.mbid
-             AND scope.artist_mbid = ?
+           WHERE scope.artist_mbid = ?
          )
       ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
     `).all(artistMbid, artistMbid) as any[];
@@ -813,61 +821,6 @@ export class ArtistQueryService {
         };
     }
 
-    static async getArtistDetail(id: string): Promise<any | null> {
-        let existing = loadArtistWithEffectiveMonitor(id);
-
-        if (!existing) {
-            try {
-                await RefreshArtistService.refreshArtistMetadata(id, { includeSimilarArtists: false, seedSimilarArtists: false });
-                existing = loadArtistWithEffectiveMonitor(id);
-            } catch { /* TIDAL lookup failed */ }
-        }
-
-        if (!existing) {
-            return null;
-        }
-
-        const artist = db.prepare(`
-      SELECT * FROM Artists WHERE id = ?
-    `).get(id) as any;
-
-        if (!artist) {
-            return null;
-        }
-
-        const albums = this.getArtistAlbums(id);
-
-        const grouped: Record<string, any[]> = {
-            ARTIST_ALBUMS: [],
-            ARTIST_EPS: [],
-            ARTIST_SINGLES: [],
-            ARTIST_COMPILATIONS: [],
-            ARTIST_LIVE_ALBUMS: [],
-            ARTIST_APPEARS_ON: [],
-            ARTIST_REMIXES: [],
-            ARTIST_SOUNDTRACKS: [],
-            ARTIST_DEMOS: [],
-            ARTIST_DJ_MIXES: [],
-            ARTIST_MIXTAPES: [],
-            ARTIST_BROADCASTS: [],
-            ARTIST_OTHER_RELEASES: [],
-        };
-
-        for (const album of albums) {
-            const moduleName = RELEASE_GROUP_BUCKETS[album.module as keyof typeof RELEASE_GROUP_BUCKETS]
-                || (album.type === "SINGLE" ? "ARTIST_SINGLES"
-                    : album.type === "EP" ? "ARTIST_EPS"
-                        : "ARTIST_ALBUMS");
-
-            if (!grouped[moduleName]) {
-                grouped[moduleName] = [];
-            }
-            grouped[moduleName].push(album);
-        }
-
-        return { artist, albums: grouped };
-    }
-
     static async getArtistPage(
         artistId: string,
         options: {
@@ -888,7 +841,7 @@ export class ArtistQueryService {
         // staleness refresh is the scheduler's job.
         if (!artist) {
             try {
-                await RefreshArtistService.refreshArtistMetadata(artistId, { includeSimilarArtists: false, seedSimilarArtists: false });
+                await RefreshArtistService.refreshArtistMetadata(artistId, {});
                 artist = loadArtistWithEffectiveMonitor(artistId);
             } catch { /* TIDAL lookup failed */ }
         }
@@ -1009,14 +962,14 @@ export class ArtistQueryService {
            COALESCE(recording.release_date, provider_item.release_date) AS release_date,
            provider_item.version,
            provider_item.explicit,
-           COALESCE(provider_item.quality, 'MP4_1080P') AS quality,
+           provider_item.quality AS quality,
            COALESCE(recording.cover_image_id, provider_item.asset_id) AS cover,
            recording.cover_image_url AS cover_art_url,
            provider_item.provider_url AS url,
            CAST(COALESCE(recording.artist_metadata_id, @artistIdNum) AS TEXT) AS artist_id,
            @artistName AS artist_name,
-           COALESCE(recording.monitored, 0) AS monitored,
-           COALESCE(recording.monitored_lock, 0) AS monitored_lock,
+           recording.monitored AS monitored,
+           recording.monitored_lock AS monitored_lock,
            recording.updated_at AS last_scanned,
            MAX(
              COALESCE(CAST(recording.popularity AS REAL), 0),
@@ -1072,7 +1025,7 @@ export class ArtistQueryService {
            album_offer.cover AS provider_cover,
            CASE
              WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
-             WHEN COALESCE(stereo.monitored, 0) = 1 OR COALESCE(spatial.monitored, 0) = 1 THEN 1
+             WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1
              ELSE 0
            END AS wanted,
            rg.images
@@ -1396,7 +1349,9 @@ export class ArtistQueryService {
                 album: {
                     id: track.album_id == null ? null : String(track.album_id),
                     title: sourceTrack?.album_title || null,
-                    cover_id: sourceTrack?.album_cover || null,
+                    cover_id: albumCoverLocalUrl({
+                        albumMbid: track.album_id == null ? null : String(track.album_id),
+                    }) || null,
                 },
             };
         }));
@@ -1438,10 +1393,11 @@ export class ArtistQueryService {
                     type: "VIDEO_LIST",
                     title: "Videos",
                     items: videos.map((video) => {
-                        const coverArtUrl = videoCoverLocalUrl(video.id) ?? video.cover_art_url ?? null;
+                        const coverArtUrl = videoCoverLocalUrl(video.id);
                         return {
                             ...video,
-                            cover_id: video.cover || null,
+                            cover: coverArtUrl,
+                            cover_id: coverArtUrl,
                             cover_art_url: coverArtUrl,
                             quality: video.quality || "MP4_1080P",
                             monitored_lock: Boolean(video.monitored_lock),
@@ -1509,8 +1465,8 @@ export class ArtistQueryService {
         return {
             artist: {
                 ...artist,
-                picture: artistArtworkUrl(artist.mbid, artist.picture, artist.cover_image_url),
-                cover_image_url: artistArtworkUrl(artist.mbid, artist.cover_image_url),
+                picture: artistArtworkUrl(artist.mbid, artist.picture),
+                cover_image_url: artistFanartUrl(artist.mbid, artist.cover_image_url),
                 bio,
                 files: artistFiles,
                 downloaded: artistDownloadStats.downloadedPercent,

@@ -88,7 +88,7 @@ export interface TrackRemoteOfferContract {
   quality: string | null;
 }
 
-export interface SimilarAlbumContract {
+export interface AlbumCardContract {
   id: string;
   title: string;
   cover_id?: string | null;
@@ -101,7 +101,7 @@ export interface SimilarAlbumContract {
   is_monitored?: boolean;
 }
 
-export interface AlbumVersionContract extends SimilarAlbumContract {
+export interface AlbumVersionContract extends AlbumCardContract {
   version?: string | null;
   stereo_provider_id?: string | null;
   stereo_quality?: string | null;
@@ -158,11 +158,15 @@ export interface VideoProviderOfferContract {
 export interface VideoAlbumRefContract {
   id: string;
   title: string;
+  /** Local /media-cover URL (alias of cover_art_url for older clients). */
   cover_id?: string | null;
+  cover_art_url?: string | null;
   /** MusicBrainz track MBID when the video sits on a release tracklist (album deep-link). */
   track_mbid?: string | null;
   track_number?: number | null;
   volume_number?: number | null;
+  /** Total tracks on the matched release (for "Track N of M"). */
+  track_count?: number | null;
 }
 
 export interface VideoDetailContract {
@@ -173,6 +177,11 @@ export interface VideoDetailContract {
   artist_name?: string;
   release_date?: string | null;
   version?: string | null;
+  /**
+   * Discogenius catalog class from Recordings.video_variant
+   * (video / official / lyric / live / audio / visualizer).
+   */
+  video_variant?: string | null;
   explicit?: boolean;
   quality?: string | null;
   cover?: string | null;
@@ -307,7 +316,7 @@ export function parseAlbumTracksContract(value: unknown): AlbumTrackContract[] {
   return expectArray(value, "Album tracks", parseAlbumTrackContract);
 }
 
-function parseAlbumListItemContract<T extends SimilarAlbumContract | AlbumVersionContract>(
+function parseAlbumListItemContract<T extends AlbumCardContract | AlbumVersionContract>(
   value: unknown,
   index: number,
 ): T {
@@ -331,10 +340,6 @@ function parseAlbumListItemContract<T extends SimilarAlbumContract | AlbumVersio
     spatial_provider_id: expectOptionalString(record.spatial_provider_id, `${label}.spatial_provider_id`) ?? null,
     spatial_quality: expectOptionalString(record.spatial_quality, `${label}.spatial_quality`) ?? null,
   } as T;
-}
-
-export function parseSimilarAlbumsContract(value: unknown): SimilarAlbumContract[] {
-  return expectArray(value, "Similar albums", (item, index) => parseAlbumListItemContract<SimilarAlbumContract>(item, index));
 }
 
 export function parseAlbumVersionsContract(value: unknown): AlbumVersionContract[] {
@@ -417,6 +422,7 @@ export function parseVideoDetailContract(value: unknown): VideoDetailContract {
     artist_name: expectOptionalString(record.artist_name, "video.artist_name"),
     release_date: expectNullableString(record.release_date, "video.release_date"),
     version: expectNullableString(record.version, "video.version"),
+    video_variant: expectNullableString(record.video_variant, "video.video_variant"),
     explicit: expectOptionalBoolean(record.explicit, "video.explicit"),
     quality: expectNullableString(record.quality, "video.quality"),
     cover: expectNullableString(record.cover, "video.cover"),
@@ -454,8 +460,10 @@ function parseVideoAlbumRefContract(value: unknown, indexLabel: string): VideoAl
     id: expectString(record.id, `${indexLabel}.id`),
     title: expectString(record.title, `${indexLabel}.title`),
     cover_id: expectNullableString(record.cover_id, `${indexLabel}.cover_id`),
+    cover_art_url: expectNullableString(record.cover_art_url, `${indexLabel}.cover_art_url`),
     track_mbid: expectNullableString(record.track_mbid, `${indexLabel}.track_mbid`),
     track_number: expectOptionalNumber(record.track_number, `${indexLabel}.track_number`) ?? null,
     volume_number: expectOptionalNumber(record.volume_number, `${indexLabel}.volume_number`) ?? null,
+    track_count: expectOptionalNumber(record.track_count, `${indexLabel}.track_count`) ?? null,
   };
 }

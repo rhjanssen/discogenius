@@ -81,11 +81,6 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
-        '/services/ultrablur': {
-          target: backendTarget,
-          changeOrigin: true,
-          secure: false,
-        },
       },
     },
     plugins: [
