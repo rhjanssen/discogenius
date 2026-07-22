@@ -53,6 +53,7 @@ test("config update parsers return only validated partial updates", () => {
   const filteringUpdate = parseFilteringConfigUpdate({
     include_videos: true,
     include_spatial: false,
+    include_video_lyric: false,
   }, {
     include_album: true,
     include_single: true,
@@ -68,6 +69,9 @@ test("config update parsers return only validated partial updates", () => {
     include_demo: false,
     include_spatial: true,
     include_videos: false,
+    include_video_official: true,
+    include_video_lyric: true,
+    include_video_live: true,
     prefer_explicit: true,
     enable_redundancy_filter: true,
     require_provider_availability: true,
@@ -75,6 +79,7 @@ test("config update parsers return only validated partial updates", () => {
   assert.deepEqual(filteringUpdate, {
     include_videos: true,
     include_spatial: false,
+    include_video_lyric: false,
   });
 
   const metadataUpdate = parseMetadataConfigUpdate({

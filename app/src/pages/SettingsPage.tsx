@@ -11,6 +11,7 @@ import {
     makeStyles,
     tokens,
     Link,
+    Checkbox,
 } from "@fluentui/react-components";
 import {
   DoorArrowLeft24Regular,
@@ -249,6 +250,27 @@ const useStyles = makeStyles({
     qualityOptionDisabled: {
         opacity: 0.5,
     },
+    videoTypeHeader: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: tokens.spacingVerticalXXS,
+        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+        borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+    videoTypeList: {
+        display: 'grid',
+        gridTemplateColumns: '1fr',
+        paddingBottom: tokens.spacingVerticalXS,
+        [MEDIA.desktop]: {
+            gridTemplateColumns: '1fr 1fr',
+        },
+    },
+    videoTypeRow: {
+        display: 'flex',
+        alignItems: 'center',
+        minHeight: '28px',
+        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}`,
+    },
     // Collapse Fluent RadioGroup's default item gap — option padding already
     // provides the touch/scan spacing (SettingsCard stacked radios).
     qualityRadioGroup: {
@@ -412,7 +434,7 @@ const SettingsPage = () => {
             // Set defaults on error
             setMonitoringConfig({
                 enabled: false,
-                monitorNewArtists: true,
+                monitorNewArtists: false,
                 removeUnmonitoredFiles: false,
             });
             setMonitoringStatus({ running: false, checking: false });
@@ -431,6 +453,9 @@ const SettingsPage = () => {
                 include_demo: true,
                 include_spatial: false,
                 include_videos: false,
+                include_video_official: true,
+                include_video_lyric: true,
+                include_video_live: true,
                 enable_redundancy_filter: true,
                 prefer_explicit: true,
                 require_provider_availability: false,
@@ -615,167 +640,30 @@ const SettingsPage = () => {
             </div>
 
             <div className={styles.sectionsContainer} data-testid="settings-sections">
-
-
-                {isAuthActive ? (
-                    <SettingsSection
-                        id="app-access"
-                        title="App Access"
-                        description="Sign-in for this browser session."
-                        className={styles.section}
-                    >
-                        <div className={styles.card}>
-                            <div className={styles.row}>
-                                <div className={styles.rowContent}>
-                                    <Text weight="semibold">Sign out</Text>
-                                    <Text size={200} className={styles.mutedText}>
-                                        End the admin session on this device.
-                                    </Text>
-                                </div>
-                                <div className={styles.rowControl}>
-                                <Button
-                                    appearance="outline"
-                                    className={styles.signOutButton}
-                                    icon={<DoorArrowLeft24 />}
-                                    onClick={handleSignOut}
-                                >
-                                    Sign out
-                                </Button>
-                                </div>
-                            </div>
-                        </div>
-                    </SettingsSection>
-                ) : null}
-
-                <AudioQualitySettingsSection
-                    audioQuality={qualitySettings?.audio_quality || "max"}
-                    includeSpatial={curationConfig?.include_spatial === true}
-                    onAudioQualityChange={(audio_quality) => updateQualitySettings({ audio_quality })}
-                    onIncludeSpatialChange={(include_spatial) => updateCuration({ include_spatial })}
-                />
-                {/* Video Quality */}
-                <SettingsSection
-                    id="video-quality"
-                    title="Music videos"
-                    description="Whether to download videos and at which resolution."
-                    className={styles.section}
-                >
-                    <div className={styles.card}>
-                        {renderToggleRow({
-                            title: "Download music videos",
-                            description: "Include official videos in the library when a service offers them.",
-                            checked: curationConfig?.include_videos === true,
-                            onChange: (checked) => updateCuration({ include_videos: checked }),
-                        })}
-                        <RadioGroup
-                            className={styles.qualityRadioGroup}
-                            value={qualitySettings?.video_quality || 'uhd'}
-                            onChange={(_, data) => updateQualitySettings({
-                                video_quality: data.value as "sd" | "hd" | "fhd" | "uhd"
-                            })}
-                        >
-                            {videoQualityOptions.map((option) => (
-                                <label
-                                    key={option.value}
-                                    className={styles.qualityOption}
-                                    htmlFor={`video-quality-${option.value}`}
-                                >
-                                    <Radio value={option.value} id={`video-quality-${option.value}`} disabled={option.disabled} />
-                                    <div className={styles.qualityContent}>
-                                        <Text weight="semibold">{option.label}</Text>
-                                        {option.disabled ? (
-                                            <Text size={200} className={styles.mutedText}>
-                                                No connected service offers this resolution
-                                            </Text>
-                                        ) : null}
-                                    </div>
-                                </label>
-                            ))}
-                        </RadioGroup>
-                    </div>
-                </SettingsSection>
-
-                {/* Curation Section */}
-                <CurationSettingsSection
-                    curationConfig={curationConfig}
-                    updating={searchingMissingAlbums}
-                    onUpdate={updateCuration}
-                    onQueueCuration={handleQueueCuration}
+                <NamingSettingsSection
+                    pathSettings={pathSettings}
+                    updatePathSettings={updatePathSettings}
+                    namingSettings={namingSettings}
+                    updateNamingSettings={updateNamingSettings}
                 />
 
-                {/* Monitoring Section */}
-                <SettingsSection
-                    id="monitoring"
-                    title="Monitoring"
-                    description="Automatic checks for new music and library cleanup."
-                    className={styles.section}
-                >
-                    <div className={styles.card}>
-                        {renderToggleRow({
-                            title: "Automatic monitoring",
-                            description: "Periodically look for new releases from monitored artists.",
-                            checked: monitoringConfig?.enabled || false,
-                            onChange: (checked) => updateMonitoring({ enabled: checked }),
-                        })}
-                        {renderToggleRow({
-                            title: "Upgrade when quality settings change",
-                            description: "Replace existing files if you raise the preferred quality.",
-                            checked: qualitySettings?.upgrade_existing_files ?? false,
-                            onChange: (checked) => updateQualitySettings({ upgrade_existing_files: checked }),
-                        })}
-                        {renderToggleRow({
-                            title: "Monitor newly found artists",
-                            description: "When a folder scan finds a new artist, monitor them and fill their library.",
-                            checked: monitoringConfig?.monitorNewArtists ?? true,
-                            onChange: (checked) => updateMonitoring({ monitorNewArtists: checked }),
-                        })}
-                        {renderToggleRow({
-                            title: "Remove unmonitored files",
-                            description: "Delete files for releases you no longer monitor.",
-                            checked: monitoringConfig?.removeUnmonitoredFiles || false,
-                            onChange: (checked) => updateMonitoring({ removeUnmonitoredFiles: checked }),
-                        })}
-                        <div className={styles.actionButtonRow}>
-                            <Button
-                                appearance="outline"
-                                className={styles.fullWidthButton}
-                                icon={isScanInProgress ? <Spinner size="tiny" /> : <ArrowSync24 />}
-                                onClick={async () => {
-                                    const startedAt = Date.now();
-                                    setCheckingNow(true);
-                                    dispatchActivityRefresh();
-                                    try {
-                                        const result: any = await api.triggerAllMonitoring();
-                                        dispatchActivityRefresh();
-                                        await fetchConfigs();
-                                        toast({
-                                            title: "Monitoring Cycle Queued",
-                                            description: result?.message || "The monitoring cycle has been queued.",
-                                        });
-                                    } catch (error) {
-                                        console.error("Error triggering monitoring:", error);
-                                        toast({
-                                            title: "Error",
-                                            description: "Failed to queue the monitoring cycle.",
-                                            variant: "destructive"
-                                        });
-                                    } finally {
-                                        const elapsed = Date.now() - startedAt;
-                                        if (elapsed < MIN_RUN_NOW_FEEDBACK_MS) {
-                                            await new Promise((resolve) => window.setTimeout(resolve, MIN_RUN_NOW_FEEDBACK_MS - elapsed));
-                                        }
-                                        setCheckingNow(false);
-                                    }
-                                }}
-                                disabled={isScanInProgress}
-                            >
-                                {isScanInProgress ? "Running Task..." : "Run Now"}
-                            </Button>
-                        </div>
-                    </div>
-                </SettingsSection>
+                <ProvidersSettingsSection
+                    providers={streamingProviders?.providers ?? []}
+                    loadFailed={providersLoadFailed}
+                    loadError={providersLoadError}
+                    fetching={providersFetching}
+                    loading={providersLoading}
+                    onRefetch={refetchStreamingProviders}
+                />
 
-                {/* Metadata */}
+                <MetadataSourceSettingsSection
+                    catalogConfig={catalogConfig}
+                    catalogTest={catalogTest}
+                    onUpdateCatalog={updateCatalog}
+                    onHostChange={(host) => setCatalogConfig((current) => (current ? { ...current, musicbrainz_host: host } : current))}
+                    onTestConnection={testCatalogConnection}
+                />
+
                 <SettingsSection
                     id="metadata"
                     title="Metadata & extras"
@@ -879,36 +767,196 @@ const SettingsPage = () => {
                     </div>
                 </SettingsSection>
 
-                <NamingSettingsSection
-                    pathSettings={pathSettings}
-                    updatePathSettings={updatePathSettings}
-                    namingSettings={namingSettings}
-                    updateNamingSettings={updateNamingSettings}
+                <AudioQualitySettingsSection
+                    audioQuality={qualitySettings?.audio_quality || "max"}
+                    includeSpatial={curationConfig?.include_spatial === true}
+                    onAudioQualityChange={(audio_quality) => updateQualitySettings({ audio_quality })}
+                    onIncludeSpatialChange={(include_spatial) => updateCuration({ include_spatial })}
                 />
+
+                <SettingsSection
+                    id="video-quality"
+                    title="Music videos"
+                    description="Whether to download videos, which types to include, and at which resolution."
+                    className={styles.section}
+                >
+                    <div className={styles.card}>
+                        {renderToggleRow({
+                            title: "Download music videos",
+                            description: "Queue monitored videos for download when a service offers them. Inline placement still requires the associated stereo release group to be monitored.",
+                            checked: curationConfig?.include_videos === true,
+                            onChange: (checked) => updateCuration({ include_videos: checked }),
+                        })}
+                        <div className={styles.videoTypeHeader}>
+                            <Text weight="semibold">Video types</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                Unchecked types are skipped by download automation. Existing files are kept.
+                            </Text>
+                        </div>
+                        <div className={styles.videoTypeList}>
+                            <div className={styles.videoTypeRow}>
+                                <Checkbox
+                                    checked={curationConfig?.include_video_official !== false}
+                                    onChange={(_, data) => updateCuration({ include_video_official: Boolean(data.checked) })}
+                                    label="Official Music Video"
+                                />
+                            </div>
+                            <div className={styles.videoTypeRow}>
+                                <Checkbox
+                                    checked={curationConfig?.include_video_lyric !== false}
+                                    onChange={(_, data) => updateCuration({ include_video_lyric: Boolean(data.checked) })}
+                                    label="Official Lyric Video"
+                                />
+                            </div>
+                            <div className={styles.videoTypeRow}>
+                                <Checkbox
+                                    checked={curationConfig?.include_video_live !== false}
+                                    onChange={(_, data) => updateCuration({ include_video_live: Boolean(data.checked) })}
+                                    label="Live"
+                                />
+                            </div>
+                        </div>
+                        <RadioGroup
+                            className={styles.qualityRadioGroup}
+                            value={qualitySettings?.video_quality || 'uhd'}
+                            onChange={(_, data) => updateQualitySettings({
+                                video_quality: data.value as "sd" | "hd" | "fhd" | "uhd"
+                            })}
+                        >
+                            {videoQualityOptions.map((option) => (
+                                <label
+                                    key={option.value}
+                                    className={styles.qualityOption}
+                                    htmlFor={`video-quality-${option.value}`}
+                                >
+                                    <Radio value={option.value} id={`video-quality-${option.value}`} disabled={option.disabled} />
+                                    <div className={styles.qualityContent}>
+                                        <Text weight="semibold">{option.label}</Text>
+                                        {option.disabled ? (
+                                            <Text size={200} className={styles.mutedText}>
+                                                No connected service offers this resolution
+                                            </Text>
+                                        ) : null}
+                                    </div>
+                                </label>
+                            ))}
+                        </RadioGroup>
+                    </div>
+                </SettingsSection>
+
+                <CurationSettingsSection
+                    curationConfig={curationConfig}
+                    updating={searchingMissingAlbums}
+                    onUpdate={updateCuration}
+                    onQueueCuration={handleQueueCuration}
+                />
+
+                <SettingsSection
+                    id="monitoring"
+                    title="Monitoring"
+                    description="Automatic checks for new music and library cleanup."
+                    className={styles.section}
+                >
+                    <div className={styles.card}>
+                        {renderToggleRow({
+                            title: "Automatic monitoring",
+                            description: "Periodically look for new releases from monitored artists.",
+                            checked: monitoringConfig?.enabled || false,
+                            onChange: (checked) => updateMonitoring({ enabled: checked }),
+                        })}
+                        {renderToggleRow({
+                            title: "Upgrade when quality settings change",
+                            description: "Replace existing files if you raise the preferred quality.",
+                            checked: qualitySettings?.upgrade_existing_files ?? false,
+                            onChange: (checked) => updateQualitySettings({ upgrade_existing_files: checked }),
+                        })}
+                        {renderToggleRow({
+                            title: "Monitor newly found artists",
+                            description: "When a folder scan finds a new artist, monitor them and fill their library.",
+                            checked: monitoringConfig?.monitorNewArtists ?? false,
+                            onChange: (checked) => updateMonitoring({ monitorNewArtists: checked }),
+                        })}
+                        {renderToggleRow({
+                            title: "Remove unmonitored files",
+                            description: "Delete files for releases you no longer monitor.",
+                            checked: monitoringConfig?.removeUnmonitoredFiles || false,
+                            onChange: (checked) => updateMonitoring({ removeUnmonitoredFiles: checked }),
+                        })}
+                        <div className={styles.actionButtonRow}>
+                            <Button
+                                appearance="outline"
+                                className={styles.fullWidthButton}
+                                icon={isScanInProgress ? <Spinner size="tiny" /> : <ArrowSync24 />}
+                                onClick={async () => {
+                                    const startedAt = Date.now();
+                                    setCheckingNow(true);
+                                    dispatchActivityRefresh();
+                                    try {
+                                        const result: any = await api.triggerAllMonitoring();
+                                        dispatchActivityRefresh();
+                                        await fetchConfigs();
+                                        toast({
+                                            title: "Monitoring Cycle Queued",
+                                            description: result?.message || "The monitoring cycle has been queued.",
+                                        });
+                                    } catch (error) {
+                                        console.error("Error triggering monitoring:", error);
+                                        toast({
+                                            title: "Error",
+                                            description: "Failed to queue the monitoring cycle.",
+                                            variant: "destructive"
+                                        });
+                                    } finally {
+                                        const elapsed = Date.now() - startedAt;
+                                        if (elapsed < MIN_RUN_NOW_FEEDBACK_MS) {
+                                            await new Promise((resolve) => window.setTimeout(resolve, MIN_RUN_NOW_FEEDBACK_MS - elapsed));
+                                        }
+                                        setCheckingNow(false);
+                                    }
+                                }}
+                                disabled={isScanInProgress}
+                            >
+                                {isScanInProgress ? "Running Task..." : "Run Now"}
+                            </Button>
+                        </div>
+                    </div>
+                </SettingsSection>
 
                 <AppearanceSettingsSection
                     theme={theme}
                     onThemeChange={setTheme}
                 />
 
-                <MetadataSourceSettingsSection
-                    catalogConfig={catalogConfig}
-                    catalogTest={catalogTest}
-                    onUpdateCatalog={updateCatalog}
-                    onHostChange={(host) => setCatalogConfig((current) => (current ? { ...current, musicbrainz_host: host } : current))}
-                    onTestConnection={testCatalogConnection}
-                />
+                {isAuthActive ? (
+                    <SettingsSection
+                        id="app-access"
+                        title="App Access"
+                        description="Sign-in for this browser session."
+                        className={styles.section}
+                    >
+                        <div className={styles.card}>
+                            <div className={styles.row}>
+                                <div className={styles.rowContent}>
+                                    <Text weight="semibold">Sign out</Text>
+                                    <Text size={200} className={styles.mutedText}>
+                                        End the admin session on this device.
+                                    </Text>
+                                </div>
+                                <div className={styles.rowControl}>
+                                <Button
+                                    appearance="outline"
+                                    className={styles.signOutButton}
+                                    icon={<DoorArrowLeft24 />}
+                                    onClick={handleSignOut}
+                                >
+                                    Sign out
+                                </Button>
+                                </div>
+                            </div>
+                        </div>
+                    </SettingsSection>
+                ) : null}
 
-                <ProvidersSettingsSection
-                    providers={streamingProviders?.providers ?? []}
-                    loadFailed={providersLoadFailed}
-                    loadError={providersLoadError}
-                    fetching={providersFetching}
-                    loading={providersLoading}
-                    onRefetch={refetchStreamingProviders}
-                />
-
-                {/* About */}
                 <SettingsSection
                     id="about"
                     title="About"

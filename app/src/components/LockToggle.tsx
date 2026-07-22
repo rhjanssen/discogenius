@@ -1,5 +1,4 @@
-import React from "react";
-import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { Button, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import {
   LockClosed24Regular,
   LockOpen24Regular,
@@ -9,6 +8,7 @@ import {
 } from "@fluentui/react-icons";
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 
 const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
 const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
@@ -44,7 +44,7 @@ export const LockToggle: React.FC<LockToggleProps> = ({
         : "Lock item to prevent auto-filters from changing status";
 
     return (
-        <Tooltip content={tooltipText} relationship="label">
+        <AppTooltip content={tooltipText} relationship="label">
             <Button
                 appearance="subtle"
                 icon={<Icon />}
@@ -57,7 +57,7 @@ export const LockToggle: React.FC<LockToggleProps> = ({
                 disabled={isTogglingLock}
                 aria-label={label}
             />
-        </Tooltip>
+        </AppTooltip>
     );
 };
 

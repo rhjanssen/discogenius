@@ -1,4 +1,5 @@
 import { db } from "../../../database.js";
+import { getConfigSection } from "../../config/config.js";
 import { DiskScanService } from "../../mediafiles/library-scan.js";
 import { MoveArtistService } from "../../mediafiles/move-artist-service.js";
 import { RenameTrackFileService } from "../../mediafiles/rename-track-file-service.js";
@@ -65,7 +66,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
         });
         await DiskScanService.scan({
             addNewArtists: addNewArtists,
-            monitorNewArtists: job.payload.monitorArtist ?? true,
+            monitorNewArtists: job.payload.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists,
             fullProcessing: job.payload.fullProcessing ?? false,
             trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
             trigger: job.trigger ?? CommandTrigger.Unspecified,
@@ -185,6 +186,28 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
 };
 
 export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) => {
+    if (job.payload.stripOnly === true) {
+        ctx.updateCommandDescription(job, {
+            progress: 5,
+            description: 'Strip Tags - removing embedded metadata',
+        });
+        let result;
+        if (Array.isArray(job.payload.ids) && job.payload.ids.length > 0) {
+            result = await AudioTagService.stripTags(job.payload.ids);
+        } else {
+            result = await AudioTagService.stripTagsByScope({
+                artistId: job.payload.artistId,
+                albumId: job.payload.albumId,
+            });
+        }
+        ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);
+        ctx.updateCommandDescription(job, {
+            progress: 100,
+            description: `Stripped tags on ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
+        });
+        return;
+    }
+
     ctx.updateCommandDescription(job, {
         progress: 5,
         description: 'Retag Files - applying media tag plan',

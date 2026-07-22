@@ -254,7 +254,7 @@ export function queueRescanFoldersPass(options: {
         {
             addNewArtists: options.addNewArtists ?? false,
             artistIds: normalizeArtistIds(options.artistIds),
-            monitorArtist: options.monitorArtist ?? true,
+            monitorArtist: options.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists,
             fullProcessing: options.fullProcessing ?? false,
             trackUnmappedFiles: options.trackUnmappedFiles ?? true,
             monitoringCycle,

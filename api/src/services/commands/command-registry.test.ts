@@ -16,7 +16,9 @@ const {
   getCommandDefinition,
   getCommandTypesForQueueCategory,
   PENDING_ACTIVITY_COMMAND_NAMES,
+  resolveRefreshArtistMaxConcurrent,
 } = await import("./command-registry.js");
+const { updateConfig } = await import("../config/config.js");
 
 test("command registry exposes canonical command and task metadata", () => {
   const healthCheck = getCommandDefinition("CheckHealth");
@@ -47,4 +49,20 @@ test("command registry exposes canonical command and task metadata", () => {
   for (const pendingType of PENDING_ACTIVITY_COMMAND_NAMES) {
     assert.equal(scanTypes.has(pendingType), true, `pending activity type ${pendingType} must be in scans category`);
   }
+});
+
+test("RefreshArtist concurrency stays at 1 for Servarr and 2 for local-MB", () => {
+  const refresh = getCommandDefinition("RefreshArtist");
+  assert.equal(refresh.maxConcurrent, 1);
+  assert.equal(typeof refresh.resolveMaxConcurrent, "function");
+
+  updateConfig("catalog", { source: "servarr" });
+  assert.equal(resolveRefreshArtistMaxConcurrent(), 1);
+  assert.equal(refresh.resolveMaxConcurrent?.(), 1);
+
+  updateConfig("catalog", { source: "musicbrainz" });
+  assert.equal(resolveRefreshArtistMaxConcurrent(), 2);
+  assert.equal(refresh.resolveMaxConcurrent?.(), 2);
+
+  updateConfig("catalog", { source: "servarr" });
 });

@@ -62,6 +62,6 @@ test("preferredMergedVideoTitle keeps a shared live/venue parenthetical", () => 
   );
   assert.equal(
     preferredMergedVideoTitle("Oblivion (Lyric Video)", "Oblivion (Official Music Video)"),
-    "Oblivion",
+    "Oblivion (Lyric Video)",
   );
 });

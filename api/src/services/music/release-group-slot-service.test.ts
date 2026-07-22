@@ -1718,6 +1718,138 @@ test("equal-completeness editions: the higher-bit-depth (hi-res) release wins th
   assert.equal(stereo?.match.releaseMbid, release24);
 });
 
+test("cross-RG HIRES single cannot steal World Gone Mad from the UPC-matched LOSSLESS original", () => {
+  // Live Bastille failure: Distorted Light Beam (CamelPhat Remix) HIRES was
+  // selected for World Gone Mad because cross-RG coverage + fuzzy track match
+  // (same position, duration within 10s) beat the barcode-matched original.
+  const { db } = dbModule;
+  const artistMbid = "artist-bastille-wgm";
+  const rgWgm = "10eccf64-c8b7-4dcd-9a4c-3597bf5d6a9e";
+  const rgDlb = "aaf3e065-1a73-45f2-a0a8-312338d2de9b";
+  const releaseWgm = "6851dc15-f540-41ee-85ca-887afc84cd03";
+  const releaseDlb = "7df03d92-97f4-416c-99d6-18b10f07b44c";
+
+  db.prepare(`INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run(artistMbid, "Bastille");
+  db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
+    .run(rgWgm, artistMbid, "World Gone Mad", "Single");
+  db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
+    .run(rgDlb, artistMbid, "Distorted Light Beam", "Single");
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, barcode, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2017-11-09', '075679882431', 1, 1)
+  `).run(releaseWgm, rgWgm, artistMbid, "World Gone Mad");
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2021-06-23', 1, 1)
+  `).run(releaseDlb, rgDlb, artistMbid, "Distorted Light Beam (CamelPhat Remix)");
+
+  db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, isrcs) VALUES (?, ?, ?, ?)`)
+    .run("rec-wgm", artistMbid, "World Gone Mad", JSON.stringify(["USAT21704727"]));
+  db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, isrcs) VALUES (?, ?, ?, ?)`)
+    .run("rec-dlb", artistMbid, "Distorted Light Beam", JSON.stringify(["GBUM72104671"]));
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 1, 1, 195000)`).run("t-wgm", releaseWgm, "rec-wgm", "World Gone Mad");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 1, 1, 186000)`).run("t-dlb", releaseDlb, "rec-dlb", "Distorted Light Beam");
+
+  const matchWgm = {
+    ...buildMatch(rgWgm, "80830544"),
+    releaseMbid: releaseWgm,
+    status: "verified" as const,
+    confidence: 1,
+    method: "musicbrainz-release-upc",
+    evidence: {
+      ...buildMatch(rgWgm, "80830544").evidence,
+      providerTitle: "World Gone Mad (From Bright: The Album)",
+      upcMatched: true,
+      isrcOverlap: 1,
+      isrcCoverageMatched: true,
+      trackCountMatched: true,
+      volumeCountMatched: true,
+      targetTrackCount: 1,
+      targetVolumeCount: 1,
+      availableReleaseMbids: [releaseWgm],
+      matchedReleaseMbid: releaseWgm,
+    },
+  };
+  const matchDlb = {
+    ...buildMatch(rgDlb, "192635951"),
+    releaseMbid: releaseDlb,
+    status: "verified" as const,
+    confidence: 0.99,
+    method: "musicbrainz-release-group-title-year-type-track-count",
+    evidence: {
+      ...buildMatch(rgDlb, "192635951").evidence,
+      providerTitle: "Distorted Light Beam (CamelPhat Remix)",
+      upcMatched: false,
+      titleExpansionMatched: true,
+      trackCountMatched: true,
+      volumeCountMatched: true,
+      targetTrackCount: 1,
+      targetVolumeCount: 1,
+      availableReleaseMbids: [releaseDlb],
+      matchedReleaseMbid: releaseDlb,
+    },
+  };
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: {
+        providerId: "80830544",
+        title: "World Gone Mad (From Bright: The Album)",
+        quality: "LOSSLESS",
+        trackCount: 1,
+        volumeCount: 1,
+        tracks: [{
+          mbid: null,
+          providerId: "80830545",
+          isrc: "USAT21704727",
+          title: "World Gone Mad",
+          track_number: 1,
+          volume_number: 1,
+          duration: 196,
+        }],
+      },
+      match: matchWgm,
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "192635951",
+        title: "Distorted Light Beam (CamelPhat Remix)",
+        quality: "HIRES_LOSSLESS",
+        trackCount: 1,
+        volumeCount: 1,
+        tracks: [{
+          mbid: null,
+          providerId: "192635952",
+          isrc: "GBUM72104671",
+          title: "Distorted Light Beam",
+          track_number: 1,
+          volume_number: 1,
+          duration: 186,
+        }],
+      },
+      match: matchDlb,
+    },
+  ]);
+
+  const wgmStereo = selections.find((selection) =>
+    selection.releaseGroupMbid === rgWgm && selection.slot === "stereo"
+  );
+  assert.ok(wgmStereo, "expected a stereo slot for World Gone Mad");
+  assert.equal(wgmStereo?.album.providerId, "80830544");
+  assert.equal(wgmStereo?.match.releaseMbid, releaseWgm);
+  assert.equal(wgmStereo?.album.quality, "LOSSLESS");
+
+  const dlbStereo = selections.find((selection) =>
+    selection.releaseGroupMbid === rgDlb && selection.slot === "stereo"
+  );
+  assert.ok(dlbStereo, "expected a stereo slot for Distorted Light Beam");
+  assert.equal(dlbStereo?.album.providerId, "192635951");
+});
+
 test("cross-RG hybrid prefers the fuller MusicBrainz edition covered by two provider albums", () => {
   const { db } = dbModule;
   const artistMbid = "artist-bastille-hybrid";

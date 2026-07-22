@@ -57,6 +57,8 @@ Track materialization is the critical acquisition contract:
 | --- | --- | --- | --- | --- |
 | TIDAL | TIDAL web/API adapter; official developer docs exist but the working runtime uses the current token-backed API adapter | `tiddl` native CLI | lossless/hi-res stereo, Dolby Atmos, music videos | followed artists, playlists, favorite tracks, mixes |
 | Apple Music | Apple Music web/API adapter using the required `media-user-token`; Discogenius auto-resolves the public MusicKit bearer token like the downloader unless an override is configured | `zhaarey/apple-music-downloader` native Go CLI, gated by external decryption wrapper | AAC/lossless/hi-res ALAC, Dolby Atmos, music videos | library artists and playlists first |
+| Deezer | Deezer public catalog API + ARL session for Streamrip | Streamrip | MP3/FLAC | followed artists, playlists, favorite tracks |
+| SoundCloud | Unofficial `api-v2` client with browser `oauth_token` + public `client_id` (experimental; official OAuth 2.1 deferred) | Native progressive MP3 when entitlement allows; `yt-dlp` fallback with OAuth header/cookies | lossy only | favorite tracks, playlists |
 | YouTube Music | Unofficial YouTube Music web API via `ytmusicapi`-style clients | `yubal` as a self-hosted downloader/reference, ultimately wrapping `yt-dlp` | lossy audio (`opus`/mp3/m4a), potentially stronger video resolution than audio fidelity | library/subscriptions/playlists/liked music, depending on cookies/auth |
 
 ## Research Notes
@@ -85,6 +87,31 @@ Track materialization is the critical acquisition contract:
   YouTube Music URLs, `yt-dlp`, real-time job progress, scheduled sync, lyrics,
   and organized outputs. For Discogenius, YouTube Music should validate the
   contract's lossy-audio/video axis rather than drive new schema.
+
+## 2.6 modularity target (planning)
+
+Honest status: we have a **shared adapter contract** and per-provider folders,
+not installable plugins. Registration is compile-time.
+
+**Phase 1 (landed):** public surface at `api/src/providers/` — `streamingProviderManager`
+registry + shared types. Concrete adapters remain under
+`api/src/services/providers/<id>/`; `services/providers/index.ts` re-exports the
+public barrel for compatibility. Some core modules still import provider-private
+helpers (notably TIDAL/`tiddl` health).
+
+Goal for 2.6 (see `docs/TASKS.md` and `docs/STRUCTURE_AUDIT_2.6.md`): make each
+streaming service a separable module — logic **and** file tree — so core
+catalog/library/queue work without a given streamer. Prefer incremental moves
+toward `api/src/providers/<id>/` (or `plugins/<id>/`) with a single public entry
+(manifest + `StreamingProvider` + download-backend registration + diagnostics).
+Core may depend on the registry and shared DTOs only. Dynamic package loading
+is optional later; clear boundaries and zero core→private imports are the
+high-value bar.
+
+Lidarr parallel: `ThingiProvider` + per-implementation folders under
+`Indexers/` and `Download/Clients/` (still compiled in). Their `Plugins/`
+surface is a thinner install/version story — useful inspiration, not a
+requirement to copy .NET plugin hosts into Node for 2.6.
 
 References:
 

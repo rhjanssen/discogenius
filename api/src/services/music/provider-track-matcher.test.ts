@@ -31,8 +31,9 @@ test("MusicBrainz parenthetical qualifier the provider omits still matches", () 
   assert.ok(isTrackMatch(target({ title: "Haunt (demo)", durationSec: 180 }), provider({ title: "Haunt", durationSec: 182 })));
 });
 
-test("same position + close duration matches even with no shared title", () => {
-  // Structural streaming metadata is reliable; titles can be cosmetically rewritten.
+test("same position + close duration matches when the base title still agrees", () => {
+  // Structural streaming metadata is reliable; titles can carry cosmetic
+  // parentheticals that baseComparableTitle strips.
   const s = scoreTrackMatch(target({ title: "Intro", durationSec: 210 }), provider({ title: "Intro (Feel The Positive Flow)", durationSec: 213 }));
   assert.ok(s >= 0.9, `got ${s}`);
 });
@@ -42,6 +43,32 @@ test("two genuinely different songs at the same position with a coincidental dur
   const s = scoreTrackMatch(
     target({ title: "Pompeii", trackNumber: 1, durationSec: 210 }),
     provider({ title: "Quarter Past Midnight", trackNumber: 1, durationSec: 211 }),
+  );
+  assert.ok(s < TRACK_MATCH_THRESHOLD, `expected no match, got ${s}`);
+});
+
+test("World Gone Mad does not match Distorted Light Beam on position+duration alone", () => {
+  // Bastille: two different 1-track singles, both track #1, durations within the
+  // 10s grace (195 vs 186). Levenshtein similarity is exactly 0.3 — enough to
+  // clear the old structural guard and mark a verified HIRES cover of the wrong
+  // MusicBrainz release group.
+  const s = scoreTrackMatch(
+    target({
+      title: "World Gone Mad",
+      trackNumber: 1,
+      volumeNumber: 1,
+      durationSec: 195,
+      isrcs: new Set(["USAT21704727"]),
+      recordingMbid: "e78b4529-83ff-45d3-abad-f77d90551368",
+    }),
+    provider({
+      title: "Distorted Light Beam",
+      trackNumber: 1,
+      volumeNumber: 1,
+      durationSec: 186,
+      isrc: "GBUM72104671",
+      mbid: "a38a4da7-4657-4c33-a4df-0a8f9b92b548",
+    }),
   );
   assert.ok(s < TRACK_MATCH_THRESHOLD, `expected no match, got ${s}`);
 });

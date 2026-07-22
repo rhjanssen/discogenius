@@ -283,6 +283,10 @@ export const useDashboardStyles = makeStyles({
         color: tokens.colorPaletteRedForeground1,
         flexShrink: 0,
     },
+    downloadStatusWarningIcon: {
+        color: tokens.colorPaletteYellowForeground1,
+        flexShrink: 0,
+    },
     downloadCover: {
         width: "40px",
         height: "40px",
@@ -709,6 +713,10 @@ export const useDashboardStyles = makeStyles({
     },
     statusIconError: {
         color: tokens.colorPaletteRedForeground1,
+        flexShrink: 0,
+    },
+    statusIconWarning: {
+        color: tokens.colorPaletteYellowForeground1,
         flexShrink: 0,
     },
     statusIconNeutral: {

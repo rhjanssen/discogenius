@@ -1,10 +1,11 @@
 import React from "react";
-import { Badge, Button, Link, Tooltip, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
+import { Badge, Button, Link, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
 import { Checkmark12Filled } from "@fluentui/react-icons";
 import { QualityBadge } from "./QualityBadge";
 import { ExplicitBadge } from "./ExplicitBadge";
 import { ProviderMark } from "./ProviderMark";
-import { providerAlbumUrl, providerKey, providerMarkFor, providerVideoUrl } from "./providerMarks";
+import { providerAlbumUrl, providerKey, providerMarkFor, providerTrackUrl, providerVideoUrl } from "./providerMarks";
+import { AppTooltip } from "./AppTooltip";
 import { tidalBadgeColor, tidalBadgeColorLight } from "@/theme/theme";
 import { useTheme } from "@/providers/themeContext";
 import {
@@ -29,7 +30,11 @@ export interface ProviderQualityOffer {
     coverageSummary?: string | null;
     providerAlbumId?: string | null;
     providerAlbumIds?: string[];
+    /** Provider track/video id when the offer is track-scoped. */
+    providerTrackId?: string | null;
     selectedReleaseMbid?: string | null;
+    musicbrainzTrackId?: string | null;
+    musicbrainzRecordingId?: string | null;
     available?: boolean;
     canPreview?: boolean;
     canDownload?: boolean;
@@ -215,9 +220,6 @@ const useStyles = makeStyles({
         flexDirection: "column",
         rowGap: tokens.spacingVerticalXXS,
     },
-    tooltipContent: {
-        maxWidth: "400px",
-    },
     tooltipLink: {
         fontWeight: tokens.fontWeightSemibold,
     },
@@ -232,6 +234,7 @@ function providerDisplayName(provider?: string | null): string {
     if (normalized === "spotify") return "Spotify";
     if (normalized === "youtube" || normalized === "youtube_music" || normalized === "youtube-music") return "YouTube Music";
     if (normalized === "deezer") return "Deezer";
+    if (normalized === "soundcloud") return "SoundCloud";
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
@@ -244,6 +247,7 @@ function providerShortChipLabel(provider?: string | null): string {
     if (normalized === "spotify") return "Spotify";
     if (normalized === "youtube" || normalized === "youtube_music" || normalized === "youtube-music") return "YT";
     if (normalized === "deezer") return "Deezer";
+    if (normalized === "soundcloud") return "SC";
     return providerDisplayName(provider);
 }
 
@@ -325,9 +329,13 @@ function statusLabel(offer: ProviderQualityOffer): string {
  * Shared quality-badge tooltip used by the album header and the releases
  * switcher (and every other ProviderQualityRow). Keep one format everywhere.
  *
- *   TIDAL · Stereo · verified match
- *   TIDAL ID: 287367980          ← id is a hyperlink to the provider page
- *   MusicBrainz edition <mbid>   ← mbid is a hyperlink to musicbrainz.org
+ * Provider mark already identifies the source — do not lead with `TIDAL · …`.
+ *
+ *   Stereo · verified match
+ *   TIDAL album ID: 287367980   ← hyperlink
+ *   TIDAL track ID: 394045534   ← when known
+ *   MusicBrainz edition <mbid>
+ *   MusicBrainz track / recording when known
  */
 function buildQualityOfferTooltip(
     offer: MergedOffer,
@@ -336,26 +344,36 @@ function buildQualityOfferTooltip(
         isSelectedOffer: boolean;
         interactive: boolean;
     },
-): { content: React.ReactNode; ariaLabel: string } {
+): { content: React.ReactElement; ariaLabel: string } {
     const providerName = providerDisplayName(offer.provider);
     const providerAlbumIds = offer.providerAlbumIds?.length
         ? offer.providerAlbumIds
         : splitProviderAlbumIds(offer.providerAlbumId);
     const fillsBothLibraries = offer.slots.length > 1;
-    const summaryLine = `${providerName} · ${slotsDisplayName(offer.slots)} · ${statusLabel(offer)}`;
-    const idLabel = `${providerName} ID`;
+    const providerTrackId = String(offer.providerTrackId || "").trim();
+    const isVideo = offer.slot === "video";
+    // Video: skip redundant "Video · available" — provider mark + ID lines are enough.
+    // Audio: slot + conviction, without repeating the provider name.
+    const summaryLine = isVideo
+        ? null
+        : `${slotsDisplayName(offer.slots)} · ${statusLabel(offer)}`;
+    const albumIdLabel = isVideo ? `${providerName} ID` : `${providerName} album ID`;
+    const trackIdLabel = `${providerName} track ID`;
 
     const ariaParts = [
         summaryLine,
-        ...providerAlbumIds.map((id) => `${idLabel}: ${id}`),
+        ...providerAlbumIds.map((id) => `${albumIdLabel}: ${id}`),
+        providerTrackId ? `${trackIdLabel}: ${providerTrackId}` : null,
         offer.selectedReleaseMbid ? `MusicBrainz edition ${offer.selectedReleaseMbid}` : null,
+        offer.musicbrainzTrackId ? `MusicBrainz track ${offer.musicbrainzTrackId}` : null,
+        offer.musicbrainzRecordingId ? `MusicBrainz recording ${offer.musicbrainzRecordingId}` : null,
         fillsBothLibraries
             ? "Same release fills both libraries (no separate stereo release available)"
             : null,
-        offer.slot === "video" && offer.canPreview === false && offer.canDownload !== false
+        isVideo && offer.canPreview === false && offer.canDownload !== false
             ? "Download available; remote preview is not supported by this provider."
             : null,
-        offer.slot === "video" && offer.canDownload === false
+        isVideo && offer.canDownload === false
             ? "Video download is not supported by this provider."
             : null,
         options.interactive
@@ -365,14 +383,14 @@ function buildQualityOfferTooltip(
 
     const content = (
         <div className={options.styles.tooltipBody}>
-            <span>{summaryLine}</span>
+            {summaryLine ? <span>{summaryLine}</span> : null}
             {providerAlbumIds.map((id) => {
-                const href = offer.slot === "video"
+                const href = isVideo
                     ? providerVideoUrl(offer.provider, id)
                     : providerAlbumUrl(offer.provider, id);
                 return (
                     <span key={id}>
-                        {idLabel}:{" "}
+                        {albumIdLabel}:{" "}
                         {href ? (
                             <Link
                                 href={href}
@@ -387,6 +405,25 @@ function buildQualityOfferTooltip(
                     </span>
                 );
             })}
+            {providerTrackId ? (
+                <span>
+                    {trackIdLabel}:{" "}
+                    {(() => {
+                        const href = providerTrackUrl(offer.provider, providerTrackId);
+                        return href ? (
+                            <Link
+                                href={href}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className={options.styles.tooltipLink}
+                                onClick={(event) => event.stopPropagation()}
+                            >
+                                {providerTrackId}
+                            </Link>
+                        ) : providerTrackId;
+                    })()}
+                </span>
+            ) : null}
             {offer.selectedReleaseMbid ? (
                 <span>
                     MusicBrainz edition{" "}
@@ -401,13 +438,41 @@ function buildQualityOfferTooltip(
                     </Link>
                 </span>
             ) : null}
+            {offer.musicbrainzTrackId ? (
+                <span>
+                    MusicBrainz track{" "}
+                    <Link
+                        href={`https://musicbrainz.org/track/${offer.musicbrainzTrackId}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className={options.styles.tooltipLink}
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        {offer.musicbrainzTrackId}
+                    </Link>
+                </span>
+            ) : null}
+            {offer.musicbrainzRecordingId ? (
+                <span>
+                    MusicBrainz recording{" "}
+                    <Link
+                        href={`https://musicbrainz.org/recording/${offer.musicbrainzRecordingId}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className={options.styles.tooltipLink}
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        {offer.musicbrainzRecordingId}
+                    </Link>
+                </span>
+            ) : null}
             {fillsBothLibraries ? (
                 <span>Same release fills both libraries (no separate stereo release available)</span>
             ) : null}
-            {offer.slot === "video" && offer.canPreview === false && offer.canDownload !== false ? (
+            {isVideo && offer.canPreview === false && offer.canDownload !== false ? (
                 <span>Download available; remote preview is not supported by this provider.</span>
             ) : null}
-            {offer.slot === "video" && offer.canDownload === false ? (
+            {isVideo && offer.canDownload === false ? (
                 <span>Video download is not supported by this provider.</span>
             ) : null}
             {options.interactive ? (
@@ -503,7 +568,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
         // Quality badges already carry provider / slot / match detail. Keep the
         // provider mark tooltip to the brand name only.
         return (
-            <Tooltip
+            <AppTooltip
                 key={`p-${groupIndex}`}
                 withArrow
                 relationship="label"
@@ -520,7 +585,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                         {pill}
                     </Link>
                 ) : pill}
-            </Tooltip>
+            </AppTooltip>
         );
     };
 
@@ -545,7 +610,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                 ? styles.videoOfferChipLarge
                 : styles.videoOfferChipMedium;
         const badge = hasKnownQuality
-            ? <QualityBadge quality={String(offer.quality)} size={size} className={styles.badge} />
+            ? <QualityBadge quality={String(offer.quality)} size={size} className={styles.badge} showTooltip={false} />
             : offer.slot === "video"
                 ? (
                     <Badge
@@ -577,14 +642,11 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
         }
 
         return (
-            <Tooltip
+            <AppTooltip
                 key={`q-${groupIndex}-${offerIndex}`}
                 withArrow
                 relationship="description"
-                content={{
-                    children: tooltipContent,
-                    className: styles.tooltipContent,
-                }}
+                content={tooltipContent}
             >
                 {onSelectOffer ? (
                     <Button
@@ -614,7 +676,7 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                         {explicitMark}
                     </span>
                 )}
-            </Tooltip>
+            </AppTooltip>
         );
     };
 

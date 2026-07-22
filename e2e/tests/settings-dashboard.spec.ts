@@ -12,12 +12,34 @@ test.describe('Settings page', () => {
     await expect(page.locator('main')).toBeVisible();
 
     await expect(page.getByRole('main').getByText('Settings', { exact: true })).toBeVisible();
-    await expect(page.locator('#audio-quality').getByText('Audio Quality', { exact: true })).toBeVisible();
-    await expect(page.locator('#video-quality').getByText('Video Quality', { exact: true })).toBeVisible();
+    await expect(page.locator('#media-management')).toBeVisible();
+    await expect(page.locator('#streaming-providers').getByText('Streaming Providers', { exact: true })).toBeVisible();
+    await expect(page.locator('#metadata-source')).toBeVisible();
+    await expect(page.locator('#metadata')).toBeVisible();
+    await expect(page.locator('#audio-quality')).toBeVisible();
+    await expect(page.locator('#video-quality')).toBeVisible();
     await expect(page.locator('#curation').getByText('Curation', { exact: true })).toBeVisible();
     await expect(page.locator('#monitoring').getByText('Monitoring', { exact: true })).toBeVisible();
-    await expect(page.locator('#streaming-providers').getByText('Streaming Providers', { exact: true })).toBeVisible();
+    await expect(page.locator('#appearance').getByText('Appearance', { exact: true })).toBeVisible();
     await expect(page.locator('#about').getByText('About', { exact: true })).toBeVisible();
+
+    // Subject-flow order (app-access is conditional and omitted here).
+    const sectionOrder = await page.locator('[data-testid="settings-sections"] > section[id]').evaluateAll(
+      (elements) => elements.map((el) => el.id),
+    );
+    const expectedOrder = [
+      'media-management',
+      'streaming-providers',
+      'metadata-source',
+      'metadata',
+      'audio-quality',
+      'video-quality',
+      'curation',
+      'monitoring',
+      'appearance',
+      'about',
+    ];
+    expect(sectionOrder.filter((id) => id !== 'app-access')).toEqual(expectedOrder);
   });
 
   test('uses masonry-style layout for settings sections', async ({ page }) => {

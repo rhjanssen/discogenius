@@ -37,6 +37,12 @@ export interface LibraryFileContract {
   bit_depth?: number;
   channels?: number;
   codec?: string;
+  /** Video stream codec (h264/hevc/av1/…) when the file is a music video. */
+  video_codec?: string;
+  /** Probed video frame width in pixels. */
+  width?: number;
+  /** Probed video frame height in pixels. */
+  height?: number;
   duration?: number;
   qualityTarget?: string | null;
   qualityChangeWanted?: boolean;
@@ -86,6 +92,11 @@ export interface TrackRemoteOfferContract {
   provider: string;
   providerAlbumId: string;
   quality: string | null;
+  /** Slot match conviction from ReleaseGroupSlots (verified / probable / …). */
+  matchStatus?: string | null;
+  selectedReleaseMbid?: string | null;
+  /** Provider track id when known for this slot. */
+  providerTrackId?: string | null;
 }
 
 export interface AlbumCardContract {
@@ -171,6 +182,33 @@ export interface VideoAlbumRefContract {
   media_count?: number | null;
 }
 
+/**
+ * Music video associated with an album via provider_video_for (or an on-RG
+ * video track), including the audio track it belongs to for album UX.
+ */
+export interface AlbumAssociatedVideoContract {
+  id: string;
+  title: string;
+  cover?: string | null;
+  cover_id?: string | null;
+  cover_art_url?: string | null;
+  video_variant?: string | null;
+  explicit?: boolean;
+  release_date?: string | null;
+  is_monitored: boolean;
+  monitored_lock: boolean;
+  downloaded: boolean;
+  is_downloaded: boolean;
+  /** MusicBrainz track MBID of the related audio (or video) track on this album. */
+  track_mbid?: string | null;
+  /** Display title of the related album track. */
+  track_title?: string | null;
+  track_number?: number | null;
+  volume_number?: number | null;
+  /** Audio recording MBID when linked via provider_video_for. */
+  audio_recording_mbid?: string | null;
+}
+
 export interface VideoDetailContract {
   id: string;
   title: string;
@@ -237,6 +275,9 @@ function parseLibraryFileContract(value: unknown, indexLabel: string): LibraryFi
     bit_depth: expectOptionalNumber(record.bit_depth, `${indexLabel}.bit_depth`),
     channels: expectOptionalNumber(record.channels, `${indexLabel}.channels`),
     codec: expectOptionalString(record.codec, `${indexLabel}.codec`),
+    video_codec: expectOptionalString(record.video_codec, `${indexLabel}.video_codec`),
+    width: expectOptionalNumber(record.width, `${indexLabel}.width`),
+    height: expectOptionalNumber(record.height, `${indexLabel}.height`),
     duration: expectOptionalNumber(record.duration, `${indexLabel}.duration`),
     qualityTarget: expectNullableString(record.qualityTarget, `${indexLabel}.qualityTarget`),
     qualityChangeWanted: expectOptionalBoolean(record.qualityChangeWanted, `${indexLabel}.qualityChangeWanted`),
@@ -284,6 +325,9 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
             provider: expectString(offerRecord.provider, `${offerLabel}.provider`),
             providerAlbumId: expectString(offerRecord.providerAlbumId, `${offerLabel}.providerAlbumId`),
             quality: expectNullableString(offerRecord.quality, `${offerLabel}.quality`) ?? null,
+            matchStatus: expectOptionalString(offerRecord.matchStatus, `${offerLabel}.matchStatus`) ?? null,
+            selectedReleaseMbid: expectOptionalString(offerRecord.selectedReleaseMbid, `${offerLabel}.selectedReleaseMbid`) ?? null,
+            providerTrackId: expectOptionalString(offerRecord.providerTrackId, `${offerLabel}.providerTrackId`) ?? null,
           };
         }),
     artist_name: expectOptionalString(record.artist_name, `${label}.artist_name`),
@@ -316,6 +360,34 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
 
 export function parseAlbumTracksContract(value: unknown): AlbumTrackContract[] {
   return expectArray(value, "Album tracks", parseAlbumTrackContract);
+}
+
+function parseAlbumAssociatedVideoContract(value: unknown, index: number): AlbumAssociatedVideoContract {
+  const label = `albumAssociatedVideos[${index}]`;
+  const record = expectRecord(value, label);
+  return {
+    id: expectString(record.id, `${label}.id`),
+    title: expectString(record.title, `${label}.title`),
+    cover: expectNullableString(record.cover, `${label}.cover`),
+    cover_id: expectNullableString(record.cover_id, `${label}.cover_id`),
+    cover_art_url: expectNullableString(record.cover_art_url, `${label}.cover_art_url`),
+    video_variant: expectNullableString(record.video_variant, `${label}.video_variant`),
+    explicit: expectOptionalBoolean(record.explicit, `${label}.explicit`),
+    release_date: expectNullableString(record.release_date, `${label}.release_date`),
+    is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
+    monitored_lock: expectOptionalBoolean(record.monitored_lock, `${label}.monitored_lock`) ?? false,
+    downloaded: expectBoolean(record.downloaded, `${label}.downloaded`),
+    is_downloaded: expectBoolean(record.is_downloaded, `${label}.is_downloaded`),
+    track_mbid: expectNullableString(record.track_mbid, `${label}.track_mbid`),
+    track_title: expectNullableString(record.track_title, `${label}.track_title`),
+    track_number: expectOptionalNumber(record.track_number, `${label}.track_number`) ?? null,
+    volume_number: expectOptionalNumber(record.volume_number, `${label}.volume_number`) ?? null,
+    audio_recording_mbid: expectNullableString(record.audio_recording_mbid, `${label}.audio_recording_mbid`),
+  };
+}
+
+export function parseAlbumAssociatedVideosContract(value: unknown): AlbumAssociatedVideoContract[] {
+  return expectArray(value, "Album associated videos", parseAlbumAssociatedVideoContract);
 }
 
 function parseAlbumListItemContract<T extends AlbumCardContract | AlbumVersionContract>(

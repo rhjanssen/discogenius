@@ -293,7 +293,7 @@ export class ImportService {
         const { db } = await import("../../database.js");
         const { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord } = await import("../config/naming.js");
         const { resolveArtistFolderForPersistence } = await import("../music/artist-paths.js");
-        const { deriveQuality, calculateFingerprint } = await import("./audioUtils.js");
+        const { deriveQuality, calculateFingerprint, parseAudioFile } = await import("./audioUtils.js");
 
         const namingConfig = getNamingConfig();
 
@@ -320,7 +320,7 @@ export class ImportService {
                 file_path, relative_path, library_root,
                 filename, extension, file_size, duration,
                 file_type, quality, needs_rename,
-                bit_depth, sample_rate, bitrate, codec, channels,
+                bit_depth, sample_rate, bitrate, codec, video_codec, channels, width, height,
                 naming_template, expected_path,
                 original_filename, release_group, fingerprint,
                 modified_at, verified_at
@@ -330,7 +330,7 @@ export class ImportService {
                 @filePath, @relativePath, @libraryRoot,
                 @filename, @extension, @fileSize, @duration,
                 @fileType, @quality, @needsRename,
-                @bitDepth, @sampleRate, @bitrate, @codec, @channels,
+                @bitDepth, @sampleRate, @bitrate, @codec, @videoCodec, @channels, @width, @height,
                 @namingTemplate, @expectedPath,
                 @originalFilename, @releaseGroup, @fingerprint,
                 @modifiedAt, CURRENT_TIMESTAMP
@@ -354,7 +354,10 @@ export class ImportService {
                 sample_rate = excluded.sample_rate,
                 bitrate = excluded.bitrate,
                 codec = excluded.codec,
+                video_codec = COALESCE(excluded.video_codec, video_codec),
                 channels = excluded.channels,
+                width = COALESCE(excluded.width, width),
+                height = COALESCE(excluded.height, height),
                 naming_template = excluded.naming_template,
                 expected_path = excluded.expected_path,
                 original_filename = excluded.original_filename,
@@ -391,7 +394,10 @@ export class ImportService {
                 sample_rate = @sampleRate,
                 bitrate = @bitrate,
                 codec = @codec,
+                video_codec = COALESCE(@videoCodec, video_codec),
                 channels = @channels,
+                width = COALESCE(@width, width),
+                height = COALESCE(@height, height),
                 naming_template = @namingTemplate,
                 expected_path = @expectedPath,
                 original_filename = @originalFilename,
@@ -612,13 +618,17 @@ export class ImportService {
                     const expectedPath = path.join(rootPath, expectedRelPath);
 
                     const format = (file.metadata?.format || {}) as any;
+                    const probed = await parseAudioFile(file.path);
                     const metrics = {
-                        bitrate: format.bitrate,
-                        sampleRate: format.sampleRate,
-                        bitDepth: format.bitsPerSample,
-                        codec: format.codec,
-                        channels: format.numberOfChannels,
-                        duration: format.duration
+                        bitrate: probed.bitrate ?? format.bitrate,
+                        sampleRate: probed.sampleRate ?? format.sampleRate,
+                        bitDepth: probed.bitDepth ?? format.bitsPerSample,
+                        codec: probed.codec ?? format.codec,
+                        videoCodec: probed.videoCodec || null,
+                        channels: probed.channels ?? format.numberOfChannels,
+                        width: probed.width || null,
+                        height: probed.height || null,
+                        duration: probed.duration ?? format.duration,
                     };
 
                     const releaseGroup = extractReleaseGroup(file.name);
@@ -645,7 +655,10 @@ export class ImportService {
                         sampleRate: metrics.sampleRate || null,
                         bitrate: metrics.bitrate || null,
                         codec: metrics.codec || null,
+                        videoCodec: metrics.videoCodec || null,
                         channels: metrics.channels || null,
+                        width: metrics.width || null,
+                        height: metrics.height || null,
                         namingTemplate: videoTemplate,
                         expectedPath,
                         originalFilename: file.name,
@@ -881,7 +894,10 @@ export class ImportService {
                         sampleRate: metrics.sampleRate || null,
                         bitrate: metrics.bitrate || null,
                         codec: metrics.codec || null,
+                        videoCodec: null,
                         channels: metrics.channels || null,
+                        width: null,
+                        height: null,
                         namingTemplate: fullPathTemplate,
                         expectedPath,
                         originalFilename: file.name,

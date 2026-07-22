@@ -62,18 +62,42 @@ function durationSeconds(raw: UnknownRecord): number {
 
 function imageFrom(raw: UnknownRecord): string | null {
   const direct = nullableText(raw.picture, raw.cover, raw.image, raw.thumbnailUrl);
-  if (direct) return direct;
+  if (direct) return normalizeYouTubeThumb(direct);
   const thumbnailContainer = record(raw.thumbnail);
   const thumbnails = records(raw.thumbnails).length > 0
     ? records(raw.thumbnails)
     : records(thumbnailContainer.thumbnails);
   if (thumbnails.length === 0) return null;
+  // Prefer landscape (16:9 / 3:2) over square crops even when the square is larger.
   const sorted = [...thumbnails].sort((left, right) => {
-    const leftSize = (numeric(left.width) ?? 0) * (numeric(left.height) ?? 0);
-    const rightSize = (numeric(right.width) ?? 0) * (numeric(right.height) ?? 0);
-    return rightSize - leftSize;
+    const leftW = numeric(left.width) ?? 0;
+    const leftH = numeric(left.height) ?? 0;
+    const rightW = numeric(right.width) ?? 0;
+    const rightH = numeric(right.height) ?? 0;
+    const leftLandscape = leftW > leftH ? 1 : 0;
+    const rightLandscape = rightW > rightH ? 1 : 0;
+    if (leftLandscape !== rightLandscape) return rightLandscape - leftLandscape;
+    return (rightW * rightH) - (leftW * leftH);
   });
-  return nullableText(sorted[0]?.url);
+  return normalizeYouTubeThumb(nullableText(sorted[0]?.url));
+}
+
+/** Strip YouTube UI `sqp=` center-crops; keep a full-frame hq720 still. */
+function normalizeYouTubeThumb(url: string | null): string | null {
+  if (!url) return null;
+  const match = url.match(/^https?:\/\/i\.ytimg\.com\/vi\/([^/?#]+)\//i);
+  if (!match) return url;
+  if (/[?&]sqp=/i.test(url) || !/\/(maxresdefault|hq720|sddefault|hqdefault)\.jpg/i.test(url)) {
+    return `https://i.ytimg.com/vi/${match[1]}/hq720.jpg`;
+  }
+  try {
+    const parsed = new URL(url);
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return `https://i.ytimg.com/vi/${match[1]}/hq720.jpg`;
+  }
 }
 
 function releaseDate(raw: UnknownRecord): string | null {
@@ -233,14 +257,17 @@ export function mapYouTubeMusicTrack(
 
 /**
  * YouTube Music tags every entry with a `videoType`:
- *   OMV                   – Original Music Video (a real music video)
+ *   OMV                   – Original Music Video (includes official lyric videos;
+ *                           there is no separate OLV type)
  *   OFFICIAL_SOURCE_MUSIC – official video content (live sets, medleys)
  *   ATV                   – audio-only "song" with a cover image, NOT a video
  *   UGC                   – user-generated upload (fan videos, lyric rips)
- * Only the first two are music videos. Without this filter an unauthenticated
- * YouTube refresh injects lyric videos, fan uploads and audio-only tracks into
- * the video library. Entries with no videoType are kept (older payloads omit it)
- * so we never silently drop a legitimate video.
+ * Only OMV / OFFICIAL_SOURCE_MUSIC are kept as music videos. Without this filter
+ * an unauthenticated YouTube refresh injects fan uploads and audio-only tracks
+ * into the video library. Entries with no videoType are kept (older payloads omit
+ * it) so we never silently drop a legitimate video.
+ * Official lyric cuts still arrive as OMV with bare YTM titles — the Python bridge
+ * upgrades titles from youtube.com oEmbed when cut labels are present there.
  */
 export function isYouTubeMusicVideoType(videoType: string | null | undefined): boolean {
   const normalized = String(videoType ?? "").trim().toUpperCase();

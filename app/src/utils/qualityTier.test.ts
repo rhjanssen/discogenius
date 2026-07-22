@@ -109,6 +109,9 @@ describe("qualityDescription", () => {
 
   it("describes spatial and video qualities distinctly", () => {
     expect(qualityDescription("DOLBY_ATMOS")).toMatch(/Atmos/);
-    expect(qualityDescription("MP4_1080P")).toMatch(/FHD|1080/);
+    expect(qualityDescription("MP4_1080P")).toBe("Full HD · 1080p");
+    expect(qualityDescription("2160P")).toBe("Ultra HD · 2160p");
+    expect(qualityDescription("MP4_360P")).toBe("SD · 360p");
+    expect(qualityDescription("FHD")).toBe("Full HD · 1080p");
   });
 });

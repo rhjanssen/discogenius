@@ -10,6 +10,9 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const {
     parseTiddlProgressEvent,
     tiddlProgressEventToDownloadProgress,
+    looksLikeTiddlTraceChrome,
+    looksLikeTiddlExceptionLine,
+    extractTiddlErrorDetail,
 } = await import("./tiddl-backend.js");
 
 test("parseTiddlProgressEvent extracts wrapper JSON after noisy stderr text", () => {
@@ -67,4 +70,37 @@ test("tiddlProgressEventToDownloadProgress maps item-result skips without losing
     assert.equal(progress.trackProgress, 100);
     assert.equal(progress.trackStatus, "skipped");
     assert.equal(progress.statusMessage, "Skipped Pompeii");
+});
+
+test("looksLikeTiddlTraceChrome rejects Rich box headers and borders", () => {
+    assert.equal(looksLikeTiddlTraceChrome("╭──────────────── Traceback (most recent call last) ─────────────────╮"), true);
+    assert.equal(looksLikeTiddlTraceChrome("╰────────────────────────────────────────────────────────────────────╯"), true);
+    assert.equal(looksLikeTiddlTraceChrome("│"), true);
+    assert.equal(looksLikeTiddlTraceChrome("Traceback (most recent call last):"), true);
+    assert.equal(looksLikeTiddlTraceChrome("AttributeError: 'NoneType' object is not iterable"), false);
+    assert.equal(looksLikeTiddlExceptionLine("AttributeError: 'NoneType' object is not iterable"), true);
+    assert.equal(looksLikeTiddlExceptionLine("Error: 'NoneType' object is not iterable (video/93036258)"), true);
+    assert.equal(looksLikeTiddlExceptionLine("╭── Traceback ──╮"), false);
+});
+
+test("extractTiddlErrorDetail prefers first real exception over Rich chrome", () => {
+    const detail = extractTiddlErrorDetail([
+        "╭──────────────── Traceback (most recent call last) ─────────────────╮",
+        "│ /opt/tiddl-venv/lib/python3.13/site-packages/tiddl/core/metadata/video.py:12 in add_video_metadata │",
+        "╰────────────────────────────────────────────────────────────────────╯",
+        "AttributeError: 'NoneType' object is not iterable",
+    ]);
+    assert.equal(detail, "AttributeError: 'NoneType' object is not iterable");
+});
+
+test("extractTiddlErrorDetail falls back to last useful stderr lines when no exception", () => {
+    const detail = extractTiddlErrorDetail([
+        "╭── Traceback ──╮",
+        "loading config",
+        "auth ok",
+        "starting download",
+        "connection reset by peer",
+    ]);
+    assert.match(detail, /connection reset by peer/);
+    assert.doesNotMatch(detail, /╭/);
 });

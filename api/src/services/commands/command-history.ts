@@ -588,6 +588,19 @@ const parseSqliteDate = (value: unknown) => {
 };
 
 export const mapJob = (job: CommandModel, options: { queuePosition?: number; descriptionContext?: DescriptionLookupContext } = {}) => {
+    const downloadState = job.payload?.downloadState && typeof job.payload.downloadState === "object"
+        ? job.payload.downloadState as Record<string, unknown>
+        : null;
+    const outcomeRaw = typeof downloadState?.outcome === "string" ? downloadState.outcome : undefined;
+    const outcome = outcomeRaw === "ok" || outcomeRaw === "completedWithWarning"
+        ? outcomeRaw as "ok" | "completedWithWarning"
+        : undefined;
+    const warningMessage = typeof downloadState?.warningMessage === "string"
+        ? downloadState.warningMessage
+        : (typeof downloadState?.statusMessage === "string" && outcome === "completedWithWarning"
+            ? downloadState.statusMessage
+            : null);
+
     const payload = job.payload && typeof job.payload === "object"
         ? {
             providerId: job.ref_id || job.payload.providerId,
@@ -599,6 +612,17 @@ export const mapJob = (job: CommandModel, options: { queuePosition?: number; des
             reason: job.payload.reason,
             files: Array.isArray(job.payload.files) ? job.payload.files : undefined,
             originalJobId: job.payload.originalJobId,
+            outcome,
+            warningMessage,
+            downloadState: downloadState
+                ? {
+                    outcome,
+                    warningMessage,
+                    statusMessage: typeof downloadState.statusMessage === "string"
+                        ? downloadState.statusMessage
+                        : undefined,
+                }
+                : undefined,
             resolved: job.payload.resolved
                 ? {
                     title: job.payload.resolved.title,
@@ -620,6 +644,8 @@ export const mapJob = (job: CommandModel, options: { queuePosition?: number; des
         error: job.error,
         trigger: job.trigger ?? CommandTrigger.Unspecified,
         queuePosition: options.queuePosition,
+        outcome,
+        warningMessage,
         payload,
     };
 };
@@ -784,7 +810,7 @@ function toTaskEventTimestamp(job: TaskEventProjectionRow): number {
     return parseSqliteDate(job.completed_at) ?? parseSqliteDate(job.started_at) ?? parseSqliteDate(job.created_at) ?? 0;
 }
 
-function getTaskEventLevel(status: ActivityStatus): ActivityEventLevel {
+function getTaskEventLevel(status: ActivityStatus, outcome?: string | null): ActivityEventLevel {
     if (status === "failed") {
         return "error";
     }
@@ -793,15 +819,26 @@ function getTaskEventLevel(status: ActivityStatus): ActivityEventLevel {
         return "warning";
     }
 
+    if (status === "completed" && outcome === "completedWithWarning") {
+        return "warning";
+    }
+
     return "info";
 }
 
 function getTaskEventMessage(job: TaskEventProjectionRow, context?: DescriptionLookupContext): string {
+    const payload = parseTaskPayload(job.payload);
     const description = buildDescription({
         ...job,
         trigger: job.trigger ?? CommandTrigger.Unspecified,
-        payload: parseTaskPayload(job.payload),
+        payload,
     } as unknown as CommandModel, context);
+    const downloadState = payload.downloadState && typeof payload.downloadState === "object"
+        ? payload.downloadState as Record<string, unknown>
+        : null;
+    const warningMessage = typeof downloadState?.warningMessage === "string"
+        ? downloadState.warningMessage.trim()
+        : "";
 
     if (job.status === "queued") {
         return `Queued: ${description}`;
@@ -812,6 +849,9 @@ function getTaskEventMessage(job: TaskEventProjectionRow, context?: DescriptionL
     }
 
     if (job.status === "completed") {
+        if (downloadState?.outcome === "completedWithWarning" && warningMessage) {
+            return `Completed with warning: ${description} (${warningMessage})`;
+        }
         return `Completed: ${description}`;
     }
 
@@ -904,14 +944,21 @@ function mapTaskEventRows(rows: readonly TaskEventProjectionRow[], context: Desc
         payload: parseTaskPayload(row.payload),
     })) as Array<Pick<CommandModel, "name" | "ref_id" | "payload">>, context);
 
-    return rows.map((job): ActivityEventLogItem => ({
-        id: `task:${job.id}`,
-        time: toTaskEventTimestamp(job),
-        level: getTaskEventLevel(job.status),
-        component: `task.${job.name}`,
-        message: getTaskEventMessage(job, context),
-        source: "task",
-    }));
+    return rows.map((job): ActivityEventLogItem => {
+        const payload = parseTaskPayload(job.payload);
+        const downloadState = payload.downloadState && typeof payload.downloadState === "object"
+            ? payload.downloadState as Record<string, unknown>
+            : null;
+        const outcome = typeof downloadState?.outcome === "string" ? downloadState.outcome : null;
+        return {
+            id: `task:${job.id}`,
+            time: toTaskEventTimestamp(job),
+            level: getTaskEventLevel(job.status, outcome),
+            component: `task.${job.name}`,
+            message: getTaskEventMessage(job, context),
+            source: "task",
+        };
+    });
 }
 
 function mapHistoryEventRows(rows: readonly HistoryEventFeedItem[]): ActivityEventLogItem[] {

@@ -514,3 +514,88 @@ test("video detail prefers provider title when recording title is Unknown Video"
   const list = videoQueryModule.listVideos({ limit: 10, offset: 0 });
   assert.equal(list.items[0]?.title, "Happy Endings");
 });
+
+test("album associated videos follow provider_video_for audio tracks on the RG", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-mbid', 'Video Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('artist-mbid', 'artist-mbid', 'Video Artist')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('rg-assoc', 'artist-mbid', 'Associated Album', 'album')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
+    VALUES ('rel-assoc', 'rg-assoc', 'artist-mbid', 'Associated Album', '2024-01-01', 2, 1)
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
+    ) VALUES ('artist-mbid', 'rg-assoc', 'stereo', 1, 'rel-assoc')
+  `).run();
+
+  const audio = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-audio-assoc', ?, 'artist-mbid', 'Oblivion', 0, 'complete')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, recording_id,
+      medium_position, position, number, title
+    ) VALUES ('track-assoc-1', 'rel-assoc', 'rec-audio-assoc', ?, 1, 4, '4', 'Oblivion')
+  `).run(audio.id);
+
+  const video = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status, monitored
+    ) VALUES (?, 'artist-mbid', 'Oblivion', 1, 'official', 'provider_only', 1)
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_id, title, quality
+    ) VALUES ('tidal', 'video', 'assoc-video-1', 'artist-mbid', ?, 'Oblivion', 'FHD')
+  `).run(video.id);
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (?, ?, 'provider_video_for', 'tidal', 0.95)
+  `).run(video.id, audio.id);
+
+  // Orphan video for another album — must not appear on this RG.
+  const otherAudio = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-other-audio', ?, 'artist-mbid', 'Other Song', 0, 'complete')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const orphanVideo = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES (?, 'artist-mbid', 'Orphan Video', 1, 'provider_only')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (?, ?, 'provider_video_for', 'tidal', 0.9)
+  `).run(orphanVideo.id, otherAudio.id);
+
+  const associated = videoQueryModule.getAlbumAssociatedVideos("rg-assoc");
+  assert.equal(associated.length, 1);
+  assert.equal(associated[0]?.id, String(video.id));
+  assert.equal(associated[0]?.title, "Oblivion");
+  assert.equal(associated[0]?.track_mbid, "track-assoc-1");
+  assert.equal(associated[0]?.track_title, "Oblivion");
+  assert.equal(associated[0]?.track_number, 4);
+  assert.equal(associated[0]?.volume_number, 1);
+  assert.equal(associated[0]?.audio_recording_mbid, "rec-audio-assoc");
+  assert.equal(associated[0]?.is_monitored, true);
+});

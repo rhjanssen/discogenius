@@ -3,6 +3,7 @@ import { db, runWithAsyncBusyRetry } from "../../database.js";
 import { CommandNames } from "../../services/commands/command-names.js";
 import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
+import { deleteVideoLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { getVideoDetail, listVideos } from "../../services/music/video-query-service.js";
 import {
   getObjectBody,
@@ -121,6 +122,22 @@ router.post("/", async (req, res) => {
   }
 });
 
+
+/**
+ * Manage → Delete library files for a video (disk + TrackFiles). Keeps catalog Recording.
+ */
+router.delete("/:videoId/files", (req, res) => {
+  try {
+    const result = deleteVideoLibraryFiles(req.params.videoId);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    if (error?.status === 404) {
+      return res.status(404).json({ detail: error.message || "Video not found" });
+    }
+    console.error(`[Videos] Failed to delete video files:`, error);
+    res.status(500).json({ detail: error.message });
+  }
+});
 
 // Update video (toggle monitoring, etc.)
 router.patch("/:videoId", (req, res) => {

@@ -1,5 +1,5 @@
 import type { MouseEvent } from "react";
-import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { Button, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import {
   ArrowDownload24Regular,
   Eye24Regular,
@@ -19,6 +19,7 @@ import {
   bundleIcon
 } from "@fluentui/react-icons";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
@@ -77,7 +78,7 @@ export function TrackRowActions({
   return (
     <div className={mergeClasses(styles.root, className)}>
       {onPlay ? (
-        <Tooltip content={isPlaying ? "Stop" : "Play"} relationship="label">
+        <AppTooltip content={isPlaying ? "Stop" : "Play"} relationship="label">
           <Button
             appearance="subtle"
             aria-label={isPlaying ? "Stop track" : "Play track"}
@@ -86,11 +87,11 @@ export function TrackRowActions({
             onClick={onPlay}
             className={styles.actionButton}
           />
-        </Tooltip>
+        </AppTooltip>
       ) : null}
 
       {onToggleMonitor ? (
-        <Tooltip
+        <AppTooltip
           content={isLocked ? "Unlock to change" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
           relationship="label"
         >
@@ -102,11 +103,11 @@ export function TrackRowActions({
             onClick={onToggleMonitor}
             className={styles.actionButton}
           />
-        </Tooltip>
+        </AppTooltip>
       ) : null}
 
       {onToggleLock ? (
-        <Tooltip content={isLocked ? "Unlock" : "Lock"} relationship="label">
+        <AppTooltip content={isLocked ? "Unlock" : "Lock"} relationship="label">
           <Button
             appearance="subtle"
             icon={isLocked ? <LockOpen24 /> : <LockClosed24 />}
@@ -114,13 +115,13 @@ export function TrackRowActions({
             onClick={onToggleLock}
             className={styles.actionButton}
           />
-        </Tooltip>
+        </AppTooltip>
       ) : null}
 
       {/* One trailing action that toggles by state: a download button until the
           track is downloaded, then a file-info button (no kebab, no checkmark). */}
       {(isDownloaded || canShowInfo) ? (
-        <Tooltip content="Track info" relationship="label">
+        <AppTooltip content="Track info" relationship="label">
           <Button
             appearance="subtle"
             icon={<Info24 />}
@@ -128,9 +129,9 @@ export function TrackRowActions({
             onClick={onShowInfo}
             className={styles.actionButton}
           />
-        </Tooltip>
+        </AppTooltip>
       ) : showDownload ? (
-        <Tooltip content={onDownload ? "Download track" : "No provider offer available"} relationship="label">
+        <AppTooltip content={onDownload ? "Download track" : "No provider offer available"} relationship="label">
           <Button
             appearance="subtle"
             aria-label="Download track"
@@ -140,7 +141,7 @@ export function TrackRowActions({
             onClick={onDownload}
             className={styles.actionButton}
           />
-        </Tooltip>
+        </AppTooltip>
       ) : null}
     </div>
   );

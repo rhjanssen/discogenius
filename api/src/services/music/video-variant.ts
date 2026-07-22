@@ -46,11 +46,15 @@ export function isMainVideoVariant(variant: VideoVariant | null | undefined): bo
   return normalized === "video" || normalized === "official";
 }
 
-/** Marketing-only wrappers stripped from stored display titles (keep venue/feat). */
+/**
+ * Default-OMV marketing wrappers stripped from stored display titles.
+ * Lyric / audio / visualizer markers stay — matching uses
+ * {@link cleanVideoGroupTitle} (bare); display keeps the cut label.
+ */
 const MARKETING_PAREN_RE =
-  /\s*[([][^)\]]*\b(official(?:\s+music)?\s*video|music\s*video|lyric(?:s)?(?:\s+video)?|audio|visuali[sz]er)\b[^)\]]*[)\]]/gi;
+  /\s*[([][^)\]]*\b(official(?:\s+music)?\s*video|music\s*video)\b[^)\]]*[)\]]/gi;
 const MARKETING_DASH_RE =
-  /\s+[-–—]\s*(?:official\s+)?(?:lyric(?:s)?(?:\s+video)?|audio(?:\s+.*)?|visuali[sz]er(?:\s+.*)?)?\s*$/i;
+  /\s+[-–—]\s*(?:official(?:\s+music)?\s*video|music\s*video)\s*$/i;
 
 /**
  * Strip lyric/live/official/audio/visualizer qualifiers for identity matching
@@ -78,10 +82,10 @@ export function cleanVideoGroupTitle(title: string | null | undefined): string {
 }
 
 /**
- * Display title stored on Recordings: drop marketing wrappers (Official Music
- * Video / Lyric Video / Audio / Visualizer) but keep venue/live/feat text so
- * the UI and `{Video Title}` naming show the full provider-facing name when
- * providers agree on those qualifiers.
+ * Display title stored on Recordings: drop default OMV wrappers (Official Music
+ * Video / Official Video) but keep lyric/audio/visualizer/venue/feat text so
+ * the UI and `{Video Title}` naming show the cut. Matching still uses
+ * {@link cleanVideoGroupTitle}.
  */
 export function catalogVideoDisplayTitle(title: string | null | undefined): string {
   const raw = String(title || "").trim();

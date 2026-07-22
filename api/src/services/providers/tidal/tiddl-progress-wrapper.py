@@ -31,6 +31,50 @@ def emit_progress(event: str, **payload: Any) -> None:
     sys.stderr.flush()
 
 
+def install_video_metadata_guard() -> None:
+    """TIDAL sometimes returns video.artists=None; upstream iterates it bare.
+
+    Must run before tiddl's download CLI imports add_video_metadata, so the
+    patched function is what the download command binds.
+    """
+    from pathlib import Path
+
+    from mutagen.easymp4 import EasyMP4 as MutagenEasyMP4
+    from tiddl.core.api.models import Video
+    from tiddl.core.metadata import video as video_metadata
+    import tiddl.core.metadata as metadata_pkg
+
+    def add_video_metadata(path: Path, video: Video) -> None:
+        mutagen = MutagenEasyMP4(path)
+        artists = video.artists or []
+        mutagen.update(
+            {
+                "title": video.title,
+                "artist": "; ".join(artist.name.strip() for artist in artists),
+            }
+        )
+
+        if video.artist:
+            mutagen["albumartist"] = video.artist.name
+
+        if video.album:
+            mutagen["album"] = video.album.title
+
+        if video.streamStartDate:
+            mutagen["date"] = str(video.streamStartDate)
+
+        if video.trackNumber:
+            mutagen["tracknumber"] = str(video.trackNumber)
+
+        if video.volumeNumber:
+            mutagen["discnumber"] = str(video.volumeNumber)
+
+        mutagen.save(path)
+
+    video_metadata.add_video_metadata = add_video_metadata
+    metadata_pkg.add_video_metadata = add_video_metadata
+
+
 def install_progress_hooks() -> None:
     import aiohttp
     from tiddl.cli.commands.download.downloader import Downloader
@@ -295,6 +339,7 @@ def install_progress_hooks() -> None:
 
 
 def main() -> Any:
+    install_video_metadata_guard()
     install_progress_hooks()
     from tiddl.cli.app import app
 

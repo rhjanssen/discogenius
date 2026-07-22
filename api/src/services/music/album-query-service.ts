@@ -7,6 +7,7 @@ import {
 import type { AlbumTrackContract, AlbumVersionContract } from "../../contracts/media.js";
 import type { AlbumContract, AlbumsListResponseContract } from "../../contracts/catalog.js";
 import type { AlbumPageContract } from "../../contracts/pages.js";
+import { getAlbumAssociatedVideos } from "./video-query-service.js";
 import { getConfigSection } from "../config/config.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { AlbumLibraryIndexService } from "./album-library-index-service.js";
@@ -633,6 +634,7 @@ export class AlbumQueryService {
             album: sanitizeAlbumSpatialFields(page.album, includeSpatial),
             tracks: page.tracks.map((track) => sanitizeAlbumTrack(track, includeSpatial)),
             otherVersions: page.otherVersions.map((version) => sanitizeAlbumVersionSpatialFields(version, includeSpatial)),
+            associatedVideos: getAlbumAssociatedVideos(albumId),
         };
     }
 

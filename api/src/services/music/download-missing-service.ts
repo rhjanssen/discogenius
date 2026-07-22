@@ -9,6 +9,11 @@ import { RefreshArtistService } from "./refresh-artist-service.js";
 import { queueCatalogAlbumDownload } from "./release-group-acquisition-plan.js";
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
 import { resolveVideoTypeSuffix } from "../mediafiles/video-naming.js";
+import {
+  canVideoPlaceInline,
+  requiresAlbumLinkedVideosOnly,
+} from "../mediafiles/video-folder-layout.js";
+import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -277,6 +282,8 @@ export class DownloadMissingService {
         }
 
         if (allowVideos) {
+            const pathConfig = getConfigSection("path");
+            const inlineOnlyVideos = requiresAlbumLinkedVideosOnly(pathConfig?.video_folder_layout);
             const hasImportedVideoFile = (
                 recordingIdColumn: string,
                 recordingMbidColumn: string,
@@ -444,6 +451,16 @@ export class DownloadMissingService {
             for (const video of preferredVideos) {
                 if (!hasBatchCapacity()) {
                     break;
+                }
+                // Type filters skip unchecked variants (lyric/live/OMV). Existing
+                // imported files are never deleted by this path.
+                if (!isVideoVariantDownloadAllowed(video.video_variant, filteringConfig as FilteringConfig)) {
+                    continue;
+                }
+                // inline_only: skip orphans that would only land in the separated
+                // video library (no provider_video_for + monitored stereo RG).
+                if (inlineOnlyVideos && !canVideoPlaceInline(video.recording_id)) {
+                    continue;
                 }
                 const recordingId = String(video.recording_id || "");
                 const providerId = String(video.provider_id || "");

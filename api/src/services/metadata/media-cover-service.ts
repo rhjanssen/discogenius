@@ -394,13 +394,29 @@ export async function ensureCachedMediaCover(options: {
     ?? (looksLikeProviderArtworkUrl(sourceUrl) ? "provider" : "canonical");
 
   const existing = existingMediaCover(options.entityId, options.coverEntity, options.coverType);
-  // Videos have no user-selectable artwork source. Album and artist images do,
-  // so a source marker lets a preference change replace an older cached image.
-  if (existing && (
-    options.coverEntity === "Video"
-    || cachedSourceMatches(options.entityId, options.coverEntity, options.coverType, sourceUrl)
-  )) {
-    return existing.url;
+  // Albums/artists refresh when the preference/source marker changes. Videos
+  // historically skipped markers and kept the first cached bytes forever —
+  // that froze cropped YouTube `sqp=` thumbs. Match on source when a marker
+  // exists; without one, only refresh when the new URL is a known upgrade
+  // (uncropped YT / landscape Apple mv) so we do not re-download every video
+  // cover on every request.
+  if (existing) {
+    if (cachedSourceMatches(options.entityId, options.coverEntity, options.coverType, sourceUrl)) {
+      return existing.url;
+    }
+    if (options.coverEntity === "Video") {
+      let hasMarker = false;
+      try {
+        fs.accessSync(sourceMarkerPath(options.entityId, options.coverEntity, options.coverType));
+        hasMarker = true;
+      } catch {
+        hasMarker = false;
+      }
+      if (!hasMarker && !isUpgradedProviderThumbnailUrl(sourceUrl)) {
+        return existing.url;
+      }
+    }
+    // Album/artist (and video upgrades / mismatched markers): fall through and refresh.
   }
 
   try {
@@ -444,6 +460,7 @@ export async function ensureCachedMediaCover(options: {
           derivative.buffer,
         );
       }
+      writeSourceMarker(options.entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy);
       return getMediaCoverUrl(options.entityId, options.coverEntity, options.coverType, extension);
     }
 
@@ -929,12 +946,75 @@ function textOrNull(...values: unknown[]): string | null {
   return null;
 }
 
+/**
+ * YouTube UI thumbs often arrive as `hq720.jpg?sqp=...` — those sqp params are
+ * a center-crop for YouTube's own layout and cut title text off music-video
+ * artwork. Prefer the full-frame `hq720` / `maxresdefault` still.
+ */
+function normalizeYouTubeThumbnailUrl(url: string): string {
+  const match = url.match(/^https?:\/\/i\.ytimg\.com\/vi\/([^/?#]+)\//i);
+  if (!match) {
+    return url;
+  }
+  const videoId = match[1];
+  // Keep explicit still names when already uncropped; otherwise upgrade to hq720.
+  if (/\/(maxresdefault|hq720|sddefault|hqdefault)\.jpg(?:$|\?)/i.test(url) && !/[?&]sqp=/i.test(url)) {
+    try {
+      const parsed = new URL(url);
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return `https://i.ytimg.com/vi/${videoId}/hq720.jpg`;
+    }
+  }
+  return `https://i.ytimg.com/vi/${videoId}/hq720.jpg`;
+}
+
+/**
+ * Apple music-video artwork templates are often materialized as square
+ * `1080x1080mv.jpg`. Prefer a 16:9 request so library/UI thumbs match the frame.
+ */
+function normalizeAppleMusicVideoArtworkUrl(url: string): string {
+  return url.replace(
+    /\/(\d+)x(\d+)(mv\.(?:jpg|jpeg|png|webp))(?:\?.*)?$/i,
+    (_full, width, height, suffix) => {
+      const w = Number(width);
+      const h = Number(height);
+      if (!Number.isFinite(w) || !Number.isFinite(h) || w !== h) {
+        return `/${width}x${height}${suffix}`;
+      }
+      return `/1920x1080${suffix}`;
+    },
+  );
+}
+
+/** True when `url` is a known upgrade over cropped provider thumbs (triggers cache refresh). */
+function isUpgradedProviderThumbnailUrl(url: string): boolean {
+  if (/^https?:\/\/i\.ytimg\.com\/vi\/[^/?#]+\/(hq720|maxresdefault)\.jpg$/i.test(url)) {
+    return true;
+  }
+  const apple = url.match(/\/(\d+)x(\d+)mv\.(?:jpg|jpeg|png|webp)$/i);
+  if (apple) {
+    const w = Number(apple[1]);
+    const h = Number(apple[2]);
+    return Number.isFinite(w) && Number.isFinite(h) && w > h;
+  }
+  return false;
+}
+
 export function normalizeArtworkUrl(value: unknown): string | null {
   const url = textOrNull(value);
   if (!url) {
     return null;
   }
   if (/^https?:\/\//i.test(url)) {
+    if (/i\.ytimg\.com\/vi\//i.test(url)) {
+      return normalizeYouTubeThumbnailUrl(url);
+    }
+    if (/mzstatic\.com\/image\/thumb\//i.test(url) && /mv\.(?:jpg|jpeg|png|webp)/i.test(url)) {
+      return normalizeAppleMusicVideoArtworkUrl(url);
+    }
     return url;
   }
   return null;

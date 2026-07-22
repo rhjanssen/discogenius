@@ -20,6 +20,10 @@ services:
       - DISCOGENIUS_DISABLE_SCHEDULER=${DISCOGENIUS_DISABLE_SCHEDULER:-0}
       - DISCOGENIUS_DISABLE_DOWNLOADS=${DISCOGENIUS_DISABLE_DOWNLOADS:-0}
       - DISCOGENIUS_WRITE_PROFILE_MS=${DISCOGENIUS_WRITE_PROFILE_MS:-0}
+      # Catalog source factory default is online Servarr Metadata (see config.ts).
+      # Do not set DISCOGENIUS_CATALOG_SOURCE here — when set (via .env or environment)
+      # it overrides Settings and survives a wiped config/DB. Use musicbrainz-local
+      # only when intentionally forcing local MusicBrainz (docs/MB_LOCAL_MODE.md).
       # Log any main-thread DB read that blocks the event loop longer than this
       # many ms (0 = off). Set e.g. DISCOGENIUS_READ_PROFILE_MS=50 to find the
       # queries that make the UI sluggish under heavy refresh/import load.

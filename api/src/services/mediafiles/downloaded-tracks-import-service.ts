@@ -56,6 +56,10 @@ export type ImportDownloadState = {
     trackStatus?: "queued" | "downloading" | "completed" | "error" | "skipped";
     statusMessage?: string;
     state?: "queued" | "downloading" | "completed" | "failed" | "paused" | "importPending" | "importing" | "importFailed";
+    outcome?: "ok" | "completedWithWarning";
+    warningMessage?: string;
+    primaryProvider?: string;
+    fallbackProvider?: string;
 };
 
 type ImportHistoryContext = {
@@ -650,13 +654,36 @@ export class DownloadedTracksImportService {
         }
 
         cancellationCheckpoint("before completing import");
+        const liveCommand = CommandQueueManager.get(job.id);
+        const liveDownloadState = (liveCommand?.payload?.downloadState || {}) as Record<string, unknown>;
+        const payloadDownloadState = (job.payload?.downloadState || {}) as Record<string, unknown>;
+        const existingDownloadState = {
+            ...payloadDownloadState,
+            ...liveDownloadState,
+        };
+        const warningMessage = typeof existingDownloadState.warningMessage === "string"
+            ? existingDownloadState.warningMessage.trim()
+            : "";
+        const completedWithWarning = existingDownloadState.outcome === "completedWithWarning" && Boolean(warningMessage);
         options.updateState({
             progress: 100,
             description: "ImportDownload: completed",
             currentFileNum: organizeResult.processedTrackIds.length,
             totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
-            statusMessage: "Import completed",
+            statusMessage: completedWithWarning ? warningMessage : "Import completed",
             state: "completed",
+            ...(completedWithWarning
+                ? {
+                    outcome: "completedWithWarning" as const,
+                    warningMessage,
+                    primaryProvider: typeof existingDownloadState.primaryProvider === "string"
+                        ? existingDownloadState.primaryProvider
+                        : undefined,
+                    fallbackProvider: typeof existingDownloadState.fallbackProvider === "string"
+                        ? existingDownloadState.fallbackProvider
+                        : undefined,
+                }
+                : {}),
         });
 
         shouldCleanupDownloadPath = true;

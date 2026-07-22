@@ -13,6 +13,12 @@ import {
     mergeClasses,
     makeStyles,
     tokens,
+    Dialog,
+    DialogSurface,
+    DialogBody,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
 } from "@fluentui/react-components";
 import {
   ArrowDownload24Regular,
@@ -28,6 +34,8 @@ import {
   LockClosed24Filled,
   LockOpen24Filled,
   Video24Filled,
+  Delete24Regular,
+  Delete24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
@@ -51,6 +59,8 @@ import type { LibraryFilesListResponseContract, VideoDetailContract } from "@con
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow, type ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
+import { AppTooltip } from "@/components/ui/AppTooltip";
+import { localFileQualityTooltip } from "@/utils/localQualityTooltip";
 import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { VideoAlbumAffiliation } from "@/components/ui/VideoAlbumAffiliation";
 import { ErrorState } from "@/components/ui/ContentState";
@@ -65,6 +75,7 @@ import {
     LIBRARY_UPDATED_EVENT,
     dispatchMonitorStateChanged,
     dispatchLibraryUpdated,
+    dispatchActivityRefresh,
 } from "@/utils/appEvents";
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
@@ -73,6 +84,7 @@ const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
 const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
 const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
 const Video24 = bundleIcon(Video24Filled, Video24Regular);
+const Delete24 = bundleIcon(Delete24Filled, Delete24Regular);
 
 /** Human label for Recordings.video_variant (Discogenius catalog class). */
 function videoVariantLabel(variant: string | null | undefined): string {
@@ -306,6 +318,8 @@ const VideoPage = () => {
     const [isPlaying, setIsPlaying] = useState(false);
     const [remoteStreamUrl, setRemoteStreamUrl] = useState<string | null>(null);
     const [selectedOfferKey, setSelectedOfferKey] = useState<string | null>(null);
+    const [deleteFilesOpen, setDeleteFilesOpen] = useState(false);
+    const [deleteFilesApplying, setDeleteFilesApplying] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
     const hlsRef = useRef<{ destroy: () => void } | null>(null);
 
@@ -438,6 +452,32 @@ const VideoPage = () => {
                 quality: downloadOffer.quality ?? video?.quality ?? null,
             },
         });
+    };
+
+    const handleDeleteVideoFiles = async () => {
+        if (!videoId) return;
+        setDeleteFilesApplying(true);
+        try {
+            const result: any = await api.deleteVideoFiles(videoId);
+            toast({
+                title: "Video files deleted",
+                description: `Removed ${result?.deleted ?? 0} file(s) from disk and tracking.`,
+            });
+            setDeleteFilesOpen(false);
+            setIsPlaying(false);
+            queryClient.invalidateQueries({ queryKey: ["video", videoId] });
+            queryClient.invalidateQueries({ queryKey: ["video-files", videoId] });
+            dispatchLibraryUpdated();
+            dispatchActivityRefresh();
+        } catch (error) {
+            toast({
+                title: "Failed to delete video files",
+                description: error instanceof Error ? error.message : "Could not delete video files.",
+                variant: "destructive",
+            });
+        } finally {
+            setDeleteFilesApplying(false);
+        }
     };
 
     const handlePlayClick = async () => {
@@ -672,52 +712,73 @@ const VideoPage = () => {
                                         {(offers.length > 0 || video.quality) ? (
                                             <div className={styles.metaSeparator} />
                                         ) : null}
-                                        <span title={`Downloaded file: ${videoFile.quality}`}>
-                                            <QualityBadge
-                                                quality={videoFile.quality}
-                                                size="medium"
-                                            />
-                                        </span>
+                                        <QualityBadge
+                                            quality={videoFile.quality}
+                                            size="medium"
+                                            tooltip={localFileQualityTooltip(videoFile)}
+                                        />
                                     </>
                                 ) : null}
                             </div>
                         </div>
 
                         <div className={styles.rightActions}>
-                            <Button
-                                appearance={isMonitored ? "subtle" : "primary"}
-                                icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
-                                disabled={isLocked}
-                                onClick={() => toggleMonitor.mutate(!isMonitored)}
-                                className={mergeClasses(styles.actionButton, isMonitored ? styles.transparentButton : styles.primaryButton)}
-                                title={isLocked ? "Unlock to change" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
+                            <AppTooltip
+                                content={isLocked ? "Unlock to change" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
+                                relationship="label"
                             >
-                                {isMonitored ? "Unmonitor" : "Monitor"}
-                            </Button>
+                                <Button
+                                    appearance={isMonitored ? "subtle" : "primary"}
+                                    icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
+                                    disabled={isLocked}
+                                    onClick={() => toggleMonitor.mutate(!isMonitored)}
+                                    className={mergeClasses(styles.actionButton, isMonitored ? styles.transparentButton : styles.primaryButton)}
+                                >
+                                    {isMonitored ? "Unmonitor" : "Monitor"}
+                                </Button>
+                            </AppTooltip>
 
-                            <Button
-                                appearance="subtle"
-                                icon={isLocked ? <LockOpen24 /> : <LockClosed24 />}
-                                onClick={() => toggleLock.mutate(!isLocked)}
-                                style={isLocked ? { color: tokens.colorPaletteRedForeground1 } : undefined}
-                                className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                                title={isLocked ? "Unlock" : "Lock"}
-                            >
-                                {isLocked ? "Unlock" : "Lock"}
-                            </Button>
-
-                            {!isDownloaded && (
+                            <AppTooltip content={isLocked ? "Unlock" : "Lock"} relationship="label">
                                 <Button
                                     appearance="subtle"
-                                    icon={<ArrowDownload24 />}
-                                    onClick={handleDownload}
-                                    disabled={!downloadOffer}
-                                    title={downloadOffer ? "Download from the selected provider" : "No provider offer supports video downloads"}
+                                    icon={isLocked ? <LockOpen24 /> : <LockClosed24 />}
+                                    onClick={() => toggleLock.mutate(!isLocked)}
+                                    style={isLocked ? { color: tokens.colorPaletteRedForeground1 } : undefined}
                                     className={mergeClasses(styles.actionButton, styles.transparentButton)}
                                 >
-                                    Download
+                                    {isLocked ? "Unlock" : "Lock"}
                                 </Button>
+                            </AppTooltip>
+
+                            {!isDownloaded && (
+                                <AppTooltip
+                                    content={downloadOffer ? "Download from the selected provider" : "No provider offer supports video downloads"}
+                                    relationship="label"
+                                >
+                                    <Button
+                                        appearance="subtle"
+                                        icon={<ArrowDownload24 />}
+                                        onClick={handleDownload}
+                                        disabled={!downloadOffer}
+                                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                                    >
+                                        Download
+                                    </Button>
+                                </AppTooltip>
                             )}
+                            {isDownloaded ? (
+                                <AppTooltip content="Delete downloaded video files" relationship="label">
+                                    <Button
+                                        appearance="subtle"
+                                        icon={<Delete24 />}
+                                        onClick={() => setDeleteFilesOpen(true)}
+                                        disabled={deleteFilesApplying}
+                                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                                    >
+                                        Delete files
+                                    </Button>
+                                </AppTooltip>
+                            ) : null}
                         </div>
                     </div>
 
@@ -729,6 +790,30 @@ const VideoPage = () => {
                     ) : null}
                 </div>
             </div>
+            <Dialog
+                open={deleteFilesOpen}
+                onOpenChange={(_, data) => {
+                    if (!data.open && !deleteFilesApplying) setDeleteFilesOpen(false);
+                }}
+            >
+                <DialogSurface>
+                    <DialogBody>
+                        <DialogTitle>Delete video files</DialogTitle>
+                        <DialogContent>
+                            Delete imported library files for <strong>{video.title}</strong> from disk and remove
+                            them from Discogenius tracking. Catalog metadata is kept.
+                        </DialogContent>
+                        <DialogActions>
+                            <Button appearance="secondary" disabled={deleteFilesApplying} onClick={() => setDeleteFilesOpen(false)}>
+                                Cancel
+                            </Button>
+                            <Button appearance="primary" disabled={deleteFilesApplying} onClick={() => void handleDeleteVideoFiles()}>
+                                {deleteFilesApplying ? "Deleting…" : "Delete files"}
+                            </Button>
+                        </DialogActions>
+                    </DialogBody>
+                </DialogSurface>
+            </Dialog>
         </DynamicBrandProvider>
     );
 };

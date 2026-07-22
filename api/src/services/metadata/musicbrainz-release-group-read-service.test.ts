@@ -342,3 +342,131 @@ test("single release group does not inherit album files by shared recording MBID
   assert.notEqual(singleTracks[0].is_downloaded, true);
 });
 
+test("hybrid trackSources tip wins over same-ISRC LOSSLESS rematch on primary album", async () => {
+  const providersModule = await import("../providers/index.js");
+  const artistMbid = "artist-mbid-amy-ost";
+  const releaseGroupMbid = "rg-amy-ost";
+  const releaseMbid = "release-amy-ost";
+  const trackMbid = "track-tears-ost";
+  const recordingMbid = "recording-tears";
+  const isrc = "GBUM70603494";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Amy Winehouse");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run(artistMbid, "Amy Winehouse", artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "Amy", "Album", "2015-10-30");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Amy", "Official", "2015-10-30", 1, 1);
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, length_ms, isrcs)
+    VALUES (?, ?, ?, ?)
+  `).run(recordingMbid, "Tears Dry on Their Own", 187000, JSON.stringify([isrc]));
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(trackMbid, releaseMbid, recordingMbid, 1, 10, "10", "Tears Dry on Their Own", 187000);
+
+  const evidence = {
+    matchKind: "composite",
+    providerAlbumIds: ["1440827079", "1422677780"],
+    coverage: {
+      coveredTracks: 1,
+      targetTracks: 1,
+      complete: true,
+      qualityTrackCounts: { LOSSLESS: 0, HIRES_LOSSLESS: 1 },
+    },
+    trackSources: [{
+      canonicalTrackMbid: trackMbid,
+      canonicalRecordingMbid: recordingMbid,
+      title: "Tears Dry on Their Own",
+      trackNum: 10,
+      volumeNum: 1,
+      providerTrackId: "1422677787",
+      providerAlbumId: "1422677780",
+      quality: "HIRES_LOSSLESS",
+      matchScore: 1,
+    }],
+  };
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid,
+      quality, match_status, match_method, match_evidence
+    ) VALUES (?, ?, 'stereo', 1, ?, ?, ?, ?, 'verified', ?, ?)
+  `).run(
+    artistMbid,
+    releaseGroupMbid,
+    "apple-music",
+    "1440827079;1422677780",
+    releaseMbid,
+    "LOSSLESS",
+    "quality_optimized_composite_track_coverage",
+    JSON.stringify(evidence),
+  );
+
+  const artist = { providerId: "apple-artist", name: "Amy Winehouse" };
+  providersModule.streamingProviderManager.registerStreamingProvider({
+    id: "apple-music",
+    name: "Apple Music",
+    capabilities: {},
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => artist,
+    getArtistAlbums: async () => [],
+    getAlbum: async () => ({ providerId: "1440827079", title: "Amy", artist, trackCount: 1, volumeCount: 1 }),
+    getTrack: async (id: string | number) => ({
+      providerId: String(id),
+      title: "Tears Dry on Their Own",
+      artist,
+      duration: 187,
+      trackNumber: 10,
+      volumeNumber: 1,
+    }),
+    getAlbumTracks: async (id: string | number) => {
+      if (String(id) === "1440827079") {
+        return [{
+          providerId: "1440827414",
+          title: "Tears Dry on Their Own",
+          artist,
+          isrc,
+          duration: 187,
+          trackNumber: 10,
+          volumeNumber: 1,
+          quality: "LOSSLESS",
+        }];
+      }
+      return [{
+        providerId: "1422677787",
+        title: "Tears Dry On Their Own",
+        artist,
+        isrc,
+        duration: 186,
+        trackNumber: 7,
+        volumeNumber: 1,
+        quality: "HIRES_LOSSLESS",
+      }];
+    },
+    getStreamUrl: async () => null,
+  } as any);
+
+  const tracks = await readServiceModule.MusicBrainzReleaseGroupReadService.getTracks(releaseGroupMbid);
+  assert.equal(tracks.length, 1);
+  assert.equal(tracks[0].quality, "HIRES_LOSSLESS");
+  assert.equal(tracks[0].preview_provider_track_id, "1422677787");
+  assert.deepEqual(tracks[0].remoteOffers, [{
+    slot: "stereo",
+    provider: "apple-music",
+    providerAlbumId: "1422677780",
+    quality: "HIRES_LOSSLESS",
+    matchStatus: "verified",
+    selectedReleaseMbid: releaseMbid,
+    providerTrackId: "1422677787",
+  }]);
+});
+

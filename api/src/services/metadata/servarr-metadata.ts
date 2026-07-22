@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { db, runChunkedWrite } from "../../database.js";
+import { db, runChunkedWrite, withSqliteWriteGate } from "../../database.js";
 import type { MusicBrainzReleaseGroupForMatching } from "./provider-release-group-matcher.js";
 import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
@@ -481,97 +481,102 @@ export class ServarrMetadataService {
     const popularity = deriveServarrMetadataPopularity(enrich.rating ?? enrich.Rating);
     const raw = enrich as Record<string, any>;
 
-    db.prepare(`
-      INSERT INTO ArtistMetadata (
-        mbid, name, sort_name, disambiguation, type, overview, status, popularity,
-        images, links, genres, ratings, aliases, old_foreign_ids, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(mbid) DO UPDATE SET
-        name = excluded.name,
-        sort_name = excluded.sort_name,
-        disambiguation = excluded.disambiguation,
-        type = excluded.type,
-        overview = excluded.overview,
-        status = excluded.status,
-        -- Keep the Servarr rating when present; otherwise preserve whatever
-        -- popularity a provider sync already stored.
-        popularity = COALESCE(excluded.popularity, ArtistMetadata.popularity),
-        images = excluded.images,
-        links = excluded.links,
-        genres = excluded.genres,
-        ratings = excluded.ratings,
-        aliases = excluded.aliases,
-        old_foreign_ids = excluded.old_foreign_ids,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(
-      artist.id,
-      artist.artistname,
-      artist.sortname,
-      artist.disambiguation || null,
-      artist.type || null,
-      raw.overview ?? null,
-      raw.status ?? null,
-      popularity,
-      JSON.stringify(imagesList),
-      JSON.stringify(raw.links ?? []),
-      JSON.stringify(raw.genres ?? []),
-      JSON.stringify(raw.rating ?? raw.Rating ?? null),
-      JSON.stringify(raw.artistaliases ?? raw.aliases ?? []),
-      JSON.stringify(raw.oldids ?? raw.oldIds ?? []),
-    );
-
-    // The artist payload carries only summary album entries (no images, links,
-    // genres, or full release detail). On conflict, update only the shallow
-    // scalar fields it actually has and NEVER overwrite the detail-sourced
-    // columns (images, links, genres, overview, content_hash) — those are
-    // owned by syncReleaseGroup when it fetches the full release-group detail.
-    // (This replaces the old read-existing-blob-then-merge dance.)
-    const insertRg = db.prepare(`
-      INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, images, ratings, old_foreign_ids, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(mbid) DO UPDATE SET
-        title = excluded.title,
-        primary_type = excluded.primary_type,
-        secondary_types = excluded.secondary_types,
-        first_release_date = excluded.first_release_date,
-        disambiguation = excluded.disambiguation,
-        ratings = excluded.ratings,
-        old_foreign_ids = excluded.old_foreign_ids,
-        updated_at = CURRENT_TIMESTAMP
-    `);
-
-    // Chunk the per-album upserts: a large artist (hundreds of release groups)
-    // would otherwise hold the write lock for the entire catalog and starve
-    // concurrent refresh workers + the main-thread job claim.
-    const albums = (artist.Albums || []).filter((album) => album.Id);
-    runChunkedWrite(albums, (album) => {
-      const rawAlbum = album as Record<string, any>;
-      const albumImages = mapServarrMetadataImages(album.images || album.Images);
-
-      insertRg.run(
-        album.Id,
+    // Serialize SQLite commits across concurrent RefreshArtist workers so
+    // catalog fetches can overlap (local-MB) without write-lock storms.
+    // Network artwork resolution stays outside the gate.
+    await withSqliteWriteGate(() => {
+      db.prepare(`
+        INSERT INTO ArtistMetadata (
+          mbid, name, sort_name, disambiguation, type, overview, status, popularity,
+          images, links, genres, ratings, aliases, old_foreign_ids, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(mbid) DO UPDATE SET
+          name = excluded.name,
+          sort_name = excluded.sort_name,
+          disambiguation = excluded.disambiguation,
+          type = excluded.type,
+          overview = excluded.overview,
+          status = excluded.status,
+          -- Keep the Servarr rating when present; otherwise preserve whatever
+          -- popularity a provider sync already stored.
+          popularity = COALESCE(excluded.popularity, ArtistMetadata.popularity),
+          images = excluded.images,
+          links = excluded.links,
+          genres = excluded.genres,
+          ratings = excluded.ratings,
+          aliases = excluded.aliases,
+          old_foreign_ids = excluded.old_foreign_ids,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(
         artist.id,
-        album.Title,
-        album.Type || null,
-        JSON.stringify(album.SecondaryTypes || []),
-        album.ReleaseDate || null,
-        album.Disambiguation || null,
-        JSON.stringify(albumImages),
-        JSON.stringify(rawAlbum.Rating ?? rawAlbum.rating ?? null),
-        JSON.stringify(rawAlbum.OldIds ?? rawAlbum.oldids ?? []),
+        artist.artistname,
+        artist.sortname,
+        artist.disambiguation || null,
+        artist.type || null,
+        raw.overview ?? null,
+        raw.status ?? null,
+        popularity,
+        JSON.stringify(imagesList),
+        JSON.stringify(raw.links ?? []),
+        JSON.stringify(raw.genres ?? []),
+        JSON.stringify(raw.rating ?? raw.Rating ?? null),
+        JSON.stringify(raw.artistaliases ?? raw.aliases ?? []),
+        JSON.stringify(raw.oldids ?? raw.oldIds ?? []),
       );
-      MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
-    });
 
-    // Match Lidarr's refresh invariant: mark the parent current only after its
-    // children have been processed successfully. If an album batch throws, the
-    // previous hash remains and the next refresh retries the whole diff.
-    db.prepare(`
-      UPDATE ArtistMetadata
-      SET content_hash = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE mbid = ?
-    `).run(contentHash, artist.id);
+      // The artist payload carries only summary album entries (no images, links,
+      // genres, or full release detail). On conflict, update only the shallow
+      // scalar fields it actually has and NEVER overwrite the detail-sourced
+      // columns (images, links, genres, overview, content_hash) — those are
+      // owned by syncReleaseGroup when it fetches the full release-group detail.
+      // (This replaces the old read-existing-blob-then-merge dance.)
+      const insertRg = db.prepare(`
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types, first_release_date, disambiguation, images, ratings, old_foreign_ids, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(mbid) DO UPDATE SET
+          title = excluded.title,
+          primary_type = excluded.primary_type,
+          secondary_types = excluded.secondary_types,
+          first_release_date = excluded.first_release_date,
+          disambiguation = excluded.disambiguation,
+          ratings = excluded.ratings,
+          old_foreign_ids = excluded.old_foreign_ids,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+
+      // Chunk the per-album upserts: a large artist (hundreds of release groups)
+      // would otherwise hold the write lock for the entire catalog and starve
+      // concurrent refresh workers + the main-thread job claim.
+      const albums = (artist.Albums || []).filter((album) => album.Id);
+      runChunkedWrite(albums, (album) => {
+        const rawAlbum = album as Record<string, any>;
+        const albumImages = mapServarrMetadataImages(album.images || album.Images);
+
+        insertRg.run(
+          album.Id,
+          artist.id,
+          album.Title,
+          album.Type || null,
+          JSON.stringify(album.SecondaryTypes || []),
+          album.ReleaseDate || null,
+          album.Disambiguation || null,
+          JSON.stringify(albumImages),
+          JSON.stringify(rawAlbum.Rating ?? rawAlbum.rating ?? null),
+          JSON.stringify(rawAlbum.OldIds ?? rawAlbum.oldids ?? []),
+        );
+        MusicBrainzArtistCreditService.ensurePrimaryScope(album.Id, artist.id, artist.artistname);
+      });
+
+      // Match Lidarr's refresh invariant: mark the parent current only after its
+      // children have been processed successfully. If an album batch throws, the
+      // previous hash remains and the next refresh retries the whole diff.
+      db.prepare(`
+        UPDATE ArtistMetadata
+        SET content_hash = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE mbid = ?
+      `).run(contentHash, artist.id);
+    });
 
     await MediaCoverService.resolveArtistArtwork({
       artistMbid: artist.id,
@@ -585,7 +590,9 @@ export class ServarrMetadataService {
   async syncReleaseGroup(releaseGroupMbid: string, artistMbid: string): Promise<void> {
     const { catalogProviderRegistry } = await import("../catalog/index.js");
     const detail = await catalogProviderRegistry.getActive().getReleaseGroup(releaseGroupMbid);
-    this.reconcileReleaseGroupDetail(releaseGroupMbid, artistMbid, detail);
+    await withSqliteWriteGate(() => {
+      this.reconcileReleaseGroupDetail(releaseGroupMbid, artistMbid, detail);
+    });
   }
 
   /**
@@ -603,18 +610,20 @@ export class ServarrMetadataService {
     const provider = catalogProviderRegistry.getActive();
     if (typeof provider.getReleaseGroupDetails === "function") {
       const details = await provider.getReleaseGroupDetails(mbids);
-      for (const entry of details) {
-        try {
-          this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
-        } catch (error) {
-          console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
+      await withSqliteWriteGate(() => {
+        for (const entry of details) {
+          try {
+            this.reconcileReleaseGroupDetail(entry.releaseGroupMbid, artistMbid, entry.detail);
+          } catch (error) {
+            console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.releaseGroupMbid}:`, error);
+          }
         }
-      }
+      });
     } else {
       // Hosted Servarr exposes one album-detail endpoint per release group, as
       // Lidarr itself uses. Fetch a small bounded group concurrently, then run
-      // the synchronous SQLite reconciliation serially so network latency is
-      // overlapped without multiplying writers.
+      // the synchronous SQLite reconciliation under the write gate so network
+      // latency overlaps without multiplying writers across RefreshArtist jobs.
       const limit = pLimit(4);
       const details = await Promise.all(mbids.map((mbid) => limit(async () => {
         try {
@@ -624,14 +633,16 @@ export class ServarrMetadataService {
           return null;
         }
       })));
-      for (const entry of details) {
-        if (!entry) continue;
-        try {
-          this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
-        } catch (error) {
-          console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
+      await withSqliteWriteGate(() => {
+        for (const entry of details) {
+          if (!entry) continue;
+          try {
+            this.reconcileReleaseGroupDetail(entry.mbid, artistMbid, entry.detail);
+          } catch (error) {
+            console.warn(`[ServarrMetadata] Failed to reconcile release group ${entry.mbid}:`, error);
+          }
         }
-      }
+      });
     }
   }
 

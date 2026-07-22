@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.6.0] - 2026-07-22
+
+### Added
+- SoundCloud experimental provider: api-v2 catalog matching, oauth token paste
+  auth, native progressive download with yt-dlp fallback, liked-tracks + playlist
+  import sources, and mixtape/dj-mix/demo (and primary Other) playlist/set wide
+  search with tracklist-coverage matching (`probable` /
+  `playlist-tracklist-coverage`; supersets OK). Official Album/EP/Single stay
+  album-search-only.
+- Local file quality tooltips (`localQualityTooltip`) plus `video_codec` /
+  `width` / `height` columns on TrackFiles (schema-39 CREATE baseline only).
+- Scroll restoration for catalog navigation (`ScrollRestoration`).
+- Settings Catalog section reorder (catalog source next to provider settings).
+- Provider public surface at `api/src/providers/` (registry + types) for 2.6
+  modularity phase 1; adapters still under `services/providers/<id>/`.
+- Catalog SQLite write gate (`withSqliteWriteGate`) so RefreshArtist fetches can
+  overlap under local-MB while commits stay single-flight.
+- Album Associated videos section + track music-video icons that scroll to the
+  matching video; `inline_only` video folder layout option.
+- Download offer retry/fallback with yellow warning UX when a fallback offer
+  completes (`completedWithWarning`).
+- Video type filters (official / lyric / live) and strip-tags manage action on
+  artist/album (`POST /api/v1/retag/strip`).
+
+### Changed
+- Video placement: inline stereo linked videos, release-group gate, and
+  auto-relocate of separated->inline videos when stereo audio is imported.
+- RefreshArtist concurrency: Servarr remains 1; local-MB may run 2 when the
+  write gate is active (do not raise further without measurement).
+- tiddl download failures surface actionable stderr detail instead of Rich UI
+  chrome.
+- Wipe-oriented schema open path: no late open-39 `ALTER TABLE` additive
+  migration helpers; fresh installs get `video_codec`/`width`/`height` from the
+  CREATE TABLE baseline only. Existing non-39 DBs still refuse to start until
+  wiped.
+
+### Fixed
+- World Gone Mad wrong-match: stricter structural title threshold and
+  cross-release-group hybrid requires ISRC.
+- Amy OST hybrid trackSources: HIRES tip wins over composite LOSSLESS slot badge
+  for per-track quality display.
+
 ## [2.5.1] - 2026-07-22
 
 ### Added
@@ -26,7 +68,7 @@ All notable changes to this project are documented in this file.
 - Hybrid album acquisition keeps the full composite provider album id set and
   falls back to coverage `trackSources` when ProviderItems lack MBIDs (e.g.
   trailing discs / Bastille GMTF stereo vol 3).
-- Provider→MusicBrainz ISRC matching prefers releases whose track/media counts
+- Providerâ†’MusicBrainz ISRC matching prefers releases whose track/media counts
   match the provider album (stable MBID tie-break).
 - Music-video matching treats shared ISRC as a strong twin signal; video refresh
   and affiliation navigation improvements.
@@ -56,7 +98,7 @@ All notable changes to this project are documented in this file.
 ### Changed
 - Catalog-first hybrid identity for download/import/organize/rename/retag:
   track numbers, titles, and slot binding come from `Tracks`/`Recordings` on
-  the selected MusicBrainz release — never provider `match_evidence` positions.
+  the selected MusicBrainz release â€” never provider `match_evidence` positions.
 - Hybrid album acquisition queues one `DownloadAlbum` with
   `acquisitionMode: "trackOffers"` (shared plan for manual + download-missing)
   instead of exploding into separate queue cards per source album.
@@ -136,7 +178,7 @@ All notable changes to this project are documented in this file.
   and import as first-class videos: they map onto the release's canonical
   video tracks, land in the video library with video naming, and register a
   provider video offer on the same recording standalone uploads dedupe to.
-- YouTube Music ATV→OMV counterparts: album-track refresh resolves the UI
+- YouTube Music ATVâ†’OMV counterparts: album-track refresh resolves the UI
   audio/video switcher via `get_watch_playlist`, persists the OMV as an
   album-scoped video offer (plus a video-slot track offer when the OMV id
   differs), and writes `provider_video_for` to the matched audio recording so
@@ -207,7 +249,7 @@ All notable changes to this project are documented in this file.
   jobs carry disc/track numbers into the queue UI.
 - Downloads: up to two concurrent downloads when providers differ
   (`DISCOGENIUS_MAX_CONCURRENT_DOWNLOADS`, default 2). Organize refuses a silent
-  TIDAL default when `provider` is missing (looks up ProviderItems instead) —
+  TIDAL default when `provider` is missing (looks up ProviderItems instead) â€”
   fixes Apple Music videos named/tagged as TIDAL / Unknown Video. Hybrid album
   organize falls back when `release_mbid` does not match the source edition.
   Embedded cover preference uses the canonical release group (not the foreign
@@ -220,8 +262,8 @@ All notable changes to this project are documented in this file.
   (e.g. `include_videos`) apply without a container restart. Video offer upserts
   no longer wipe a known title with a null/empty refresh payload; video organize
   and seed prefer mapped provider titles over raw catalog payloads (fixes YouTube
-  `videoDetails.title` → `Unknown Video`). Video `computeExpectedPath` receives
-  `provider`/`provider_id` so filenames stop defaulting to `{TIDAL-…}`. Stereo↔
+  `videoDetails.title` â†’ `Unknown Video`). Video `computeExpectedPath` receives
+  `provider`/`provider_id` so filenames stop defaulting to `{TIDAL-â€¦}`. Stereoâ†”
   spatial lyric sharing works across distinct recording MBIDs. Slot repair without
   tracklists prefers offers matched to the representative release.
 - Video detail/list titles prefer a real ProviderItems title when the recording
@@ -241,8 +283,8 @@ All notable changes to this project are documented in this file.
   MusicBrainz release by quality with hybrid and direct offers treated equally
   so TIDAL MAX beats Apple HIGH. Hybrid quality badges use the majority album
   quality in the stitch (ties break higher). Hybrid explicit badges aggregate member
-  albums (any explicit → E). Apple browser preview remains 30-second
-  catalog clips only — full-song Apple streams are FairPlay DRM and not available
+  albums (any explicit â†’ E). Apple browser preview remains 30-second
+  catalog clips only â€” full-song Apple streams are FairPlay DRM and not available
   as a TIDAL-like third-party progressive preview. Dolby Atmos from Apple and
   TIDAL remain equally scored; equal-coverage ties use provider preference order.
 - Album-bundled Apple videos whose downloader filenames contain a track number
@@ -254,7 +296,7 @@ All notable changes to this project are documented in this file.
   Discogenius's bounded, resumable queue retry policy instead of entering the
   upstream interactive retry loop (which spins forever when stdin is at EOF).
   Lyric embedding stays force-disabled because the upstream binary
-  crashes (nil TTML) on tracks without lyrics — both constraints are pinned by
+  crashes (nil TTML) on tracks without lyrics â€” both constraints are pinned by
   tests.
 - Apple Music no longer advertises catalog lyrics: the supported catalog API
   does not expose a lyrics resource, and raw TTML is not synthesized as LRC.
@@ -315,7 +357,7 @@ All notable changes to this project are documented in this file.
   Fluent details modal (status, capability summary, connect/disconnect) instead
   of inline disclosure rows.
 - Provider capability copy is consistent across services (lossless ceiling,
-  Dolby Atmos, video resolution) — Apple Music now declares the same explicit
+  Dolby Atmos, video resolution) â€” Apple Music now declares the same explicit
   quality strings as TIDAL.
 - Dashboard queue/activity loading skeletons mirror the real Active/History
   dual-column layout and follow the shared delayed-loading policy, as do the
@@ -363,7 +405,7 @@ All notable changes to this project are documented in this file.
   retag pass instead of being repeated during preview and write.
 - YouTube Music lyrics are converted from ytmusicapi timestamp objects into
   provider-neutral plain text and LRC. Public live validation succeeded against
-  Bastille's “Give Me the Future”.
+  Bastille's â€œGive Me the Futureâ€.
 - YouTube downloads ship with the required EJS challenge-solver dependency and
   an explicitly enabled Node 22 runtime. The old Node 20/bare-pip image made
   yt-dlp warn that no supported JavaScript runtime was available and could omit
@@ -405,7 +447,7 @@ All notable changes to this project are documented in this file.
   processor (including retries of previously-failed payloads), and the preview
   signing route now resolve to the preference-ranked provider's actual video
   offer instead of sending the internal id to a provider API. Apple-only
-  videos preview and download standalone as a result — both paths previously
+  videos preview and download standalone as a result â€” both paths previously
   hardcoded TIDAL.
 - Video metadata seeding queries the provider that owns the resolved offer
   rather than always the default provider.
@@ -838,14 +880,14 @@ All notable changes to this project are documented in this file.
   environment at call time (fixes CI flake when test files override
   `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
   on known Node test-runner clone deserialization failures.
-- **The container no longer freezes and goes `unhealthy` under heavy refresh load.** `better-sqlite3` is synchronous, so any wait on the single SQLite write lock blocks the entire Node event loop. The main (HTTP/SSE) thread used a 15s `busy_timeout` plus a synchronous retry backoff, so one contended write (chiefly the `markProcessing` job-claim) froze every request, SSE stream, and `/health` probe for ~30s while worker threads held the lock during a large refresh — exactly the "scanned 1000 artists then became unreachable" symptom, and the source of the `database is locked` errors on big-discography artists. The main thread now fails fast (`busy_timeout = 1000ms`, a single quick retry) and is retried at the next scheduler tick instead of freezing, mirroring Lidarr's 100ms request-path `busy_timeout`. Worker threads keep the generous 30s timeout + 8 retries because they run off the event loop. Measured under live refresh load: `/health` ~85ms (was timing out at 30s), event-loop lag p99 ~20ms / max bounded ~2s (was 25–30s), zero `database is locked`.
+- **The container no longer freezes and goes `unhealthy` under heavy refresh load.** `better-sqlite3` is synchronous, so any wait on the single SQLite write lock blocks the entire Node event loop. The main (HTTP/SSE) thread used a 15s `busy_timeout` plus a synchronous retry backoff, so one contended write (chiefly the `markProcessing` job-claim) froze every request, SSE stream, and `/health` probe for ~30s while worker threads held the lock during a large refresh â€” exactly the "scanned 1000 artists then became unreachable" symptom, and the source of the `database is locked` errors on big-discography artists. The main thread now fails fast (`busy_timeout = 1000ms`, a single quick retry) and is retried at the next scheduler tick instead of freezing, mirroring Lidarr's 100ms request-path `busy_timeout`. Worker threads keep the generous 30s timeout + 8 retries because they run off the event loop. Measured under live refresh load: `/health` ~85ms (was timing out at 30s), event-loop lag p99 ~20ms / max bounded ~2s (was 25â€“30s), zero `database is locked`.
 
 ### Changed
 - **Large catalog write transactions are chunked (`runChunkedWrite`).** A big artist's refresh previously upserted its entire catalog (hundreds of release groups, thousands of tracks) in one transaction, holding the write lock long enough to starve concurrent workers and time out the main-thread claim. The MusicBrainz catalog hydration (`servarr-metadata-proxy` artist/release-group sync) and provider-album offer writes now commit in bounded chunks so the lock is released between batches.
 - **`AlbumReleaseMedia` folded into `AlbumReleases.data`.** Release medium/disc summaries now derive from the MusicBrainz release JSON instead of a separate table.
 - **`TrackFiles` no longer carries provider-shadow `album_id`/`media_id` columns.** File/sidecar joins resolve through canonical MusicBrainz identity and provider `ProviderItems` provenance; the legacy columns are removed from the fresh schema, with provider identity aliased only at API compatibility boundaries. Import, manual import, rename/tag, search, disk-scan, download-state, stats, and sidecar replication paths were converted.
 - **v1 API resource routes normalized to Lidarr's singular-controller convention.** System tasks moved to `/api/v1/system/task`, managed playable files to `/api/v1/mediaFile`, streaming provider status to `/api/v1/provider`.
-- **Artist page reads are now read-only projections.** `getArtistPageDb` no longer runs a provider-selection write pass or per-card Servarr metadata hydration on the request thread — first-load artwork hydration is left to refresh workers — fixing multi-second artist-page loads under refresh load.
+- **Artist page reads are now read-only projections.** `getArtistPageDb` no longer runs a provider-selection write pass or per-card Servarr metadata hydration on the request thread â€” first-load artwork hydration is left to refresh workers â€” fixing multi-second artist-page loads under refresh load.
 - **Popularity sort works for artists and albums.** TIDAL album popularity is carried through provider mapping/refresh into `Albums.popularity` (with provider-snapshot fallback), exposed in the album/artist list contracts, and album sort uses a real popularity expression instead of falling back to release date.
 
 ## [2.0.9] - 2026-06-23
@@ -872,7 +914,7 @@ All notable changes to this project are documented in this file.
 - **Refresh policy now uses canonical release/provider state:** `refresh-policy` reads artist release freshness from canonical `Albums.first_release_date`, and its track/video freshness helpers read `ProviderItems.updated_at` instead of legacy provider scan columns.
 - **TIDAL album download progress now falls back to canonical provider items:** when a provider album has no selected canonical release yet, the TIDAL download-progress track list is built from `ProviderItems` instead of `ProviderMedia`, so provider-only fallback progress works without legacy media rows.
 - **Import matcher fingerprint candidates now resolve through canonical provider items:** `import-matcher-service` no longer joins fingerprinted `TrackFiles` to `ProviderMedia` to find candidate albums; it resolves album provider ids from canonical `TrackFiles` identity plus `ProviderItems`.
-- **`library-files.ts` is now fully canonical (no `ProviderMedia`/`ProviderAlbums` reads):** video naming/path resolution, inline-vs-separated video layout (incl. the inline video→audio match), the video library-root routing, and the previously-converted audio path computation all resolve from the canonical graph + `ProviderItems` (videos via `getCanonicalVideoMetadataForRow`, which uses `ProviderItems.recording_id` for mbid-less provider videos). Removed dead helpers (`getAudioRoot`, lookup-row types). The inline-video layout test was migrated to seed canonical video `Recordings`/`ProviderItems`.
+- **`library-files.ts` is now fully canonical (no `ProviderMedia`/`ProviderAlbums` reads):** video naming/path resolution, inline-vs-separated video layout (incl. the inline videoâ†’audio match), the video library-root routing, and the previously-converted audio path computation all resolve from the canonical graph + `ProviderItems` (videos via `getCanonicalVideoMetadataForRow`, which uses `ProviderItems.recording_id` for mbid-less provider videos). Removed dead helpers (`getAudioRoot`, lookup-row types). The inline-video layout test was migrated to seed canonical video `Recordings`/`ProviderItems`.
 - **Metadata backfill now discovers sidecars from canonical `ProviderItems`:** `library-metadata-backfill` no longer joins `TrackFiles` through `ProviderMedia`/`ProviderAlbums` to find albums, tracks, videos, or video tag metadata. Album sidecars resolve from canonical release groups/slots plus album `ProviderItems`; lyrics/video sidecars use `TrackFiles.provider_id` and `ProviderItems` and carry provider/canonical identity into sidecar rows. Added a canonical-only regression test with zero legacy provider rows.
 - **Metadata sidecar writers now fall back to canonical/provider-item metadata:** `metadata-files` no longer uses `ProviderAlbums`/`ProviderMedia` for local album/video NFO or artwork fallback data. Artist NFO album lists read canonical `Albums`; album NFOs resolve MBIDs, selected releases, reviews, artwork context, and tracks through `ProviderItems`, `ReleaseGroupSlots`, `AlbumReleases`, and `Tracks`; video NFOs resolve artist/album MBIDs through video `ProviderItems` + canonical `Recordings`.
 - **Lyric sharing now resolves through canonical provider items:** `lyric-service` no longer falls back to `ProviderMedia`/`ProviderAlbums` when sharing cached lyrics between stereo/spatial counterparts. It resolves provider track items through `ProviderItems`, `Tracks`, and `Recordings`, then matches cached lyric files by provider id, track MBID, or recording MBID.
@@ -895,7 +937,7 @@ All notable changes to this project are documented in this file.
   environment at call time (fixes CI flake when test files override
   `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
   on known Node test-runner clone deserialization failures.
-- **Monitoring-cycle downloads now wait for artist intake/curation work before the terminal missing-download pass.** The scheduled/manual cycle's terminal `DownloadMissing` was gated only on monitoring-cycle-tagged jobs and ignored in-flight per-artist intake work (`RefreshArtist`/`RescanFolders`/`CurateArtist`). On a fresh setup it could fire the moment the metadata refresh finished — before artist intake had curated any release-group slots — so it queued 0 downloads, then nothing retried until the next 24h boundary. The pre-download gate now also waits for all artist-workflow and library-rescan jobs to drain. Standalone artist add, scan, curation, and collaborator scanning still do not auto-download; downloads remain part of the explicit manual/scheduled monitoring cycle or download command.
+- **Monitoring-cycle downloads now wait for artist intake/curation work before the terminal missing-download pass.** The scheduled/manual cycle's terminal `DownloadMissing` was gated only on monitoring-cycle-tagged jobs and ignored in-flight per-artist intake work (`RefreshArtist`/`RescanFolders`/`CurateArtist`). On a fresh setup it could fire the moment the metadata refresh finished â€” before artist intake had curated any release-group slots â€” so it queued 0 downloads, then nothing retried until the next 24h boundary. The pre-download gate now also waits for all artist-workflow and library-rescan jobs to drain. Standalone artist add, scan, curation, and collaborator scanning still do not auto-download; downloads remain part of the explicit manual/scheduled monitoring cycle or download command.
 - **Forced upgrade checks now actually force redownload evaluation.** Manual `CheckUpgrades`/queue-triggered forced runs now pass an enabled redownload profile into `UpgradableSpecification`; previously they skipped the top-level setting guard but still evaluated with `allowRedownloads=false` when `upgrade_existing_files` was disabled.
 
 ## [2.0.7] - 2026-06-18
@@ -913,7 +955,7 @@ All notable changes to this project are documented in this file.
 - Detail-page loading skeletons align with the real layout (top spacing/header height).
 
 ### Changed
-- Search stays local + MusicBrainz/Servarr Metadata Server only for artists/albums/tracks/videos — no provider live-search.
+- Search stays local + MusicBrainz/Servarr Metadata Server only for artists/albums/tracks/videos â€” no provider live-search.
 - Tracklist: clickable artist names (linking via the known MusicBrainz id), a Duration column and a Quality column, the volume separator hidden on single-volume releases, and refined play/stop controls.
 - Background UltraBlur is generated small and blurred client-side (Plex-style), cutting the payload ~35x, and new pages now cross-fade in once decoded instead of snapping.
 - Runtime Docker image slimmed via a yarn cache mount and node_modules pruning.
@@ -929,13 +971,13 @@ All notable changes to this project are documented in this file.
 - Album page now shows a single quality pill when one provider release fills both the stereo and spatial library slots (the Atmos-fallback case), with a hover explaining it covers both libraries, instead of two identical Dolby Atmos pills.
 - Album page split Download button no longer clips its hover shadow/lift; the whole control now lifts and shadows as one unit like the other action buttons.
 - Atmos-only releases that fall back into the stereo slot now organize into `stereo-music` (not `spatial-music`), and `--dolby-atmos allow` is applied for stereo downloads so the fallback actually downloads.
-- Eliminated the concurrent stereo+spatial download race that caused `ENOENT … rename` import failures: each download job now uses its own `job_<id>` workspace, so jobs can't wipe each other's files.
+- Eliminated the concurrent stereo+spatial download race that caused `ENOENT â€¦ rename` import failures: each download job now uses its own `job_<id>` workspace, so jobs can't wipe each other's files.
 - Resolved "ghost" queue items that lingered as active after a job completed until a manual page reload.
 - Removed the constant GPU load from the background: the full-viewport `backdrop-filter` (re-sampled on every repaint) was replaced with a static `filter` baked onto the cached gradient image.
 - Reduced the visible grain/texture on the background by dialing the gradient dither way down.
 
 ### Changed
-- tiddl is now steered with a clean split: `config.toml` holds only global settings (video quality, threads, metadata embedding, templates, …) while per-job values (download/scan path, track-quality cap, Dolby Atmos mode, video filter) are passed as CLI args. This removes the previous config/args duplication.
+- tiddl is now steered with a clean split: `config.toml` holds only global settings (video quality, threads, metadata embedding, templates, â€¦) while per-job values (download/scan path, track-quality cap, Dolby Atmos mode, video filter) are passed as CLI args. This removes the previous config/args duplication.
 - Removed a stale Playwright smoke test for the `/search` route that was dropped in 2.0.4 (search now lives in the nav bar), fixing CI.
 
 ## [2.0.5] - 2026-06-17
@@ -979,14 +1021,14 @@ All notable changes to this project are documented in this file.
 - fix(ui): tighten mobile tracklist spacing instead of stacking pills
 - refactor(ui): rebuild tracklist on Fluent UI Table
 - fix(ui): tighten tracklist sizing and bio/review spacing
-- feat(ui): rework tracklist — hover-play, artist always, compact right cluster
-- fix(ui): tighten mobile artist name↔bio spacing
+- feat(ui): rework tracklist â€” hover-play, artist always, compact right cluster
+- fix(ui): tighten mobile artist nameâ†”bio spacing
 - feat(ui): theme-aware quality/provider pills + revert header order
 - feat(ui): album header row swap, declutter cards, auth page polish
 - fix(import): ffprobe duration fallback for unmapped Atmos/MP4 files
 - fix(ui): auth page scrolls; welcome header stays one line
 - fix(api): resolve blank artist-credit ids so tracklist artists link
-- fix(ui): mobile badge layout — own lines, card stacking, smaller card pills
+- fix(ui): mobile badge layout â€” own lines, card stacking, smaller card pills
 - fix(ui): white-on-black provider chip, consistent badge size & order
 - fix(ui): theme-aware provider marks everywhere (settings + auth too)
 - fix(ui): 24px badges, center the header badge block
@@ -997,10 +1039,10 @@ All notable changes to this project are documented in this file.
 ## [2.0.2] - 2026-06-13
 
 ### Changed
-- **Unified track matching**: curation, the album page, and playback now score MusicBrainz↔provider track matches through one shared matcher (recording-MBID / ISRC exact → position+title+duration structural → title-dominant fallback), so the three paths can no longer disagree. Fixes albums showing "no tracks matched / available" while the same release downloaded fine elsewhere (e.g. Bad Blood now reads 33/33).
-- **Verified status for full-coverage editions**: a release group whose provider release fully covers an "… EP" / "… X" style title-expansion now reads **verified** instead of being capped at "probable" (e.g. Goosebumps EP).
-- **Combined provider + quality pill**: the album header shows one chip per filled slot — a provider mark fused with its quality badge (e.g. TIDAL · 24-BIT, TIDAL · Atmos). With multiple providers this makes it obvious where each version came from; match confidence, combined-release count, and the selected MusicBrainz edition moved into the hover tooltip. A small corner dot flags only probable/ambiguous matches.
-- **Spatial-only albums** now read **"Dolby Atmos only"** in the header when the provider has no stereo release, presenting correctly instead of as a missing stereo match. (No empty stereo download was ever queued — Atmos candidates already route to the spatial slot.)
+- **Unified track matching**: curation, the album page, and playback now score MusicBrainzâ†”provider track matches through one shared matcher (recording-MBID / ISRC exact â†’ position+title+duration structural â†’ title-dominant fallback), so the three paths can no longer disagree. Fixes albums showing "no tracks matched / available" while the same release downloaded fine elsewhere (e.g. Bad Blood now reads 33/33).
+- **Verified status for full-coverage editions**: a release group whose provider release fully covers an "â€¦ EP" / "â€¦ X" style title-expansion now reads **verified** instead of being capped at "probable" (e.g. Goosebumps EP).
+- **Combined provider + quality pill**: the album header shows one chip per filled slot â€” a provider mark fused with its quality badge (e.g. TIDAL Â· 24-BIT, TIDAL Â· Atmos). With multiple providers this makes it obvious where each version came from; match confidence, combined-release count, and the selected MusicBrainz edition moved into the hover tooltip. A small corner dot flags only probable/ambiguous matches.
+- **Spatial-only albums** now read **"Dolby Atmos only"** in the header when the provider has no stereo release, presenting correctly instead of as a missing stereo match. (No empty stereo download was ever queued â€” Atmos candidates already route to the spatial slot.)
 - **TIDAL plugin files consolidated** under `config/providers/tidal/` (`.tiddl/` beside the token), with a one-time migration of a pre-2.0.2 `config/.tiddl`. Our app owns token refresh and writes the derived tiddl `auth.json`, so the app and `tiddl` no longer contend over the token. `TIDDL_PATH` now points at `config/providers/tidal/.tiddl`.
 
 ### Fixed
@@ -1008,7 +1050,7 @@ All notable changes to this project are documented in this file.
   environment at call time (fixes CI flake when test files override
   `DISCOGENIUS_CONFIG_DIR` after module load). API test runner retries once
   on known Node test-runner clone deserialization failures.
-- **Badge squishing**: quality badges held their intrinsic width (`flex-shrink: 0`, no-wrap), so labels no longer spill outside the rounded body when a row gets tight — album header, media cards, and the dashboard alike.
+- **Badge squishing**: quality badges held their intrinsic width (`flex-shrink: 0`, no-wrap), so labels no longer spill outside the rounded body when a row gets tight â€” album header, media cards, and the dashboard alike.
 - **Single-track organizer collision**: a track that was also released as a standalone single embeds `trackNumber: 1`; the organizer only overrides album position with that embedded number when the candidate's title also matches, so track 13 no longer maps onto position 1.
 - **Artwork source consistency**: artist-page album cards now prefer the same persisted canonical (Cover Art Archive) cover the album page resolves, instead of falling through to provider art whenever the cached data blob lacked an image. (Backfilling canonical art for never-viewed release groups is tracked for 2.0.3.)
 - The misleading "Add Another Provider" button (it re-ran the already-connected TIDAL flow and bounced to the library) is replaced by a roadmap hint until the universal provider-onboarding flow lands.
@@ -1027,7 +1069,7 @@ All notable changes to this project are documented in this file.
 - **One video per song**: duplicate provider videos (official/lyric/live re-uploads) are grouped by song and only the best one is queued, preferring official videos.
 - Credit-only collaborator artists get a basic metadata refresh instead of a full provider catalog/video sweep, and hydrate once instead of on every parent refresh.
 - Page ambience (UltraBlur background + accent) persists across navigation and on dashboard/settings, cross-fading between artworks instead of snapping through the neutral default.
-- The Docker image is ~40% smaller (2.31GB → ~1.4GB): runtime installs only the API workspace dependencies, and git plus repo-setup tools are no longer shipped.
+- The Docker image is ~40% smaller (2.31GB â†’ ~1.4GB): runtime installs only the API workspace dependencies, and git plus repo-setup tools are no longer shipped.
 - Naming examples render with consistent separators and real Bastille/MusicBrainz sample data, and the token help now documents recording/media/provider-video ids and album tokens for video templates.
 
 ### Fixed
@@ -1037,8 +1079,8 @@ All notable changes to this project are documented in this file.
   on known Node test-runner clone deserialization failures.
 - Importing one slot of a release group no longer deletes the other slot's file: stereo FLAC and Atmos M4A of the same release now coexist instead of ping-pong replacing each other.
 - Music video imports failed on a phantom `ProviderMedia.monitor` column; video downloads now import with thumbnail and NFO.
-- Video↔track matching never linked anything because it filtered audio recordings by an always-empty `artist_mbid` column; candidates now resolve through release groups (Men I Trust: 0/13 → 13/13 videos linked), giving inline video placement real anchors.
-- Merging library roots no longer strands artist/album sidecars in unresolvable rename conflicts — same-scope duplicates are merged automatically.
+- Videoâ†”track matching never linked anything because it filtered audio recordings by an always-empty `artist_mbid` column; candidates now resolve through release groups (Men I Trust: 0/13 â†’ 13/13 videos linked), giving inline video placement real anchors.
+- Merging library roots no longer strands artist/album sidecars in unresolvable rename conflicts â€” same-scope duplicates are merged automatically.
 - Album pages derive the accent color from cover art like artist/video pages, so seekbars and brand UI no longer stay default orange.
 - Artist images load in dev (`/MediaCoverProxy` proxy), artist-page album cards prefer canonical Cover Art Archive artwork over provider art, and `docker-compose.yml` no longer points `TIDDL_BIN` at the removed tidal-dl-ng.
 - Restored authentication on the video preview sign endpoint and fixed TIDAL video playback URLs (countryCode + HTML-entity unescaping in DASH manifests).
@@ -1051,7 +1093,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 - **Single download backend:** all TIDAL downloads (stereo, Dolby Atmos, music videos) now run through tiddl. OrpheusDL and tidal-dl-ng have been removed, together with their runtime setup, token sync paths, and health checks. The Docker image installs tiddl and pins `TIDDL_PATH=/config/.tiddl`.
-- **One login:** the in-app TIDAL device login is synced straight into tiddl (`auth.json` in the exact shape tiddl expects, plus matching OAuth client credentials via `TIDDL_AUTH`), so downloads work immediately after connecting your account — no separate downloader authentication.
+- **One login:** the in-app TIDAL device login is synced straight into tiddl (`auth.json` in the exact shape tiddl expects, plus matching OAuth client credentials via `TIDDL_AUTH`), so downloads work immediately after connecting your account â€” no separate downloader authentication.
 - **Edition-aware matching:** provider albums are validated against the tracklist of every release in a MusicBrainz release group (representative edition first, then by tracklist size). The slot records the edition that the chosen provider album actually covers, so a standard edition on TIDAL no longer shows as "unavailable" just because MusicBrainz's largest release is a deluxe, and the stored release MBID always describes the content that gets downloaded.
 - Documentation and agent guidance consolidated: one `AGENTS.md` at the repository root, refreshed `ARCHITECTURE.md`/`CURATION_DEDUPLICATION.md`/`ROADMAP.md`, and removal of ~30 stale agent-session documents, RFCs, and instruction files.
 
@@ -1130,7 +1172,7 @@ All notable changes to this project are documented in this file.
 - Real `HealthCheck` diagnostics across runtime state, writable paths, tool availability, and downloader capabilities.
 - Browser playback fallback chain: BTS/progressive preferred, DASH segment streaming as fallback.
 - Dolby Atmos browser streaming path for web playback of downloaded Atmos audio.
-- Two-column desktop queue layout: active queue and history side-by-side at ≥960px.
+- Two-column desktop queue layout: active queue and history side-by-side at â‰¥960px.
 - Mobile infinite scroll for both active queue and history lists.
 - Bulk queue reorder: per-row reorder buttons apply to entire selection when multiple items are selected.
 
@@ -1140,7 +1182,7 @@ All notable changes to this project are documented in this file.
 - Queue SSE/download events now include `quality` metadata with grace-window reconciliation to prevent flicker.
 - Album/track organization, scanner metadata writes, playlist imports, and manual import now use transaction batching instead of per-row auto-commits.
 - Manual import apply service rewritten to Lidarr-style two-phase collect-then-commit pattern.
-- Artist page release modules ordered: Albums → EPs → Singles → Live → Compilations → Soundtracks → Demos → Remixes → Appears On.
+- Artist page release modules ordered: Albums â†’ EPs â†’ Singles â†’ Live â†’ Compilations â†’ Soundtracks â†’ Demos â†’ Remixes â†’ Appears On.
 - Deprecated `write_audio_metadata` boolean in favor of `write_audio_tags_policy` enum.
 - Adopted pure SSE event-driven updates (Tidarr-style); removed all fallback polling intervals.
 - Queue item layout uses stacked title/artist/badge rows for pending items; active/importing items retain inline layout.
@@ -1218,7 +1260,7 @@ All notable changes to this project are documented in this file.
 
 - **Performance & Scaling**: Optimized backend for massive libraries (millions of tracks) by eliminating SQLite FILESORT bottlenecks in track/video queries.
 - **Event-Driven Queue**: Removed background polling loop in download processor; queue is now purely event-driven (triggered on startup, item addition, and completion).
-- **Job Queue Resilience**: Added proper job recovery on container restart—interrupted jobs transition from `processing` to `pending` automatically.
+- **Job Queue Resilience**: Added proper job recovery on container restartâ€”interrupted jobs transition from `processing` to `pending` automatically.
 - **SSE Stability**: Added 30-second keep-alive heartbeats to SSE connections to prevent proxy/load-balancer timeouts.
 - **Queue Performance**: Fixed job queue polling with native column sorting instead of CASE expressions; added `idx_jobs_poll` index for rapid pending-job selection.
 - **UI Virtualization**: Refactored QueueTab with `@tanstack/react-virtual` to handle massive queues without DOM node explosion.

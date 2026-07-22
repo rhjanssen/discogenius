@@ -86,4 +86,53 @@ router.post("/apply", async (req, res) => {
   }
 });
 
+/**
+ * Queue a Lidarr-style strip-tags job (remove embedded tags; no rewrite).
+ * Scope by ids, or applyAll with artistId / albumId.
+ */
+router.post("/strip", async (req, res) => {
+  try {
+    const ids = (req.body as any)?.ids as number[] | undefined;
+    const applyAll = (req.body as any)?.applyAll === true;
+    const artistId = (req.body as any)?.artistId as string | undefined;
+    const albumId = (req.body as any)?.albumId as string | undefined;
+    const normalizedIds = ids && Array.isArray(ids)
+      ? ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+      : undefined;
+
+    if ((!normalizedIds || normalizedIds.length === 0) && !applyAll) {
+      return res.status(400).json({ detail: "ids array is required unless applyAll is true" });
+    }
+    if (applyAll && !artistId && !albumId) {
+      return res.status(400).json({ detail: "artistId or albumId is required when applyAll is true" });
+    }
+
+    const refId = `strip-tags:${JSON.stringify(applyAll
+      ? { artistId: artistId || null, albumId: albumId || null }
+      : { ids: normalizedIds || [] })}`;
+
+    const commandId = await runWithAsyncBusyRetry(
+      () => CommandQueueManager.push(CommandNames.RetagFiles, {
+        ids: normalizedIds,
+        applyAll,
+        artistId,
+        albumId,
+        stripOnly: true,
+      }, refId, 1, 1),
+      30,
+      200,
+    );
+
+    res.json({
+      success: true,
+      queued: commandId !== -1,
+      commandId,
+      message: "Strip tags task queued",
+    });
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : "Strip tags failed";
+    res.status(500).json({ detail: message });
+  }
+});
+
 export default router;

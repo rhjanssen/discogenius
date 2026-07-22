@@ -24,6 +24,7 @@ const PROVIDER_MARKS: Record<string, ProviderMarkAsset> = {
     youtube_music: { src: "/assets/images/youtube_icon.svg", monochrome: false, badgeFill: true },
     "youtube-music": { src: "/assets/images/youtube_icon.svg", monochrome: false, badgeFill: true },
     deezer: { src: "/assets/images/deezer_icon.svg", monochrome: false },
+    soundcloud: { src: "/assets/images/soundcloud_icon.svg", monochrome: false, badgeFill: true },
 };
 
 export function providerKey(provider?: string | null): string {
@@ -60,6 +61,26 @@ export function providerAlbumUrl(provider: string | null | undefined, albumId: s
             : `https://music.youtube.com/browse/${encodeURIComponent(id)}`;
     }
     if (key === "deezer") return `https://www.deezer.com/album/${encodeURIComponent(id)}`;
+    if (key === "soundcloud") return `https://soundcloud.com/playlists/${encodeURIComponent(id)}`;
+    return null;
+}
+
+/** Public web URL for a provider track id (same contract as providerAlbumUrl). */
+export function providerTrackUrl(provider: string | null | undefined, trackId: string): string | null {
+    const id = String(trackId || "").trim();
+    if (!id) return null;
+    const key = providerKey(provider);
+    if (key === "tidal") return `https://tidal.com/browse/track/${encodeURIComponent(id)}`;
+    if (key.startsWith("apple")) return `https://geo.music.apple.com/song/${encodeURIComponent(id)}`;
+    if (key === "amazon-music" || key === "amazon_music" || key === "amazon") {
+        return `https://music.amazon.com/tracks/${encodeURIComponent(id)}`;
+    }
+    if (key === "spotify") return `https://open.spotify.com/track/${encodeURIComponent(id)}`;
+    if (key === "youtube-music" || key === "youtube_music" || key === "youtube") {
+        return `https://music.youtube.com/watch?v=${encodeURIComponent(id)}`;
+    }
+    if (key === "deezer") return `https://www.deezer.com/track/${encodeURIComponent(id)}`;
+    if (key === "soundcloud") return `https://soundcloud.com/tracks/${encodeURIComponent(id)}`;
     return null;
 }
 

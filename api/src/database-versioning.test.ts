@@ -84,6 +84,13 @@ test("re-initializing an existing schema-39 database opens it without a wipe", (
   }
 });
 
+test("fresh schema-39 TrackFiles baseline includes video_codec and frame size columns", () => {
+  const columns = tableColumns("TrackFiles");
+  assert.ok(columns.includes("video_codec"), "Expected TrackFiles.video_codec on CREATE TABLE baseline");
+  assert.ok(columns.includes("width"), "Expected TrackFiles.width on CREATE TABLE baseline");
+  assert.ok(columns.includes("height"), "Expected TrackFiles.height on CREATE TABLE baseline");
+});
+
 test("upgrade queue table is absent from the fresh schema", () => {
   const row = dbModule.db
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='upgrade_queue'")
@@ -101,7 +108,7 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
     ["ArtistReleaseGroupCuration", ["source_artist_metadata_id", "release_group_id", "redundant_to_release_group_id", "source_artist_mbid", "release_group_mbid"]],
     ["Tracks", ["id", "album_release_id", "recording_id", "release_mbid", "recording_mbid"]],
     ["ReleaseGroupSlots", ["id", "artist_metadata_id", "release_group_id", "selected_album_release_id", "artist_mbid", "release_group_mbid", "selected_release_mbid"]],
-    ["TrackFiles", ["release_group_id", "album_release_id", "track_id", "recording_id", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
+    ["TrackFiles", ["release_group_id", "album_release_id", "track_id", "recording_id", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id", "codec", "video_codec", "width", "height"]],
     ["MetadataFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
     ["LyricFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
     ["ExtraFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],

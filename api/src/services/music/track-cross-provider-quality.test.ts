@@ -86,8 +86,8 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   const detail = trackQuery.getTrackDetail("track-1");
   assert.ok(detail);
   assert.deepEqual(
-    (detail.remoteOffers || []).map((offer) => `${offer.slot}:${offer.provider}:${offer.quality}`).sort(),
-    ["spatial:apple-music:DOLBY_ATMOS", "stereo:tidal:HIRES_LOSSLESS"],
+    (detail.remoteOffers || []).map((offer) => `${offer.slot}:${offer.provider}:${offer.quality}:${offer.matchStatus}`).sort(),
+    ["spatial:apple-music:DOLBY_ATMOS:verified", "stereo:tidal:HIRES_LOSSLESS:verified"],
   );
   assert.ok(detail.qualityTags?.includes("HIRES_LOSSLESS"));
   assert.ok(detail.qualityTags?.includes("DOLBY_ATMOS"));

@@ -1252,7 +1252,7 @@ const Auth = () => {
                 </Text>
                 <Body1 className={styles.leftBody}>
                   {isAddingProvider
-                    ? "Connect another service, then return to Settings to choose its priority and capabilities."
+                    ? "Connect another service, then return to Settings to set its download priority."
                     : "Connect a streaming service to enable downloading, or skip for now and add your wanted artists first."}
                 </Body1>
               </div>

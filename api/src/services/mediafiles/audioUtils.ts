@@ -147,7 +147,14 @@ export interface AudioMetrics {
     bitrate?: number;
     sampleRate?: number;
     bitDepth?: number;
+    /** Audio stream codec (AAC, Opus, FLAC, …). */
     codec?: string;
+    /**
+     * Video stream codec when the file has a video track (h264, hevc, av1, …).
+     * Kept separate from `codec` so audio tooltips/matching stay accurate.
+     * Persisted on TrackFiles.video_codec via the import/organize upsert path.
+     */
+    videoCodec?: string;
     channels?: number;
     duration?: number;
     width?: number;
@@ -247,10 +254,16 @@ export async function parseAudioFile(filePath: string): Promise<AudioMetrics> {
                     try {
                         const data = JSON.parse(stdout);
                         const stream = Array.isArray(data?.streams) ? data.streams[0] : null;
+                        const videoCodec = typeof stream?.codec_name === "string" && stream.codec_name
+                            ? String(stream.codec_name)
+                            : undefined;
                         resolve({
                             width: typeof stream?.width === "number" ? stream.width : undefined,
                             height: typeof stream?.height === "number" ? stream.height : undefined,
-                            codec: metrics.codec || stream?.codec_name || undefined,
+                            // Keep audio `codec`; surface the video FourCC separately.
+                            videoCodec,
+                            // Legacy fallback: only fill `codec` from video when no audio codec exists.
+                            codec: metrics.codec || videoCodec,
                         });
                     } catch {
                         resolve({});
@@ -262,6 +275,8 @@ export async function parseAudioFile(filePath: string): Promise<AudioMetrics> {
         return {
             ...metrics,
             ...videoProbe,
+            codec: metrics.codec || videoProbe.codec,
+            videoCodec: videoProbe.videoCodec,
         };
     } catch (error) {
         console.warn(`Failed to parse metadata for ${filePath}`, error);

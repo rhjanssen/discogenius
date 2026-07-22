@@ -112,7 +112,7 @@ export const MetadataSourceSettingsSection = ({
     return (
         <SettingsSection
             id="metadata-source"
-            title="Metadata source"
+            title="Catalog"
             description="Choose where artist, album, and track details come from."
             className={styles.section}
         >

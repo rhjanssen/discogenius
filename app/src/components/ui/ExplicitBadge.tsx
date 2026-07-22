@@ -82,7 +82,6 @@ export const ExplicitBadge: React.FC<ExplicitBadgeProps> = ({ className, size = 
         color: palette.SpatialText,
       }}
       aria-label="Explicit"
-      title="Explicit"
     >
       <span className={styles.label}>E</span>
     </Badge>

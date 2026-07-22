@@ -54,6 +54,23 @@ import {
     resolveProviderArtistId,
     resolveProviderArtistIds,
 } from "./refresh-artist-bio.js";
+import {
+    normalizeMusicBrainzType,
+    parseMusicBrainzSecondaryTypes,
+} from "../metadata/musicbrainz-release-group-filter.js";
+
+/** Fan playlist / mixtape coverage — never promoted to verified. */
+const PLAYLIST_TRACKLIST_COVERAGE_METHOD = "playlist-tracklist-coverage";
+
+function isWidePlaylistSearchReleaseGroup(
+    primaryType?: string | null,
+    secondaryTypes?: string | null,
+): boolean {
+    const primary = normalizeMusicBrainzType(primaryType);
+    if (primary === "other") return true;
+    return parseMusicBrainzSecondaryTypes(secondaryTypes).some((type) =>
+        type === "mixtape/street" || type === "dj-mix" || type === "demo");
+}
 
 export {
     completeBulkTrackList,
@@ -551,6 +568,191 @@ export class RefreshArtistService {
                         error,
                     );
                 }
+            }
+        }
+
+        return {
+            albums: Array.from(albumsByProviderId.values()),
+            matches,
+        };
+    }
+
+    /**
+     * SoundCloud-only wide search for less-official release groups (mixtape/street,
+     * dj-mix, demo, primary Other) that were not matched from the artist’s official
+     * album catalog. Fan playlists may be supersets — coverage of the MB tracklist
+     * is required; conviction is always `probable` via playlist-tracklist-coverage.
+     */
+    private static async searchSoundCloudMixtapePlaylistOffers(
+        provider: StreamingProvider,
+        artistMbid: string | null,
+        alreadyMatchedRgMbids: Set<string>,
+    ): Promise<{ albums: any[]; matches: Map<string, ProviderReleaseGroupMatch> }> {
+        if (!artistMbid || provider.id !== "soundcloud" || !provider.searchReleaseGroup) {
+            return { albums: [], matches: new Map() };
+        }
+
+        const cachedReleaseGroups = servarrMetadata.getCachedReleaseGroupsForArtist(artistMbid);
+        const cachedByMbid = new Map(
+            cachedReleaseGroups.map((releaseGroup) => [releaseGroup.mbid, releaseGroup] as const),
+        );
+
+        const targets = db.prepare(`
+            SELECT
+                rg.mbid,
+                rg.title,
+                rg.primary_type,
+                rg.secondary_types,
+                rg.first_release_date,
+                owner.name AS artist_name,
+                (
+                    SELECT release.mbid
+                    FROM AlbumReleases release
+                    WHERE release.release_group_mbid = rg.mbid
+                    ORDER BY COALESCE(release.track_count, 0) DESC, release.mbid ASC
+                    LIMIT 1
+                ) AS preferred_release_mbid,
+                (
+                    SELECT release.track_count
+                    FROM AlbumReleases release
+                    WHERE release.release_group_mbid = rg.mbid
+                    ORDER BY COALESCE(release.track_count, 0) DESC, release.mbid ASC
+                    LIMIT 1
+                ) AS preferred_track_count
+            FROM Albums rg
+            LEFT JOIN ArtistMetadata owner ON owner.mbid = rg.artist_mbid
+            WHERE rg.artist_mbid = ?
+            ORDER BY rg.mbid ASC
+        `).all(artistMbid) as Array<{
+            mbid: string;
+            title: string;
+            primary_type?: string | null;
+            secondary_types?: string | null;
+            first_release_date?: string | null;
+            artist_name?: string | null;
+            preferred_release_mbid?: string | null;
+            preferred_track_count?: number | null;
+        }>;
+
+        const albumsByProviderId = new Map<string, any>();
+        const matches = new Map<string, ProviderReleaseGroupMatch>();
+        const loadTracks = db.prepare(`
+            SELECT title, length_ms, position
+            FROM Tracks
+            WHERE release_mbid = ?
+            ORDER BY medium_position, position
+        `);
+
+        for (const target of targets) {
+            if (alreadyMatchedRgMbids.has(target.mbid)) continue;
+            if (!isWidePlaylistSearchReleaseGroup(target.primary_type, target.secondary_types)) {
+                continue;
+            }
+            const releaseGroup = cachedByMbid.get(target.mbid);
+            if (!releaseGroup) continue;
+
+            let secondaryTypes: string[] = [];
+            try {
+                const parsed = JSON.parse(String(target.secondary_types || "[]"));
+                secondaryTypes = Array.isArray(parsed) ? parsed.map((value) => String(value)) : [];
+            } catch {
+                secondaryTypes = [];
+            }
+
+            const preferredTracks = target.preferred_release_mbid
+                ? (loadTracks.all(target.preferred_release_mbid) as Array<{
+                    title: string | null;
+                    length_ms: number | null;
+                    position: number | null;
+                }>).map((row) => ({
+                    title: String(row.title || ""),
+                    durationSec: row.length_ms != null ? Math.round(Number(row.length_ms) / 1000) : null,
+                    trackNumber: row.position ?? null,
+                })).filter((row) => row.title)
+                : [];
+            if (preferredTracks.length === 0) continue;
+
+            try {
+                const providerAlbums = await provider.searchReleaseGroup!({
+                    artistName: String(target.artist_name || ""),
+                    releaseGroupMbid: target.mbid,
+                    releaseGroupTitle: target.title,
+                    releaseDate: target.first_release_date || null,
+                    slot: "stereo",
+                    preferredTrackCount: target.preferred_track_count || preferredTracks.length,
+                    primaryType: target.primary_type || null,
+                    secondaryTypes,
+                    preferredTracks,
+                });
+                if (providerAlbums.length === 0) continue;
+
+                for (const providerAlbum of providerAlbums) {
+                    const album = {
+                        ...providerAlbumToOfferRow(providerAlbum, artistMbid),
+                        provider: provider.id,
+                    };
+                    const providerAlbumId = String(album.provider_id);
+                    if (albumsByProviderId.has(providerAlbumId)) continue;
+
+                    let rawTracks: any[] = [];
+                    try {
+                        rawTracks = await provider.getAlbumTracks(providerAlbum.providerId);
+                    } catch (error) {
+                        console.warn(
+                            `[RefreshArtistService] Failed to hydrate SoundCloud playlist ${providerAlbumId}:`,
+                            error,
+                        );
+                        continue;
+                    }
+                    album._provider_tracks = rawTracks.map((track: any) => slotTrack(track));
+                    album._provider_raw_tracks = rawTracks;
+                    album.num_tracks = rawTracks.length || album.num_tracks;
+
+                    const targetMatches = matchProviderAlbumsToReleaseGroups(
+                        [{
+                            provider: provider.id,
+                            providerId: providerAlbumId,
+                            providerUrl: album.url ?? null,
+                            title: String(album.title || ""),
+                            version: album.version ?? null,
+                            releaseDate: album.release_date ?? null,
+                            type: album.type ?? null,
+                            quality: album.quality ?? null,
+                            qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
+                            explicit: album.explicit ?? null,
+                            upc: album.upc ?? null,
+                            trackCount: album.num_tracks ?? null,
+                            volumeCount: album.num_volumes ?? null,
+                        }],
+                        [releaseGroup],
+                    );
+                    const match = targetMatches.get(providerAlbumId);
+                    if (!match || match.status === "unmatched" || match.releaseGroup?.mbid !== target.mbid) {
+                        continue;
+                    }
+
+                    // Fan playlists are never verified identity — keep probable with
+                    // an explicit coverage method so UI/slot logic treat them correctly.
+                    match.status = "probable";
+                    match.method = PLAYLIST_TRACKLIST_COVERAGE_METHOD;
+                    match.confidence = Math.max(Number(match.confidence || 0), 0.85);
+                    match.evidence = {
+                        ...match.evidence,
+                        trackCountMatched: false,
+                        providerTrackCount: album.num_tracks ?? null,
+                        targetTrackCount: preferredTracks.length,
+                    };
+
+                    albumsByProviderId.set(providerAlbumId, album);
+                    matches.set(providerAlbumId, match);
+                    // One covering playlist per RG is enough for offer selection.
+                    break;
+                }
+            } catch (error) {
+                console.warn(
+                    `[RefreshArtistService] SoundCloud mixtape playlist search failed for ${target.title} (${target.mbid}):`,
+                    error,
+                );
             }
         }
 
@@ -1274,6 +1476,76 @@ export class RefreshArtistService {
                             match,
                         });
                     }
+                }
+
+                // SoundCloud mixtapes / dj-mixes / demos often live only as fan or
+                // user playlists, not under the official artist album catalog.
+                // For those release types, search playlists by title and accept
+                // supersets that cover the MusicBrainz tracklist.
+                const matchedRgMbids = new Set(
+                    Array.from(providerReleaseGroupMatches.values())
+                        .filter((match) =>
+                            match.releaseGroup
+                            && ["verified", "probable", "candidate"].includes(match.status))
+                        .map((match) => String(match.releaseGroup!.mbid)),
+                );
+                const widePlaylistOffers = await this.searchSoundCloudMixtapePlaylistOffers(
+                    provider,
+                    artistMbid,
+                    matchedRgMbids,
+                );
+                if (widePlaylistOffers.albums.length > 0) {
+                    await this.storeProviderAlbumOffers(
+                        provider.id,
+                        artistMbid,
+                        widePlaylistOffers.albums,
+                        widePlaylistOffers.matches,
+                    );
+                    const { RefreshAlbumService: RefreshAlbumSvcWide, providerTrackToTrackMetadataRow: toTrackRowWide } =
+                        await import("./refresh-album-service.js");
+                    for (const album of widePlaylistOffers.albums) {
+                        const rawTracks = album._provider_raw_tracks;
+                        if (!Array.isArray(rawTracks) || rawTracks.length === 0) continue;
+                        try {
+                            await RefreshAlbumSvcWide.storeProviderTrackOffers(
+                                provider.id,
+                                String(album.provider_id),
+                                rawTracks.map(toTrackRowWide),
+                                artistMbid,
+                            );
+                        } catch (error) {
+                            console.warn(
+                                `[RefreshArtistService] Failed to persist mixtape playlist track offers for ${album.provider_id}:`,
+                                error,
+                            );
+                        }
+                    }
+                    for (const album of widePlaylistOffers.albums) {
+                        const providerAlbumId = String(album.provider_id);
+                        const match = widePlaylistOffers.matches.get(providerAlbumId);
+                        if (!match) continue;
+                        allMatchedSelections.push({
+                            provider: provider.id,
+                            album: {
+                                providerId: providerAlbumId,
+                                title: String(album.title || ""),
+                                version: album.version ?? null,
+                                releaseDate: album.release_date ?? null,
+                                quality: album.quality ?? null,
+                                qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
+                                explicit: album.explicit ?? null,
+                                trackCount: album.num_tracks ?? null,
+                                volumeCount: album.num_volumes ?? null,
+                                tracks: Array.isArray(album._provider_tracks) ? album._provider_tracks : undefined,
+                                raw: album,
+                            },
+                            match,
+                        });
+                    }
+                    totalAlbumsCount += widePlaylistOffers.albums.length;
+                    console.log(
+                        `[RefreshArtistService] Added ${widePlaylistOffers.albums.length} SoundCloud mixtape/playlist offer(s) for ${artistId}`,
+                    );
                 }
             } catch (error) {
                 console.warn(`[RefreshArtistService] Failed to fetch albums on ${provider.name} for ${artistId}:`, error);

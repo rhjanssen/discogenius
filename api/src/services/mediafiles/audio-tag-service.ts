@@ -2506,6 +2506,55 @@ export class AudioTagService {
 
     return this.apply(ids);
   }
+
+  /**
+   * Lidarr-style strip tags: remove embedded metadata from audio files without
+   * rewriting catalog tags. Skips Atmos/spatial files that are not safely writable.
+   */
+  static async stripTags(ids: number[]): Promise<RetagApplyResult> {
+    const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))));
+    const result: RetagApplyResult = {
+      retagged: 0,
+      skipped: 0,
+      missing: 0,
+      errors: [],
+    };
+    if (uniqueIds.length === 0) return result;
+
+    const rows = this.getTrackRowsByIds(uniqueIds);
+    const found = new Set(rows.map((row) => row.id));
+    for (const id of uniqueIds) {
+      if (!found.has(id)) result.missing++;
+    }
+
+    for (const row of rows) {
+      const resolvedPath = resolveStoredLibraryPath({
+        filePath: row.file_path,
+        libraryRoot: row.library_root,
+      });
+      if (!fs.existsSync(resolvedPath)) {
+        result.missing++;
+        continue;
+      }
+      if (shouldSkipEmbeddedAudioTagWrite(row)) {
+        result.skipped++;
+        continue;
+      }
+      const scrubbed = await removeAllTags(resolvedPath);
+      if (!scrubbed) {
+        result.errors.push({ id: row.id, error: "Tag strip failed" });
+        continue;
+      }
+      result.retagged++;
+    }
+
+    return result;
+  }
+
+  static async stripTagsByScope(options: RetagScopeOptions = {}): Promise<RetagApplyResult> {
+    const rows = this.getTrackRows(options, false);
+    return this.stripTags(rows.map((row) => row.id));
+  }
 }
 
 

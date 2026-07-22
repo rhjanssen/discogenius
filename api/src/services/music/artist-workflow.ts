@@ -2,6 +2,7 @@ import { CommandTrigger } from "../commands/command-trigger.js";
 import {ARTIST_WORKFLOW_COMMAND_NAMES, CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import type { RescanFoldersCommand } from "../commands/command-bodies.js";
+import { getConfigSection } from "../config/config.js";
 import { getManagedArtists } from "./managed-artists.js";
 
 export type ArtistWorkflow =
@@ -257,7 +258,7 @@ export function queueLibraryRescan(options: {
     {
       addNewArtists: options.addNewArtists ?? false,
       artistIds: options.artistIds,
-      monitorArtist: options.monitorArtist ?? true,
+      monitorArtist: options.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists,
       fullProcessing: options.fullProcessing ?? false,
     } satisfies Partial<RescanFoldersCommand>,
     "rescan-folders",

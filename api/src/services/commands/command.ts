@@ -117,12 +117,13 @@ export class CommandManager {
         }
 
         // Optional command-level max concurrency cap
-        if (definition.maxConcurrent !== undefined) {
+        const maxConcurrent = definition.resolveMaxConcurrent?.() ?? definition.maxConcurrent;
+        if (maxConcurrent !== undefined) {
             const runningSameTypeCount = processingJobs.filter(j => j.name === jobType).length;
-            if (runningSameTypeCount >= definition.maxConcurrent) {
+            if (runningSameTypeCount >= maxConcurrent) {
                 return {
                     canStart: false,
-                    reason: `${definition.name} reached max concurrency (${runningSameTypeCount}/${definition.maxConcurrent})`,
+                    reason: `${definition.name} reached max concurrency (${runningSameTypeCount}/${maxConcurrent})`,
                 };
             }
         }

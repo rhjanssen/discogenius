@@ -8,6 +8,7 @@ import {
 import {
     CheckmarkCircle16Filled,
     DismissCircle16Filled,
+    Warning16Filled,
     ArrowClockwise24Regular,
     Clock16Regular,
     MusicNote224Regular,
@@ -123,9 +124,20 @@ function renderHistoryStatusIndicator(
     styles: ReturnType<typeof useDashboardStyles>,
     status?: string,
     error?: string | null,
+    outcome?: string | null,
+    warningMessage?: string | null,
 ) {
     if (error || status === "failed") {
         return <DismissCircle16Filled className={styles.downloadStatusErrorIcon} />;
+    }
+
+    if (status === "completed" && outcome === "completedWithWarning") {
+        return (
+            <Warning16Filled
+                className={styles.downloadStatusWarningIcon}
+                title={warningMessage || "Completed with warning"}
+            />
+        );
     }
 
     if (status === "completed") {
@@ -261,7 +273,13 @@ export function QueueHistoryPanel({
                                 <div className={styles.queueHistoryTrailing}>
                                     <Text className={styles.queueHistoryTime}>{row.timeLabel}</Text>
                                     <div className={styles.queueHistoryStatus}>
-                                        {renderHistoryStatusIndicator(styles, item.status, item.error)}
+                                        {renderHistoryStatusIndicator(
+                                            styles,
+                                            item.status,
+                                            item.error,
+                                            item.outcome,
+                                            item.warningMessage,
+                                        )}
                                     </div>
                                 </div>
                                 {isFailed ? (
@@ -271,6 +289,8 @@ export function QueueHistoryPanel({
                                 ) : null}
                                 {row.error ? (
                                     <Text className={styles.queueHistoryErrorText}>{row.error}</Text>
+                                ) : item.outcome === "completedWithWarning" && item.warningMessage ? (
+                                    <Text className={styles.queueHistoryErrorText}>{item.warningMessage}</Text>
                                 ) : null}
                             </div>
                         );

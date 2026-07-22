@@ -1,6 +1,11 @@
 import { db } from "../../database.js";
 import type { VideoContract, VideosListResponseContract } from "../../contracts/catalog.js";
-import type { VideoAlbumRefContract, VideoDetailContract, VideoProviderOfferContract } from "../../contracts/media.js";
+import type {
+  AlbumAssociatedVideoContract,
+  VideoAlbumRefContract,
+  VideoDetailContract,
+  VideoProviderOfferContract,
+} from "../../contracts/media.js";
 import { streamingProviderManager } from "../providers/index.js";
 import { videoCoverLocalUrl, albumCoverLocalUrl, imageContainerFromImagesColumn } from "../metadata/media-cover-service.js";
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
@@ -431,6 +436,349 @@ export function getVideoDetail(videoId: string): VideoDetailContract | null {
   }
 
   return null;
+}
+
+/**
+ * Videos associated with an album (release group) for album-page UX.
+ *
+ * Sources (unioned, de-duped by video recording id):
+ *  1. `provider_video_for` from a video → audio recording that appears on this RG
+ *  2. Video recordings that themselves appear as tracks on this RG
+ *
+ * Track position prefers the stereo-selected / richest edition (same idea as
+ * Appears On), then earliest date.
+ */
+export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssociatedVideoContract[] {
+  const rgMbid = String(releaseGroupMbid || "").trim();
+  if (!rgMbid) return [];
+
+  // Prefer slot-selected release, then richest tracklist, then earliest date —
+  // mirrors Appears On track pick order for a stable album-page track label.
+  const trackPickOrder = `
+    CASE
+      WHEN ar.mbid = (
+        SELECT rgs.selected_release_mbid
+        FROM ReleaseGroupSlots rgs
+        WHERE rgs.release_group_mbid = ar.release_group_mbid
+          AND rgs.selected_release_mbid IS NOT NULL
+        ORDER BY
+          CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+          rgs.monitored DESC
+        LIMIT 1
+      ) THEN 0
+      ELSE 1
+    END ASC,
+    COALESCE(ar.track_count, 0) DESC,
+    COALESCE(ar.media_count, 0) DESC,
+    CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
+    ar.date ASC,
+    t.medium_position ASC,
+    t.position ASC
+  `;
+
+  const linkedViaRelation = db.prepare(`
+    SELECT
+      CAST(video.id AS TEXT) AS id,
+      CASE
+        WHEN video.title IS NOT NULL
+          AND TRIM(video.title) != ''
+          AND LOWER(TRIM(video.title)) != 'unknown video'
+        THEN video.title
+        ELSE COALESCE(
+          NULLIF(TRIM(pi.title), ''),
+          NULLIF(TRIM(video.title), ''),
+          'Unknown Video'
+        )
+      END AS title,
+      video.video_variant AS video_variant,
+      video.release_date AS release_date,
+      video.monitored AS monitored,
+      video.monitored_lock AS monitored_lock,
+      CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM TrackFiles lf
+        WHERE lf.file_type = 'video'
+          AND (
+            lf.recording_id = video.id
+            OR (video.mbid IS NOT NULL AND lf.canonical_recording_mbid = video.mbid)
+            OR (
+              pi.provider_id IS NOT NULL
+              AND lf.provider = pi.provider
+              AND CAST(lf.provider_id AS TEXT) = CAST(pi.provider_id AS TEXT)
+            )
+          )
+      ) THEN 1 ELSE 0 END AS downloaded,
+      (
+        SELECT t.mbid
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = audio.id
+            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
+          )
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS track_mbid,
+      (
+        SELECT COALESCE(NULLIF(TRIM(t.title), ''), audio.title)
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = audio.id
+            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
+          )
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS track_title,
+      (
+        SELECT t.position
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = audio.id
+            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
+          )
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS track_number,
+      (
+        SELECT t.medium_position
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = audio.id
+            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
+          )
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS volume_number,
+      audio.mbid AS audio_recording_mbid
+    FROM RecordingRelations rr
+    JOIN Recordings video ON video.id = rr.source_recording_id AND video.is_video = 1
+    JOIN Recordings audio ON audio.id = rr.target_recording_id
+    LEFT JOIN ProviderItems pi
+      ON pi.rowid = (
+        SELECT candidate.rowid
+        FROM ProviderItems candidate
+        WHERE candidate.entity_type = 'video'
+          AND (
+            candidate.recording_id = video.id
+            OR (video.mbid IS NOT NULL AND candidate.recording_mbid = video.mbid)
+          )
+        ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
+        LIMIT 1
+      )
+    WHERE rr.relation_type = 'provider_video_for'
+      AND EXISTS (
+        SELECT 1
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = audio.id
+            OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid)
+          )
+      )
+  `).all(rgMbid, rgMbid, rgMbid, rgMbid, rgMbid) as Array<{
+    id: string;
+    title: string;
+    video_variant: string | null;
+    release_date: string | null;
+    monitored: number | boolean | null;
+    monitored_lock: number | boolean | null;
+    explicit: number | boolean | null;
+    downloaded: number;
+    track_mbid: string | null;
+    track_title: string | null;
+    track_number: number | null;
+    volume_number: number | null;
+    audio_recording_mbid: string | null;
+  }>;
+
+  const onAlbumVideoTracks = db.prepare(`
+    SELECT
+      CAST(video.id AS TEXT) AS id,
+      CASE
+        WHEN video.title IS NOT NULL
+          AND TRIM(video.title) != ''
+          AND LOWER(TRIM(video.title)) != 'unknown video'
+        THEN video.title
+        ELSE COALESCE(
+          NULLIF(TRIM(pi.title), ''),
+          NULLIF(TRIM(video.title), ''),
+          'Unknown Video'
+        )
+      END AS title,
+      video.video_variant AS video_variant,
+      video.release_date AS release_date,
+      video.monitored AS monitored,
+      video.monitored_lock AS monitored_lock,
+      CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM TrackFiles lf
+        WHERE lf.file_type = 'video'
+          AND (
+            lf.recording_id = video.id
+            OR (video.mbid IS NOT NULL AND lf.canonical_recording_mbid = video.mbid)
+            OR (
+              pi.provider_id IS NOT NULL
+              AND lf.provider = pi.provider
+              AND CAST(lf.provider_id AS TEXT) = CAST(pi.provider_id AS TEXT)
+            )
+          )
+      ) THEN 1 ELSE 0 END AS downloaded,
+      (
+        SELECT t.mbid
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = video.id
+            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
+          )
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS track_mbid,
+      (
+        SELECT COALESCE(NULLIF(TRIM(t.title), ''), video.title)
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = video.id
+            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
+          )
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS track_title,
+      (
+        SELECT t.position
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = video.id
+            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
+          )
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS track_number,
+      (
+        SELECT t.medium_position
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = video.id
+            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
+          )
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS volume_number,
+      CAST(NULL AS TEXT) AS audio_recording_mbid
+    FROM Recordings video
+    LEFT JOIN ProviderItems pi
+      ON pi.rowid = (
+        SELECT candidate.rowid
+        FROM ProviderItems candidate
+        WHERE candidate.entity_type = 'video'
+          AND (
+            candidate.recording_id = video.id
+            OR (video.mbid IS NOT NULL AND candidate.recording_mbid = video.mbid)
+          )
+        ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
+        LIMIT 1
+      )
+    WHERE video.is_video = 1
+      AND EXISTS (
+        SELECT 1
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = ?
+          AND (
+            t.recording_id = video.id
+            OR (video.mbid IS NOT NULL AND t.recording_mbid = video.mbid)
+          )
+      )
+  `).all(rgMbid, rgMbid, rgMbid, rgMbid, rgMbid) as Array<{
+    id: string;
+    title: string;
+    video_variant: string | null;
+    release_date: string | null;
+    monitored: number | boolean | null;
+    monitored_lock: number | boolean | null;
+    explicit: number | boolean | null;
+    downloaded: number;
+    track_mbid: string | null;
+    track_title: string | null;
+    track_number: number | null;
+    volume_number: number | null;
+    audio_recording_mbid: string | null;
+  }>;
+
+  const byId = new Map<string, AlbumAssociatedVideoContract>();
+  const upsert = (row: typeof linkedViaRelation[number]) => {
+    const id = String(row.id);
+    if (byId.has(id)) return;
+    const coverArtUrl = videoCoverLocalUrl(id);
+    byId.set(id, {
+      id,
+      title: row.title || "Unknown Video",
+      cover: coverArtUrl,
+      cover_id: coverArtUrl,
+      cover_art_url: coverArtUrl,
+      video_variant: row.video_variant ?? null,
+      release_date: row.release_date ?? null,
+      explicit: row.explicit == null ? undefined : Boolean(row.explicit),
+      is_monitored: Boolean(row.monitored),
+      monitored_lock: Boolean(row.monitored_lock),
+      downloaded: Boolean(row.downloaded),
+      is_downloaded: Boolean(row.downloaded),
+      track_mbid: row.track_mbid ?? null,
+      track_title: row.track_title ?? null,
+      track_number: row.track_number == null ? null : Number(row.track_number),
+      volume_number: row.volume_number == null ? null : Number(row.volume_number),
+      audio_recording_mbid: row.audio_recording_mbid ?? null,
+    });
+  };
+
+  // Relation-linked first (prefer audio-track affiliation), then on-RG video tracks.
+  for (const row of linkedViaRelation) upsert(row);
+  for (const row of onAlbumVideoTracks) upsert(row);
+
+  return Array.from(byId.values()).sort((left, right) => {
+    const leftVol = left.volume_number ?? 0;
+    const rightVol = right.volume_number ?? 0;
+    if (leftVol !== rightVol) return leftVol - rightVol;
+    const leftTrack = left.track_number ?? Number.MAX_SAFE_INTEGER;
+    const rightTrack = right.track_number ?? Number.MAX_SAFE_INTEGER;
+    if (leftTrack !== rightTrack) return leftTrack - rightTrack;
+    return String(left.title).localeCompare(String(right.title), undefined, { sensitivity: "base" });
+  });
 }
 
 /** All provider VIDEO offers for the canonical recording, preference-ordered. */

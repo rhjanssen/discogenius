@@ -149,6 +149,9 @@ interface LibraryFileRow {
   bit_depth?: number;
   channels?: number;
   codec?: string;
+  video_codec?: string;
+  width?: number;
+  height?: number;
   duration?: number;
   created_at?: string;
   modified_at?: string;
@@ -209,6 +212,9 @@ function normalizeLibraryFileRow(file: LibraryFileRow): LibraryFileContract {
     bit_depth: file.bit_depth,
     channels: file.channels,
     codec: file.codec,
+    video_codec: file.video_codec,
+    width: file.width,
+    height: file.height,
     duration: file.duration,
   };
 }
@@ -321,11 +327,14 @@ function getTrackSelectSql(whereClause: string): string {
           'slot', selected_offer.slot,
           'provider', selected_offer.selected_provider,
           'providerAlbumId', selected_offer.selected_provider_id,
-          'quality', selected_offer.quality
+          'quality', selected_offer.quality,
+          'matchStatus', selected_offer.match_status,
+          'selectedReleaseMbid', selected_offer.selected_release_mbid
         ))
         FROM (
           SELECT selected_track_offer.slot, selected_track_offer.selected_provider,
-                 selected_track_offer.selected_provider_id, selected_track_offer.quality
+                 selected_track_offer.selected_provider_id, selected_track_offer.quality,
+                 selected_track_offer.match_status, selected_track_offer.selected_release_mbid
           FROM ReleaseGroupSlots selected_track_offer
           WHERE selected_track_offer.release_group_id = release_group.id
             AND selected_track_offer.selected_provider IS NOT NULL
@@ -449,6 +458,9 @@ function parseRemoteOffers(value: string | null | undefined, includeSpatial: boo
       const provider = String(offer.provider || "").trim();
       const providerAlbumId = String(offer.providerAlbumId || "").trim();
       const quality = sanitizeQualityTag(String(offer.quality || ""), includeSpatial) || null;
+      const matchStatus = String(offer.matchStatus || "").trim() || null;
+      const selectedReleaseMbid = String(offer.selectedReleaseMbid || "").trim() || null;
+      const providerTrackId = String(offer.providerTrackId || "").trim() || null;
       if (!slot || !provider || !providerAlbumId || (!includeSpatial && slot === "spatial")) {
         return [];
       }
@@ -457,7 +469,15 @@ function parseRemoteOffers(value: string | null | undefined, includeSpatial: boo
         return [];
       }
       seen.add(key);
-      return [{ slot, provider, providerAlbumId, quality }];
+      return [{
+        slot,
+        provider,
+        providerAlbumId,
+        quality,
+        matchStatus,
+        selectedReleaseMbid,
+        providerTrackId,
+      }];
     });
   } catch {
     return [];
@@ -476,7 +496,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
              canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
              canonical_track_mbid, canonical_recording_mbid,
              provider, provider_entity_type, provider_id, library_slot,
-             quality, library_root, file_size, bitrate, sample_rate, bit_depth, channels, codec, duration
+             quality, library_root, file_size, bitrate, sample_rate, bit_depth, channels, codec, video_codec, width, height, duration
       FROM TrackFiles
       WHERE (
           canonical_track_mbid IN (${placeholders})
@@ -544,7 +564,21 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
       musicbrainz_release_id: track.musicbrainz_release_id || null,
       quality: sanitizeQualityTag(track.quality, includeSpatial),
       qualityTags: splitQualityTags(track.quality_tags, includeSpatial),
-      remoteOffers: parseRemoteOffers(track.remote_offers, includeSpatial),
+      remoteOffers: parseRemoteOffers(track.remote_offers, includeSpatial).map((offer) => {
+        if (offer.providerTrackId) return offer;
+        const fileMatch = files.find((file) =>
+          file.file_type === "track"
+          && String(file.library_slot || "").toLowerCase() === offer.slot
+          && String(file.provider || "").toLowerCase() === offer.provider.toLowerCase()
+          && String(file.provider_id || "").trim());
+        const previewMatch = String(track.preview_provider || "").toLowerCase() === offer.provider.toLowerCase()
+          ? String(track.preview_provider_track_id || "").trim() || null
+          : null;
+        return {
+          ...offer,
+          providerTrackId: String(fileMatch?.provider_id || previewMatch || "").trim() || null,
+        };
+      }),
       is_monitored: Boolean(track.is_monitored),
       monitored_lock: Boolean(track.monitored_lock),
       explicit: track.explicit === undefined ? undefined : Boolean(track.explicit),
@@ -848,6 +882,9 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
       bit_depth,
       channels,
       codec,
+      video_codec,
+      width,
+      height,
       duration,
       canonical_artist_mbid,
       canonical_release_group_mbid,

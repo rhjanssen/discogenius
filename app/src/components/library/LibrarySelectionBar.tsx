@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
-import { Button, Badge, makeStyles, mergeClasses, tokens, Tooltip } from "@fluentui/react-components";
+import { Button, Badge, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 import { glassButtonStyles, glassPrimaryButtonStyles } from "@/components/ui/glassButtonStyles";
 import { collectionActionSurfacePadding } from "@/components/ui/sharedLayoutStyles";
 
@@ -127,7 +128,7 @@ export function LibrarySelectionBar({
 
       <div className={styles.actionRow}>
         {actions.map((action) => (
-          <Tooltip key={action.key} content={action.label} relationship="label">
+          <AppTooltip key={action.key} content={action.label} relationship="label">
             <Button
               appearance={action.appearance ?? "subtle"}
               size="small"
@@ -138,7 +139,7 @@ export function LibrarySelectionBar({
             >
               <span className={styles.actionLabel}>{action.label}</span>
             </Button>
-          </Tooltip>
+          </AppTooltip>
         ))}
       </div>
     </div>

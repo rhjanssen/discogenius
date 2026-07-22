@@ -462,7 +462,7 @@ test("lyric and unlabeled merge when durations agree within 2s", () => {
     SELECT id, title, video_variant FROM Recordings WHERE is_video = 1
   `).all() as Array<{ id: number; title: string; video_variant: string | null }>;
   assert.equal(videos.length, 1);
-  assert.equal(videos[0].title, "Oblivion");
+  assert.equal(videos[0].title, "Oblivion (Lyric Video)");
   assert.equal(videos[0].video_variant, "lyric");
 
   const offers = dbModule.db.prepare(`

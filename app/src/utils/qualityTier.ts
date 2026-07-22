@@ -83,12 +83,29 @@ export const VIDEO_TIER_PIXELS: Record<VideoQualityTier, string> = {
   SD: "480p",
 };
 
+/** Long tier name for tooltips (paired with a pixel fragment). */
+export const VIDEO_TIER_NAME: Record<VideoQualityTier, string> = {
+  UHD: "Ultra HD",
+  FHD: "Full HD",
+  HD: "HD",
+  SD: "SD",
+};
+
+/** Expanded video tooltip copy — avoids repeating the short badge (FHD → Full HD · 1080p). */
 export const VIDEO_TIER_DESCRIPTION: Record<VideoQualityTier, string> = {
-  UHD: "UHD · 2160p",
-  FHD: "FHD · 1080p",
+  UHD: "Ultra HD · 2160p",
+  FHD: "Full HD · 1080p",
   HD: "HD · 720p",
   SD: "SD · 480p",
 };
+
+/** Exact pixel height from a quality tag when present (`MP4_1080P` → `1080p`). */
+export function videoResolutionExactPixels(quality: string | null | undefined): string | null {
+  const normalized = normalizeQualityTag(quality);
+  const match = /(?:^|_)(\d{3,4})P$/.exec(normalized);
+  if (!match) return null;
+  return `${match[1]}p`;
+}
 
 /** Map a provider's declared max video height to a badge tier. */
 export function videoTierFromMaxHeight(height: number | null | undefined): VideoQualityTier | null {
@@ -139,10 +156,14 @@ export function videoQualityTier(quality: string | null | undefined): VideoQuali
 export function qualityDescription(quality: string | null | undefined): string {
   const normalized = normalizeQualityTag(quality);
   if (isUnknownQualityTag(normalized)) return "Quality unknown";
+  // Video before spatial: MP4_360P contains "360" which would otherwise match Sony 360RA.
+  const videoTier = videoQualityTier(normalized);
+  if (videoTier) {
+    const pixels = videoResolutionExactPixels(normalized) || VIDEO_TIER_PIXELS[videoTier];
+    return `${VIDEO_TIER_NAME[videoTier]} · ${pixels}`;
+  }
   if (normalized === "DOLBY_ATMOS") return "Dolby Atmos — spatial audio";
   if (isSpatialAudioQuality(normalized)) return "Spatial audio";
-  const videoTier = videoQualityTier(normalized);
-  if (videoTier) return `Video · ${VIDEO_TIER_DESCRIPTION[videoTier]}`;
   return QUALITY_TIER_DESCRIPTION[stereoQualityTier(normalized)];
 }
 
@@ -161,6 +182,8 @@ export function videoResolutionLabel(quality: string | null | undefined): string
 
 /** Pixel tooltip fragment for a video quality string, e.g. "1080p". */
 export function videoResolutionPixels(quality: string | null | undefined): string | null {
+  const exact = videoResolutionExactPixels(quality);
+  if (exact) return exact;
   const tier = videoQualityTier(quality);
   return tier ? VIDEO_TIER_PIXELS[tier] : null;
 }

@@ -2,6 +2,9 @@ import fs from "fs";
 import path from "path";
 import { db, batchDelete, batchRun } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
+import {
+  allowsInlineVideoPlacement,
+} from "./video-folder-layout.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext, type library_root } from "../config/naming.js";
 import { getCurrentLibraryRootPath, resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import { normalizeComparablePath, normalizeResolvedPath } from "./path-utils.js";
@@ -145,10 +148,13 @@ type LibraryFileRow = {
   // Quality metadata
   quality?: string | null;
   codec?: string | null;
+  video_codec?: string | null;
   bitrate?: number | null;
   sample_rate?: number | null;
   bit_depth?: number | null;
   channels?: number | null;
+  width?: number | null;
+  height?: number | null;
 };
 
 type TrackedAssetRow = LibraryFileRow & {
@@ -348,7 +354,10 @@ export type LibraryFileUpsertParams = {
   sampleRate?: number | null;
   bitrate?: number | null;
   codec?: string | null;
+  videoCodec?: string | null;
   channels?: number | null;
+  width?: number | null;
+  height?: number | null;
   duration?: number | null;
   fingerprint?: string | null;
   removeFromUnmapped?: boolean;
@@ -381,6 +390,14 @@ type RebaseLibraryFileRow = {
   quality: string | null;
 };
 
+/**
+ * Catalog path under the stereo music root for an inline video beside its
+ * associated audio track. Always uses the stereo library (`music`), never spatial —
+ * Atmos folders stay Atmos audio only.
+ *
+ * Callers must already have confirmed `provider_video_for` → audio recording →
+ * stereo RG slot monitored; this helper only resolves the filename stem.
+ */
 function resolveCanonicalInlineAudioExpectedPath(artistId: number, videoTitle: string): string | null {
   if (!videoTitle) return null;
 
@@ -412,8 +429,8 @@ function resolveCanonicalInlineAudioExpectedPath(artistId: number, videoTitle: s
       ON c.source_artist_mbid = ?
      AND c.release_group_mbid = ar.release_group_mbid
     WHERE a.artist_mbid = ?
+      AND COALESCE(rgs.monitored, 0) = 1
     ORDER BY included DESC,
-             wanted DESC,
              CASE a.primary_type WHEN 'Album' THEN 0 WHEN 'EP' THEN 1 WHEN 'Single' THEN 2 ELSE 3 END,
              selected_release DESC,
              a.first_release_date ASC,
@@ -719,7 +736,7 @@ export class LibraryFilesService {
     const canonicalIdentity = getCanonicalIdentityForLibraryFile(row);
     const canonicalVideo = getCanonicalVideoMetadataForRow(row, canonicalIdentity.canonicalRecordingMbid);
 
-    if (videoFolderLayout === "inline" && row.media_id && (row.file_type === "video" || row.file_type === "video_thumbnail" || row.file_type === "nfo")) {
+    if (allowsInlineVideoPlacement(videoFolderLayout) && row.media_id && (row.file_type === "video" || row.file_type === "video_thumbnail" || row.file_type === "nfo")) {
       if (canonicalVideo) {
         const recordingMbid = canonicalIdentity.canonicalRecordingMbid || null;
         const videoRecordingId = (() => {
@@ -730,58 +747,100 @@ export class LibraryFilesService {
           }
           const provider = String(row.provider || canonicalIdentity.provider || "").trim();
           const providerId = String(row.provider_id || row.media_id || "").trim();
-          if (!provider || !providerId) return null;
-          const byOffer = db.prepare(`
-            SELECT recording_id FROM ProviderItems
-            WHERE provider = ? AND entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-              AND recording_id IS NOT NULL
-            LIMIT 1
-          `).get(provider, providerId) as { recording_id?: number | null } | undefined;
+          if (!providerId) return null;
+          // Sidecars (thumbnail/nfo) often omit provider on the row; resolve the
+          // video offer by provider_id alone so inline gating still applies.
+          const byOffer = provider
+            ? db.prepare(`
+                SELECT recording_id FROM ProviderItems
+                WHERE provider = ? AND entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                  AND recording_id IS NOT NULL
+                LIMIT 1
+              `).get(provider, providerId) as { recording_id?: number | null } | undefined
+            : db.prepare(`
+                SELECT recording_id FROM ProviderItems
+                WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                  AND recording_id IS NOT NULL
+                LIMIT 1
+              `).get(providerId) as { recording_id?: number | null } | undefined;
           return byOffer?.recording_id == null ? null : Number(byOffer.recording_id);
         })();
-        // Prefer an explicit audio↔video relation (YouTube ATV↔OMV counterpart,
-        // fuzzy provider_video_for, etc.) so inline layout sits beside the
-        // matched album track rather than only matching on shared recording id.
+        // Inline placement (not download) requires an associated audio recording via
+        // provider_video_for → that audio's album/RG → stereo slot monitored.
+        // Download still follows video/artist monitor flags; without association or
+        // with an unmonitored stereo RG, keep the separated video-library path even
+        // when global layout is "inline" / "inline_only". Spatial folders stay Atmos audio only —
+        // inline always targets the stereo music root (no stereo/spatial toggle).
         const relatedAudio = videoRecordingId
           ? db.prepare(`
+              SELECT
+                rr.target_recording_id AS audio_recording_id,
+                audio.mbid AS audio_recording_mbid,
+                audio.title AS audio_title,
+                COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid) AS release_group_mbid
+              FROM RecordingRelations rr
+              JOIN Recordings audio ON audio.id = rr.target_recording_id
+              LEFT JOIN TrackFiles tf
+                ON tf.recording_id = rr.target_recording_id
+               AND tf.file_type = 'track'
+               AND tf.library_slot = 'stereo'
+              LEFT JOIN Tracks t
+                ON (t.recording_mbid = audio.mbid OR t.recording_id = audio.id)
+              LEFT JOIN AlbumReleases track_rg ON track_rg.mbid = t.release_mbid
+              WHERE rr.source_recording_id = ?
+                AND rr.relation_type = 'provider_video_for'
+              ORDER BY rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
+              LIMIT 1
+            `).get(videoRecordingId) as {
+              audio_recording_id?: number;
+              audio_recording_mbid?: string | null;
+              audio_title?: string | null;
+              release_group_mbid?: string | null;
+            } | undefined
+          : undefined;
+
+        const releaseGroupMbid = relatedAudio?.release_group_mbid
+          ? String(relatedAudio.release_group_mbid)
+          : null;
+        const stereoSlotMonitored = releaseGroupMbid
+          ? Boolean(db.prepare(`
+              SELECT 1
+              FROM ReleaseGroupSlots
+              WHERE release_group_mbid = ?
+                AND slot = 'stereo'
+                AND monitored = 1
+              LIMIT 1
+            `).get(releaseGroupMbid))
+          : false;
+
+        if (relatedAudio?.audio_recording_id && stereoSlotMonitored) {
+          // Stereo TrackFile only — never park MVs beside a spatial/Atmos copy.
+          const audioTrack = db.prepare(`
               SELECT
                 tf.id, tf.artist_id, NULL AS album_id, tf.provider_id AS media_id,
                 tf.canonical_artist_mbid, tf.canonical_release_group_mbid, tf.canonical_release_mbid,
                 tf.canonical_track_mbid, tf.canonical_recording_mbid,
                 tf.file_path, tf.relative_path, tf.library_root, tf.file_type, tf.extension,
                 tf.quality, tf.codec, tf.bitrate, tf.sample_rate, tf.bit_depth, tf.channels
-              FROM RecordingRelations rr
-              JOIN TrackFiles tf
-                ON tf.recording_id = rr.target_recording_id
-               AND tf.file_type = 'track'
-              LEFT JOIN Albums a
-                ON a.mbid = tf.canonical_release_group_mbid
-              WHERE rr.source_recording_id = ?
-                AND rr.relation_type = 'provider_video_for'
-              ORDER BY COALESCE(a.monitored, 0) DESC, rr.confidence DESC, tf.id ASC
+              FROM TrackFiles tf
+              WHERE tf.recording_id = ?
+                AND tf.file_type = 'track'
+                AND tf.library_slot = 'stereo'
+              ORDER BY tf.id ASC
               LIMIT 1
-            `).get(videoRecordingId) as LibraryFileRow | undefined
-          : undefined;
-        // Fallback: audio file sharing the same canonical recording mbid (rare).
-        const audioTrack = relatedAudio || (recordingMbid
-          ? db.prepare(`
-            SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
-                   canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
-                   file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
-            FROM TrackFiles
-            WHERE canonical_recording_mbid = ? AND file_type = 'track'
-            LIMIT 1
-          `).get(recordingMbid) as LibraryFileRow | undefined
-          : undefined);
+            `).get(relatedAudio.audio_recording_id) as LibraryFileRow | undefined;
 
-        const inlineVideoTitle = normalizeInlineVideoTitle(canonicalVideo.title);
+          const inlineVideoTitle = normalizeInlineVideoTitle(
+            relatedAudio.audio_title || canonicalVideo.title,
+          );
 
-        let audioExpectedPath: string | null = audioTrack
-          ? LibraryFilesService.computeExpectedPath(audioTrack).expectedPath
-          : null;
-        audioExpectedPath ||= resolveCanonicalInlineAudioExpectedPath(row.artist_id, inlineVideoTitle);
+          let audioExpectedPath: string | null = audioTrack
+            ? LibraryFilesService.computeExpectedPath(audioTrack).expectedPath
+            : null;
+          // Catalog stereo-root fallback when the stereo file is not on disk yet.
+          audioExpectedPath ||= resolveCanonicalInlineAudioExpectedPath(row.artist_id, inlineVideoTitle);
 
-        if (audioExpectedPath) {
+          if (audioExpectedPath) {
             const audioExpectedDir = path.dirname(audioExpectedPath);
             const audioExpectedStem = path.parse(audioExpectedPath).name;
             let ext = row.extension || "";
@@ -794,32 +853,34 @@ export class LibraryFilesService {
                 ext = "nfo";
               }
             }
-          const trackedVideo = row.file_type !== "video"
-            ? db.prepare(`
-                SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
-                       canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
-                       file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
-                FROM TrackFiles
-                WHERE provider_id = ? AND file_type = 'video'
-                LIMIT 1
-              `).get(row.media_id) as LibraryFileRow | undefined
-            : undefined;
-          const trackedVideoExpected = trackedVideo
-            ? LibraryFilesService.computeExpectedPath(trackedVideo).expectedPath
-            : null;
-          if (trackedVideoExpected) {
-            return { expectedPath: path.join(path.dirname(trackedVideoExpected), `${path.parse(trackedVideoExpected).name}.${ext}`) };
-          }
+            const trackedVideo = row.file_type !== "video"
+              ? db.prepare(`
+                  SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
+                         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+                         file_path, relative_path, library_root, file_type, extension, quality, codec, bitrate, sample_rate, bit_depth, channels
+                  FROM TrackFiles
+                  WHERE provider_id = ? AND file_type = 'video'
+                  LIMIT 1
+                `).get(row.media_id) as LibraryFileRow | undefined
+              : undefined;
+            const trackedVideoExpected = trackedVideo
+              ? LibraryFilesService.computeExpectedPath(trackedVideo).expectedPath
+              : null;
+            if (trackedVideoExpected) {
+              return { expectedPath: path.join(path.dirname(trackedVideoExpected), `${path.parse(trackedVideoExpected).name}.${ext}`) };
+            }
 
-          const videoTypeSuffix = resolveVideoTypeSuffix(canonicalVideo.title, canonicalVideo.video_variant);
-          // One primary inline file per audio stem + Plex type (e.g. Track-video.mp4).
-          // Plex allows a descriptive middle segment for multiples, but the UX is weak
-          // and multi-provider offers for the same cut must not litter the album folder.
-          // Different type suffixes (-lyrics / -live) still coexist via this key.
-          return {
-            expectedPath: path.join(audioExpectedDir, `${audioExpectedStem}${videoTypeSuffix}.${ext}`),
-          };
+            const videoTypeSuffix = resolveVideoTypeSuffix(canonicalVideo.title, canonicalVideo.video_variant);
+            // One primary inline file per audio stem + Plex type (e.g. Track-video.mp4).
+            // Plex allows a descriptive middle segment for multiples, but the UX is weak
+            // and multi-provider offers for the same cut must not litter the album folder.
+            // Different type suffixes (-lyrics / -live) still coexist via this key.
+            return {
+              expectedPath: path.join(audioExpectedDir, `${audioExpectedStem}${videoTypeSuffix}.${ext}`),
+            };
+          }
         }
+        // Fall through: separated video library path.
       }
     }
 
@@ -1429,7 +1490,10 @@ export class LibraryFilesService {
               sample_rate = COALESCE(?, sample_rate),
               bitrate = COALESCE(?, bitrate),
               codec = COALESCE(?, codec),
+              video_codec = COALESCE(?, video_codec),
               channels = COALESCE(?, channels),
+              width = COALESCE(?, width),
+              height = COALESCE(?, height),
               duration = COALESCE(?, duration),
               fingerprint = COALESCE(?, fingerprint)
           WHERE id = ?
@@ -1462,7 +1526,10 @@ export class LibraryFilesService {
           params.sampleRate || null,
           params.bitrate || null,
           params.codec || null,
+          params.videoCodec || null,
           params.channels || null,
+          params.width || null,
+          params.height || null,
           params.duration || null,
           params.fingerprint || null,
           rowToUpdate.id,
@@ -1576,7 +1643,10 @@ export class LibraryFilesService {
               sample_rate = COALESCE(?, sample_rate),
               bitrate = COALESCE(?, bitrate),
               codec = COALESCE(?, codec),
+              video_codec = COALESCE(?, video_codec),
               channels = COALESCE(?, channels),
+              width = COALESCE(?, width),
+              height = COALESCE(?, height),
               duration = COALESCE(?, duration),
               fingerprint = COALESCE(?, fingerprint)
           WHERE id = ?
@@ -1609,7 +1679,10 @@ export class LibraryFilesService {
           params.sampleRate || null,
           params.bitrate || null,
           params.codec || null,
+          params.videoCodec || null,
           params.channels || null,
+          params.width || null,
+          params.height || null,
           params.duration || null,
           params.fingerprint || null,
           rowToUpdate.id,
@@ -1669,7 +1742,7 @@ export class LibraryFilesService {
         file_type, quality,
         naming_template, expected_path, needs_rename,
         modified_at, verified_at,
-        bit_depth, sample_rate, bitrate, codec, channels,
+        bit_depth, sample_rate, bitrate, codec, video_codec, channels, width, height,
         duration, fingerprint
       ) VALUES (
         ?,
@@ -1681,7 +1754,7 @@ export class LibraryFilesService {
         ?, ?,
         ?, ?, 0,
         ?, CURRENT_TIMESTAMP,
-        ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT(file_path) DO UPDATE SET
         artist_id = excluded.artist_id,
@@ -1710,7 +1783,10 @@ export class LibraryFilesService {
         sample_rate = COALESCE(excluded.sample_rate, TrackFiles.sample_rate),
         bitrate = COALESCE(excluded.bitrate, TrackFiles.bitrate),
         codec = COALESCE(excluded.codec, TrackFiles.codec),
+        video_codec = COALESCE(excluded.video_codec, TrackFiles.video_codec),
         channels = COALESCE(excluded.channels, TrackFiles.channels),
+        width = COALESCE(excluded.width, TrackFiles.width),
+        height = COALESCE(excluded.height, TrackFiles.height),
         duration = COALESCE(excluded.duration, TrackFiles.duration),
         fingerprint = COALESCE(excluded.fingerprint, TrackFiles.fingerprint)
     `);
@@ -1741,7 +1817,10 @@ export class LibraryFilesService {
       params.sampleRate || null,
       params.bitrate || null,
       params.codec || null,
+      params.videoCodec || null,
       params.channels || null,
+      params.width || null,
+      params.height || null,
       params.duration || null,
       params.fingerprint || null,
     );

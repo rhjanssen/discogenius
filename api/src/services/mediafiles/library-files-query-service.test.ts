@@ -127,8 +127,8 @@ test("library file listing resolves downloaded videos by canonical recording row
     INSERT INTO TrackFiles (
       artist_id, recording_id, provider, provider_entity_type, provider_id,
       library_slot, file_path, relative_path, library_root, filename, extension,
-      file_type, quality, codec
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      file_type, quality, codec, video_codec, width, height, bitrate
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "artist-local",
     501,
@@ -143,7 +143,11 @@ test("library file listing resolves downloaded videos by canonical recording row
     "mp4",
     "video",
     "FHD",
+    "aac",
     "h264",
+    1920,
+    1080,
+    320000,
   );
 
   const result = listLibraryFiles({ mediaId: "501" });
@@ -151,4 +155,9 @@ test("library file listing resolves downloaded videos by canonical recording row
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0].file_type, "video");
   assert.equal(result.items[0].media_id, "provider-video-1");
+  assert.equal(result.items[0].codec, "aac");
+  assert.equal(result.items[0].video_codec, "h264");
+  assert.equal(result.items[0].width, 1920);
+  assert.equal(result.items[0].height, 1080);
+  assert.equal(result.items[0].bitrate, 320000);
 });

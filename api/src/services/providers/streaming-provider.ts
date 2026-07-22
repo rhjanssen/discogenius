@@ -440,4 +440,17 @@ export interface ProviderReleaseGroupSearch {
   slot: "stereo" | "spatial" | "video";
   preferredTrackCount?: number | null;
   preferredVolumeCount?: number | null;
+  /** MusicBrainz primary type (album/ep/single/other/…). */
+  primaryType?: string | null;
+  /** MusicBrainz secondary types (mixtape/street, live, …). */
+  secondaryTypes?: string[] | null;
+  /**
+   * Optional canonical tracklist for coverage ranking. Used by providers that
+   * may match user playlists/sets as supersets of a release (SoundCloud mixtapes).
+   */
+  preferredTracks?: Array<{
+    title: string;
+    durationSec?: number | null;
+    trackNumber?: number | null;
+  }> | null;
 }

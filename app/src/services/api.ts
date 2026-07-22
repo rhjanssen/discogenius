@@ -833,6 +833,14 @@ class ApiClient {
     });
   }
 
+  async deleteTrackFiles(trackId: string) {
+    return this.request(`/v1/track/${trackId}/files`, { method: 'DELETE' });
+  }
+
+  async deleteVideoFiles(videoId: string) {
+    return this.request(`/v1/video/${videoId}/files`, { method: 'DELETE' });
+  }
+
   async getAlbumReleaseAvailability(albumId: string, options: RequestControlOptions = {}): Promise<ReleaseGroupAvailabilityContract> {
     return this.request(`/v1/album/${albumId}/release-availability`, options, parseReleaseGroupAvailabilityContract);
   }
@@ -1049,6 +1057,18 @@ class ApiClient {
     applyAll?: boolean;
   }) {
     return this.request('/retag/apply', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async stripTags(params: {
+    ids?: number[];
+    artistId?: string;
+    albumId?: string;
+    applyAll?: boolean;
+  }) {
+    return this.request('/retag/strip', {
       method: 'POST',
       body: JSON.stringify(params),
     });

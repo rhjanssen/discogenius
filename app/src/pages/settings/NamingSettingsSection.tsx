@@ -10,7 +10,6 @@ import {
     Select,
     Switch,
     Text,
-    Tooltip,
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
@@ -25,6 +24,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 import { useToast } from "@/hooks/useToast";
 import { api } from "@/services/api";
 import type { NamingConfigContract, PathConfigContract } from "@contracts/config";
@@ -489,14 +489,17 @@ export const NamingSettingsSection = ({
         const trackPathSingle = namingPreviewResponse.preview.standardTrack;
         const trackPathMulti = namingPreviewResponse.preview.multiDiscTrack;
         const videoFile = namingPreviewResponse.preview.video;
+        // Album/video previews use ".../" so the artist folder isn't repeated under every template.
+        const withShortenedArtistParent = (relativePath: string) =>
+            ["...", relativePath].filter(Boolean).join("/");
         return {
             artistFolder,
             videoFile,
             trackPathSingle,
             trackPathMulti,
-            fullSingleTrackPath: [artistFolder, trackPathSingle].filter(Boolean).join("/"),
-            fullMultiTrackPath: [artistFolder, trackPathMulti].filter(Boolean).join("/"),
-            videoPath: [artistFolder, videoFile].filter(Boolean).join("/"),
+            fullSingleTrackPath: withShortenedArtistParent(trackPathSingle),
+            fullMultiTrackPath: withShortenedArtistParent(trackPathMulti),
+            videoPath: withShortenedArtistParent(videoFile),
         };
     })() : null;
 
@@ -556,16 +559,26 @@ export const NamingSettingsSection = ({
                         <div className={styles.rowContent}>
                             <Text weight="semibold">Video Folder Layout</Text>
                             <Text size={200} className={styles.mutedText}>
-                                Keep videos in their own library, or store them alongside each artist's music.
+                                Choose where music videos live. Separated keeps them in the video library.
+                                Inline with albums places a video beside its stereo track when it is linked
+                                to that track and the album is monitored; otherwise it stays in the video
+                                library. Album-linked only also uses that inline placement, but never
+                                downloads videos that would only end up in the separated library — so you
+                                can leave the video library empty. Importing stereo audio for a linked
+                                track relocates already-downloaded separated videos inline automatically.
+                                Broader path changes still use Preview Rename on Library / Artist / Album.
                             </Text>
                         </div>
                         <Select
                             value={pathSettings?.video_folder_layout || "separated"}
-                            onChange={(_, data) => updatePathSettings({ video_folder_layout: data.value as "separated" | "inline" })}
+                            onChange={(_, data) => updatePathSettings({
+                                video_folder_layout: data.value as "separated" | "inline" | "inline_only",
+                            })}
                             className={styles.controlMedium}
                         >
-                            <option value="separated">Separated Library</option>
-                            <option value="inline">Inline with Audio Tracks</option>
+                            <option value="separated">Separated library</option>
+                            <option value="inline">Inline with albums when possible</option>
+                            <option value="inline_only">Album-linked only</option>
                         </Select>
                     </div>
                     <div className={styles.row}>
@@ -604,14 +617,14 @@ export const NamingSettingsSection = ({
                                     className={styles.pathInput}
                                     disabled={!namingSettings}
                                 />
-                                <Tooltip content="Show tokens" relationship="label">
+                                <AppTooltip content="Show tokens" relationship="label">
                                     <Button
                                         appearance="subtle"
                                         icon={<QuestionCircle24 />}
                                         className={styles.templateHelpButton}
                                         onClick={() => setNamingHelpField("artist_folder")}
                                     />
-                                </Tooltip>
+                                </AppTooltip>
                             </div>
                             <Caption1 className={styles.templatePreview}>
                                 Example: <span className={styles.tokenCode}>{namingExamples?.artistFolder ?? "—"}</span>
@@ -642,14 +655,14 @@ export const NamingSettingsSection = ({
                                     className={styles.pathInput}
                                     disabled={!namingSettings}
                                 />
-                                <Tooltip content="Show tokens" relationship="label">
+                                <AppTooltip content="Show tokens" relationship="label">
                                     <Button
                                         appearance="subtle"
                                         icon={<QuestionCircle24 />}
                                         className={styles.templateHelpButton}
                                         onClick={() => setNamingHelpField("album_track_path_single")}
                                     />
-                                </Tooltip>
+                                </AppTooltip>
                             </div>
                             <Caption1 className={styles.templatePreview}>
                                 Example: <span className={styles.tokenCode}>{namingExamples?.fullSingleTrackPath ?? "—"}</span>
@@ -680,14 +693,14 @@ export const NamingSettingsSection = ({
                                     className={styles.pathInput}
                                     disabled={!namingSettings}
                                 />
-                                <Tooltip content="Show tokens" relationship="label">
+                                <AppTooltip content="Show tokens" relationship="label">
                                     <Button
                                         appearance="subtle"
                                         icon={<QuestionCircle24 />}
                                         className={styles.templateHelpButton}
                                         onClick={() => setNamingHelpField("album_track_path_multi")}
                                     />
-                                </Tooltip>
+                                </AppTooltip>
                             </div>
                             <Caption1 className={styles.templatePreview}>
                                 Example: <span className={styles.tokenCode}>{namingExamples?.fullMultiTrackPath ?? "—"}</span>
@@ -718,14 +731,14 @@ export const NamingSettingsSection = ({
                                     className={styles.pathInput}
                                     disabled={!namingSettings}
                                 />
-                                <Tooltip content="Show tokens" relationship="label">
+                                <AppTooltip content="Show tokens" relationship="label">
                                     <Button
                                         appearance="subtle"
                                         icon={<QuestionCircle24 />}
                                         className={styles.templateHelpButton}
                                         onClick={() => setNamingHelpField("video_file")}
                                     />
-                                </Tooltip>
+                                </AppTooltip>
                             </div>
                             <Caption1 className={styles.templatePreview}>
                                 Example: <span className={styles.tokenCode}>{namingExamples?.videoPath ?? "—"}</span>

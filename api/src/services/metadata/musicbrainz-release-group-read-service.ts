@@ -51,11 +51,13 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         stereo.selected_release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
+        stereo.match_evidence AS stereo_match_evidence,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
         spatial.selected_release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
-        spatial.match_status AS spatial_match_status
+        spatial.match_status AS spatial_match_status,
+        spatial.match_evidence AS spatial_match_evidence
       FROM Albums rg
       LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
       LEFT JOIN ReleaseGroupSlots stereo
@@ -580,6 +582,9 @@ function normalizeLibraryFileFromRow(row: any) {
         bit_depth: row.bit_depth == null ? undefined : Number(row.bit_depth),
         channels: row.channels == null ? undefined : Number(row.channels),
         codec: row.codec == null ? undefined : String(row.codec),
+        video_codec: row.video_codec == null ? undefined : String(row.video_codec),
+        width: row.width == null ? undefined : Number(row.width),
+        height: row.height == null ? undefined : Number(row.height),
         duration: row.duration == null ? undefined : Number(row.duration),
     };
 }
@@ -643,6 +648,9 @@ function attachCanonicalFilesToTracks(
         lf.bit_depth,
         lf.channels,
         lf.codec,
+        lf.video_codec,
+        lf.width,
+        lf.height,
         lf.duration
       FROM TrackFiles lf
       WHERE (${matchConditions.join(" OR ")})
@@ -886,15 +894,87 @@ function buildProviderTrackSelections(releaseGroup: any): ProviderTrackSelection
     return unique;
 }
 
+type SlotTrackSourceTip = {
+    providerTrackId: string;
+    providerAlbumId: string | null;
+    quality: string | null;
+};
+
+function parseSlotTrackSourceTips(matchEvidence: unknown): Map<string, SlotTrackSourceTip> {
+    const byCanonical = new Map<string, SlotTrackSourceTip>();
+    if (!matchEvidence) return byCanonical;
+    let evidence: { trackSources?: Array<Record<string, unknown>> };
+    try {
+        evidence = typeof matchEvidence === "string"
+            ? JSON.parse(matchEvidence)
+            : matchEvidence as { trackSources?: Array<Record<string, unknown>> };
+    } catch {
+        return byCanonical;
+    }
+    if (!Array.isArray(evidence.trackSources)) return byCanonical;
+
+    for (const source of evidence.trackSources) {
+        const providerTrackId = String(source.providerTrackId || "").trim();
+        if (!providerTrackId) continue;
+        const tip: SlotTrackSourceTip = {
+            providerTrackId,
+            providerAlbumId: source.providerAlbumId ? String(source.providerAlbumId) : null,
+            quality: source.quality ? String(source.quality) : null,
+        };
+        const trackMbid = String(source.canonicalTrackMbid || "").trim();
+        const recordingMbid = String(source.canonicalRecordingMbid || "").trim();
+        if (trackMbid) byCanonical.set(`track:${trackMbid}`, tip);
+        if (recordingMbid) byCanonical.set(`recording:${recordingMbid}`, tip);
+    }
+    return byCanonical;
+}
+
+function slotTrackSourceForCatalogTrack(
+    track: AlbumTrackContract,
+    tips: Map<string, SlotTrackSourceTip>,
+): SlotTrackSourceTip | null {
+    const trackMbid = String(track.musicbrainz_track_id || track.id || "").trim();
+    const recordingMbid = String(track.musicbrainz_recording_id || "").trim();
+    return (trackMbid ? tips.get(`track:${trackMbid}`) : undefined)
+        || (recordingMbid ? tips.get(`recording:${recordingMbid}`) : undefined)
+        || null;
+}
+
 function findBestProviderTrackMatch(
     track: AlbumTrackContract,
     providerTracks: AnnotatedProviderTrack[],
     unusedProviderTracks: Set<string>,
     canonicalIsrcs: Set<string> | undefined,
     slot: ProviderTrackSlot,
+    preferredTip?: SlotTrackSourceTip | null,
 ): { providerTrack: AnnotatedProviderTrack; score: number } | null {
-    const candidates = providerTracks
-        .filter((providerTrack) => providerTrack.__slot === slot && unusedProviderTracks.has(providerTrack.__key))
+    const slotTracks = providerTracks.filter(
+        (providerTrack) => providerTrack.__slot === slot && unusedProviderTracks.has(providerTrack.__key),
+    );
+
+    // Hybrid/composite slots already chose per-track tips in match_evidence.
+    // Prefer those over a fresh title/duration rematch — otherwise a LOSSLESS
+    // same-ISRC cut on the primary album can hide the HIRES tip the slot won on.
+    if (preferredTip?.providerTrackId) {
+        const preferred = slotTracks.find((providerTrack) =>
+            String(providerTrack.providerId || "").trim() === preferredTip.providerTrackId
+            && (
+                !preferredTip.providerAlbumId
+                || String(providerTrack.__providerAlbumId || "").trim() === preferredTip.providerAlbumId
+            ),
+        );
+        if (preferred) {
+            const preferredWithQuality = preferredTip.quality
+                ? { ...preferred, quality: preferred.quality || preferredTip.quality }
+                : preferred;
+            return {
+                providerTrack: preferredWithQuality,
+                score: Math.max(0.99, scoreProviderTrackMatch(track, preferred, canonicalIsrcs)),
+            };
+        }
+    }
+
+    const candidates = slotTracks
         .map((providerTrack) => ({
             providerTrack,
             score: scoreProviderTrackMatch(track, providerTrack, canonicalIsrcs),
@@ -936,6 +1016,11 @@ async function attachProviderPreviewTracks(
             }
         }
 
+        const stereoTips = parseSlotTrackSourceTips(releaseGroup.stereo_match_evidence);
+        const spatialTips = parseSlotTrackSourceTips(releaseGroup.spatial_match_evidence);
+        // selected slot mirrors stereo when both are set; prefer stereo tips.
+        const selectedTips = stereoTips.size > 0 ? stereoTips : spatialTips;
+
         const providerTracks = (await Promise.all(providerAlbumSelections.map(async (selection) => {
             const provider = streamingProviderManager.getStreamingProvider(selection.providerId);
             const albumTracks = await provider.getAlbumTracks(selection.providerAlbumId);
@@ -952,9 +1037,30 @@ async function attachProviderPreviewTracks(
 
         return tracks.map((track) => {
             const trackIsrcs = recordingIsrcs.get(String(track.musicbrainz_recording_id || "").trim());
-            const stereoBest = findBestProviderTrackMatch(track, providerTracks, unusedProviderTracks, trackIsrcs, "stereo");
-            const spatialBest = findBestProviderTrackMatch(track, providerTracks, unusedProviderTracks, trackIsrcs, "spatial");
-            const selectedBest = findBestProviderTrackMatch(track, providerTracks, unusedProviderTracks, trackIsrcs, "selected");
+            const stereoBest = findBestProviderTrackMatch(
+                track,
+                providerTracks,
+                unusedProviderTracks,
+                trackIsrcs,
+                "stereo",
+                slotTrackSourceForCatalogTrack(track, stereoTips),
+            );
+            const spatialBest = findBestProviderTrackMatch(
+                track,
+                providerTracks,
+                unusedProviderTracks,
+                trackIsrcs,
+                "spatial",
+                slotTrackSourceForCatalogTrack(track, spatialTips),
+            );
+            const selectedBest = findBestProviderTrackMatch(
+                track,
+                providerTracks,
+                unusedProviderTracks,
+                trackIsrcs,
+                "selected",
+                slotTrackSourceForCatalogTrack(track, selectedTips),
+            );
             const bestPreview = stereoBest || selectedBest || spatialBest;
 
             if (!stereoBest && !spatialBest && !selectedBest) {
@@ -992,12 +1098,18 @@ async function attachProviderPreviewTracks(
                     provider: stereoBest.providerTrack.__providerId,
                     providerAlbumId: stereoBest.providerTrack.__providerAlbumId,
                     quality: offerDisplayQuality(stereoBest.providerTrack, "stereo"),
+                    matchStatus: releaseGroup.stereo_match_status || null,
+                    selectedReleaseMbid: releaseGroup.stereo_release_mbid || null,
+                    providerTrackId: String(stereoBest.providerTrack.providerId || "").trim() || null,
                 } : null,
                 spatialBest ? {
                     slot: "spatial",
                     provider: spatialBest.providerTrack.__providerId,
                     providerAlbumId: spatialBest.providerTrack.__providerAlbumId,
                     quality: offerDisplayQuality(spatialBest.providerTrack, "spatial"),
+                    matchStatus: releaseGroup.spatial_match_status || null,
+                    selectedReleaseMbid: releaseGroup.spatial_release_mbid || null,
+                    providerTrackId: String(spatialBest.providerTrack.providerId || "").trim() || null,
                 } : null,
             ].filter((offer): offer is NonNullable<typeof offer> => Boolean(offer));
 

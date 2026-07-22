@@ -21,11 +21,14 @@ type LibraryFileRow = {
   bit_depth?: number | null;
   channels?: number | null;
   codec?: string | null;
+  video_codec?: string | null;
   duration?: number | null;
   file_type: string;
   media_type?: string | null;
   source_quality?: string | null;
   album_quality?: string | null;
+  width?: number | null;
+  height?: number | null;
 };
 
 const canonicalSourceQualitySql = `
@@ -122,6 +125,9 @@ function mapLibraryFileRow(item: LibraryFileRow): LibraryFileContract {
     bit_depth: item.bit_depth == null ? undefined : item.bit_depth,
     channels: item.channels == null ? undefined : item.channels,
     codec: item.codec == null ? undefined : item.codec,
+    video_codec: item.video_codec == null ? undefined : item.video_codec,
+    width: item.width == null ? undefined : item.width,
+    height: item.height == null ? undefined : item.height,
     duration: item.duration == null ? undefined : item.duration,
     qualityTarget: null,
     qualityChangeWanted: false,
@@ -280,7 +286,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
     FROM (
       SELECT
         id, artist_id, NULL AS album_id, provider_id AS media_id, recording_id, file_path, relative_path, library_root, file_type, filename, extension,
-        quality, file_size, bitrate, sample_rate, bit_depth, channels, codec, duration,
+        quality, file_size, bitrate, sample_rate, bit_depth, channels, codec, video_codec, width, height, duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
         provider, provider_entity_type, provider_id, library_slot,
@@ -290,7 +296,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       UNION ALL
 
       SELECT id + 10000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
-        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration,
+        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
         provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id, library_slot AS library_slot,
@@ -300,7 +306,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       UNION ALL
 
       SELECT id + 20000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
-        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration,
+        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
         provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id, library_slot AS library_slot,
@@ -310,7 +316,7 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       UNION ALL
 
       SELECT id + 30000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, NULL AS filename, extension AS extension,
-        quality AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS duration,
+        quality AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
         provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id, library_slot AS library_slot,

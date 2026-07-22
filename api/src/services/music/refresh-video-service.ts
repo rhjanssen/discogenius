@@ -1185,7 +1185,10 @@ export class RefreshVideoService {
         await Promise.all(targets.map((item) => limit(async () => {
             const needsEnrichment = item.duration == null
                 || !String(item.releaseDate || "").trim()
-                || !String(item.quality || "").trim();
+                || !String(item.quality || "").trim()
+                // YouTube Music often returns bare titles; getVideo may restore
+                // lyric/live cut labels via oEmbed.
+                || parseVideoVariant(item.title) === "video";
             if (!needsEnrichment) return;
             try {
                 const detailed: ProviderVideo = await provider.getVideo!(String(item.providerId));
@@ -1194,8 +1197,19 @@ export class RefreshVideoService {
                 if (!item.quality && detailed.quality) item.quality = detailed.quality;
                 if (!item.cover && detailed.cover) item.cover = detailed.cover;
                 if (!item.url && detailed.url) item.url = detailed.url;
-                if (detailed.title && (!item.title || item.title === "Unknown Video")) {
-                    item.title = detailed.title;
+                if (detailed.title) {
+                    const currentVariant = parseVideoVariant(item.title);
+                    const detailedVariant = parseVideoVariant(detailed.title);
+                    if (
+                        !item.title
+                        || item.title === "Unknown Video"
+                        || (currentVariant === "video" && detailedVariant !== "video")
+                        || (detailedVariant !== "video"
+                            && preferredVideoVariant(currentVariant, detailedVariant) === detailedVariant
+                            && String(detailed.title).length > String(item.title || "").length)
+                    ) {
+                        item.title = detailed.title;
+                    }
                 }
             } catch (error) {
                 console.warn(

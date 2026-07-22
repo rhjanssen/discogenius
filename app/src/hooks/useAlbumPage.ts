@@ -7,12 +7,14 @@ import {
     MONITOR_STATE_CHANGED_EVENT,
 } from '@/utils/appEvents';
 import type {
+    AlbumAssociatedVideoContract as AlbumAssociatedVideo,
     AlbumTrackContract as AlbumTrack,
     AlbumVersionContract as AlbumVersion,
     ReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
 } from '@contracts/media';
 
 export type {
+    AlbumAssociatedVideoContract as AlbumAssociatedVideo,
     AlbumTrackContract as AlbumTrack,
     AlbumVersionContract as AlbumVersion,
     ReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
@@ -22,6 +24,7 @@ export interface AlbumPageData {
     album: Album;
     tracks: AlbumTrack[];
     otherVersions: AlbumVersion[];
+    associatedVideos: AlbumAssociatedVideo[];
     releaseAvailability: ReleaseGroupAvailability | null;
     artistImage: string | null;
 }
@@ -66,6 +69,7 @@ export function useAlbumPage(albumId: string | undefined) {
                 album: response.album as Album,
                 tracks: response.tracks,
                 otherVersions: response.otherVersions,
+                associatedVideos: response.associatedVideos ?? [],
                 releaseAvailability,
                 artistImage,
             };

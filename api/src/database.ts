@@ -374,6 +374,31 @@ export function runChunkedWrite<T>(
 }
 
 /**
+ * Single-flight async gate for catalog SQLite writers.
+ *
+ * Local-MB can fetch many artists' Postgres payloads concurrently, but
+ * better-sqlite3 still serialises writers on one connection. Wrap each
+ * writer's commit section (including `runChunkedWrite`) so overlapping
+ * RefreshArtist commands wait their turn instead of fighting the busy timeout.
+ * Fetches and network work must stay *outside* the gate.
+ */
+let sqliteWriteGateTail: Promise<void> = Promise.resolve();
+
+export async function withSqliteWriteGate<T>(work: () => T | Promise<T>): Promise<T> {
+  let release!: () => void;
+  const previous = sqliteWriteGateTail;
+  sqliteWriteGateTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await work();
+  } finally {
+    release();
+  }
+}
+
+/**
  * Delete rows by ID list in a single transaction.
  */
 export function batchDelete(table: string, ids: Array<string | number>): number {
@@ -447,15 +472,16 @@ export function initDatabase() {
 
   if (isEmptyDatabase) {
     // Fresh database: build the entire schema-39 baseline in one coherent pass,
-    // stamp the version, then seed defaults.
+    // stamp the version, then seed defaults. Late fields such as
+    // TrackFiles.video_codec/width/height live only on the CREATE TABLE
+    // baseline — there is no ALTER migrate-existing path for wipe installs.
     createBaselineSchemaV38();
     stampSchemaVersion();
     runStartupIntegrityCheck();
     console.log("✅ Database schema initialized");
   } else {
     // Existing schema-39 database (guaranteed by assertDatabaseVersionCanStart):
-    // open only. No ensure*/DROP INDEX/data repair/FTS rebuild/trigger DROP+CREATE
-    // work runs on this hot path — the baseline is already in place.
+    // open only. No ADD COLUMN / repair / FTS rebuild on this path.
     runStartupIntegrityCheck();
     console.log(`✅ Opened existing schema ${BASE_SCHEMA_VERSION} database`);
   }
@@ -563,6 +589,9 @@ function createBaselineSchemaV38(): void {
       bit_depth INT,                     -- Bit depth (16, 24, etc)
       channels INT,                      -- Number of audio channels
       codec TEXT,                        -- Audio codec (FLAC, AAC, etc)
+      video_codec TEXT,                  -- Video stream codec when file_type=video (h264, hevc, av1, …)
+      width INT,                         -- Video frame width (pixels); null for audio-only
+      height INT,                        -- Video frame height (pixels); null for audio-only
       
       -- Content Type
       file_type TEXT NOT NULL,           -- track, video, cover, video_cover, video_thumbnail, bio, review, lyrics

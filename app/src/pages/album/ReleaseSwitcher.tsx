@@ -2,10 +2,10 @@ import {
   Badge,
   Card,
   Text,
-  Tooltip,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 import { ProviderQualityRow, type ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
 import { formatDurationSeconds } from "@/utils/format";
 import type { ReleaseGroupAvailability } from "@/hooks/useAlbumPage";
@@ -314,9 +314,9 @@ export function ReleaseSwitcher({
               </div>
               <div className={styles.releaseMeta}>
                 {metaParts.length > 0 ? <Text size={200}>{metaParts.join(" · ")}</Text> : null}
-                <Tooltip content={release.releaseMbid} relationship="label">
+                <AppTooltip content={release.releaseMbid} relationship="label">
                   <Text size={100}>{release.releaseMbid}</Text>
-                </Tooltip>
+                </AppTooltip>
               </div>
               <div className={styles.releaseAvailability}>
                 {providerOffers.length === 0 ? (

@@ -1,6 +1,7 @@
 import type { MouseEvent, ReactElement } from "react";
-import { Button, Tooltip, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
+import { Button, makeStyles, mergeClasses, tokens } from "@fluentui/react-components";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 
 export interface LibraryRowActionItem {
   key: string;
@@ -39,7 +40,7 @@ export function LibraryRowActions({ actions, className }: LibraryRowActionsProps
   return (
     <div className={mergeClasses(styles.root, className)}>
       {actions.filter((action) => !action.hidden).map((action) => (
-        <Tooltip key={action.key} content={action.label} relationship="label">
+        <AppTooltip key={action.key} content={action.label} relationship="label">
           <Button
             appearance="subtle"
             size="small"
@@ -48,7 +49,7 @@ export function LibraryRowActions({ actions, className }: LibraryRowActionsProps
             onClick={action.onClick}
             className={styles.actionButton}
           />
-        </Tooltip>
+        </AppTooltip>
       ))}
     </div>
   );

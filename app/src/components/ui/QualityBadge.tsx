@@ -16,6 +16,7 @@ import {
   type DiscogeniusBadgeSize,
 } from "./badgeSizes";
 import { ATMOS_OPTICAL_NUDGE_PX, badgeGlassFill } from "./badgeChrome";
+import { AppTooltip } from "./AppTooltip";
 
 export type AudioQuality = string;
 
@@ -25,6 +26,13 @@ interface QualityBadgeProps {
   quality: string;
   className?: string;
   size?: BadgeSize;
+  /** Override the default tier description (e.g. probed local file props). */
+  tooltip?: string | null;
+  /**
+   * When false, skip the Fluent tooltip — parents that wrap the badge in a
+   * richer offer tooltip (ProviderQualityRow) should pass false.
+   */
+  showTooltip?: boolean;
 }
 
 // Horizontal "Dolby Atmos" lockup aspect ratio (viewBox 110.76 × 15.64).
@@ -103,56 +111,34 @@ const useStyles = makeStyles({
   },
 });
 
-export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, size = "medium" }) => {
+export const QualityBadge: React.FC<QualityBadgeProps> = ({
+  quality,
+  className,
+  size = "medium",
+  tooltip,
+  showTooltip = true,
+}) => {
   const styles = useStyles();
   const { isDarkMode } = useTheme();
   const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
 
   const normalizedQuality = normalizeQualityTag(quality);
   const sizeClass = size === "small" ? styles.small : size === "large" ? styles.large : styles.medium;
+  const description = String(tooltip || qualityDescription(quality) || "").trim();
 
   if (isUnknownQualityTag(normalizedQuality)) {
     return null;
   }
 
-  if (normalizedQuality === "DOLBY_ATMOS") {
-    const logoHeight = ATMOS_LOGO_HEIGHT_PX[size];
-    const nudge = ATMOS_OPTICAL_NUDGE_PX[size];
-    return (
-      <Badge
-        shape="circular"
-        appearance="tint"
-        // Keep Fluent size fixed so its padding/font tokens do not diverge per
-        // our small/medium/large height classes.
-        size="medium"
-        className={mergeClasses(styles.base, styles.atmos, sizeClass, className)}
-        style={{ backgroundColor: badgeGlassFill(palette.SpatialBackground, isDarkMode) }}
-        aria-label="Dolby Atmos"
-        title={qualityDescription(quality)}
-      >
-        <span
-          aria-hidden="true"
-          className={styles.atmosLogo}
-          style={{
-            height: `${logoHeight}px`,
-            width: `${Math.round(logoHeight * ATMOS_ASPECT)}px`,
-            backgroundColor: palette.SpatialText,
-            transform: `translateY(${nudge}px)`,
-          }}
-        />
-      </Badge>
-    );
-  }
-
-  // Neutral tiers (video resolution, LOW stereo) share Explicit / provider Spatial
-  // glass so the badge row reads as one family instead of a washed Fluent grey.
   let backgroundColor: string = badgeGlassFill(palette.SpatialBackground, isDarkMode);
   let color: string = palette.SpatialText;
   let badgeText = quality;
+  let isAtmosLogo = false;
 
-  if (isSpatialAudioQuality(normalizedQuality)) {
-    backgroundColor = badgeGlassFill(palette.SpatialBackground, isDarkMode);
-    color = palette.SpatialText;
+  if (normalizedQuality === "DOLBY_ATMOS") {
+    isAtmosLogo = true;
+    badgeText = "Dolby Atmos";
+  } else if (isSpatialAudioQuality(normalizedQuality)) {
     badgeText = "Spatial";
   } else if (isVideoResolutionQuality(normalizedQuality)) {
     const tier = videoQualityTier(normalizedQuality);
@@ -168,19 +154,59 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({ quality, className, 
       backgroundColor = badgeGlassFill(palette.TealBackground, isDarkMode);
       color = palette.TealText;
     }
-    // LOW (and any other non-MAX/HIGH stereo) keeps Spatial glass above.
   }
 
-  return (
+  const badgeAria = showTooltip ? undefined : badgeText;
+  const badgeHidden = showTooltip ? true : undefined;
+
+  const badge = isAtmosLogo ? (() => {
+    const logoHeight = ATMOS_LOGO_HEIGHT_PX[size];
+    const nudge = ATMOS_OPTICAL_NUDGE_PX[size];
+    return (
+      <Badge
+        shape="circular"
+        appearance="tint"
+        size="medium"
+        className={mergeClasses(styles.base, styles.atmos, sizeClass, className)}
+        style={{ backgroundColor: badgeGlassFill(palette.SpatialBackground, isDarkMode) }}
+        aria-label={badgeAria}
+        aria-hidden={badgeHidden}
+      >
+        <span
+          aria-hidden="true"
+          className={styles.atmosLogo}
+          style={{
+            height: `${logoHeight}px`,
+            width: `${Math.round(logoHeight * ATMOS_ASPECT)}px`,
+            backgroundColor: palette.SpatialText,
+            transform: `translateY(${nudge}px)`,
+          }}
+        />
+      </Badge>
+    );
+  })() : (
     <Badge
       shape="circular"
       appearance="tint"
       size="medium"
       className={mergeClasses(styles.base, styles.label, sizeClass, className)}
       style={{ backgroundColor, color }}
-      title={qualityDescription(quality)}
+      aria-label={badgeAria}
+      aria-hidden={badgeHidden}
     >
       <span className={styles.textLabel}>{badgeText}</span>
     </Badge>
+  );
+
+  if (!showTooltip) {
+    return badge;
+  }
+
+  return (
+    <AppTooltip content={description || badgeText} relationship="description" withArrow>
+      <span style={{ display: "inline-flex" }} aria-label={badgeText}>
+        {badge}
+      </span>
+    </AppTooltip>
   );
 };

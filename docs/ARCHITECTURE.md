@@ -90,6 +90,10 @@ model in `api/src/database.ts`:
   wait their turn instead of erroring with `database is locked`.
 - **Chunked catalog writes** commit large refresh/hydration in bounded chunks so
   no single transaction holds the write lock long enough to starve peers.
+  Keep this pattern; do not collapse hydration into one giant transaction.
+  Optional 2.6 work (local-MB): parallel catalog fetches across artists with a
+  single-flight write gate — see `docs/TASKS.md` (do not bump `RefreshArtist`
+  `maxConcurrent` without that gate).
 - **Bounded WAL** (`journal_size_limit`, `wal_autocheckpoint`, periodic passive
   checkpoint) keeps the WAL from ballooning under a write storm.
 

@@ -314,6 +314,7 @@ function compatibleReleaseMbids(match: ProviderReleaseGroupMatch): string[] {
 }
 
 type ReleaseTrackTargets = {
+    releaseGroupMbid: string;
     releaseMbid: string;
     tracks: TargetTrack[];
 };
@@ -397,7 +398,11 @@ function loadReleaseTrackTargets(releaseGroupMbid: string): ReleaseTrackTargets[
         });
     }
 
-    return Array.from(byRelease.entries()).map(([releaseMbid, tracks]) => ({ releaseMbid, tracks }));
+    return Array.from(byRelease.entries()).map(([releaseMbid, tracks]) => ({
+        releaseGroupMbid,
+        releaseMbid,
+        tracks,
+    }));
 }
 
 function buildCoveragePlanForProvider(
@@ -445,9 +450,15 @@ function buildCoveragePlanForProvider(
     }
     const sources = Array.from(sourcesByKey.values());
     // Multi-album stitches require catalog ISRC on every edge (Servarr mode
-    // without ISRCs simply will not form hybrids). Single-album plans keep the
-    // shared fuzzy matcher for normal matching.
-    const requireIsrc = providerCandidates.length > 1;
+    // without ISRCs simply will not form hybrids). Same for a single album that
+    // was matched to a *different* release group: cross-RG borrowing is for
+    // ISRC hybrids (Bastille MTV Unplugged stitches), not fuzzy title/duration
+    // claims that can assign Distorted Light Beam to World Gone Mad.
+    const crossRgOnly = providerCandidates.length === 1
+        && Boolean(target.releaseGroupMbid)
+        && Boolean(providerCandidates[0].match.releaseGroup?.mbid)
+        && providerCandidates[0].match.releaseGroup!.mbid !== target.releaseGroupMbid;
+    const requireIsrc = providerCandidates.length > 1 || crossRgOnly;
     const normalizedTitle = (value: string | null | undefined) => String(value || "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")

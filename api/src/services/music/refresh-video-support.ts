@@ -272,9 +272,10 @@ export function preferredMergedVideoTitle(titleA: string, titleB: string): strin
     const clsA = videoVariantClass(titleA);
     const clsB = videoVariantClass(titleB);
 
-    // Prefer non-lyric display when merging a lyric label onto the main OMV.
-    if (clsA === "lyric" && isMainVideoVariant(clsB)) return displayB;
-    if (clsB === "lyric" && isMainVideoVariant(clsA)) return displayA;
+    // When a lyric cut merges onto a bare/main slot, keep the lyric display
+    // title (variant wins as lyric; UI should still read as a lyric video).
+    if (clsA === "lyric" && isMainVideoVariant(clsB)) return displayA;
+    if (clsB === "lyric" && isMainVideoVariant(clsA)) return displayB;
 
     // Bare "(Live)" twin with same cleaned core: prefer the unlabeled main title.
     if (normalizeVideoText(cleanA) === normalizeVideoText(cleanB)) {

@@ -205,6 +205,21 @@ export function parseAppleDownloaderProgressLine(
     };
   }
 
+  // Upstream apple-music-dl logs "Unavailable, trying to dl aac-lc" when the
+  // preferred ALAC/Atmos stream is missing and it falls back to AAC-LC. That is
+  // a codec fallback, not a hard failure — treating it as isError previously
+  // failed whole album jobs that exited 0 after a successful AAC download.
+  if (/Unavailable,\s*trying to dl aac/i.test(cleanLine)) {
+    return {
+      currentFileNum: current?.currentFileNum,
+      totalFiles: current?.totalFiles,
+      currentProviderTrackId: current?.providerTrackId,
+      currentTrack: current?.providerTrackId,
+      trackStatus: "downloading",
+      statusMessage: cleanLine,
+    };
+  }
+
   if (/Unavailable|Invalid media-user-token|Failed|Error|Exception/i.test(cleanLine) && !/lyric|lrc/i.test(cleanLine)) {
     return {
       currentFileNum: current?.currentFileNum,

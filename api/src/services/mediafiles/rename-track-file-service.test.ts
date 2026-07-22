@@ -178,6 +178,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM LyricFiles").run();
   db.prepare("DELETE FROM ExtraFiles").run();
   db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM RecordingRelations").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
@@ -667,4 +668,204 @@ dbModule.db.prepare(`
   assert.equal(replicatedCover.providerEntityType, "album");
   assert.equal(replicatedCover.providerId, "20");
   assert.equal(replicatedCover.librarySlot, "spatial");
+});
+
+function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } = {}) {
+  const stereoMonitored = options.stereoMonitored !== false;
+  const musicRoot = configModule.Config.getMusicPath();
+  const videoRoot = configModule.Config.getVideoPath();
+
+  seedCanonicalGraph({ albumTitle: "Bad Blood", trackTitle: "Pompeii" });
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
+    ) VALUES (?, ?, 'stereo', ?, ?)
+  `).run("artist-mbid-1", "release-group-mbid-1", stereoMonitored ? 1 : 0, "release-mbid-1");
+
+  const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("recording-mbid-1") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES (?, ?, ?, 1)
+  `).run("video-rec-pompeii", "Pompeii", "artist-mbid-1");
+  const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("video-rec-pompeii") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot
+    ) VALUES ('tidal', 'video', 'video-pompeii', 'artist-mbid-1', 'video-rec-pompeii', ?, 'Pompeii', 'video')
+  `).run(videoRecId);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+      track_mbid, recording_mbid, recording_id, album_id, title, quality, library_slot
+    ) VALUES (
+      'tidal', 'track', 'track-pompeii', 'artist-mbid-1', 'release-group-mbid-1', 'release-mbid-1',
+      'track-mbid-1', 'recording-mbid-1', ?, '10', 'Pompeii', 'LOSSLESS', 'stereo'
+    )
+  `).run(audioRecId);
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
+    VALUES (?, ?, 'provider_video_for', 0.98)
+  `).run(videoRecId, audioRecId);
+
+  const separatedVideoPath = path.join(videoRoot, "Artist One", "Pompeii.mp4");
+  fs.mkdirSync(path.dirname(separatedVideoPath), { recursive: true });
+  fs.writeFileSync(separatedVideoPath, "test-video");
+
+  const videoFileId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: null,
+    mediaId: "video-pompeii",
+    filePath: separatedVideoPath,
+    libraryRoot: videoRoot,
+    fileType: "video",
+    quality: "MP4_1080P",
+    provider: "tidal",
+    providerEntityType: "video",
+    providerId: "video-pompeii",
+    librarySlot: "video",
+    canonicalArtistMbid: "artist-mbid-1",
+    canonicalRecordingMbid: "video-rec-pompeii",
+  });
+
+  const audioPath = path.join(musicRoot, "Artist One", "Bad Blood", "01 - Pompeii.flac");
+  fs.mkdirSync(path.dirname(audioPath), { recursive: true });
+  fs.writeFileSync(audioPath, "test-audio");
+  const audioFileId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: null,
+    mediaId: "track-pompeii",
+    filePath: audioPath,
+    libraryRoot: musicRoot,
+    fileType: "track",
+    quality: "LOSSLESS",
+    provider: "tidal",
+    providerEntityType: "track",
+    providerId: "track-pompeii",
+    librarySlot: "stereo",
+    canonicalArtistMbid: "artist-mbid-1",
+    canonicalReleaseGroupMbid: "release-group-mbid-1",
+    canonicalReleaseMbid: "release-mbid-1",
+    canonicalTrackMbid: "track-mbid-1",
+    canonicalRecordingMbid: "recording-mbid-1",
+  });
+
+  return {
+    audioFileId,
+    videoFileId,
+    separatedVideoPath,
+    inlineVideoPath: path.join(musicRoot, "Artist One", "Bad Blood", "01 - Pompeii-video.mp4"),
+  };
+}
+
+test("RenameTrackFileService moves separated video to inline when association and stereo RG are ready", () => {
+  const config = configModule.readConfig();
+  config.path.video_folder_layout = "inline";
+  configModule.writeConfig(config);
+
+  const fixture = seedInlineVideoTransferFixture();
+  const videoRow = dbModule.db.prepare(`
+    SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
+           file_path, relative_path, library_root, file_type, extension
+    FROM TrackFiles WHERE id = ?
+  `).get(fixture.videoFileId) as any;
+
+  const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath(videoRow);
+  assert.equal(path.resolve(expected.expectedPath || ""), path.resolve(fixture.inlineVideoPath));
+
+  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([fixture.videoFileId]);
+  assert.equal(result.renamed, 1);
+  assert.equal(fs.existsSync(fixture.separatedVideoPath), false);
+  assert.equal(fs.existsSync(fixture.inlineVideoPath), true);
+
+  const moved = dbModule.db.prepare(`
+    SELECT file_path AS filePath, library_root AS libraryRoot, needs_rename AS needsRename
+    FROM TrackFiles WHERE id = ?
+  `).get(fixture.videoFileId) as { filePath: string; libraryRoot: string; needsRename: number };
+  assert.equal(path.resolve(moved.filePath), path.resolve(fixture.inlineVideoPath));
+  assert.equal(moved.needsRename, 0);
+});
+
+test("relocateRelatedInlineVideosForImportedAudio moves linked videos when stereo audio is imported", () => {
+  const config = configModule.readConfig();
+  config.path.video_folder_layout = "inline";
+  configModule.writeConfig(config);
+
+  const fixture = seedInlineVideoTransferFixture();
+  const result = renameTrackFileServiceModule.RenameTrackFileService
+    .relocateRelatedInlineVideosForImportedAudio([fixture.audioFileId]);
+
+  assert.equal(result.renamed, 1);
+  assert.equal(fs.existsSync(fixture.separatedVideoPath), false);
+  assert.equal(fs.existsSync(fixture.inlineVideoPath), true);
+});
+
+test("relocateRelatedInlineVideosForImportedAudio is a no-op when layout is separated", () => {
+  const config = configModule.readConfig();
+  config.path.video_folder_layout = "separated";
+  configModule.writeConfig(config);
+
+  const fixture = seedInlineVideoTransferFixture();
+  const result = renameTrackFileServiceModule.RenameTrackFileService
+    .relocateRelatedInlineVideosForImportedAudio([fixture.audioFileId]);
+
+  assert.equal(result.renamed, 0);
+  assert.equal(fs.existsSync(fixture.separatedVideoPath), true);
+  assert.equal(fs.existsSync(fixture.inlineVideoPath), false);
+});
+
+test("relocateRelatedInlineVideosForImportedAudio does not move to inline when stereo RG is unmonitored", () => {
+  const config = configModule.readConfig();
+  config.path.video_folder_layout = "inline";
+  configModule.writeConfig(config);
+
+  const fixture = seedInlineVideoTransferFixture({ stereoMonitored: false });
+  renameTrackFileServiceModule.RenameTrackFileService
+    .relocateRelatedInlineVideosForImportedAudio([fixture.audioFileId]);
+
+  assert.equal(fs.existsSync(fixture.inlineVideoPath), false);
+  const videoRow = dbModule.db.prepare(`
+    SELECT file_path AS filePath FROM TrackFiles WHERE id = ?
+  `).get(fixture.videoFileId) as { filePath: string };
+  const videoRoot = path.resolve(configModule.Config.getVideoPath());
+  assert.ok(
+    path.resolve(videoRow.filePath).toLowerCase().startsWith(videoRoot.toLowerCase()),
+    `expected video to remain under videos root, got ${videoRow.filePath}`,
+  );
+});
+test("relocateRelatedInlineVideosForImportedAudio ignores unrelated imported audio", () => {
+  const config = configModule.readConfig();
+  config.path.video_folder_layout = "inline";
+  configModule.writeConfig(config);
+
+  const fixture = seedInlineVideoTransferFixture();
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid)
+    VALUES (?, ?, ?)
+  `).run("recording-mbid-other", "Other Song", "artist-mbid-1");
+  const otherAudioPath = path.join(configModule.Config.getMusicPath(), "Artist One", "Other.flac");
+  fs.mkdirSync(path.dirname(otherAudioPath), { recursive: true });
+  fs.writeFileSync(otherAudioPath, "other-audio");
+  const otherAudioId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: null,
+    mediaId: "track-other",
+    filePath: otherAudioPath,
+    libraryRoot: configModule.Config.getMusicPath(),
+    fileType: "track",
+    quality: "LOSSLESS",
+    provider: "tidal",
+    providerEntityType: "track",
+    providerId: "track-other",
+    librarySlot: "stereo",
+    canonicalArtistMbid: "artist-mbid-1",
+    canonicalRecordingMbid: "recording-mbid-other",
+  });
+
+  const result = renameTrackFileServiceModule.RenameTrackFileService
+    .relocateRelatedInlineVideosForImportedAudio([otherAudioId]);
+
+  assert.equal(result.renamed, 0);
+  assert.equal(fs.existsSync(fixture.separatedVideoPath), true);
 });

@@ -230,7 +230,7 @@ const ActivityTab = ({
             case "success":
                 return <CheckmarkCircle16Filled className={source === "history" ? styles.statusIconSuccessHistory : styles.statusIconSuccess} />;
             case "warning":
-                return <Warning16Filled className={styles.statusIconNeutral} />;
+                return <Warning16Filled className={styles.statusIconWarning} />;
             case "error":
                 return <DismissCircle16Filled className={styles.statusIconError} />;
             default:
@@ -240,15 +240,25 @@ const ActivityTab = ({
 
     const renderActivityEntry = (entry: ActivityEntry) => {
         const { job, source } = entry;
+        const warningMessage = typeof job.warningMessage === "string" && job.warningMessage.trim()
+            ? job.warningMessage.trim()
+            : (typeof (job.payload as { warningMessage?: unknown } | null | undefined)?.warningMessage === "string"
+                ? String((job.payload as { warningMessage: string }).warningMessage).trim()
+                : "");
+        const completedWithWarning = job.status === "completed"
+            && (job.outcome === "completedWithWarning"
+                || (job.payload as { outcome?: string } | null | undefined)?.outcome === "completedWithWarning");
         const level: EventLevel = job.error
             ? "error"
             : job.status === "failed"
                 ? "error"
-                : job.status === "completed"
-                    ? "success"
-                    : job.status === "cancelled"
-                        ? "warning"
-                        : "info";
+                : completedWithWarning
+                    ? "warning"
+                    : job.status === "completed"
+                        ? "success"
+                        : job.status === "cancelled"
+                            ? "warning"
+                            : "info";
 
         const retryJobId = Number(job.id);
         const canRetry = source === "history"
@@ -281,6 +291,9 @@ const ActivityTab = ({
                                 </Text>
                             ) : null}
                             {job.error ? <Text size={200} className={styles.activityErrorText}>Error: {job.error}</Text> : null}
+                            {!job.error && completedWithWarning && warningMessage ? (
+                                <Text size={200} className={styles.activityInlineDescription}>{warningMessage}</Text>
+                            ) : null}
                         </div>
                         <div className={styles.activityTimeActions}>
                             <Text className={styles.activityTime}>

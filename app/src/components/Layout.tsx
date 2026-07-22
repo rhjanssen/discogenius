@@ -20,6 +20,7 @@ import {
 const logo = "/assets/images/logo.png";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import GlobalSearch from "./GlobalSearch";
+import ScrollRestoration from "./ScrollRestoration";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { hexToRgb } from "@/ultrablur/color";
@@ -305,6 +306,7 @@ const Layout = () => {
 
   return (
     <>
+      <ScrollRestoration />
       <UltraBlurBackground colors={colors} isDarkMode={ultraBlurIsDarkMode} />
       <div className={mergeClasses(styles.wrapper, isAuthRoute && styles.authWrapper)}>
         {!isAuthRoute ? (

@@ -3,7 +3,6 @@ import {
     tokens,
     Spinner,
     Text,
-    Tooltip,
     mergeClasses,
 } from "@fluentui/react-components";
 import {
@@ -14,6 +13,7 @@ import {
   bundleIcon
 } from "@fluentui/react-icons";
 import { useStatusOverview } from "@/hooks/useStatusOverview";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const ErrorCircle24 = bundleIcon(ErrorCircle24Filled, ErrorCircle24Regular);
@@ -75,19 +75,19 @@ export const ActivityIndicator = () => {
 
     if (hasStatusRefreshError && !hasStatusData) {
         return (
-            <Tooltip content="Cannot reach server status endpoint" relationship="label">
+            <AppTooltip content="Cannot reach server status endpoint" relationship="label">
                 <div className={styles.container}>
                     <ErrorCircle24 className={styles.icon} style={{ color: tokens.colorPaletteRedForeground1 }} />
                     <Text>Status unavailable</Text>
                 </div>
-            </Tooltip>
+            </AppTooltip>
         );
     }
 
     if (downloadingCount > 0 || queuedCount > 0) {
         const subtitle = `${downloadingCount} downloading, ${queuedCount} queued${(backgroundProcessing > 0 || backgroundPending > 0) ? `; ${backgroundProcessing} background running, ${backgroundPending} background queued` : ""}`;
         return (
-            <Tooltip content={subtitle} relationship="label">
+            <AppTooltip content={subtitle} relationship="label">
                 <div className={mergeClasses(styles.container, styles.active)}>
                     {downloadingCount > 0 ? <Spinner size="tiny" /> : <ArrowDownload24 className={styles.icon} />}
                     <Text>
@@ -96,14 +96,14 @@ export const ActivityIndicator = () => {
                             : `${queuedCount} queued${backgroundPending > 0 ? ` + ${backgroundPending} bg` : ""}`}
                     </Text>
                 </div>
-            </Tooltip>
+            </AppTooltip>
         );
     }
 
     if (backgroundProcessing > 0 || backgroundPending > 0) {
         const subtitle = `${backgroundProcessing} running, ${backgroundPending} queued background tasks`;
         return (
-            <Tooltip content={subtitle} relationship="label">
+            <AppTooltip content={subtitle} relationship="label">
                 <div className={styles.container}>
                     <Spinner size="tiny" />
                     <Text>
@@ -112,18 +112,18 @@ export const ActivityIndicator = () => {
                             : `${backgroundPending} background queued`}
                     </Text>
                 </div>
-            </Tooltip>
+            </AppTooltip>
         );
     }
 
     if (isStatusUpdating) {
         return (
-            <Tooltip content="Refreshing queue summary" relationship="label">
+            <AppTooltip content="Refreshing queue summary" relationship="label">
                 <div className={styles.container}>
                     <Spinner size="tiny" />
                     <Text>Updating</Text>
                 </div>
-            </Tooltip>
+            </AppTooltip>
         );
     }
 

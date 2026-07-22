@@ -18,6 +18,7 @@ import {
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ExplicitBadge } from "@/components/ui/ExplicitBadge";
 import { DownloadOverlay } from "@/components/ui/DownloadOverlay";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 import { useCardStyles } from "./cardStyles";
 
 const Circle24 = bundleIcon(Circle24Filled, Circle24Regular);
@@ -321,20 +322,24 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                 )}
 
                 {onMonitorToggle && (
-                    <button
-                        type="button"
-                        className={styles.monitorIndicator}
-                        onClick={handleMonitorClick}
-                        disabled={monitoringLocked}
-                        aria-label={monitored ? "Unmonitor" : "Monitor"}
-                        title={monitoringLocked ? "Monitoring is locked" : monitored ? "Unmonitor" : "Monitor"}
+                    <AppTooltip
+                        content={monitoringLocked ? "Monitoring is locked" : monitored ? "Unmonitor" : "Monitor"}
+                        relationship="label"
                     >
-                        {monitored ? (
-                            <EyeOff16 className={styles.monitorIcon} />
-                        ) : (
-                            <Eye16 className={styles.monitorIcon} />
-                        )}
-                    </button>
+                        <button
+                            type="button"
+                            className={styles.monitorIndicator}
+                            onClick={handleMonitorClick}
+                            disabled={monitoringLocked}
+                            aria-label={monitored ? "Unmonitor" : "Monitor"}
+                        >
+                            {monitored ? (
+                                <EyeOff16 className={styles.monitorIcon} />
+                            ) : (
+                                <Eye16 className={styles.monitorIcon} />
+                            )}
+                        </button>
+                    </AppTooltip>
                 )}
 
                 {downloadStatus && downloadStatus !== 'completed' && (

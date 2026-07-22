@@ -13,6 +13,8 @@ import {
   Stop24Regular,
   CheckmarkCircle16Filled,
   Stop24Filled,
+  Video24Regular,
+  Video24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { api } from "@/services/api";
@@ -23,15 +25,18 @@ import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow, type ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
 import { TrackInfoDialog } from "@/components/ui/TrackInfoDialog";
 import { TrackRowActions } from "@/components/tracks/TrackRowActions";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 import { useTrackPlayback } from "@/hooks/useTrackPlayback";
 import { navigateToAlbum } from "@/utils/albumNavigation";
 import { formatDurationSeconds } from "@/utils/format";
 import { orderedQualityTags } from "@/utils/qualityTags";
+import { localFileQualityTooltip } from "@/utils/localQualityTooltip";
 import { mediaCoverSrc } from "@/utils/artwork";
 import type { TrackListItem } from "@/types/track-list";
 
 const CheckmarkCircle16 = bundleIcon(CheckmarkCircle16Filled, CheckmarkCircle16Regular);
 const Stop24 = bundleIcon(Stop24Filled, Stop24Regular);
+const Video24 = bundleIcon(Video24Filled, Video24Regular);
 
 type TrackNumbering = "track" | "index";
 type TrackFiles = NonNullable<TrackListItem["files"]>;
@@ -60,6 +65,8 @@ interface TrackListProps<T extends TrackListItem = TrackListItem> {
   onDownloadTrack?: (track: T, event?: MouseEvent<HTMLButtonElement>) => void;
   onToggleMonitor?: (track: T, event?: MouseEvent<HTMLButtonElement>) => void;
   onToggleLock?: (track: T, event?: MouseEvent<HTMLButtonElement>) => void;
+  /** Music-video glyph on tracks that have an associated video (album page). */
+  onAssociatedVideoClick?: (track: T, videoId: string, event: MouseEvent<HTMLButtonElement>) => void;
   isTrackDownloading?: (track: T) => boolean;
   selection?: TrackListSelection<T>;
 }
@@ -221,6 +228,31 @@ const useStyles = makeStyles({
     minWidth: 0,
     fontWeight: tokens.fontWeightSemibold,
   },
+  videoGlyphButton: {
+    flexShrink: 0,
+    width: "22px",
+    height: "22px",
+    padding: 0,
+    border: 0,
+    borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: "transparent",
+    color: tokens.colorNeutralForeground3,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    ":hover": {
+      color: tokens.colorBrandForeground1,
+      backgroundColor: tokens.colorNeutralBackground1Hover,
+    },
+    ":focus-visible": {
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: "2px",
+    },
+  },
+  videoGlyphIcon: {
+    fontSize: "16px",
+  },
   mobileMeta: {
     display: "flex",
     flexWrap: "wrap",
@@ -323,11 +355,20 @@ const getRemoteProviderQualityOffers = (track: TrackListItem): ProviderQualityOf
       const slot: ProviderQualityOffer["slot"] = slotRaw === "spatial" || slotRaw === "video"
         ? slotRaw
         : "stereo";
+      const providerTrackId = String(offer.providerTrackId || "").trim()
+        || (String(track.preview_provider || "").toLowerCase() === String(offer.provider || "").toLowerCase()
+          ? String(track.preview_provider_track_id || "").trim()
+          : "");
       return {
         slot,
         quality: offer.quality,
         provider: offer.provider,
         providerAlbumId: offer.providerAlbumId,
+        matchStatus: offer.matchStatus,
+        selectedReleaseMbid: offer.selectedReleaseMbid || track.musicbrainz_release_id || null,
+        providerTrackId: providerTrackId || null,
+        musicbrainzTrackId: track.musicbrainz_track_id || null,
+        musicbrainzRecordingId: track.musicbrainz_recording_id || null,
       };
     });
   }
@@ -336,14 +377,26 @@ const getRemoteProviderQualityOffers = (track: TrackListItem): ProviderQualityOf
   const qualities = tags.length > 0 ? tags : (track.quality ? [String(track.quality)] : []);
   if (qualities.length === 0) {
     return track.preview_provider
-      ? [{ slot: "stereo", quality: null, provider: track.preview_provider }]
+      ? [{
+        slot: "stereo",
+        quality: null,
+        provider: track.preview_provider,
+        providerTrackId: track.preview_provider_track_id,
+        musicbrainzTrackId: track.musicbrainz_track_id || null,
+        musicbrainzRecordingId: track.musicbrainz_recording_id || null,
+        selectedReleaseMbid: track.musicbrainz_release_id || null,
+      }]
       : [];
   }
 
   return qualities.map((quality) => ({
-    slot: /atmos|spatial/i.test(quality) ? "spatial" : "stereo",
+    slot: /atmos|spatial/i.test(quality) ? "spatial" as const : "stereo" as const,
     quality,
     provider: track.preview_provider || null,
+    providerTrackId: track.preview_provider_track_id || null,
+    musicbrainzTrackId: track.musicbrainz_track_id || null,
+    musicbrainzRecordingId: track.musicbrainz_recording_id || null,
+    selectedReleaseMbid: track.musicbrainz_release_id || null,
   }));
 };
 const getFileQualityTags = (files: TrackFiles): string[] => orderedQualityTags({
@@ -351,6 +404,15 @@ const getFileQualityTags = (files: TrackFiles): string[] => orderedQualityTags({
     .filter((file) => String(file.file_type || "track") === "track")
     .map((file) => file.quality),
 });
+
+/** Prefer the track file that carries this quality tag for tooltip probe props. */
+const getFileForQualityTag = (files: TrackFiles, quality: string) => {
+  const trackFiles = files.filter((file) => String(file.file_type || "track") === "track");
+  const normalized = String(quality || "").trim().toUpperCase();
+  return trackFiles.find((file) => String(file.quality || "").trim().toUpperCase() === normalized)
+    || trackFiles[0]
+    || null;
+};
 const isDownloadedTrack = (track: TrackListItem) => Boolean(track.is_downloaded ?? track.downloaded);
 const looksLikeMusicBrainzMbid = (value: string | null | undefined) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
@@ -413,6 +475,7 @@ const TrackList = <T extends TrackListItem>({
   onDownloadTrack,
   onToggleMonitor,
   onToggleLock,
+  onAssociatedVideoClick,
   isTrackDownloading,
   selection,
 }: TrackListProps<T>) => {
@@ -585,6 +648,7 @@ const TrackList = <T extends TrackListItem>({
       showAlbum ? displayAlbum : null,
     ].filter(Boolean);
     const mobileOffers = showQuality ? getRemoteProviderQualityOffers(track) : [];
+    const associatedVideoId = String(track.associated_video_id || "").trim() || null;
 
     return (
       <div className={styles.titleCell}>
@@ -594,6 +658,21 @@ const TrackList = <T extends TrackListItem>({
               {getDisplayTitle(track)}
             </Text>
             {track.explicit ? <ExplicitBadge size="small" /> : null}
+            {associatedVideoId && onAssociatedVideoClick ? (
+              <AppTooltip content="Jump to associated video" relationship="label">
+                <button
+                  type="button"
+                  className={styles.videoGlyphButton}
+                  aria-label={`Jump to music video for ${getDisplayTitle(track)}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAssociatedVideoClick(track, associatedVideoId, event);
+                  }}
+                >
+                  <Video24 className={styles.videoGlyphIcon} />
+                </button>
+              </AppTooltip>
+            ) : null}
           </div>
           {mobileMeta.length > 0 ? (
             <div className={styles.mobileMeta}>
@@ -615,6 +694,7 @@ const TrackList = <T extends TrackListItem>({
     );
   }, [
     contextAlbumTitle,
+    onAssociatedVideoClick,
     renderArtistCredits,
     showAlbum,
     showArtist,
@@ -626,6 +706,8 @@ const TrackList = <T extends TrackListItem>({
     styles.titleRow,
     styles.titleStack,
     styles.titleText,
+    styles.videoGlyphButton,
+    styles.videoGlyphIcon,
   ]);
 
   const renderCover = useCallback((track: T) => {
@@ -819,11 +901,22 @@ const TrackList = <T extends TrackListItem>({
         width: "max-content",
         minWidth: 768,
         render: (track) => {
-          const fileQualityTags = getFileQualityTags(getTrackFiles(track));
+          const trackFiles = getTrackFiles(track);
+          const fileQualityTags = getFileQualityTags(trackFiles);
           return (
             <div className={styles.qualityContent} aria-label="Library file quality">
               {fileQualityTags.length > 0
-                ? fileQualityTags.map((quality) => <QualityBadge key={quality} quality={quality} size="small" />)
+                ? fileQualityTags.map((quality) => {
+                  const file = getFileForQualityTag(trackFiles, quality);
+                  return (
+                    <QualityBadge
+                      key={quality}
+                      quality={quality}
+                      size="small"
+                      tooltip={localFileQualityTooltip(file)}
+                    />
+                  );
+                })
                 : <span className={styles.emptyValue}>—</span>}
             </div>
           );
@@ -1010,6 +1103,7 @@ const TrackList = <T extends TrackListItem>({
         <TrackInfoDialog
           open={Boolean(infoTrack)}
           onClose={() => setInfoTrack(null)}
+          trackId={infoTrack.id}
           trackTitle={getDisplayTitle(infoTrack)}
           artistName={infoTrack.artist_name || contextArtistName || undefined}
           albumTitle={getAlbumTitle(infoTrack, contextAlbumTitle) || undefined}
@@ -1017,6 +1111,13 @@ const TrackList = <T extends TrackListItem>({
           duration={infoTrack.duration}
           audioQuality={infoTrack.quality}
           files={infoTrack.files || []}
+          onFilesDeleted={() => {
+            setTrackFilesById((previous) => {
+              const next = { ...previous };
+              delete next[infoTrack.id];
+              return next;
+            });
+          }}
         />
       ) : null}
     </>

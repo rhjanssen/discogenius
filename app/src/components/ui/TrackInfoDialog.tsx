@@ -5,6 +5,7 @@ import {
     DialogBody,
     DialogTitle,
     DialogContent,
+    DialogActions,
     Button,
     Text,
     Spinner,
@@ -20,6 +21,20 @@ import { formatDurationSeconds } from "@/utils/format";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { api } from "@/services/api";
+import { useToast } from "@/hooks/useToast";
+import {
+    formatBitDepthLabel,
+    formatBitrateKbps,
+    formatChannelsLabel,
+    formatCodecLabel,
+    formatSampleRateLabel,
+    localFileQualityTooltip,
+} from "@/utils/localQualityTooltip";
+import { isSpatialAudioQuality, normalizeQualityTag } from "@/utils/spatialAudio";
+import {
+    dispatchActivityRefresh,
+    dispatchLibraryUpdated,
+} from "@/utils/appEvents";
 
 const Dismiss24 = bundleIcon(Dismiss24Filled, Dismiss24Regular);
 
@@ -32,11 +47,16 @@ export interface TrackFileInfo {
     extension?: string;
     quality?: string | null;
     library_root?: string;
+    library_slot?: string | null;
     file_size?: number;
     bitrate?: number;
     sample_rate?: number;
     bit_depth?: number;
+    channels?: number;
     codec?: string;
+    video_codec?: string | null;
+    width?: number;
+    height?: number;
     duration?: number;
 }
 
@@ -52,6 +72,9 @@ interface TrackInfoDialogProps {
     files?: TrackFileInfo[];
     dialogTitle?: string;
     detailsTitle?: string;
+    /** When set, show Manage → Delete files for this track. */
+    trackId?: string;
+    onFilesDeleted?: () => void;
 }
 
 type ImageMetadata = {
@@ -159,21 +182,17 @@ function formatFileSize(bytes?: number): string {
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function formatBitrate(bitrate?: number): string {
-    if (!bitrate) return "—";
-    if (bitrate >= 1000) return `${(bitrate / 1000).toFixed(0)} kbps`;
-    return `${bitrate} bps`;
-}
-
-function formatSampleRate(rate?: number): string {
-    if (!rate) return "—";
-    if (rate >= 1000) return `${(rate / 1000).toFixed(1)} kHz`;
-    return `${rate} Hz`;
-}
-
 function formatResolution(metadata?: ImageMetadata): string {
     if (!metadata) return "—";
-    return `${metadata.width} x ${metadata.height}`;
+    return `${metadata.width} × ${metadata.height}`;
+}
+
+function formatSlotLabel(slot?: string | null): string | null {
+    const normalized = String(slot || "").trim().toLowerCase();
+    if (normalized === "stereo") return "Stereo";
+    if (normalized === "spatial") return "Spatial";
+    if (normalized === "video") return "Video";
+    return null;
 }
 
 function formatFileTypeLabel(fileType: string): string {
@@ -220,12 +239,28 @@ function renderBasicFileRows(
     file: TrackFileInfo,
     imageMetadata?: ImageMetadata,
 ) {
+    const codecLabel = formatCodecLabel(file.codec);
+    const bitrateLabel = formatBitrateKbps(file.bitrate);
+    const sampleRateLabel = formatSampleRateLabel(file.sample_rate);
+    const bitDepthLabel = formatBitDepthLabel(file.bit_depth);
+    const channelsLabel = formatChannelsLabel(file.channels);
+    const slotLabel = formatSlotLabel(file.library_slot);
+    const isSpatial = isSpatialAudioQuality(normalizeQualityTag(file.quality))
+        || (Number(file.channels) > 2);
+    const atmosLabel = isSpatial ? "Yes" : null;
+
     return (
         <>
             <div className={styles.row}>
                 <Text className={styles.label}>Type</Text>
                 <Text className={styles.value}>{formatFileTypeLabel(file.file_type)}</Text>
             </div>
+            {slotLabel && (
+                <div className={styles.row}>
+                    <Text className={styles.label}>Library</Text>
+                    <Text className={styles.value}>{slotLabel}</Text>
+                </div>
+            )}
             {file.filename && (
                 <div className={styles.row}>
                     <Text className={styles.label}>Filename</Text>
@@ -254,28 +289,40 @@ function renderBasicFileRows(
                     <Text className={styles.value}>{formatResolution(imageMetadata)}</Text>
                 </div>
             )}
-            {file.codec && (
+            {codecLabel && (
                 <div className={styles.row}>
                     <Text className={styles.label}>Codec</Text>
-                    <Text className={styles.value}>{file.codec.toUpperCase()}</Text>
+                    <Text className={styles.value}>{codecLabel}</Text>
                 </div>
             )}
-            {file.bitrate && (
-                <div className={styles.row}>
-                    <Text className={styles.label}>Bitrate</Text>
-                    <Text className={styles.value}>{formatBitrate(file.bitrate)}</Text>
-                </div>
-            )}
-            {file.sample_rate && (
-                <div className={styles.row}>
-                    <Text className={styles.label}>Sample Rate</Text>
-                    <Text className={styles.value}>{formatSampleRate(file.sample_rate)}</Text>
-                </div>
-            )}
-            {file.bit_depth && (
+            {bitDepthLabel && (
                 <div className={styles.row}>
                     <Text className={styles.label}>Bit Depth</Text>
-                    <Text className={styles.value}>{file.bit_depth}-bit</Text>
+                    <Text className={styles.value}>{bitDepthLabel}</Text>
+                </div>
+            )}
+            {sampleRateLabel && (
+                <div className={styles.row}>
+                    <Text className={styles.label}>Sample Rate</Text>
+                    <Text className={styles.value}>{sampleRateLabel}</Text>
+                </div>
+            )}
+            {bitrateLabel && (
+                <div className={styles.row}>
+                    <Text className={styles.label}>Bitrate</Text>
+                    <Text className={styles.value}>{bitrateLabel}</Text>
+                </div>
+            )}
+            {channelsLabel && (
+                <div className={styles.row}>
+                    <Text className={styles.label}>Channels</Text>
+                    <Text className={styles.value}>{channelsLabel}</Text>
+                </div>
+            )}
+            {atmosLabel && (
+                <div className={styles.row}>
+                    <Text className={styles.label}>Atmos</Text>
+                    <Text className={styles.value}>{atmosLabel}</Text>
                 </div>
             )}
             {file.duration && (
@@ -287,7 +334,11 @@ function renderBasicFileRows(
             {file.quality && (
                 <div className={styles.row}>
                     <Text className={styles.label}>Quality</Text>
-                    <QualityBadge quality={file.quality as string} size="small" />
+                    <QualityBadge
+                        quality={file.quality as string}
+                        size="small"
+                        tooltip={localFileQualityTooltip(file)}
+                    />
                 </div>
             )}
         </>
@@ -306,16 +357,47 @@ export const TrackInfoDialog: React.FC<TrackInfoDialogProps> = ({
     files = [],
     dialogTitle = "Track Info",
     detailsTitle = "Details",
+    trackId,
+    onFilesDeleted,
 }) => {
     const styles = useStyles();
+    const { toast } = useToast();
     const [textContent, setTextContent] = useState<Record<number, string | null>>({});
     const [loadingTextIds, setLoadingTextIds] = useState<Set<number>>(new Set());
     const [imageMetadata, setImageMetadata] = useState<Record<number, ImageMetadata>>({});
+    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [deleteApplying, setDeleteApplying] = useState(false);
 
     const audioFiles = files.filter(isAudioFile);
     const videoFiles = files.filter(isVideoFile);
     const imageFiles = files.filter(isImageFile);
     const textFiles = files.filter(isTextFile);
+    const hasDeletableFiles = Boolean(trackId) && files.length > 0;
+
+    const handleDeleteFiles = async () => {
+        if (!trackId) return;
+        setDeleteApplying(true);
+        try {
+            const result: any = await api.deleteTrackFiles(trackId);
+            toast({
+                title: "Track files deleted",
+                description: `Removed ${result?.deleted ?? 0} file(s) from disk and tracking.`,
+            });
+            setDeleteConfirmOpen(false);
+            onFilesDeleted?.();
+            onClose();
+            dispatchLibraryUpdated();
+            dispatchActivityRefresh();
+        } catch (error) {
+            toast({
+                title: "Failed to delete track files",
+                description: error instanceof Error ? error.message : "Could not delete track files.",
+                variant: "destructive",
+            });
+        } finally {
+            setDeleteApplying(false);
+        }
+    };
 
     useEffect(() => {
         if (!open || textFiles.length === 0) {
@@ -386,6 +468,7 @@ export const TrackInfoDialog: React.FC<TrackInfoDialogProps> = ({
     }, [open, imageFiles]);
 
     return (
+        <>
         <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) onClose(); }}>
             <DialogSurface className={styles.surface}>
                 <DialogBody>
@@ -510,8 +593,44 @@ export const TrackInfoDialog: React.FC<TrackInfoDialogProps> = ({
                             </React.Fragment>
                         ))}
                     </DialogContent>
+                    {hasDeletableFiles ? (
+                        <DialogActions>
+                            <Button
+                                appearance="secondary"
+                                disabled={deleteApplying}
+                                onClick={() => setDeleteConfirmOpen(true)}
+                            >
+                                Delete files…
+                            </Button>
+                        </DialogActions>
+                    ) : null}
                 </DialogBody>
             </DialogSurface>
         </Dialog>
+        <Dialog
+            open={deleteConfirmOpen}
+            onOpenChange={(_, data) => {
+                if (!data.open && !deleteApplying) setDeleteConfirmOpen(false);
+            }}
+        >
+            <DialogSurface>
+                <DialogBody>
+                    <DialogTitle>Delete track files</DialogTitle>
+                    <DialogContent>
+                        Delete imported library files for <strong>{trackTitle}</strong> from disk and remove
+                        them from Discogenius tracking. Catalog metadata is kept.
+                    </DialogContent>
+                    <DialogActions>
+                        <Button appearance="secondary" disabled={deleteApplying} onClick={() => setDeleteConfirmOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button appearance="primary" disabled={deleteApplying} onClick={() => void handleDeleteFiles()}>
+                            {deleteApplying ? "Deleting…" : "Delete files"}
+                        </Button>
+                    </DialogActions>
+                </DialogBody>
+            </DialogSurface>
+        </Dialog>
+        </>
     );
 };

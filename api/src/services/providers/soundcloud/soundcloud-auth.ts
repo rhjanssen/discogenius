@@ -1,0 +1,173 @@
+import fs from "node:fs";
+import path from "node:path";
+
+import { CONFIG_DIR } from "../../config/config.js";
+
+export interface SoundCloudCredentials {
+  /** Public web client id (from SoundCloud's frontend / session URL). */
+  clientId: string;
+  /** User oauth / access token from a signed-in browser session. */
+  oauthToken: string;
+  /** Optional numeric user id for likes/playlists; refreshed from /me when absent. */
+  userId?: string | null;
+}
+
+export interface SoundCloudCredentialInput {
+  clientId?: unknown;
+  client_id?: unknown;
+  oauthToken?: unknown;
+  oauth_token?: unknown;
+  accessToken?: unknown;
+  access_token?: unknown;
+  userId?: unknown;
+  user_id?: unknown;
+  cookies?: unknown;
+  cookiesText?: unknown;
+  netscapeCookies?: unknown;
+}
+
+export interface SoundCloudCredentialState {
+  configured: boolean;
+  clientIdConfigured: boolean;
+  oauthTokenConfigured: boolean;
+  cookiesConfigured: boolean;
+  userId: string | null;
+}
+
+export const SOUNDCLOUD_PROVIDER_DIR = path.join(CONFIG_DIR, "providers", "soundcloud");
+export const SOUNDCLOUD_CREDENTIALS_FILE = path.join(SOUNDCLOUD_PROVIDER_DIR, "credentials.json");
+export const SOUNDCLOUD_COOKIES_FILE = path.join(SOUNDCLOUD_PROVIDER_DIR, "cookies.txt");
+
+/** SoundCloud's public web client id — used when the operator pastes only an oauth token. */
+export const SOUNDCLOUD_DEFAULT_CLIENT_ID = "Mxv2e5wxnWei6krLywjIXpztX7S0VCeK";
+
+function nonEmptyString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function writePrivateFile(filePath: string, contents: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, contents, { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temporaryPath, filePath);
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Windows ACLs do not map cleanly to POSIX modes.
+  }
+}
+
+export function looksLikeNetscapeCookies(contents: string): boolean {
+  const trimmed = contents.trim();
+  if (!trimmed) return false;
+  if (/^#\s*Netscape HTTP Cookie File/im.test(trimmed)) return true;
+  return trimmed.split(/\r?\n/u).some((line) => {
+    if (!line || line.startsWith("#")) return false;
+    return line.split("\t").length >= 7;
+  });
+}
+
+function normalizeOauthToken(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  // Accept "OAuth <token>" pastes from Authorization headers.
+  return trimmed.replace(/^OAuth\s+/iu, "").trim();
+}
+
+export function loadSoundCloudCredentials(): SoundCloudCredentials | null {
+  try {
+    const raw = fs.readFileSync(SOUNDCLOUD_CREDENTIALS_FILE, "utf8").replace(/^\uFEFF/u, "");
+    const parsed = JSON.parse(raw) as Partial<SoundCloudCredentials>;
+    const clientId = nonEmptyString(parsed.clientId) || SOUNDCLOUD_DEFAULT_CLIENT_ID;
+    const oauthToken = normalizeOauthToken(nonEmptyString(parsed.oauthToken));
+    if (!oauthToken) return null;
+    const userId = nonEmptyString(parsed.userId) || null;
+    return { clientId, oauthToken, userId };
+  } catch {
+    return null;
+  }
+}
+
+export function getSoundCloudCredentialState(): SoundCloudCredentialState {
+  const credentials = loadSoundCloudCredentials();
+  return {
+    configured: Boolean(credentials?.oauthToken),
+    clientIdConfigured: Boolean(credentials?.clientId),
+    oauthTokenConfigured: Boolean(credentials?.oauthToken),
+    cookiesConfigured: fs.existsSync(SOUNDCLOUD_COOKIES_FILE)
+      && fs.statSync(SOUNDCLOUD_COOKIES_FILE).size > 0,
+    userId: credentials?.userId || null,
+  };
+}
+
+export function saveSoundCloudCredentials(input: SoundCloudCredentialInput): SoundCloudCredentials {
+  const clientId = nonEmptyString(input.clientId ?? input.client_id) || SOUNDCLOUD_DEFAULT_CLIENT_ID;
+  const oauthToken = normalizeOauthToken(
+    nonEmptyString(input.oauthToken ?? input.oauth_token ?? input.accessToken ?? input.access_token),
+  );
+  if (!oauthToken) {
+    throw new Error("SoundCloud oauthToken is required.");
+  }
+  if (oauthToken.length < 12 || /[\r\n]/u.test(oauthToken)) {
+    throw new Error("SoundCloud oauthToken must be a single-line session token.");
+  }
+  if (!clientId || /[\r\n]/u.test(clientId)) {
+    throw new Error("SoundCloud clientId must be a single-line client id.");
+  }
+
+  const cookiesText = nonEmptyString(input.cookies ?? input.cookiesText ?? input.netscapeCookies);
+  if (cookiesText) {
+    if (!looksLikeNetscapeCookies(cookiesText) && !/=/.test(cookiesText)) {
+      throw new Error("SoundCloud cookies must be Netscape cookies.txt or a raw Cookie header.");
+    }
+    if (looksLikeNetscapeCookies(cookiesText)) {
+      writePrivateFile(SOUNDCLOUD_COOKIES_FILE, `${cookiesText.trimEnd()}\n`);
+    } else {
+      // Raw Cookie header → minimal Netscape jar for yt-dlp.
+      const lines = [
+        "# Netscape HTTP Cookie File",
+        "# Generated by Discogenius from a SoundCloud Cookie header",
+      ];
+      for (const part of cookiesText.split(";")) {
+        const separator = part.indexOf("=");
+        if (separator <= 0) continue;
+        const name = part.slice(0, separator).trim();
+        const value = part.slice(separator + 1).trim();
+        if (!name || !value) continue;
+        lines.push(`.soundcloud.com\tTRUE\t/\tFALSE\t2147483647\t${name}\t${value}`);
+      }
+      writePrivateFile(SOUNDCLOUD_COOKIES_FILE, `${lines.join("\n")}\n`);
+    }
+  }
+
+  const userId = nonEmptyString(input.userId ?? input.user_id) || null;
+  const credentials: SoundCloudCredentials = { clientId, oauthToken, userId };
+  writePrivateFile(SOUNDCLOUD_CREDENTIALS_FILE, `${JSON.stringify({
+    clientId,
+    oauthToken,
+    userId,
+  }, null, 2)}\n`);
+  return credentials;
+}
+
+export function updateSoundCloudUserId(userId: string): void {
+  const current = loadSoundCloudCredentials();
+  if (!current) return;
+  const next = String(userId || "").trim();
+  if (!next || current.userId === next) return;
+  writePrivateFile(SOUNDCLOUD_CREDENTIALS_FILE, `${JSON.stringify({
+    clientId: current.clientId,
+    oauthToken: current.oauthToken,
+    userId: next,
+  }, null, 2)}\n`);
+}
+
+export function clearSoundCloudCredentials(): void {
+  for (const target of [
+    SOUNDCLOUD_CREDENTIALS_FILE,
+    SOUNDCLOUD_COOKIES_FILE,
+    `${SOUNDCLOUD_CREDENTIALS_FILE}.${process.pid}.tmp`,
+  ]) {
+    fs.rmSync(target, { force: true });
+  }
+}

@@ -11,6 +11,9 @@ export interface TrackRemoteOffer {
   provider: string;
   providerAlbumId: string;
   quality: string | null;
+  matchStatus?: string | null;
+  selectedReleaseMbid?: string | null;
+  providerTrackId?: string | null;
 }
 
 export interface TrackListItem {
@@ -36,6 +39,8 @@ export interface TrackListItem {
   musicbrainz_track_id?: string | null;
   musicbrainz_recording_id?: string | null;
   musicbrainz_release_id?: string | null;
+  /** Canonical video recording id when a music video is linked to this track. */
+  associated_video_id?: string | null;
   created_at?: string | null;
   downloaded?: boolean;
   is_downloaded?: boolean;

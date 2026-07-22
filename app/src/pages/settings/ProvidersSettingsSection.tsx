@@ -37,6 +37,7 @@ import { ErrorState } from "@/components/ui/ContentState";
 import { ImportArtistsModal } from "@/components/ui/ImportArtistsModal";
 import { ProviderMark } from "@/components/ui/ProviderMark";
 import { providerMarkFor } from "@/components/ui/providerMarks";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { useToast } from "@/hooks/useToast";
 import { api, type StreamingProviderStatus } from "@/services/api";
@@ -149,6 +150,11 @@ const useStyles = makeStyles({
         gap: tokens.spacingHorizontalXS,
         minHeight: "22px",
     },
+    capabilitySectionHeader: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "2px",
+    },
     signOutButton: {
         minHeight: "36px",
         [MEDIA.mobile]: {
@@ -200,7 +206,11 @@ const getProviderCapabilitySummary = (provider: StreamingProviderStatus) => {
         : caps.losslessStereo
             ? "LOSSLESS"
             : caps.lossyStereo
-                ? (provider.id === "youtube-music" ? "YOUTUBE_LOSSY" : "MP3_320")
+                ? (provider.id === "youtube-music"
+                          ? "YOUTUBE_LOSSY"
+                          : provider.id === "soundcloud"
+                            ? "SOUNDCLOUD_LOSSY"
+                            : "MP3_320")
                 : null;
     const spatialBadge = caps.spatialAudio
         ? (caps.spatialFormats?.includes("DOLBY_ATMOS") ? "DOLBY_ATMOS" : "SPATIAL")
@@ -505,15 +515,33 @@ export const ProvidersSettingsSection = ({
                                                 <Badge appearance="tint" color="informative">Default provider</Badge>
                                             ) : null}
                                         </div>
+                                        <div className={styles.capabilitySectionHeader}>
+                                            <Text weight="semibold">Supported capabilities</Text>
+                                            <Caption1 className={styles.mutedText}>
+                                                Read-only quality ceilings for this service — not user-configurable.
+                                            </Caption1>
+                                        </div>
                                         <div className={styles.capabilitySummaryGrid}>
                                             {getProviderCapabilitySummary(detailsProvider).map((capability) => (
                                                 <div key={capability.label} className={styles.capabilitySummaryItem}>
                                                     <Caption1 className={styles.mutedText}>{capability.label}</Caption1>
                                                     <div className={styles.capabilitySummaryValue}>
                                                         {capability.badgeQuality ? (
-                                                            <QualityBadge quality={capability.badgeQuality} size="large" />
+                                                            <QualityBadge
+                                                                quality={capability.badgeQuality}
+                                                                size="large"
+                                                                tooltip={capability.caption}
+                                                            />
                                                         ) : (
-                                                            <Text size={200}>Not available</Text>
+                                                            <AppTooltip
+                                                                content={capability.caption}
+                                                                relationship="description"
+                                                                withArrow
+                                                            >
+                                                                <span style={{ display: "inline-flex" }}>
+                                                                    <Text size={200}>Not available</Text>
+                                                                </span>
+                                                            </AppTooltip>
                                                         )}
                                                     </div>
                                                 </div>

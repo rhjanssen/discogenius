@@ -17,6 +17,7 @@ maps to Lidarr's, what we've split to match, and the remaining monoliths.
 | `Configuration` / `Profiles` / `Qualities` | `services/config/` |
 | `Datastore` | `database.ts` + `repositories/` |
 | `Extras` | `services/extras/` |
+| `Indexers` + `Download/Clients` + `ThingiProvider` | `services/providers/` today (adapters; 2.6 target may move to `api/src/providers/<id>/` — see `docs/TASKS.md` / plugin contract) |
 
 ## Command Queue Layout
 

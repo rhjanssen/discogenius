@@ -22,6 +22,21 @@ import {
   queueUpdateLibraryMetadata,
   queueCheckUpgradesPass,
 } from "./scheduler.js";
+import { getConfigSection } from "../config/config.js";
+
+/**
+ * Local-MB Postgres is not public-API rate-limited, so two RefreshArtist
+ * commands can fetch in parallel. SQLite writes still serialize via
+ * `withSqliteWriteGate`. Servarr (and unknown/broken config) stay at 1.
+ * Do not raise above 2 without measuring busy-timeout / claim latency.
+ */
+export function resolveRefreshArtistMaxConcurrent(): number {
+  try {
+    return getConfigSection("catalog").source === "musicbrainz" ? 2 : 1;
+  } catch {
+    return 1;
+  }
+}
 
 export interface CommandDefinition {
   type: CommandName;
@@ -31,7 +46,13 @@ export interface CommandDefinition {
   isExclusive: boolean;
   isLongRunning: boolean;
   isPerRefExclusive?: boolean;
+  /** Static concurrency cap. Prefer `resolveMaxConcurrent` when mode-dependent. */
   maxConcurrent?: number;
+  /**
+   * Optional dynamic concurrency (e.g. local-MB RefreshArtist). When present,
+   * overrides `maxConcurrent` at scheduling time.
+   */
+  resolveMaxConcurrent?: () => number;
 }
 
 export interface SystemTaskDefinition {
@@ -196,12 +217,10 @@ export const COMMAND_DEFINITIONS = {
     isLongRunning: true,
   },
   // Catalog hydration is the write-heaviest work in the app. Intake fans out
-  // one RefreshArtist command per artist, so cap each heavy type at 1 concurrent
-  // command to serialize catalog writers on the SQLite write lock — three
-  // parallel hydrations starve each other (and every other writer) into 30s
-  // busy-timeouts, they don't finish faster. Different types still overlap
-  // (refresh + match + rescan), which keeps network-bound and disk-bound work
-  // flowing.
+  // one RefreshArtist command per artist. Servarr stays at 1 concurrent command
+  // (public API + write cost). Local-MB may run 2: Postgres fetches overlap while
+  // SQLite commits serialize via `withSqliteWriteGate` — do not raise further
+  // without measuring busy-timeout / main-thread claim latency.
   [CommandNames.RefreshArtist]: {
     type: CommandNames.RefreshArtist,
     name: "Refresh Artist",
@@ -211,6 +230,7 @@ export const COMMAND_DEFINITIONS = {
     isLongRunning: true,
     isPerRefExclusive: true,
     maxConcurrent: 1,
+    resolveMaxConcurrent: resolveRefreshArtistMaxConcurrent,
   },
   [CommandNames.MatchArtistProviders]: {
     type: CommandNames.MatchArtistProviders,

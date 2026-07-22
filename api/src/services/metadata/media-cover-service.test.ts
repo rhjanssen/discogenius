@@ -915,3 +915,22 @@ test("ensureCachedMediaCover keeps prior files when a successful fetch cannot be
     globalThis.fetch = originalFetch;
   }
 });
+
+test("normalizeArtworkUrl upgrades cropped YouTube and square Apple music-video thumbs", () => {
+  assert.equal(
+    mediaCoverServiceModule.normalizeArtworkUrl(
+      "https://i.ytimg.com/vi/-oyOHAew3Bc/hq720.jpg?sqp=-oaymwEXCNUGEOADIAQqCwjVARCqCBh4INgESFo&rs=AOn4CLAJ8V-N1UzOLZFqL7WnPxzYz7h8pQ",
+    ),
+    "https://i.ytimg.com/vi/-oyOHAew3Bc/hq720.jpg",
+  );
+  assert.equal(
+    mediaCoverServiceModule.normalizeArtworkUrl(
+      "https://is1-ssl.mzstatic.com/image/thumb/Video221/v4/c1/f2/33/c1f233cd-8f77-9d2f-8097-7d9ce47c627b/24UMGIM84106.crop.jpg/1080x1080mv.jpg",
+    ),
+    "https://is1-ssl.mzstatic.com/image/thumb/Video221/v4/c1/f2/33/c1f233cd-8f77-9d2f-8097-7d9ce47c627b/24UMGIM84106.crop.jpg/1920x1080mv.jpg",
+  );
+  assert.equal(
+    mediaCoverServiceModule.normalizeArtworkUrl("https://i.ytimg.com/vi/abc123/hq720.jpg"),
+    "https://i.ytimg.com/vi/abc123/hq720.jpg",
+  );
+});

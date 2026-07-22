@@ -34,6 +34,12 @@ export interface FilteringConfig {
 
   include_spatial: boolean;            // Include spatial/surround release-group slots
   include_videos: boolean;             // Monitor music videos
+  /** Official Music Video / OMV (`video` + `official`; also gates audio/visualizer). Factory default ON. */
+  include_video_official: boolean;
+  /** Official lyric videos (`lyric`). Factory default ON. */
+  include_video_lyric: boolean;
+  /** Live performance videos (`live`). Factory default ON. */
+  include_video_live: boolean;
   prefer_explicit: boolean;            // Prefer explicit versions over clean
   enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
   require_provider_availability: boolean; // Only mark release groups wanted when a provider offer exists
@@ -44,7 +50,8 @@ export interface PathConfig {
   spatial_path: string;
   video_path: string;
   create_empty_artist_folders?: boolean;
-  video_folder_layout?: "separated" | "inline";
+  /** separated | inline (linked when possible) | inline_only (skip orphan/separated downloads) */
+  video_folder_layout?: "separated" | "inline" | "inline_only";
 }
 
 export interface NamingConfig {
@@ -159,7 +166,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   },
   monitoring: {
     enable_active_monitoring: true,
-    monitor_new_artists: true,
+    monitor_new_artists: false,
     remove_unmonitored_files: false,
   },
   quality: {
@@ -167,7 +174,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     video_quality: "uhd",
     embed_cover: true,
     embed_lyrics: true,
-    upgrade_existing_files: true,
+    upgrade_existing_files: false,
     convert_video_mp4: true,
     extract_flac: true,
   },
@@ -188,6 +195,9 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_demo: true,
     include_spatial: false,
     include_videos: false,
+    include_video_official: true,
+    include_video_lyric: true,
+    include_video_live: true,
     require_provider_availability: true,
   },
   path: {
@@ -278,6 +288,9 @@ function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConf
     include_demo: raw?.include_demo ?? DEFAULT_CONFIG.filtering.include_demo,
     include_spatial: raw?.include_spatial ?? DEFAULT_CONFIG.filtering.include_spatial,
     include_videos: raw?.include_videos ?? DEFAULT_CONFIG.filtering.include_videos,
+    include_video_official: raw?.include_video_official ?? DEFAULT_CONFIG.filtering.include_video_official,
+    include_video_lyric: raw?.include_video_lyric ?? DEFAULT_CONFIG.filtering.include_video_lyric,
+    include_video_live: raw?.include_video_live ?? DEFAULT_CONFIG.filtering.include_video_live,
     require_provider_availability: raw?.require_provider_availability ?? DEFAULT_CONFIG.filtering.require_provider_availability,
   };
 }
@@ -313,9 +326,10 @@ function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig 
 
 function normalizeCatalogConfig(raw?: Partial<CatalogConfig>): CatalogConfig {
   // Env wins over stored config so a compose/TrueNAS deployment can force the
-  // source without the UI (mirrors the DISCOGENIUS_CATALOG_SOURCE / MB_LOCAL_HOST
-  // vars from docker-compose.mb-local.example.yml). Env uses the catalog-provider
-  // ids; config uses the short UI values.
+  // source without the UI (mirrors DISCOGENIUS_CATALOG_SOURCE / MB_LOCAL_HOST).
+  // Env uses catalog-provider ids; config uses short UI values. Unset env keeps
+  // the factory default (`servarr` / online Servarr Metadata) — wiping config
+  // alone does not clear a set env override.
   const envSourceRaw = (process.env.DISCOGENIUS_CATALOG_SOURCE || "").trim();
   const envSource = envSourceRaw === "musicbrainz-local" || envSourceRaw === "musicbrainz"
     ? "musicbrainz"

@@ -173,3 +173,154 @@ export function deleteArtistLibraryFiles(
 
   return { ...result, unmonitored };
 }
+
+/**
+ * Manage → Delete files for a single track (by track MBID).
+ * Removes TrackFiles rows matching the track (and sibling extras keyed to it).
+ */
+export function deleteTrackLibraryFiles(
+  trackMbid: string,
+): DeleteLibraryFilesResult {
+  const track = db.prepare(`
+    SELECT mbid FROM Tracks WHERE mbid = ?
+  `).get(trackMbid) as { mbid?: string } | undefined;
+  if (!track?.mbid) {
+    const err = new Error("Track not found") as Error & { status?: number };
+    err.status = 404;
+    throw err;
+  }
+
+  const rows = db.prepare(`
+    SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
+    FROM TrackFiles
+    WHERE canonical_track_mbid = ?
+       OR CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+  `).all(trackMbid, trackMbid) as TrackFileDeleteRow[];
+
+  const result = deleteTrackFileRows(rows);
+  const releaseGroups = new Set(
+    rows
+      .map((row) => row.canonical_release_group_mbid)
+      .filter((mbid): mbid is string => Boolean(mbid)),
+  );
+  for (const releaseGroupMbid of releaseGroups) {
+    invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
+  }
+
+  return { ...result, unmonitored: false };
+}
+
+/**
+ * Manage → Delete files for a music video (canonical recording id or provider id).
+ * Removes video + thumbnail/nfo TrackFiles; keeps the catalog Recording.
+ */
+export function deleteVideoLibraryFiles(
+  videoId: string,
+): DeleteLibraryFilesResult {
+  const recording = db.prepare(`
+    SELECT id, mbid
+    FROM Recordings
+    WHERE is_video = 1
+      AND (
+        CAST(id AS TEXT) = CAST(? AS TEXT)
+        OR mbid = ?
+      )
+    LIMIT 1
+  `).get(videoId, videoId) as { id?: number; mbid?: string | null } | undefined;
+
+  let recordingId = recording?.id != null ? Number(recording.id) : null;
+  let recordingMbid = recording?.mbid ? String(recording.mbid) : null;
+
+  if (recordingId == null) {
+    const offer = db.prepare(`
+      SELECT recording_id, recording_mbid
+      FROM ProviderItems
+      WHERE entity_type = 'video'
+        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        AND recording_id IS NOT NULL
+      LIMIT 1
+    `).get(videoId) as { recording_id?: number | null; recording_mbid?: string | null } | undefined;
+    if (offer?.recording_id != null) {
+      recordingId = Number(offer.recording_id);
+      recordingMbid = offer.recording_mbid ? String(offer.recording_mbid) : recordingMbid;
+    }
+  }
+
+  if (recordingId == null) {
+    const err = new Error("Video not found") as Error & { status?: number };
+    err.status = 404;
+    throw err;
+  }
+
+  const providerIds = (db.prepare(`
+    SELECT CAST(provider_id AS TEXT) AS provider_id
+    FROM ProviderItems
+    WHERE entity_type = 'video'
+      AND (
+        recording_id = ?
+        OR (? IS NOT NULL AND recording_mbid = ?)
+      )
+  `).all(recordingId, recordingMbid, recordingMbid) as Array<{ provider_id: string }>)
+    .map((row) => row.provider_id)
+    .filter(Boolean);
+
+  const rows = (providerIds.length > 0
+    ? db.prepare(`
+        SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
+        FROM TrackFiles
+        WHERE file_type IN ('video', 'video_thumbnail', 'nfo')
+          AND (
+            recording_id = ?
+            OR (? IS NOT NULL AND canonical_recording_mbid = ?)
+            OR (
+              provider_entity_type = 'video'
+              AND CAST(provider_id AS TEXT) IN (${providerIds.map(() => "?").join(",")})
+            )
+          )
+      `).all(recordingId, recordingMbid, recordingMbid, ...providerIds)
+    : db.prepare(`
+        SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
+        FROM TrackFiles
+        WHERE file_type IN ('video', 'video_thumbnail', 'nfo')
+          AND (
+            recording_id = ?
+            OR (? IS NOT NULL AND canonical_recording_mbid = ?)
+          )
+      `).all(recordingId, recordingMbid, recordingMbid)) as TrackFileDeleteRow[];
+
+  const result = deleteTrackFileRows(rows);
+  return { ...result, unmonitored: false };
+}
+
+/**
+ * Delete specific TrackFiles by id (disk + DB). Used by track/video manage UIs.
+ */
+export function deleteLibraryFilesByIds(
+  fileIds: number[],
+): DeleteLibraryFilesResult {
+  const uniqueIds = Array.from(new Set(
+    fileIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0),
+  ));
+  if (uniqueIds.length === 0) {
+    return { deleted: 0, missing: 0, errors: 0, unmonitored: false };
+  }
+
+  const placeholders = uniqueIds.map(() => "?").join(",");
+  const rows = db.prepare(`
+    SELECT id, artist_id, file_type, quality, file_path, library_root, canonical_release_group_mbid
+    FROM TrackFiles
+    WHERE id IN (${placeholders})
+  `).all(...uniqueIds) as TrackFileDeleteRow[];
+
+  const result = deleteTrackFileRows(rows);
+  const releaseGroups = new Set(
+    rows
+      .map((row) => row.canonical_release_group_mbid)
+      .filter((mbid): mbid is string => Boolean(mbid)),
+  );
+  for (const releaseGroupMbid of releaseGroups) {
+    invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
+  }
+  return { ...result, unmonitored: false };
+}
+

@@ -50,14 +50,18 @@ test("editable settings are persisted to database and read through the cache", (
 test("fresh installs use the production monitoring and library defaults", () => {
   const config = configModule.readConfig();
 
-  assert.equal(config.monitoring.monitor_new_artists, true);
+  assert.equal(config.monitoring.monitor_new_artists, false);
   assert.equal(config.monitoring.remove_unmonitored_files, false);
-  assert.equal(config.quality.upgrade_existing_files, true);
+  assert.equal(config.quality.upgrade_existing_files, false);
   assert.equal(config.filtering.require_provider_availability, true);
   assert.equal(config.filtering.include_spatial, false);
   assert.equal(config.filtering.include_videos, false);
+  assert.equal(config.filtering.include_video_official, true);
+  assert.equal(config.filtering.include_video_lyric, true);
+  assert.equal(config.filtering.include_video_live, true);
   assert.equal(config.quality.video_quality, "uhd");
   assert.equal(config.path.create_empty_artist_folders, false);
+  assert.equal(config.path.video_folder_layout, "separated");
   assert.equal(config.naming.video_file, "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}");
   assert.equal(config.naming.album_track_path_single, "{Album FullTitle} ({Release Year})/{track:00} - {Track FullTitle}");
   assert.equal(config.naming.album_track_path_multi, "{Album FullTitle} ({Release Year})/{medium:0}{track:00} - {Track FullTitle}");
@@ -66,6 +70,27 @@ test("fresh installs use the production monitoring and library defaults", () => 
   assert.equal(config.metadata.artwork_preference, "canonical");
   assert.equal(config.catalog.source, "servarr");
   assert.equal(config.catalog.musicbrainz_host, "localhost");
+});
+
+test("DISCOGENIUS_CATALOG_SOURCE env overrides stored catalog source", () => {
+  const previous = process.env.DISCOGENIUS_CATALOG_SOURCE;
+  try {
+    process.env.DISCOGENIUS_CATALOG_SOURCE = "musicbrainz-local";
+    configModule.clearConfigCache();
+    assert.equal(configModule.readConfig().catalog.source, "musicbrainz");
+
+    process.env.DISCOGENIUS_CATALOG_SOURCE = "servarr-metadata";
+    configModule.clearConfigCache();
+    assert.equal(configModule.readConfig().catalog.source, "servarr");
+
+    delete process.env.DISCOGENIUS_CATALOG_SOURCE;
+    configModule.clearConfigCache();
+    assert.equal(configModule.readConfig().catalog.source, "servarr");
+  } finally {
+    if (previous === undefined) delete process.env.DISCOGENIUS_CATALOG_SOURCE;
+    else process.env.DISCOGENIUS_CATALOG_SOURCE = previous;
+    configModule.clearConfigCache();
+  }
 });
 
 test("config writes strip retired quality settings", () => {

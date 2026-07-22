@@ -87,7 +87,10 @@ snippet and steps; in short:
 
 The overlay sets:
 
-- `DISCOGENIUS_CATALOG_SOURCE` — `servarr-metadata` (default) | `musicbrainz-local`
+- `DISCOGENIUS_CATALOG_SOURCE` — `servarr-metadata` (factory default when unset)
+  | `musicbrainz-local`. **This env var overrides Settings and survives wiping
+  `config/` / the SQLite DB**, so a reset that keeps `.env` still forces local-MB
+  if the var is set. Omit it for online Servarr on fresh installs.
 - `MB_LOCAL_HOST` — MusicBrainz-docker host or service name, default `db`
 
 The Settings page uses the same host-only value. Enter `localhost`,

@@ -16,24 +16,114 @@ Status: pending | in progress | decided | revisit
 - **Amazon Music / Spotify:** Auth shows **Soon** — no live validation until
   re-enabled.
 
-## 2.6.0 (future) — SoundCloud (experimental)
+## 2.6.0 (shipped 2026-07-22)
+
+Shipped themes: SoundCloud experimental, quality tooltips/`video_codec`, scroll
+restore, Settings catalog reorder, provider public surface + SQLite write gate,
+album Associated videos + `inline_only`, download fallback warnings, video
+gates/filters/strip tags, tiddl error capture, WGM matcher + Amy HIRES tip.
+Wipe installs: no late open-39 ALTER path (CREATE baseline only).
+
+Residual / follow-ups below. Manual provider validation still needed (see top).
+
+### Follow-ups from 2.6
+
+- pending: hybrid tooltip quality breakdown (`qualityTrackCounts` in UI)
+- pending: SoundCloud Auth/Go+/permalink polish; contract parity
+- pending: measure Bastille/Bakermat bulk refresh under local-MB with gate + 2
+- pending: migrate one provider end-to-end (SoundCloud pilot) for modularity
+- pending: structure audit incremental moves (see `docs/STRUCTURE_AUDIT_2.6.md`)
+
+### SoundCloud provider (experimental)
 
 Research (2026-07): yt-dlp covers **download** (tracks, sets, private links, user
 likes via URL); **catalog** and stable URNs need the official SoundCloud API
 (OAuth 2.1) or a thin api-v2 client — yt-dlp alone is CLI-shaped, omits ISRC,
 and is a poor fit for `ProviderItems`. Hybrid: API for catalog/auth/import;
-extend `YtDlpBackend` for acquisition. Lossy-only; no RG automation; major-label
-DRM/Go+ gaps; API ToS forbids file-save on registered credentials — label
-experimental and at-operator risk.
+native progressive and/or `YtDlpBackend` for acquisition. Lossy-only; no RG
+automation; major-label DRM/Go+ gaps; API ToS forbids file-save on registered
+credentials — label experimental and at-operator risk.
 
-- pending: experimental `soundcloud` provider — URL/track/set import, liked
-  tracks + playlist import only (no followed-artists → MB monitoring).
-- pending: OAuth token paste (or PKCE) + official API catalog adapter
-  (URN-native ids, search/resolve/getTrack/getAlbum).
-- pending: extend shared yt-dlp backend — SoundCloud URLs, OAuth header/cookie,
-  `{track_id}.{ext}` staging, bestaudio format selection.
-- defer: `searchReleaseGroup` / artist discography automation, ISRC-first
-  matching, lossless/hi-res/spatial, official-API download path.
+Live probe (2026-07-22, free session): api-v2 `oauth_token` + public `client_id`
+validates `/me`, search, user albums, and progressive MP3 resolve on some
+indie/downloadable tracks. Major-label Bastille offers often return
+`policy=SNIP` or encrypted HLS for free accounts — native progressive fails;
+yt-dlp remains the fallback. Official OAuth 2.1 (registered app + PKCE) deferred;
+Auth uses token paste like Deezer/YTM.
+
+Mixtape / less-official matching (2026-07-22): for MusicBrainz secondary types
+`mixtape/street`, `dj-mix`, `demo` (and primary `Other`), SoundCloud casts a
+wider net via `/search/playlists` (not only the matched artist’s `/albums`).
+User playlists that **cover** the MB tracklist are accepted even with extra
+tracks (superset OK). Conviction is always `probable` with method
+`playlist-tracklist-coverage` — never `verified` (fan sets are not identity).
+Official Album/EP/Single without those secondaries stay album-search-only so
+fan playlists cannot false-positive against standard releases. Example: Bastille
+OPH (`375227dd-…`, EP + Mixtape/Street) ↔ `emmatad/sets/other-peoples-heartache`.
+
+- shipped: first-pass module under `api/src/services/providers/soundcloud/`
+  (api-v2 catalog matching, oauth token paste auth, native progressive download
+  + yt-dlp fallback, liked-tracks + playlist import sources, mixtape playlist
+  coverage matching).
+- pending: richer permalink resolve, Go+ encrypted-HLS path validation, Auth /
+  Settings / diagnostics polish, contract parity with other lossy providers.
+- defer: followed artists → MB monitoring, official-API download path /
+  registered-app PKCE, ISRC-first matching automation, lossless/hi-res/spatial.
+
+### Local-MB refresh concurrency redesign
+
+Motivated by local Postgres MB **not** being public-API rate-limited (bulk SQL
+fetches are fine). SQLite + sync `better-sqlite3` remains the bottleneck.
+
+- decided: keep chunked SQLite writes (`runChunkedWrite`) — do **not** switch
+  catalog hydration to one giant transaction.
+- shipped: **single-flight write gate** (`withSqliteWriteGate`) around
+  catalog SQLite commits in `servarr-metadata` sync paths so fetches can overlap
+  while only one writer commits chunks at a time.
+- shipped: `RefreshArtist` `resolveMaxConcurrent` — Servarr stays `1`;
+  local-MB may run `2` (fetches overlap; writes gated). Do **not** raise further
+  without measuring busy-timeout / main-thread claim latency.
+- pending: measure Bastille/Bakermat bulk refresh under local-MB with gate + 2;
+  consider MatchArtistProviders similarly only if needed.
+
+### Provider plugin modularity
+
+Product goal: streaming services are swappable modules. Core Discogenius
+(MusicBrainz catalog, library, command queue, curation, import) must stay useful
+if a streamer (e.g. TIDAL) blocks third-party access/download. Easy to disable,
+remove, or swap a provider without core entanglement.
+
+Today we are **adapters in a folder**, not true plugins: shared
+`StreamingProvider` / `ProviderManifest` contract and per-id folders under
+`api/src/services/providers/<id>/`. Registration is compile-time. See
+`docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md` (§ 2.6 modularity target) and
+`docs/STRUCTURE_AUDIT_2.6.md`.
+
+- shipped (phase 1): public surface at `api/src/providers/` (registry +
+  types). `services/providers/index.ts` re-exports for compatibility. Concrete
+  adapters still under `services/providers/<id>/`.
+- pending: investigate Lidarr `ThingiProvider` + `Indexers/` /
+  `Download/Clients/` (compiled-in plugins via factory), Lidarr’s thin
+  `Plugins/` surface, Tidarr / Jellyfin layouts under `.ref_*`.
+- pending: migrate one provider end-to-end (SoundCloud pilot), then roll others;
+  kill direct core→`tiddl` / provider-private imports; replace tidal-shaped
+  health with backend-id-keyed diagnostics (already noted under Performance).
+- defer: dynamic npm/runtime plugin loading, separate publishable packages per
+  provider — not required for 2.6 unless the boundary work makes it cheap.
+
+### Repo-wide structure audit
+
+- shipped: findings doc `docs/STRUCTURE_AUDIT_2.6.md` — proposed incremental
+  moves; no mass move yet. Leave sibling `.tmp-*` scratch until those threads
+  finish.
+- Guides (present checkouts only): `.ref_lidarr` (core folder map —
+  `docs/LIDARR_STRUCTURE_ALIGNMENT.md`), `.ref_tidarr` (TS streaming-arr shape),
+  `.ref_jellyfin` / `.ref_kodi` (media-server / sidecar metadata layout). Also
+  useful for provider tooling boundaries: `.ref_tiddl`, `.ref_yt-dlp`,
+  `.ref_apple-music-downloader`. Do not invent missing refs.
+- Aligns with provider modularity: separate **core** paths from
+  **streaming-service** modules so disabling TIDAL (or any provider) is a
+  registration/config change, not a core rewrite.
 
 ## Post-2.4.0 priorities
 
@@ -50,8 +140,18 @@ experimental and at-operator risk.
   large modules (`organizer.ts`, Settings page — sections already extracted)
   alongside feature work. (`tiddl.ts` / `tiddl-backend.ts` already split.)
 
+### Library tools
+
+- deferred: strip tags for video files (audio strip at artist/album is shipped
+  via Manage → Strip Tags + `POST /api/v1/retag/strip`); per-track strip UI.
+- deferred: optional Settings toggle for inline stereo vs spatial — product
+  decision is stereo-only for now (spatial folders stay Atmos audio).
+
 ### Matching and curation
 
+- pending: hybrid / multi-provider album fills — decide whether incomplete
+  single-provider coverage should warn (yellow) vs require full set-cover before
+  marking an album complete; Lioness-style missing-track cases are the litmus.
 - in progress: release-centric matching — composites persist in
   `ProviderItemMatches`; still need provider albums to score against **all**
   candidate MB releases for the artist (not one RG container). Evidence:
@@ -73,9 +173,9 @@ experimental and at-operator risk.
   selector + deferred-monitoring reconciliation.
 - decided (not implemented): artist manage modals — artist-scoped Interactive
   Import + MonitoringOptions (all/future/missing/…).
-- pending: video albums in the **album tracklist** (glyph + preview + VIDEO
-  offers on album-scoped video recordings). Album-bundled download/offers and
-  video-page “Appears on” already shipped.
+- pending: richer album-tracklist video UX (inline preview + VIDEO offers on
+  album-scoped video recordings). Glyph + Associated videos section already
+  ship via `associatedVideos` on the album page payload.
 - pending: playlist **SYNC** (recurring ImportList-style sync + exclusions),
   not only one-shot import.
 

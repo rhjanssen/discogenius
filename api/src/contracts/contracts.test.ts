@@ -78,11 +78,15 @@ test("config contract parsers normalize expected public settings shapes", () => 
     include_demo: false,
     include_spatial: false,
     include_videos: true,
+    include_video_official: true,
+    include_video_lyric: true,
+    include_video_live: true,
     prefer_explicit: true,
     enable_redundancy_filter: true,
     require_provider_availability: true,
   });
   assert.equal(curation.include_videos, true);
+  assert.equal(curation.include_video_official, true);
 });
 
 test("media contract parsers validate album tracks and video detail payloads", () => {
@@ -176,6 +180,9 @@ test("library files response parser keeps list payloads typed", () => {
     bit_depth: undefined,
     channels: undefined,
     codec: undefined,
+    video_codec: undefined,
+    width: undefined,
+    height: undefined,
     duration: undefined,
     qualityTarget: "FHD",
     qualityChangeWanted: false,

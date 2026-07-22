@@ -65,6 +65,62 @@ function looksLikeProgressFragment(line: string): boolean {
         || line.includes('"bytesTotal"');
 }
 
+/**
+ * Rich traceback box borders / headers — never store these as errorDetail.
+ * Released capture used `errorDetail ||= line`, so "╭── Traceback ──╮" won forever.
+ */
+export function looksLikeTiddlTraceChrome(line: string): boolean {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    return /^[╭╰│─┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬\s]+$/.test(trimmed)
+        || /^╭.*(?:Traceback|─)/i.test(trimmed)
+        || /^╰/.test(trimmed)
+        || /^│\s*$/.test(trimmed)
+        || /^Traceback \(most recent call last\):/.test(trimmed);
+}
+
+/** Strip an optional Rich left-border glyph so exception text still matches. */
+function stripRichBorderPrefix(line: string): string {
+    return line.replace(/^[│║]\s*/, "").trim();
+}
+
+/** Actionable Python / tiddl exception or Error: lines. */
+export function looksLikeTiddlExceptionLine(line: string): boolean {
+    const body = stripRichBorderPrefix(line);
+    if (!body || looksLikeTiddlTraceChrome(body)) return false;
+    return /(?:^|\s)Error:/.test(body)
+        || /\bException:/.test(body)
+        || /\bAPI Error\b/.test(body)
+        || /^[A-Za-z_][\w.]*Error\b/.test(body)
+        || /^[A-Za-z_][\w.]*Exception\b/.test(body);
+}
+
+const TIDDL_ERROR_DETAIL_MAX = 500;
+const TIDDL_ERROR_FALLBACK_LINES = 8;
+const TIDDL_CAPTURED_LINES_MAX = 200;
+
+/**
+ * Prefer the first real Error:/exception line; otherwise the last N useful
+ * (non-chrome, non-progress) stderr/stdout lines joined with " | ".
+ */
+export function extractTiddlErrorDetail(
+    lines: string[],
+    options?: { maxLength?: number; lastUsefulLines?: number },
+): string {
+    const maxLength = options?.maxLength ?? TIDDL_ERROR_DETAIL_MAX;
+    const lastUsefulLines = options?.lastUsefulLines ?? TIDDL_ERROR_FALLBACK_LINES;
+    const cleaned = lines
+        .map((line) => stripRichBorderPrefix(stripAnsi(line).trim()))
+        .filter((line) => line && !looksLikeProgressFragment(line) && !looksLikeTiddlTraceChrome(line));
+
+    const firstException = cleaned.find((line) => looksLikeTiddlExceptionLine(line));
+    if (firstException) {
+        return firstException.slice(0, maxLength);
+    }
+
+    return cleaned.slice(-lastUsefulLines).join(" | ").slice(0, maxLength);
+}
+
 function clampPercent(value: unknown): number | undefined {
     if (typeof value !== "number" || !Number.isFinite(value)) {
         return undefined;
@@ -228,9 +284,11 @@ export class TiddlBackend implements DownloadBackend {
         return new Promise<void>((resolve, reject) => {
             let lastPercent = toOverallPercent(0);
             let hasProcessingError = false;
-            let errorDetail = "";
             let stdoutBuffer = "";
             let stderrBuffer = "";
+            // Non-chrome lines kept for failure summarization — never store
+            // Rich box chrome as errorDetail (that used to hide the real exception).
+            const capturedLines: string[] = [];
             // Item counts from wrapper queue_total/queue_progress events drive
             // the album-level percent, mirroring how imports report progress.
             // tiddl's own "Total Progress" panel is a Rich Live table that
@@ -238,7 +296,21 @@ export class TiddlBackend implements DownloadBackend {
             let queueTotal = 0;
             let queueCompleted = 0;
 
-            const handleLine = (line: string, source: "stdout" | "stderr") => {
+            const rememberLine = (cleanLine: string) => {
+                if (
+                    !cleanLine
+                    || looksLikeProgressFragment(cleanLine)
+                    || looksLikeTiddlTraceChrome(cleanLine)
+                ) {
+                    return;
+                }
+                capturedLines.push(cleanLine);
+                if (capturedLines.length > TIDDL_CAPTURED_LINES_MAX) {
+                    capturedLines.splice(0, capturedLines.length - TIDDL_CAPTURED_LINES_MAX);
+                }
+            };
+
+            const handleLine = (line: string, _source: "stdout" | "stderr") => {
                 const cleanLine = stripAnsi(line).trim();
                 if (!cleanLine) return;
 
@@ -274,15 +346,16 @@ export class TiddlBackend implements DownloadBackend {
                     return;
                 }
 
+                rememberLine(cleanLine);
+
                 // "not a MP4 file" is a tiddl-handled fallback; "no longer
                 // available" tracks are skipped rather than fatal.
                 if (
-                    cleanLine.includes("Error:")
+                    looksLikeTiddlExceptionLine(cleanLine)
                     && !cleanLine.includes("not a MP4 file")
                     && !cleanLine.includes("no longer available")
                 ) {
                     hasProcessingError = true;
-                    errorDetail = errorDetail || cleanLine;
                 }
 
                 if (cleanLine.includes("Total Progress")) {
@@ -305,12 +378,6 @@ export class TiddlBackend implements DownloadBackend {
                         statusMessage: cleanLine,
                         state: "downloading",
                     });
-                } else if (
-                    source === "stderr"
-                    && (cleanLine.includes("Exception:") || cleanLine.includes("Traceback"))
-                ) {
-                    hasProcessingError = true;
-                    errorDetail = errorDetail || cleanLine;
                 }
             };
 
@@ -353,6 +420,7 @@ export class TiddlBackend implements DownloadBackend {
                     });
                     resolve();
                 } else {
+                    const errorDetail = extractTiddlErrorDetail(capturedLines);
                     reject(new Error(
                         `tiddl exited with code ${code}${errorDetail ? `: ${errorDetail}` : ""}`,
                     ));

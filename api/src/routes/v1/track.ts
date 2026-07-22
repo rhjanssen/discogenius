@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "../../database.js";
 import { invalidateReleaseGroupDownloadStatus } from "../../services/download/download-state.js";
+import { deleteTrackLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import {
   getTrackDetail,
   getTrackFiles,
@@ -143,6 +144,22 @@ router.get("/:trackId/files", (req, res) => {
   try {
     res.json({ items: getTrackFiles(req.params.trackId) });
   } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+/**
+ * Manage → Delete files for a track (disk + TrackFiles). Keeps catalog rows.
+ */
+router.delete("/:trackId/files", (req, res) => {
+  try {
+    const result = deleteTrackLibraryFiles(req.params.trackId);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    if (error?.status === 404) {
+      return res.status(404).json({ detail: error.message || "Track not found" });
+    }
+    console.error(`[Tracks] Failed to delete track files:`, error);
     res.status(500).json({ detail: error.message });
   }
 });

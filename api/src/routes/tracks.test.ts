@@ -208,8 +208,8 @@ test("GET tracks filters selected offers and keeps remote quality separate from 
   db.prepare(`
     INSERT INTO ReleaseGroupSlots (
       artist_mbid, release_group_mbid, slot, monitored, selected_provider,
-      selected_provider_id, selected_release_mbid, quality
-    ) VALUES ('artist-mbid', 'rg-mbid', 'stereo', 1, 'tidal', 'tidal-album', 'release-mbid', 'HIRES_LOSSLESS')
+      selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES ('artist-mbid', 'rg-mbid', 'stereo', 1, 'tidal', 'tidal-album', 'release-mbid', 'HIRES_LOSSLESS', 'verified')
   `).run();
   db.prepare(`
     INSERT INTO ProviderItems (
@@ -246,6 +246,9 @@ test("GET tracks filters selected offers and keeps remote quality separate from 
     provider: "tidal",
     providerAlbumId: "tidal-album",
     quality: "HIRES_LOSSLESS",
+    matchStatus: "verified",
+    selectedReleaseMbid: "release-mbid",
+    providerTrackId: "tidal-track",
   }]);
   assert.equal(selected.body.items[0].preview_provider, "tidal");
   assert.equal(selected.body.items[0].preview_provider_track_id, "tidal-track");

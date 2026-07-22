@@ -12,6 +12,7 @@ import {
   type RenameScopeOptions,
   type RenameStatusSummary,
 } from "./library-files.js";
+import { allowsInlineVideoPlacement } from "./video-folder-layout.js";
 import { normalizeResolvedPath } from "./path-utils.js";
 import {
   buildRenameFilters,
@@ -546,6 +547,115 @@ export class RenameTrackFileService {
 
   static executeRenameArtist(options: { artistId: string }): RenameApplyResult {
     return this.executeRenameFilesByQuery({ artistId: options.artistId });
+  }
+
+  /**
+   * After stereo audio lands on disk, move associated music videos from the
+   * separated video library into the inline stereo album folder when
+   * `video_folder_layout` is `inline` or `inline_only`. Reuses computeExpectedPath + executeRenameFiles
+   * (same gate as Rename: provider_video_for + monitored stereo RG).
+   *
+   * Scoped to videos linked to the imported audio recordings only — not a
+   * library-wide rename. No-op when layout is separated or no links exist.
+   */
+  static relocateRelatedInlineVideosForImportedAudio(importedFileIds: number[]): RenameApplyResult {
+    const empty: RenameApplyResult = {
+      renamed: 0,
+      skipped: 0,
+      conflicts: 0,
+      missing: 0,
+      cleanedDirectories: 0,
+      errors: [],
+    };
+    if (!importedFileIds?.length) {
+      return empty;
+    }
+    if (!allowsInlineVideoPlacement(Config.getPathConfig().video_folder_layout)) {
+      return empty;
+    }
+
+    const placeholders = importedFileIds.map(() => "?").join(", ");
+    const audioRows = db.prepare(`
+      SELECT id, recording_id, canonical_recording_mbid, provider, provider_id
+      FROM TrackFiles
+      WHERE id IN (${placeholders})
+        AND file_type = 'track'
+        AND library_slot = 'stereo'
+    `).all(...importedFileIds) as Array<{
+      id: number;
+      recording_id?: number | null;
+      canonical_recording_mbid?: string | null;
+      provider?: string | null;
+      provider_id?: string | null;
+    }>;
+
+    const audioRecordingIds = new Set<number>();
+    for (const row of audioRows) {
+      if (row.recording_id != null) {
+        audioRecordingIds.add(Number(row.recording_id));
+        continue;
+      }
+      const recordingMbid = String(row.canonical_recording_mbid || "").trim();
+      if (recordingMbid) {
+        const byMbid = db.prepare(`
+          SELECT id FROM Recordings WHERE mbid = ? AND COALESCE(is_video, 0) = 0 LIMIT 1
+        `).get(recordingMbid) as { id?: number } | undefined;
+        if (byMbid?.id != null) {
+          audioRecordingIds.add(Number(byMbid.id));
+          continue;
+        }
+      }
+      const providerId = String(row.provider_id || "").trim();
+      if (!providerId) continue;
+      const provider = String(row.provider || "").trim();
+      const byOffer = provider
+        ? db.prepare(`
+            SELECT recording_id FROM ProviderItems
+            WHERE provider = ?
+              AND entity_type = 'track'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+              AND recording_id IS NOT NULL
+            LIMIT 1
+          `).get(provider, providerId) as { recording_id?: number | null } | undefined
+        : db.prepare(`
+            SELECT recording_id FROM ProviderItems
+            WHERE entity_type = 'track'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+              AND recording_id IS NOT NULL
+            LIMIT 1
+          `).get(providerId) as { recording_id?: number | null } | undefined;
+      if (byOffer?.recording_id != null) {
+        audioRecordingIds.add(Number(byOffer.recording_id));
+      }
+    }
+
+    if (audioRecordingIds.size === 0) {
+      return empty;
+    }
+
+    const recordingIds = [...audioRecordingIds];
+    const recordingPlaceholders = recordingIds.map(() => "?").join(", ");
+    const relatedVideoFileIds = (db.prepare(`
+      SELECT DISTINCT tf.id AS id
+      FROM RecordingRelations rr
+      JOIN ProviderItems pi
+        ON pi.recording_id = rr.source_recording_id
+       AND pi.entity_type = 'video'
+      JOIN TrackFiles tf
+        ON tf.file_type IN ('video', 'video_thumbnail', 'nfo')
+       AND (
+         tf.recording_id = rr.source_recording_id
+         OR CAST(tf.provider_id AS TEXT) = CAST(pi.provider_id AS TEXT)
+       )
+      WHERE rr.target_recording_id IN (${recordingPlaceholders})
+        AND rr.relation_type = 'provider_video_for'
+    `).all(...recordingIds) as Array<{ id: number }>).map((row) => Number(row.id));
+
+    if (relatedVideoFileIds.length === 0) {
+      return empty;
+    }
+
+    return this.executeRenameFiles(relatedVideoFileIds);
   }
 
   private static replicateSeparatedSidecars() {

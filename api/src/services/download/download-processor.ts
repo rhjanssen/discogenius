@@ -21,17 +21,33 @@ import path from 'path';
 import {
     getDownloadWorkspacePath,
     getDefaultStreamingSource,
+    buildStreamingMediaUrl,
 } from '../download/download-routing.js';
 import {
     isKnownProviderVideoOffer,
     resolvePreferredVideoOffer,
 } from '../music/video-offer-resolver.js';
+import {
+    executeWithSameOfferRetries,
+    formatFallbackSuccessMessage,
+    formatProviderLabel,
+    isDownloadCancellationError,
+} from './download-failure-policy.js';
+import {
+    listRankedAlbumOffers,
+    listRankedTrackOffers,
+    listRankedVideoOffers,
+    makeOfferAttemptKey,
+    nextOfferAfterTried,
+    type RankedDownloadOffer,
+} from './download-offer-fallback.js';
 import { AlbumQueryService } from "../music/album-query-service.js";
 import { streamingProviderManager } from '../providers/index.js';
 import type {
     DownloadAlbumCommand,
     DownloadMediaType,
     DownloadStatePayload,
+    DownloadTrackOffer,
     DownloadTrackStateEntry,
     ImportDownloadCommand,
     DownloadTrackCommand,
@@ -639,6 +655,10 @@ export class DownloadProcessor {
         size?: number;
         sizeleft?: number;
         tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }[];
+        outcome?: 'ok' | 'completedWithWarning';
+        warningMessage?: string;
+        primaryProvider?: string;
+        fallbackProvider?: string;
     }) {
         // Merge into any buffered snapshot instead of replacing it: progress
         // events are partial (a per-track update carries no statusMessage; a
@@ -746,6 +766,10 @@ export class DownloadProcessor {
         size?: number;
         sizeleft?: number;
         tracks?: { title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }[];
+        outcome?: 'ok' | 'completedWithWarning';
+        warningMessage?: string;
+        primaryProvider?: string;
+        fallbackProvider?: string;
     }) {
         const currentJob = CommandQueueManager.get(commandId);
         const currentDownloadState = (currentJob?.payload?.downloadState as Record<string, unknown> | undefined) || {};
@@ -847,6 +871,10 @@ export class DownloadProcessor {
                 size: state.size ?? currentDownloadState.size,
                 sizeleft: state.sizeleft ?? currentDownloadState.sizeleft,
                 tracks: mergedTracks,
+                outcome: state.outcome ?? currentDownloadState.outcome,
+                warningMessage: state.warningMessage ?? currentDownloadState.warningMessage,
+                primaryProvider: state.primaryProvider ?? currentDownloadState.primaryProvider,
+                fallbackProvider: state.fallbackProvider ?? currentDownloadState.fallbackProvider,
             },
         };
 
@@ -1337,13 +1365,26 @@ export class DownloadProcessor {
                 cover: payload.cover,
                 url: payload.url,
                 resolved,
+                downloadState: {
+                    outcome: completedDownloadState.outcome,
+                    warningMessage: completedDownloadState.warningMessage,
+                    primaryProvider: completedDownloadState.primaryProvider,
+                    fallbackProvider: completedDownloadState.fallbackProvider,
+                },
             } as ImportDownloadCommand;
 
             this.persistDownloadState(job.id, {
                 state: 'importPending',
-                statusMessage: 'Waiting to import',
+                statusMessage: completedDownloadState.outcome === 'completedWithWarning'
+                    && completedDownloadState.warningMessage
+                    ? completedDownloadState.warningMessage
+                    : 'Waiting to import',
                 tracks: importTracks,
                 totalFiles: completedDownloadState.totalFiles,
+                outcome: completedDownloadState.outcome,
+                warningMessage: completedDownloadState.warningMessage,
+                primaryProvider: completedDownloadState.primaryProvider,
+                fallbackProvider: completedDownloadState.fallbackProvider,
             });
 
             // SSE so the queue UI can leave "Downloading" immediately instead of
@@ -1446,54 +1487,23 @@ export class DownloadProcessor {
         // Download commands carry the slot's selected provider as `provider`
         // (queue-route payloads may use `streamingSource`); only fall back to
         // the default provider when neither is present.
-        const providerId = (payload as any).streamingSource || (payload as any).provider || getDefaultStreamingSource();
-        const baseDownloadPath = getDownloadWorkspacePath(type, id, providerId);
-        const downloadPath = path.join(baseDownloadPath, `job_${commandId}`);
-        entry.downloadPath = downloadPath;
-        const slot = (payload as any).slot || 'stereo';
-        const capability = type === 'video' ? 'video' : (slot === 'spatial' ? 'spatial' : 'stereo');
+        let activeProvider = String(
+            (payload as any).streamingSource || (payload as any).provider || getDefaultStreamingSource(),
+        );
+        let activeProviderItemId = String(id);
+        const primaryProvider = activeProvider;
+        const primaryProviderItemId = activeProviderItemId;
+        const triedOffers = new Set<string>([makeOfferAttemptKey(activeProvider, activeProviderItemId)]);
+        let usedFallback = false;
+        let fallbackProvider: string | null = null;
+        let workingPayload = payload;
 
-        const backend = downloadBackendRegistry.resolve(providerId, capability);
-        if (!backend) {
-            throw new Error(`No download backend found for provider ${providerId} with capability ${capability}`);
-        }
-
+        const slot = (payload as any).slot || "stereo";
+        const capability = type === "video" ? "video" : (slot === "spatial" ? "spatial" : "stereo");
         const controller = entry.abortController;
         const signal = controller.signal;
-
-        const onProgress = (state: any) => {
-            // Backends (Amazon/Deezer) sometimes emit state:"completed" when the
-            // download binary exits. Reserve completed for post-import only so the
-            // queue row does not vanish before import starts.
-            const sanitizedState = state?.state === "completed"
-                ? { ...state, state: "downloading" as const, statusMessage: state.statusMessage || "Download finished" }
-                : state;
-            this.persistDownloadState(commandId, sanitizedState);
-            downloadEvents.emitProgress(commandId, {
-                providerId: id,
-                type,
-                quality: payload.quality ?? null,
-                title: payload.title,
-                artist: payload.artist,
-                cover: payload.cover,
-                progress: sanitizedState.progress,
-                currentFileNum: sanitizedState.currentFileNum,
-                totalFiles: sanitizedState.totalFiles,
-                currentTrack: sanitizedState.currentTrack,
-                currentProviderTrackId: sanitizedState.currentProviderTrackId,
-                currentTrackNum: sanitizedState.currentTrackNum,
-                currentVolumeNum: sanitizedState.currentVolumeNum,
-                trackProgress: sanitizedState.trackProgress,
-                trackStatus: sanitizedState.trackStatus,
-                statusMessage: sanitizedState.statusMessage,
-                state: sanitizedState.state,
-                speed: sanitizedState.speed,
-                eta: sanitizedState.eta,
-                size: sanitizedState.size,
-                sizeleft: sanitizedState.sizeleft,
-                tracks: this.getProgressTracksForEvent(commandId, sanitizedState.tracks),
-            });
-        };
+        const metadataConfig = getConfigSection("metadata");
+        const rankedAlternates = this.listFallbackOffersForJob(type, workingPayload, activeProviderItemId);
 
         const checkCancelInterval = setInterval(() => {
             if (entry.cancelRequested) {
@@ -1504,26 +1514,214 @@ export class DownloadProcessor {
         }, 500);
 
         try {
-            const metadataConfig = getConfigSection("metadata");
-
-            await backend.download({
-                provider: providerId,
-                entityType: type as "album" | "track" | "video",
-                providerId: id,
-                downloadPath,
-                quality: payload.quality,
-                slot,
-                metadata: {
-                    artwork_preference: metadataConfig.artwork_preference,
-                    save_lyrics: metadataConfig.save_lyrics,
+            while (true) {
+                if (entry.cancelRequested || signal.aborted) {
+                    throw new Error("Download cancelled");
                 }
-            }, {
-                signal,
-                onProgress,
-            });
+
+                const backend = downloadBackendRegistry.resolve(activeProvider, capability);
+                if (!backend) {
+                    const next = nextOfferAfterTried(rankedAlternates, triedOffers);
+                    if (!next) {
+                        throw new Error(`No download backend found for provider ${activeProvider} with capability ${capability}`);
+                    }
+                    triedOffers.add(makeOfferAttemptKey(next.provider, next.providerId));
+                    usedFallback = true;
+                    fallbackProvider = next.provider;
+                    activeProvider = next.provider;
+                    activeProviderItemId = next.providerId;
+                    workingPayload = this.applyOfferToPayload(workingPayload, type, next);
+                    entry.provider = activeProvider;
+                    entry.providerId = activeProviderItemId;
+                    continue;
+                }
+
+                const baseDownloadPath = getDownloadWorkspacePath(type, activeProviderItemId, activeProvider);
+                const downloadPath = path.join(baseDownloadPath, `job_${commandId}`);
+                entry.downloadPath = downloadPath;
+                entry.provider = activeProvider;
+                entry.providerId = activeProviderItemId;
+
+                const onProgress = (state: any) => {
+                    const sanitizedState = state?.state === "completed"
+                        ? { ...state, state: "downloading" as const, statusMessage: state.statusMessage || "Download finished" }
+                        : state;
+                    this.persistDownloadState(commandId, sanitizedState);
+                    downloadEvents.emitProgress(commandId, {
+                        providerId: activeProviderItemId,
+                        type,
+                        quality: workingPayload.quality ?? null,
+                        title: workingPayload.title,
+                        artist: workingPayload.artist,
+                        cover: workingPayload.cover,
+                        progress: sanitizedState.progress,
+                        currentFileNum: sanitizedState.currentFileNum,
+                        totalFiles: sanitizedState.totalFiles,
+                        currentTrack: sanitizedState.currentTrack,
+                        currentProviderTrackId: sanitizedState.currentProviderTrackId,
+                        currentTrackNum: sanitizedState.currentTrackNum,
+                        currentVolumeNum: sanitizedState.currentVolumeNum,
+                        trackProgress: sanitizedState.trackProgress,
+                        trackStatus: sanitizedState.trackStatus,
+                        statusMessage: sanitizedState.statusMessage,
+                        state: sanitizedState.state,
+                        speed: sanitizedState.speed,
+                        eta: sanitizedState.eta,
+                        size: sanitizedState.size,
+                        sizeleft: sanitizedState.sizeleft,
+                        tracks: this.getProgressTracksForEvent(commandId, sanitizedState.tracks),
+                    });
+                };
+
+                try {
+                    await executeWithSameOfferRetries(
+                        {
+                            signal,
+                            onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
+                                const message = error instanceof Error ? error.message : String(error);
+                                console.warn(
+                                    `[DOWNLOAD-PROCESSOR] Job #${commandId} same-offer retry ${attempt}/${maxAttempts} `
+                                    + `for ${activeProvider}:${activeProviderItemId} in ${delayMs}ms — ${message}`,
+                                );
+                                this.persistDownloadState(commandId, {
+                                    state: "downloading",
+                                    statusMessage: `Retrying ${formatProviderLabel(activeProvider)} `
+                                        + `(${attempt}/${maxAttempts})…`,
+                                });
+                            },
+                        },
+                        async () => {
+                            await backend.download({
+                                provider: activeProvider,
+                                entityType: type as "album" | "track" | "video",
+                                providerId: activeProviderItemId,
+                                downloadPath,
+                                quality: workingPayload.quality,
+                                slot,
+                                metadata: {
+                                    artwork_preference: metadataConfig.artwork_preference,
+                                    save_lyrics: metadataConfig.save_lyrics,
+                                },
+                            }, {
+                                signal,
+                                onProgress,
+                            });
+                        },
+                    );
+
+                    if (usedFallback && fallbackProvider) {
+                        this.markFallbackSuccessWarning(
+                            commandId,
+                            primaryProvider,
+                            fallbackProvider,
+                        );
+                    }
+                    // Keep command payload aligned with the offer that actually downloaded.
+                    if (
+                        activeProvider !== primaryProvider
+                        || activeProviderItemId !== primaryProviderItemId
+                    ) {
+                        CommandQueueManager.updateState(commandId, {
+                            payloadPatch: {
+                                ...workingPayload,
+                                provider: activeProvider,
+                                providerId: activeProviderItemId,
+                            } as any,
+                        });
+                    }
+                    return;
+                } catch (error) {
+                    if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
+                        throw error;
+                    }
+                    const next = nextOfferAfterTried(rankedAlternates, triedOffers);
+                    if (!next) {
+                        throw error;
+                    }
+                    console.warn(
+                        `[DOWNLOAD-PROCESSOR] Job #${commandId} falling back from `
+                        + `${activeProvider}:${activeProviderItemId} to ${next.provider}:${next.providerId} `
+                        + `after: ${error instanceof Error ? error.message : String(error)}`,
+                    );
+                    triedOffers.add(makeOfferAttemptKey(next.provider, next.providerId));
+                    usedFallback = true;
+                    fallbackProvider = next.provider;
+                    activeProvider = next.provider;
+                    activeProviderItemId = next.providerId;
+                    workingPayload = this.applyOfferToPayload(workingPayload, type, next);
+                    entry.provider = activeProvider;
+                    entry.providerId = activeProviderItemId;
+                    this.persistDownloadState(commandId, {
+                        state: "downloading",
+                        statusMessage: `Falling back to ${formatProviderLabel(next.provider)}…`,
+                    });
+                }
+            }
         } finally {
             clearInterval(checkCancelInterval);
         }
+    }
+
+    private listFallbackOffersForJob(
+        type: DownloadJobType,
+        payload: DownloadCommand,
+        providerItemId: string,
+    ): RankedDownloadOffer[] {
+        if (type === "album") {
+            return listRankedAlbumOffers(
+                payload.releaseGroupMbid || payload.albumId || null,
+                payload.slot || null,
+            );
+        }
+        if (type === "track") {
+            return listRankedTrackOffers({
+                trackMbid: payload.canonicalTrackMbid || null,
+                recordingMbid: payload.canonicalRecordingMbid || null,
+            });
+        }
+        const recordingRef = String(
+            payload.canonicalRecordingId
+            || payload.canonicalRecordingMbid
+            || providerItemId
+            || "",
+        ).trim();
+        return listRankedVideoOffers(recordingRef);
+    }
+
+    private applyOfferToPayload(
+        payload: DownloadCommand,
+        type: DownloadJobType,
+        offer: RankedDownloadOffer,
+    ): DownloadCommand {
+        let url: string | null | undefined = payload.url;
+        try {
+            url = buildStreamingMediaUrl(type, offer.providerId, offer.provider);
+        } catch {
+            // Keep previous URL when the provider cannot build one.
+        }
+        return {
+            ...payload,
+            provider: offer.provider,
+            providerId: offer.providerId,
+            quality: offer.quality ?? payload.quality,
+            url: url ?? payload.url,
+        } as DownloadCommand;
+    }
+
+    private markFallbackSuccessWarning(
+        commandId: number,
+        primaryProvider: string,
+        fallbackProvider: string,
+    ): void {
+        const warningMessage = formatFallbackSuccessMessage(fallbackProvider, primaryProvider);
+        this.persistDownloadState(commandId, {
+            outcome: "completedWithWarning",
+            warningMessage,
+            statusMessage: warningMessage,
+            primaryProvider,
+            fallbackProvider,
+        });
+        console.log(`[DOWNLOAD-PROCESSOR] Job #${commandId}: ${warningMessage}`);
     }
 
     /**
@@ -1575,6 +1773,8 @@ export class DownloadProcessor {
             offers.length,
         );
         let completedBefore = tracks.filter((track) => track.status === "completed" || track.status === "skipped").length;
+        let fallbackPrimary: string | null = null;
+        let fallbackUsed: string | null = null;
 
         const emitProgress = (partial: DownloadStatePayload) => {
             this.persistDownloadState(commandId, partial);
@@ -1613,17 +1813,22 @@ export class DownloadProcessor {
         }, 500);
 
         try {
+            const resolvedOffers: DownloadTrackOffer[] = [];
+
             for (let offerIndex = 0; offerIndex < offers.length; offerIndex++) {
                 if (entry.cancelRequested || signal.aborted) {
                     throw new Error("Download cancelled");
                 }
 
-                const offer = offers[offerIndex];
-                const providerId = offer.provider || defaultProvider;
-                const backend = downloadBackendRegistry.resolve(providerId, capability);
-                if (!backend) {
-                    throw new Error(`No download backend found for provider ${providerId} with capability ${capability}`);
-                }
+                let offer = { ...offers[offerIndex] };
+                const primaryOfferProvider = offer.provider || defaultProvider;
+                const tried = new Set<string>([
+                    makeOfferAttemptKey(primaryOfferProvider, offer.providerTrackId),
+                ]);
+                const ranked = listRankedTrackOffers({
+                    trackMbid: offer.canonicalTrackMbid,
+                    recordingMbid: offer.canonicalRecordingMbid,
+                });
 
                 const trackIndex = tracks.findIndex((track) => {
                     if (offer.canonicalTrackMbid && track.canonicalTrackMbid === offer.canonicalTrackMbid) return true;
@@ -1631,84 +1836,165 @@ export class DownloadProcessor {
                     return track.providerTrackId === offer.providerTrackId;
                 });
 
-                if (trackIndex >= 0) {
-                    tracks[trackIndex] = {
-                        ...tracks[trackIndex],
-                        status: "downloading",
-                        providerTrackId: offer.providerTrackId,
-                        provider: providerId,
-                    };
-                }
+                let downloaded = false;
+                while (!downloaded) {
+                    const providerId = offer.provider || defaultProvider;
+                    const backend = downloadBackendRegistry.resolve(providerId, capability);
+                    if (!backend) {
+                        const next = nextOfferAfterTried(ranked, tried);
+                        if (!next) {
+                            throw new Error(`No download backend found for provider ${providerId} with capability ${capability}`);
+                        }
+                        tried.add(makeOfferAttemptKey(next.provider, next.providerId));
+                        fallbackPrimary ||= primaryOfferProvider;
+                        fallbackUsed = next.provider;
+                        offer = {
+                            ...offer,
+                            provider: next.provider,
+                            providerTrackId: next.providerId,
+                            providerAlbumId: next.providerAlbumId ?? offer.providerAlbumId,
+                            quality: next.quality ?? offer.quality,
+                        };
+                        continue;
+                    }
 
-                const currentFileNum = completedBefore + offerIndex + 1;
-                emitProgress({
-                    state: "downloading",
-                    currentFileNum,
-                    totalFiles,
-                    progress: Math.round(((completedBefore + offerIndex) / totalFiles) * 100),
-                    currentTrack: offer.title || tracks[trackIndex]?.title,
-                    currentProviderTrackId: offer.providerTrackId,
-                    currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
-                    currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
-                    trackStatus: "downloading",
-                    statusMessage: `Downloading track ${currentFileNum}/${totalFiles}`,
-                    tracks,
-                });
+                    if (trackIndex >= 0) {
+                        tracks[trackIndex] = {
+                            ...tracks[trackIndex],
+                            status: "downloading",
+                            providerTrackId: offer.providerTrackId,
+                            provider: providerId,
+                        };
+                    }
 
-                const trackDownloadPath = path.join(downloadPath, `track_${offer.providerTrackId}`);
-                fs.mkdirSync(trackDownloadPath, { recursive: true });
+                    const currentFileNum = completedBefore + offerIndex + 1;
+                    emitProgress({
+                        state: "downloading",
+                        currentFileNum,
+                        totalFiles,
+                        progress: Math.round(((completedBefore + offerIndex) / totalFiles) * 100),
+                        currentTrack: offer.title || tracks[trackIndex]?.title,
+                        currentProviderTrackId: offer.providerTrackId,
+                        currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
+                        currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
+                        trackStatus: "downloading",
+                        statusMessage: `Downloading track ${currentFileNum}/${totalFiles}`,
+                        tracks,
+                    });
 
-                await backend.download({
-                    provider: providerId,
-                    entityType: "track",
-                    providerId: offer.providerTrackId,
-                    downloadPath: trackDownloadPath,
-                    quality: offer.quality ?? payload.quality,
-                    slot,
-                    metadata: {
-                        artwork_preference: metadataConfig.artwork_preference,
-                        save_lyrics: metadataConfig.save_lyrics,
-                    },
-                }, {
-                    signal,
-                    onProgress: (state: any) => {
+                    const trackDownloadPath = path.join(downloadPath, `track_${offer.providerTrackId}`);
+                    fs.mkdirSync(trackDownloadPath, { recursive: true });
+
+                    try {
+                        await executeWithSameOfferRetries(
+                            {
+                                signal,
+                                onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
+                                    const message = error instanceof Error ? error.message : String(error);
+                                    console.warn(
+                                        `[DOWNLOAD-PROCESSOR] Job #${commandId} track same-offer retry `
+                                        + `${attempt}/${maxAttempts} for ${providerId}:${offer.providerTrackId} `
+                                        + `in ${delayMs}ms — ${message}`,
+                                    );
+                                    emitProgress({
+                                        state: "downloading",
+                                        statusMessage: `Retrying ${formatProviderLabel(providerId)} `
+                                            + `(${attempt}/${maxAttempts})…`,
+                                        tracks,
+                                    });
+                                },
+                            },
+                            async () => {
+                                await backend.download({
+                                    provider: providerId,
+                                    entityType: "track",
+                                    providerId: offer.providerTrackId,
+                                    downloadPath: trackDownloadPath,
+                                    quality: offer.quality ?? payload.quality,
+                                    slot,
+                                    metadata: {
+                                        artwork_preference: metadataConfig.artwork_preference,
+                                        save_lyrics: metadataConfig.save_lyrics,
+                                    },
+                                }, {
+                                    signal,
+                                    onProgress: (state: any) => {
+                                        emitProgress({
+                                            state: "downloading",
+                                            currentFileNum,
+                                            totalFiles,
+                                            progress: Math.round((((completedBefore + offerIndex) + ((state.progress || 0) / 100)) / totalFiles) * 100),
+                                            currentTrack: offer.title || state.currentTrack || tracks[trackIndex]?.title,
+                                            currentProviderTrackId: offer.providerTrackId,
+                                            currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
+                                            currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
+                                            trackProgress: state.progress,
+                                            trackStatus: state.trackStatus || "downloading",
+                                            statusMessage: state.statusMessage || `Downloading track ${currentFileNum}/${totalFiles}`,
+                                            speed: state.speed,
+                                            eta: state.eta,
+                                            size: state.size,
+                                            sizeleft: state.sizeleft,
+                                            tracks,
+                                        });
+                                    },
+                                });
+                            },
+                        );
+
+                        this.flattenTrackOfferWorkspace(trackDownloadPath, downloadPath, offer.providerTrackId);
+
+                        if (trackIndex >= 0) {
+                            tracks[trackIndex] = {
+                                ...tracks[trackIndex],
+                                status: "queued",
+                                providerTrackId: offer.providerTrackId,
+                                provider: providerId,
+                            };
+                        }
+                        resolvedOffers.push(offer);
+                        downloaded = true;
+                    } catch (error) {
+                        if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
+                            throw error;
+                        }
+                        const next = nextOfferAfterTried(ranked, tried);
+                        if (!next) {
+                            throw error;
+                        }
+                        console.warn(
+                            `[DOWNLOAD-PROCESSOR] Job #${commandId} track falling back from `
+                            + `${providerId}:${offer.providerTrackId} to ${next.provider}:${next.providerId}`,
+                        );
+                        tried.add(makeOfferAttemptKey(next.provider, next.providerId));
+                        fallbackPrimary ||= primaryOfferProvider;
+                        fallbackUsed = next.provider;
+                        offer = {
+                            ...offer,
+                            provider: next.provider,
+                            providerTrackId: next.providerId,
+                            providerAlbumId: next.providerAlbumId ?? offer.providerAlbumId,
+                            quality: next.quality ?? offer.quality,
+                        };
                         emitProgress({
                             state: "downloading",
-                            currentFileNum,
-                            totalFiles,
-                            progress: Math.round((((completedBefore + offerIndex) + ((state.progress || 0) / 100)) / totalFiles) * 100),
-                            currentTrack: offer.title || state.currentTrack || tracks[trackIndex]?.title,
-                            currentProviderTrackId: offer.providerTrackId,
-                            currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
-                            currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
-                            trackProgress: state.progress,
-                            trackStatus: state.trackStatus || "downloading",
-                            statusMessage: state.statusMessage || `Downloading track ${currentFileNum}/${totalFiles}`,
-                            speed: state.speed,
-                            eta: state.eta,
-                            size: state.size,
-                            sizeleft: state.sizeleft,
+                            statusMessage: `Falling back to ${formatProviderLabel(next.provider)}…`,
                             tracks,
                         });
-                    },
-                });
-
-                // Flatten track workspace into the album job folder for import.
-                this.flattenTrackOfferWorkspace(trackDownloadPath, downloadPath, offer.providerTrackId);
-
-                if (trackIndex >= 0) {
-                    // Downloaded; stays non-completed until import finishes (orange in UI).
-                    tracks[trackIndex] = {
-                        ...tracks[trackIndex],
-                        status: "queued",
-                        providerTrackId: offer.providerTrackId,
-                        provider: providerId,
-                    };
+                    }
                 }
             }
 
+            if (resolvedOffers.length > 0) {
+                CommandQueueManager.updateState(commandId, {
+                    payloadPatch: {
+                        trackOffers: resolvedOffers,
+                    } as any,
+                });
+            }
+
             completedBefore = tracks.filter((track) => track.status === "completed" || track.status === "skipped").length;
-            emitProgress({
+            const finishState: DownloadStatePayload = {
                 state: "downloading",
                 currentFileNum: Math.min(totalFiles, completedBefore + offers.length),
                 totalFiles,
@@ -1716,7 +2002,16 @@ export class DownloadProcessor {
                 trackStatus: "completed",
                 statusMessage: "Download finished, preparing import",
                 tracks,
-            });
+            };
+            if (fallbackPrimary && fallbackUsed) {
+                const warningMessage = formatFallbackSuccessMessage(fallbackUsed, fallbackPrimary);
+                finishState.outcome = "completedWithWarning";
+                finishState.warningMessage = warningMessage;
+                finishState.statusMessage = warningMessage;
+                finishState.primaryProvider = fallbackPrimary;
+                finishState.fallbackProvider = fallbackUsed;
+            }
+            emitProgress(finishState);
         } finally {
             clearInterval(checkCancelInterval);
         }

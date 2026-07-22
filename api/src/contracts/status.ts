@@ -22,6 +22,7 @@ export type DownloadStateContract =
   | "importPending"
   | "importing"
   | "importFailed";
+export type DownloadOutcomeContract = "ok" | "completedWithWarning";
 export type DownloadContentTypeContract = "track" | "video" | "album";
 
 export interface DownloadTrackProgressContract {
@@ -76,6 +77,9 @@ export interface QueueItemContract {
   size?: number;
   sizeleft?: number;
   state?: DownloadStateContract;
+  /** Soft success after provider fallback — UI warning, not a failure. */
+  outcome?: DownloadOutcomeContract;
+  warningMessage?: string | null;
   tracks?: DownloadTrackProgressContract[];
 }
 
@@ -161,6 +165,9 @@ export interface ActivityJobContract {
   error?: string;
   trigger?: number;
   payload?: unknown;
+  /** Soft-success warning (e.g. provider fallback) — completed, not failed. */
+  outcome?: DownloadOutcomeContract;
+  warningMessage?: string | null;
 }
 
 export interface ActivityListResponseContract {
@@ -286,6 +293,15 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
     size: expectOptionalNumber(record.size, `${label}.size`),
     sizeleft: expectOptionalNumber(record.sizeleft, `${label}.sizeleft`),
     state: state as DownloadStateContract | undefined,
+    outcome: (() => {
+      const outcome = expectOptionalString(record.outcome, `${label}.outcome`);
+      if (outcome === undefined) return undefined;
+      if (outcome !== "ok" && outcome !== "completedWithWarning") {
+        throw new Error(`${label}.outcome must be a known download outcome`);
+      }
+      return outcome as DownloadOutcomeContract;
+    })(),
+    warningMessage: expectNullableString(record.warningMessage, `${label}.warningMessage`),
     tracks: record.tracks === undefined
       ? undefined
       : expectArray(record.tracks, `${label}.tracks`, (item, trackIndex) =>

@@ -192,6 +192,11 @@ test("renderAppleArtwork substitutes width/height/format placeholders", () => {
   assert.equal(renderAppleArtwork(undefined), null);
 });
 
+test("renderAppleArtwork can request landscape music-video dimensions", () => {
+  const url = renderAppleArtwork({ url: "https://x/{w}x{h}mv.{f}" }, 1920, 1080);
+  assert.equal(url, "https://x/1920x1080mv.jpg");
+});
+
 test("Apple quality mapping translates raw traits into the neutral model", () => {
   assert.equal(appleMusicQualityMapping.toNeutralAudio("hi-res-lossless"), "hires-lossless");
   assert.equal(appleMusicQualityMapping.toNeutralAudio("lossless"), "lossless");
@@ -571,6 +576,17 @@ test("Apple downloader progress parser extracts track counts and provider ids fr
   });
   assert.equal(errorLine?.trackStatus, "error");
   assert.equal(errorLine?.isError, true);
+
+  // ALAC→AAC fallback is informational; must not fail the job (Amy soundtrack
+  // job 211: "Unavailable, trying to dl aac-lc" with exit code 0).
+  const aacFallback = parseAppleDownloaderProgressLine("Unavailable, trying to dl aac-lc", {
+    currentFileNum: 12,
+    totalFiles: 23,
+    providerTrackId: "1440827418",
+  });
+  assert.equal(aacFallback?.isError, undefined);
+  assert.equal(aacFallback?.trackStatus, "downloading");
+  assert.match(String(aacFallback?.statusMessage), /aac-lc/i);
 
   // The success banner contains the word "Errors" and must NOT be treated as
   // a failure — misparsing it once failed completed downloads, whose cleanup

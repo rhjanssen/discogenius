@@ -32,14 +32,23 @@ test("cleanVideoGroupTitle strips marketing and live qualifiers for matching", (
   );
 });
 
-test("catalogVideoDisplayTitle keeps venue/live/feat but drops marketing wrappers", () => {
+test("catalogVideoDisplayTitle keeps lyric/venue/feat; drops default OMV wrappers", () => {
   assert.equal(catalogVideoDisplayTitle("Pompeii (Official Music Video)"), "Pompeii");
-  assert.equal(catalogVideoDisplayTitle("Oblivion (Lyric Video)"), "Oblivion");
+  assert.equal(catalogVideoDisplayTitle("Oblivion (Lyric Video)"), "Oblivion (Lyric Video)");
+  assert.equal(
+    catalogVideoDisplayTitle("Emily & Her Penthouse In The Sky (Official Lyric Video)"),
+    "Emily & Her Penthouse In The Sky (Official Lyric Video)",
+  );
   assert.equal(catalogVideoDisplayTitle("Good Grief (Live From O2)"), "Good Grief (Live From O2)");
   assert.equal(
     catalogVideoDisplayTitle("Don't Want You Back (feat. Kiesza) (Official Video)"),
     "Don't Want You Back (feat. Kiesza)",
   );
+});
+
+test("parseVideoVariant reads Official Lyric Video before bare matching", () => {
+  assert.equal(parseVideoVariant("Emily & Her Penthouse In The Sky (Official Lyric Video)"), "lyric");
+  assert.equal(parseVideoVariant("Bastille – Emily (Official Lyric Video)"), "lyric");
 });
 
 test("preferredVideoVariant keeps the more specific class", () => {

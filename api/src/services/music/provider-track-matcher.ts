@@ -112,12 +112,14 @@ export function scoreTrackMatch(target: MatchTargetTrack, pt: MatchProviderTrack
     // 2. Structural-first acceptance. Streaming providers give exact track
     //    positions and durations, so a same-slot match is decisive even when
     //    the displayed title carries extra decoration the canonical title omits.
-    //    The `titleSim >= 0.3` guard blocks two genuinely different songs that
-    //    merely share a position and a coincidental duration.
+    //    Require a *strong* title signal here: Levenshtein similarity of ~0.3 is
+    //    common for unrelated short titles of similar length (e.g. "World Gone
+    //    Mad" vs "Distorted Light Beam"), and that used to promote a false 0.95
+    //    cover that beat the barcode-matched single on HIRES quality.
     if ((versionsOk || oneSidedStructurallyConfirmed) && positionAligned && baseMatch) {
         return 0.95;
     }
-    if (versionsOk && positionAligned && durationClose && titleSim >= 0.3) {
+    if (versionsOk && positionAligned && durationClose && titleSim >= 0.55) {
         return 0.95;
     }
     // 3. Title + duration agree but the position differs — the case when a

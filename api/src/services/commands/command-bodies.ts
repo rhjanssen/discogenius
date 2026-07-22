@@ -22,6 +22,9 @@ export type DownloadQueueStateValue =
   | "importing"
   | "importFailed";
 
+/** Terminal download outcome when the command still completed successfully. */
+export type DownloadOutcomeValue = "ok" | "completedWithWarning";
+
 export interface DownloadTrackStateEntry {
   title: string;
   trackNum?: number;
@@ -69,6 +72,14 @@ export interface DownloadStatePayload {
   size?: number;
   sizeleft?: number;
   tracks?: DownloadTrackStateEntry[];
+  /**
+   * When a download succeeds via provider fallback (or other soft warning),
+   * status stays completed but UI shows a warning — never a failure.
+   */
+  outcome?: DownloadOutcomeValue;
+  warningMessage?: string;
+  primaryProvider?: string;
+  fallbackProvider?: string;
 }
 
 export interface ResolvedDownloadMetadata {
@@ -327,6 +338,8 @@ export interface RetagFilesCommand extends CommandBodyCommon {
   artistId?: string;
   albumId?: string;
   applyAll?: boolean;
+  /** When true, remove embedded tags without rewriting catalog metadata. */
+  stripOnly?: boolean;
 }
 
 export interface RetagArtistCommand extends CommandBodyCommon {

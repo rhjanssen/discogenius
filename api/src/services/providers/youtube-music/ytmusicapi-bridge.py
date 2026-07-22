@@ -13,7 +13,11 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any, Iterable
 
 from ytmusicapi import YTMusic
@@ -146,6 +150,97 @@ VIDEO_ENRICH_LIMIT = 40
 # Cap per album so artist-wide refreshes cannot issue unbounded watch calls.
 COUNTERPART_ENRICH_LIMIT = 40
 
+# YouTube Music catalog titles omit "(Official Lyric Video)" and similar cut
+# labels that still appear on youtube.com / oEmbed. Use oEmbed as secondary
+# title evidence so parseVideoVariant can classify lyric/live cuts. There is
+# no MUSIC_VIDEO_TYPE_OLV — official lyric uploads are tagged OMV like OMVs.
+VARIANT_HINT_RE = re.compile(
+    r"\b(lyrics?|live|performance|audio|visuali[sz]er|official(?:\s+music)?\s*video|music\s*video)\b",
+    re.I,
+)
+
+
+def fetch_youtube_oembed_title(video_id: str) -> str | None:
+    """Best-effort youtube.com title (includes Official Lyric Video markers)."""
+    vid = str(video_id or "").strip()
+    if not vid:
+        return None
+    url = (
+        "https://www.youtube.com/oembed?format=json&url="
+        + urllib.parse.quote(f"https://www.youtube.com/watch?v={vid}", safe="")
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    title = str(payload.get("title") or "").strip()
+    return title or None
+
+
+def normalize_oembed_video_title(oembed_title: str, catalog_title: str | None = None) -> str:
+    """Drop a leading 'Artist – ' when the remainder carries the song + cut label."""
+    title = str(oembed_title or "").strip()
+    catalog = str(catalog_title or "").strip()
+    if not title:
+        return title
+    for sep in (" – ", " — ", " - "):
+        if sep not in title:
+            continue
+        _left, right = title.split(sep, 1)
+        right = right.strip()
+        if not right or not VARIANT_HINT_RE.search(right):
+            continue
+        if not catalog or catalog.casefold() in right.casefold():
+            return right
+    return title
+
+
+def prefer_variant_hint_title(catalog_title: str | None, oembed_title: str | None) -> str | None:
+    """Prefer oEmbed when it adds lyric/live/official markers YTM stripped."""
+    catalog = str(catalog_title or "").strip() or None
+    oembed_raw = str(oembed_title or "").strip() or None
+    if not oembed_raw:
+        return catalog
+    oembed = normalize_oembed_video_title(oembed_raw, catalog)
+    if not catalog:
+        return oembed
+    if VARIANT_HINT_RE.search(catalog):
+        return catalog
+    if VARIANT_HINT_RE.search(oembed):
+        return oembed
+    return catalog
+
+
+def apply_oembed_title(video: dict[str, Any]) -> None:
+    details = video.get("videoDetails") if isinstance(video.get("videoDetails"), dict) else {}
+    video_id = str(
+        video.get("videoId")
+        or video.get("id")
+        or details.get("videoId")
+        or details.get("id")
+        or "",
+    ).strip()
+    if not video_id:
+        return
+    catalog_title = (
+        str(video.get("title") or "").strip()
+        or str(details.get("title") or "").strip()
+        or None
+    )
+    oembed_title = fetch_youtube_oembed_title(video_id)
+    preferred = prefer_variant_hint_title(catalog_title, oembed_title)
+    if not preferred:
+        return
+    video["title"] = preferred
+    if details:
+        details["title"] = preferred
+        video["videoDetails"] = details
+    if oembed_title:
+        video["youtubeOembedTitle"] = oembed_title
+
 
 def extract_watch_track(watch: Any, video_id: str) -> dict[str, Any] | None:
     tracks = watch.get("tracks") if isinstance(watch, dict) else None
@@ -218,27 +313,32 @@ def get_track_counterparts(api: YTMusic, video_ids: Iterable[str]) -> dict[str, 
 
 
 def enrich_videos(api: YTMusic, videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    for video in videos[:VIDEO_ENRICH_LIMIT]:
+    for index, video in enumerate(videos):
         if not isinstance(video, dict):
             continue
-        if video.get("videoType") and video.get("duration_seconds"):
-            continue
+        needs_song = not (video.get("videoType") and video.get("duration_seconds"))
         video_id = video.get("videoId")
-        if not video_id:
-            continue
-        try:
-            details = api.get_song(str(video_id)).get("videoDetails") or {}
-        except Exception:
-            continue
-        if not isinstance(details, dict):
-            continue
-        if not video.get("videoType") and details.get("musicVideoType"):
-            video["videoType"] = details["musicVideoType"]
-        if not video.get("duration_seconds") and details.get("lengthSeconds") is not None:
+        if needs_song and video_id and index < VIDEO_ENRICH_LIMIT:
             try:
-                video["duration_seconds"] = int(details["lengthSeconds"])
-            except (TypeError, ValueError):
-                pass
+                details = api.get_song(str(video_id)).get("videoDetails") or {}
+            except Exception:
+                details = {}
+            if isinstance(details, dict):
+                if not video.get("videoType") and details.get("musicVideoType"):
+                    video["videoType"] = details["musicVideoType"]
+                if not video.get("duration_seconds") and details.get("lengthSeconds") is not None:
+                    try:
+                        video["duration_seconds"] = int(details["lengthSeconds"])
+                    except (TypeError, ValueError):
+                        pass
+                if details.get("title") and not video.get("title"):
+                    video["title"] = details["title"]
+        # oEmbed is cheap and restores lyric/live cut labels YTM strips — run for
+        # every artist-video row, not only the song-enrich cap.
+        try:
+            apply_oembed_title(video)
+        except Exception:
+            pass
     return videos
 
 
@@ -471,7 +571,13 @@ def dispatch(api: YTMusic, operation: str, payload: dict[str, Any]) -> Any:
             raise ValueError("ids must be a JSON array of video ids")
         return get_track_counterparts(api, [str(item) for item in ids])
     if operation == "get_video":
-        return api.get_song(require_text(payload, "id"))
+        player = api.get_song(require_text(payload, "id"))
+        if isinstance(player, dict):
+            try:
+                apply_oembed_title(player)
+            except Exception:
+                pass
+        return player
     if operation == "get_lyrics":
         return get_track_lyrics(api, require_text(payload, "id"))
     if operation == "list_import_sources":

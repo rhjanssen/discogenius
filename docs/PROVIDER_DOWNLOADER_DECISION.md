@@ -29,6 +29,7 @@ partial-failure status at least as well as the existing backend.
 | Spotify | [`Votify`](https://github.com/glomatico/votify) with librespot | Direct Spotify Vorbis audio for a Premium session; no lossless, spatial or video claim | **Soon in Auth for 2.4.0.** Plugin works with a Spotify Developer client ID/secret (+ optional cookies for downloads), but that UX is held back until connection is simpler. spotDL remains rejected (YouTube audio provenance). |
 | YouTube / YouTube Music | [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) + [`ytmusicapi`](https://github.com/sigma67/ytmusicapi) | Direct YouTube audio/video; YouTube audio remains lossy | Keep. Bundle yt-dlp's EJS scripts and a supported JavaScript runtime as required by the [upstream EJS guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS). |
 | Deezer | [`Streamrip`](https://github.com/nathom/streamrip) | Direct entitled Deezer MP3/FLAC with an ARL session | Keep. The pinned Streamrip implementation does not expose Deezer lyrics, so lyrics must come from a canonical cross-provider counterpart rather than a false capability claim. |
+| SoundCloud | Native progressive resolve via `api-v2`, with [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) fallback | Lossy progressive/HLS when the session can resolve it; major-label free accounts often SNIP or encrypted-HLS only | Experimental. Prefer native progressive for entitled tracks; keep yt-dlp as fallback rather than yt-dlp-only. Official OAuth 2.1 download path deferred. |
 
 ## spotDL boundary
 

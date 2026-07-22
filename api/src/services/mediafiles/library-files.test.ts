@@ -1069,12 +1069,20 @@ dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, artist_mbid)
     VALUES (?, ?, ?)
   `).run("recording-mbid-pompeii", "Pompeii", "artist-mbid-bastille");
+  const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("recording-mbid-pompeii") as { id: number }).id;
 
   dbModule.db.prepare(`
     INSERT INTO Tracks (
       mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-pompeii", "release-mbid-pompeii", "recording-mbid-pompeii", 1, 1, "1", "Pompeii");
+
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
+    ) VALUES (?, ?, 'stereo', 1, ?)
+  `).run("artist-mbid-bastille", "rg-mbid-pompeii", "release-mbid-pompeii");
 
   // The music video is its own canonical recording (is_video=1) surfaced via a
   // video ProviderItem; naming + inline matching resolve from these, not ProviderMedia.
@@ -1087,6 +1095,10 @@ dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
     VALUES ('tidal', 'video', 'video-inline-test', 'artist-mbid-bastille', 'video-rec-pompeii', ?, 'Pompeii Video', 'video')
   `).run(videoRecId);
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
+    VALUES (?, ?, 'provider_video_for', 0.98)
+  `).run(videoRecId, audioRecId);
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'track', 'track-inline-test', 'artist-mbid-bastille', 'rg-mbid-pompeii', 'release-mbid-pompeii', 'track-mbid-pompeii', 'recording-mbid-pompeii', 'album-inline-test', 'Pompeii', 'LOSSLESS', 'stereo')
@@ -1146,13 +1158,14 @@ dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       id, artist_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
-      file_type, quality, canonical_recording_mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      file_type, quality, recording_id, canonical_recording_mbid, canonical_release_group_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     2000, "artist-inline-test", "tidal", "track", "track-inline-test", "stereo",
     path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii.flac"),
     path.join("Bastille", "Bad Blood", "01 - Pompeii.flac"),
-    "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS", "recording-mbid-pompeii"
+    "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS",
+    audioRecId, "recording-mbid-pompeii", "rg-mbid-pompeii",
   );
 
   const expectedInlineImported = libraryFilesModule.LibraryFilesService.computeExpectedPath(rowVideoSeparated);
@@ -1192,11 +1205,17 @@ dbModule.db.prepare(`
   assert.equal(expectedAlbumLinkedFallback.expectedPath, expectedInlineMonitoredPath);
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
     .run("video-rec-dup", "Pompeii (Official Video)", "artist-mbid-bastille");
+  const dupVideoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("video-rec-dup") as { id: number }).id;
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
     VALUES ('tidal', 'video', 'video-inline-duplicate', 'artist-mbid-bastille', 'video-rec-dup',
-      (SELECT id FROM Recordings WHERE mbid = 'video-rec-dup'), 'Pompeii (Official Video)', 'video')
-  `).run();
+      ?, 'Pompeii (Official Video)', 'video')
+  `).run(dupVideoRecId);
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
+    VALUES (?, ?, 'provider_video_for', 0.9)
+  `).run(dupVideoRecId, audioRecId);
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
@@ -1228,23 +1247,247 @@ dbModule.db.prepare(`
       (SELECT id FROM Recordings WHERE mbid = 'video-rec-unlinked'), 'Pompeii (Official Video)', 'video')
   `).run();
 
-  const expectedUnlinkedDuplicate = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+  const expectedUnlinked = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     ...rowVideoSeparated,
     id: 1004,
     album_id: null,
     media_id: "video-inline-unlinked",
   });
-  assert.equal(expectedUnlinkedDuplicate.expectedPath, expectedInlineMonitoredPath);
-
-  const expectedCanonicalOnlyDuplicate = libraryFilesModule.LibraryFilesService.computeExpectedPath({
-    ...rowVideoSeparated,
-    id: 1005,
-    album_id: null,
-    media_id: "video-inline-unlinked",
-  });
-  assert.equal(expectedCanonicalOnlyDuplicate.expectedPath, expectedInlineMonitoredPath);
+  // No provider_video_for association → separated video library even when layout is inline.
+  assert.equal(
+    expectedUnlinked.expectedPath,
+    path.join(tempDir, "library", "videos", "Bastille", "Pompeii (Official Video)-video {TIDAL-video-inline-unlinked}.mp4"),
+  );
 });
 
+test("computeExpectedPath inline requires monitored stereo RG slot", () => {
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, path, monitored)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("artist-inline-gate", "Bastille", "artist-mbid-inline-gate", "Bastille", 1);
+  dbModule.db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`)
+    .run("artist-mbid-inline-gate", "Bastille");
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES (?, ?, ?, ?)
+  `).run("rg-mbid-inline-gate", "artist-mbid-inline-gate", "Bad Blood", "Album");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("release-mbid-inline-gate", "rg-mbid-inline-gate", "artist-mbid-inline-gate", "Bad Blood", 1);
+  dbModule.db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid) VALUES (?, ?, ?)`)
+    .run("recording-mbid-inline-gate", "Pompeii", "artist-mbid-inline-gate");
+  const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("recording-mbid-inline-gate") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-inline-gate", "release-mbid-inline-gate", "recording-mbid-inline-gate", 1, 1, "1", "Pompeii");
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored)
+    VALUES (?, ?, 'stereo', 0)
+  `).run("artist-mbid-inline-gate", "rg-mbid-inline-gate");
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video, video_variant)
+    VALUES (?, ?, ?, 1, 'video')
+  `).run("video-rec-inline-gate", "Pompeii", "artist-mbid-inline-gate");
+  const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("video-rec-inline-gate") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
+    VALUES ('tidal', 'video', 'video-inline-gate', 'artist-mbid-inline-gate', 'video-rec-inline-gate', ?, 'Pompeii', 'video')
+  `).run(videoRecId);
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
+    VALUES (?, ?, 'provider_video_for', 0.98)
+  `).run(videoRecId, audioRecId);
 
+  const config = configModule.readConfig();
+  config.path.video_folder_layout = "inline";
+  configModule.writeConfig(config);
 
+  const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    id: 5000,
+    artist_id: "artist-inline-gate",
+    album_id: null,
+    media_id: "video-inline-gate",
+    file_path: path.join(tempDir, "library", "videos", "Bastille", "Pompeii.mp4"),
+    relative_path: null,
+    library_root: "videos",
+    file_type: "video",
+    extension: "mp4",
+  } as any);
+
+  assert.equal(
+    expected.expectedPath,
+    path.join(tempDir, "library", "videos", "Bastille", "Pompeii-video {TIDAL-video-inline-gate}.mp4"),
+  );
+});
+
+test("computeExpectedPath prefers stereo over spatial for inline videos", () => {
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, path, monitored)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("artist-inline-stereo-pref", "Bastille", "artist-mbid-stereo-pref", "Bastille", 1);
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+  `).run("artist-mbid-stereo-pref", "Bastille");
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, monitored)
+    VALUES (?, ?, ?, ?, 1)
+  `).run("rg-mbid-stereo-pref", "artist-mbid-stereo-pref", "Bad Blood", "Album");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, date)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("release-mbid-stereo-pref", "rg-mbid-stereo-pref", "artist-mbid-stereo-pref", "Bad Blood", 1, "2013-01-01");
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid) VALUES (?, ?, ?)
+  `).run("recording-mbid-stereo-pref", "Pompeii", "artist-mbid-stereo-pref");
+  const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("recording-mbid-stereo-pref") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("track-mbid-stereo-pref", "release-mbid-stereo-pref", "recording-mbid-stereo-pref", 1, 1, "1", "Pompeii");
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid)
+    VALUES (?, ?, 'stereo', 1, ?)
+  `).run("artist-mbid-stereo-pref", "rg-mbid-stereo-pref", "release-mbid-stereo-pref");
+
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video, video_variant)
+    VALUES (?, ?, ?, 1, 'video')
+  `).run("video-rec-stereo-pref", "Pompeii", "artist-mbid-stereo-pref");
+  const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("video-rec-stereo-pref") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
+    VALUES ('tidal', 'video', 'video-stereo-pref', 'artist-mbid-stereo-pref', 'video-rec-stereo-pref', ?, 'Pompeii', 'video')
+  `).run(videoRecId);
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
+    VALUES (?, ?, 'provider_video_for', 0.98)
+  `).run(videoRecId, audioRecId);
+
+  const stereoPath = path.join(tempDir, "library", "music", "Bastille", "Bad Blood (2013)", "01 - Pompeii.flac");
+  const spatialPath = path.join(tempDir, "library", "spatial", "Bastille", "Bad Blood (2015)", "01 - Pompeii.m4a");
+  // Spatial imported first (lower id) — old ORDER BY tf.id ASC would pick it.
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      id, artist_id, provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension, file_size,
+      file_type, quality, recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    3001, "artist-inline-stereo-pref", "apple-music", "track", "spatial-track-1", "spatial",
+    spatialPath, path.relative(configModule.Config.getSpatialPath(), spatialPath),
+    "spatial", "01 - Pompeii.m4a", "m4a", 100, "track", "DOLBY_ATMOS",
+    audioRecId, "recording-mbid-stereo-pref", "rg-mbid-stereo-pref", "release-mbid-stereo-pref",
+  );
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      id, artist_id, provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension, file_size,
+      file_type, quality, recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    3002, "artist-inline-stereo-pref", "tidal", "track", "stereo-track-1", "stereo",
+    stereoPath, path.relative(configModule.Config.getMusicPath(), stereoPath),
+    "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS",
+    audioRecId, "recording-mbid-stereo-pref", "rg-mbid-stereo-pref", "release-mbid-stereo-pref",
+  );
+
+  const config = configModule.readConfig();
+  config.path.video_folder_layout = "inline";
+  configModule.writeConfig(config);
+
+  const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    id: 4000,
+    artist_id: "artist-inline-stereo-pref",
+    album_id: null,
+    media_id: "video-stereo-pref",
+    file_path: path.join(tempDir, "library", "videos", "Bastille", "Pompeii.mp4"),
+    relative_path: null,
+    library_root: "videos",
+    file_type: "video",
+    extension: "mp4",
+  } as any);
+
+  assert.equal(
+    expected.expectedPath,
+    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video.mp4"),
+  );
+  assert.ok(!String(expected.expectedPath || "").includes(`${path.sep}spatial${path.sep}`));
+});
+
+test("upsertLibraryFile persists video_codec and frame size for music videos", () => {
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-video-codec", "Bastille");
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, path, monitored)
+    VALUES (?, ?, ?, ?, ?)
+  `).run("video-artist-1", "Bastille", "artist-mbid-video-codec", "Bastille", 1);
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES (?, ?, ?, 1)
+  `).run("video-recording-codec", "Pompeii", "artist-mbid-video-codec");
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id,
+      title, quality, library_slot
+    ) VALUES (
+      'tidal', 'video', 'video-provider-codec', 'artist-mbid-video-codec', 'video-recording-codec',
+      (SELECT id FROM Recordings WHERE mbid = 'video-recording-codec'),
+      'Pompeii', 'MP4_1080P', 'video'
+    )
+  `).run();
+
+  const videoRoot = configModule.Config.getVideoPath();
+  const filePath = path.join(videoRoot, "Bastille", "Pompeii.mp4");
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, "fake-video");
+
+  const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "video-artist-1",
+    mediaId: "video-provider-codec",
+    filePath,
+    libraryRoot: videoRoot,
+    fileType: "video",
+    quality: "MP4_1080P",
+    codec: "aac",
+    videoCodec: "h264",
+    bitrate: 320000,
+    channels: 2,
+    width: 1920,
+    height: 1080,
+    provider: "tidal",
+    providerEntityType: "video",
+    providerId: "video-provider-codec",
+    librarySlot: "video",
+    canonicalArtistMbid: "artist-mbid-video-codec",
+    canonicalRecordingMbid: "video-recording-codec",
+  });
+
+  const row = dbModule.db.prepare(`
+    SELECT codec, video_codec, width, height, bitrate, quality
+    FROM TrackFiles
+    WHERE id = ?
+  `).get(id) as {
+    codec: string | null;
+    video_codec: string | null;
+    width: number | null;
+    height: number | null;
+    bitrate: number | null;
+    quality: string | null;
+  };
+
+  assert.equal(row.codec, "aac");
+  assert.equal(row.video_codec, "h264");
+  assert.equal(row.width, 1920);
+  assert.equal(row.height, 1080);
+  assert.equal(row.bitrate, 320000);
+  assert.equal(row.quality, "MP4_1080P");
+});
 

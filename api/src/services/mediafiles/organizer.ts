@@ -793,7 +793,10 @@ export class OrganizerService {
         sampleRate: metrics.sampleRate,
         bitrate: metrics.bitrate,
         codec: metrics.codec,
+        videoCodec: metrics.videoCodec,
         channels: metrics.channels,
+        width: metrics.width,
+        height: metrics.height,
       });
 
       try {
@@ -1756,13 +1759,16 @@ export class OrganizerService {
     quality?: string | null;
     namingTemplate?: string | null;
     expectedPath?: string | null;
-    bitDepth?: number | null;
-    sampleRate?: number | null;
-    bitrate?: number | null;
-    codec?: string | null;
-    channels?: number | null;
-    duration?: number | null;
-    fingerprint?: string | null;
+  bitDepth?: number | null;
+  sampleRate?: number | null;
+  bitrate?: number | null;
+  codec?: string | null;
+  videoCodec?: string | null;
+  channels?: number | null;
+  width?: number | null;
+  height?: number | null;
+  duration?: number | null;
+  fingerprint?: string | null;
     provider?: string | null;
     providerEntityType?: string | null;
     providerId?: string | null;
@@ -1990,6 +1996,7 @@ export class OrganizerService {
 
       const renderedTrackDirs: string[] = [];
       const destFiles: Array<{ trackId: string; destFile: string; ext: string }> = [];
+      const importedStereoTrackFileIds: number[] = [];
       let sampleRelativeTrackPath: string | null = null;
       const processedEmbeddedVideoIds = new Set<string>();
       const albumTrackNamingTemplate = path.join(artistFolder, trackTemplate);
@@ -2341,6 +2348,12 @@ export class OrganizerService {
         }
 
         destFiles.push({ trackId, destFile, ext });
+        if (
+          importedTrackFileId != null
+          && (canonicalIdentity.librarySlot ?? (isSpatial ? "spatial" : "stereo")) === "stereo"
+        ) {
+          importedStereoTrackFileIds.push(importedTrackFileId);
+        }
         onProgress?.({
           phase: "importing",
           currentFileNum: destFiles.length,
@@ -2570,6 +2583,15 @@ export class OrganizerService {
         `).get(streamingProviderId, ...albumIds) as { count?: number } | undefined)?.count || 0);
       } catch (error) {
         console.warn("[Organizer] Failed to query expected track count from ProviderItems:", error);
+      }
+
+      if (importedStereoTrackFileIds.length > 0) {
+        try {
+          const { RenameTrackFileService } = await import("./rename-track-file-service.js");
+          RenameTrackFileService.relocateRelatedInlineVideosForImportedAudio(importedStereoTrackFileIds);
+        } catch (error) {
+          console.warn(`[Organizer] Failed to relocate related inline videos after album import:`, error);
+        }
       }
 
       return {
@@ -3068,6 +3090,18 @@ export class OrganizerService {
         statusMessage: `Finalizing ${trackTitle}`,
       });
 
+      if (
+        importedTrackFileId != null
+        && (trackIdentity.librarySlot ?? (isSpatial ? "spatial" : "stereo")) === "stereo"
+      ) {
+        try {
+          const { RenameTrackFileService } = await import("./rename-track-file-service.js");
+          RenameTrackFileService.relocateRelatedInlineVideosForImportedAudio([importedTrackFileId]);
+        } catch (error) {
+          console.warn(`[Organizer] Failed to relocate related inline videos after track import:`, error);
+        }
+      }
+
       // Return result for track
       return {
         type: "track",
@@ -3323,7 +3357,10 @@ export class OrganizerService {
           sampleRate: metrics.sampleRate,
           bitrate: metrics.bitrate,
           codec: metrics.codec,
+          videoCodec: metrics.videoCodec,
           channels: metrics.channels,
+          width: metrics.width,
+          height: metrics.height,
           provider: videoIdentity.provider,
           providerEntityType: videoIdentity.providerEntityType,
           providerId: videoIdentity.providerId,

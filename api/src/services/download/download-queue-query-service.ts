@@ -1042,6 +1042,13 @@ export class DownloadQueueQueryService {
       trackStatus: getOptionalString(downloadState.trackStatus) as QueueItemContract["trackStatus"] | undefined,
       statusMessage: getOptionalString(downloadState.statusMessage) ?? undefined,
       state: getOptionalString(downloadState.state) as QueueItemContract["state"] | undefined,
+      outcome: (() => {
+        const outcome = getOptionalString(downloadState.outcome);
+        return outcome === "ok" || outcome === "completedWithWarning"
+          ? outcome
+          : undefined;
+      })(),
+      warningMessage: getOptionalString(downloadState.warningMessage) ?? null,
       speed: getOptionalString(downloadState.speed) ?? undefined,
       eta: getOptionalString(downloadState.eta) ?? undefined,
       size: typeof downloadState.size === "number" ? downloadState.size : undefined,

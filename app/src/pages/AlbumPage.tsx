@@ -9,7 +9,6 @@ import {
   Text,
   Title1,
   Title2,
-  Tooltip,
   Menu,
   MenuTrigger,
   MenuPopover,
@@ -42,6 +41,8 @@ import {
   ChevronDown16Regular,
   CheckmarkCircle16Filled,
   FolderSync24Regular,
+  Play24Regular,
+  Play24Filled,
   ArrowDownload24Filled,
   Eye24Filled,
   EyeOff24Filled,
@@ -58,15 +59,18 @@ import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { api } from "@/services/api";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow, type ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 import { ArtistPersona } from "@/components/ui/ArtistPersona";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
 import { ExpandableMetadataBlock } from "@/components/ui/ExpandableMetadataBlock";
 import { TrackInfoDialog, type TrackFileInfo } from "@/components/ui/TrackInfoDialog";
 import TrackList from "@/components/TrackList";
+import { useCardStyles } from "@/components/cards/cardStyles";
 import {
   albumPageQueryKey,
   useAlbumPage,
+  type AlbumAssociatedVideo,
   type AlbumPageData,
   type AlbumTrack,
   type ReleaseGroupAvailability,
@@ -106,6 +110,29 @@ const Tag24 = bundleIcon(Tag24Filled, Tag24Regular);
 const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
 const ChevronDown16 = bundleIcon(ChevronDown16Filled, ChevronDown16Regular);
 const FolderSync24 = bundleIcon(FolderSync24Filled, FolderSync24Regular);
+const Play24 = bundleIcon(Play24Filled, Play24Regular);
+
+function albumAssociatedVideoElementId(videoId: string): string {
+  return `album-associated-video-${videoId}`;
+}
+
+function formatAssociatedVideoTrackLabel(video: AlbumAssociatedVideo): string | null {
+  const trackTitle = String(video.track_title || "").trim();
+  const trackNumber = video.track_number == null || !Number.isFinite(video.track_number)
+    ? null
+    : Math.trunc(video.track_number);
+  const volumeNumber = video.volume_number == null || !Number.isFinite(video.volume_number)
+    ? null
+    : Math.trunc(video.volume_number);
+  const trackPart = trackNumber != null && trackNumber > 0
+    ? (trackTitle ? `Track ${trackNumber} · ${trackTitle}` : `Track ${trackNumber}`)
+    : (trackTitle || null);
+  if (!trackPart) return null;
+  if (volumeNumber != null && volumeNumber > 1) {
+    return `Disc ${volumeNumber} · ${trackPart}`;
+  }
+  return trackPart;
+}
 
 const useStyles = makeStyles({
   container: {
@@ -449,6 +476,28 @@ const useStyles = makeStyles({
       gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
+  videoGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: tokens.spacingHorizontalS,
+    width: "100%",
+    "@media (min-width: 640px)": {
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: tokens.spacingHorizontalM,
+    },
+    "@media (min-width: 900px)": {
+      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    },
+  },
+  videoCardAnchor: {
+    minWidth: 0,
+    scrollMarginTop: "96px",
+  },
+  playIcon: {
+    width: "32px",
+    height: "32px",
+    color: tokens.colorNeutralForeground3,
+  },
   // Edition cards in the "Other releases" grid use the shared card surface
   // from useCardStyles (components/cards/cardStyles.ts) via MediaCard. This
   // page-specific key only highlights the edition currently being viewed.
@@ -532,9 +581,11 @@ const useStyles = makeStyles({
 /* ── Album overflow helpers ─────────────────────────────────── */
 
 const EMPTY_ALBUM_TRACKS: AlbumTrack[] = [];
+const EMPTY_ASSOCIATED_VIDEOS: AlbumAssociatedVideo[] = [];
 
 const AlbumPage = () => {
   const styles = useStyles();
+  const cardStyles = useCardStyles();
   const { albumId } = useParams<{ albumId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -556,12 +607,15 @@ const AlbumPage = () => {
   const [deleteFilesOpen, setDeleteFilesOpen] = useState(false);
   const [deleteFilesUnmonitor, setDeleteFilesUnmonitor] = useState(false);
   const [deleteFilesApplying, setDeleteFilesApplying] = useState(false);
+  const [stripTagsOpen, setStripTagsOpen] = useState(false);
+  const [stripTagsApplying, setStripTagsApplying] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const handledTrackScrollKeyRef = useRef<string | null>(null);
 
   const { data: pageData, isLoading: loading, error, refetch } = useAlbumPage(albumId);
   const album = pageData?.album ?? null;
   const tracks = pageData?.tracks ?? EMPTY_ALBUM_TRACKS;
+  const associatedVideos = pageData?.associatedVideos ?? EMPTY_ASSOCIATED_VIDEOS;
   const { data: curationConfig } = useQuery({
     queryKey: ["config", "curation"],
     queryFn: () => api.getCurationConfig(),
@@ -583,6 +637,46 @@ const AlbumPage = () => {
   const otherVersions = pageData?.otherVersions ?? [];
   const releaseAvailability = pageData?.releaseAvailability ?? null;
   const artistImage = pageData?.artistImage ?? undefined;
+
+  const tracksWithAssociatedVideos = useMemo(() => {
+    if (associatedVideos.length === 0) return tracks;
+    const videoByTrackMbid = new Map<string, string>();
+    const videoByAudioRecordingMbid = new Map<string, string>();
+    for (const video of associatedVideos) {
+      const videoId = String(video.id || "").trim();
+      if (!videoId) continue;
+      const trackMbid = String(video.track_mbid || "").trim();
+      if (trackMbid && !videoByTrackMbid.has(trackMbid)) {
+        videoByTrackMbid.set(trackMbid, videoId);
+      }
+      const audioMbid = String(video.audio_recording_mbid || "").trim();
+      if (audioMbid && !videoByAudioRecordingMbid.has(audioMbid)) {
+        videoByAudioRecordingMbid.set(audioMbid, videoId);
+      }
+    }
+    return tracks.map((track) => {
+      const byTrack = videoByTrackMbid.get(String(track.musicbrainz_track_id || "").trim());
+      const byRecording = videoByAudioRecordingMbid.get(String(track.musicbrainz_recording_id || "").trim());
+      const associatedVideoId = byTrack || byRecording || null;
+      if (!associatedVideoId) return track;
+      return { ...track, associated_video_id: associatedVideoId };
+    });
+  }, [associatedVideos, tracks]);
+
+  const scrollToAssociatedVideo = useCallback((videoId: string) => {
+    const elementId = albumAssociatedVideoElementId(videoId);
+    const escapeId = typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(elementId)
+      : elementId.replace(/([\\"])/g, "\\$1");
+    const target = document.getElementById(elementId)
+      ?? document.querySelector<HTMLElement>(`#${escapeId}`);
+    if (target) {
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
+    navigate(`/video/${videoId}`);
+  }, [navigate]);
+
   const albumArtists = album?.album_artists?.length
     ? album.album_artists
     : album
@@ -722,13 +816,7 @@ const AlbumPage = () => {
     ));
   };
 
-  useLayoutEffect(() => {
-    if (!albumId) {
-      return;
-    }
-
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-  }, [albumId, location.key]);
+  // App-wide ScrollRestoration owns window scroll (POP restore / PUSH top).
 
   useLayoutEffect(() => {
     if (!albumId || loading) {
@@ -1021,6 +1109,28 @@ const AlbumPage = () => {
     }
   };
 
+  const handleStripAlbumTags = async () => {
+    if (!albumId) return;
+    setStripTagsApplying(true);
+    try {
+      const result: any = await api.stripTags({ applyAll: true, albumId });
+      toast({
+        title: "Strip tags queued",
+        description: result?.message || "Queued removing embedded tags from album files.",
+      });
+      setStripTagsOpen(false);
+      dispatchActivityRefresh();
+    } catch (error) {
+      toast({
+        title: "Failed to queue strip tags",
+        description: error instanceof Error ? error.message : "Could not queue strip tags.",
+        variant: "destructive",
+      });
+    } finally {
+      setStripTagsApplying(false);
+    }
+  };
+
   const albumActions: OverflowAction[] = [
     { key: 'monitor', label: isMonitored ? 'Unmonitor' : 'Monitor', disabled: isTogglingMonitor || isLocked, onClick: handleToggleMonitor },
     { key: 'lock', label: isLocked ? 'Unlock' : 'Lock', disabled: isTogglingLock, onClick: handleToggleLock },
@@ -1029,6 +1139,7 @@ const AlbumPage = () => {
     ...(album?.spatial_provider_id ? [{ key: 'download-spatial', label: 'Download spatial', disabled: downloadingAlbum, onClick: () => handleDownloadAlbum('spatial') }] : []),
     { key: 'rename-files', label: renameApplying ? 'Loading rename...' : 'Preview Rename', disabled: renameApplying, onClick: openRenamePreview },
     { key: 'retag-files', label: retagApplying ? 'Loading tags...' : 'Write Tags', disabled: retagApplying, onClick: openRetagPreview },
+    { key: 'strip-tags', label: stripTagsApplying ? 'Queueing…' : 'Strip Tags…', disabled: stripTagsApplying, onClick: () => setStripTagsOpen(true) },
     { key: 'delete-files', label: 'Delete files…', disabled: deleteFilesApplying, onClick: () => setDeleteFilesOpen(true) },
   ];
 
@@ -1201,6 +1312,31 @@ const AlbumPage = () => {
             </DialogBody>
           </DialogSurface>
         </Dialog>
+        <Dialog
+          open={stripTagsOpen}
+          onOpenChange={(_, data) => {
+            if (!data.open && !stripTagsApplying) setStripTagsOpen(false);
+          }}
+        >
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>Strip tags</DialogTitle>
+              <DialogContent>
+                Remove embedded metadata tags from imported audio files for{" "}
+                <strong>{album?.title || "this album"}</strong>. Files stay on disk; catalog data is unchanged.
+                Use Write Tags afterward if you want Discogenius metadata rewritten.
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" disabled={stripTagsApplying} onClick={() => setStripTagsOpen(false)}>
+                  Cancel
+                </Button>
+                <Button appearance="primary" disabled={stripTagsApplying} onClick={() => void handleStripAlbumTags()}>
+                  {stripTagsApplying ? "Queueing…" : "Strip tags"}
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
         {/* Header Section */}
         <div className={styles.header}>
           <div className={styles.headerContent}>
@@ -1227,13 +1363,23 @@ const AlbumPage = () => {
                     </div>
                   )}
                   {hasCoverFile && (
-                    <div
-                      className={styles.coverOverlay}
-                      onClick={() => setCoverInfoOpen(true)}
-                      title="Artwork info"
-                    >
-                      <Info24 className={styles.coverInfoIcon} />
-                    </div>
+                    <AppTooltip content="Artwork info" relationship="label">
+                      <div
+                        className={styles.coverOverlay}
+                        onClick={() => setCoverInfoOpen(true)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setCoverInfoOpen(true);
+                          }
+                        }}
+                        aria-label="Artwork info"
+                      >
+                        <Info24 className={styles.coverInfoIcon} />
+                      </div>
+                    </AppTooltip>
                   )}
                 </div>
               );
@@ -1327,24 +1473,28 @@ const AlbumPage = () => {
                 <div className={styles.actions}>
                   {/* Monitor Button — icon shows action (what clicking will do) */}
                   <OverflowItem id="monitor" priority={3}>
-                    <Button
-                      appearance={isMonitored ? "subtle" : "primary"}
-                      icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
-                      onClick={handleToggleMonitor}
-                      disabled={isTogglingMonitor || isLocked}
-                      title={isLocked ? "Unlock to change monitoring" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
-                      className={mergeClasses(
-                        styles.actionButton,
-                        isMonitored ? styles.transparentButton : styles.primaryButton
-                      )}
+                    <AppTooltip
+                      content={isLocked ? "Unlock to change monitoring" : (isMonitored ? "Stop monitoring" : "Start monitoring")}
+                      relationship="label"
                     >
-                      {isMonitored ? "Unmonitor" : "Monitor"}
-                    </Button>
+                      <Button
+                        appearance={isMonitored ? "subtle" : "primary"}
+                        icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
+                        onClick={handleToggleMonitor}
+                        disabled={isTogglingMonitor || isLocked}
+                        className={mergeClasses(
+                          styles.actionButton,
+                          isMonitored ? styles.transparentButton : styles.primaryButton
+                        )}
+                      >
+                        {isMonitored ? "Unmonitor" : "Monitor"}
+                      </Button>
+                    </AppTooltip>
                   </OverflowItem>
 
                   {/* Lock Button — icon shows action (what clicking will do) */}
                   <OverflowItem id="lock" priority={2}>
-                    <Tooltip content={isLocked ? "Unlock to allow auto-filters to change status" : "Lock to prevent auto-filters from changing status"} relationship="label">
+                    <AppTooltip content={isLocked ? "Unlock to allow auto-filters to change status" : "Lock to prevent auto-filters from changing status"} relationship="label">
                       <Button
                         appearance="subtle"
                         icon={isLocked ? <LockOpen24 /> : <LockClosed24 />}
@@ -1354,23 +1504,24 @@ const AlbumPage = () => {
                       >
                         {isLocked ? "Unlock" : "Lock"}
                       </Button>
-                    </Tooltip>
+                    </AppTooltip>
                   </OverflowItem>
 
                   {/* Download Button */}
                   <OverflowItem id="download" priority={1}>
                     {hasStereoOffer && hasSpatialOffer ? (
                       <div className={styles.splitDownload}>
-                        <Button
-                          icon={<ArrowDownload24 />}
-                          appearance="subtle"
-                          onClick={handleDownloadPrimary}
-                          disabled={downloadingAlbum}
-                          title="Download stereo and spatial audio"
-                          className={mergeClasses(styles.actionButton, styles.transparentButton, styles.splitDownloadPrimary)}
-                        >
-                          {downloadingAlbum ? "Adding..." : "Download"}
-                        </Button>
+                        <AppTooltip content="Download stereo and spatial audio" relationship="label">
+                          <Button
+                            icon={<ArrowDownload24 />}
+                            appearance="subtle"
+                            onClick={handleDownloadPrimary}
+                            disabled={downloadingAlbum}
+                            className={mergeClasses(styles.actionButton, styles.transparentButton, styles.splitDownloadPrimary)}
+                          >
+                            {downloadingAlbum ? "Adding..." : "Download"}
+                          </Button>
+                        </AppTooltip>
                         <Menu>
                           <MenuTrigger disableButtonEnhancement>
                             <Button
@@ -1391,43 +1542,46 @@ const AlbumPage = () => {
                         </Menu>
                       </div>
                     ) : (
-                      <Button
-                        icon={<ArrowDownload24 />}
-                        appearance="subtle"
-                        onClick={handleDownloadPrimary}
-                        disabled={downloadingAlbum || !hasAnyProviderOffer}
-                        title={hasAnyProviderOffer ? "Download album" : "No provider offer selected"}
-                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                      >
-                        {downloadingAlbum ? "Adding..." : "Download"}
-                      </Button>
+                      <AppTooltip content={hasAnyProviderOffer ? "Download album" : "No provider offer selected"} relationship="label">
+                        <Button
+                          icon={<ArrowDownload24 />}
+                          appearance="subtle"
+                          onClick={handleDownloadPrimary}
+                          disabled={downloadingAlbum || !hasAnyProviderOffer}
+                          className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                        >
+                          {downloadingAlbum ? "Adding..." : "Download"}
+                        </Button>
+                      </AppTooltip>
                     )}
                   </OverflowItem>
 
                   <OverflowItem id="rename-files" priority={0}>
-                    <Button
-                      appearance="subtle"
-                      icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24 />}
-                      onClick={openRenamePreview}
-                      disabled={renameApplying}
-                      title="Preview album file renames"
-                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                    >
-                      Rename
-                    </Button>
+                    <AppTooltip content="Preview album file renames" relationship="label">
+                      <Button
+                        appearance="subtle"
+                        icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24 />}
+                        onClick={openRenamePreview}
+                        disabled={renameApplying}
+                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                      >
+                        Rename
+                      </Button>
+                    </AppTooltip>
                   </OverflowItem>
 
                   <OverflowItem id="retag-files" priority={0}>
-                    <Button
-                      appearance="subtle"
-                      icon={retagApplying ? <Spinner size="tiny" /> : <Tag24 />}
-                      onClick={openRetagPreview}
-                      disabled={retagApplying}
-                      title="Preview album metadata tag changes"
-                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                    >
-                      Tags
-                    </Button>
+                    <AppTooltip content="Preview album metadata tag changes" relationship="label">
+                      <Button
+                        appearance="subtle"
+                        icon={retagApplying ? <Spinner size="tiny" /> : <Tag24 />}
+                        onClick={openRetagPreview}
+                        disabled={retagApplying}
+                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                      >
+                        Tags
+                      </Button>
+                    </AppTooltip>
                   </OverflowItem>
 
                   <ActionOverflowMenu actions={albumActions} className={mergeClasses(styles.actionButton, styles.transparentButton)} />
@@ -1447,7 +1601,7 @@ const AlbumPage = () => {
           />
         ) : (
           <TrackList
-            tracks={tracks}
+            tracks={tracksWithAssociatedVideos}
             showArtist
             showQuality={true}
             showLocalQuality
@@ -1455,9 +1609,50 @@ const AlbumPage = () => {
             contextArtistName={album.artist_name}
             contextAlbumTitle={album.title}
             onDownloadTrack={handleDownloadTrack}
+            onAssociatedVideoClick={(_track, videoId) => scrollToAssociatedVideo(videoId)}
             isTrackDownloading={(track) => downloadingTracks.has(track.id)}
           />
         )}
+
+        {associatedVideos.length > 0 ? (
+          <div className={styles.sectionSpacing}>
+            <div className={styles.sectionHeader}>
+              <Title2>Associated videos</Title2>
+            </div>
+            <div className={styles.videoGrid}>
+              {associatedVideos.map((video) => {
+                const videoId = String(video.id);
+                const trackLabel = formatAssociatedVideoTrackLabel(video);
+                const year = video.release_date ? new Date(video.release_date).getFullYear() : null;
+                const subtitle = [trackLabel, year || null].filter(Boolean).join(" · ");
+                return (
+                  <div
+                    key={videoId}
+                    id={albumAssociatedVideoElementId(videoId)}
+                    className={styles.videoCardAnchor}
+                  >
+                    <MediaCard
+                      imageUrl={mediaCoverSrc(video)}
+                      alt={video.title}
+                      title={video.title}
+                      subtitle={subtitle || undefined}
+                      explicit={video.explicit}
+                      monitored={Boolean(video.is_monitored)}
+                      monitoringLocked={Boolean(video.monitored_lock)}
+                      videoAspect
+                      onClick={() => navigate(`/video/${videoId}`)}
+                      placeholder={
+                        <div className={cardStyles.placeholderBg}>
+                          <Play24 className={styles.playIcon} />
+                        </div>
+                      }
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
 
         {/* Cover Info Dialog */}
         {coverInfoOpen && (() => {

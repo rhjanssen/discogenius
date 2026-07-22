@@ -23,7 +23,7 @@ export type VideoQualityValue = (typeof VIDEO_QUALITY_VALUES)[number];
 export const UPC_TARGET_VALUES = ["UPC", "EAN", "BARCODE"] as const;
 export type UpcTargetValue = (typeof UPC_TARGET_VALUES)[number];
 
-export const VIDEO_FOLDER_LAYOUT_VALUES = ["separated", "inline"] as const;
+export const VIDEO_FOLDER_LAYOUT_VALUES = ["separated", "inline", "inline_only"] as const;
 export type VideoFolderLayoutValue = (typeof VIDEO_FOLDER_LAYOUT_VALUES)[number];
 
 export const WRITE_AUDIO_TAGS_POLICY_VALUES = ["no", "new_files", "all_files"] as const;
@@ -126,6 +126,9 @@ export interface FilteringConfigContract {
   include_demo: boolean;
   include_spatial: boolean;
   include_videos: boolean;
+  include_video_official: boolean;
+  include_video_lyric: boolean;
+  include_video_live: boolean;
   prefer_explicit: boolean;
   enable_redundancy_filter: boolean;
   require_provider_availability: boolean;
@@ -282,6 +285,9 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     include_demo: expectBoolean(record.include_demo, "curation.include_demo"),
     include_spatial: expectBoolean(record.include_spatial, "curation.include_spatial"),
     include_videos: expectBoolean(record.include_videos, "curation.include_videos"),
+    include_video_official: expectBoolean(record.include_video_official, "curation.include_video_official"),
+    include_video_lyric: expectBoolean(record.include_video_lyric, "curation.include_video_lyric"),
+    include_video_live: expectBoolean(record.include_video_live, "curation.include_video_live"),
     prefer_explicit: expectBoolean(record.prefer_explicit, "curation.prefer_explicit"),
     enable_redundancy_filter: expectBoolean(record.enable_redundancy_filter, "curation.enable_redundancy_filter"),
     require_provider_availability: expectBoolean(record.require_provider_availability, "curation.require_provider_availability"),

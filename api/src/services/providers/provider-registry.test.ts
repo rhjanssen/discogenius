@@ -37,10 +37,11 @@ test("registry exposes every built-in provider", async () => {
   assert.deepEqual(ids, [
     "tidal",
     "apple-music",
+    "deezer",
+    "soundcloud",
+    "youtube-music",
     "amazon-music",
     "spotify",
-    "youtube-music",
-    "deezer",
   ]);
 
   for (const provider of providers) {
@@ -61,4 +62,36 @@ test("registry exposes every built-in provider", async () => {
     assert.equal(provider.manifest.qualityMapping.spatial, provider.capabilities.spatialAudio);
     assert.equal(provider.manifest.qualityMapping.video, provider.capabilities.musicVideos);
   }
+});
+
+test("default provider preference follows registration order when unset", async () => {
+  const { initDatabase } = await import("../../database.js");
+  initDatabase();
+  const { updateConfig } = await import("../config/config.js");
+  const { streamingProviderManager } = await import("./index.js");
+
+  updateConfig("streaming", { default_provider: "tidal", provider_priority: [] });
+  assert.deepEqual(streamingProviderManager.getProviderPriority(), [
+    "tidal",
+    "apple-music",
+    "deezer",
+    "soundcloud",
+    "youtube-music",
+    "amazon-music",
+    "spotify",
+  ]);
+
+  updateConfig("streaming", {
+    default_provider: "tidal",
+    provider_priority: ["spotify", "deezer", "tidal"],
+  });
+  assert.deepEqual(streamingProviderManager.getProviderPriority(), [
+    "spotify",
+    "deezer",
+    "tidal",
+    "apple-music",
+    "soundcloud",
+    "youtube-music",
+    "amazon-music",
+  ]);
 });

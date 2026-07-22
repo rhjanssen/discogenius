@@ -59,6 +59,14 @@ export async function finalizeImportedDirectories(params: {
         } catch (error: any) {
             console.error(`[Import] Failed to apply renames for imported items:`, error);
         }
+        // Videos downloaded before their stereo audio can sit in the separated
+        // library; once that audio is imported (layout=inline + association +
+        // monitored stereo RG), relocate them beside the track.
+        try {
+            RenameTrackFileService.relocateRelatedInlineVideosForImportedAudio(importedFileIds);
+        } catch (error: any) {
+            console.error(`[Import] Failed to relocate related inline videos:`, error);
+        }
     }
 
 

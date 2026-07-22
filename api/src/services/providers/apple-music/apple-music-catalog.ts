@@ -29,11 +29,17 @@ interface AppleArtwork {
 }
 
 /** Apple artwork URLs are templates with {w}/{h} placeholders. */
-export function renderAppleArtwork(artwork: AppleArtwork | undefined | null, size = 640): string | null {
+export function renderAppleArtwork(
+  artwork: AppleArtwork | undefined | null,
+  size = 640,
+  height?: number,
+): string | null {
   if (!artwork?.url) return null;
+  const width = size;
+  const resolvedHeight = height ?? size;
   return artwork.url
-    .replace(/\{w\}/g, String(size))
-    .replace(/\{h\}/g, String(size))
+    .replace(/\{w\}/g, String(width))
+    .replace(/\{h\}/g, String(resolvedHeight))
     .replace(/\{f\}/g, "jpg");
 }
 
@@ -199,7 +205,10 @@ export function mapAppleTrack(resource: AppleResource): ProviderTrack {
     releaseDate: attrs.releaseDate || null,
     copyright: attrs.copyright || null,
     // Music-video rows in album tracklists need artwork for sidecar thumbnails.
-    cover: renderAppleArtwork(attrs.artwork, resource.type === "music-videos" ? 1080 : 1200),
+    // Use landscape dimensions — square 1080x1080mv crops title text on posters.
+    cover: resource.type === "music-videos"
+      ? renderAppleArtwork(attrs.artwork, 1920, 1080)
+      : renderAppleArtwork(attrs.artwork, 1200),
     quality: bestAppleAudioQuality(traits),
     qualityTags: traits,
     // Apple bundles music videos into album tracklists (type "music-videos"
@@ -234,7 +243,7 @@ export function mapAppleVideo(resource: AppleResource): ProviderVideo {
     artist,
     duration: attrs.durationInMillis != null ? Math.round(attrs.durationInMillis / 1000) : null,
     releaseDate: attrs.releaseDate || null,
-    cover: renderAppleArtwork(attrs.artwork, 1080),
+    cover: renderAppleArtwork(attrs.artwork, 1920, 1080),
     explicit: attrs.contentRating ? attrs.contentRating === "explicit" : null,
     url: attrs.url,
     isrc: attrs.isrc || null,

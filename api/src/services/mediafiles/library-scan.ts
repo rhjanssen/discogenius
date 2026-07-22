@@ -281,7 +281,7 @@ export class DiskScanService {
                     });
                 },
                 {
-                    monitorArtist: options.monitorNewArtists ?? true,
+                    monitorArtist: options.monitorNewArtists ?? getConfigSection("monitoring").monitor_new_artists,
                     fullProcessing: options.fullProcessing ?? false,
                     trigger: options.trigger ?? CommandTrigger.Manual,
                 },
@@ -1025,7 +1025,7 @@ export class DiskScanService {
         onProgress?: (event: DiscoveryProgress) => void,
         options?: { monitorArtist?: boolean; fullProcessing?: boolean; trigger?: number },
     ): Promise<DiscoveryResult> {
-        const shouldMonitor = options?.monitorArtist ?? true;
+        const shouldMonitor = options?.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists;
         const trigger = options?.trigger ?? CommandTrigger.Manual;
         const result: DiscoveryResult = {
             knownFolders: 0,

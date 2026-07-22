@@ -23,7 +23,7 @@
 
 > [!WARNING]
 > Discogenius is **not** affiliated with Amazon Music, Apple Music, Deezer,
-> Google/YouTube, Spotify, TIDAL, MusicBrainz/MetaBrainz, or Lidarr. Provider
+> Google/YouTube, SoundCloud, Spotify, TIDAL, MusicBrainz/MetaBrainz, or Lidarr. Provider
 > tools and credentials are yours to use lawfully — **do not** use Discogenius
 > to distribute or pirate music.
 
@@ -109,6 +109,7 @@ artwork/previews, and allowed supplements — not a parallel catalog.
 | **Apple Music** | Connect in Auth | Media-user token | Downloader + optional decrypt wrapper — AAC/ALAC / Atmos / video |
 | **YouTube Music** | Connect in Auth | Public `ytmusicapi` (+ optional cookies) | `yt-dlp` — lossy audio / video |
 | **Deezer** | Connect in Auth | Public Deezer API | Streamrip (+ `arl`) — MP3 / FLAC |
+| **SoundCloud** | Connect in Auth (experimental) | Unofficial `api-v2` + oauth token | Native progressive MP3 / `yt-dlp` fallback — lossy |
 | **Amazon Music** | Soon | Unofficial API (in-tree) | Re-enable when token host is reliable |
 | **Spotify** | Soon | Official Web API (in-tree) | Re-enable when connect UX is simpler |
 

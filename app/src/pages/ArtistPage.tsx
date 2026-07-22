@@ -71,7 +71,6 @@ import { StatusFilters, defaultStatusFilters } from "@/utils/statusFilters";
 import { DynamicBrandProvider } from "@/providers/DynamicBrandProvider";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
-import { DownloadOverlay } from "@/components/ui/DownloadOverlay";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
@@ -87,6 +86,7 @@ import { DataGrid, useDataGridCellStyles } from "@/components/DataGrid";
 import type { DataGridColumn } from "@/components/DataGrid";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { QualityBadge } from "@/components/ui/QualityBadge";
+import { AppTooltip } from "@/components/ui/AppTooltip";
 import { albumSelectedQualityOffers } from "@/utils/albumSelectedQualityOffers";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import {
@@ -489,6 +489,8 @@ const ArtistPage = () => {
   const [deleteFilesOpen, setDeleteFilesOpen] = useState(false);
   const [deleteFilesUnmonitor, setDeleteFilesUnmonitor] = useState(false);
   const [deleteFilesApplying, setDeleteFilesApplying] = useState(false);
+  const [stripTagsOpen, setStripTagsOpen] = useState(false);
+  const [stripTagsApplying, setStripTagsApplying] = useState(false);
   const [deleteArtistOpen, setDeleteArtistOpen] = useState(false);
   const [deleteArtistAlsoFiles, setDeleteArtistAlsoFiles] = useState(false);
   const [deleteArtistApplying, setDeleteArtistApplying] = useState(false);
@@ -1160,62 +1162,35 @@ const ArtistPage = () => {
 
     if (libraryFilter === 'video' || libraryFilter === 'all') {
       return (
-        <Card
-          key={providerId}
-          className={cardStyles.card}
+        <MediaCard
+          key={`${artistId}-${providerId}`}
+          imageUrl={imageUrl}
+          alt={title}
+          title={title}
+          subtitle={subtitle}
+          explicit={item.explicit}
+          monitored={isVideoMonitored}
+          monitoringLocked={isLocked}
+          videoAspect
           onClick={() => navigate(`/video/${providerId}`)}
-        >
-          <div className={cardStyles.videoPreview}>
-            {imageUrl ? (
-              <img src={imageUrl} alt={title} className={cardStyles.cardImage} loading="lazy" />
-            ) : (
-              <div className={cardStyles.placeholderBg}>
-                <Play24 className={styles.playIcon} />
-              </div>
-            )}
-            {isLocked && (
-              <Badge
-                appearance="filled"
-                color="informative"
-                className={styles.lockedBadge}
-                icon={<LockClosed24 />}
-              >
-                Locked
-              </Badge>
-            )}
-            <button
-              type="button"
-              className={cardStyles.monitorIndicator}
-              onClick={(e) => toggleVideoMonitored(e, providerId, !isVideoMonitored)}
-              disabled={isLocked}
-              title={isLocked ? 'Monitoring is locked' : (isVideoMonitored ? 'Unmonitor' : 'Monitor')}
-              style={{ cursor: isLocked ? 'not-allowed' : 'pointer', opacity: isLocked ? 0.5 : 1 }}
-            >
-              {isVideoMonitored ? (
-                <EyeOff24 className={cardStyles.monitorIcon} />
-              ) : (
-                <Eye24 className={cardStyles.monitorIcon} />
-              )}
-            </button>
-            {(() => {
-              const progress = getProgressByProviderId(String(providerId));
-              if (progress && progress.state !== 'completed') {
-                return (
-                  <DownloadOverlay
-                    status={progress.state || 'queued'}
-                    progress={progress.progress}
-                    error={progress.statusMessage}
-                  />
-                );
-              }
-              return null;
-            })()}
-          </div>
-          <div className={cardStyles.cardContent}>
-            <div className={cardStyles.cardTitle} title={title}>{title}</div>
-            <div className={cardStyles.cardSubtitle} title={subtitle}>{subtitle}</div>
-          </div>
-        </Card>
+          onMonitorToggle={isLocked ? undefined : (e) => toggleVideoMonitored(e, providerId, !isVideoMonitored)}
+          placeholder={
+            <div className={cardStyles.placeholderBg}>
+              <Play24 className={styles.playIcon} />
+            </div>
+          }
+          statusBadge={isLocked ? (
+            <Badge appearance="filled" color="informative" icon={<LockClosed24 />}>
+              Locked
+            </Badge>
+          ) : undefined}
+          downloadStatus={(() => {
+            const progress = getProgressByProviderId(String(providerId));
+            return progress && progress.state !== "completed" ? progress.state : undefined;
+          })()}
+          downloadProgress={getProgressByProviderId(String(providerId))?.progress}
+          downloadError={getProgressByProviderId(String(providerId))?.statusMessage}
+        />
       );
     }
     return null;
@@ -1559,6 +1534,7 @@ const ArtistPage = () => {
     { key: 'download-missing', label: 'Download Missing', disabled: downloadActionDisabled, onClick: startDownloads },
     { key: 'rename-files', label: renameApplying ? 'Loading rename...' : 'Preview Rename', disabled: renameApplying, onClick: openRenamePreview },
     { key: 'retag-files', label: retagApplying ? 'Loading tags...' : 'Write Tags', disabled: retagApplying, onClick: openRetagPreview },
+    { key: 'strip-tags', label: stripTagsApplying ? 'Queueing…' : 'Strip Tags…', disabled: stripTagsApplying, onClick: () => setStripTagsOpen(true) },
     { key: 'delete-files', label: 'Delete files…', disabled: deleteFilesApplying || deleteArtistApplying, onClick: () => setDeleteFilesOpen(true) },
     { key: 'delete-artist', label: 'Delete artist…', disabled: deleteFilesApplying || deleteArtistApplying, onClick: () => setDeleteArtistOpen(true) },
   ];
@@ -1585,6 +1561,28 @@ const ArtistPage = () => {
       });
     } finally {
       setDeleteFilesApplying(false);
+    }
+  };
+
+  const handleStripArtistTags = async () => {
+    if (!artistId) return;
+    setStripTagsApplying(true);
+    try {
+      const result: any = await api.stripTags({ applyAll: true, artistId });
+      toast({
+        title: "Strip tags queued",
+        description: result?.message || "Queued removing embedded tags from artist files.",
+      });
+      setStripTagsOpen(false);
+      dispatchActivityRefresh();
+    } catch (error) {
+      toast({
+        title: "Failed to queue strip tags",
+        description: error instanceof Error ? error.message : "Could not queue strip tags.",
+        variant: "destructive",
+      });
+    } finally {
+      setStripTagsApplying(false);
     }
   };
 
@@ -1680,6 +1678,31 @@ const ArtistPage = () => {
           </DialogSurface>
         </Dialog>
         <Dialog
+          open={stripTagsOpen}
+          onOpenChange={(_, data) => {
+            if (!data.open && !stripTagsApplying) setStripTagsOpen(false);
+          }}
+        >
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>Strip tags</DialogTitle>
+              <DialogContent>
+                Remove embedded metadata tags from imported audio files for{" "}
+                <strong>{artistName || "this artist"}</strong>. Files stay on disk; catalog data is unchanged.
+                Use Write Tags afterward if you want Discogenius metadata rewritten.
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" disabled={stripTagsApplying} onClick={() => setStripTagsOpen(false)}>
+                  Cancel
+                </Button>
+                <Button appearance="primary" disabled={stripTagsApplying} onClick={() => void handleStripArtistTags()}>
+                  {stripTagsApplying ? "Queueing…" : "Strip tags"}
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+        <Dialog
           open={deleteArtistOpen}
           onOpenChange={(_, data) => {
             if (!data.open && !deleteArtistApplying) {
@@ -1766,89 +1789,101 @@ const ArtistPage = () => {
               <Overflow minimumVisible={3}>
                 <div className={styles.actions}>
                   <OverflowItem id="monitor" priority={4}>
-                    <Button
-                      appearance={isMonitored ? "subtle" : "primary"}
-                      icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
-                      onClick={toggleMonitoring}
-                      title={isMonitored ? "Click to stop monitoring" : "Click to enable monitoring"}
-                      className={mergeClasses(
-                        styles.actionButton,
-                        isMonitored ? styles.transparentButton : styles.primaryButton
-                      )}
+                    <AppTooltip
+                      content={isMonitored ? "Click to stop monitoring" : "Click to enable monitoring"}
+                      relationship="label"
                     >
-                      {isMonitored ? "Unmonitor" : "Monitor"}
-                    </Button>
+                      <Button
+                        appearance={isMonitored ? "subtle" : "primary"}
+                        icon={isMonitored ? <EyeOff24 /> : <Eye24 />}
+                        onClick={toggleMonitoring}
+                        className={mergeClasses(
+                          styles.actionButton,
+                          isMonitored ? styles.transparentButton : styles.primaryButton
+                        )}
+                      >
+                        {isMonitored ? "Unmonitor" : "Monitor"}
+                      </Button>
+                    </AppTooltip>
                   </OverflowItem>
 
                   <OverflowItem id="refresh-scan" priority={3}>
-                    <Button
-                      appearance={!hasBeenScanned ? "primary" : "subtle"}
-                      icon={isScanBusy ? <Spinner size="tiny" /> : <ArrowSync24 />}
-                      onClick={syncArtist}
-                      disabled={isScanBusy}
-                      className={mergeClasses(
-                        styles.actionButton,
-                        !hasBeenScanned ? styles.primaryButton : styles.transparentButton
-                      )}
-                      title={isScanBusy ? 'Scanning...' : scanActionTitle}
-                    >
-                      {isScanBusy ? "Scanning..." : "Refresh & Scan"}
-                    </Button>
+                    <AppTooltip content={isScanBusy ? "Scanning..." : scanActionTitle} relationship="label">
+                      <Button
+                        appearance={!hasBeenScanned ? "primary" : "subtle"}
+                        icon={isScanBusy ? <Spinner size="tiny" /> : <ArrowSync24 />}
+                        onClick={syncArtist}
+                        disabled={isScanBusy}
+                        className={mergeClasses(
+                          styles.actionButton,
+                          !hasBeenScanned ? styles.primaryButton : styles.transparentButton
+                        )}
+                      >
+                        {isScanBusy ? "Scanning..." : "Refresh & Scan"}
+                      </Button>
+                    </AppTooltip>
                   </OverflowItem>
 
                   <OverflowItem id="curate" priority={2}>
-                    <Button
-                      appearance={(hasAlbums && !hasMonitoredAlbums) ? "primary" : "subtle"}
-                      icon={isCurateBusy ? <Spinner size="tiny" /> : <ArrowSortDownLines24 />}
-                      onClick={curateArtist}
-                      disabled={isCurateBusy || isScanBusy || !hasAlbums}
-                      className={mergeClasses(
-                        styles.actionButton,
-                        (hasAlbums && !hasMonitoredAlbums) ? styles.primaryButton : styles.transparentButton
-                      )}
-                      title={!hasAlbums ? "Refresh & Scan first" : (isScanBusy ? "Wait for scan to finish" : "Curate")}
+                    <AppTooltip
+                      content={!hasAlbums ? "Refresh & Scan first" : (isScanBusy ? "Wait for scan to finish" : "Curate")}
+                      relationship="label"
                     >
-                      {isCurateBusy ? "Running..." : "Curate"}
-                    </Button>
+                      <Button
+                        appearance={(hasAlbums && !hasMonitoredAlbums) ? "primary" : "subtle"}
+                        icon={isCurateBusy ? <Spinner size="tiny" /> : <ArrowSortDownLines24 />}
+                        onClick={curateArtist}
+                        disabled={isCurateBusy || isScanBusy || !hasAlbums}
+                        className={mergeClasses(
+                          styles.actionButton,
+                          (hasAlbums && !hasMonitoredAlbums) ? styles.primaryButton : styles.transparentButton
+                        )}
+                      >
+                        {isCurateBusy ? "Running..." : "Curate"}
+                      </Button>
+                    </AppTooltip>
                   </OverflowItem>
 
                   <OverflowItem id="download-missing" priority={1}>
-                    <Button
-                      appearance="subtle"
-                      icon={<ArrowDownload24 />}
-                      onClick={startDownloads}
-                      disabled={downloadActionDisabled}
-                      title={downloadActionTitle}
-                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                    >
-                      Download Missing
-                    </Button>
+                    <AppTooltip content={downloadActionTitle} relationship="label">
+                      <Button
+                        appearance="subtle"
+                        icon={<ArrowDownload24 />}
+                        onClick={startDownloads}
+                        disabled={downloadActionDisabled}
+                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                      >
+                        Download Missing
+                      </Button>
+                    </AppTooltip>
                   </OverflowItem>
 
                   <OverflowItem id="rename-files" priority={0}>
-                    <Button
-                      appearance="subtle"
-                      icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24 />}
-                      onClick={openRenamePreview}
-                      disabled={renameApplying}
-                      title="Preview artist file renames"
-                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                    >
-                      Rename
-                    </Button>
+                    <AppTooltip content="Preview artist file renames" relationship="label">
+                      <Button
+                        appearance="subtle"
+                        icon={renameApplying ? <Spinner size="tiny" /> : <FolderSync24 />}
+                        onClick={openRenamePreview}
+                        disabled={renameApplying}
+                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                      >
+                        Rename
+                      </Button>
+                    </AppTooltip>
                   </OverflowItem>
 
                   <OverflowItem id="retag-files" priority={0}>
-                    <Button
-                      appearance="subtle"
-                      icon={retagApplying ? <Spinner size="tiny" /> : <Tag24 />}
-                      onClick={openRetagPreview}
-                      disabled={retagApplying}
-                      title="Preview artist metadata tag changes"
-                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                    >
-                      Tags
-                    </Button>
+                    <AppTooltip content="Preview artist metadata tag changes" relationship="label">
+                      <Button
+                        appearance="subtle"
+                        icon={retagApplying ? <Spinner size="tiny" /> : <Tag24 />}
+                        onClick={openRetagPreview}
+                        disabled={retagApplying}
+                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                      >
+                        Tags
+                      </Button>
+                    </AppTooltip>
                   </OverflowItem>
 
                   <ActionOverflowMenu actions={artistActions} className={mergeClasses(styles.actionButton, styles.transparentButton)} />
@@ -1864,15 +1899,19 @@ const ArtistPage = () => {
                       className={mergeClasses(styles.actionButton, styles.transparentButton)}
                     />
 
-                    <Button
-                      appearance="subtle"
-                      icon={viewMode === 'grid' ? <AppsListDetail24 /> : <Grid24 />}
-                      onClick={() => setViewMode(prev => prev === 'grid' ? 'carousel' : 'grid')}
-                      title={viewMode === 'grid' ? "Switch to carousel view" : "Switch to grid view"}
-                      className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                    <AppTooltip
+                      content={viewMode === 'grid' ? "Switch to carousel view" : "Switch to grid view"}
+                      relationship="label"
                     >
-                      View
-                    </Button>
+                      <Button
+                        appearance="subtle"
+                        icon={viewMode === 'grid' ? <AppsListDetail24 /> : <Grid24 />}
+                        onClick={() => setViewMode(prev => prev === 'grid' ? 'carousel' : 'grid')}
+                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                      >
+                        View
+                      </Button>
+                    </AppTooltip>
                   </div>
                 </div>
               </Overflow>

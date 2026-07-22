@@ -93,6 +93,7 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM RecordingRelations").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
@@ -136,4 +137,73 @@ test("finalizeImportedDirectories applies queued renames through RenameTrackFile
   assert.equal(path.normalize(row.filePath), path.normalize(expectedPath));
   assert.equal(path.normalize(row.expectedPath), path.normalize(expectedPath));
   assert.equal(row.needsRename, 0);
+});
+
+test("finalizeImportedDirectories relocates linked separated videos inline after stereo audio import", async () => {
+  const config = configModule.readConfig();
+  config.path.video_folder_layout = "inline";
+  configModule.writeConfig(config);
+
+  const { libraryFileId } = seedImportedTrack();
+  // seedImportedTrack leaves RG slot unmonitored by default — enable for inline gate.
+  dbModule.db.prepare(`
+    UPDATE ReleaseGroupSlots SET monitored = 1 WHERE release_group_mbid = 'rg-one' AND slot = 'stereo'
+  `).run();
+
+  const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("rec-one") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES (?, ?, ?, 1)
+  `).run("video-rec-one", "Track One", "artist-one-mbid");
+  const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("video-rec-one") as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot
+    ) VALUES ('tidal', 'video', 'video-100', 'artist-one-mbid', 'video-rec-one', ?, 'Track One', 'video')
+  `).run(videoRecId);
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
+    VALUES (?, ?, 'provider_video_for', 0.98)
+  `).run(videoRecId, audioRecId);
+  dbModule.db.prepare(`
+    UPDATE ProviderItems SET recording_id = ? WHERE entity_type = 'track' AND provider_id = '100'
+  `).run(audioRecId);
+
+  const videoRoot = configModule.Config.getVideoPath();
+  const separatedVideoPath = path.join(videoRoot, "Artist One", "Track One.mp4");
+  fs.mkdirSync(path.dirname(separatedVideoPath), { recursive: true });
+  fs.writeFileSync(separatedVideoPath, "test-video");
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: null,
+    mediaId: "video-100",
+    filePath: separatedVideoPath,
+    libraryRoot: videoRoot,
+    fileType: "video",
+    quality: "MP4_1080P",
+    provider: "tidal",
+    providerEntityType: "video",
+    providerId: "video-100",
+    librarySlot: "video",
+    canonicalArtistMbid: "artist-one-mbid",
+    canonicalRecordingMbid: "video-rec-one",
+  });
+
+  const inlineVideoPath = path.join(
+    configModule.Config.getMusicPath(),
+    "Artist One",
+    "Album One",
+    "01 - Track One-video.mp4",
+  );
+
+  await importFinalizeModule.finalizeImportedDirectories({
+    importedFileIds: [libraryFileId],
+    dirMappings: new Map(),
+    imageFileType: "cover",
+  });
+
+  assert.equal(fs.existsSync(separatedVideoPath), false);
+  assert.equal(fs.existsSync(inlineVideoPath), true);
 });
