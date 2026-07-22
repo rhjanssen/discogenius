@@ -16,6 +16,10 @@ import {
   renderableProviderArtworkUrl,
   videoCoverLocalUrl,
 } from "../metadata/media-cover-service.js";
+import type {
+  QueueHistoryMediaKindFilter,
+  QueueHistoryOutcomeFilter,
+} from "../../utils/queue-history-query.js";
 
 type QueueJobRow = {
   id: number;
@@ -654,16 +658,61 @@ function getPendingDownloadQueuePositionsForIds(commandIds: readonly number[]): 
   return queuePositionById;
 }
 
-function buildLogicalHistoryQuery(): { whereSql: string; params: unknown[] } {
+type QueueHistoryQueryFilters = {
+  outcomes?: readonly QueueHistoryOutcomeFilter[];
+  mediaKinds?: readonly QueueHistoryMediaKindFilter[];
+};
+
+/** Outcome bucket used by history filters (matches app queueHistoryFilters). */
+function queueHistoryOutcomeBucketSql(): string {
+  return `
+    CASE
+      WHEN jq.status = 'failed' THEN 'failed'
+      WHEN jq.status = 'completed'
+        AND json_extract(jq.payload, '$.downloadState.outcome') = 'completedWithWarning'
+        THEN 'warning'
+      WHEN jq.status = 'completed' THEN 'completed'
+      ELSE 'other'
+    END
+  `;
+}
+
+/**
+ * Media-kind / library-slot bucket for history filters.
+ * Videos win over slot; unset album/track slot defaults to stereo.
+ */
+function queueHistoryMediaKindSql(): string {
+  return `
+    CASE
+      WHEN jq.name = '${CommandNames.DownloadVideo}' THEN 'video'
+      WHEN jq.name = '${CommandNames.ImportDownload}'
+        AND lower(coalesce(json_extract(jq.payload, '$.type'), '')) = 'video'
+        THEN 'video'
+      WHEN lower(coalesce(
+        json_extract(jq.payload, '$.slot'),
+        json_extract(jq.payload, '$.librarySlot'),
+        'stereo'
+      )) = 'spatial' THEN 'spatial'
+      WHEN lower(coalesce(
+        json_extract(jq.payload, '$.slot'),
+        json_extract(jq.payload, '$.librarySlot'),
+        'stereo'
+      )) = 'video' THEN 'video'
+      ELSE 'stereo'
+    END
+  `;
+}
+
+function buildLogicalHistoryQuery(
+  filters: QueueHistoryQueryFilters = {},
+): { whereSql: string; params: unknown[] } {
   const typeSql = placeholders(DOWNLOAD_OR_IMPORT_COMMAND_NAMES);
   const statusSql = placeholders(QUEUE_HISTORY_STATUSES);
   const downloadTypeSql = placeholders(DOWNLOAD_COMMAND_NAMES);
-
-  return {
-    whereSql: `
-      jq.name IN (${typeSql})
-      AND jq.status IN (${statusSql})
-      AND NOT (
+  const clauses: string[] = [
+    `jq.name IN (${typeSql})`,
+    `jq.status IN (${statusSql})`,
+    `NOT (
         jq.name IN (${downloadTypeSql})
         AND EXISTS (
           SELECT 1
@@ -671,14 +720,30 @@ function buildLogicalHistoryQuery(): { whereSql: string; params: unknown[] } {
           WHERE import_job.name = ?
             AND CAST(json_extract(import_job.payload, '$.originalJobId') AS INTEGER) = jq.id
         )
-      )
-    `,
-    params: [
-      ...DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-      ...QUEUE_HISTORY_STATUSES,
-      ...DOWNLOAD_COMMAND_NAMES,
-      CommandNames.ImportDownload,
-    ],
+      )`,
+  ];
+  const params: unknown[] = [
+    ...DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
+    ...QUEUE_HISTORY_STATUSES,
+    ...DOWNLOAD_COMMAND_NAMES,
+    CommandNames.ImportDownload,
+  ];
+
+  const outcomes = filters.outcomes ?? [];
+  if (outcomes.length > 0) {
+    clauses.push(`(${queueHistoryOutcomeBucketSql()}) IN (${placeholders(outcomes)})`);
+    params.push(...outcomes);
+  }
+
+  const mediaKinds = filters.mediaKinds ?? [];
+  if (mediaKinds.length > 0) {
+    clauses.push(`(${queueHistoryMediaKindSql()}) IN (${placeholders(mediaKinds)})`);
+    params.push(...mediaKinds);
+  }
+
+  return {
+    whereSql: clauses.join("\n      AND "),
+    params,
   };
 }
 
@@ -844,12 +909,30 @@ export class DownloadQueueQueryService {
     };
   }
 
-  static getQueueHistory(params: { limit: number; offset: number }): QueueListResponseContract {
-    return this.getSnapshot(`history:${params.limit}:${params.offset}`, () => this.buildQueueHistory(params));
+  static getQueueHistory(params: {
+    limit: number;
+    offset: number;
+    outcomes?: readonly QueueHistoryOutcomeFilter[];
+    mediaKinds?: readonly QueueHistoryMediaKindFilter[];
+  }): QueueListResponseContract {
+    const outcomesKey = (params.outcomes ?? []).slice().sort().join(",");
+    const mediaKindsKey = (params.mediaKinds ?? []).slice().sort().join(",");
+    return this.getSnapshot(
+      `history:${params.limit}:${params.offset}:${outcomesKey}:${mediaKindsKey}`,
+      () => this.buildQueueHistory(params),
+    );
   }
 
-  private static buildQueueHistory(params: { limit: number; offset: number }): QueueListResponseContract {
-    const logicalHistory = buildLogicalHistoryQuery();
+  private static buildQueueHistory(params: {
+    limit: number;
+    offset: number;
+    outcomes?: readonly QueueHistoryOutcomeFilter[];
+    mediaKinds?: readonly QueueHistoryMediaKindFilter[];
+  }): QueueListResponseContract {
+    const logicalHistory = buildLogicalHistoryQuery({
+      outcomes: params.outcomes,
+      mediaKinds: params.mediaKinds,
+    });
     const totalRow = db.prepare(`
       SELECT COUNT(*) AS count
       FROM commands jq

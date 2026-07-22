@@ -43,7 +43,11 @@ type MediaCoverProxyEntry = {
 
 const MEDIA_COVER_PROXY_TTL_MS = 24 * 60 * 60 * 1000;
 const MEDIA_COVER_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+/** Album/artist UI cache: both sizes. Videos only need a small card proxy + full origin. */
 const MEDIA_COVER_DEFAULT_HEIGHTS = [500, 250] as const;
+const MEDIA_COVER_VIDEO_HEIGHTS = [250] as const;
+/** Heights cleared on rewrite (includes legacy video-500 leftovers). */
+const MEDIA_COVER_ALL_HEIGHTS = [500, 250] as const;
 const PNG = (pngjs as unknown as { PNG: any }).PNG as any;
 const mediaCoverProxyMemoryCache = new Map<string, MediaCoverProxyEntry>();
 let lastMediaCoverCleanupAt = 0;
@@ -136,7 +140,7 @@ function cachedSourceMatches(
 function clearCachedCoverVariant(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string): void {
   const folder = mediaCoverFolder(entityId, coverEntity);
   for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-    for (const height of [null, ...MEDIA_COVER_DEFAULT_HEIGHTS]) {
+    for (const height of [null, ...MEDIA_COVER_ALL_HEIGHTS]) {
       try { fs.rmSync(path.join(folder, filenameForCover(coverType, extension, height)), { force: true }); } catch { /* absent */ }
     }
   }
@@ -250,7 +254,12 @@ function existingMediaCover(entityId: string | number | null | undefined, coverE
     return null;
   }
 
-  const heights: Array<number | null> = coverEntity === "Video" ? [null, 500, 250] : [500, 250];
+  // Videos: prefer full-res origin, then the small card proxy. Album/artist: proxies only.
+  // Public URL identity is always bare `{coverType}.jpg` (Lidarr-style). Height is a
+  // request-layer rewrite (`cover-250.jpg`) so list and detail share one cover id.
+  const heights: Array<number | null> = coverEntity === "Video"
+    ? [null, ...MEDIA_COVER_VIDEO_HEIGHTS]
+    : [...MEDIA_COVER_DEFAULT_HEIGHTS];
   for (const height of heights) {
     for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
       const filePath = getMediaCoverPath(entityId, coverEntity, coverType, extension, height);
@@ -261,11 +270,8 @@ function existingMediaCover(entityId: string | number | null | undefined, coverE
             for (const originalExtension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
               try { fs.unlinkSync(getMediaCoverPath(entityId, coverEntity, coverType, originalExtension)); } catch { /* absent */ }
             }
-            // Keep the public URL stable. The media-cover route resolves this
-            // alias to the best derivative even though no plain file exists.
-            return { path: filePath, url: getMediaCoverUrl(entityId, coverEntity, coverType, ".jpg") };
           }
-          return { path: filePath, url: getMediaCoverUrl(entityId, coverEntity, coverType, extension, height) };
+          return { path: filePath, url: getMediaCoverUrl(entityId, coverEntity, coverType, ".jpg") };
         }
       } catch {
         // try next candidate
@@ -274,6 +280,64 @@ function existingMediaCover(entityId: string | number | null | undefined, coverE
   }
 
   return null;
+}
+
+/** Newest on-disk cover mtime for Lidarr-like `?lastWrite=` cache busting. */
+function mediaCoverRevisionMs(
+  entityId: string | number | null | undefined,
+  coverEntity: MediaCoverEntity,
+  coverType: string,
+): number | null {
+  if (entityId == null || String(entityId).trim() === "") {
+    return null;
+  }
+
+  const heights: Array<number | null> = coverEntity === "Video"
+    ? [null, ...MEDIA_COVER_VIDEO_HEIGHTS, ...MEDIA_COVER_ALL_HEIGHTS]
+    : [null, ...MEDIA_COVER_DEFAULT_HEIGHTS];
+  // Deduplicate heights while preserving order.
+  const uniqueHeights = [...new Set(heights)];
+  let latest: number | null = null;
+  for (const height of uniqueHeights) {
+    for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
+      try {
+        const stats = fs.statSync(getMediaCoverPath(entityId, coverEntity, coverType, extension, height));
+        if (stats.isFile() && stats.size > 0) {
+          latest = latest == null ? stats.mtimeMs : Math.max(latest, stats.mtimeMs);
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+  }
+  return latest == null ? null : Math.trunc(latest);
+}
+
+function appendMediaCoverQuery(url: string, key: string, value: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(value)}`;
+}
+
+/**
+ * Append `?lastWrite=<mtimeMs>` when cached bytes exist so immutable HTTP
+ * caching cannot pin list/detail to different generations of the same path.
+ */
+function withMediaCoverLastWrite(
+  url: string | null,
+  entityId: string | number | null | undefined,
+  coverEntity: MediaCoverEntity,
+  coverType: string,
+): string | null {
+  if (!url || !url.startsWith("/media-cover/") || entityId == null) {
+    return url;
+  }
+  if (/[?&]lastWrite=/.test(url)) {
+    return url;
+  }
+  const revision = mediaCoverRevisionMs(entityId, coverEntity, coverType);
+  if (revision == null) {
+    return url;
+  }
+  return appendMediaCoverQuery(url, "lastWrite", String(revision));
 }
 
 function contentTypeForExtension(extension: string): string {
@@ -340,7 +404,11 @@ type PreparedMediaCoverDerivative = {
   buffer: Buffer;
 };
 
-function prepareResizedMediaCovers(originalBuffer: Buffer, extension: string): PreparedMediaCoverDerivative[] {
+function prepareResizedMediaCovers(
+  originalBuffer: Buffer,
+  extension: string,
+  heights: readonly number[] = MEDIA_COVER_DEFAULT_HEIGHTS,
+): PreparedMediaCoverDerivative[] {
   let decoded: { width: number; height: number; data: Uint8Array } | null = null;
   try {
     decoded = decodeImage(originalBuffer, extension);
@@ -354,7 +422,7 @@ function prepareResizedMediaCovers(originalBuffer: Buffer, extension: string): P
   }
 
   const derivatives: PreparedMediaCoverDerivative[] = [];
-  for (const targetHeight of MEDIA_COVER_DEFAULT_HEIGHTS) {
+  for (const targetHeight of heights) {
     try {
       const resized = resizeRgbaNearest(decoded, targetHeight);
       const candidates = [82, 70, 60, 50].map((quality) => jpeg.encode({
@@ -448,9 +516,9 @@ export async function ensureCachedMediaCover(options: {
     const originalBuffer = Buffer.from(await response.arrayBuffer());
 
     if (options.coverEntity === "Video") {
-      // TIDAL video artwork is requested at 1080x720. Keep that source for the
-      // large video surface while the route serves 500/250 derivatives to grids.
-      const derivatives = prepareResizedMediaCovers(originalBuffer, extension);
+      // Full-aspect origin for detail/embed; a single 250px proxy for cards/lists.
+      // Video thumbs are typically ~720p already, so a 500px derivative is wasteful.
+      const derivatives = prepareResizedMediaCovers(originalBuffer, extension, MEDIA_COVER_VIDEO_HEIGHTS);
       clearCachedCoverVariant(options.entityId, options.coverEntity, options.coverType);
       const filePath = getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, extension);
       fs.writeFileSync(filePath, originalBuffer);
@@ -833,12 +901,25 @@ export function configuredArtworkPreference(): "canonical" | "provider" {
   }
 }
 
-function withArtworkPreferenceRevision(url: string | null): string | null {
+function withArtworkPreferenceRevision(
+  url: string | null,
+  options?: {
+    entityId?: string | number | null;
+    coverEntity?: MediaCoverEntity;
+    coverType?: string;
+  },
+): string | null {
   if (!url || !url.startsWith("/media-cover/")) {
     return url;
   }
   const preference = configuredArtworkPreference();
-  return `${url}${url.includes("?") ? "&" : "?"}source=${preference}`;
+  const withSource = /[?&]source=/.test(url)
+    ? url
+    : appendMediaCoverQuery(url, "source", preference);
+  if (!options?.entityId || !options.coverEntity || !options.coverType) {
+    return withSource;
+  }
+  return withMediaCoverLastWrite(withSource, options.entityId, options.coverEntity, options.coverType);
 }
 
 export function mapAlbumArtworkToLocalUrl(options: {
@@ -870,6 +951,7 @@ export function mapAlbumArtworkToLocalUrl(options: {
     selected
       || existingAlbumMediaCoverUrl(options.albumMbid)
       || (options.albumMbid ? getMediaCoverUrl(options.albumMbid, "Album", "Cover", ".jpg") : null),
+    { entityId: options.albumMbid, coverEntity: "Album", coverType: "Cover" },
   );
 }
 
@@ -903,7 +985,14 @@ export function mapArtistArtworkToLocalUrl(options: {
   const selected = configuredArtworkPreference() === "provider"
     ? providerUrl || canonicalUrl
     : canonicalUrl || providerUrl;
-  return withArtworkPreferenceRevision(selected || existingArtistMediaCoverUrl(options.artistMbid, types));
+  return withArtworkPreferenceRevision(
+    selected || existingArtistMediaCoverUrl(options.artistMbid, types),
+    {
+      entityId: options.artistMbid,
+      coverEntity: "Artist",
+      coverType: types[0] || "Poster",
+    },
+  );
 }
 
 /**
@@ -989,6 +1078,31 @@ function normalizeAppleMusicVideoArtworkUrl(url: string): string {
   );
 }
 
+/** TIDAL CDN 3:2 video still sizes — requesting these crops the native frame. */
+const TIDAL_VIDEO_CROP_SIZES = new Set([
+  "160x107",
+  "480x320",
+  "750x500",
+  "1080x720",
+]);
+
+/**
+ * TIDAL video stills requested at 3:2 (e.g. 1080x720) are center-cropped from
+ * the native landscape upload. Prefer `/origin.jpg` so UI/library thumbs keep
+ * the full frame (often 16:9).
+ */
+function normalizeTidalVideoArtworkUrl(url: string): string {
+  return url.replace(
+    /^(https?:\/\/resources\.tidal\.com\/images\/(?:[0-9a-f]{2,}\/){4}[0-9a-f]+)\/([^/?#]+)\.(jpe?g|png|webp)(?:\?.*)?$/i,
+    (_full, base, size, ext) => {
+      if (TIDAL_VIDEO_CROP_SIZES.has(String(size).toLowerCase())) {
+        return `${base}/origin.${ext}`;
+      }
+      return `${base}/${size}.${ext}`;
+    },
+  );
+}
+
 /** True when `url` is a known upgrade over cropped provider thumbs (triggers cache refresh). */
 function isUpgradedProviderThumbnailUrl(url: string): boolean {
   if (/^https?:\/\/i\.ytimg\.com\/vi\/[^/?#]+\/(hq720|maxresdefault)\.jpg$/i.test(url)) {
@@ -999,6 +1113,9 @@ function isUpgradedProviderThumbnailUrl(url: string): boolean {
     const w = Number(apple[1]);
     const h = Number(apple[2]);
     return Number.isFinite(w) && Number.isFinite(h) && w > h;
+  }
+  if (/^https?:\/\/resources\.tidal\.com\/images\/.+\/origin\.(?:jpe?g|png|webp)$/i.test(url)) {
+    return true;
   }
   return false;
 }
@@ -1014,6 +1131,9 @@ export function normalizeArtworkUrl(value: unknown): string | null {
     }
     if (/mzstatic\.com\/image\/thumb\//i.test(url) && /mv\.(?:jpg|jpeg|png|webp)/i.test(url)) {
       return normalizeAppleMusicVideoArtworkUrl(url);
+    }
+    if (/resources\.tidal\.com\/images\//i.test(url)) {
+      return normalizeTidalVideoArtworkUrl(url);
     }
     return url;
   }
@@ -1224,8 +1344,15 @@ export function videoCoverLocalUrl(videoId: string | number | null | undefined):
 
   // Always emit the local URL for UI. Bytes are filled lazily by
   // /media-cover (resolveVideoArtwork) — never expose raw provider asset UUIDs.
-  return existingVideoMediaCoverUrl(normalizedVideoId)
-    || getMediaCoverUrl(normalizedVideoId, "Video", "Cover", ".jpg");
+  // Identity is entity + cover type; `lastWrite` busts immutable browser cache
+  // when origin + card proxies are rewritten together.
+  return withMediaCoverLastWrite(
+    existingVideoMediaCoverUrl(normalizedVideoId)
+      || getMediaCoverUrl(normalizedVideoId, "Video", "Cover", ".jpg"),
+    normalizedVideoId,
+    "Video",
+    "Cover",
+  );
 }
 
 /**
@@ -1654,10 +1781,7 @@ export async function resolveVideoArtwork(options: {
   size?: string | number | null;
 }): Promise<string | null> {
   const normalizedVideoId = textOrNull(options.videoId);
-  const localCoverUrl = existingVideoMediaCoverUrl(normalizedVideoId);
-  if (localCoverUrl) {
-    return localCoverUrl;
-  }
+  const revise = (url: string | null) => withMediaCoverLastWrite(url, normalizedVideoId, "Video", "Cover");
 
   let storedSource: string | null = null;
   let providerCandidates = options.providerCandidates || [];
@@ -1701,6 +1825,9 @@ export async function resolveVideoArtwork(options: {
     }
   }
 
+  // Do not early-return on existing files: ensureCachedMediaCover refreshes when
+  // the source marker mismatches or the URL is a known upgrade (uncropped YT /
+  // Apple landscape / TIDAL origin). Origin + card proxies rewrite together.
   if (storedSource) {
     const cached = await ensureCachedMediaCover({
       entityId: normalizedVideoId,
@@ -1708,17 +1835,15 @@ export async function resolveVideoArtwork(options: {
       coverType: "Cover",
       sourceUrl: storedSource,
     });
-    if (cached) return cached;
+    if (cached) return revise(cached);
   }
 
   const providerUrl = await resolveProviderArtworkUrl(
     providerCandidates,
     "video",
-    // Video thumbnails top out at 720p, and the video page shows one large in
-    // the player, so — unlike album/artist art — keep the full-resolution image
-    // as the primary cover. writeResizedMediaCovers still derives the 500/250
-    // proxies from it for the grid cards.
-    options.size ?? "1080x720",
+    // Prefer origin so we keep the provider's native aspect (no 3:2 crop).
+    // ensureCachedMediaCover still derives the 250px card proxy.
+    options.size ?? "origin",
   );
   if (providerUrl) {
     const cached = await ensureCachedMediaCover({
@@ -1727,10 +1852,10 @@ export async function resolveVideoArtwork(options: {
       coverType: "Cover",
       sourceUrl: providerUrl,
     });
-    if (cached) return cached;
+    if (cached) return revise(cached);
   }
 
-  return null;
+  return revise(existingVideoMediaCoverUrl(normalizedVideoId));
 }
 
 // MediaCoverService class aligned 1:1 with Lidarr naming and structure

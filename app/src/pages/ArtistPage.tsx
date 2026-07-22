@@ -57,7 +57,8 @@ import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
-import { mediaCoverSrc } from "@/utils/artwork";
+import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
+import { readArtistViewMode, writeArtistViewMode, type ArtistViewMode } from "@/utils/artistViewMode";
 import { WarningBadge } from "@/components/ui/WarningBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { DetailPageSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -302,10 +303,14 @@ const useStyles = makeStyles({
   },
   actionButton: {
     ...compactDetailActionButtonStyles,
+    // Content-based basis so Fluent Overflow measures real widths; grow fills
+    // leftover space after lower-priority actions collapse into More.
+    flex: "1 0 auto",
     minWidth: "76px",
     flexShrink: 0,
     "@media (min-width: 768px)": {
       ...compactDetailActionButtonStyles["@media (min-width: 768px)"],
+      flex: "0 0 auto",
       minWidth: "auto",
       flexShrink: 0,
     },
@@ -537,13 +542,10 @@ const ArtistPage = () => {
   // Combined busy states: local action flags OR server-side activity
   const isScanBusy = syncing || Boolean(activity?.scanning);
   const isCurateBusy = curating || Boolean(activity?.curating);
-  const [viewMode, setViewMode] = useState<'carousel' | 'grid' | 'list'>(() => {
-    const saved = localStorage.getItem('discogenius_artist_view_mode') as 'carousel' | 'grid' | 'list' | null;
-    return (saved === 'grid' || saved === 'carousel' || saved === 'list') ? saved : 'carousel';
-  });
+  const [viewMode, setViewMode] = useState<ArtistViewMode>(() => readArtistViewMode());
 
   useEffect(() => {
-    localStorage.setItem('discogenius_artist_view_mode', viewMode);
+    writeArtistViewMode(viewMode);
   }, [viewMode]);
 
   useEffect(() => {
@@ -1129,7 +1131,7 @@ const ArtistPage = () => {
     const isVideoMonitored = Boolean(item.is_monitored);
     const isLocked = Boolean(item.monitored_lock);
     const isDownloaded = Boolean(item.is_downloaded ?? item.downloaded);
-    const imageUrl = mediaCoverSrc(item);
+    const imageUrl = mediaCoverProxySrc(item);
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = [artistName, year || ''].filter(Boolean).join(' · ');
 

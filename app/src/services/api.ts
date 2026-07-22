@@ -1231,10 +1231,22 @@ class ApiClient {
     return this.request('/v1/queue/status', {}, parseQueueStatusContract);
   }
 
-  async getQueueHistory(params?: { limit?: number; offset?: number; timeoutMs?: number | null }): Promise<QueueListResponseContract> {
+  async getQueueHistory(params?: {
+    limit?: number;
+    offset?: number;
+    outcomes?: string[];
+    mediaKinds?: string[];
+    timeoutMs?: number | null;
+  }): Promise<QueueListResponseContract> {
     const queryParams = new URLSearchParams();
     if (params?.limit !== undefined) queryParams.set('limit', params.limit.toString());
     if (params?.offset !== undefined) queryParams.set('offset', params.offset.toString());
+    if (params?.outcomes && params.outcomes.length > 0) {
+      queryParams.set('outcome', params.outcomes.join(','));
+    }
+    if (params?.mediaKinds && params.mediaKinds.length > 0) {
+      queryParams.set('slot', params.mediaKinds.join(','));
+    }
     const query = queryParams.toString();
     return this.request(`/v1/queue/history${query ? `?${query}` : ''}`, { timeoutMs: params?.timeoutMs ?? null }, parseQueueListResponseContract);
   }

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { CONFIG_DIR, Config } from "../../config/config.js";
+import { configuredVideoMaxHeight } from "../provider-quality.js";
 
 /**
  * Apple Music auth (tiddl-style credential handoff).
@@ -167,16 +168,11 @@ function yamlString(value: string): string {
 
 /** App video-quality setting → downloader mv-max height (Apple MVs go up to 4K). */
 export function resolveAppleVideoMaxHeight(): number {
-  let configured = "fhd";
+  let configured = "uhd";
   try {
     configured = String(Config.getQualityConfig()?.video_quality || "uhd").toLowerCase();
   } catch { /* config unavailable during early bootstrap — keep the default */ }
-  switch (configured) {
-    case "sd": return 480;
-    case "hd": return 720;
-    case "uhd": return 2160;
-    default: return 1080;
-  }
+  return configuredVideoMaxHeight(configured);
 }
 
 /**

@@ -182,8 +182,8 @@ test("canonical MusicBrainz video matching keeps official, lyric, and live asset
     provider_id: "apple-pompeii-performance",
     title: "Pompeii (Good Morning America Performance)",
     artist_name: "Bastille",
-    // Equal duration must not override an explicit performance variant.
-    duration: 232,
+    // Off by 4s from the MB cut — stays its own recording.
+    duration: 228,
   }]);
 
   const offers = dbModule.db.prepare(`
@@ -202,6 +202,154 @@ test("canonical MusicBrainz video matching keeps official, lyric, and live asset
 
   const recordings = dbModule.db.prepare("SELECT id FROM Recordings WHERE is_video = 1").all();
   assert.equal(recordings.length, 3);
+});
+
+test("named venue live attaches to unlabeled MusicBrainz video at exact duration", () => {
+  // Me & Mr. Jones / Back to Black shape: TIDAL unlabeled on MB, Apple
+  // "Live at Other Voices" at the same second — same upload, different titles.
+  for (const sample of [{
+    mbid: "mb-video-mej",
+    title: "Me & Mr. Jones",
+    liveTitle: "Me & Mr. Jones (Live at Other Voices, 2006)",
+    tidalId: "tidal-mej",
+    appleId: "apple-mej-live",
+    duration: 203,
+    date: "2024-09-02",
+  }, {
+    mbid: "mb-video-btb",
+    title: "Back to Black",
+    liveTitle: "Back To Black (Live at Other Voices, 2006)",
+    tidalId: "tidal-btb",
+    appleId: "apple-btb-live",
+    duration: 253,
+    date: "2024-08-05",
+  }]) {
+    dbModule.db.prepare("DELETE FROM RecordingRelations").run();
+    dbModule.db.prepare("DELETE FROM TrackFiles").run();
+    dbModule.db.prepare("DELETE FROM ProviderItems").run();
+    dbModule.db.prepare("DELETE FROM Recordings").run();
+
+    const canonical = dbModule.db.prepare(`
+      INSERT INTO Recordings (
+        foreign_recording_id, mbid, artist_mbid, title, length_ms, video_variant,
+        is_video, metadata_status, monitored, release_date
+      ) VALUES (
+        ?, ?, 'artist-mbid', ?, ?, 'video',
+        1, 'musicbrainz', 1, ?
+      )
+      RETURNING id
+    `).get(sample.mbid, sample.mbid, sample.title, sample.duration * 1000, sample.date) as { id: number };
+
+    dbModule.db.prepare(`
+      INSERT INTO ProviderItems (
+        provider, entity_type, provider_id, artist_mbid, title, duration, release_date, recording_id
+      ) VALUES ('tidal', 'video', ?, 'artist-mbid', ?, ?, ?, ?)
+    `).run(sample.tidalId, sample.title, sample.duration, sample.date, canonical.id);
+
+    refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+      provider: "apple-music",
+      provider_id: sample.appleId,
+      title: sample.liveTitle,
+      artist_name: "Bastille",
+      artist_mbid: "artist-mbid",
+      duration: sample.duration,
+      release_date: sample.date,
+    }]);
+
+    const offers = dbModule.db.prepare(`
+      SELECT provider, provider_id AS providerId, recording_id AS recordingId, title
+      FROM ProviderItems
+      WHERE entity_type = 'video' ORDER BY provider
+    `).all() as Array<{ provider: string; providerId: string; recordingId: number; title: string }>;
+    const videos = dbModule.db.prepare(`
+      SELECT id, title, mbid, video_variant, length_ms FROM Recordings WHERE is_video = 1 ORDER BY id
+    `).all();
+    assert.equal(
+      offers.length,
+      2,
+      `${sample.title}: offers=${JSON.stringify(offers)} videos=${JSON.stringify(videos)}`,
+    );
+    assert.equal(
+      offers[0].recordingId,
+      offers[1].recordingId,
+      `${sample.title}: offers=${JSON.stringify(offers)} videos=${JSON.stringify(videos)}`,
+    );
+    assert.equal(offers[0].recordingId, canonical.id, sample.title);
+
+    assert.equal(videos.length, 1, `${sample.title}: ${JSON.stringify(videos)}`);
+  }
+});
+
+test("refresh promotes legacy provider-only venue live onto MusicBrainz twin", () => {
+  const canonical = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, video_variant,
+      is_video, metadata_status, monitored, release_date
+    ) VALUES (
+      'mb-video-mej', 'mb-video-mej', 'artist-mbid', 'Me & Mr. Jones', 203000, 'video',
+      1, 'musicbrainz', 1, '2024-09-02'
+    )
+    RETURNING id
+  `).get() as { id: number };
+  const legacyLive = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      artist_mbid, title, length_ms, video_variant, is_video, metadata_status, release_date
+    ) VALUES (
+      'artist-mbid', 'Me & Mr. Jones (Live at Other Voices, 2006)', 203000, 'live',
+      1, 'provider_only', '2024-09-02'
+    )
+    RETURNING id
+  `).get() as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, title, duration, release_date, recording_id
+    ) VALUES ('tidal', 'video', 'tidal-mej', 'artist-mbid', 'Me & Mr. Jones', 203, '2024-09-02', ?)
+  `).run(canonical.id);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, title, duration, release_date, recording_id
+    ) VALUES (
+      'apple-music', 'video', 'apple-mej-live', 'artist-mbid',
+      'Me & Mr. Jones (Live at Other Voices, 2006)', 203, '2024-09-02', ?
+    )
+  `).run(legacyLive.id);
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, recording_id, provider, provider_entity_type, provider_id,
+      library_slot, file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (
+      'provider-artist-1', ?, 'apple-music', 'video', 'apple-mej-live',
+      'video', 'C:/library/mej-live.mp4', 'mej-live.mp4', 'C:/library',
+      'mej-live.mp4', '.mp4', 'video'
+    )
+  `).run(legacyLive.id);
+
+  // Any video refresh sweeps and promotes the Apple offer onto the MB twin.
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-mej",
+    title: "Me & Mr. Jones",
+    artist_name: "Bastille",
+    duration: 203,
+    release_date: "2024-09-02",
+  }]);
+
+  const apple = dbModule.db.prepare(`
+    SELECT recording_id AS recordingId FROM ProviderItems
+    WHERE provider = 'apple-music' AND provider_id = 'apple-mej-live'
+  `).get() as { recordingId: number };
+  assert.equal(apple.recordingId, canonical.id);
+
+  const file = dbModule.db.prepare(`
+    SELECT recording_id AS recordingId FROM TrackFiles WHERE provider_id = 'apple-mej-live'
+  `).get() as { recordingId: number };
+  assert.equal(file.recordingId, canonical.id);
+
+  const orphan = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE id = ?
+  `).get(legacyLive.id);
+  assert.equal(orphan, undefined);
 });
 
 test("refresh repairs legacy canonical overmerges across providers", () => {

@@ -27,6 +27,7 @@ after(() => {
 
 test("syncMusicBrainzVideosForArtist upserts relation artists before recording rows", async () => {
   dbModule.db.prepare("DELETE FROM RecordingRelations").run();
+  dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid-1", "Root Artist");
@@ -110,4 +111,69 @@ test("syncMusicBrainzVideosForArtist upserts relation artists before recording r
     2,
     "force refresh should update canonical recordings rather than duplicate them",
   );
+});
+
+test("syncMusicBrainzVideosForArtist creates youtube-music offers from free-streaming url-rels", async () => {
+  dbModule.db.prepare("DELETE FROM RecordingRelations").run();
+  dbModule.db.prepare("DELETE FROM ProviderItems").run();
+  dbModule.db.prepare("DELETE FROM Recordings").run();
+  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid-yt", "URL Artist");
+
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      "recording-count": 1,
+      "recording-offset": 0,
+      recordings: [
+        {
+          id: "video-recording-mbid-yt",
+          title: "Tears Dry on Their Own",
+          video: true,
+          length: 196000,
+          "artist-credit": [
+            { name: "URL Artist", artist: { id: "artist-mbid-yt", name: "URL Artist" } },
+          ],
+          relations: [
+            {
+              type: "free streaming",
+              url: { resource: "https://www.youtube.com/watch?v=a1xFsoRYrds", id: "url-mbid-1" },
+            },
+          ],
+        },
+      ],
+    }),
+  } as Response)) as typeof globalThis.fetch;
+
+  const synced = await videoService.syncMusicBrainzVideosForArtist("artist-mbid-yt", { force: true });
+  assert.equal(synced, 1);
+
+  const recording = dbModule.db.prepare(`
+    SELECT id FROM Recordings WHERE mbid = ?
+  `).get("video-recording-mbid-yt") as { id: number } | undefined;
+  assert.ok(recording);
+
+  const offer = dbModule.db.prepare(`
+    SELECT provider, provider_id, recording_id, recording_mbid, match_method, match_confidence, provider_url
+    FROM ProviderItems
+    WHERE entity_type = 'video' AND provider_id = ?
+  `).get("a1xFsoRYrds") as {
+    provider: string;
+    provider_id: string;
+    recording_id: number;
+    recording_mbid: string;
+    match_method: string;
+    match_confidence: number;
+    provider_url: string;
+  } | undefined;
+
+  assert.ok(offer, "MB free-streaming YouTube URL must become a video offer");
+  assert.equal(offer.provider, "youtube-music");
+  assert.equal(offer.recording_id, recording.id);
+  assert.equal(offer.recording_mbid, "video-recording-mbid-yt");
+  assert.equal(offer.match_method, "musicbrainz-recording-url");
+  assert.equal(offer.match_confidence, 0.98);
+  assert.equal(offer.provider_url, "https://www.youtube.com/watch?v=a1xFsoRYrds");
 });

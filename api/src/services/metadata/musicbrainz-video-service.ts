@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
 import { getMusicBrainzHeaders, scheduleMusicBrainzRequest } from "../mediafiles/fingerprint.js";
+import { parseProviderResourceIdentity } from "./provider-url-identity.js";
 
 type MusicBrainzRecording = {
   id?: string;
@@ -13,6 +14,7 @@ type MusicBrainzRecording = {
     "type-id"?: string;
     direction?: string;
     recording?: MusicBrainzRecording;
+    url?: { resource?: string; id?: string };
   }>;
 };
 
@@ -256,6 +258,90 @@ function upsertMusicVideoRelations(
   }
 }
 
+/**
+ * MusicBrainz often stamps the exact YouTube/TIDAL/Apple watch URL on a video
+ * recording (`free streaming` / `streaming` url-rels). Provider catalog matching
+ * only sees whatever `getArtistVideos` returns and may attach the studio OMV to
+ * a different MB recording — leaving these URL-backed performances with zero
+ * offers even when YouTube Music is connected. Pin the offer to the recording
+ * that owns the URL relation.
+ */
+function upsertMusicBrainzVideoUrlOffers(
+  video: MusicBrainzRecording,
+  recordingId: number | null,
+  artistMbid: string | null,
+): number {
+  if (recordingId == null) {
+    return 0;
+  }
+
+  const recordingMbid = nullableText(video.id);
+  const title = nullableText(video.title);
+  const durationSec = Number(video.length || 0) > 0
+    ? Math.round(Number(video.length) / 1000)
+    : null;
+  let created = 0;
+
+  const upsert = db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_mbid,
+      title, duration, availability, library_slot, recording_id, provider_url,
+      match_status, match_confidence, match_method, match_evidence, updated_at
+    ) VALUES (?, 'video', ?, ?, ?, ?, ?, 'available', 'video', ?, ?,
+      'verified', 0.98, 'musicbrainz-recording-url', ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
+      artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
+      recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
+      title = COALESCE(NULLIF(TRIM(excluded.title), ''), ProviderItems.title),
+      duration = COALESCE(excluded.duration, ProviderItems.duration),
+      availability = 'available',
+      library_slot = 'video',
+      -- MB URL ownership wins over fuzzy catalog matches: the recording that
+      -- carries the free-streaming link is the identity for this provider id.
+      recording_id = excluded.recording_id,
+      provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
+      match_status = excluded.match_status,
+      match_confidence = excluded.match_confidence,
+      match_method = excluded.match_method,
+      match_evidence = excluded.match_evidence,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+
+  for (const relation of video.relations || []) {
+    const relationType = String(relation.type || "").toLowerCase();
+    if (relationType !== "free streaming" && relationType !== "streaming") {
+      continue;
+    }
+    const resource = nullableText(relation.url?.resource);
+    if (!resource) {
+      continue;
+    }
+    const identity = parseProviderResourceIdentity(resource);
+    if (!identity || identity.type !== "video" || !identity.id) {
+      continue;
+    }
+
+    upsert.run(
+      identity.provider,
+      identity.id,
+      nullableText(artistMbid),
+      recordingMbid,
+      title,
+      durationSec,
+      recordingId,
+      resource,
+      JSON.stringify({
+        recordingMbid,
+        url: resource,
+        relationType,
+      }),
+    );
+    created += 1;
+  }
+
+  return created;
+}
+
 export async function syncMusicBrainzVideosForArtist(
   artistMbid: string,
   options: { force?: boolean } = {},
@@ -285,6 +371,7 @@ export async function syncMusicBrainzVideosForArtist(
         for (const recording of recordings.filter(isVideoRecording)) {
           const recordingId = upsertRecording(recording, { artistMbid, isVideo: true }, context);
           upsertMusicVideoRelations(recording, recordingId, context);
+          upsertMusicBrainzVideoUrlOffers(recording, recordingId, artistMbid);
           synced++;
         }
       })();
@@ -301,7 +388,9 @@ export async function syncMusicBrainzVideosForArtist(
   while (offset < total) {
     const params = new URLSearchParams({
       artist: artistMbid,
-      inc: "artist-credits+isrcs+recording-rels",
+      // url-rels carry YouTube/TIDAL free-streaming links that become ProviderItems
+      // — without them MB-only performances stay offer-less after provider matching.
+      inc: "artist-credits+isrcs+recording-rels+url-rels",
       fmt: "json",
       limit: String(MUSICBRAINZ_PAGE_SIZE),
       offset: String(offset),
@@ -318,6 +407,7 @@ export async function syncMusicBrainzVideosForArtist(
           isVideo: true,
         }, context);
         upsertMusicVideoRelations(recording, recordingId, context);
+        upsertMusicBrainzVideoUrlOffers(recording, recordingId, artistMbid);
         synced++;
       }
     })();

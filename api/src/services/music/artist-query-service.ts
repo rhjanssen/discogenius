@@ -1398,7 +1398,7 @@ export class ArtistQueryService {
                             cover: coverArtUrl,
                             cover_id: coverArtUrl,
                             cover_art_url: coverArtUrl,
-                            quality: video.quality || "MP4_1080P",
+                            quality: video.quality || null,
                             monitored_lock: Boolean(video.monitored_lock),
                             is_monitored: Boolean(video.monitored),
                             downloaded: video.is_downloaded ? 1 : 0,

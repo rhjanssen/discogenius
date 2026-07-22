@@ -23,6 +23,7 @@ import type { StreamingProvider, ProviderAlbum } from "../providers/streaming-pr
 import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate } from "./release-group-slot-service.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
+import { isUntrustedTidalCatalogVideoQuality } from "../providers/tidal/tidal-quality.js";
 import {
     resolveAlbumArtwork,
     resolveArtistArtwork,
@@ -1648,12 +1649,15 @@ export class RefreshArtistService {
             // Fill missing publish dates / duration / quality, and always try to
             // pick up album / related-track associations when the list payload
             // omitted them (TIDAL list often has duration+quality but no album).
+            // TIDAL catalog quality is often MP4_1080P even when the stream is
+            // HD/SD — re-enrich untrusted FHD tags via getVideo stream probe.
             if (provider.getVideo) {
                 const missingFacts = videos
                     .filter((video) =>
                         !String(video.release_date || "").trim()
                         || video.duration == null
                         || !String(video.quality || "").trim()
+                        || (provider.id === "tidal" && isUntrustedTidalCatalogVideoQuality(video.quality))
                         || !String(video.album_id || "").trim()
                         || !String(video.related_track_id || "").trim())
                     .slice(0, 80);
@@ -1698,13 +1702,12 @@ export class RefreshArtistService {
     }
 
     /**
-     * Warm the video-thumbnail proxies during refresh (parallel, off the request
-     * thread) so the artist page never has to fetch them on load — the same
-     * shape as resolveAlbumArtwork for album covers. Only cold-loading an artist
-     * straight from search results should ever resolve a thumbnail on the fly.
-     * resolveVideoArtwork self-resolves each video's provider candidate from the
-     * DB and stores a UI proxy (see its size default), so a video's full-res
-     * artwork is still only fetched onto disk by the library download path.
+     * Warm video thumbnails during refresh (parallel, off the request thread)
+     * so the artist page never has to fetch them on load — the same shape as
+     * resolveAlbumArtwork for album covers. Only cold-loading an artist straight
+     * from search results should ever resolve a thumbnail on the fly.
+     * resolveVideoArtwork caches full-aspect origin plus 500/250 height proxies
+     * (aspect preserved); library sidecars still fetch remote origin separately.
      */
     private static async precacheArtistVideoArtwork(artistId: string): Promise<void> {
         const artistMbid = this.getArtistMusicBrainzId(artistId);

@@ -15,7 +15,7 @@ import {
 } from "@fluentui/react-icons";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { useGridStyles } from "@/components/cards/cardStyles";
-import { mediaCoverSrc } from "@/utils/artwork";
+import { mediaCoverProxySrc } from "@/utils/artwork";
 import { CardGridSkeleton } from "@/components/ui/LoadingSkeletons";
 import { DownloadedBadge } from "@/components/ui/StatusBadges";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
@@ -149,7 +149,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
   if (loading) {
     return (
       <div className={styles.container}>
-        <CardGridSkeleton cards={6} thumbnailAspect="videoWide" className={gridStyles.grid} />
+        <CardGridSkeleton cards={6} thumbnailAspect="video" className={gridStyles.grid} />
       </div>
     );
   }
@@ -171,7 +171,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
     <div className={styles.container}>
       <div className={gridStyles.grid}>
         {videos.map((video) => {
-          const imageUrl = mediaCoverSrc(video);
+          const imageUrl = mediaCoverProxySrc(video);
           const year = video.release_date ? new Date(video.release_date).getFullYear() : null;
           const subtitle = [video.artist_name || "Unknown Artist", year || ""].filter(Boolean).join(" · ");
           // Show only the selected download offer (same as list view / tracks Available).

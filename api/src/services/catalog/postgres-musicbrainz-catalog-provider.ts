@@ -720,6 +720,19 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       [artistRow.id],
     );
 
+    // Free-streaming / streaming URL relations (YouTube watch links, etc.).
+    const urlRelations = await this.query<{ video_id: number; link_type: string; url: string }>(
+      `SELECT v.id AS video_id, lt.name AS link_type, u.url
+       FROM recording v
+       JOIN artist_credit_name acn ON acn.artist_credit = v.artist_credit AND acn.artist = $1
+       JOIN l_recording_url lru ON lru.entity0 = v.id
+       JOIN link l ON l.id = lru.link
+       JOIN link_type lt ON lt.id = l.link_type AND lt.name IN ('free streaming', 'streaming')
+       JOIN url u ON u.id = lru.entity1
+       WHERE v.video = true`,
+      [artistRow.id],
+    );
+
     // Resolve artist-credit lists for every involved artist_credit id in one pass.
     const creditIds = new Set<number>();
     videos.forEach((row) => creditIds.add(row.artist_credit));
@@ -752,6 +765,14 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           video: false,
           "artist-credit": creditsByAc.get(row.audio_credit) ?? [],
         },
+      });
+      relationsByVideo.set(row.video_id, list);
+    }
+    for (const row of urlRelations) {
+      const list = relationsByVideo.get(row.video_id) ?? [];
+      list.push({
+        type: row.link_type,
+        url: { resource: row.url },
       });
       relationsByVideo.set(row.video_id, list);
     }

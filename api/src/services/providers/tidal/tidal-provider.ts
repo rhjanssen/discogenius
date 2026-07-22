@@ -692,10 +692,14 @@ export class TidalProvider implements StreamingProvider {
   }
 
   private normalizeVideoSize(size: string | number | null | undefined): string {
-    const normalized = String(size || "1080x720");
-    if (normalized === "origin" || normalized === "1280x720") return "1080x720";
-    if (normalized === "640x360") return "480x320";
-    return normalized;
+    // Prefer origin so we keep the provider's native aspect (often 16:9).
+    // TIDAL's 3:2 CDN sizes center-crop the native frame — never request those.
+    const cropSizes = new Set(["160x107", "480x320", "750x500", "1080x720"]);
+    const normalized = String(size || "origin").trim().toLowerCase();
+    if (!normalized || cropSizes.has(normalized)) return "origin";
+    // Explicit 16:9 CDN sizes pass through; everything else is returned as-is
+    // (including "origin") so callers can ask for a specific non-crop variant.
+    return String(size || "origin").trim();
   }
 
   private providerId(...values: unknown[]): string {

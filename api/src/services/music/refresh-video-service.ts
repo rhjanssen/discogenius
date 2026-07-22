@@ -9,7 +9,6 @@ import {
     isPlaceholderVideoTitle,
     nullableText,
     preferredMergedVideoTitle,
-    resolveCompareVariant,
     videoVariantClass,
     type AudioRecordingCandidateRow,
     type AudioRecordingVideoMatch,
@@ -18,6 +17,7 @@ import { isExactVideoTwin, scoreVideoIdentityMatch, videosAreSameIdentity } from
 import {
     catalogVideoDisplayTitle,
     isMainVideoVariant,
+    normalizeVideoVariant,
     parseVideoVariant,
     preferredVideoVariant,
     VIDEO_DURATION_MATCH_MS,
@@ -361,6 +361,9 @@ function ensureProviderVideoRecording(input: {
         // them so a refresh can split legacy overmerges (e.g. Live Capitol
         // glued onto studio Oblivion at the old 10s live↔unlabeled gate).
         const existingTitle = String(existing?.title || "");
+        // Revalidate with full identity rules. Bare live↔main on an MB row
+        // still requires cross-provider (do not pass allowSameProviderBareLiveTwin);
+        // named venue/TV performance twins may stay attached at exact duration.
         const stillSame = Boolean(
             existing
             && sameProviderVideo(
@@ -369,23 +372,15 @@ function ensureProviderVideoRecording(input: {
                 existingTitle,
                 existing.length_ms,
                 offerVariant,
-                existing.video_variant,
+                coherentStoredVideoVariant(existingTitle, existing.video_variant),
                 releaseDate,
                 existing.release_date,
                 undefined,
                 undefined,
                 provider,
                 recordingVideoProvider(existing.id),
-                true,
+                !existing.mbid,
             ),
-        );
-        // MusicBrainz studio rows: never keep a live↔unlabeled glue even when
-        // sameProviderVideo would allow it among provider-only peers.
-        const existingClass = resolveCompareVariant(existingTitle, existing?.video_variant);
-        const liveOntoMb = Boolean(
-            existing?.mbid
-            && ((offerVariant === "live" && isMainVideoVariant(existingClass))
-                || (isMainVideoVariant(offerVariant) && existingClass === "live")),
         );
         const sameProviderCollision = Boolean(
             existing
@@ -406,7 +401,7 @@ function ensureProviderVideoRecording(input: {
                 releaseDateB: existing.release_date,
             }),
         );
-        if (!stillSame || liveOntoMb || sameProviderCollision) {
+        if (!stillSame || sameProviderCollision) {
             input.existingRecordingId = null;
         }
     }
@@ -488,11 +483,22 @@ function applyCatalogVideoIdentity(
     } | undefined;
     if (!existing) return;
 
+    const existingTitle = String(existing.title || "");
+    // Named venue/TV live twin onto a bare MB main title: adopt the fuller
+    // live title with the live variant. Keeping bare title + live variant
+    // breaks reverse matching (TIDAL unlabeled then fails to re-attach).
+    const incomingNamedLive = input.offerVariant === "live"
+        && /\bperformance\b|\blive\s+at\b|\blive\s+from\b/i.test(input.groupTitle);
+    const existingBareMain = isMainVideoVariant(
+        normalizeVideoVariant(existing.video_variant || parseVideoVariant(existingTitle)),
+    ) && !/\bperformance\b|\blive\s+at\b|\blive\s+from\b/i.test(existingTitle);
+    const adoptNamedLiveTitle = Boolean(existing.mbid && incomingNamedLive && existingBareMain);
+
     const mergedVariant = preferredVideoVariant(existing.video_variant, input.offerVariant);
-    const preferIncomingTitle = !input.preserveMbTitle && !existing.mbid;
+    const preferIncomingTitle = adoptNamedLiveTitle || (!input.preserveMbTitle && !existing.mbid);
     const nextTitle = preferIncomingTitle
-        ? (preferredMergedVideoTitle(String(existing.title || ""), input.groupTitle) || input.groupTitle)
-        : (String(existing.title || "").trim() || input.groupTitle);
+        ? (preferredMergedVideoTitle(existingTitle, input.groupTitle) || input.groupTitle)
+        : (existingTitle.trim() || input.groupTitle);
 
     db.prepare(`
         UPDATE Recordings
@@ -537,6 +543,21 @@ function recordingVideoProvider(recordingId: number): string | null {
         LIMIT 1
     `).get(recordingId) as { provider?: string } | undefined;
     return row?.provider ? String(row.provider) : null;
+}
+
+/**
+ * Stored video_variant=live on a bare title is an inconsistent twin-promote
+ * leftover. Matching should trust the title so unlabeled peers still attach.
+ */
+function coherentStoredVideoVariant(
+    title: string,
+    stored?: VideoVariant | string | null,
+): VideoVariant {
+    const fromTitle = parseVideoVariant(title);
+    if (stored == null || !String(stored).trim()) return fromTitle;
+    const fromStored = normalizeVideoVariant(stored);
+    if (fromStored === "live" && fromTitle !== "live") return fromTitle;
+    return fromStored;
 }
 
 /**
@@ -905,17 +926,32 @@ function findMusicBrainzVideoRecordingIdByTitle(
         return null;
     }
     const rows = db.prepare(`
-        SELECT id, title, length_ms, video_variant, release_date
-        FROM Recordings
-        WHERE is_video = 1 AND mbid IS NOT NULL AND artist_mbid = ?
+        SELECT
+          r.id,
+          r.title,
+          r.length_ms,
+          r.video_variant,
+          r.release_date,
+          (
+            SELECT pi.provider
+            FROM ProviderItems pi
+            WHERE pi.entity_type = 'video'
+              AND pi.recording_id = r.id
+            ORDER BY pi.updated_at DESC
+            LIMIT 1
+          ) AS provider
+        FROM Recordings r
+        WHERE r.is_video = 1 AND r.mbid IS NOT NULL AND r.artist_mbid = ?
     `).all(artistMbid) as Array<{
         id: number;
         title: string | null;
         length_ms: number | null;
         video_variant: string | null;
         release_date: string | null;
+        provider: string | null;
     }>;
     const wantedClass = videoVariantClass(title);
+    const incomingProvider = exclude?.provider ?? null;
     const scored = rows
         .filter((row) => {
             if (!exclude?.provider || !exclude.providerId) return true;
@@ -926,23 +962,26 @@ function findMusicBrainzVideoRecordingIdByTitle(
         })
         .map((row) => {
             const rowTitle = String(row.title || "");
-            const rowClass = resolveCompareVariant(rowTitle, row.video_variant);
-            if (rowClass !== wantedClass && !(isMainVideoVariant(rowClass) && isMainVideoVariant(wantedClass))) {
-                const lyricPair = (wantedClass === "lyric" && isMainVideoVariant(rowClass))
-                    || (isMainVideoVariant(wantedClass) && rowClass === "lyric");
-                if (!lyricPair) {
-                    return null;
-                }
-            }
+            // Let scoreVideoIdentityMatch own variant policy (lyric pairs,
+            // named venue/TV performance twins, cross-provider bare live).
+            // A rigid live↔main pre-filter here blocked Apple "Live at …"
+            // twins from attaching to an unlabeled MusicBrainz video that
+            // TIDAL already populated (Me & Mr. Jones / Other Voices).
+            //
+            // If a prior twin attach left video_variant=live on a bare MB title,
+            // trust the title for matching so reverse unlabeled offers still join.
+            const rowVariant = coherentStoredVideoVariant(rowTitle, row.video_variant);
             const match = scoreVideoIdentityMatch({
                 titleA: title,
                 titleB: rowTitle,
                 lengthMsA: lengthMs,
                 lengthMsB: row.length_ms,
                 variantA: wantedClass,
-                variantB: row.video_variant,
+                variantB: rowVariant,
                 releaseDateA: releaseDate,
                 releaseDateB: row.release_date,
+                providerA: incomingProvider,
+                providerB: row.provider,
             });
             return match.matched ? { row, match } : null;
         })
@@ -1317,7 +1356,7 @@ export class RefreshVideoService {
                 release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
                 release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
                 title = COALESCE(NULLIF(TRIM(excluded.title), ''), ProviderItems.title),
-                quality = COALESCE(excluded.quality, ProviderItems.quality),
+                quality = excluded.quality,
                 duration = COALESCE(excluded.duration, ProviderItems.duration),
                 release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
                 availability = excluded.availability,
@@ -1416,7 +1455,7 @@ export class RefreshVideoService {
                 artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
                 recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
                 title = COALESCE(NULLIF(TRIM(excluded.title), ''), ProviderItems.title),
-                quality = COALESCE(excluded.quality, ProviderItems.quality),
+                quality = excluded.quality,
                 duration = COALESCE(excluded.duration, ProviderItems.duration),
                 release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
                 availability = excluded.availability,

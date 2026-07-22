@@ -75,10 +75,11 @@ export const useCardStyles = makeStyles({
         overflow: "hidden",
     },
 
-    // Video preview area (3:2 aspect ratio)
+    // Video preview area (16:9). Thumbs use object-fit: cover so taller
+    // landscapes (e.g. 3:2) fill width and crop top/bottom.
     videoPreview: {
         position: "relative",
-        aspectRatio: "3/2",
+        aspectRatio: "16/9",
         width: "100%",
         backgroundColor: tokens.colorNeutralBackground3,
         margin: tokens.spacingVerticalNone,

@@ -1,9 +1,18 @@
 import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import {
     Button,
+    Menu,
+    MenuDivider,
+    MenuItemCheckbox,
+    MenuList,
+    MenuPopover,
+    MenuTrigger,
     mergeClasses,
     Subtitle2,
     Text,
+    tokens,
+    makeStyles,
+    type MenuProps,
 } from "@fluentui/react-components";
 import {
     CheckmarkCircle16Filled,
@@ -17,6 +26,8 @@ import {
     Clock16Filled,
     MusicNote224Filled,
     Video24Filled,
+    Filter24Regular,
+    Filter24Filled,
     bundleIcon,
 } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
@@ -24,16 +35,36 @@ import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
-import { mediaCoverSrc } from "@/utils/artwork";
+import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { ProviderMark } from "@/components/ui/ProviderMark";
+import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useDashboardStyles } from "./dashboardStyles";
 import { formatRelativeTime } from "./dashboardUtils";
 import { isInteractiveElementTarget, stopQueueControlEvent } from "./queueTabShared";
+import {
+    QUEUE_HISTORY_MEDIA_KIND_OPTIONS,
+    QUEUE_HISTORY_OUTCOME_OPTIONS,
+    countActiveQueueHistoryFilters,
+    hasActiveQueueHistoryFilters,
+    type QueueHistoryFilters,
+    type QueueHistoryMediaKindFilter,
+    type QueueHistoryOutcomeFilter,
+} from "./queueHistoryFilters";
 
 const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
 const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
 const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
 const Video24 = bundleIcon(Video24Filled, Video24Regular);
+const Filter24 = bundleIcon(Filter24Filled, Filter24Regular);
+
+const useFilterStyles = makeStyles({
+    triggerButton: {
+        ...glassButtonStyles,
+    },
+    activeTriggerButton: {
+        color: tokens.colorBrandForeground1,
+    },
+});
 
 type QueueHistoryMediaBadge = {
     kind: "album" | "track" | "video";
@@ -103,7 +134,8 @@ function mapQueueHistoryItemToRow(item: QueueItem): QueueHistoryRowModel {
     const mediaBadge = getQueueHistoryMediaBadge(item);
     const title = item.title || item.album_title || "Unknown item";
     const subtitle = item.artist || null;
-    const coverUrl = mediaCoverSrc(item);
+    const isVideo = mediaBadge?.kind === "video";
+    const coverUrl = isVideo ? mediaCoverProxySrc(item) : mediaCoverSrc(item);
     const navPath = getQueueHistoryNavPath(item);
     const timeSource = item.completed_at || item.updated_at || item.started_at || item.created_at;
 
@@ -111,7 +143,7 @@ function mapQueueHistoryItemToRow(item: QueueItem): QueueHistoryRowModel {
         title,
         subtitle,
         coverUrl,
-        isVideo: mediaBadge?.kind === "video",
+        isVideo,
         mediaBadge,
         navPath,
         quality: item.quality ?? null,
@@ -147,6 +179,82 @@ function renderHistoryStatusIndicator(
     return <Clock16 className={styles.downloadStatusPendingIcon} />;
 }
 
+function QueueHistoryFilterMenu({
+    filters,
+    onFiltersChange,
+}: {
+    filters: QueueHistoryFilters;
+    onFiltersChange: (next: QueueHistoryFilters) => void;
+}) {
+    const styles = useFilterStyles();
+    const activeCount = countActiveQueueHistoryFilters(filters);
+    const checkedValues: Record<string, string[]> = {
+        outcome: filters.outcomes,
+        mediaKind: filters.mediaKinds,
+    };
+
+    const handleCheckedValueChange: MenuProps["onCheckedValueChange"] = (_event, data) => {
+        if (data.name === "outcome") {
+            onFiltersChange({
+                ...filters,
+                outcomes: data.checkedItems as QueueHistoryOutcomeFilter[],
+            });
+            return;
+        }
+
+        if (data.name === "mediaKind") {
+            onFiltersChange({
+                ...filters,
+                mediaKinds: data.checkedItems as QueueHistoryMediaKindFilter[],
+            });
+        }
+    };
+
+    const sectionLabelStyle = {
+        fontSize: tokens.fontSizeBase200,
+        fontWeight: tokens.fontWeightSemibold,
+        color: tokens.colorNeutralForeground3,
+        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    } as const;
+
+    return (
+        <Menu checkedValues={checkedValues} onCheckedValueChange={handleCheckedValueChange}>
+            <MenuTrigger disableButtonEnhancement>
+                <Button
+                    className={mergeClasses(
+                        styles.triggerButton,
+                        activeCount > 0 ? styles.activeTriggerButton : undefined,
+                    )}
+                    appearance="subtle"
+                    icon={<Filter24 />}
+                    size="small"
+                    title="Filter history"
+                    aria-label={`Filter history${activeCount > 0 ? ` (${activeCount})` : ""}`}
+                >
+                    {activeCount > 0 ? `Filter (${activeCount})` : "Filter"}
+                </Button>
+            </MenuTrigger>
+            <MenuPopover>
+                <MenuList>
+                    <Text style={sectionLabelStyle}>OUTCOME</Text>
+                    {QUEUE_HISTORY_OUTCOME_OPTIONS.map((option) => (
+                        <MenuItemCheckbox key={option.value} name="outcome" value={option.value}>
+                            {option.label}
+                        </MenuItemCheckbox>
+                    ))}
+                    <MenuDivider />
+                    <Text style={sectionLabelStyle}>LIBRARY</Text>
+                    {QUEUE_HISTORY_MEDIA_KIND_OPTIONS.map((option) => (
+                        <MenuItemCheckbox key={option.value} name="mediaKind" value={option.value}>
+                            {option.label}
+                        </MenuItemCheckbox>
+                    ))}
+                </MenuList>
+            </MenuPopover>
+        </Menu>
+    );
+}
+
 export type QueueHistoryPanelProps = {
     items: QueueItem[];
     hasMore: boolean;
@@ -156,6 +264,8 @@ export type QueueHistoryPanelProps = {
     refreshErrorMessage?: string | null;
     onRetryFeeds: () => void | Promise<void>;
     onRetryItem: (id: number) => void;
+    filters: QueueHistoryFilters;
+    onFiltersChange: (next: QueueHistoryFilters) => void;
 };
 
 export function QueueHistoryPanel({
@@ -167,11 +277,14 @@ export function QueueHistoryPanel({
     refreshErrorMessage,
     onRetryFeeds,
     onRetryItem,
+    filters,
+    onFiltersChange,
 }: QueueHistoryPanelProps) {
     const styles = useDashboardStyles();
     const navigate = useNavigate();
     const historySentinelRef = useRef<HTMLDivElement | null>(null);
     const hasHistoryRows = items.length > 0;
+    const filtersActive = hasActiveQueueHistoryFilters(filters);
 
     useEffect(() => {
         if (!hasHistoryRows || !hasMore) {
@@ -196,14 +309,21 @@ export function QueueHistoryPanel({
         return () => observer.disconnect();
     }, [hasHistoryRows, hasMore, isLoadingMore, onLoadMore, items.length]);
 
+    const sectionHeader = (
+        <div className={styles.queueSectionHeader}>
+            <div className={styles.queueSectionHeading}>
+                <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
+            </div>
+            <div className={styles.queueSectionActions}>
+                <QueueHistoryFilterMenu filters={filters} onFiltersChange={onFiltersChange} />
+            </div>
+        </div>
+    );
+
     if (hasHistoryRows) {
         return (
             <section className={styles.queueSection} aria-label="Queue history">
-                <div className={styles.queueSectionHeader}>
-                    <div className={styles.queueSectionHeading}>
-                        <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
-                    </div>
-                </div>
+                {sectionHeader}
                 <div className={styles.downloadList}>
                     {items.map((item) => {
                         const row = mapQueueHistoryItemToRow(item);
@@ -313,11 +433,7 @@ export function QueueHistoryPanel({
     if (hasRefreshError) {
         return (
             <section className={styles.queueSection} aria-label="Queue history">
-                <div className={styles.queueSectionHeader}>
-                    <div className={styles.queueSectionHeading}>
-                        <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
-                    </div>
-                </div>
+                {sectionHeader}
                 <ErrorState
                     title="Queue history unavailable"
                     description={refreshErrorMessage ?? "The queue history feed did not finish loading."}
@@ -334,13 +450,10 @@ export function QueueHistoryPanel({
 
     return (
         <section className={styles.queueSection} aria-label="Queue history">
-            <div className={styles.queueSectionHeader}>
-                <div className={styles.queueSectionHeading}>
-                    <Subtitle2 className={styles.queueSectionTitle}>History</Subtitle2>
-                </div>
-            </div>
+            {sectionHeader}
             <EmptyState
-                title="No history yet"
+                title={filtersActive ? "No matching history" : "No history yet"}
+                description={filtersActive ? "Try clearing outcome or library filters." : undefined}
                 icon={<ArrowClockwise24 />}
                 minHeight="220px"
                 compactMobile

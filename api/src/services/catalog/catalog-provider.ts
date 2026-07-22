@@ -124,7 +124,14 @@ export interface CatalogVideoRecording {
   video?: boolean | string | null;
   isrcs?: string[] | null;
   "artist-credit"?: Array<{ name?: string; joinphrase?: string; artist?: { id?: string; name?: string } }>;
-  relations?: Array<{ type?: string; "type-id"?: string; direction?: string; recording?: CatalogVideoRecording }>;
+  relations?: Array<{
+    type?: string;
+    "type-id"?: string;
+    direction?: string;
+    recording?: CatalogVideoRecording;
+    /** Present on URL relations (`free streaming`, `streaming`, …). */
+    url?: { resource?: string; id?: string };
+  }>;
 }
 
 /**

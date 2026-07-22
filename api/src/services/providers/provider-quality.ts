@@ -107,6 +107,42 @@ export function neutralVideoTagFromHeight(height: number | null | undefined): Ne
   return tier ? formatNeutralVideoTag(tier) : null;
 }
 
+/** Settings `video_quality` → max download/request height in pixels. */
+export function configuredVideoMaxHeight(setting?: string | null): number {
+  switch (String(setting ?? "uhd").trim().toLowerCase()) {
+    case "sd":
+      return 480;
+    case "hd":
+      return 720;
+    case "fhd":
+      return 1080;
+    case "uhd":
+    default:
+      return 2160;
+  }
+}
+
+/**
+ * Pick the best available video tier that does not exceed the configured max.
+ * `available` may be empty; returns null when nothing fits.
+ */
+export function selectBestVideoQualityAtOrBelow(
+  available: Iterable<NeutralVideoQuality | null | undefined>,
+  max: NeutralVideoQuality,
+): NeutralVideoQuality | null {
+  let best: NeutralVideoQuality | null = null;
+  const maxRank = NEUTRAL_VIDEO_QUALITY_RANK[max];
+  for (const tier of available) {
+    if (!tier) continue;
+    const rank = NEUTRAL_VIDEO_QUALITY_RANK[tier];
+    if (rank > maxRank) continue;
+    if (!best || rank > NEUTRAL_VIDEO_QUALITY_RANK[best]) {
+      best = tier;
+    }
+  }
+  return best;
+}
+
 const SPATIAL_360_MARKERS = ["360", "SONY_360", "360RA"];
 const ATMOS_MARKERS = ["ATMOS", "DOLBY"];
 const HIRES_MARKERS = ["HIRES", "HI_RES", "MASTER", "MQA", "MAX"];

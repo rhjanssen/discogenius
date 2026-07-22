@@ -200,14 +200,17 @@ const rowBase = {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    flexWrap: "wrap" as const,
+    flexWrap: "nowrap" as const,
     padding: MODAL_LAYOUT.rowPadding.base,
     columnGap: tokens.spacingHorizontalM,
-    rowGap: tokens.spacingVerticalXS,
+    rowGap: tokens.spacingVerticalS,
     [MEDIA.mobile]: {
+        flexDirection: "column" as const,
+        alignItems: "stretch",
+        flexWrap: "nowrap" as const,
         padding: MODAL_LAYOUT.rowPadding.mobile,
-        columnGap: tokens.spacingHorizontalS,
-        rowGap: tokens.spacingVerticalXS,
+        columnGap: tokens.spacingHorizontalNone,
+        rowGap: tokens.spacingVerticalS,
     },
 };
 
@@ -236,13 +239,34 @@ const useStyles = makeStyles({
             borderBottom: "none",
         },
     },
+    /** Switch/toggle rows stay side-by-side on mobile — control is compact. */
+    rowInline: {
+        ...rowBase,
+        [MEDIA.mobile]: {
+            flexDirection: "row",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            flexWrap: "nowrap",
+            padding: MODAL_LAYOUT.rowPadding.mobile,
+            columnGap: tokens.spacingHorizontalS,
+            rowGap: tokens.spacingVerticalXS,
+        },
+        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        "&:last-child": {
+            borderBottom: "none",
+        },
+    },
     rowContent: {
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalXXS,
-        flex: 1,
+        flex: "1 1 auto",
         minWidth: 0,
         paddingTop: tokens.spacingVerticalXXS,
+        [MEDIA.mobile]: {
+            flex: "0 0 auto",
+            width: "100%",
+        },
     },
     labelWithHelp: {
         display: "flex",
@@ -252,30 +276,31 @@ const useStyles = makeStyles({
     },
     controlMedium: {
         width: "100%",
-        maxWidth: "280px",
-        minWidth: "180px",
+        maxWidth: "320px",
+        minWidth: "200px",
+        flex: "1 1 auto",
+        [MEDIA.mobile]: {
+            maxWidth: "none",
+            minWidth: 0,
+            width: "100%",
+            flex: "0 0 auto",
+        },
     },
     templateControl: {
         display: "flex",
         flexDirection: "column",
         gap: tokens.spacingVerticalXXS,
-        flex: 1,
-        minWidth: 0,
-    },
-    templateInputRow: {
-        display: "flex",
-        alignItems: "center",
-        gap: tokens.spacingHorizontalXS,
         width: "100%",
+        minWidth: 0,
     },
     templateHelpButton: {
         ...glassButtonStyles,
         flexShrink: 0,
-        minWidth: "36px",
-        minHeight: "36px",
+        minWidth: "32px",
+        minHeight: "32px",
         [MEDIA.mobile]: {
-            minWidth: "40px",
-            minHeight: "40px",
+            minWidth: "36px",
+            minHeight: "36px",
         },
     },
     templatePreview: {
@@ -323,11 +348,24 @@ const useStyles = makeStyles({
         overflowWrap: "anywhere",
         whiteSpace: "normal",
     },
+    /** Library path inputs: side-by-side on desktop with generous width; full-bleed on mobile. */
     pathInput: {
-        flex: 1,
+        flex: "1 1 auto",
         width: "100%",
-        maxWidth: "420px",
-        minWidth: "220px",
+        maxWidth: "560px",
+        minWidth: "240px",
+        [MEDIA.mobile]: {
+            maxWidth: "none",
+            minWidth: 0,
+            width: "100%",
+            flex: "0 0 auto",
+        },
+    },
+    /** Naming templates stretch edge-to-edge of the content column. */
+    templateInput: {
+        width: "100%",
+        minWidth: 0,
+        maxWidth: "100%",
     },
     mutedText: {
         color: tokens.colorNeutralForeground2,
@@ -600,7 +638,7 @@ export const NamingSettingsSection = ({
                             <option value="inline_only">Album-linked only</option>
                         </Select>
                     </div>
-                    <div className={styles.row}>
+                    <div className={styles.rowInline}>
                         <div className={styles.rowContent}>
                             <Text weight="semibold">Create Empty Artist Folders</Text>
                             <Text size={200} className={styles.mutedText}>
@@ -617,34 +655,35 @@ export const NamingSettingsSection = ({
                 <div className={styles.card}>
                     <div className={styles.namingRow}>
                         <div className={styles.rowContent}>
-                            <Text weight="semibold">Artist Folder</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Template for artist folder name
-                            </Text>
-                        </div>
-                        <div className={styles.templateControl}>
-                            <div className={styles.templateInputRow}>
-                                <Input
-                                    ref={setNamingInputRef("artist_folder")}
-                                    value={localNaming?.artist_folder ?? ""}
-                                    onChange={(_, data) => handleNamingChange("artist_folder", data.value)}
-                                    onFocus={() => captureNamingSelection("artist_folder")}
-                                    onSelect={() => captureNamingSelection("artist_folder")}
-                                    onKeyUp={() => captureNamingSelection("artist_folder")}
-                                    onBlur={() => handleNamingCommit("artist_folder")}
-                                    onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("artist_folder"); }}
-                                    className={styles.pathInput}
-                                    disabled={!namingSettings}
-                                />
+                            <div className={styles.labelWithHelp}>
+                                <Text weight="semibold">Artist Folder</Text>
                                 <AppTooltip content="Show tokens" relationship="label">
                                     <Button
                                         appearance="subtle"
                                         icon={<QuestionCircle24 />}
                                         className={styles.templateHelpButton}
                                         onClick={() => setNamingHelpField("artist_folder")}
+                                        aria-label="Artist folder naming tokens"
                                     />
                                 </AppTooltip>
                             </div>
+                            <Text size={200} className={styles.mutedText}>
+                                Template for artist folder name
+                            </Text>
+                        </div>
+                        <div className={styles.templateControl}>
+                            <Input
+                                ref={setNamingInputRef("artist_folder")}
+                                value={localNaming?.artist_folder ?? ""}
+                                onChange={(_, data) => handleNamingChange("artist_folder", data.value)}
+                                onFocus={() => captureNamingSelection("artist_folder")}
+                                onSelect={() => captureNamingSelection("artist_folder")}
+                                onKeyUp={() => captureNamingSelection("artist_folder")}
+                                onBlur={() => handleNamingCommit("artist_folder")}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("artist_folder"); }}
+                                className={styles.templateInput}
+                                disabled={!namingSettings}
+                            />
                             <Caption1 className={styles.templatePreview}>
                                 Example: <span className={styles.tokenCode}>{namingExamples?.artistFolder ?? "—"}</span>
                             </Caption1>
@@ -655,34 +694,35 @@ export const NamingSettingsSection = ({
                     </div>
                     <div className={styles.namingRow}>
                         <div className={styles.rowContent}>
-                            <Text weight="semibold">Single-volume Album Track Path</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Album folder + track filename (without extension)
-                            </Text>
-                        </div>
-                        <div className={styles.templateControl}>
-                            <div className={styles.templateInputRow}>
-                                <Input
-                                    ref={setNamingInputRef("album_track_path_single")}
-                                    value={localNaming?.album_track_path_single ?? ""}
-                                    onChange={(_, data) => handleNamingChange("album_track_path_single", data.value)}
-                                    onFocus={() => captureNamingSelection("album_track_path_single")}
-                                    onSelect={() => captureNamingSelection("album_track_path_single")}
-                                    onKeyUp={() => captureNamingSelection("album_track_path_single")}
-                                    onBlur={() => handleNamingCommit("album_track_path_single")}
-                                    onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("album_track_path_single"); }}
-                                    className={styles.pathInput}
-                                    disabled={!namingSettings}
-                                />
+                            <div className={styles.labelWithHelp}>
+                                <Text weight="semibold">Single-volume Album Track Path</Text>
                                 <AppTooltip content="Show tokens" relationship="label">
                                     <Button
                                         appearance="subtle"
                                         icon={<QuestionCircle24 />}
                                         className={styles.templateHelpButton}
                                         onClick={() => setNamingHelpField("album_track_path_single")}
+                                        aria-label="Single-volume album track path naming tokens"
                                     />
                                 </AppTooltip>
                             </div>
+                            <Text size={200} className={styles.mutedText}>
+                                Album folder + track filename (without extension)
+                            </Text>
+                        </div>
+                        <div className={styles.templateControl}>
+                            <Input
+                                ref={setNamingInputRef("album_track_path_single")}
+                                value={localNaming?.album_track_path_single ?? ""}
+                                onChange={(_, data) => handleNamingChange("album_track_path_single", data.value)}
+                                onFocus={() => captureNamingSelection("album_track_path_single")}
+                                onSelect={() => captureNamingSelection("album_track_path_single")}
+                                onKeyUp={() => captureNamingSelection("album_track_path_single")}
+                                onBlur={() => handleNamingCommit("album_track_path_single")}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("album_track_path_single"); }}
+                                className={styles.templateInput}
+                                disabled={!namingSettings}
+                            />
                             <Caption1 className={styles.templatePreview}>
                                 Example: <span className={styles.tokenCode}>{namingExamples?.fullSingleTrackPath ?? "—"}</span>
                             </Caption1>
@@ -693,34 +733,35 @@ export const NamingSettingsSection = ({
                     </div>
                     <div className={styles.namingRow}>
                         <div className={styles.rowContent}>
-                            <Text weight="semibold">Multi-volume Album Track Path</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Album folder + optional disc folder + track filename (without extension)
-                            </Text>
-                        </div>
-                        <div className={styles.templateControl}>
-                            <div className={styles.templateInputRow}>
-                                <Input
-                                    ref={setNamingInputRef("album_track_path_multi")}
-                                    value={localNaming?.album_track_path_multi ?? ""}
-                                    onChange={(_, data) => handleNamingChange("album_track_path_multi", data.value)}
-                                    onFocus={() => captureNamingSelection("album_track_path_multi")}
-                                    onSelect={() => captureNamingSelection("album_track_path_multi")}
-                                    onKeyUp={() => captureNamingSelection("album_track_path_multi")}
-                                    onBlur={() => handleNamingCommit("album_track_path_multi")}
-                                    onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("album_track_path_multi"); }}
-                                    className={styles.pathInput}
-                                    disabled={!namingSettings}
-                                />
+                            <div className={styles.labelWithHelp}>
+                                <Text weight="semibold">Multi-volume Album Track Path</Text>
                                 <AppTooltip content="Show tokens" relationship="label">
                                     <Button
                                         appearance="subtle"
                                         icon={<QuestionCircle24 />}
                                         className={styles.templateHelpButton}
                                         onClick={() => setNamingHelpField("album_track_path_multi")}
+                                        aria-label="Multi-volume album track path naming tokens"
                                     />
                                 </AppTooltip>
                             </div>
+                            <Text size={200} className={styles.mutedText}>
+                                Album folder + optional disc folder + track filename (without extension)
+                            </Text>
+                        </div>
+                        <div className={styles.templateControl}>
+                            <Input
+                                ref={setNamingInputRef("album_track_path_multi")}
+                                value={localNaming?.album_track_path_multi ?? ""}
+                                onChange={(_, data) => handleNamingChange("album_track_path_multi", data.value)}
+                                onFocus={() => captureNamingSelection("album_track_path_multi")}
+                                onSelect={() => captureNamingSelection("album_track_path_multi")}
+                                onKeyUp={() => captureNamingSelection("album_track_path_multi")}
+                                onBlur={() => handleNamingCommit("album_track_path_multi")}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("album_track_path_multi"); }}
+                                className={styles.templateInput}
+                                disabled={!namingSettings}
+                            />
                             <Caption1 className={styles.templatePreview}>
                                 Example: <span className={styles.tokenCode}>{namingExamples?.fullMultiTrackPath ?? "—"}</span>
                             </Caption1>
@@ -731,34 +772,35 @@ export const NamingSettingsSection = ({
                     </div>
                     <div className={styles.namingRow}>
                         <div className={styles.rowContent}>
-                            <Text weight="semibold">Video File</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Video filename (without extension)
-                            </Text>
-                        </div>
-                        <div className={styles.templateControl}>
-                            <div className={styles.templateInputRow}>
-                                <Input
-                                    ref={setNamingInputRef("video_file")}
-                                    value={localNaming?.video_file ?? ""}
-                                    onChange={(_, data) => handleNamingChange("video_file", data.value)}
-                                    onFocus={() => captureNamingSelection("video_file")}
-                                    onSelect={() => captureNamingSelection("video_file")}
-                                    onKeyUp={() => captureNamingSelection("video_file")}
-                                    onBlur={() => handleNamingCommit("video_file")}
-                                    onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("video_file"); }}
-                                    className={styles.pathInput}
-                                    disabled={!namingSettings}
-                                />
+                            <div className={styles.labelWithHelp}>
+                                <Text weight="semibold">Video File</Text>
                                 <AppTooltip content="Show tokens" relationship="label">
                                     <Button
                                         appearance="subtle"
                                         icon={<QuestionCircle24 />}
                                         className={styles.templateHelpButton}
                                         onClick={() => setNamingHelpField("video_file")}
+                                        aria-label="Video file naming tokens"
                                     />
                                 </AppTooltip>
                             </div>
+                            <Text size={200} className={styles.mutedText}>
+                                Video filename (without extension)
+                            </Text>
+                        </div>
+                        <div className={styles.templateControl}>
+                            <Input
+                                ref={setNamingInputRef("video_file")}
+                                value={localNaming?.video_file ?? ""}
+                                onChange={(_, data) => handleNamingChange("video_file", data.value)}
+                                onFocus={() => captureNamingSelection("video_file")}
+                                onSelect={() => captureNamingSelection("video_file")}
+                                onKeyUp={() => captureNamingSelection("video_file")}
+                                onBlur={() => handleNamingCommit("video_file")}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleNamingCommit("video_file"); }}
+                                className={styles.templateInput}
+                                disabled={!namingSettings}
+                            />
                             <Caption1 className={styles.templatePreview}>
                                 Example: <span className={styles.tokenCode}>{namingExamples?.videoPath ?? "—"}</span>
                             </Caption1>

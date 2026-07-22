@@ -1202,7 +1202,7 @@ export class OrganizerService {
     }
 
     if (coverId && !fs.existsSync(coverPath)) {
-      const videoThumbnailResolution = metadataConfig.video_thumbnail_resolution || "1080x720";
+      const videoThumbnailResolution = metadataConfig.video_thumbnail_resolution || "origin";
       try {
         await downloadVideoThumbnail(coverId, videoThumbnailResolution as any, coverPath, {
           provider: params.provider,

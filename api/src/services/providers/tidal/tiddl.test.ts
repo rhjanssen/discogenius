@@ -53,7 +53,15 @@ test("mapVideoQualityToTiddl accepts native values and falls back to config", ()
     assert.equal(mapVideoQualityToTiddl("sd"), "sd");
     assert.equal(mapVideoQualityToTiddl("hd"), "hd");
     assert.equal(mapVideoQualityToTiddl("fhd"), "fhd");
+    assert.equal(mapVideoQualityToTiddl("uhd"), "fhd"); // TIDAL video ceiling
     assert.ok(["sd", "hd", "fhd"].includes(mapVideoQualityToTiddl("1080p")));
+});
+
+test("mapVideoQualityToTiddl clamps settings max to available tiddl tiers", () => {
+    // Discogenius Ultra HD → TIDAL FHD; HD setting stays HD.
+    assert.equal(mapVideoQualityToTiddl("uhd"), "fhd");
+    assert.equal(mapVideoQualityToTiddl("hd"), "hd");
+    assert.equal(mapVideoQualityToTiddl("sd"), "sd");
 });
 
 test("syncTokenToTiddl writes the exact auth.json shape tiddl expects", () => {

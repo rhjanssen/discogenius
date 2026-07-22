@@ -72,6 +72,7 @@ test("config update parsers return only validated partial updates", () => {
     include_video_official: true,
     include_video_lyric: true,
     include_video_live: true,
+    include_video_visualizer: true,
     prefer_explicit: true,
     enable_redundancy_filter: true,
     require_provider_availability: true,

@@ -400,7 +400,7 @@ async function getVideoForNfo(videoId: string) {
             release_date: row.recording_release_date || row.provider_release_date || null,
             image_id: row.recording_cover_image_id || row.provider_asset_id || null,
             vibrant_color: null,
-            quality: row.provider_quality || "MP4_1080P",
+            quality: row.provider_quality || null,
             explicit: Boolean(row.provider_explicit ),
             popularity: 0,
             url: (() => {
@@ -424,12 +424,24 @@ type VideoThumbnailResolution =
     | "1280x720"
     | "origin";
 
-const normalizeVideoThumbnailResolution = (resolution: VideoThumbnailResolution): "160x107" | "480x320" | "750x500" | "1080x720" => {
-    if (resolution === "origin" || resolution === "1280x720") {
-        return "1080x720";
-    }
-    if (resolution === "640x360") {
-        return "480x320";
+/** TIDAL CDN sizes that center-crop the native landscape still to 3:2. */
+const VIDEO_THUMBNAIL_CROP_SIZES = new Set<string>([
+    "160x107",
+    "480x320",
+    "750x500",
+    "1080x720",
+]);
+
+/**
+ * Prefer full-aspect origin over TIDAL 3:2 crop sizes. Legacy defaults and
+ * seeded configs still say 1080x720; remap those so store/embed keep the frame.
+ * Explicit 16:9 sizes (640x360 / 1280x720) and origin pass through.
+ */
+const normalizeVideoThumbnailResolution = (
+    resolution: VideoThumbnailResolution,
+): VideoThumbnailResolution => {
+    if (!resolution || VIDEO_THUMBNAIL_CROP_SIZES.has(resolution)) {
+        return "origin";
     }
     return resolution;
 };
@@ -847,7 +859,8 @@ export async function downloadArtistPicture(
 /**
  * Download music video thumbnail at specified resolution.
  * Prefer resolveVideoArtwork when a recording id is known; otherwise provider imageId.
- * NOTE: Video thumbnails are 3:2 aspect ratio (e.g., 1080x720, 750x500)
+ * Prefer `origin` so the stored/embedded still keeps the provider's native aspect
+ * (TIDAL 3:2 sizes like 1080x720 crop; Apple/YouTube landscape stills do not).
  */
 export async function downloadVideoThumbnail(
     imageId: string,

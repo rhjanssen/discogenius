@@ -296,8 +296,8 @@ export const useDashboardStyles = makeStyles({
         flexShrink: 0,
     },
     downloadCoverVideo: {
-        width: "60px",
-        height: "40px",
+        width: "64px",
+        height: "36px",
         borderRadius: tokens.borderRadiusSmall,
         objectFit: "cover",
         backgroundColor: tokens.colorNeutralBackground3,
@@ -315,8 +315,8 @@ export const useDashboardStyles = makeStyles({
         color: tokens.colorNeutralForeground4,
     },
     downloadCoverPlaceholderVideo: {
-        width: "60px",
-        height: "40px",
+        width: "64px",
+        height: "36px",
         borderRadius: tokens.borderRadiusSmall,
         backgroundColor: tokens.colorNeutralBackground3,
         display: "flex",

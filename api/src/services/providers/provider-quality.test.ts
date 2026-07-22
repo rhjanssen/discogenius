@@ -27,6 +27,18 @@ test("classifyNeutralVideo maps legacy MP4_* and neutral tags", () => {
   assert.equal(neutralVideoTagFromHeight(2160), "UHD");
 });
 
+test("configuredVideoMaxHeight maps settings tiers to pixel ceilings", async () => {
+  const { configuredVideoMaxHeight, selectBestVideoQualityAtOrBelow } = await import("./provider-quality.js");
+  assert.equal(configuredVideoMaxHeight("sd"), 480);
+  assert.equal(configuredVideoMaxHeight("hd"), 720);
+  assert.equal(configuredVideoMaxHeight("fhd"), 1080);
+  assert.equal(configuredVideoMaxHeight("uhd"), 2160);
+  assert.equal(configuredVideoMaxHeight(undefined), 2160);
+  assert.equal(selectBestVideoQualityAtOrBelow(["uhd", "fhd", "hd"], "hd"), "hd");
+  assert.equal(selectBestVideoQualityAtOrBelow(["uhd", "fhd"], "hd"), null);
+  assert.equal(selectBestVideoQualityAtOrBelow(["sd", "fhd", "hd"], "fhd"), "fhd");
+});
+
 test("shared heuristic classifies spatial formats", () => {
   assert.equal(classifyNeutralSpatial("DOLBY_ATMOS"), "atmos");
   assert.equal(classifyNeutralSpatial("SONY_360RA"), "spatial-360");
@@ -56,4 +68,43 @@ test("TIDAL mapping round-trips neutral tiers back to raw strings", () => {
   assert.equal(tidalQualityMapping.fromNeutralAudio("lossless"), "LOSSLESS");
   assert.equal(tidalQualityMapping.fromNeutralAudio("hires-lossless"), "HI_RES_LOSSLESS");
   assert.equal(tidalQualityMapping.fromNeutralVideo("fhd"), "MP4_1080P");
+});
+
+test("TIDAL catalog video quality distrusts aspirational MP4_1080P / FHD", async () => {
+  const {
+    tidalVideoQualityTag,
+    isUntrustedTidalCatalogVideoQuality,
+    parseM3u8MaxHeight,
+    tidalVideoQualityTagFromProbe,
+    tidalStreamVideoQualityTier,
+  } = await import("./tidal/tidal-quality.js");
+
+  assert.equal(isUntrustedTidalCatalogVideoQuality("MP4_1080P"), true);
+  assert.equal(isUntrustedTidalCatalogVideoQuality("FHD"), true);
+  assert.equal(isUntrustedTidalCatalogVideoQuality("MP4_720P"), false);
+  assert.equal(tidalVideoQualityTag("MP4_1080P"), null);
+  assert.equal(tidalVideoQualityTag("FHD"), null);
+  assert.equal(tidalVideoQualityTag("MP4_720P"), "HD");
+  assert.equal(tidalVideoQualityTag("MP4_480P"), "SD");
+
+  assert.equal(tidalStreamVideoQualityTier("HIGH"), "fhd");
+  assert.equal(tidalStreamVideoQualityTier("MEDIUM"), "hd");
+  assert.equal(tidalStreamVideoQualityTier("LOW"), "sd");
+
+  const master = [
+    "#EXTM3U",
+    '#EXT-X-STREAM-INF:BANDWIDTH=700000,RESOLUTION=640x360',
+    "a.m3u8",
+    '#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=712x480',
+    "b.m3u8",
+    '#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720',
+    "c.m3u8",
+  ].join("\n");
+  assert.equal(parseM3u8MaxHeight(master), 720);
+  assert.equal(tidalVideoQualityTagFromProbe({ height: 720 }), "HD");
+  assert.equal(tidalVideoQualityTagFromProbe({ height: 480 }), "SD");
+  assert.equal(tidalVideoQualityTagFromProbe({ height: 1080 }), "FHD");
+  // MEDIUM stream name alone would claim HD; height wins when present.
+  assert.equal(tidalVideoQualityTagFromProbe({ height: 480, streamQuality: "MEDIUM" }), "SD");
+  assert.equal(tidalVideoQualityTagFromProbe({ streamQuality: "MEDIUM" }), "HD");
 });

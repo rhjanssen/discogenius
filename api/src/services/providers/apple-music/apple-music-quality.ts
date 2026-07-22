@@ -83,9 +83,9 @@ export const appleMusicQualityMapping: ProviderQualityMapping = {
 
 /**
  * Apple catalog only exposes `has4K` for music videos (no height).
- * 4K → UHD; otherwise advertise FHD — Apple's typical non-4K MV ceiling
- * (matches the downloader's default `mv-max: 1080`).
+ * 4K → UHD; otherwise leave unknown — inventing FHD caused offers to claim
+ * Full HD when the download could only fetch HD/SD.
  */
-export function appleVideoQualityTag(has4K: boolean | null | undefined): string {
-  return has4K === true ? formatNeutralVideoTag("uhd") : formatNeutralVideoTag("fhd");
+export function appleVideoQualityTag(has4K: boolean | null | undefined): string | null {
+  return has4K === true ? formatNeutralVideoTag("uhd") : null;
 }

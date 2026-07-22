@@ -51,7 +51,13 @@ export const ActionOverflowMenu = ({ actions, className }: { actions: OverflowAc
   return (
     <Menu>
       <MenuTrigger disableButtonEnhancement>
-        <Button ref={ref} appearance="subtle" icon={<MoreHorizontal24 />} className={mergeClasses(styles.moreButton, className)}>
+        <Button
+          ref={ref}
+          appearance="subtle"
+          icon={<MoreHorizontal24 />}
+          aria-label="More actions"
+          className={mergeClasses(styles.moreButton, className)}
+        >
           More
         </Button>
       </MenuTrigger>

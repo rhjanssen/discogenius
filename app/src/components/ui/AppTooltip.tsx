@@ -23,6 +23,12 @@ import {
  * short quality strings like `Dolby Digital Plus 5.1 + Dolby Atmos · 768 kbps`
  * early. Every AppTooltip raises that to a shared 400px budget so content
  * grows with the string and only wraps when the cap (or viewport) requires it.
+ *
+ * Fluent trigger: marked as a FluentTriggerComponent so OverflowItem / MenuTrigger
+ * / similar wrappers recurse through AppTooltip into the child control when
+ * attaching measure refs. Without that flag, OverflowItem stops at AppTooltip
+ * (which is not forwardRef), never registers the button, and action rows never
+ * collapse into the overflow menu.
  */
 export type AppTooltipProps = Omit<TooltipProps, "children" | "relationship"> & {
   /** Defaults to `label` for control tooltips. */
@@ -86,3 +92,8 @@ export function AppTooltip({
     </Tooltip>
   );
 }
+
+// Match Fluent Tooltip / MenuTrigger so OverflowItem can attach its measure ref
+// to the real control child instead of stopping on this wrapper.
+// Type cast mirrors Fluent's own pattern (internal FluentTriggerComponent type).
+(AppTooltip as typeof AppTooltip & { isFluentTriggerComponent?: boolean }).isFluentTriggerComponent = true;

@@ -18,6 +18,7 @@ import { queueDownloadMissingPass } from '../../services/commands/scheduler.js';
 import { ACTIVITY_FILTERS, getActivityPage } from '../../services/commands/command-history.js';
 import { getCommandTypesForQueueCategory, type CommandQueueCategory } from '../../services/commands/command-registry.js';
 import { parseActivityFilters, parseListPagination } from '../../utils/activity-query.js';
+import { parseQueueHistoryFilters } from '../../utils/queue-history-query.js';
 import {
   getObjectBody,
   getOptionalIdentifier,
@@ -453,12 +454,26 @@ router.get('/details', async (req: Request, res: Response) => {
 /**
  * GET /api/v1/queue/history
  * Get history of finished download items
+ *
+ * Optional filters (CSV): outcome|outcomes=completed,warning,failed
+ * and slot|slots|mediaKind|mediaKinds=stereo,spatial,video.
+ * Empty / omitted = all. OR within a dimension; AND across dimensions.
  */
 router.get('/history', async (req: Request, res: Response) => {
   try {
     const limit = Math.max(1, Math.min(200, parseInt(String(req.query.limit || '50'), 10) || 50));
     const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
-    res.json(DownloadQueueQueryService.getQueueHistory({ limit, offset }));
+    const filtersResult = parseQueueHistoryFilters(req.query as Record<string, unknown>);
+    if ('error' in filtersResult) {
+      return res.status(400).json(filtersResult.error);
+    }
+
+    res.json(DownloadQueueQueryService.getQueueHistory({
+      limit,
+      offset,
+      outcomes: filtersResult.value.outcomes,
+      mediaKinds: filtersResult.value.mediaKinds,
+    }));
   } catch (error: any) {
     console.error('[QUEUE-API] Error getting queue history:', error);
     res.status(500).json({ error: 'Failed to get queue history', message: error.message });

@@ -35,7 +35,7 @@ import { glassButtonStyles } from '@/components/ui/glassButtonStyles';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
 import { dispatchActivityRefresh } from '@/utils/appEvents';
-import { mediaCoverSrc, renderableArtworkUrl } from '@/utils/artwork';
+import { mediaCoverProxySrc, mediaCoverSrc, renderableArtworkUrl } from '@/utils/artwork';
 import { type UnmappedFile } from './ManualImportTab';
 
 const ArrowImport24 = bundleIcon(ArrowImport24Filled, ArrowImport24Regular);
@@ -248,8 +248,8 @@ const getResultTitle = (result: any) => result.name || result.title || 'Unknown 
 const getResultSubtitle = (result: any) =>
     result.subtitle || result.artist_name || result.artist?.name || result.artists?.[0]?.name || 'Unknown Artist';
 
-const getResultImage = (result: any) =>
-    mediaCoverSrc(result)
+const getResultImage = (result: any, preferVideoProxy = false) =>
+    (preferVideoProxy ? mediaCoverProxySrc(result) : mediaCoverSrc(result))
     ?? renderableArtworkUrl(result.image_id)
     ?? null;
 
@@ -507,7 +507,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                                     videoAspect={isVideoImport}
                                                     title={getResultTitle(result)}
                                                     subtitle={getResultSubtitle(result)}
-                                                    imageUrl={getResultImage(result)}
+                                                    imageUrl={getResultImage(result, isVideoImport)}
                                                     alt={getResultTitle(result)}
                                                     quality={result.quality}
                                                     explicit={result.explicit}
@@ -525,7 +525,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                 <div className={styles.mappingHeader}>
                                     <div className={styles.mappingHeaderInfo}>
                                         <img
-                                            src={getResultImage(selectedMatch) || '/assets/images/default-album.png'}
+                                            src={getResultImage(selectedMatch, isVideoImport) || '/assets/images/default-album.png'}
                                             alt=""
                                             className={styles.mappingHeaderArt}
                                         />

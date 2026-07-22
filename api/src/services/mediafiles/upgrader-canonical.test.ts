@@ -171,7 +171,13 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].name, CommandNames.DownloadAlbum);
   assert.equal(jobs[0].ref_id, "album-provider-1");
-  assert.deepEqual(JSON.parse(jobs[0].payload), { providerId: "album-provider-1", reason: "upgrade" });
+  assert.deepEqual(JSON.parse(jobs[0].payload), {
+    providerId: "album-provider-1",
+    provider: "tidal",
+    type: "album",
+    reason: "upgrade",
+    url: "https://tidal.com/browse/album/album-provider-1",
+  });
 });
 
 test("checkUpgrades queues canonical video upgrades without provider catalog rows", async () => {
@@ -221,7 +227,154 @@ test("checkUpgrades queues canonical video upgrades without provider catalog row
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].name, CommandNames.DownloadVideo);
   assert.equal(jobs[0].ref_id, "video-provider-1");
-  assert.deepEqual(JSON.parse(jobs[0].payload), { providerId: "video-provider-1", reason: "upgrade" });
+  assert.deepEqual(JSON.parse(jobs[0].payload), {
+    providerId: "video-provider-1",
+    provider: "tidal",
+    type: "video",
+    reason: "upgrade",
+    url: "https://tidal.com/browse/video/video-provider-1",
+  });
+});
+
+test("checkUpgrades does not queue Apple Music album ids as TIDAL (Grace Note)", async () => {
+  // Bakermat / Grace Note shaped: Apple album id with LOSSLESS library files that
+  // need a higher cutoff. Must never enqueue DownloadAlbum against TIDAL.
+  seedArtistAndRelease();
+  const appleAlbumId = "1776562088";
+  db.prepare(`INSERT INTO ProviderItems (
+    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+    title, quality, library_slot
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "apple-music",
+    "album",
+    appleAlbumId,
+    "artist-mbid",
+    "release-group-1",
+    "release-1",
+    "Grace Note",
+    "LOSSLESS",
+    "stereo"
+  );
+  db.prepare(`INSERT INTO ProviderItems (
+    provider, entity_type, provider_id, provider_album_id, artist_mbid, release_group_mbid, release_mbid,
+    track_mbid, recording_mbid, title, quality, library_slot, match_evidence
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "apple-music",
+    "track",
+    "apple-track-1",
+    appleAlbumId,
+    "artist-mbid",
+    "release-group-1",
+    "release-1",
+    "track-1",
+    "recording-1",
+    "Grace Note",
+    "HIRES_LOSSLESS",
+    "stereo",
+    JSON.stringify({ albumProviderId: appleAlbumId })
+  );
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    provider: "apple-music",
+    provider_entity_type: "track",
+    provider_id: "apple-track-1",
+    quality: "LOW",
+    codec: "AAC",
+    extension: "m4a",
+    file_path: "C:/Music/grace-note.m4a",
+    relative_path: "grace-note.m4a",
+    filename: "grace-note.m4a",
+  });
+
+  const result = await UpgraderService.checkUpgrades(true, "artist-local");
+
+  assert.equal(result.tracks, 1);
+  assert.equal(result.albums, 1);
+
+  const jobs = listDownloadJobs();
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].name, CommandNames.DownloadAlbum);
+  assert.equal(jobs[0].ref_id, appleAlbumId);
+
+  const payload = JSON.parse(jobs[0].payload) as Record<string, unknown>;
+  assert.equal(payload.provider, "apple-music");
+  assert.equal(payload.providerId, appleAlbumId);
+  assert.equal(payload.type, "album");
+  assert.equal(payload.reason, "upgrade");
+  assert.match(String(payload.url), /^https:\/\/music\.apple\.com\/[^/]+\/album\/1776562088$/);
+  assert.notEqual(payload.provider, "tidal");
+  assert.doesNotMatch(String(payload.url || ""), /tidal/i);
+});
+
+test("checkUpgrades skips album-level upgrade when provider has zero album tracks", async () => {
+  seedArtistAndRelease();
+  // Album offer exists, but no ProviderItems tracks for this provider/album —
+  // must not enqueue DownloadAlbum (old bug: 1/0 always passed the ≥50% check).
+  db.prepare(`INSERT INTO ProviderItems (
+    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+    title, quality, library_slot
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "apple-music",
+    "album",
+    "1776562088",
+    "artist-mbid",
+    "release-group-1",
+    "release-1",
+    "Grace Note",
+    "HIRES_LOSSLESS",
+    "stereo"
+  );
+  db.prepare(`INSERT INTO ProviderItems (
+    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+    track_mbid, recording_mbid, title, quality, library_slot, match_evidence
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "apple-music",
+    "track",
+    "apple-track-orphan",
+    "artist-mbid",
+    "release-group-1",
+    "release-1",
+    "track-1",
+    "recording-1",
+    "Grace Note",
+    "HIRES_LOSSLESS",
+    "stereo",
+    // Deliberately wrong / missing album linkage so album track count is 0
+    JSON.stringify({})
+  );
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    provider: "apple-music",
+    provider_entity_type: "track",
+    provider_id: "apple-track-orphan",
+    quality: "LOW",
+    codec: "AAC",
+    extension: "m4a",
+  });
+
+  // Force an album_id onto the candidate via provider_album_id on a second pass:
+  // update the track offer's provider_album_id is intentionally left null so
+  // album_item join may still resolve album_id from release MBIDs.
+  const result = await UpgraderService.checkUpgrades(true, "artist-local");
+
+  assert.equal(result.tracks, 1);
+  assert.equal(result.albums, 0);
+
+  const jobs = listDownloadJobs();
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].name, CommandNames.DownloadTrack);
+  const payload = JSON.parse(jobs[0].payload) as Record<string, unknown>;
+  assert.equal(payload.provider, "apple-music");
+  assert.equal(payload.providerId, "apple-track-orphan");
+  assert.notEqual(payload.provider, "tidal");
 });
 
 test("checkUpgrades does not immediately requeue a recent completed no-improvement upgrade", async () => {

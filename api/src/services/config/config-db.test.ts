@@ -59,6 +59,7 @@ test("fresh installs use the production monitoring and library defaults", () => 
   assert.equal(config.filtering.include_video_official, true);
   assert.equal(config.filtering.include_video_lyric, true);
   assert.equal(config.filtering.include_video_live, true);
+  assert.equal(config.filtering.include_video_visualizer, true);
   assert.equal(config.quality.video_quality, "uhd");
   assert.equal(config.path.create_empty_artist_folders, false);
   assert.equal(config.path.video_folder_layout, "separated");

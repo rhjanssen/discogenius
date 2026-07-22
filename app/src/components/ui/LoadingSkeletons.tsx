@@ -241,7 +241,8 @@ const useStyles = makeStyles({
     aspectRatio: "16 / 9",
   },
   mediaCardVideoWidePreview: {
-    aspectRatio: "3 / 2",
+    // Alias kept for callers; video cards are 16:9 (cover-crop taller thumbs).
+    aspectRatio: "16 / 9",
   },
   mediaPreviewFill: {
     position: "absolute",

@@ -181,7 +181,7 @@ export class ManualImportService {
                     return isVideo ? "videos" : "music";
                 })();
 
-                const quality = trackData.quality || (isVideo ? "MP4_1080P" : "LOSSLESS");
+                const quality = trackData.quality || (isVideo ? null : "LOSSLESS");
                 const artistFolder = resolveArtistFolderFromRecord({
                     name: artistRow?.name || trackData.artist?.name || trackData.artist_name || "Unknown Artist",
                     mbid: artistRow?.mbid || null,
@@ -307,7 +307,7 @@ export class ManualImportService {
                     provider_id: c.providerId,
                     album_id: c.albumId || null,
                     title: c.trackData.title || "Unknown Video",
-                    quality: c.trackData.quality || "MP4_1080P",
+                    quality: c.trackData.quality || null,
                     provider: provider.id,
                 }]);
             }

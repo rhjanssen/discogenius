@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { DownloadBackend, DownloadProgress, DownloadRequest } from "../../download/download-backend.js";
+import { Config } from "../../config/config.js";
+import { configuredVideoMaxHeight } from "../provider-quality.js";
 import { YOUTUBE_MUSIC_COOKIES_FILE } from "./youtube-music-auth.js";
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/u;
@@ -239,7 +241,11 @@ export class YtDlpBackend implements DownloadBackend {
     if (fs.existsSync(cookiesPath)) args.push("--cookies", cookiesPath);
 
     if (request.entityType === "video") {
-      args.push("--no-playlist", "--format", "bestvideo*+bestaudio/best", "--merge-output-format", "mp4");
+      const maxHeight = configuredVideoMaxHeight(Config.getQualityConfig()?.video_quality);
+      // Prefer the best stream at or below the Settings video-quality ceiling.
+      const format =
+        `bestvideo*[height<=${maxHeight}]+bestaudio/best[height<=${maxHeight}]/best`;
+      args.push("--no-playlist", "--format", format, "--merge-output-format", "mp4");
     } else {
       args.push(
         request.entityType === "album" ? "--yes-playlist" : "--no-playlist",

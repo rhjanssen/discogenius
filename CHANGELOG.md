@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.6.2] - 2026-07-22
+
+### Added
+- Queue history filters: outcome (Completed / Warning / Failed) and library kind
+  (Stereo / Spatial / Video), server-side on the paginated history feed.
+- Settings Curation: Visualizer music-video type filter
+  (`include_video_visualizer`, default on) — separate from Official.
+- MusicBrainz free-streaming / streaming URL relations ingested as
+  `youtube-music` offers on video refresh (so catalog videos with an MB YouTube
+  link get a downloadable offer).
+
+### Changed
+- Video thumbnails: store full-aspect origin; cards use a 250px aspect-preserving
+  proxy; album/artist cover art still uses 500 + 250 proxies. Video cards are
+  16:9 with `object-fit: cover` (taller thumbs crop top/bottom; card width
+  unchanged).
+- Cover identity: list and detail share one `/media-cover/.../cover.jpg` URL plus
+  `?lastWrite=` / `?source=` so proxy vs origin no longer drift across pages.
+- Album Associated videos honor the artist page list/grid (carousel) preference.
+- Settings: naming template inputs stretch full width; path/layout controls stack
+  on mobile for breathing room.
+- TIDAL video quality offers: probe stream height instead of trusting catalog
+  `MP4_1080P`; Apple no longer invents FHD; YouTube downloads respect Settings
+  max resolution.
+
+### Fixed
+- Cross-provider live video merge: named venue twins (e.g. Other Voices) attach
+  onto the MusicBrainz row instead of minting duplicates and double-downloading.
+- Upgrader is provider-aware: no longer queues Apple (or other) album IDs as
+  TIDAL downloads (Grace Note–style 404s).
+- Artist/album mobile action bars: AppTooltip blocked Fluent Overflow measure
+  refs — More overflow menu restored on narrow viewports.
+
 ## [2.6.1] - 2026-07-22
 
 ### Changed

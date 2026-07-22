@@ -31,15 +31,15 @@ export const useDataGridCellStyles = makeStyles({
             height: "40px",
         },
     },
-    /* Thumbnail images — wide (videos, 3:2) */
+    /* Thumbnail images — wide (videos, 16:9) */
     thumbnailWide: {
-        width: "56px",
+        width: "64px",
         height: "36px",
         borderRadius: tokens.borderRadiusSmall,
         objectFit: "cover",
         backgroundColor: tokens.colorNeutralBackground3,
         "@media (min-width: 768px)": {
-            width: "64px",
+            width: "72px",
             height: "40px",
         },
     },

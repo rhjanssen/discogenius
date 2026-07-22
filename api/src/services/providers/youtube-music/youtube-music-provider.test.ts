@@ -609,7 +609,8 @@ test("yt-dlp arguments use provider-ID filenames and select audio/video formats 
   assert.ok(!audioArgs.includes("--cookies"));
 
   const videoArgs = backend.buildArgs({ ...audioRequest, entityType: "video", providerId: VIDEO_ID });
-  assert.ok(videoArgs.includes("bestvideo*+bestaudio/best"));
+  const videoFormat = videoArgs[videoArgs.indexOf("--format") + 1];
+  assert.match(String(videoFormat), /bestvideo\*\[height<=\d+\]\+bestaudio\/best\[height<=\d+\]\/best/);
   assert.ok(videoArgs.includes("--merge-output-format"));
   assert.equal(videoArgs.at(-1), `https://www.youtube.com/watch?v=${VIDEO_ID}`);
 

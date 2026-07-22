@@ -27,7 +27,7 @@ import {
 } from "@fluentui/react-icons";
 import { useSearch, SearchResultItem } from "@/hooks/useSearch";
 import { MediaCard } from "@/components/cards/MediaCard";
-import { mediaCoverSrc } from "@/utils/artwork";
+import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { api } from "@/services/api";
 import { useToast } from "@/hooks/useToast";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
@@ -659,7 +659,7 @@ const GlobalSearch = ({ autoFocus, initialQuery = "" }: GlobalSearchProps = {}) 
         const parts = item.subtitle?.split('·').map(s => s.trim()) || [];
         const artistName = parts[1] || "";
         const extraInfo = item.type === "artist" ? "" : parts[2] || ""; // Duration or Year
-        const imageUrl = mediaCoverSrc(item);
+        const imageUrl = isVideo ? mediaCoverProxySrc(item) : mediaCoverSrc(item);
 
         return (
             <div

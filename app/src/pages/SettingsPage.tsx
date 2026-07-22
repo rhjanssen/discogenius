@@ -434,6 +434,7 @@ const SettingsPage = () => {
                 include_video_official: true,
                 include_video_lyric: true,
                 include_video_live: true,
+                include_video_visualizer: true,
                 enable_redundancy_filter: true,
                 prefer_explicit: true,
                 require_provider_availability: false,

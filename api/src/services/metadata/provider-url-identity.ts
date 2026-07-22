@@ -13,7 +13,9 @@ function cleanId(value: string | null | undefined): string {
 function normalizeProvider(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (normalized === "apple" || normalized === "itunes") return "apple-music";
-  if (normalized === "youtube music") return "youtube-music";
+  // Discogenius registers one YouTube plugin (`youtube-music`); bare `youtube`
+  // hostnames from MusicBrainz free-streaming links must resolve to it.
+  if (normalized === "youtube" || normalized === "youtube music") return "youtube-music";
   return normalized;
 }
 
@@ -63,7 +65,7 @@ function fromHostPath(hostname: string, pathname: string): ProviderResourceIdent
   if (host === "youtube.com" || host === "music.youtube.com" || host === "youtu.be") {
     const id = host === "youtu.be" ? cleanId(parts[0]) : "";
     if (id) {
-      return { provider: host === "music.youtube.com" ? "youtube-music" : "youtube", type: "video", id };
+      return { provider: "youtube-music", type: "video", id };
     }
   }
 
@@ -81,7 +83,7 @@ export function parseProviderResourceIdentity(value?: string | null): ProviderRe
       if (fromUrl) return fromUrl;
       if ((url.hostname === "youtube.com" || url.hostname === "music.youtube.com" || url.hostname === "www.youtube.com") && url.searchParams.get("v")) {
         return {
-          provider: url.hostname === "music.youtube.com" ? "youtube-music" : "youtube",
+          provider: "youtube-music",
           type: "video",
           id: cleanId(url.searchParams.get("v")),
         };

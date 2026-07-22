@@ -589,7 +589,7 @@ class LibraryMetadataBackfillService {
 
         // ---- Thumbnail backfill ----
         if (metadataConfig.save_video_thumbnail || metadataConfig.embed_video_thumbnail !== false) {
-            const resolution = metadataConfig.video_thumbnail_resolution || "1080x720";
+            const resolution = metadataConfig.video_thumbnail_resolution || "origin";
 
             const thumbnailVideos = db.prepare(`
       SELECT

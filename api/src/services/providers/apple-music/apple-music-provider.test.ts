@@ -210,11 +210,11 @@ test("Apple quality mapping translates raw traits into the neutral model", () =>
   assert.equal(appleMusicQualityMapping.fromNeutralAudio("lossless"), "lossless");
 });
 
-test("Apple music-video quality maps has4K to UHD and everything else to FHD", async () => {
+test("Apple music-video quality maps has4K to UHD and otherwise stays unknown", async () => {
   const { appleVideoQualityTag } = await import("./apple-music-quality.js");
   assert.equal(appleVideoQualityTag(true), "UHD");
-  assert.equal(appleVideoQualityTag(false), "FHD");
-  assert.equal(appleVideoQualityTag(undefined), "FHD");
+  assert.equal(appleVideoQualityTag(false), null);
+  assert.equal(appleVideoQualityTag(undefined), null);
 
   const video = await getAppleVideo("1452310551", opts());
   assert.equal(video.quality, "UHD");

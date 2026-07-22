@@ -247,7 +247,7 @@ export function mapAppleVideo(resource: AppleResource): ProviderVideo {
     explicit: attrs.contentRating ? attrs.contentRating === "explicit" : null,
     url: attrs.url,
     isrc: attrs.isrc || null,
-    // Catalog only exposes has4K; non-4K MVs still resolve to FHD (see appleVideoQualityTag).
+    // Catalog only exposes has4K; non-4K MVs stay unlabeled until file probe.
     quality: appleVideoQualityTag(attrs.has4K),
     albumId: albumResource?.id || null,
     relatedTrackId: songResource?.type === "songs" ? songResource.id : null,

@@ -85,7 +85,8 @@ import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEven
 import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
 import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
-import { mediaCoverSrc } from "@/utils/artwork";
+import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
+import { readArtistViewMode, type ArtistViewMode } from "@/utils/artistViewMode";
 import {
   detailActionGlassButtonStyles,
   detailActionPrimaryButtonStyles,
@@ -386,10 +387,14 @@ const useStyles = makeStyles({
   },
   actionButton: {
     ...standardDetailActionButtonStyles,
+    // Content-based basis so Fluent Overflow measures real widths; grow fills
+    // leftover space after lower-priority actions collapse into More.
+    flex: "1 0 auto",
     minWidth: "76px",
     flexShrink: 0,
     "@media (min-width: 768px)": {
       ...standardDetailActionButtonStyles["@media (min-width: 768px)"],
+      flex: "0 0 auto",
       minWidth: "auto",
       flexShrink: 0,
     },
@@ -463,7 +468,37 @@ const useStyles = makeStyles({
   sectionHeader: {
     marginBottom: tokens.spacingVerticalM,
   },
-  carousel: {
+  /** Horizontal scroll for associated videos (matches artist page carousel). */
+  videoCarousel: {
+    display: "flex",
+    gap: tokens.spacingHorizontalS,
+    overflowX: "auto",
+    scrollBehavior: "smooth",
+    paddingBottom: tokens.spacingVerticalS,
+    scrollSnapType: "x mandatory",
+    "& > *": {
+      scrollSnapAlign: "start",
+      width: `calc((100% - 2 * ${tokens.spacingHorizontalS}) / 3)`,
+      flexShrink: 0,
+    },
+    "@media (min-width: 640px)": {
+      gap: tokens.spacingHorizontalM,
+      "& > *": {
+        width: `calc((100% - 3 * ${tokens.spacingHorizontalM}) / 4)`,
+      },
+    },
+    "@media (min-width: 900px)": {
+      "& > *": {
+        width: `calc((100% - 5 * ${tokens.spacingHorizontalM}) / 6)`,
+      },
+    },
+    scrollbarWidth: "none",
+    "&::-webkit-scrollbar": {
+      display: "none",
+    },
+  },
+  /** Grid when artist view preference is "grid". */
+  videoGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: tokens.spacingHorizontalS,
@@ -476,17 +511,18 @@ const useStyles = makeStyles({
       gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
-  videoGrid: {
+  /** Other-release album cards (square grid, not the video carousel). */
+  carousel: {
     display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: tokens.spacingHorizontalS,
     width: "100%",
     "@media (min-width: 640px)": {
-      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
       gap: tokens.spacingHorizontalM,
     },
     "@media (min-width: 900px)": {
-      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
     },
   },
   videoCardAnchor: {
@@ -598,6 +634,8 @@ const AlbumPage = () => {
   const [reviewExpanded, setReviewExpanded] = useState(false);
   const [coverInfoOpen, setCoverInfoOpen] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
+  // Same carousel/grid preference as the artist page video list.
+  const [videoViewMode] = useState<ArtistViewMode>(() => readArtistViewMode());
   const [renamePreviewOpen, setRenamePreviewOpen] = useState(false);
   const [renamePreviewItems, setRenamePreviewItems] = useState<RenamePreviewItem[]>([]);
   const [renameApplying, setRenameApplying] = useState(false);
@@ -1619,7 +1657,7 @@ const AlbumPage = () => {
             <div className={styles.sectionHeader}>
               <Title2>Associated videos</Title2>
             </div>
-            <div className={styles.videoGrid}>
+            <div className={videoViewMode === "grid" ? styles.videoGrid : styles.videoCarousel}>
               {associatedVideos.map((video) => {
                 const videoId = String(video.id);
                 const trackLabel = formatAssociatedVideoTrackLabel(video);
@@ -1632,7 +1670,7 @@ const AlbumPage = () => {
                     className={styles.videoCardAnchor}
                   >
                     <MediaCard
-                      imageUrl={mediaCoverSrc(video)}
+                      imageUrl={mediaCoverProxySrc(video)}
                       alt={video.title}
                       title={video.title}
                       subtitle={subtitle || undefined}

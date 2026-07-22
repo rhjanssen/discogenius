@@ -401,15 +401,74 @@ test("provider video artwork ids resolve through the provider interface before c
 
   const artworkUrl = await mediaCoverServiceModule.resolveVideoArtwork({ videoId: recording.id });
 
-  assert.equal(artworkUrl, `/media-cover/Videos/${recording.id}/cover.jpg`);
+  assert.match(String(artworkUrl), new RegExp(`^/media-cover/Videos/${recording.id}/cover\\.jpg(?:\\?lastWrite=\\d+)?$`));
   assert.deepEqual(artworkRequests, [{
     entityType: "video",
     providerId: "provider-video-id",
     imageId: "video-image-id",
-    size: "1080x720",
+    size: "origin",
   }]);
   assert.deepEqual(fetchCalls, [providerUrl]);
-  assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Videos", String(recording.id), "cover.jpg")), true);
+  const videoCache = path.join(tempDir, "media-cover", "Videos", String(recording.id));
+  assert.equal(fs.existsSync(path.join(videoCache, "cover.jpg")), true);
+  assert.equal(fs.existsSync(path.join(videoCache, "cover-250.jpg")), true);
+  assert.equal(fs.existsSync(path.join(videoCache, "cover-500.jpg")), false);
+  assert.match(
+    String(mediaCoverServiceModule.videoCoverLocalUrl(recording.id)),
+    new RegExp(`^/media-cover/Videos/${recording.id}/cover\\.jpg\\?lastWrite=\\d+$`),
+  );
+});
+
+test("video cover proxies preserve source aspect ratio (no forced 3:2 crop)", async () => {
+  const cases = [
+    { label: "16:9", width: 1280, height: 720, videoId: "aspect-16x9-video" },
+    { label: "3:2", width: 1080, height: 720, videoId: "aspect-3x2-video" },
+    { label: "4:3", width: 800, height: 600, videoId: "aspect-4x3-video" },
+  ] as const;
+
+  for (const sample of cases) {
+    const image = jpeg.encode({
+      width: sample.width,
+      height: sample.height,
+      data: Buffer.alloc(sample.width * sample.height * 4, 180),
+    }, 92).data;
+    const sourceUrl = `https://provider.example/artwork/${sample.videoId}.jpg`;
+
+    globalThis.fetch = (async () => new Response(image, {
+      status: 200,
+      headers: { "content-type": "image/jpeg" },
+    })) as typeof fetch;
+
+    try {
+      const cached = await mediaCoverServiceModule.ensureCachedMediaCover({
+        entityId: sample.videoId,
+        coverEntity: "Video",
+        coverType: "Cover",
+        sourceUrl,
+      });
+      assert.equal(cached, `/media-cover/Videos/${sample.videoId}/cover.jpg`);
+
+      const folder = path.join(tempDir, "media-cover", "Videos", sample.videoId);
+      const origin = jpeg.decode(fs.readFileSync(path.join(folder, "cover.jpg")), { useTArray: true });
+      const proxy250 = jpeg.decode(fs.readFileSync(path.join(folder, "cover-250.jpg")), { useTArray: true });
+
+      assert.equal(origin.width, sample.width, `${sample.label} origin width`);
+      assert.equal(origin.height, sample.height, `${sample.label} origin height`);
+      assert.equal(fs.existsSync(path.join(folder, "cover-500.jpg")), false, `${sample.label} no 500 proxy`);
+      assert.equal(proxy250.height, 250, `${sample.label} proxy-250 height`);
+
+      const expected250Width = Math.max(1, Math.round(sample.width * 250 / sample.height));
+      assert.equal(proxy250.width, expected250Width, `${sample.label} proxy-250 width`);
+
+      const sourceRatio = sample.width / sample.height;
+      assert.ok(
+        Math.abs(proxy250.width / proxy250.height - sourceRatio) < 0.02,
+        `${sample.label} proxy-250 must keep aspect (got ${proxy250.width}x${proxy250.height})`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
 });
 
 test("provider video artwork can resolve from provider id when no image id is stored", async () => {
@@ -498,12 +557,12 @@ test("provider video artwork can resolve from provider id when no image id is st
 
   const artworkUrl = await mediaCoverServiceModule.resolveVideoArtwork({ videoId: recording.id });
 
-  assert.equal(artworkUrl, `/media-cover/Videos/${recording.id}/cover.jpg`);
+  assert.match(String(artworkUrl), new RegExp(`^/media-cover/Videos/${recording.id}/cover\\.jpg(?:\\?lastWrite=\\d+)?$`));
   assert.deepEqual(artworkRequests, [{
     entityType: "video",
     providerId: "provider-video-without-image-id",
     imageId: null,
-    size: "1080x720",
+    size: "origin",
   }]);
 });
 
@@ -916,7 +975,7 @@ test("ensureCachedMediaCover keeps prior files when a successful fetch cannot be
   }
 });
 
-test("normalizeArtworkUrl upgrades cropped YouTube and square Apple music-video thumbs", () => {
+test("normalizeArtworkUrl upgrades cropped YouTube, square Apple, and TIDAL 3:2 video thumbs", () => {
   assert.equal(
     mediaCoverServiceModule.normalizeArtworkUrl(
       "https://i.ytimg.com/vi/-oyOHAew3Bc/hq720.jpg?sqp=-oaymwEXCNUGEOADIAQqCwjVARCqCBh4INgESFo&rs=AOn4CLAJ8V-N1UzOLZFqL7WnPxzYz7h8pQ",
@@ -932,5 +991,18 @@ test("normalizeArtworkUrl upgrades cropped YouTube and square Apple music-video 
   assert.equal(
     mediaCoverServiceModule.normalizeArtworkUrl("https://i.ytimg.com/vi/abc123/hq720.jpg"),
     "https://i.ytimg.com/vi/abc123/hq720.jpg",
+  );
+  assert.equal(
+    mediaCoverServiceModule.normalizeArtworkUrl(
+      "https://resources.tidal.com/images/238db1f8/3d1c/4810/bf02/df33c72315ab/1080x720.jpg",
+    ),
+    "https://resources.tidal.com/images/238db1f8/3d1c/4810/bf02/df33c72315ab/origin.jpg",
+  );
+  // Square album art must not be rewritten to origin.
+  assert.equal(
+    mediaCoverServiceModule.normalizeArtworkUrl(
+      "https://resources.tidal.com/images/21824bc6/1cfd/44da/9f78/c400e83cf133/640x640.jpg",
+    ),
+    "https://resources.tidal.com/images/21824bc6/1cfd/44da/9f78/c400e83cf133/640x640.jpg",
   );
 });

@@ -123,12 +123,19 @@ test("named TV performance twins bare title only at exact duration", () => {
   assert.equal(sameDuration.matched, true);
 
   const liveAtVenue = scoreVideoIdentityMatch({
-    titleA: "Back to Black",
-    titleB: "Back To Black (Live at Other Voices, 2006)",
-    lengthMsA: 253_000,
-    lengthMsB: 253_000,
+    titleA: "Me & Mr. Jones",
+    titleB: "Me & Mr. Jones (Live at Other Voices, 2006)",
+    lengthMsA: 203_000,
+    lengthMsB: 203_000,
+    releaseDateA: "2024-09-02",
+    releaseDateB: "2024-09-02",
+    variantA: "video",
+    variantB: "live",
+    providerA: "tidal",
+    providerB: "apple-music",
   });
   assert.equal(liveAtVenue.matched, true);
+  assert.ok(liveAtVenue.score >= VIDEO_IDENTITY_MATCH_THRESHOLD);
 
   const bareLiveWithoutVenue = scoreVideoIdentityMatch({
     titleA: "Distorted Light Beam",

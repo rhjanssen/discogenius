@@ -4,16 +4,25 @@ import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { updateAlbumDownloadStatus } from "../download/download-state.js";
 import { downloadProcessor } from "../download/download-processor.js";
+import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { normalizeAudioQualityTag } from "../config/quality.js";
 import { UpgradableSpecification } from "../config/upgradable-specification.js";
 import { readIntEnv } from "../../utils/env.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 
+export type UpgradeDetail = {
+    mediaId: string;
+    type: string;
+    reason: string;
+    provider: string;
+    albumId: string | null;
+};
+
 export type UpgradeResult = {
     tracks: number;
     videos: number;
     albums: number;
-    details: { mediaId: string; type: string; reason: string }[];
+    details: UpgradeDetail[];
 };
 
 type UpgradeCandidateRow = {
@@ -33,7 +42,35 @@ type UpgradeCandidateRow = {
     album_quality: string | null;
 };
 
+type AlbumUpgradeTarget = {
+    provider: string;
+    albumId: string;
+};
+
 const UPGRADE_HISTORY_COOLDOWN_HOURS = 24;
+
+function normalizeProviderId(value: string | null | undefined): string | null {
+    const normalized = String(value || "").trim().toLowerCase();
+    return normalized || null;
+}
+
+function albumUpgradeKey(provider: string, albumId: string): string {
+    return `${provider}\0${albumId}`;
+}
+
+function countProviderAlbumTracks(provider: string, albumId: string): number {
+    const row = db.prepare(`
+        SELECT COUNT(*) AS cnt
+        FROM ProviderItems
+        WHERE provider = ?
+          AND entity_type = 'track'
+          AND (
+            CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
+            OR CAST(json_extract(match_evidence, '$.albumProviderId') AS TEXT) = CAST(? AS TEXT)
+          )
+    `).get(provider, albumId, albumId) as { cnt: number } | undefined;
+    return Number(row?.cnt) || 0;
+}
 
 function hasRecentNoImprovementUpgradeAttempt(row: UpgradeCandidateRow): boolean {
     if (!row.media_id) return false;
@@ -130,11 +167,12 @@ export class UpgraderService {
 
         // Apply quality settings to actual downloaded library files. Resolve the
         // provider resource to re-download from TrackFiles provider identity and
-        // canonical ProviderItems.
+        // canonical ProviderItems. Never default a missing provider to TIDAL —
+        // foreign album/track IDs must stay on their owning backend.
         const query = db.prepare(`
         SELECT
             lf.id AS file_id,
-            COALESCE(media_item.provider, lf.provider, 'tidal') AS provider,
+            COALESCE(media_item.provider, lf.provider) AS provider,
             CASE WHEN lf.file_type = 'video' THEN 'video' ELSE 'track' END AS provider_entity_type,
             COALESCE(
                 media_item.provider_id,
@@ -229,12 +267,18 @@ export class UpgraderService {
         }
 
         const result: UpgradeResult = { tracks: 0, videos: 0, albums: 0, details: [] };
-        const albumsNeedingUpgrade = new Set<string>();
+        const albumsNeedingUpgrade = new Map<string, AlbumUpgradeTarget>();
 
         let rowsLoopCounter = 0;
         for (const row of rows) {
             rowsLoopCounter++;
             await this.maybeYield(rowsLoopCounter);
+
+            const provider = normalizeProviderId(row.provider);
+            if (!provider || !row.media_id) {
+                console.log(`[UPGRADER] Skipping ${row.provider_entity_type} ${row.media_id}: missing provider identity.`);
+                continue;
+            }
 
             const normalizedCurrentQuality = normalizeAudioQualityTag(row.current_quality);
             let evaluation;
@@ -270,14 +314,21 @@ export class UpgraderService {
                     continue;
                 }
 
-                result.details.push({ mediaId: String(row.media_id), type: row.media_type, reason: evaluation.reason });
+                const albumId = row.album_id ? String(row.album_id) : null;
+                result.details.push({
+                    mediaId: String(row.media_id),
+                    type: row.media_type,
+                    reason: evaluation.reason,
+                    provider,
+                    albumId,
+                });
 
                 if (row.media_type === 'Music Video') {
                     result.videos++;
                 } else {
                     result.tracks++;
-                    if (row.album_id) {
-                        albumsNeedingUpgrade.add(String(row.album_id));
+                    if (albumId) {
+                        albumsNeedingUpgrade.set(albumUpgradeKey(provider, albumId), { provider, albumId });
                     }
                 }
             }
@@ -287,30 +338,39 @@ export class UpgraderService {
         const trackMediaIdsQueuedViaAlbum = new Set<string>();
         let albumsLoopCounter = 0;
         let albumTrackTransferLoopCounter = 0;
-        for (const albumId of albumsNeedingUpgrade) {
+        for (const { provider, albumId } of albumsNeedingUpgrade.values()) {
             albumsLoopCounter++;
             await this.maybeYield(albumsLoopCounter);
 
             const albumTracksToUpgrade = result.details.filter(
-                d => d.type !== 'Music Video' && rows.some(r => String(r.media_id) === d.mediaId && String(r.album_id) === albumId)
+                d => d.type !== 'Music Video'
+                    && d.provider === provider
+                    && d.albumId === albumId
             );
 
-            // Only queue as album if a significant portion needs upgrading (≥50% or ≥3 tracks)
-            const totalAlbumTracks = (db.prepare(`
-                SELECT COUNT(*) as cnt FROM ProviderItems
-                WHERE provider = 'tidal'
-                  AND entity_type = 'track'
-                  AND provider_album_id = ?
-            `).get(albumId) as any)?.cnt || 0;
+            // Count tracks for THIS provider only. Never assume TIDAL — a foreign
+            // album id with zero TIDAL tracks used to still enqueue DownloadAlbum.
+            const totalAlbumTracks = countProviderAlbumTracks(provider, albumId);
+            if (totalAlbumTracks <= 0) {
+                console.log(`[UPGRADER] Skipping album-level upgrade for ${provider} album ${albumId}: no provider tracks found.`);
+                continue;
+            }
 
+            // Only queue as album if a significant portion needs upgrading (≥50% or ≥3 tracks)
             if (albumTracksToUpgrade.length >= 3 || albumTracksToUpgrade.length >= totalAlbumTracks * 0.5) {
-                console.log(`[UPGRADER] Queuing album ${albumId} for upgrade (${albumTracksToUpgrade.length}/${totalAlbumTracks} tracks need upgrade)`);
+                console.log(`[UPGRADER] Queuing ${provider} album ${albumId} for upgrade (${albumTracksToUpgrade.length}/${totalAlbumTracks} tracks need upgrade)`);
 
                 updateAlbumDownloadStatus(albumId);
 
                 CommandQueueManager.push(
                     CommandNames.DownloadAlbum,
-                    { providerId: albumId, reason: 'upgrade' },
+                    {
+                        providerId: albumId,
+                        provider,
+                        type: "album",
+                        reason: "upgrade",
+                        url: buildStreamingMediaUrl("album", albumId, provider),
+                    },
                     albumId,
                     -5
                 );
@@ -319,25 +379,33 @@ export class UpgraderService {
                 for (const d of albumTracksToUpgrade) {
                     albumTrackTransferLoopCounter++;
                     await this.maybeYield(albumTrackTransferLoopCounter);
-                    trackMediaIdsQueuedViaAlbum.add(d.mediaId);
+                    trackMediaIdsQueuedViaAlbum.add(`${d.provider}\0${d.mediaId}`);
                 }
             }
         }
 
-        // Queue remaining individual track upgrades (not covered by album downloads)
+        // Queue remaining individual track/video upgrades (not covered by album downloads)
         let detailsLoopCounter = 0;
         for (const d of result.details) {
             detailsLoopCounter++;
             await this.maybeYield(detailsLoopCounter);
 
-            if (trackMediaIdsQueuedViaAlbum.has(d.mediaId)) continue;
+            if (trackMediaIdsQueuedViaAlbum.has(`${d.provider}\0${d.mediaId}`)) continue;
 
-            const jobType = d.type === 'Music Video' ? CommandNames.DownloadVideo : CommandNames.DownloadTrack;
-            console.log(`[UPGRADER] Queuing ${jobType} upgrade for ${d.mediaId}: ${d.reason}`);
+            const isVideo = d.type === 'Music Video';
+            const jobType = isVideo ? CommandNames.DownloadVideo : CommandNames.DownloadTrack;
+            const mediaType = isVideo ? "video" : "track";
+            console.log(`[UPGRADER] Queuing ${jobType} upgrade for ${d.provider}:${d.mediaId}: ${d.reason}`);
 
             CommandQueueManager.push(
                 jobType,
-                { providerId: d.mediaId, reason: 'upgrade' },
+                {
+                    providerId: d.mediaId,
+                    provider: d.provider,
+                    type: mediaType,
+                    reason: "upgrade",
+                    url: buildStreamingMediaUrl(mediaType, d.mediaId, d.provider),
+                },
                 d.mediaId,
                 -5
             );

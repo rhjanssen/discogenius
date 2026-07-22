@@ -64,7 +64,7 @@ import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useTheme } from "@/providers/themeContext";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
 import { api, type StreamingProviderStatus } from "@/services/api";
-import { mediaCoverSrc } from "@/utils/artwork";
+import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import {
   dispatchActivityRefresh,
   dispatchLibraryUpdated,
@@ -1154,7 +1154,7 @@ const Library = () => {
       width: "64px",
       media: true,
       render: (video: any) => {
-        const src = mediaCoverSrc(video);
+        const src = mediaCoverProxySrc(video);
         return src ? (
           <img src={src} alt={video.title} className={dgCell.thumbnailWide} />
         ) : (

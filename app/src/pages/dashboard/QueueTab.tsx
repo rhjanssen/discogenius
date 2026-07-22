@@ -51,13 +51,17 @@ import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QueueListSkeleton } from "@/components/ui/LoadingSkeletons";
-import { mediaCoverSrc } from "@/utils/artwork";
+import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import type { DownloadProgress } from "@/queue/queueProgress";
 import { useDashboardStyles } from "./dashboardStyles";
 import { ProviderMark } from "@/components/ui/ProviderMark";
 import { QueueHistoryPanel } from "./QueueHistoryPanel";
 import { isInteractiveElementTarget, stopQueueControlEvent } from "./queueTabShared";
+import {
+    defaultQueueHistoryFilters,
+    type QueueHistoryFilters,
+} from "./queueHistoryFilters";
 
 const ArrowClockwise24 = bundleIcon(ArrowClockwise24Filled, ArrowClockwise24Regular);
 const Clock16 = bundleIcon(Clock16Filled, Clock16Regular);
@@ -832,6 +836,7 @@ const QueueTab = () => {
         deleteItem,
         reorderItems,
     } = useQueueStatus();
+    const [historyFilters, setHistoryFilters] = useState<QueueHistoryFilters>(defaultQueueHistoryFilters);
     const {
         queueHistoryItems,
         hasMoreQueueHistory,
@@ -841,7 +846,7 @@ const QueueTab = () => {
         hasQueueHistoryRefreshError,
         queueHistoryRefreshErrorMessage,
         refetch: refreshQueueHistory,
-    } = useQueueHistoryFeed();
+    } = useQueueHistoryFeed({ filters: historyFilters });
     const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
     const [busyGroupIds, setBusyGroupIds] = useState<string[]>([]);
@@ -1371,7 +1376,7 @@ const QueueTab = () => {
                         <div className={styles.downloadList}>
                             {visibleGroupedDownloads.map((group) => {
                                 const isVideo = group.type === 'video';
-                                const coverUrl = mediaCoverSrc(group);
+                                const coverUrl = isVideo ? mediaCoverProxySrc(group) : mediaCoverSrc(group);
                                 const isDownloading = group.status === 'downloading';
                                 const isFailed = group.status === 'failed';
                                 const groupedTrackItems = group.items.filter((item) => item.type === 'track');
@@ -1809,6 +1814,8 @@ const QueueTab = () => {
                     refreshErrorMessage={queueHistoryRefreshErrorMessage}
                     onRetryFeeds={handleRetryQueueFeeds}
                     onRetryItem={retryItem}
+                    filters={historyFilters}
+                    onFiltersChange={setHistoryFilters}
                 />
             </div>
         </div>

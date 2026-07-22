@@ -76,6 +76,7 @@ const musicVideoTypeRows = [
     { key: "include_video_official", title: "Official Music Video" },
     { key: "include_video_lyric", title: "Official Lyric Video" },
     { key: "include_video_live", title: "Live" },
+    { key: "include_video_visualizer", title: "Visualizer" },
 ] as const;
 
 const useStyles = makeStyles({

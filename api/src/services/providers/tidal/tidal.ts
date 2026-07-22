@@ -8,6 +8,7 @@ import {
   refreshStoredTidalToken,
 } from "./tidal-auth.js";
 import { tidalVideoQualityTag } from "./tidal-quality.js";
+import { resolveTidalVideoQualityTag } from "./tidal-video-probe.js";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 const TIDAL_API_BASE_V2 = "https://api.tidal.com/v2";
 // TIDAL's JSON:API developer platform. Our device-flow token is accepted here
@@ -1709,7 +1710,7 @@ export async function getArtistVideos(artistId: string) {
     release_date: item.releaseDate || item.streamStartDate || null,
     version: item.version || null,
     explicit: item.explicit || false,
-    quality: tidalVideoQualityTag(item.quality),  // Video quality like MP4_1080P
+    quality: tidalVideoQualityTag(item.quality),  // null for untrusted catalog MP4_1080P
     image_id: item.imageId || item.image || null,  // UUID for video thumbnail
     vibrant_color: item.vibrantColor || null,  // Hex color code
     artist_id: item.artist?.id?.toString() || artistId,
@@ -1728,6 +1729,8 @@ export async function getVideo(videoId: string) {
   if (!data || !data.id) {
     throw new Error(`Invalid video data for ID ${videoId}`);
   }
+  // Catalog quality is often MP4_1080P even when the stream is 720p/480p — probe.
+  const quality = await resolveTidalVideoQualityTag(String(data.id), data.quality);
   return {
     id: data.id.toString(),
     provider_id: data.id.toString(),
@@ -1740,7 +1743,7 @@ export async function getVideo(videoId: string) {
     release_date: data.releaseDate || data.streamStartDate || null,
     image_id: data.imageId || data.image || null,  // UUID for video thumbnail
     vibrant_color: data.vibrantColor || null,  // Hex color code
-    quality: tidalVideoQualityTag(data.quality),
+    quality,
     explicit: data.explicit || false,
     popularity: data.popularity || 0,
     url: `https://listen.tidal.com/video/${data.id}`,

@@ -1,23 +1,45 @@
 import { api } from "@/services/api";
 import { ignoreProgressTickEvents, useDashboardInfiniteFeed } from "@/hooks/useDashboardInfiniteFeed";
 import type { QueueItemContract } from "@contracts/status";
+import {
+    defaultQueueHistoryFilters,
+    type QueueHistoryFilters,
+} from "@/pages/dashboard/queueHistoryFilters";
 
-export const queueHistoryFeedQueryKey = ["queueHistoryFeed"] as const;
+export function queueHistoryFeedQueryKey(filters: QueueHistoryFilters = defaultQueueHistoryFilters) {
+    return [
+        "queueHistoryFeed",
+        {
+            outcomes: [...filters.outcomes].sort(),
+            mediaKinds: [...filters.mediaKinds].sort(),
+        },
+    ] as const;
+}
 
 const QUEUE_HISTORY_PAGE_SIZE = 10;
 const QUEUE_HISTORY_FEED_TIMEOUT_MS = 45_000;
 
 type UseQueueHistoryFeedOptions = {
     enabled?: boolean;
+    filters?: QueueHistoryFilters;
 };
 
-export function useQueueHistoryFeed({ enabled = true }: UseQueueHistoryFeedOptions = {}) {
+export function useQueueHistoryFeed({
+    enabled = true,
+    filters = defaultQueueHistoryFilters,
+}: UseQueueHistoryFeedOptions = {}) {
     const query = useDashboardInfiniteFeed<QueueItemContract>({
-        queryKey: queueHistoryFeedQueryKey,
+        queryKey: queueHistoryFeedQueryKey(filters),
         pageSize: QUEUE_HISTORY_PAGE_SIZE,
         timeoutMs: QUEUE_HISTORY_FEED_TIMEOUT_MS,
         refreshErrorFallbackMessage: "Failed to refresh queue history.",
-        fetchPage: ({ limit, offset, timeoutMs }) => api.getQueueHistory({ limit, offset, timeoutMs }),
+        fetchPage: ({ limit, offset, timeoutMs }) => api.getQueueHistory({
+            limit,
+            offset,
+            timeoutMs,
+            outcomes: filters.outcomes,
+            mediaKinds: filters.mediaKinds,
+        }),
         getItemId: (item) => item.id,
         // History only changes on terminal transitions, which arrive as SSE
         // events; the interval is a fallback for missed events.

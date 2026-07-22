@@ -75,7 +75,7 @@ export interface MediaCardProps {
     bottomLeftBadge?: React.ReactNode;
     /** Additional className for the card root */
     className?: string;
-    /** Use video aspect ratio (3:2) instead of square */
+    /** Use video aspect ratio (16:9) instead of square */
     videoAspect?: boolean;
     /** Download overlay status */
     downloadStatus?: 'pending' | 'queued' | 'downloading' | 'completed' | 'failed' | 'cancelled' | 'paused' | string;
