@@ -902,7 +902,9 @@ export class RefreshArtistService {
         return ReleaseGroupSlotService.syncProviderAlbumSelections({
             artistMbid,
             candidates,
-            clearProviders: [],
+            // Rebuild from the full stored offer graph: clear any previous
+            // provider selection that no longer wins (empty SC stubs, demoted
+            // cross-RG partials, etc.).
         });
     }
 
@@ -1482,11 +1484,22 @@ export class RefreshArtistService {
                 // user playlists, not under the official artist album catalog.
                 // For those release types, search playlists by title and accept
                 // supersets that cover the MusicBrainz tracklist.
+                // Title-only shells with no tracklist must not block this search —
+                // otherwise an empty official SC album stub prevents finding the
+                // fan set that actually covers the mixtape.
                 const matchedRgMbids = new Set(
                     Array.from(providerReleaseGroupMatches.values())
-                        .filter((match) =>
-                            match.releaseGroup
-                            && ["verified", "probable", "candidate"].includes(match.status))
+                        .filter((match) => {
+                            if (!match.releaseGroup) return false;
+                            if (!["verified", "probable", "candidate"].includes(match.status)) {
+                                return false;
+                            }
+                            if (match.method === PLAYLIST_TRACKLIST_COVERAGE_METHOD) {
+                                return true;
+                            }
+                            return match.evidence?.trackCountMatched === true
+                                || Number(match.evidence?.providerTrackCount || 0) > 0;
+                        })
                         .map((match) => String(match.releaseGroup!.mbid)),
                 );
                 const widePlaylistOffers = await this.searchSoundCloudMixtapePlaylistOffers(

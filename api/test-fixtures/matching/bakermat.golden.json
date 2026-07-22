@@ -110,7 +110,7 @@
   {
     "providerId": "25459012",
     "providerTitle": "Strandfeest",
-    "status": "verified",
+    "status": "probable",
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "5f699603-5079-4575-994a-b107746ae6a1",

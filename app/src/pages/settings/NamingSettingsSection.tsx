@@ -244,6 +244,12 @@ const useStyles = makeStyles({
         minWidth: 0,
         paddingTop: tokens.spacingVerticalXXS,
     },
+    labelWithHelp: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalXXS,
+        minHeight: "32px",
+    },
     controlMedium: {
         width: "100%",
         maxWidth: "280px",
@@ -557,16 +563,29 @@ export const NamingSettingsSection = ({
                     </div>
                     <div className={styles.row}>
                         <div className={styles.rowContent}>
-                            <Text weight="semibold">Video Folder Layout</Text>
+                            <div className={styles.labelWithHelp}>
+                                <Text weight="semibold">Video Folder Layout</Text>
+                                <AppTooltip
+                                    relationship="description"
+                                    withArrow
+                                    content={
+                                        "Separated keeps videos in the video library. "
+                                        + "Inline places a linked video beside its stereo track when the album is monitored; otherwise it stays separated. "
+                                        + "Album-linked only uses that inline placement but never downloads videos that would only land in the video library. "
+                                        + "Importing stereo for a linked track relocates already-downloaded separated videos inline. "
+                                        + "Broader path changes still use Preview Rename."
+                                    }
+                                >
+                                    <Button
+                                        appearance="subtle"
+                                        icon={<QuestionCircle24 />}
+                                        className={styles.templateHelpButton}
+                                        aria-label="Video folder layout help"
+                                    />
+                                </AppTooltip>
+                            </div>
                             <Text size={200} className={styles.mutedText}>
-                                Choose where music videos live. Separated keeps them in the video library.
-                                Inline with albums places a video beside its stereo track when it is linked
-                                to that track and the album is monitored; otherwise it stays in the video
-                                library. Album-linked only also uses that inline placement, but never
-                                downloads videos that would only end up in the separated library — so you
-                                can leave the video library empty. Importing stereo audio for a linked
-                                track relocates already-downloaded separated videos inline automatically.
-                                Broader path changes still use Preview Rename on Library / Artist / Album.
+                                Where music videos live relative to albums
                             </Text>
                         </div>
                         <Select

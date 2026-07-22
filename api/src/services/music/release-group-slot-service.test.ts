@@ -1116,7 +1116,23 @@ test("provider slot selection falls back to metadata matching when track details
   insertTrack.run("track-fb-2", "release-mbid-fallback", "rec-fb-2", "Lazing on a Sunday Afternoon", 2, 1);
   insertTrack.run("track-fb-3", "release-mbid-fallback", "rec-fb-3", "I'm in Love with My Car", 3, 1);
 
-  const match = buildMatch(releaseGroupMbid, "provider-album-fallback");
+  // Album metadata has a matching track count but no hydrated track rows —
+  // strong shape evidence still allows the standalone metadata fallback.
+  const match = {
+    ...buildMatch(releaseGroupMbid, "provider-album-fallback"),
+    confidence: 0.99,
+    evidence: {
+      ...buildMatch(releaseGroupMbid, "provider-album-fallback").evidence,
+      trackCountMatched: true,
+      volumeCountMatched: true,
+      providerTrackCount: 3,
+      targetTrackCount: 3,
+      providerVolumeCount: 1,
+      targetVolumeCount: 1,
+      availableReleaseMbids: ["release-mbid-fallback"],
+      matchedReleaseMbid: "release-mbid-fallback",
+    },
+  };
 
   slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
     provider: "tidal",
@@ -1848,6 +1864,184 @@ test("cross-RG HIRES single cannot steal World Gone Mad from the UPC-matched LOS
   );
   assert.ok(dlbStereo, "expected a stereo slot for Distorted Light Beam");
   assert.equal(dlbStereo?.album.providerId, "192635951");
+});
+
+test("empty SoundCloud stub without tracks does not fill a tracklisted slot", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-oph-pt2-empty-sc";
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2012-12-06', 2, 1)
+  `).run("release-oph-empty-sc", releaseGroupMbid, "artist-mbid-1", "Other People’s Heartache, Pt. 2");
+  db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)`)
+    .run("rec-oph-1", "artist-mbid-1", "Tuning In");
+  db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)`)
+    .run("rec-oph-2", "artist-mbid-1", "Killer");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 1, 1, 62000)`).run("t-oph-1", "release-oph-empty-sc", "rec-oph-1", "Tuning In");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 2, 1, 181000)`).run("t-oph-2", "release-oph-empty-sc", "rec-oph-2", "Killer");
+
+  const match = {
+    ...buildMatch(releaseGroupMbid, "2881942"),
+    status: "verified" as const,
+    confidence: 0.97,
+    method: "musicbrainz-release-title-year-type-track-count",
+    evidence: {
+      ...buildMatch(releaseGroupMbid, "2881942").evidence,
+      trackCountMatched: false,
+      volumeCountMatched: true,
+      providerTrackCount: 0,
+      targetTrackCount: 2,
+      targetVolumeCount: 1,
+    },
+  };
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([{
+    provider: "soundcloud",
+    album: {
+      providerId: "2881942",
+      title: "OTHER PEOPLE'S HEARTACHE, PT. 2",
+      quality: "SOUNDCLOUD_LOSSY",
+      trackCount: 0,
+      volumeCount: 1,
+      tracks: [],
+    },
+    match,
+  }]);
+
+  assert.equal(selections.length, 0, "title-only SC stub must not select the stereo slot");
+});
+
+test("incomplete pure cross-RG partial cannot steal a monitored sibling tracklist", () => {
+  // OPH Pt. 2 must not keep a 2/11 TIDAL tip stolen from Bad Blood X.
+  const { db } = dbModule;
+  const artistMbid = "artist-bastille-oph";
+  const rgOph = "2d1c5d7d-56e3-4f7c-8194-d065595302d8";
+  const rgBadBlood = "bf37b1a0-d94f-4230-b2c7-09b17f9f8a68";
+  const releaseOph = "6085cdeb-aa4b-4d64-937b-4f22f8520546";
+  const releaseBadBlood = "release-bad-blood-x";
+
+  db.prepare(`INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run(artistMbid, "Bastille");
+  db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types)
+              VALUES (?, ?, ?, ?, ?)`).run(rgOph, artistMbid, "Other People’s Heartache, Pt. 2", "EP", JSON.stringify(["Mixtape/Street"]));
+  db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, primary_type)
+              VALUES (?, ?, ?, ?)`).run(rgBadBlood, artistMbid, "Bad Blood", "Album");
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2012-12-06', 3, 1)
+  `).run(releaseOph, rgOph, artistMbid, "Other People’s Heartache, Pt. 2");
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', '2023-01-01', 2, 1)
+  `).run(releaseBadBlood, rgBadBlood, artistMbid, "Bad Blood X");
+
+  for (const [rec, title, isrc] of [
+    ["rec-oph-a", "Tuning In", null],
+    ["rec-oph-b", "Dreams", "GBAAA1300203"],
+    ["rec-oph-c", "No Angels", null],
+  ] as const) {
+    db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, isrcs) VALUES (?, ?, ?, ?)`)
+      .run(rec, artistMbid, title, isrc ? JSON.stringify([isrc]) : null);
+  }
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 1, 1, 62000)`).run("t-oph-a", releaseOph, "rec-oph-a", "Tuning In");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 2, 1, 259000)`).run("t-oph-b", releaseOph, "rec-oph-b", "Dreams");
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+              VALUES (?, ?, ?, ?, 3, 1, 240000)`).run("t-oph-c", releaseOph, "rec-oph-c", "No Angels");
+
+  // Mark Bad Blood monitored so this mirrors the live failure mode.
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, match_status)
+    VALUES (?, ?, 'stereo', 1, 'tidal', '320186059', 'verified')
+  `).run(artistMbid, rgBadBlood);
+
+  const matchOwnedByBadBlood = {
+    ...buildMatch(rgBadBlood, "320186059"),
+    releaseMbid: releaseBadBlood,
+    status: "verified" as const,
+    confidence: 0.99,
+    method: "musicbrainz-recording-isrc",
+    evidence: {
+      ...buildMatch(rgBadBlood, "320186059").evidence,
+      providerTitle: "Bad Blood X (10th Anniversary Edition)",
+      isrcCoverageMatched: true,
+      trackCountMatched: true,
+      targetTrackCount: 2,
+      availableReleaseMbids: [releaseBadBlood],
+      matchedReleaseMbid: releaseBadBlood,
+    },
+  };
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      // Empty title shell matched to OPH — creates the OPH:stereo slot key so
+      // cross-RG coverage can attempt to borrow Bad Blood X tips.
+      provider: "soundcloud",
+      album: {
+        providerId: "2881942",
+        title: "OTHER PEOPLE'S HEARTACHE, PT. 2",
+        quality: "SOUNDCLOUD_LOSSY",
+        trackCount: 0,
+        volumeCount: 1,
+        tracks: [],
+      },
+      match: {
+        ...buildMatch(rgOph, "2881942"),
+        status: "probable" as const,
+        confidence: 0.9,
+        method: "musicbrainz-release-title-year-type-track-count",
+        evidence: {
+          ...buildMatch(rgOph, "2881942").evidence,
+          trackCountMatched: false,
+          providerTrackCount: 0,
+          targetTrackCount: 3,
+        },
+      },
+    },
+    {
+      provider: "tidal",
+      album: {
+        providerId: "320186059",
+        title: "Bad Blood X (10th Anniversary Edition)",
+        quality: "LOSSLESS",
+        trackCount: 2,
+        volumeCount: 1,
+        tracks: [
+          {
+            mbid: null,
+            providerId: "tidal-dreams",
+            isrc: "GBAAA1300203",
+            title: "Dreams",
+            track_number: 1,
+            volume_number: 1,
+            duration: 259,
+          },
+          {
+            mbid: null,
+            providerId: "tidal-angels",
+            isrc: null,
+            title: "No Angels",
+            track_number: 2,
+            volume_number: 1,
+            duration: 240,
+          },
+        ],
+      },
+      match: matchOwnedByBadBlood,
+    },
+  ]);
+
+  const ophStereo = selections.find((selection) =>
+    selection.releaseGroupMbid === rgOph && selection.slot === "stereo"
+  );
+  assert.equal(
+    ophStereo,
+    undefined,
+    "pure cross-RG partial from Bad Blood X must not select OPH Pt. 2",
+  );
 });
 
 test("cross-RG hybrid prefers the fuller MusicBrainz edition covered by two provider albums", () => {

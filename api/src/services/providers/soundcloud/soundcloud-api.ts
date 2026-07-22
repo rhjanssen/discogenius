@@ -223,39 +223,90 @@ export async function soundcloudGetMe(
 
 export function pickPlayableTranscoding(
   track: SoundCloudTrackResource,
+  options: { allowSnipped?: boolean } = {},
 ): SoundCloudTranscoding | null {
+  const allowSnipped = options.allowSnipped === true;
   const transcodings = track.media?.transcodings || [];
   const usable = transcodings.filter((item) => {
     if (!item?.url) return false;
-    if (item.snipped) return false;
+    if (item.snipped && !allowSnipped) return false;
     const protocol = String(item.format?.protocol || "").toLowerCase();
     // Encrypted HLS needs a DRM license path we do not implement yet.
     if (protocol.includes("encrypted")) return false;
     return protocol === "progressive" || protocol === "hls";
   });
-  const progressive = usable.find((item) => item.format?.protocol === "progressive");
-  if (progressive) return progressive;
-  const hlsMp3 = usable.find((item) => /mpeg/i.test(item.format?.mime_type || "") && item.format?.protocol === "hls");
-  if (hlsMp3) return hlsMp3;
-  return usable[0] || null;
+  const rank = (item: SoundCloudTranscoding): number => {
+    const protocol = String(item.format?.protocol || "").toLowerCase();
+    const snippedPenalty = item.snipped ? 10 : 0;
+    if (protocol === "progressive") return 0 + snippedPenalty;
+    if (protocol === "hls" && /mpeg/i.test(item.format?.mime_type || "")) return 1 + snippedPenalty;
+    if (protocol === "hls") return 2 + snippedPenalty;
+    return 50 + snippedPenalty;
+  };
+  return [...usable].sort((left, right) =>
+    rank(left) - rank(right)
+    || String(left.preset || "").localeCompare(String(right.preset || "")))[0] || null;
+}
+
+export function listPlayableTranscodings(
+  track: SoundCloudTrackResource,
+  options: { allowSnipped?: boolean } = {},
+): SoundCloudTranscoding[] {
+  const allowSnipped = options.allowSnipped === true;
+  const transcodings = track.media?.transcodings || [];
+  const usable = transcodings.filter((item) => {
+    if (!item?.url) return false;
+    if (item.snipped && !allowSnipped) return false;
+    const protocol = String(item.format?.protocol || "").toLowerCase();
+    if (protocol.includes("encrypted")) return false;
+    return protocol === "progressive" || protocol === "hls";
+  });
+  const rank = (item: SoundCloudTranscoding): number => {
+    const protocol = String(item.format?.protocol || "").toLowerCase();
+    const snippedPenalty = item.snipped ? 10 : 0;
+    if (protocol === "progressive") return 0 + snippedPenalty;
+    if (protocol === "hls" && /mpeg/i.test(item.format?.mime_type || "")) return 1 + snippedPenalty;
+    if (protocol === "hls") return 2 + snippedPenalty;
+    return 50 + snippedPenalty;
+  };
+  return [...usable].sort((left, right) =>
+    rank(left) - rank(right)
+    || String(left.preset || "").localeCompare(String(right.preset || "")));
 }
 
 export async function resolveSoundCloudMediaUrl(
   track: SoundCloudTrackResource,
-  options: { credentials?: SoundCloudCredentials | null; fetchImpl?: SoundCloudFetchLike } = {},
+  options: {
+    credentials?: SoundCloudCredentials | null;
+    fetchImpl?: SoundCloudFetchLike;
+    allowSnipped?: boolean;
+  } = {},
 ): Promise<{ url: string; protocol: string; mimeType: string; snipped: boolean } | null> {
-  const transcoding = pickPlayableTranscoding(track);
-  if (!transcoding?.url) return null;
-  const resolved = await soundcloudApiRequest<{ url?: string }>(transcoding.url, {
-    credentials: options.credentials,
-    fetchImpl: options.fetchImpl,
-  });
-  const url = String(resolved.url || "").trim();
-  if (!url) return null;
-  return {
-    url,
-    protocol: String(transcoding.format?.protocol || "progressive"),
-    mimeType: String(transcoding.format?.mime_type || "audio/mpeg"),
-    snipped: Boolean(transcoding.snipped),
-  };
+  // Prefer progressive, then plain HLS. Skip dead legacy media endpoints by
+  // trying the next candidate on 404 (post-2025 MP3 HLS often 404s while SNIP
+  // progressive previews still resolve).
+  const candidates = listPlayableTranscodings(track, { allowSnipped: options.allowSnipped });
+  for (const transcoding of candidates) {
+    if (!transcoding.url) continue;
+    try {
+      const resolved = await soundcloudApiRequest<{ url?: string }>(transcoding.url, {
+        credentials: options.credentials,
+        fetchImpl: options.fetchImpl,
+      });
+      const url = String(resolved.url || "").trim();
+      if (!url) continue;
+      return {
+        url,
+        protocol: String(transcoding.format?.protocol || "progressive"),
+        mimeType: String(transcoding.format?.mime_type || "audio/mpeg"),
+        snipped: Boolean(transcoding.snipped),
+      };
+    } catch (error) {
+      if (error instanceof SoundCloudApiError && (error.status === 404 || error.status === 403)) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  return null;
 }

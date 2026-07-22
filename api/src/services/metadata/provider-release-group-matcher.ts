@@ -672,6 +672,13 @@ export function matchProviderAlbumToReleaseGroup(
     // fully-covered EP doesn't sit at "probable".
     const verifiedTrackMatch = best.titleExpansionMatched && best.trackCountMatched;
     const verifiedSpatialReleaseMatch = Boolean(isSpatialProviderAlbum(album) && best.matchedReleaseMbid && best.trackCountMatched && best.volumeCountMatched);
+    // Exact title alone is not release identity when the provider tracklist is
+    // empty/unknown (SoundCloud album stubs). Require a positive matching track
+    // count so title-only shells cannot become verified offers with no previews.
+    const verifiedExactTitleMatch = exactProviderTitleMatch
+        && best.confidence >= 0.96
+        && best.trackCountMatched
+        && Number(best.providerTrackCount || 0) > 0;
     const weakCoverageCandidate = best.isrcOverlap > 0
         && !best.isrcCoverageMatched
         && !best.providerUrlMatched
@@ -681,7 +688,7 @@ export function matchProviderAlbumToReleaseGroup(
         ? "ambiguous"
         : weakCoverageCandidate
             ? "candidate"
-        : (strongIdentityMatch || verifiedTrackMatch || verifiedSpatialReleaseMatch || (exactProviderTitleMatch && best.confidence >= 0.96))
+        : (strongIdentityMatch || verifiedTrackMatch || verifiedSpatialReleaseMatch || verifiedExactTitleMatch)
             ? "verified"
             : "probable";
     const method = best.providerUrlMatched

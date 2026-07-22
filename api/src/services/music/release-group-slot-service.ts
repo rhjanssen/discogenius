@@ -878,6 +878,10 @@ export function selectReleaseGroupSlotAlbums(
         // the best candidate by score — but prefer offers already matched to the
         // representative release so a probable radio-edit cannot beat a verified
         // full edition on typeMatched alone when tracklists are unavailable.
+        // When the RG has a real tracklist but no hydrated provider tracks, only
+        // accept strong shape evidence (known matching track counts). Title-only
+        // stubs with providerTrackCount 0 (common SoundCloud shells) must not
+        // fill the slot — they produce no per-track tips or previews.
         if (releaseTargets.length === 0 || !hasTrackDetails) {
             const scorePool = preferredCompatibleCandidates.length > 0
                 ? preferredCompatibleCandidates
@@ -890,7 +894,11 @@ export function selectReleaseGroupSlotAlbums(
                         isrc: track.isrc ? normalizeIsrc(track.isrc) : null,
                     })),
                 }))
-                .filter((candidate) => candidate.match.status !== "candidate");
+                .filter((candidate) => candidate.match.status !== "candidate")
+                .filter((candidate) =>
+                    releaseTargets.length === 0
+                    || hasTrackDetails
+                    || hasStrongReleaseShapeEvidence(candidate, preferredReleaseRow?.mbid));
             standaloneCandidates.sort((a, b) => b.score - a.score
                 || streamingProviderManager.getProviderPreferenceRank(a.provider)
                     - streamingProviderManager.getProviderPreferenceRank(b.provider));
@@ -949,8 +957,18 @@ export function selectReleaseGroupSlotAlbums(
             }
             return plans;
         }));
-        coveragePlans.sort(compareCoveragePlans);
-        const selectedPlan = coveragePlans[0] || null;
+        // Incomplete plans that only tip tracks from albums matched to a
+        // *different* RG are cross-RG steals (e.g. Bad Blood X filling two
+        // OPH Pt. 2 tips). Complete ISRC hybrids across RGs remain allowed.
+        const eligibleCoveragePlans = coveragePlans.filter((plan) => {
+            if (plan.complete) return true;
+            const ownsAnyTip = plan.candidates.some((candidate) =>
+                !candidate.match.releaseGroup?.mbid
+                || candidate.match.releaseGroup.mbid === releaseGroupMbid);
+            return ownsAnyTip;
+        });
+        eligibleCoveragePlans.sort(compareCoveragePlans);
+        const selectedPlan = eligibleCoveragePlans[0] || null;
 
         if (!selectedPlan) {
             const strongMetadataCandidates = candidatesWithTracks.filter((candidate) =>

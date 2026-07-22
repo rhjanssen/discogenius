@@ -270,6 +270,35 @@ test("SoundCloud skips encrypted and snipped transcodings for native play", () =
   assert.equal(soundcloudResourceId("soundcloud:tracks:194886453"), "194886453");
 });
 
+test("SoundCloud preview may use snipped progressive when full streams are DRM-only", () => {
+  const snippedOnly = {
+    ...album.tracks[1]!,
+    media: {
+      transcodings: [
+        {
+          url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:194886454/preview/stream/progressive",
+          snipped: true,
+          format: { protocol: "progressive", mime_type: "audio/mpeg" },
+        },
+        {
+          url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:194886454/enc/stream/ctr-encrypted-hls",
+          snipped: false,
+          format: { protocol: "ctr-encrypted-hls", mime_type: "audio/mp4" },
+        },
+      ],
+    },
+  };
+  assert.equal(pickPlayableTranscoding(snippedOnly), null);
+  assert.equal(
+    pickPlayableTranscoding(snippedOnly, { allowSnipped: true })?.format?.protocol,
+    "progressive",
+  );
+  assert.equal(
+    pickPlayableTranscoding(snippedOnly, { allowSnipped: true })?.snipped,
+    true,
+  );
+});
+
 test("SoundCloud URL builders accept numeric ids and permalink hosts", () => {
   assert.equal(
     buildSoundCloudSourceUrl("track", "194886453"),

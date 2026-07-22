@@ -215,10 +215,43 @@ test("marks exact title and type matches as verified", () => {
         title: "Give Me The Future",
         releaseDate: "2022-02-04",
         type: "ALBUM",
+        trackCount: 13,
+        volumeCount: 1,
     }, releaseGroups);
 
     assert.equal(match.status, "verified");
     assert.equal(match.releaseGroup?.mbid, "bc411157-431c-4f04-81e1-18e1c21d50ec");
+    assert.equal(match.evidence.trackCountMatched, true);
+});
+
+test("exact title without a provider track count stays probable", () => {
+    // SoundCloud album stubs often report title/year with track_count 0.
+    // Title-only shells must not become verified availability with no tracklist.
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "2881942",
+        title: "Other People’s Heartache, Pt. 2",
+        releaseDate: "2012-12-06",
+        type: "ALBUM",
+        trackCount: 0,
+        volumeCount: 1,
+    }, [{
+        mbid: "2d1c5d7d-56e3-4f7c-8194-d065595302d8",
+        title: "Other People’s Heartache, Pt. 2",
+        primaryType: "EP",
+        secondaryTypes: ["Mixtape/Street"],
+        firstReleaseDate: "2012-12-06",
+        releases: [{
+            mbid: "6085cdeb-aa4b-4d64-937b-4f22f8520546",
+            title: "Other People’s Heartache, Pt. 2",
+            trackCount: 11,
+            mediaCount: 1,
+        }],
+    }]);
+
+    assert.equal(match.releaseGroup?.mbid, "2d1c5d7d-56e3-4f7c-8194-d065595302d8");
+    assert.equal(match.status, "probable");
+    assert.equal(match.evidence.trackCountMatched, false);
+    assert.equal(match.evidence.providerTrackCount, 0);
 });
 
 test("prefers an exact title over a nearby version even when release dates differ", () => {

@@ -3,7 +3,16 @@ import { useLocation, useNavigationType } from "react-router-dom";
 
 const STORAGE_KEY = "discogenius-scroll-positions";
 const MAX_STORED_KEYS = 64;
-const RESTORE_RETRY_MS = [50, 150, 400] as const;
+/** Immediate retries while Suspense / React Query paint the first shell. */
+const RESTORE_RETRY_MS = [50, 150, 400, 800] as const;
+/**
+ * Artist/album pages often grow for seconds after POP (local-MB library hydrate).
+ * Keep re-applying the saved offset until the document is tall enough or this
+ * budget elapses — otherwise the browser clamps scrollY to ~0 and leaves the
+ * user at the top after back-navigation.
+ */
+const RESTORE_GROWTH_BUDGET_MS = 4_000;
+const RESTORE_SCROLL_TOLERANCE_PX = 8;
 
 function readStoredPositions(): Record<string, number> {
   try {
@@ -78,22 +87,53 @@ export default function ScrollRestoration() {
     const key = location.key;
     const saved = positionsRef.current[key];
 
-    if (navigationType === "POP" && typeof saved === "number") {
+    if (navigationType === "POP" && typeof saved === "number" && saved > 0) {
       let cancelled = false;
+      const target = saved;
       const restore = () => {
         if (cancelled) return;
-        window.scrollTo({ top: saved, left: 0, behavior: "auto" });
+        window.scrollTo({ top: target, left: 0, behavior: "auto" });
       };
+      const reachedTarget = () => Math.abs(window.scrollY - target) <= RESTORE_SCROLL_TOLERANCE_PX;
+      const canReachTarget = () =>
+        document.documentElement.scrollHeight >= target + Math.min(window.innerHeight, 64);
 
-      // Content often arrives after Suspense / React Query; retry briefly.
+      // Content often arrives after Suspense / React Query; retry briefly, then
+      // keep watching document growth until the saved offset is reachable.
       restore();
       const raf = window.requestAnimationFrame(restore);
       const timers = RESTORE_RETRY_MS.map((ms) => window.setTimeout(restore, ms));
+
+      const startedAt = Date.now();
+      let lastHeight = document.documentElement.scrollHeight;
+      const growthTimer = window.setInterval(() => {
+        if (cancelled) return;
+        if (reachedTarget() || Date.now() - startedAt >= RESTORE_GROWTH_BUDGET_MS) {
+          window.clearInterval(growthTimer);
+          return;
+        }
+        const height = document.documentElement.scrollHeight;
+        if (height !== lastHeight || !canReachTarget() || window.scrollY < target - RESTORE_SCROLL_TOLERANCE_PX) {
+          lastHeight = height;
+          restore();
+        }
+      }, 100);
+
+      const resizeObserver =
+        typeof ResizeObserver !== "undefined"
+          ? new ResizeObserver(() => {
+              if (cancelled || reachedTarget()) return;
+              restore();
+            })
+          : null;
+      resizeObserver?.observe(document.documentElement);
 
       return () => {
         cancelled = true;
         window.cancelAnimationFrame(raf);
         for (const timer of timers) window.clearTimeout(timer);
+        window.clearInterval(growthTimer);
+        resizeObserver?.disconnect();
       };
     }
 

@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.6.1] - 2026-07-22
+
+### Changed
+- Settings: Official / Lyric / Live music-video type filters live under
+  Curation (with release-type filters); Music videos settings keep download
+  enable + resolution only.
+- Settings: Video Folder Layout help moved into a compact tooltip instead of a
+  multi-paragraph description under the control.
+
+### Fixed
+- Album matching: title-only provider shells with an empty/unknown tracklist
+  (common SoundCloud album stubs) are no longer promoted to verified or
+  selected into a tracklisted stereo slot — no more “matched” offers without
+  per-track tips or previews.
+- Slot selection: incomplete pure cross-release-group partials cannot steal a
+  slot when every tip comes from an album matched to a different RG (e.g. Bad
+  Blood X tips on Other People’s Heartache, Pt. 2).
+- SoundCloud mixtape wide search is no longer blocked by empty official album
+  stubs on the same release group; stored-offer rematch clears stale provider
+  selections that no longer win.
+- SoundCloud preview: allow SNIP progressive streams for browser preview and
+  skip dead legacy media endpoints (post-2025 MP3 HLS 404s) when resolving.
+- Scroll restoration: POP back-nav retries longer (4s growth budget +
+  ResizeObserver) so artist pages restore scroll after slow hydrate.
+
 ## [2.6.0] - 2026-07-22
 
 ### Added

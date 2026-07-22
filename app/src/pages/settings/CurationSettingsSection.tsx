@@ -72,6 +72,12 @@ const secondaryReleaseTypeRows = [
     { key: "include_demo", title: "Demo" },
 ] as const;
 
+const musicVideoTypeRows = [
+    { key: "include_video_official", title: "Official Music Video" },
+    { key: "include_video_lyric", title: "Official Lyric Video" },
+    { key: "include_video_live", title: "Live" },
+] as const;
+
 const useStyles = makeStyles({
     section: {
         display: "flex",
@@ -224,7 +230,7 @@ export const CurationSettingsSection = ({
         <SettingsSection
             id="curation"
             title="Curation"
-            description="Which release types to keep, and how to choose between versions."
+            description="Which release and video types to keep, and how to choose between versions."
             className={styles.section}
         >
             <div className={styles.card}>
@@ -247,6 +253,20 @@ export const CurationSettingsSection = ({
                         rowKey: row.key,
                         title: row.title,
                         checked: curationConfig?.[row.key] === true,
+                        onChange: (checked) => void onUpdate({ [row.key]: checked }),
+                    }))}
+                </div>
+                <div className={styles.subsectionHeader}>
+                    <Text weight="semibold">Music video types</Text>
+                    <Text size={200} className={styles.mutedText}>
+                        Unchecked types are skipped by download automation. Existing files are kept.
+                    </Text>
+                </div>
+                <div className={styles.checkboxList}>
+                    {musicVideoTypeRows.map((row) => renderCheckboxRow({
+                        rowKey: row.key,
+                        title: row.title,
+                        checked: curationConfig?.[row.key] !== false,
                         onChange: (checked) => void onUpdate({ [row.key]: checked }),
                     }))}
                 </div>

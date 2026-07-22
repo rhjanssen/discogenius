@@ -11,7 +11,6 @@ import {
     makeStyles,
     tokens,
     Link,
-    Checkbox,
 } from "@fluentui/react-components";
 import {
   DoorArrowLeft24Regular,
@@ -249,27 +248,6 @@ const useStyles = makeStyles({
     },
     qualityOptionDisabled: {
         opacity: 0.5,
-    },
-    videoTypeHeader: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalXXS,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-        borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    },
-    videoTypeList: {
-        display: 'grid',
-        gridTemplateColumns: '1fr',
-        paddingBottom: tokens.spacingVerticalXS,
-        [MEDIA.desktop]: {
-            gridTemplateColumns: '1fr 1fr',
-        },
-    },
-    videoTypeRow: {
-        display: 'flex',
-        alignItems: 'center',
-        minHeight: '28px',
-        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}`,
     },
     // Collapse Fluent RadioGroup's default item gap — option padding already
     // provides the touch/scan spacing (SettingsCard stacked radios).
@@ -777,7 +755,7 @@ const SettingsPage = () => {
                 <SettingsSection
                     id="video-quality"
                     title="Music videos"
-                    description="Whether to download videos, which types to include, and at which resolution."
+                    description="Whether to download videos, and at which resolution."
                     className={styles.section}
                 >
                     <div className={styles.card}>
@@ -787,35 +765,6 @@ const SettingsPage = () => {
                             checked: curationConfig?.include_videos === true,
                             onChange: (checked) => updateCuration({ include_videos: checked }),
                         })}
-                        <div className={styles.videoTypeHeader}>
-                            <Text weight="semibold">Video types</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Unchecked types are skipped by download automation. Existing files are kept.
-                            </Text>
-                        </div>
-                        <div className={styles.videoTypeList}>
-                            <div className={styles.videoTypeRow}>
-                                <Checkbox
-                                    checked={curationConfig?.include_video_official !== false}
-                                    onChange={(_, data) => updateCuration({ include_video_official: Boolean(data.checked) })}
-                                    label="Official Music Video"
-                                />
-                            </div>
-                            <div className={styles.videoTypeRow}>
-                                <Checkbox
-                                    checked={curationConfig?.include_video_lyric !== false}
-                                    onChange={(_, data) => updateCuration({ include_video_lyric: Boolean(data.checked) })}
-                                    label="Official Lyric Video"
-                                />
-                            </div>
-                            <div className={styles.videoTypeRow}>
-                                <Checkbox
-                                    checked={curationConfig?.include_video_live !== false}
-                                    onChange={(_, data) => updateCuration({ include_video_live: Boolean(data.checked) })}
-                                    label="Live"
-                                />
-                            </div>
-                        </div>
                         <RadioGroup
                             className={styles.qualityRadioGroup}
                             value={qualitySettings?.video_quality || 'uhd'}
