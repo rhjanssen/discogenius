@@ -152,6 +152,96 @@ export function matchAppleMusicBundledVideoFiles(params: {
  * release. Positions always come from Tracks — never from provider
  * match_evidence disc/track numbers (native album layout ≠ hybrid release).
  */
+function resolveCanonicalTrackOnRelease(params: {
+  releaseMbid: string;
+  trackMbid?: string | null;
+  recordingMbid?: string | null;
+  isrc?: string | null;
+}): {
+  mbid: string;
+  recording_mbid: string;
+  title: string;
+  position: number;
+  medium_position: number;
+} | undefined {
+  const trackMbid = String(params.trackMbid || "").trim() || null;
+  const recordingMbid = String(params.recordingMbid || "").trim() || null;
+  if (trackMbid || recordingMbid) {
+    const byIdentity = db.prepare(`
+      SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
+      FROM Tracks t
+      WHERE t.release_mbid = ?
+        AND (
+          (? IS NOT NULL AND t.mbid = ?)
+          OR (? IS NOT NULL AND t.recording_mbid = ?)
+        )
+      ORDER BY
+        CASE
+          WHEN ? IS NOT NULL AND t.mbid = ? THEN 0
+          ELSE 1
+        END,
+        t.medium_position,
+        t.position
+      LIMIT 1
+    `).get(
+      params.releaseMbid,
+      trackMbid,
+      trackMbid,
+      recordingMbid,
+      recordingMbid,
+      trackMbid,
+      trackMbid,
+    ) as {
+      mbid: string;
+      recording_mbid: string;
+      title: string;
+      position: number;
+      medium_position: number;
+    } | undefined;
+    if (byIdentity) {
+      return byIdentity;
+    }
+  }
+
+  // Stereo multi-disc offers (e.g. Bastille GMTF vol 3) can have ISRCs without
+  // track/recording MBIDs written back onto ProviderItems. Match catalog by ISRC
+  // so album import does not treat those files as unmatched extras.
+  const isrc = String(params.isrc || "").trim().toUpperCase();
+  if (!isrc) {
+    return undefined;
+  }
+  return db.prepare(`
+    SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
+    FROM Tracks t
+    JOIN Recordings r ON r.mbid = t.recording_mbid
+    WHERE t.release_mbid = ?
+      AND r.isrcs IS NOT NULL
+      AND TRIM(r.isrcs) != ''
+      AND (
+        (
+          json_valid(r.isrcs)
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(r.isrcs) AS isrc_row
+            WHERE UPPER(TRIM(COALESCE(isrc_row.value, ''))) = ?
+          )
+        )
+        OR (
+          NOT json_valid(r.isrcs)
+          AND UPPER(TRIM(r.isrcs)) = ?
+        )
+      )
+    ORDER BY t.medium_position, t.position
+    LIMIT 1
+  `).get(params.releaseMbid, isrc, isrc) as {
+    mbid: string;
+    recording_mbid: string;
+    title: string;
+    position: number;
+    medium_position: number;
+  } | undefined;
+}
+
 export function resolveMatchedCanonicalAlbumTrackRow(params: {
   provider: string;
   trackId: string;
@@ -170,6 +260,7 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
       pi.album_id,
       pi.track_mbid,
       pi.recording_mbid,
+      pi.isrc,
       json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
     FROM ProviderItems pi
     WHERE pi.provider = ?
@@ -190,6 +281,7 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
       pi.album_id,
       pi.track_mbid,
       pi.recording_mbid,
+      pi.isrc,
       json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
     FROM ProviderItems pi
     WHERE pi.provider = ?
@@ -205,37 +297,12 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
     // Catalog-first: bind via Tracks on the selected/hybrid release only.
     // Never use provider match_evidence disc/track numbers — those are the
     // native album layout (e.g. Come As You Are #1) and mis-number Softly.
-    const canonicalTrack = db.prepare(`
-      SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
-      FROM Tracks t
-      WHERE t.release_mbid = ?
-        AND (
-          (? IS NOT NULL AND t.mbid = ?)
-          OR (? IS NOT NULL AND t.recording_mbid = ?)
-        )
-      ORDER BY
-        CASE
-          WHEN ? IS NOT NULL AND t.mbid = ? THEN 0
-          ELSE 1
-        END,
-        t.medium_position,
-        t.position
-      LIMIT 1
-    `).get(
-      params.releaseMbid,
-      providerTrack.track_mbid || null,
-      providerTrack.track_mbid || null,
-      providerTrack.recording_mbid || null,
-      providerTrack.recording_mbid || null,
-      providerTrack.track_mbid || null,
-      providerTrack.track_mbid || null,
-    ) as {
-      mbid: string;
-      recording_mbid: string;
-      title: string;
-      position: number;
-      medium_position: number;
-    } | undefined;
+    const canonicalTrack = resolveCanonicalTrackOnRelease({
+      releaseMbid: params.releaseMbid,
+      trackMbid: providerTrack.track_mbid,
+      recordingMbid: providerTrack.recording_mbid,
+      isrc: providerTrack.isrc,
+    });
 
     if (!canonicalTrack) {
       return null;

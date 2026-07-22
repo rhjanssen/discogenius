@@ -167,7 +167,10 @@ export function resolveCanonicalProviderOffer(
         FROM ProviderItems pi
         LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
         LEFT JOIN Tracks t ON t.mbid = pi.track_mbid
-        LEFT JOIN Recordings r ON r.mbid = pi.recording_mbid
+        LEFT JOIN Recordings r ON (
+          (pi.recording_id IS NOT NULL AND r.id = pi.recording_id)
+          OR (pi.recording_id IS NULL AND pi.recording_mbid IS NOT NULL AND r.mbid = pi.recording_mbid)
+        )
         LEFT JOIN ArtistMetadata am ON am.mbid = pi.artist_mbid
         WHERE pi.provider = ?
           AND pi.provider_id = ?
@@ -250,26 +253,35 @@ export async function ensureMetadataReady(
 
 /**
  * Resolve display title/artist/cover for a download job.
- * Catalog titles only when a canonical offer exists — provider/payload titles
- * are not a substitute for Tracks/Recordings.
+ * Prefer catalog titles via internal recording/track FKs; fall back to provider
+ * then payload titles so Active queue never paints literal "Unknown" when we
+ * already had a good enqueue title (int ids for joins, MBIDs for tags).
  */
 export function resolveDownloadMetadata(
     providerId: string,
     type: DownloadJobType,
     payload: DownloadCommand,
 ): Required<ResolvedDownloadMetadata> {
-    const fallbackTitle = payload?.title;
-    const fallbackArtist = payload?.artist;
+    const fallbackTitle = pickNonPlaceholderTitle(payload?.title);
+    const fallbackArtist = pickNonPlaceholderTitle(payload?.artist);
     const fallbackCover = payload?.cover ?? null;
 
     try {
         const canonicalOffer = resolveCanonicalProviderOffer(providerId, type, payload);
         if (canonicalOffer) {
-            const title = type === 'album'
+            const catalogTitle = type === 'album'
                 ? canonicalOffer.canonical_album_title
                 : type === 'video'
                     ? canonicalOffer.canonical_recording_title
                     : canonicalOffer.canonical_track_title || canonicalOffer.canonical_recording_title;
+            const title = pickNonPlaceholderTitle(catalogTitle)
+                || pickNonPlaceholderTitle(canonicalOffer.provider_title)
+                || fallbackTitle
+                || 'Unknown';
+            const artist = pickNonPlaceholderTitle(canonicalOffer.artist_name)
+                || pickNonPlaceholderTitle(canonicalOffer.provider_artist_name)
+                || fallbackArtist
+                || 'Unknown';
             const providerCover = fallbackCover
                 ?? canonicalOffer.slot_cover
                 ?? canonicalOffer.provider_cover
@@ -279,13 +291,12 @@ export function resolveDownloadMetadata(
                 ? videoCoverLocalUrl(canonicalOffer.canonical_recording_id)
                 : albumCoverLocalUrl({ albumMbid: canonicalOffer.release_group_mbid });
             const cover = canonicalCover
-                ?? renderableProviderArtworkUrl(providerCover, canonicalOffer.provider);
+                ?? renderableProviderArtworkUrl(providerCover, canonicalOffer.provider)
+                ?? renderableProviderArtworkUrl(fallbackCover, payload?.provider);
 
             return {
-                // Catalog only for job display when a canonical offer exists.
-                // Provider/payload titles are not a substitute for Tracks/Recordings.
-                title: title || 'Unknown',
-                artist: canonicalOffer.artist_name || 'Unknown',
+                title,
+                artist,
                 cover,
             };
         }
@@ -302,6 +313,16 @@ export function resolveDownloadMetadata(
             cover: renderableProviderArtworkUrl(fallbackCover, payload?.provider),
         };
     }
+}
+
+function pickNonPlaceholderTitle(value: unknown): string | null {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const lower = text.toLowerCase();
+    if (lower === "unknown" || lower === "unknown video" || lower === "unknown track" || lower === "unknown album") {
+        return null;
+    }
+    return text;
 }
 
 export function resolveDownloadQuality(

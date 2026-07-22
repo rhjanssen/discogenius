@@ -9,8 +9,8 @@ import {
   resolveVideoTypeSuffix,
 } from "./video-variant.js";
 
-test("VIDEO_DURATION_MATCH_MS is a single 5s gate", () => {
-  assert.equal(VIDEO_DURATION_MATCH_MS, 5_000);
+test("VIDEO_DURATION_MATCH_MS is a single 2s gate", () => {
+  assert.equal(VIDEO_DURATION_MATCH_MS, 2_000);
 });
 
 test("parseVideoVariant classifies lyric/live/audio/visualizer/video", () => {

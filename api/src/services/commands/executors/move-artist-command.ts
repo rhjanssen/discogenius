@@ -5,7 +5,7 @@ import { handleMoveArtist } from "../handlers/library-handlers.js";
 
 /**
  * Executor for MoveArtist
- * Wraps the legacy handler to implement the new Lidarr-style IExecuteCommand contract.
+ * Dispatches to the command handler via the IExecuteCommand contract.
  */
 export class MoveArtistCommand implements IExecuteCommand<any> {
     async execute(job: any, ctx: CommandHandlerContext): Promise<void> {

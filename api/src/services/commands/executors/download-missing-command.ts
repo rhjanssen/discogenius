@@ -6,12 +6,11 @@ import { getManagedArtists } from "../../music/managed-artists.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 
 /**
- * Lidarr MissingAlbumSearch analogue: discover monitored missing media and
- * enqueue Download* commands once, then exit.
+ * Discover monitored missing media and enqueue Download* commands once, then exit.
  *
- * Concurrency belongs to the command worker / per-type caps (qBittorrent-style
- * active-slot limits), not a long-running refill loop that holds this command
- * open while capping a "buffer" of pending Download* rows.
+ * Concurrency belongs to the command worker / per-type caps (active-slot limits),
+ * not a long-running refill loop that holds this command open while capping a
+ * "buffer" of pending Download* rows.
  */
 export class DownloadMissingCommand implements IExecuteCommand<"DownloadMissing"> {
     private async queueForScope(

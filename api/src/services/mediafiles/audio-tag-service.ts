@@ -1181,7 +1181,7 @@ export class AudioTagService {
     const ext = rawExtension && !rawExtension.startsWith(".") ? `.${rawExtension}` : rawExtension;
 
     // .opus is Ogg-container Vorbis comments, same scheme as FLAC/OGG
-    // (matches Lidarr's Xiph tag-type handling, which covers Opus identically).
+    // (matches Xiph tag-type handling, which covers Opus identically).
     const isFlac = ext === ".flac" || ext === ".ogg" || ext === ".opus";
     const isMp3 = ext === ".mp3";
     const isM4a = ext === ".m4a" || ext === ".mp4";
@@ -1287,9 +1287,9 @@ export class AudioTagService {
       initialkey: "----:com.apple.iTunes:initialkey",
     };
 
-    // ASF/WMA descriptor names, mirroring Lidarr's AudioTag.cs mapping:
+    // ASF/WMA descriptor names:
     // standard fields use the "WM/" namespace, MusicBrainz identifiers use
-    // the separate "MusicBrainz/" namespace Lidarr writes for ASF.
+    // the separate "MusicBrainz/" namespace for ASF.
     const wmaMap: Record<string, string> = {
       lyrics: "WM/Lyrics",
       title: "title",
@@ -1324,7 +1324,7 @@ export class AudioTagService {
     };
 
     // APE (Monkey's Audio) uses APEv2 tags, nearly identical field naming to
-    // Xiph/Vorbis in Lidarr's own mapping (same MUSICBRAINZ_* field names).
+    // Xiph/Vorbis mapping (same MUSICBRAINZ_* field names).
     const apeMap: Record<string, string> = {
       ...flacMap,
       album_artist: "Album Artist",
@@ -1920,8 +1920,10 @@ export class AudioTagService {
             "musicbrainz_recordingid",
             "musicbrainzrecordingid",
             "musicbrainz recording id",
+            "musicbrainz track id",
             "musicbrainz_trackid",
             "musicbrainztrackid",
+            "MusicBrainz Track Id",
           ],
         });
       }
@@ -1932,7 +1934,12 @@ export class AudioTagService {
           label: "MusicBrainz Release ID",
           ffmpegKey: "musicbrainz_albumid",
           targetValue: String(row.album_mbid),
-          aliases: ["musicbrainz_albumid", "musicbrainzalbumid", "musicbrainz album id"],
+          aliases: [
+            "musicbrainz_albumid",
+            "musicbrainzalbumid",
+            "musicbrainz album id",
+            "MusicBrainz Album Id",
+          ],
         });
       }
 
@@ -1942,14 +1949,24 @@ export class AudioTagService {
           label: "MusicBrainz Album Artist ID",
           ffmpegKey: "musicbrainz_albumartistid",
           targetValue: String(row.artist_mbid),
-          aliases: ["musicbrainz_albumartistid", "musicbrainzalbumartistid", "musicbrainz album artist id"],
+          aliases: [
+            "musicbrainz_albumartistid",
+            "musicbrainzalbumartistid",
+            "musicbrainz album artist id",
+            "MusicBrainz Album Artist Id",
+          ],
         });
         tags.push({
           key: "musicbrainz_artistid",
           label: "MusicBrainz Artist ID",
           ffmpegKey: "musicbrainz_artistid",
           targetValue: String(row.artist_mbid),
-          aliases: ["musicbrainz_artistid", "musicbrainzartistid", "musicbrainz artist id"],
+          aliases: [
+            "musicbrainz_artistid",
+            "musicbrainzartistid",
+            "musicbrainz artist id",
+            "MusicBrainz Artist Id",
+          ],
         });
       }
 
@@ -1959,7 +1976,12 @@ export class AudioTagService {
           label: "MusicBrainz Release Group ID",
           ffmpegKey: "musicbrainz_releasegroupid",
           targetValue: String(row.album_mb_release_group_id),
-          aliases: ["musicbrainz_releasegroupid", "musicbrainzreleasegroupid", "musicbrainz release group id"],
+          aliases: [
+            "musicbrainz_releasegroupid",
+            "musicbrainzreleasegroupid",
+            "musicbrainz release group id",
+            "MusicBrainz Release Group Id",
+          ],
         });
       }
 
@@ -1991,7 +2013,12 @@ export class AudioTagService {
             label: "Release Country",
             ffmpegKey: "release_country",
             targetValue: releaseCountry,
-            aliases: ["releasecountry", "release_country"],
+            aliases: [
+              "releasecountry",
+              "release_country",
+              "musicbrainz album release country",
+              "MusicBrainz Album Release Country",
+            ],
           });
         }
       }
@@ -2013,7 +2040,12 @@ export class AudioTagService {
           label: "Release Status",
           ffmpegKey: "release_status",
           targetValue: String(row.release_status).toLowerCase(),
-          aliases: ["releasestatus", "release_status"],
+          aliases: [
+            "releasestatus",
+            "release_status",
+            "musicbrainz album status",
+            "MusicBrainz Album Status",
+          ],
         });
       }
 
@@ -2038,14 +2070,19 @@ export class AudioTagService {
           label: "Release Type",
           ffmpegKey: "release_type",
           targetValue: releaseType,
-          aliases: ["releasetype", "release_type"],
+          aliases: [
+            "releasetype",
+            "release_type",
+            "musicbrainz album type",
+            "MusicBrainz Album Type",
+          ],
         });
       }
 
-      // AcoustID id/fingerprint are deliberately NOT embedded: Lidarr writes only
-      // MusicBrainz IDs (the lever Plex/Jellyfin actually read) and uses fpcalc/
+      // AcoustID id/fingerprint are deliberately NOT embedded: we write only
+      // MusicBrainz IDs (what media servers typically read) and use fpcalc/
       // AcoustID purely as INTERNAL import-match evidence — never as a written
-      // tag. We follow that exactly; the fingerprint stays in TrackFiles for
+      // tag. The fingerprint stays in TrackFiles for
       // matching/verification but is not surfaced as an embedded tag.
 
       if (row.media_explicit !== null && row.media_explicit !== undefined) {
@@ -2375,7 +2412,7 @@ export class AudioTagService {
         continue;
       }
 
-      // Scrub all existing tags before writing (Lidarr's ScrubAudioTags)
+      // Scrub all existing tags before writing
       if (config.scrub_audio_tags) {
         const scrubbed = await removeAllTags(resolvedPath);
         if (!scrubbed) {

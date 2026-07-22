@@ -220,11 +220,12 @@ export function ensureEmptyArtistFoldersIfEnabled(relativeArtistPath: string): s
   }
 
   const normalizedArtistPath = normalizeArtistFolderInput(relativeArtistPath);
+  const filtering = Config.getFilteringConfig();
   const roots = Array.from(new Set([
     Config.getMusicPath(),
-    Config.getSpatialPath(),
-    Config.getVideoPath(),
-  ].filter(Boolean)));
+    filtering.include_spatial === true ? Config.getSpatialPath() : null,
+    filtering.include_videos === true ? Config.getVideoPath() : null,
+  ].filter(Boolean))) as string[];
 
   const ensured: string[] = [];
   for (const root of roots) {

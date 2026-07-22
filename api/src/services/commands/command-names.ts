@@ -1,8 +1,8 @@
 /**
  * Command identity — the set of command type names and the groupings used for
- * queue selection/exclusivity. Mirrors Lidarr keeping command identity (the
- * `Command` type names) distinct from the queue manager and the command bodies.
- * Pure constants + type guards; no runtime dependencies.
+ * queue selection/exclusivity. Keeps command identity distinct from the queue
+ * manager and the command bodies. Pure constants + type guards; no runtime
+ * dependencies.
  */
 
 export const CommandNames = {

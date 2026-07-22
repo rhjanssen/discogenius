@@ -6,7 +6,7 @@
     "method": "musicbrainz-recording-isrc",
     "confidence": 0.99,
     "releaseGroupMbid": "86da8ce7-05ef-4109-8186-c6fa69c57729",
-    "releaseMbid": "68565c66-d386-4525-8eb0-dd61c09a4bae"
+    "releaseMbid": "157f27fb-7f7f-4ea9-9674-fd84ed9db612"
   },
   {
     "providerId": "12914927",
@@ -240,7 +240,7 @@
     "method": "musicbrainz-recording-isrc",
     "confidence": 0.99,
     "releaseGroupMbid": "628ed87c-789d-4839-b92d-df7b1ed8c86d",
-    "releaseMbid": "ef23abb2-4dd7-49f5-afdb-e4d17154bcaa"
+    "releaseMbid": "08343cca-7931-4d6e-a3e1-0d79722e5d2e"
   },
   {
     "providerId": "77655302",

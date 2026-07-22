@@ -92,7 +92,7 @@ export function yieldToEventLoop(): Promise<void> {
     return new Promise(resolve => setImmediate(resolve));
 }
 
-/** Build the per-command handler context (Lidarr's per-command service scope). */
+/** Build the per-command handler context (progress helpers + cooperative yield). */
 export function buildHandlerContext(): CommandHandlerContext {
     return {
         updateCommandDescription: (job, options) => updateCommandDescription(job, options),
@@ -106,8 +106,6 @@ export function buildHandlerContext(): CommandHandlerContext {
 /**
  * Execute a claimed command's lifecycle — run handler → complete/fail → queue
  * the next monitoring pass — entirely on the calling thread's DB connection.
- * Analogous to Lidarr's `CommandExecutor.ExecuteCommand` running Complete/Fail
- * on its own worker thread.
  *
  * Running complete/fail/next-pass here (rather than on the main thread) is what
  * keeps the main event loop free under a scan backlog: those writes happen on

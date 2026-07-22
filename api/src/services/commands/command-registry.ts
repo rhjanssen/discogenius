@@ -195,15 +195,13 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: true,
   },
-  // Catalog hydration is the write-heaviest work in the app. Lidarr's bulk
-  // refresh is ONE RefreshArtistCommand carrying ArtistIds[] processed
-  // sequentially inside the command, so Lidarr never has several catalog
-  // writers racing on the SQLite write lock. Our intake fans out one command
-  // per artist instead, so cap each heavy type at 1 concurrent command to get
-  // the same effective serialization — three parallel hydrations starve each
-  // other (and every other writer) into 30s busy-timeouts, they don't finish
-  // faster. Different types still overlap (refresh + match + rescan), which
-  // keeps network-bound and disk-bound work flowing.
+  // Catalog hydration is the write-heaviest work in the app. Intake fans out
+  // one RefreshArtist command per artist, so cap each heavy type at 1 concurrent
+  // command to serialize catalog writers on the SQLite write lock — three
+  // parallel hydrations starve each other (and every other writer) into 30s
+  // busy-timeouts, they don't finish faster. Different types still overlap
+  // (refresh + match + rescan), which keeps network-bound and disk-bound work
+  // flowing.
   [CommandNames.RefreshArtist]: {
     type: CommandNames.RefreshArtist,
     name: "Refresh Artist",
@@ -270,8 +268,7 @@ export const COMMAND_DEFINITIONS = {
     requiresDiskAccess: true,
     isTypeExclusive: true,
     // Housekeeping VACUUMs the whole database — on a 1 GB library file that
-    // holds the write lock for minutes. Run it alone (Lidarr's housekeeping
-    // vacuums the main DB too, but never alongside catalog-scale writers):
+    // holds the write lock for minutes. Run it alone:
     // concurrent refresh workers would exhaust their busy-retry budgets and
     // fail their commands en masse.
     isExclusive: true,

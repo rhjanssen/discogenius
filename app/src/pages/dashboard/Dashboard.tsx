@@ -91,6 +91,10 @@ const useStyles = makeStyles({
         gap: tokens.spacingVerticalM,
         paddingTop: tokens.spacingVerticalM,
         paddingBottom: tokens.spacingVerticalL,
+        width: "100%",
+        maxWidth: "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
     },
     brandHeader: {
         display: "flex",
@@ -296,6 +300,10 @@ const useStyles = makeStyles({
         whiteSpace: "nowrap",
     },
     tabContentPanel: {
+        width: "100%",
+        maxWidth: "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
         animationName: {
             from: { opacity: 0, transform: `translateY(${tokens.spacingVerticalS})` },
             to: { opacity: 1, transform: "translateY(0)" },

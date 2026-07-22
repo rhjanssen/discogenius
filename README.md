@@ -5,8 +5,8 @@
 <h1 align="center">Discogenius</h1>
 
 <p align="center">
-  A self-hosted music library manager in the Lidarr mold: MusicBrainz identity,
-  curated discographies, and streaming-provider availability/downloads.
+  A self-hosted music library manager: MusicBrainz identity, curated
+  discographies, and streaming-provider availability/downloads.
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@
 - Curated stereo / spatial / music-video library slots with discography deduplication
 - Provider plugins for availability, previews, downloads, and allowed metadata supplements
 - Organize, retag, fingerprint (AcoustID), and import existing libraries
-- Lidarr-style command queue, scheduling, and quality profiles
+- Command queue, scheduling, and quality profiles
 
 ## Demo
 

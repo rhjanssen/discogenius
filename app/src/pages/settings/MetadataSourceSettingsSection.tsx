@@ -125,9 +125,9 @@ export const MetadataSourceSettingsSection = ({
                     <label className={styles.qualityOption} htmlFor="metadata-source-servarr">
                         <Radio value="servarr" id="metadata-source-servarr" />
                         <div className={styles.qualityContent}>
-                            <Text weight="semibold">Servarr Metadata</Text>
+                            <Text weight="semibold">Online catalog</Text>
                             <Text size={200} className={styles.mutedText}>
-                                Hosted catalog — easy setup. Some releases and codes (ISRC/UPC) may be missing.
+                                Hosted MusicBrainz-based catalog — easy setup. Some releases may match less precisely.
                             </Text>
                         </div>
                     </label>
@@ -159,7 +159,7 @@ export const MetadataSourceSettingsSection = ({
                         >
                             <Input
                                 value={catalogConfig?.musicbrainz_host ?? ""}
-                                placeholder="192.168.1.100 or musicbrainz.mydomain.com"
+                                placeholder="localhost or musicbrainz.mydomain.com"
                                 onChange={(_, data) => onHostChange(data.value)}
                                 onBlur={() => {
                                     if (catalogConfig) {

@@ -23,7 +23,7 @@ test("embedded lyrics prefer synced subtitles with plain text fallback", () => {
   }), "Canonical plain line");
 });
 
-test("audio tag writer expands Lidarr-compatible total aliases", () => {
+test("audio tag writer expands total aliases", () => {
   const tags: ManagedTag[] = [
     {
       key: "track_count",

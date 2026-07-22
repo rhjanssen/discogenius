@@ -203,10 +203,10 @@ export function queueMetadataRefreshPass(options: {
         artistIds: options.artistIds,
         dueOnly: options.dueOnly,
     });
-    // Lidarr's scheduled RefreshArtist command considers the complete managed
-    // artist set in one daily pass. Discogenius fans that pass out into durable
-    // per-artist commands, but keeps the same all-due semantics; queue equality
-    // and the pending-id filter above prevent duplicate work.
+    // Scheduled RefreshArtist considers the complete managed artist set in one
+    // daily pass. Discogenius fans that pass out into durable per-artist
+    // commands, but keeps the same all-due semantics; queue equality and the
+    // pending-id filter above prevent duplicate work.
     const queuedArtists = artists;
     const queuedArtistIds = queuedArtists.map((artist) => String(artist.id));
     const artistLabel = options.dueOnly ? "due managed artist(s)" : "managed artist(s)";
@@ -340,8 +340,7 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
                 return;
             }
             // Per-artist matching and curation are event-driven. Root-folder
-            // inventory is an independent daily RescanFolders task, matching
-            // Lidarr's separate RefreshArtist and RescanFolders schedules.
+            // inventory is an independent daily RescanFolders task.
             break;
         case CommandNames.RescanFolders:
             break;
@@ -604,8 +603,7 @@ function queueDueScheduledTasks() {
             try {
                 const commandId = queueMonitoringCyclePass({ trigger: CommandTrigger.Scheduled, includeRootScan: true });
                 if (commandId !== -1) {
-                    // Stamp at queue time (like Lidarr measures the next run from when
-                    // the task fires) so a cycle that fails to fully complete still
+                    // Stamp at queue time so a cycle that fails to fully complete still
                     // won't re-queue every tick. markMonitoringCycleCompleted()
                     // refreshes it again when the full chain drains.
                     markScheduledTaskQueued("monitoring-cycle");

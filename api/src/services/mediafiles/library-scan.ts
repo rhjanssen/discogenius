@@ -428,12 +428,15 @@ export class DiskScanService {
         const usePrebuiltRootIndex = !usesNestedArtistFolders();
         const fileIndex: RootFileIndex = new Map();
         const musicPath = Config.getMusicPath();
-        const videoPath = Config.getVideoPath();
-        const spatialPath = Config.getSpatialPath();
+        const filtering = Config.getFilteringConfig();
+        const videoPath = filtering.include_videos === true ? Config.getVideoPath() : null;
+        const spatialPath = filtering.include_spatial === true ? Config.getSpatialPath() : null;
 
         if (usePrebuiltRootIndex) {
             fileIndex.set(musicPath, await this.buildRootFileIndex(musicPath));
-            fileIndex.set(videoPath, await this.buildRootFileIndex(videoPath));
+            if (videoPath) {
+                fileIndex.set(videoPath, await this.buildRootFileIndex(videoPath));
+            }
             if (spatialPath) {
                 fileIndex.set(spatialPath, await this.buildRootFileIndex(spatialPath));
             }
@@ -658,13 +661,16 @@ export class DiskScanService {
         let shouldPromoteArtist = false;
 
         // Scan each library root where this artist might have files
+        const filtering = Config.getFilteringConfig();
         const roots: Array<{ key: LibraryRootKey; dir: string }> = [
             { key: "music", dir: path.join(Config.getMusicPath(), artistFolder) },
-            { key: "videos", dir: path.join(Config.getVideoPath(), artistFolder) },
         ];
+        if (filtering.include_videos === true) {
+            roots.push({ key: "videos", dir: path.join(Config.getVideoPath(), artistFolder) });
+        }
 
         const spatialPath = Config.getSpatialPath();
-        if (spatialPath) {
+        if (filtering.include_spatial === true && spatialPath) {
             roots.push({ key: "spatial", dir: path.join(spatialPath, artistFolder) });
         }
 
@@ -1048,11 +1054,14 @@ export class DiskScanService {
         }
 
         // Gather all unique library roots to scan
+        const filtering = Config.getFilteringConfig();
         const roots = new Set<string>();
         roots.add(Config.getMusicPath());
-        roots.add(Config.getVideoPath());
+        if (filtering.include_videos === true) {
+            roots.add(Config.getVideoPath());
+        }
         const spatialPath = Config.getSpatialPath();
-        if (spatialPath) roots.add(spatialPath);
+        if (filtering.include_spatial === true && spatialPath) roots.add(spatialPath);
 
         // Collect all unique top-level folder names across all roots
         const seenFolders = new Map<string, string>(); // lowercase → original name

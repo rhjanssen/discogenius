@@ -31,7 +31,7 @@ export interface ImportCandidate {
 }
 
 /**
- * Lidarr-aligned rejection classification.
+ * rejection classification.
  * - permanent: Cannot be resolved without user intervention (e.g., duplicate file, wrong format)
  * - temporary: May resolve on its own (e.g., download not yet complete, metadata pending)
  */
@@ -57,7 +57,7 @@ export interface ProviderMatch {
     trackIdsByFilePath?: Record<string, string>;
     /** @deprecated Use typedRejections for new code */
     rejections?: string[];
-    /** Lidarr-aligned structured rejection reasons with permanent/temporary classification */
+    /** structured rejection reasons with permanent/temporary classification */
     typedRejections?: ImportRejection[];
     conflictPath?: string | null;
 }

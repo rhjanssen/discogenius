@@ -17,6 +17,7 @@ import sys
 from typing import Any, Iterable
 
 from ytmusicapi import YTMusic
+from ytmusicapi.auth.types import AuthType
 
 
 SEARCH_FILTERS = {
@@ -25,6 +26,21 @@ SEARCH_FILTERS = {
     "tracks": "songs",
     "videos": "videos",
 }
+
+# Liked songs / library browse returns a mobile-style sign-in wall when cookies
+# are missing or expired. ytmusicapi then KeyErrors looking for the desktop
+# twoColumn renderer — surface a reconnect message instead of that dump.
+AUTH_REQUIRED_MESSAGE = (
+    "YouTube Music authentication is missing or expired. "
+    "Sign in at music.youtube.com, then reconnect Browser headers "
+    "(Copy as Node.js fetch) and cookies in Discogenius Auth."
+)
+
+# Avoid the useless "Mozilla/5.0" stub some pastes produce; match ytmusicapi's
+# default shape closely enough that WEB_REMIX requests keep browser cookies.
+DEFAULT_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
+)
 
 
 def read_payload() -> dict[str, Any]:
@@ -42,6 +58,47 @@ def require_text(payload: dict[str, Any], key: str) -> str:
     if not value:
         raise ValueError(f"{key} is required")
     return value
+
+
+def require_browser_auth(api: YTMusic) -> None:
+    if getattr(api, "auth_type", AuthType.UNAUTHORIZED) != AuthType.BROWSER:
+        raise RuntimeError(AUTH_REQUIRED_MESSAGE)
+
+
+def is_unauthenticated_browse_error(error: BaseException) -> bool:
+    text = str(error)
+    if "authentication is missing or expired" in text.casefold():
+        return True
+    if "please provide authentication" in text.casefold():
+        return True
+    if "Looking for what" in text and "liked" in text.casefold():
+        return True
+    if "singleColumnBrowseResultsRenderer" in text and (
+        "twoColumnBrowseResultsRenderer" in text or "Sign in" in text or "signInEndpoint" in text
+    ):
+        return True
+    return False
+
+
+def map_ytmusic_error(error: BaseException) -> BaseException:
+    if is_unauthenticated_browse_error(error):
+        return RuntimeError(AUTH_REQUIRED_MESSAGE)
+    return error
+
+
+def load_browser_auth(headers_path: str | None) -> dict[str, str] | None:
+    """Load browser.json and normalize headers before handing them to ytmusicapi."""
+    if not headers_path or not os.path.isfile(headers_path):
+        return None
+    with open(headers_path, encoding="utf-8") as handle:
+        parsed = json.load(handle)
+    if not isinstance(parsed, dict):
+        raise ValueError("YouTube Music browser.json must be a JSON object")
+    headers = {str(key): str(value) for key, value in parsed.items() if value is not None}
+    user_agent = str(headers.get("User-Agent") or headers.get("user-agent") or "").strip()
+    if not user_agent or user_agent == "Mozilla/5.0":
+        headers["User-Agent"] = DEFAULT_BROWSER_USER_AGENT
+    return headers
 
 
 def section_results(section: Any) -> list[dict[str, Any]]:
@@ -225,26 +282,86 @@ def artist_entries(items: Iterable[Any]) -> list[dict[str, Any]]:
     return result
 
 
+def list_discovery_playlists(api: YTMusic) -> list[dict[str, Any]]:
+    """Personalized home-feed playlists (Mixed for you / discovery rows)."""
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    try:
+        home = api.get_home(limit=3)
+    except Exception:
+        return results
+    if not isinstance(home, list):
+        return results
+    for section in home:
+        if not isinstance(section, dict):
+            continue
+        section_title = str(section.get("title") or section.get("type") or "").strip()
+        contents = section.get("contents")
+        if not isinstance(contents, list):
+            continue
+        for item in contents:
+            if not isinstance(item, dict):
+                continue
+            playlist_id = str(item.get("playlistId") or item.get("browseId") or "").strip()
+            if playlist_id.startswith("VL"):
+                playlist_id = playlist_id[2:]
+            if not playlist_id or playlist_id in seen:
+                continue
+            if not playlist_id.startswith("PL"):
+                continue
+            seen.add(playlist_id)
+            results.append({
+                "playlistId": playlist_id,
+                "title": item.get("title") or section_title or "Discovery playlist",
+                "author": item.get("author") or item.get("artists"),
+                "thumbnails": item.get("thumbnails"),
+            })
+    return results
+
+
 def list_import_sources(api: YTMusic) -> dict[str, Any]:
     return {
         "libraryArtists": api.get_library_artists(limit=1000),
         "playlists": api.get_library_playlists(limit=1000),
         "favoriteTracksAvailable": True,
+        "discoveryPlaylists": list_discovery_playlists(api),
     }
+
+
+def get_liked_songs_for_import(api: YTMusic) -> list[dict[str, Any]]:
+    require_browser_auth(api)
+    try:
+        liked = api.get_liked_songs(limit=5000)
+    except Exception as error:
+        raise map_ytmusic_error(error) from error
+    tracks = liked.get("tracks", []) if isinstance(liked, dict) else liked
+    return tracks if isinstance(tracks, list) else []
 
 
 def get_import_artists(api: YTMusic, payload: dict[str, Any]) -> list[dict[str, Any]]:
     category = require_text(payload, "category")
     if category == "library-artists":
+        require_browser_auth(api)
         return artist_entries(api.get_library_artists(limit=1000))
     if category == "playlist":
+        require_browser_auth(api)
         playlist_id = require_text(payload, "listId")
-        playlist = api.get_playlist(playlist_id, limit=None)
+        try:
+            playlist = api.get_playlist(playlist_id, limit=None)
+        except Exception as error:
+            raise map_ytmusic_error(error) from error
         tracks = playlist.get("tracks", []) if isinstance(playlist, dict) else []
         return artist_entries(tracks if isinstance(tracks, list) else [])
     if category == "favorite-tracks":
-        liked = api.get_liked_songs(limit=5000)
-        tracks = liked.get("tracks", []) if isinstance(liked, dict) else liked
+        return artist_entries(get_liked_songs_for_import(api))
+    if category == "mix":
+        require_browser_auth(api)
+        playlist_id = require_text(payload, "listId")
+        try:
+            playlist = api.get_playlist(playlist_id, limit=None)
+        except Exception as error:
+            raise map_ytmusic_error(error) from error
+        tracks = playlist.get("tracks", []) if isinstance(playlist, dict) else []
         return artist_entries(tracks if isinstance(tracks, list) else [])
     raise ValueError(f"unsupported import category: {category}")
 
@@ -374,7 +491,7 @@ def main() -> int:
     parser.add_argument("--headers")
     args = parser.parse_args()
     payload = read_payload()
-    auth = args.headers if args.headers and os.path.isfile(args.headers) else None
+    auth = load_browser_auth(args.headers)
 
     # Keep stdout machine-readable even if a dependency happens to log there.
     with contextlib.redirect_stdout(sys.stderr):
@@ -389,5 +506,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as error:
-        print(f"{type(error).__name__}: {error}", file=sys.stderr)
+        mapped = map_ytmusic_error(error)
+        print(f"{type(mapped).__name__}: {mapped}", file=sys.stderr)
         raise SystemExit(1)

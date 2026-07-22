@@ -470,13 +470,15 @@ function resolveProviderItemMetadata(input: {
   const canonicalTitle = input.contentType === "album"
     ? row.release_group_title
     : row.track_title ?? row.recording_title;
-  const cover = row.release_group_mbid
-    ? albumCoverLocalUrl({
-        albumMbid: row.release_group_mbid,
-        images: imageContainerFromImagesColumn(row.release_group_images),
-      })
-    : input.contentType === "video"
-      ? videoCoverLocalUrl(row.recording_id)
+  // Videos with a stamped release_group_mbid must still use the video poster —
+  // album Cover is cropped art and is wrong for DownloadVideo queue/history rows.
+  const cover = input.contentType === "video"
+    ? videoCoverLocalUrl(row.recording_id)
+    : row.release_group_mbid
+      ? albumCoverLocalUrl({
+          albumMbid: row.release_group_mbid,
+          images: imageContainerFromImagesColumn(row.release_group_images),
+        })
       : null;
 
   return {
@@ -986,6 +988,15 @@ export class DownloadQueueQueryService {
       albumTitle ||= offerMetadata.albumTitle ?? null;
       quality ||= offerMetadata.quality ?? null;
     }
+    // Prefer the video poster over any album art gap-fill or stale payload cover.
+    let mediaId: string | null = null;
+    if (contentType === "video") {
+      mediaId = getOptionalString(job.payload?.canonicalRecordingId)
+        ?? getOptionalString(
+          (job.payload?.resolved as Record<string, unknown> | undefined)?.canonicalRecordingId,
+        );
+      cover = videoCoverLocalUrl(mediaId) ?? cover;
+    }
 
     return {
       id: job.id,
@@ -1016,6 +1027,7 @@ export class DownloadQueueQueryService {
       quality: quality ?? null,
       album_id: albumId ?? null,
       album_title: albumTitle ?? null,
+      media_id: mediaId,
       currentFileNum: typeof downloadState.currentFileNum === "number" ? downloadState.currentFileNum : undefined,
       totalFiles: typeof downloadState.totalFiles === "number" ? downloadState.totalFiles : undefined,
       currentTrack: getOptionalString(downloadState.currentTrack) ?? undefined,

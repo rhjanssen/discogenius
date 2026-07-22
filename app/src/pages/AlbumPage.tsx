@@ -1450,7 +1450,7 @@ const AlbumPage = () => {
             tracks={tracks}
             showArtist
             showQuality={true}
-            showFileQualityDifferences
+            showLocalQuality
             showVolumeHeaders
             contextArtistName={album.artist_name}
             contextAlbumTitle={album.title}

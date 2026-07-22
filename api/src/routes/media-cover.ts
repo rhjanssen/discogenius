@@ -47,18 +47,45 @@ function sendMediaCover(res: any, filePath: string): void {
   fs.createReadStream(filePath).pipe(res);
 }
 
+async function resolveArtworkWhenNeeded(options: {
+  filePath: string | null;
+  cacheCurrent: boolean;
+  resolve: () => Promise<unknown>;
+  refreshFilePath: () => string | null;
+  logLabel: string;
+}): Promise<string | null> {
+  const needsResolve = !options.filePath || !options.cacheCurrent;
+  if (!needsResolve) {
+    return options.filePath;
+  }
+
+  const resolvePromise = options.resolve().catch((error) => {
+    console.warn(`[MediaCover Route] Failed to fetch missing ${options.logLabel} on-the-fly:`, error);
+  });
+
+  if (options.filePath) {
+    void resolvePromise;
+    return options.filePath;
+  }
+
+  await resolvePromise;
+  return options.refreshFilePath();
+}
+
 router.get("/Albums/:albumId/:filename", async (req, res) => {
   const albumId = String(req.params.albumId || "").replace(/[^a-zA-Z0-9._-]/g, "_");
-  let filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Albums", albumId), String(req.params.filename || ""));
+  const filename = String(req.params.filename || "");
+  const albumFolder = path.join(MEDIA_COVER_ROOT, "Albums", albumId);
+  const refreshFilePath = () => resolveUiMediaCoverFilePath(albumFolder, filename);
+  let filePath = refreshFilePath();
 
-  if (!filePath || !isArtworkPreferenceCacheCurrent(albumId, "Album", "Cover")) {
-    try {
-      await resolveAlbumArtwork({ albumMbid: albumId });
-      filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, "Albums", albumId), String(req.params.filename || ""));
-    } catch (error) {
-      console.warn(`[MediaCover Route] Failed to fetch missing album cover on-the-fly for ${albumId}:`, error);
-    }
-  }
+  filePath = await resolveArtworkWhenNeeded({
+    filePath,
+    cacheCurrent: isArtworkPreferenceCacheCurrent(albumId, "Album", "Cover"),
+    resolve: () => resolveAlbumArtwork({ albumMbid: albumId }),
+    refreshFilePath,
+    logLabel: `album cover for ${albumId}`,
+  });
 
   if (!filePath) {
     return res.status(404).end();
@@ -89,16 +116,17 @@ router.get("/:artistId/:filename", async (req, res) => {
   const artistId = String(req.params.artistId || "").replace(/[^a-zA-Z0-9._-]/g, "_");
   const filename = String(req.params.filename || "");
   const requestedCoverType = filename.replace(/-\d+(?=\.[a-z0-9]+$)/i, "").replace(/\.[a-z0-9]+$/i, "") || "Poster";
-  let filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, artistId), filename);
+  const artistFolder = path.join(MEDIA_COVER_ROOT, artistId);
+  const refreshFilePath = () => resolveUiMediaCoverFilePath(artistFolder, filename);
+  let filePath = refreshFilePath();
 
-  if (!filePath || !isArtworkPreferenceCacheCurrent(artistId, "Artist", requestedCoverType)) {
-    try {
-      await resolveArtistArtwork({ artistMbid: artistId, preferredCoverTypes: requestedCoverType });
-      filePath = resolveUiMediaCoverFilePath(path.join(MEDIA_COVER_ROOT, artistId), filename);
-    } catch (error) {
-      console.warn(`[MediaCover Route] Failed to fetch missing artist cover on-the-fly for ${artistId}:`, error);
-    }
-  }
+  filePath = await resolveArtworkWhenNeeded({
+    filePath,
+    cacheCurrent: isArtworkPreferenceCacheCurrent(artistId, "Artist", requestedCoverType),
+    resolve: () => resolveArtistArtwork({ artistMbid: artistId, preferredCoverTypes: requestedCoverType }),
+    refreshFilePath,
+    logLabel: `artist cover for ${artistId}`,
+  });
 
   if (!filePath) {
     return res.status(404).end();

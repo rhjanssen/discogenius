@@ -489,6 +489,9 @@ const ArtistPage = () => {
   const [deleteFilesOpen, setDeleteFilesOpen] = useState(false);
   const [deleteFilesUnmonitor, setDeleteFilesUnmonitor] = useState(false);
   const [deleteFilesApplying, setDeleteFilesApplying] = useState(false);
+  const [deleteArtistOpen, setDeleteArtistOpen] = useState(false);
+  const [deleteArtistAlsoFiles, setDeleteArtistAlsoFiles] = useState(false);
+  const [deleteArtistApplying, setDeleteArtistApplying] = useState(false);
   const [bioExpanded, setBioExpanded] = useState(false);
   const [monitorOverride, setMonitorOverride] = useState<boolean | null>(() => (
     artistId ? getOptimisticMonitorState('artist', artistId) ?? null : null
@@ -1556,7 +1559,8 @@ const ArtistPage = () => {
     { key: 'download-missing', label: 'Download Missing', disabled: downloadActionDisabled, onClick: startDownloads },
     { key: 'rename-files', label: renameApplying ? 'Loading rename...' : 'Preview Rename', disabled: renameApplying, onClick: openRenamePreview },
     { key: 'retag-files', label: retagApplying ? 'Loading tags...' : 'Write Tags', disabled: retagApplying, onClick: openRetagPreview },
-    { key: 'delete-files', label: 'Delete files…', disabled: deleteFilesApplying, onClick: () => setDeleteFilesOpen(true) },
+    { key: 'delete-files', label: 'Delete files…', disabled: deleteFilesApplying || deleteArtistApplying, onClick: () => setDeleteFilesOpen(true) },
+    { key: 'delete-artist', label: 'Delete artist…', disabled: deleteFilesApplying || deleteArtistApplying, onClick: () => setDeleteArtistOpen(true) },
   ];
 
   const handleDeleteArtistFiles = async () => {
@@ -1581,6 +1585,34 @@ const ArtistPage = () => {
       });
     } finally {
       setDeleteFilesApplying(false);
+    }
+  };
+
+  const handleDeleteArtist = async () => {
+    if (!artistId) return;
+    setDeleteArtistApplying(true);
+    try {
+      const result: any = await api.deleteArtist(artistId, { deleteFiles: deleteArtistAlsoFiles });
+      toast({
+        title: "Artist deleted",
+        description: deleteArtistAlsoFiles
+          ? `Removed ${artistName || "artist"} from the library and deleted ${result?.deletedFiles ?? 0} file(s).`
+          : `Removed ${artistName || "artist"} from the library. Files on disk were kept.`,
+      });
+      setDeleteArtistOpen(false);
+      setDeleteArtistAlsoFiles(false);
+      dispatchLibraryUpdated();
+      dispatchActivityRefresh();
+      queryClient.invalidateQueries({ queryKey: ["artists"] });
+      navigate("/library");
+    } catch (error) {
+      toast({
+        title: "Failed to delete artist",
+        description: error instanceof Error ? error.message : "Could not delete artist.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteArtistApplying(false);
     }
   };
 
@@ -1642,6 +1674,47 @@ const ArtistPage = () => {
                 </Button>
                 <Button appearance="primary" disabled={deleteFilesApplying} onClick={() => void handleDeleteArtistFiles()}>
                   {deleteFilesApplying ? "Deleting…" : "Delete files"}
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+        <Dialog
+          open={deleteArtistOpen}
+          onOpenChange={(_, data) => {
+            if (!data.open && !deleteArtistApplying) {
+              setDeleteArtistOpen(false);
+              setDeleteArtistAlsoFiles(false);
+            }
+          }}
+        >
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>Delete artist</DialogTitle>
+              <DialogContent>
+                Remove <strong>{artistName || "this artist"}</strong> from your Discogenius library.
+                Catalog metadata for MusicBrainz stays available for re-import.
+                <div style={{ marginTop: 12 }}>
+                  <Checkbox
+                    checked={deleteArtistAlsoFiles}
+                    onChange={(_, data) => setDeleteArtistAlsoFiles(Boolean(data.checked))}
+                    label="Also delete imported files from disk"
+                  />
+                </div>
+              </DialogContent>
+              <DialogActions>
+                <Button
+                  appearance="secondary"
+                  disabled={deleteArtistApplying}
+                  onClick={() => {
+                    setDeleteArtistOpen(false);
+                    setDeleteArtistAlsoFiles(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button appearance="primary" disabled={deleteArtistApplying} onClick={() => void handleDeleteArtist()}>
+                  {deleteArtistApplying ? "Deleting…" : "Delete artist"}
                 </Button>
               </DialogActions>
             </DialogBody>

@@ -5,9 +5,9 @@ session. This file is the single source of truth for rules; `docs/` holds the
 living design/operator docs and `docs/TASKS.md` is the backlog.
 
 ## Project identity & goals
-- Self-hosted, Lidarr-style music library manager that uses streaming-service
-  rippers instead of torrent indexers, plus discography deduplication on top of
-  release-type filtering.
+- Self-hosted music library manager that uses streaming-service rippers instead
+  of torrent indexers, plus discography deduplication on top of release-type
+  filtering.
 - Manages stereo, spatial (Atmos), and music-video libraries — by default in
   three separate library roots.
 - Providers: TIDAL, Apple Music, Amazon Music, Spotify, YouTube / YouTube Music,
@@ -17,12 +17,12 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - **Key decisions**: keep the TypeScript stack (Express + better-sqlite3 `api/`,
   React + Vite + Fluent UI v9 `app/`). Frontend stays pure Fluent UI.
   MusicBrainz is canonical identity; providers are availability/download only.
-- Core views are MusicBrainz/Servarr-primary. Provider data may supplement
-  canonical holes (artwork asset ids, copyright, provider URLs,
-  availability/downloads), but do not preserve provider-only catalog/discovery
-  features (similar artists/albums, top tracks) unless MusicBrainz/Servarr can
-  drive them. Drop provider-only sections rather than adding provider catalog
-  tables.
+- Core views are catalog-primary (online catalog or local MusicBrainz). Provider
+  data may supplement canonical holes (artwork asset ids, copyright, provider
+  URLs, availability/downloads), but do not preserve provider-only
+  catalog/discovery features (similar artists/albums, top tracks) unless the
+  catalog can drive them. Drop provider-only sections rather than adding
+  provider catalog tables.
 
 ## Layout
 - `api/` — Express + TypeScript + better-sqlite3 (synchronous DB access only)
@@ -30,7 +30,7 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - `e2e/` — Playwright tests
 - `config/` — runtime state (TOML config, SQLite DB, provider tokens) — never commit
 - `.ref_*` — read-only reference checkouts; consult them, never import from them
-- `docs/LIDARR_STRUCTURE_ALIGNMENT.md` maps our folders to Lidarr's.
+- `docs/LIDARR_STRUCTURE_ALIGNMENT.md` is a historical folder-mapping reference.
 
 ## Architecture & development rules
 - TypeScript everywhere; Yarn 1.x only.
@@ -55,7 +55,7 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   ffmpeg.
 - **Matching**: one shared matcher scores slot-candidate tracks. Beware
   camelCase vs snake_case differences between callers.
-- **Servarr Metadata Server** strips ISRC/UPC. Use local-MB mode for exact
+- **Online catalog** (default) strips ISRC/UPC. Use local-MB mode for exact
   ISRC/UPC; otherwise match on MBID + duration + title distance.
 
 ## Performance facts
@@ -99,16 +99,17 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - Never touch the host SQLite DB directly while the container is running. For
   ad-hoc inspection, `docker exec discogenius sh -c 'node /tmp/x.js'` opening
   better-sqlite3 with `{readonly:true, fileMustExist:true}`.
-- **MusicBrainz/Servarr is the catalog source of truth.** Providers exist only to
-  download media and to supplement allowed catalog holes (cover-art ids,
-  copyright, replay gain/peak, provider URLs/availability), never to seed a
-  parallel catalog table. Provider UPC/barcode and ISRC are matching evidence and
-  stay on `ProviderItems`, not `Albums`/`AlbumReleases`/`Recordings`; normal
-  Servarr mode does not populate catalog UPC/ISRC from provider data. There are
-  no provider catalog tables: `ProviderItems` is offers/availability and
-  `ProviderItemMatches` is match evidence. If a feature is populated exclusively
-  from provider data, re-source it from MB/Servarr or remove it. Prefer integer
-  catalog FKs for new file joins; do not add provider-shadow catalog columns.
+- **MusicBrainz / the configured catalog provider is the source of truth.**
+  Providers exist only to download media and to supplement allowed catalog holes
+  (cover-art ids, copyright, replay gain/peak, provider URLs/availability), never
+  to seed a parallel catalog table. Provider UPC/barcode and ISRC are matching
+  evidence and stay on `ProviderItems`, not `Albums`/`AlbumReleases`/`Recordings`;
+  the default online catalog does not populate catalog UPC/ISRC from provider
+  data. There are no provider catalog tables: `ProviderItems` is
+  offers/availability and `ProviderItemMatches` is match evidence. If a feature
+  is populated exclusively from provider data, re-source it from the catalog or
+  remove it. Prefer integer catalog FKs for new file joins; do not add
+  provider-shadow catalog columns.
 
 ## Import & M4A
 - M4A stores tags fine (iTunes-style atoms).

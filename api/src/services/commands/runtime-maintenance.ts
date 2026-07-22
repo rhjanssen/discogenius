@@ -30,7 +30,7 @@ export interface RuntimeMaintenanceSummary {
   albumStatesRefreshed: number;
   artistStatesRefreshed: number;
   databaseOptimized: boolean;
-  /** Finished commands rows pruned (Lidarr-aligned: completed > 1 day) */
+  /** Finished commands rows pruned (completed > 1 day) */
   historyJobsPruned: number;
 }
 
@@ -218,8 +218,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
   refreshDownloadState(summary);
   ArtistStatisticsService.refresh();
 
-  // Prune finished commands rows older than 1 day (Lidarr keeps completed commands
-  // 5 min in-memory and trims DB records older than 1 day via CommandRepository.Trim())
+  // Prune finished commands rows older than 1 day
   const pruneResult = db.prepare(`
     DELETE FROM commands
     WHERE status IN ('completed', 'failed', 'cancelled')

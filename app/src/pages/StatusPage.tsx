@@ -366,7 +366,7 @@ const StatusPage = () => {
                     <SettingsSection
                         id="download-backend"
                         title="Download Backend"
-                        description="tiddl: the TIDAL download/tagging backend Discogenius drives."
+                        description="tiddl: the TIDAL download and tagging backend."
                         actions={status ? (
                             <Badge appearance="filled" color={overallBadgeColor(status.backends.tiddl.status)}>
                                 {status.backends.tiddl.available ? "Available" : "Unavailable"}

@@ -13,6 +13,7 @@ import {
 } from "../../services/music/artist-monitoring.js";
 import { MoveArtistService } from "../../services/mediafiles/move-artist-service.js";
 import { deleteArtistLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
+import { deleteArtistFromLibrary } from "../../services/music/artist-delete-service.js";
 import { ArtistQueryService } from "../../services/music/artist-query-service.js";
 import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
 import { CommandNames } from "../../services/commands/command-names.js";
@@ -545,9 +546,20 @@ router.delete("/:artistId/files", (req, res) => {
 
 router.delete("/:artistId", (req, res) => {
   try {
-    db.prepare("DELETE FROM artists WHERE id = ?").run(req.params.artistId);
-    res.json({ success: true });
+    const body = getObjectBody(req.body ?? {});
+    rejectUnknownKeys(body, ["deleteFiles"], "Artist delete");
+    const deleteFiles = getOptionalBoolean(body, "deleteFiles") === true
+      || parseOptionalQueryBoolean(req.query.deleteFiles) === true;
+    const result = deleteArtistFromLibrary(req.params.artistId, { deleteFiles });
+    res.json({ success: true, ...result });
   } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    if (error?.status === 404) {
+      return res.status(404).json({ detail: error.message || "Artist not found" });
+    }
+    console.error(`[Artists] Failed to delete artist:`, error);
     res.status(500).json({ detail: error.message });
   }
 });

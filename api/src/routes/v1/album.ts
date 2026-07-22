@@ -133,7 +133,7 @@ router.get("/:albumId/versions", async (req, res) => {
 });
 
 // Per-release streaming availability for a release group (release-group MBID),
-// powering the Lidarr-style release switcher. Read-only.
+// powering the release switcher. Read-only.
 router.get("/:albumId/release-availability", (req, res) => {
   try {
     res.json(getReleaseGroupAvailability(req.params.albumId));
@@ -236,7 +236,7 @@ router.patch("/:albumId", async (req, res) => {
 });
 
 /**
- * Lidarr-style Manage → Delete files for a release group.
+ * Delete files for a release group (Manage → Delete files).
  * Query: slot=stereo|spatial (optional), unmonitor=true (optional).
  */
 router.delete("/:albumId/files", (req, res) => {

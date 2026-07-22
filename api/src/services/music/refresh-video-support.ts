@@ -276,6 +276,16 @@ export function preferredMergedVideoTitle(titleA: string, titleB: string): strin
     if (clsA === "lyric" && isMainVideoVariant(clsB)) return displayB;
     if (clsB === "lyric" && isMainVideoVariant(clsA)) return displayA;
 
+    // Bare "(Live)" twin with same cleaned core: prefer the unlabeled main title.
+    if (normalizeVideoText(cleanA) === normalizeVideoText(cleanB)) {
+        const bareLiveA = clsA === "live" && clsB === "video"
+            && !/\bperformance\b|\blive\s+(at|from)\b/i.test(displayA);
+        const bareLiveB = clsB === "live" && clsA === "video"
+            && !/\bperformance\b|\blive\s+(at|from)\b/i.test(displayB);
+        if (bareLiveA) return displayB;
+        if (bareLiveB) return displayA;
+    }
+
     if (normalizeVideoText(cleanA) !== normalizeVideoText(cleanB)) {
         if (cleanA && cleanB) {
             return cleanA.length <= cleanB.length ? cleanA : cleanB;

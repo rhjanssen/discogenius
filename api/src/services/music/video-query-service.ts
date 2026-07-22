@@ -492,8 +492,9 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
  * not native provider MB identity — Appears On follows catalog Tracks + the
  * audio relation instead.
  *
- * Track/disc position prefers a video tracklist row, then the related audio
- * track on that same release group. Monitored albums sort first.
+ * Track/disc position prefers the monitored/selected release when present,
+ * then richer multi-disc editions, then earliest date. Wanted albums
+ * (`ReleaseGroupSlots.monitored`) sort first.
  */
 function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
   const videoOrRelatedAudio = `
@@ -511,13 +512,29 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
     )
   `;
   // Prefer a track row that belongs to the video recording itself; fall back to
-  // the related audio recording's position on the same release group.
+  // the related audio recording's position on the same release group. Prefer
+  // the slot-selected / richest edition over the earliest-dated single.
   const trackPickOrder = `
     CASE
       WHEN CAST(t.recording_id AS TEXT) = CAST(? AS TEXT) THEN 0
       WHEN t.recording_mbid = (
         SELECT mbid FROM Recordings
         WHERE CAST(id AS TEXT) = CAST(? AS TEXT) AND mbid IS NOT NULL
+      ) THEN 0
+      ELSE 1
+    END ASC,
+    COALESCE(ar.track_count, 0) DESC,
+    COALESCE(ar.media_count, 0) DESC,
+    CASE
+      WHEN ar.mbid = (
+        SELECT rgs.selected_release_mbid
+        FROM ReleaseGroupSlots rgs
+        WHERE rgs.release_group_mbid = ar.release_group_mbid
+          AND rgs.selected_release_mbid IS NOT NULL
+        ORDER BY
+          CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+          rgs.monitored DESC
+        LIMIT 1
       ) THEN 0
       ELSE 1
     END ASC,
@@ -531,7 +548,10 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       a.mbid AS id,
       a.title,
       a.images AS album_images,
-      a.monitored AS monitored,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM ReleaseGroupSlots rgs
+        WHERE rgs.release_group_mbid = a.mbid AND rgs.monitored = 1
+      ) THEN 1 ELSE 0 END AS wanted,
       (
         SELECT t.mbid
         FROM Tracks t
@@ -583,7 +603,18 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
           AND (${videoOrRelatedAudio})
         ORDER BY ${trackPickOrder}
         LIMIT 1
-      ) AS track_count
+      ) AS track_count,
+      (
+        SELECT COALESCE(NULLIF(ar.media_count, 0), 1)
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = a.mbid
+          AND (${videoOrRelatedAudio})
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ) AS media_count
     FROM Albums a
     WHERE a.mbid IN (
       SELECT ar.release_group_mbid
@@ -593,10 +624,11 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
         OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
       WHERE ${videoOrRelatedAudio}
     )
-    ORDER BY a.monitored DESC, a.title COLLATE NOCASE ASC
+    ORDER BY wanted DESC, a.title COLLATE NOCASE ASC
   `).all(
     // Per position subquery: videoOrRelatedAudio (3) + trackPickOrder (2)
-    // × 4 subqueries (track_mbid, track_number, volume_number, track_count)
+    // × 5 subqueries (track_mbid, track_number, volume_number, track_count, media_count)
+    recordingId, recordingId, recordingId, recordingId, recordingId,
     recordingId, recordingId, recordingId, recordingId, recordingId,
     recordingId, recordingId, recordingId, recordingId, recordingId,
     recordingId, recordingId, recordingId, recordingId, recordingId,
@@ -607,11 +639,12 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
     id: string;
     title: string;
     album_images: string | null;
-    monitored: number;
+    wanted: number;
     track_mbid: string | null;
     track_number: number | null;
     volume_number: number | null;
     track_count: number | null;
+    media_count: number | null;
   }>;
   return rows.map((row) => {
     const coverArtUrl = albumCoverLocalUrl({
@@ -629,6 +662,9 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       track_count: row.track_count == null || Number(row.track_count) <= 0
         ? null
         : Number(row.track_count),
+      media_count: row.media_count == null || Number(row.media_count) <= 0
+        ? null
+        : Number(row.media_count),
     };
   });
 }

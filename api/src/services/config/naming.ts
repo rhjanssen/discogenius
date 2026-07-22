@@ -59,7 +59,7 @@ const ScenifyRemoveChars = /(?<=\s)([,<>/\\;:'"|`~!@$%^*_=\-?])(?=\s)|([':?,])(?
 const FileNameCleanupRegex = /([- ._])\1+/g;
 const TrimSeparatorsRegex = /[- ._]+$/;
 // Windows-reserved device names break the filesystem when followed by an
-// extension (e.g. "con.flac"). Matches Lidarr's FileNameBuilder behavior:
+// extension (e.g. "con.flac"). Matches the FileNameBuilder behavior:
 // only fires when the reserved word is immediately followed by a dot, so it
 // never mangles unrelated names like "Console" or "Prince".
 const ReservedDeviceNameRegex = /^(?:aux|com[1-9]|con|lpt[1-9]|nul|prn)\./i;
@@ -577,7 +577,7 @@ function renderTokens(template: string, context: NamingContext): string {
     return placeholder;
   });
 
-  // 2. Align with Lidarr's TitleRegex and ReplaceToken behavior (allowing colons in customFormat)
+  // 2. Allow colons in customFormat (TitleRegex / ReplaceToken behavior)
   const TitleRegex = /(\{\{|\}\})|\{([- ._[(]*)([a-zA-Z0-9]+(?:[- ._]+[a-zA-Z0-9]+)?)(?::([ a-zA-Z0-9+-:]+(?<![- ])))?([- ._)\]]*)\}/g;
 
   const rendered = processedTemplate.replace(TitleRegex, (

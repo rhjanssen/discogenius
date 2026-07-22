@@ -126,7 +126,7 @@ export class AppleMusicProvider implements StreamingProvider {
       videos: true,
     },
     imports: {
-      supported: ["library-artists", "playlist"],
+      supported: ["library-artists", "favorite-tracks", "playlist", "mix"],
     },
     qualityMapping: {
       neutral: true,

@@ -111,6 +111,10 @@ const useStyles = makeStyles({
         flexDirection: 'column',
         gap: tokens.spacingVerticalL,
         paddingBottom: tokens.spacingVerticalXXL,
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
     },
     emptyState: {
         padding: tokens.spacingVerticalXXL,
@@ -178,18 +182,22 @@ const useStyles = makeStyles({
         ...glassSurfaceStyles,
         backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 72%, transparent)`,
         borderRadius: tokens.borderRadiusLarge,
+        width: '100%',
         maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box',
         overflowX: 'auto',
         overflowY: 'hidden',
         WebkitOverflowScrolling: 'touch',
         touchAction: 'pan-x pan-y',
-        scrollbarGutter: 'stable both-edges',
         border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
         boxShadow: tokens.shadow8,
     },
     tableGrid: {
-        width: 'max-content',
+        width: '100%',
         minWidth: '100%',
+        maxWidth: '100%',
+        boxSizing: 'border-box',
     },
     rowIgnored: {
         opacity: 0.62,
@@ -230,6 +238,8 @@ const useStyles = makeStyles({
     },
     wrappingCell: {
         whiteSpace: 'normal',
+        minWidth: 0,
+        overflow: 'hidden',
     },
     identifiedInfo: {
         display: 'flex',
@@ -303,9 +313,8 @@ const useStyles = makeStyles({
         ...glassPrimaryButtonStyles,
     },
     actionCell: {
-        minWidth: '120px',
-        overflow: 'visible',
-        paddingRight: tokens.spacingHorizontalM,
+        minWidth: 0,
+        overflow: 'hidden',
     },
     destructiveButton: {
         ...glassDangerButtonStyles,
@@ -865,7 +874,8 @@ const ManualImportTab = () => {
                     {getSortLabel('filename', 'Filename / Path')}
                 </button>
             ),
-            width: 'minmax(180px, 1.2fr)',
+            width: 'minmax(140px, 1.2fr)',
+            wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
                 <div className={styles.titleStack}>
@@ -887,7 +897,8 @@ const ManualImportTab = () => {
                     {getSortLabel('detected_artist', 'Identified')}
                 </button>
             ),
-            width: 'minmax(150px, 0.9fr)',
+            width: 'minmax(120px, 0.9fr)',
+            wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
                 <div className={styles.identifiedInfo}>
@@ -905,7 +916,7 @@ const ManualImportTab = () => {
                     </div>
                 </div>
             ),
-            minWidth: 768,
+            minWidth: 900,
         },
         {
             key: 'quality',
@@ -914,7 +925,8 @@ const ManualImportTab = () => {
                     {getSortLabel('audio_quality', 'Properties')}
                 </button>
             ),
-            width: 'minmax(112px, 0.55fr)',
+            width: 'minmax(100px, 0.55fr)',
+            wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
                 <div className={styles.qualityInfo}>
@@ -932,7 +944,7 @@ const ManualImportTab = () => {
                     </div>
                 </div>
             ),
-            minWidth: 768,
+            minWidth: 1100,
         },
         {
             key: 'reason',
@@ -941,19 +953,20 @@ const ManualImportTab = () => {
                     {getSortLabel('reason', 'Reason')}
                 </button>
             ),
-            width: 'minmax(160px, 0.75fr)',
+            width: 'minmax(120px, 0.75fr)',
+            wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
                 <Text className={mergeClasses(styles.reasonText, row.decisionState !== 'blocked' ? styles.reasonTextMuted : undefined)}>
                     {getReasonText(row)}
                 </Text>
             ),
-            minWidth: 768,
+            minWidth: 700,
         },
         {
             key: 'actions',
             header: 'Actions',
-            width: '72px',
+            width: '88px',
             align: 'right',
             className: mergeClasses(styles.wrappingCell, styles.actionCell),
             render: (row) => renderActionButtons(row),
@@ -994,7 +1007,7 @@ const ManualImportTab = () => {
                 <DataGridSkeleton
                   rows={8}
                   columns={5}
-                  columnTemplate="minmax(180px, 1.2fr) minmax(150px, 0.9fr) minmax(112px, 0.55fr) minmax(160px, 0.75fr) 72px"
+                  columnTemplate="minmax(140px, 1.2fr) minmax(120px, 0.9fr) minmax(100px, 0.55fr) minmax(120px, 0.75fr) 88px"
                   compact
                   actionColumns={[4]}
                 />
@@ -1085,9 +1098,8 @@ const ManualImportTab = () => {
                             columns={columns}
                             items={sortedRows}
                             className={styles.tableGrid}
-                            disableResponsiveColumnHiding
                             resizableColumns
-                            columnResizeStorageKey="discogenius-unmapped-files-column-widths"
+                            columnResizeStorageKey="discogenius-unmapped-files-column-widths-v2"
                             getRowKey={(row) => row.id}
                             getRowClassName={(row) => row.ignored ? styles.rowIgnored : undefined}
                             selection={{

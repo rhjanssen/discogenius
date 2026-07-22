@@ -39,6 +39,12 @@ export type BridgeRunner = (request: BridgeExecutionRequest) => Promise<BridgeEx
 
 const MAX_BRIDGE_OUTPUT_BYTES = 32 * 1024 * 1024;
 
+/** Shared with the Python bridge — keep the reconnect wording identical. */
+export const YOUTUBE_MUSIC_AUTH_REQUIRED_MESSAGE =
+  "YouTube Music authentication is missing or expired. "
+  + "Sign in at music.youtube.com, then reconnect Browser headers "
+  + "(Copy as Node.js fetch) and cookies in Discogenius Auth.";
+
 export function getYtMusicPythonBinary(): string {
   if (process.env.YTMUSICAPI_PYTHON_BIN?.trim()) {
     return process.env.YTMUSICAPI_PYTHON_BIN.trim();
@@ -104,6 +110,23 @@ function conciseError(stderr: string, stdout: string): string {
   return (lines.at(-1) || "Unknown bridge error").slice(0, 800);
 }
 
+export function mapYtMusicBridgeFailure(stderr: string, stdout: string): string {
+  const raw = conciseError(stderr, stdout);
+  const haystack = `${stderr}\n${stdout}\n${raw}`;
+  if (
+    /authentication is missing or expired/iu.test(haystack)
+    || /please provide authentication/iu.test(haystack)
+    || (/singleColumnBrowseResultsRenderer/iu.test(haystack)
+      && (/twoColumnBrowseResultsRenderer/iu.test(haystack)
+        || /Sign in/iu.test(haystack)
+        || /Looking for what/iu.test(haystack)))
+    || (/Looking for what/iu.test(haystack) && /liked/iu.test(haystack))
+  ) {
+    return YOUTUBE_MUSIC_AUTH_REQUIRED_MESSAGE;
+  }
+  return raw;
+}
+
 export class PythonYtMusicBridge implements YtMusicBridge {
   constructor(private readonly options: {
     runner?: BridgeRunner;
@@ -134,12 +157,12 @@ export class PythonYtMusicBridge implements YtMusicBridge {
       timeoutMs: this.options.timeoutMs ?? 45_000,
     });
     if (result.code !== 0) {
-      throw new Error(`ytmusicapi bridge failed (${result.code ?? "signal"}): ${conciseError(result.stderr, result.stdout)}`);
+      throw new Error(`ytmusicapi bridge failed (${result.code ?? "signal"}): ${mapYtMusicBridgeFailure(result.stderr, result.stdout)}`);
     }
     try {
       return JSON.parse(result.stdout) as T;
     } catch {
-      throw new Error(`ytmusicapi bridge returned invalid JSON: ${conciseError(result.stderr, result.stdout)}`);
+      throw new Error(`ytmusicapi bridge returned invalid JSON: ${mapYtMusicBridgeFailure(result.stderr, result.stdout)}`);
     }
   }
 }

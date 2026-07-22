@@ -2,7 +2,7 @@ import type { UltraBlurColors } from "@/ultrablur/colors";
 import { getBrandTokensFromPalette } from "@/theme/fluentThemeDesigner";
 
 /**
- * Plexamp-style UltraBlur bake.
+ * Plexamp-inspired UltraBlur bake.
  *
  * Hue/chroma identity comes from k-means corner colours. Luminance is normalised
  * through Fluent's brand ramp (`getBrandTokensFromPalette`) so cover brightness

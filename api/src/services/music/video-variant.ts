@@ -11,8 +11,8 @@
 export const VIDEO_VARIANTS = ["video", "official", "lyric", "live", "audio", "visualizer"] as const;
 export type VideoVariant = (typeof VIDEO_VARIANTS)[number];
 
-/** Single duration gate for same-class and cross-class video merges (5s). */
-export const VIDEO_DURATION_MATCH_MS = 5_000;
+/** Soft duration gate for same-class and cross-class video merges (2s). */
+export const VIDEO_DURATION_MATCH_MS = 2_000;
 
 const VARIANT_CLASS_RULES: Array<{ variant: VideoVariant; re: RegExp }> = [
   { variant: "audio", re: /\baudio\b/i },

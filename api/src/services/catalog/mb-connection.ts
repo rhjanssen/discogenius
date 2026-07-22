@@ -1,6 +1,6 @@
 /**
  * MusicBrainz-docker connection helpers. The user configures only a HOST (IP or
- * hostname, e.g. `192.168.1.100` or `musicbrainz.mydomain.com`); we derive the
+ * hostname, e.g. `localhost` or `musicbrainz.mydomain.com`); we derive the
  * Postgres DSN and the `/ws/2` search URL from the standard musicbrainz-docker
  * layout (creds + db name from `default/postgres.env`, web on :5000, db on :5432).
  * An optional `:port` on the host overrides the Postgres port for advanced setups;

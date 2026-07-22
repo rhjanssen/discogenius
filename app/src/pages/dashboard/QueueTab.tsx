@@ -352,7 +352,7 @@ function getQueueGroupNavPath(groupType: QueueItem['type'], firstItem?: QueueIte
     }
 
     if (groupType === 'video') {
-        return buildVideoNavPath(firstItem.providerId);
+        return buildVideoNavPath(firstItem.media_id ?? firstItem.providerId);
     }
 
     if (groupType === 'album') {
@@ -431,6 +431,32 @@ function getLiveQueueItemStage(progress: DownloadProgress): QueueItem["stage"] |
     }
 }
 
+function isPlaceholderQueueLabel(value: unknown): boolean {
+    const text = String(value || "").trim().toLowerCase();
+    return !text
+        || text === "unknown"
+        || text === "unknown track"
+        || text === "unknown video"
+        || text === "unknown album"
+        || text === "unknown item";
+}
+
+function preferQueueLabel(progressValue: unknown, itemValue: unknown): string | undefined {
+    const progressText = typeof progressValue === "string" ? progressValue : progressValue == null ? undefined : String(progressValue);
+    const itemText = typeof itemValue === "string" ? itemValue : itemValue == null ? undefined : String(itemValue);
+    if (!isPlaceholderQueueLabel(progressText)) return progressText;
+    if (!isPlaceholderQueueLabel(itemText)) return itemText;
+    return progressText ?? itemText;
+}
+
+function preferQueueCover(progressCover: unknown, itemCover: unknown): string | null {
+    const progressText = typeof progressCover === "string" ? progressCover.trim() : "";
+    const itemText = typeof itemCover === "string" ? itemCover.trim() : "";
+    if (progressText) return progressText;
+    if (itemText) return itemText;
+    return null;
+}
+
 function mergeQueueItemsWithProgress(
     downloadQueue: QueueItem[],
     progressByJobId: Map<number, DownloadProgress>,
@@ -468,9 +494,9 @@ function mergeQueueItemsWithProgress(
                 ? progress.statusMessage ?? item.error ?? null
                 : item.error ?? null,
             quality: progress.quality ?? item.quality ?? null,
-            title: progress.title ?? item.title,
-            artist: progress.artist ?? item.artist,
-            cover: progress.cover ?? item.cover ?? null,
+            title: preferQueueLabel(progress.title, item.title),
+            artist: preferQueueLabel(progress.artist, item.artist),
+            cover: preferQueueCover(progress.cover, item.cover),
             currentFileNum: progress.currentFileNum ?? item.currentFileNum,
             totalFiles: progress.totalFiles ?? item.totalFiles,
             currentTrack: progress.currentTrack ?? item.currentTrack,

@@ -36,6 +36,8 @@ const {
 const {
   PythonYtMusicBridge,
   getYtMusicBridgeScript,
+  mapYtMusicBridgeFailure,
+  YOUTUBE_MUSIC_AUTH_REQUIRED_MESSAGE,
 } = await import("./ytmusicapi-bridge.js");
 
 const ARTIST_ID = "UCbastille00000000000001";
@@ -181,6 +183,7 @@ class FixtureBridge implements YtMusicBridge {
           libraryArtists: [artistFixture],
           playlists: [{ playlistId: "PL_bastille_test", title: "Bastille favorites", count: 12 }],
           favoriteTracksAvailable: true,
+          discoveryPlaylists: [{ playlistId: "PL_discovery_mix", title: "Your Mix 1", count: 50 }],
         };
         break;
       case "get_import_artists":
@@ -254,16 +257,24 @@ test("album track counterpart enrich keeps self-OMV video ids", async () => {
   assert.equal(tracks[0].counterpartVideoId, tracks[0].providerId);
 });
 
-test("authenticated import adapter exposes library, liked music, and playlists", async () => {
+test("authenticated import adapter exposes library, liked music, playlists, and discovery mixes", async () => {
   const bridge = new FixtureBridge();
   const catalog = new YouTubeMusicCatalog(bridge);
   const sources = await catalog.listImportSources();
-  assert.deepEqual(sources.map((source) => source.category), ["library-artists", "favorite-tracks", "playlist"]);
+  assert.deepEqual(
+    sources.map((source) => source.category),
+    ["library-artists", "favorite-tracks", "playlist", "mix"],
+  );
   assert.equal(sources[2].lists?.[0].id, "PL_bastille_test");
+  assert.equal(sources[3].label, "Mixed for you");
+  assert.equal(sources[3].lists?.[0].id, "PL_discovery_mix");
 
   const artists = await catalog.getArtistsForImportSource({ category: "playlist", listId: "PL_bastille_test" });
   assert.equal(artists[0].name, "Bastille");
   assert.deepEqual(bridge.calls.at(-1)?.payload, { category: "playlist", listId: "PL_bastille_test" });
+
+  const mixArtists = await catalog.getArtistsForImportSource({ category: "mix", listId: "PL_discovery_mix" });
+  assert.equal(mixArtists[0].name, "Bastille");
   await assert.rejects(
     () => catalog.getArtistsForImportSource({ category: "playlist" }),
     /playlist must be selected/i,
@@ -280,7 +291,7 @@ test("provider manifest is honest about lossy audio and delegates the catalog co
   assert.equal(provider.manifest.displayName, provider.name);
   assert.equal(provider.manifest.integration.catalogSource, "unofficial-api");
   assert.equal(provider.manifest.integration.downloadSource, "native-cli");
-  assert.deepEqual(provider.manifest.imports.supported, ["library-artists", "playlist", "favorite-tracks"]);
+  assert.deepEqual(provider.manifest.imports.supported, ["library-artists", "playlist", "favorite-tracks", "mix"]);
   assert.equal(provider.capabilities.lossyStereo, true);
   assert.equal(provider.capabilities.losslessStereo, false);
   assert.equal(provider.capabilities.spatialAudio, false);
@@ -516,6 +527,67 @@ test("Python bridge is dependency-injectable and passes a bounded JSON request",
   assert.equal(request.args.at(-1), "search");
   assert.deepEqual(JSON.parse(request.input), { query: "Bastille", limit: 1 });
   assert.equal(request.timeoutMs, 45_000);
+});
+
+test("liked-songs sign-in KeyError is mapped to a reconnect message", async () => {
+  const rawKeyError = [
+    'KeyError: "Unable to find \'twoColumnBrowseResultsRenderer\' using path ',
+    "['contents', 'twoColumnBrowseResultsRenderer', 'tabs', 0, 'tabRenderer', 'content', ",
+    "'sectionListRenderer', 'contents', 0] on {'singleColumnBrowseResultsRenderer': ",
+    "{'tabs': [{'tabRenderer': {'selected': True, 'content': {'sectionListRenderer': ",
+    "{'contents': [{'itemSectionRenderer': {'contents': [{'messageRenderer': ",
+    "{'text': {'runs': [{'text': 'Looking for what you’ve liked?'}]}, ",
+    "'button': {'buttonRenderer': {'text': {'runs': [{'text': 'Sign in'}]}}}]}}]}}]}}]}\"",
+  ].join("");
+
+  assert.equal(mapYtMusicBridgeFailure(rawKeyError, ""), YOUTUBE_MUSIC_AUTH_REQUIRED_MESSAGE);
+  assert.equal(
+    mapYtMusicBridgeFailure("RuntimeError: YouTube Music authentication is missing or expired. Sign in at music.youtube.com", ""),
+    YOUTUBE_MUSIC_AUTH_REQUIRED_MESSAGE,
+  );
+  assert.match(mapYtMusicBridgeFailure("ValueError: unsupported import category: nope", ""), /unsupported import category/i);
+
+  const bridge = new PythonYtMusicBridge({
+    scriptPath: getYtMusicBridgeScript(),
+    headersPath: path.join(testConfigDir, "missing-browser.json"),
+    pythonBinary: "fixture-python",
+    runner: async () => ({ code: 1, stdout: "", stderr: rawKeyError }),
+  });
+  await assert.rejects(
+    () => bridge.request("get_import_artists", { category: "favorite-tracks" }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /ytmusicapi bridge failed/);
+      assert.match(error.message, /authentication is missing or expired/i);
+      assert.doesNotMatch(error.message, /twoColumnBrowseResultsRenderer/i);
+      return true;
+    },
+  );
+});
+
+test("liked music import fails clearly when browser headers are missing", async () => {
+  clearYouTubeMusicCredentials();
+  const catalog = new YouTubeMusicCatalog(new FixtureBridge());
+  await assert.rejects(
+    () => catalog.getArtistsForImportSource({ category: "favorite-tracks" }),
+    /authentication is missing or expired/i,
+  );
+});
+
+test("stub User-Agent is upgraded when saving YouTube Music credentials", () => {
+  clearYouTubeMusicCredentials();
+  saveYouTubeMusicCredentials({
+    headers: {
+      Authorization: "SAPISIDHASH test-hash",
+      Cookie: "SAPISID=test-secret; __Secure-3PAPISID=second-secret",
+      "User-Agent": "Mozilla/5.0",
+    },
+  });
+  const stored = loadYouTubeMusicHeaders();
+  assert.ok(stored?.["User-Agent"]);
+  assert.notEqual(stored?.["User-Agent"], "Mozilla/5.0");
+  assert.match(stored?.["User-Agent"] || "", /Firefox|Chrome|Safari/i);
+  clearYouTubeMusicCredentials();
 });
 
 test("yt-dlp arguments use provider-ID filenames and select audio/video formats explicitly", () => {

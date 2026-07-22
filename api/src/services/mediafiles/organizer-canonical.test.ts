@@ -150,6 +150,61 @@ test("resolveMatchedCanonicalAlbumTrackRow fails closed when catalog track is mi
   assert.equal(row, null);
 });
 
+test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC when MBIDs are missing", () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Bastille");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-local", "Bastille", "artist-mbid");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-gmtf", "artist-mbid", "Give Me the Future");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("rel-3vol", "rg-gmtf", "artist-mbid", "Give Me the Future + Dreams of the Past", 3, 2);
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video, isrcs) VALUES (?, ?, ?, ?, ?)")
+    .run("rec-vol3", "Running Away", "artist-mbid", 0, JSON.stringify(["GBUM72202390"]));
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("track-vol3", "rel-3vol", "rec-vol3", "Running Away", 3, 6);
+  // Provider offer has ISRC evidence but no track/recording MBIDs yet (stereo vol 3 case).
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
+      track_mbid, recording_mbid, isrc, title, track_number, volume_number, match_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "tidal",
+    "track",
+    "243864079",
+    "artist-mbid",
+    "rg-gmtf",
+    "rel-3vol",
+    null,
+    null,
+    "GBUM72202390",
+    "Running Away",
+    6,
+    3,
+    "matched",
+  );
+
+  const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
+    provider: "tidal",
+    trackId: "243864079",
+    releaseMbid: "rel-3vol",
+    fallbackAlbumId: "243864035",
+    fallbackArtistId: "artist-local",
+    fallbackQuality: "HIRES_LOSSLESS",
+  });
+
+  assert.equal(row?.canonical_track_mbid, "track-vol3");
+  assert.equal(row?.canonical_recording_mbid, "rec-vol3");
+  assert.equal(row?.title, "Running Away");
+  assert.equal(row?.track_number, 6);
+  assert.equal(row?.volume_number, 3);
+});
+
 test("organizer matches provider-id staging filenames to materialized provider track rows", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
@@ -601,4 +656,265 @@ test("hybrid composite identity prefers monitored hybrid over native provider al
   });
   assert.equal(fromNativeTrackOnHybrid.canonicalTrackMbid, "t-pompeii-hybrid");
   assert.equal(getCanonicalTrackPosition(fromNativeTrackOnHybrid.canonicalTrackMbid)?.trackNumber, 2);
+});
+
+test("hybrid tips with providerAlbumId on secondary albums match organize scope", async () => {
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid", "Bastille");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-local", "Bastille", "artist-mbid");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-hybrid-tips", "artist-mbid", "Hybrid Tips");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("rel-hybrid-tips", "rg-hybrid-tips", "artist-mbid", "Hybrid Tips", 1, 2);
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
+    .run("rec-primary", "Primary Tip", "artist-mbid", 0);
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
+    .run("rec-secondary", "Secondary Tip", "artist-mbid", 0);
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("t-primary", "rel-hybrid-tips", "rec-primary", "Primary Tip", 1, 1);
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("t-secondary", "rel-hybrid-tips", "rec-secondary", "Secondary Tip", 1, 2);
+
+  // Primary album offer only — secondary track lives on a different provider album.
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid,
+      release_group_mbid, release_mbid, track_mbid, recording_mbid,
+      title, quality, library_slot, match_status
+    ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'stereo', 'matched')
+  `).run(
+    "tidal",
+    "trk-primary",
+    "album-primary",
+    "artist-mbid",
+    "rg-hybrid-tips",
+    "rel-hybrid-tips",
+    "t-primary",
+    "rec-primary",
+    "Primary Tip",
+    "HIRES_LOSSLESS",
+  );
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid,
+      release_group_mbid, release_mbid, track_mbid, recording_mbid,
+      title, quality, library_slot, match_status
+    ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'stereo', 'matched')
+  `).run(
+    "tidal",
+    "trk-secondary",
+    "album-secondary",
+    "artist-mbid",
+    "rg-hybrid-tips",
+    "rel-hybrid-tips",
+    "t-secondary",
+    "rec-secondary",
+    "Secondary Tip",
+    "HIRES_LOSSLESS",
+  );
+
+  const stagedPrimary = path.join(tempDir, "hybrid-tips", "trk-primary.flac");
+  const stagedSecondary = path.join(tempDir, "hybrid-tips", "trk-secondary.flac");
+  const trackOffers = [
+    {
+      providerTrackId: "trk-primary",
+      providerAlbumId: "album-primary",
+      quality: "HIRES_LOSSLESS",
+      canonicalTrackMbid: "t-primary",
+      canonicalRecordingMbid: "rec-primary",
+    },
+    {
+      providerTrackId: "trk-secondary",
+      providerAlbumId: "album-secondary",
+      quality: "HIRES_LOSSLESS",
+      canonicalTrackMbid: "t-secondary",
+      canonicalRecordingMbid: "rec-secondary",
+    },
+  ];
+
+  // Job tip album ids must expand match scope even when the hybrid providerId
+  // string only lists the primary album.
+  const matches = await (organizerModule.OrganizerService as any).matchAlbumFilesToTracks(
+    "album-primary",
+    [stagedPrimary, stagedSecondary],
+    {
+      provider: "tidal",
+      releaseGroupMbid: "rg-hybrid-tips",
+      releaseMbid: "rel-hybrid-tips",
+      artistMbid: "artist-mbid",
+      slot: "stereo",
+      quality: "HIRES_LOSSLESS",
+    },
+    trackOffers,
+  );
+
+  assert.equal(matches.get(stagedPrimary), "trk-primary");
+  assert.equal(matches.get(stagedSecondary), "trk-secondary");
+
+  const secondaryRow = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
+    provider: "tidal",
+    trackId: "trk-secondary",
+    releaseMbid: "rel-hybrid-tips",
+    fallbackAlbumId: "album-primary",
+    fallbackAlbumIds: ["album-primary", "album-secondary"],
+    fallbackArtistId: "artist-local",
+    fallbackQuality: "HIRES_LOSSLESS",
+  });
+  assert.equal(secondaryRow?.id, "trk-secondary");
+  assert.equal(secondaryRow?.canonical_track_mbid, "t-secondary");
+  assert.equal(secondaryRow?.canonical_recording_mbid, "rec-secondary");
+  assert.equal(secondaryRow?.track_number, 2);
+});
+
+test("hybrid tip shared with a single/EP organizes under the job release, not the single (BTB Rehab)", async () => {
+  // Live failure: tip album 77661290 is both BTB hybrid core and Rehab single's
+  // selected_provider_id. Context JOIN used to pick the single LIMIT 1 and rebind
+  // Rehab.flac onto RG aea5b8c0 instead of Back to Black deluxe.
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-amy", "Amy Winehouse");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-amy-local", "Amy Winehouse", "artist-amy");
+
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-btb", "artist-amy", "Back to Black");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("rg-rehab-single", "artist-amy", "Rehab");
+
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("rel-btb-deluxe", "rg-btb", "artist-amy", "Back to Black", 1, 2);
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("rel-rehab-single", "rg-rehab-single", "artist-amy", "Rehab", 1, 1);
+
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
+    .run("rec-rehab", "Rehab", "artist-amy", 0);
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
+    .run("rec-you-know", "You Know I'm No Good", "artist-amy", 0);
+
+  // Deluxe BTB positions.
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("t-rehab-btb", "rel-btb-deluxe", "rec-rehab", "Rehab", 1, 7);
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("t-you-know-btb", "rel-btb-deluxe", "rec-you-know", "You Know I'm No Good", 1, 2);
+  // Competing single position (same recording).
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("t-rehab-single", "rel-rehab-single", "rec-rehab", "Rehab", 1, 1);
+
+  // Hybrid composite + exact-id single sharing tip 77661290.
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid
+    ) VALUES (?, ?, 'stereo', 1, 'tidal', ?, ?)
+  `).run("artist-amy", "rg-btb", "77661290;77555663;22888255", "rel-btb-deluxe");
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid
+    ) VALUES (?, ?, 'stereo', 1, 'tidal', ?, ?)
+  `).run("artist-amy", "rg-rehab-single", "77661290", "rel-rehab-single");
+
+  // Tip album offer points at BTB (provider-native for the hires core).
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid,
+      release_group_mbid, release_mbid, title, quality, library_slot, match_status
+    ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, 'stereo', 'matched')
+  `).run("tidal", "77661290", "artist-amy", "rg-btb", "rel-btb-deluxe", "Back to Black", "HIRES_LOSSLESS");
+  // Track tip: provider album is the BTB tip, but a naive slot JOIN can still
+  // land on the Rehab single via selected_provider_id = 77661290.
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, artist_mbid,
+      release_group_mbid, release_mbid, track_mbid, recording_mbid,
+      title, quality, library_slot, match_status
+    ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'stereo', 'matched')
+  `).run(
+    "tidal",
+    "77661291",
+    "77661290",
+    "artist-amy",
+    "rg-btb",
+    "rel-btb-deluxe",
+    "t-rehab-btb",
+    "rec-rehab",
+    "Rehab",
+    "HIRES_LOSSLESS",
+  );
+
+  const context = (organizerModule.OrganizerService as any).resolveCanonicalAlbumImportContext(
+    {
+      type: "album",
+      provider: "tidal",
+      providerId: "77661290;77555663;22888255",
+      releaseGroupMbid: "rg-btb",
+      releaseMbid: "rel-btb-deluxe",
+      slot: "stereo",
+      trackOffers: [
+        {
+          providerTrackId: "77661291",
+          providerAlbumId: "77661290",
+          canonicalTrackMbid: "t-rehab-btb",
+          canonicalRecordingMbid: "rec-rehab",
+          quality: "HIRES_LOSSLESS",
+        },
+      ],
+    },
+    "77661290",
+  );
+
+  assert.equal(context?.releaseGroupMbid, "rg-btb");
+  assert.equal(context?.releaseMbid, "rel-btb-deluxe");
+  assert.notEqual(context?.releaseGroupMbid, "rg-rehab-single");
+
+  // Job RG hint must keep identity on BTB even when albumId is the colliding tip.
+  const identity = identityModule.resolveLibraryFileIdentity({
+    provider: "tidal",
+    providerEntityType: "track",
+    providerId: "77661291",
+    mediaId: "77661291",
+    albumId: "77661290",
+    fileType: "track",
+    librarySlot: "stereo",
+    canonicalReleaseGroupMbid: "rg-btb",
+    canonicalReleaseMbid: "rel-btb-deluxe",
+    canonicalTrackMbid: "t-rehab-btb",
+    canonicalRecordingMbid: "rec-rehab",
+  });
+  assert.equal(identity.canonicalReleaseGroupMbid, "rg-btb");
+  assert.equal(identity.canonicalReleaseMbid, "rel-btb-deluxe");
+  assert.equal(identity.canonicalTrackMbid, "t-rehab-btb");
+
+  const { getCanonicalTrackPosition } = await import("../metadata/canonical-track-position.js");
+  assert.equal(getCanonicalTrackPosition("t-rehab-btb")?.trackNumber, 7);
+  assert.equal(getCanonicalTrackPosition("t-rehab-single")?.trackNumber, 1);
+
+  // Without an explicit job RG, prefer the longer hybrid composite over the exact single.
+  const contextNoJobRg = (organizerModule.OrganizerService as any).resolveCanonicalAlbumImportContext(
+    {
+      type: "album",
+      provider: "tidal",
+      providerId: "77661290;77555663;22888255",
+      slot: "stereo",
+    },
+    "77661290",
+  );
+  assert.equal(contextNoJobRg?.releaseGroupMbid, "rg-btb");
+  assert.equal(contextNoJobRg?.releaseMbid, "rel-btb-deluxe");
 });

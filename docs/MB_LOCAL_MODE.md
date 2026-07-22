@@ -90,7 +90,7 @@ The overlay sets:
 - `DISCOGENIUS_CATALOG_SOURCE` — `servarr-metadata` (default) | `musicbrainz-local`
 - `MB_LOCAL_HOST` — MusicBrainz-docker host or service name, default `db`
 
-The Settings page uses the same host-only value. Enter `192.168.1.100`,
+The Settings page uses the same host-only value. Enter `localhost`,
 `musicbrainz.mydomain.com`, `db`, or `host:postgresPort` for non-standard
 Postgres ports; Discogenius derives the Postgres DSN and `/ws/2` probe URL.
 

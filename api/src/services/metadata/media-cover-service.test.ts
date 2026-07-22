@@ -613,6 +613,36 @@ test("stable poster.jpg alias resolves to the largest UI derivative", () => {
   );
 });
 
+test("getCachedMediaCoverSourceUrlFromLocalUrl returns remote origin from source marker", () => {
+  const albumMbid = "origin-source-album-mbid";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, "cover-500.jpg"), Buffer.alloc(80, 1));
+  fs.writeFileSync(
+    path.join(folder, ".cover.source.json"),
+    JSON.stringify({ url: "https://resources.tidal.com/images/abcd/origin.jpg" }),
+  );
+
+  assert.equal(
+    mediaCoverServiceModule.getCachedMediaCoverSourceUrlFromLocalUrl(
+      `/media-cover/Albums/${albumMbid}/cover.jpg`,
+    ),
+    "https://resources.tidal.com/images/abcd/origin.jpg",
+  );
+  assert.equal(
+    mediaCoverServiceModule.getCachedMediaCoverSourceUrlFromLocalUrl(
+      `/media-cover/Albums/${albumMbid}/cover-500.jpg`,
+    ),
+    "https://resources.tidal.com/images/abcd/origin.jpg",
+  );
+  assert.equal(
+    mediaCoverServiceModule.getCachedMediaCoverSourceUrlFromLocalUrl(
+      `/media-cover/Albums/missing-album/cover.jpg`,
+    ),
+    null,
+  );
+});
+
 test("artist profile selectors never fall back to Fanart or Banner", () => {
   const fanartUrl = "https://images.lidarr.audio/cache/https://example.test/fanart.jpg";
   const bannerUrl = "https://images.lidarr.audio/cache/https://example.test/banner.jpg";
@@ -747,35 +777,141 @@ test("album provider artwork candidates prefer stereo slot then spatial then oth
   assert.equal(spatialOnly[0]?.imageId, "spatial-cover");
 });
 
-test("album provider artwork candidates expand hybrid selected_provider_id", () => {
-  const { db } = dbModule;
-  const albumMbid = "album-hybrid-art-mbid";
-  const artistMbid = "album-hybrid-art-artist";
-
-  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Hybrid Art Artist");
-  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
-    .run(albumMbid, artistMbid, "Hybrid Art Album");
-
-  db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, match_confidence
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("tidal", "album", "hybrid-a", artistMbid, albumMbid, "cover-a", 0.8);
-  db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, match_confidence
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("tidal", "album", "hybrid-b", artistMbid, albumMbid, "cover-b", 0.7);
-
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id
-    ) VALUES (?, ?, ?, ?, ?, ?)
-  `).run(artistMbid, albumMbid, "stereo", 1, "tidal", "hybrid-a;hybrid-b");
-
-  const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(albumMbid);
-  assert.deepEqual(
-    candidates.slice(0, 2).map((candidate) => candidate.entityId),
-    ["hybrid-a", "hybrid-b"],
+test("stale provider cache still serves existing derivatives while upgrade is pending", () => {
+  const albumMbid = "stale-but-serve-album";
+  const providerUrl = "https://resources.tidal.com/images/aaaaaaaa/bbbb/cccc/dddd/eeeeeeeeeeee/750x750.jpg";
+  const servarrUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/real-cover.jpg";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, "cover-500.jpg"), Buffer.alloc(64, 1));
+  fs.writeFileSync(path.join(folder, "cover-250.jpg"), Buffer.alloc(32, 1));
+  fs.writeFileSync(
+    path.join(folder, ".cover.source.json"),
+    JSON.stringify({ url: providerUrl, preference: "canonical", fulfilledBy: "provider" }),
   );
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("stale-but-serve-artist", "Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, images) VALUES (?, ?, ?, ?)")
+    .run(
+      albumMbid,
+      "stale-but-serve-artist",
+      "Stale But Serve",
+      JSON.stringify([
+        { coverType: "Cover", url: servarrUrl },
+        { coverType: "Cover", url: providerUrl, source: "provider-fallback" },
+      ]),
+    );
+
+  configModule.updateConfig("metadata", { artwork_preference: "canonical" });
+  assert.equal(mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(albumMbid, "Album", "Cover"), false);
+  assert.equal(
+    mediaCoverServiceModule.resolveMediaCoverFilePath(folder, "cover.jpg"),
+    path.join(folder, "cover-500.jpg"),
+  );
+  assert.equal(fs.existsSync(path.join(folder, "cover-500.jpg")), true);
+});
+
+test("ensureCachedMediaCover keeps prior files when a canonical upgrade fetch fails", async () => {
+  const albumMbid = "failed-upgrade-retention-album";
+  const providerUrl = "https://resources.tidal.com/images/bbbbbbbb/cccc/dddd/eeee/ffffffffffff/750x750.jpg";
+  const canonicalUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/upgrade-cover.jpg";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  const image = jpeg.encode({
+    width: 600,
+    height: 600,
+    data: Buffer.alloc(600 * 600 * 4, 255),
+  }, 92).data;
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const source = String(url);
+    if (source === providerUrl) {
+      return new Response(image, {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      });
+    }
+    return new Response("", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const initialUrl = await mediaCoverServiceModule.ensureCachedMediaCover({
+      entityId: albumMbid,
+      coverEntity: "Album",
+      coverType: "Cover",
+      sourceUrl: providerUrl,
+      fulfilledBy: "provider",
+    });
+    assert.equal(initialUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
+    assert.equal(fs.existsSync(path.join(folder, "cover-500.jpg")), true);
+    assert.equal(fs.existsSync(path.join(folder, "cover-250.jpg")), true);
+
+    const failedUpgrade = await mediaCoverServiceModule.ensureCachedMediaCover({
+      entityId: albumMbid,
+      coverEntity: "Album",
+      coverType: "Cover",
+      sourceUrl: canonicalUrl,
+      fulfilledBy: "canonical",
+    });
+    assert.equal(failedUpgrade, null);
+    assert.equal(fs.existsSync(path.join(folder, "cover-500.jpg")), true);
+    assert.equal(fs.existsSync(path.join(folder, "cover-250.jpg")), true);
+    const marker = JSON.parse(fs.readFileSync(path.join(folder, ".cover.source.json"), "utf-8"));
+    assert.equal(marker.url, providerUrl);
+    assert.equal(marker.fulfilledBy, "provider");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ensureCachedMediaCover keeps prior files when a successful fetch cannot be decoded", async () => {
+  const albumMbid = "failed-decode-retention-album";
+  const providerUrl = "https://resources.tidal.com/images/cccccccc/dddd/eeee/ffff/000000000000/750x750.jpg";
+  const badCanonicalUrl = "https://images.lidarr.audio/cache/https://coverartarchive.org/release/example/bad-cover.bin";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  const image = jpeg.encode({
+    width: 600,
+    height: 600,
+    data: Buffer.alloc(600 * 600 * 4, 255),
+  }, 92).data;
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const source = String(url);
+    if (source === providerUrl) {
+      return new Response(image, {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      });
+    }
+    if (source === badCanonicalUrl) {
+      return new Response(Buffer.from("not-an-image"), {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      });
+    }
+    return new Response("", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    await mediaCoverServiceModule.ensureCachedMediaCover({
+      entityId: albumMbid,
+      coverEntity: "Album",
+      coverType: "Cover",
+      sourceUrl: providerUrl,
+      fulfilledBy: "provider",
+    });
+
+    const failedUpgrade = await mediaCoverServiceModule.ensureCachedMediaCover({
+      entityId: albumMbid,
+      coverEntity: "Album",
+      coverType: "Cover",
+      sourceUrl: badCanonicalUrl,
+      fulfilledBy: "canonical",
+    });
+    assert.equal(failedUpgrade, `/media-cover/Albums/${albumMbid}/cover.jpg`);
+    assert.equal(fs.existsSync(path.join(folder, "cover-500.jpg")), true);
+    assert.equal(fs.existsSync(path.join(folder, "cover-250.jpg")), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

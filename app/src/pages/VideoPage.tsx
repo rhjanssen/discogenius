@@ -205,6 +205,8 @@ const useStyles = makeStyles({
     },
     albumAffiliation: {
         marginTop: tokens.spacingVerticalXXS,
+        width: "100%",
+        minWidth: 0,
     },
     titleRow: {
         display: "flex",
@@ -325,6 +327,14 @@ const VideoPage = () => {
         enabled: !!videoId,
         refetchOnWindowFocus: false,
     });
+
+    // Canonicalize the address bar to Recordings.id (API contract id). Queue /
+    // history still deep-link by provider id; GET resolves both.
+    useEffect(() => {
+        if (!video?.id || !videoId) return;
+        if (String(video.id) === String(videoId)) return;
+        navigate(`/video/${video.id}`, { replace: true });
+    }, [video?.id, videoId, navigate]);
 
     // Keep the artist chip aligned with AlbumPage: resolve the artist image from
     // the canonical artist payload, falling back from primary picture to cover.
@@ -656,6 +666,19 @@ const VideoPage = () => {
                                     />
                                 ) : video.quality ? (
                                     <QualityBadge quality={video.quality} size="medium" />
+                                ) : null}
+                                {isDownloaded && videoFile?.quality ? (
+                                    <>
+                                        {(offers.length > 0 || video.quality) ? (
+                                            <div className={styles.metaSeparator} />
+                                        ) : null}
+                                        <span title={`Downloaded file: ${videoFile.quality}`}>
+                                            <QualityBadge
+                                                quality={videoFile.quality}
+                                                size="medium"
+                                            />
+                                        </span>
+                                    </>
                                 ) : null}
                             </div>
                         </div>

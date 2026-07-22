@@ -67,7 +67,7 @@ export const handleCurateArtist: CommandHandler<"CurateArtist"> = async (job, ct
         progress: 10,
         description: ctx.formatArtistPhaseDescription(job, "applying release monitoring rules"),
     });
-    // Curation only selects slots/offers. DownloadMissing is the Lidarr-style
+    // Curation only selects slots/offers. DownloadMissing is the
     // "search for missing" handoff (see monitoring-intake / full-monitoring).
     await CurationService.processAll(
         job.payload.artistId,

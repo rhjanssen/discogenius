@@ -18,6 +18,7 @@ before(async () => {
 });
 
 beforeEach(() => {
+  dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
@@ -129,5 +130,215 @@ test("album versions expose provider offers for all compatible MusicBrainz relea
   assert.equal(providersByRelease.get(standardReleaseMbid), "tidal-standard");
   assert.equal(providersByRelease.get(deluxeReleaseMbid), "tidal-deluxe");
   assert.equal(providersByRelease.get(expandedReleaseMbid), "tidal-expanded");
+});
+
+test("album tracks attach library files by recording MBID when track MBIDs differ across releases", async () => {
+  const artistMbid = "artist-mbid-frank";
+  const releaseGroupMbid = "release-group-frank";
+  const stereoReleaseMbid = "release-frank-deluxe";
+  const spatialReleaseMbid = "release-frank-atmos";
+  const stereoTrackMbid = "track-frank-stereo-rehab";
+  const spatialTrackMbid = "track-frank-spatial-rehab";
+  const recordingMbid = "recording-frank-rehab";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Amy Winehouse");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run(artistMbid, "Amy Winehouse", artistMbid);
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(releaseGroupMbid, artistMbid, "Frank", "Album", "2006-10-20");
+
+  const insertRelease = dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run(
+    stereoReleaseMbid,
+    releaseGroupMbid,
+    artistMbid,
+    "Frank (Deluxe Edition)",
+    "Official",
+    "2008-05-12",
+    2,
+    31,
+  );
+  insertRelease.run(
+    spatialReleaseMbid,
+    releaseGroupMbid,
+    artistMbid,
+    "Frank (Apple Digital Master)",
+    "Official",
+    "2021-10-29",
+    1,
+    16,
+  );
+
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(artistMbid, releaseGroupMbid, "stereo", 1, stereoReleaseMbid);
+
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, length_ms)
+    VALUES (?, ?, ?)
+  `).run(recordingMbid, "Rehab", 214000);
+
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(stereoTrackMbid, stereoReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
+
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid, library_slot, file_path, relative_path,
+      library_root, filename, extension, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    artistMbid,
+    artistMbid,
+    releaseGroupMbid,
+    spatialReleaseMbid,
+    spatialTrackMbid,
+    recordingMbid,
+    "spatial",
+    "/library/spatial/Amy Winehouse/Rehab.m4a",
+    "Amy Winehouse/Rehab.m4a",
+    "/library/spatial",
+    "Rehab.m4a",
+    ".m4a",
+    "track",
+    "DOLBY_ATMOS",
+  );
+
+  const tracks = await readServiceModule.MusicBrainzReleaseGroupReadService.getTracks(releaseGroupMbid);
+
+  assert.equal(tracks.length, 1);
+  assert.equal(tracks[0].musicbrainz_track_id, stereoTrackMbid);
+  assert.equal(tracks[0].musicbrainz_recording_id, recordingMbid);
+  assert.equal(tracks[0].files.length, 1);
+  assert.equal(tracks[0].files[0]?.library_slot, "spatial");
+  assert.equal(tracks[0].files[0]?.canonical_track_mbid, spatialTrackMbid);
+  assert.equal(tracks[0].files[0]?.canonical_recording_mbid, recordingMbid);
+  assert.equal(tracks[0].downloaded, true);
+});
+
+test("single release group does not inherit album files by shared recording MBID", async () => {
+  const artistMbid = "artist-mbid-amy";
+  const albumReleaseGroupMbid = "release-group-back-to-black";
+  const singleReleaseGroupMbid = "release-group-rehab-single";
+  const albumReleaseMbid = "release-back-to-black";
+  const singleReleaseMbid = "release-rehab-single";
+  const albumTrackMbid = "track-btb-rehab";
+  const singleTrackMbid = "track-rehab-single";
+  const recordingMbid = "recording-rehab-shared";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Amy Winehouse");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run(artistMbid, "Amy Winehouse", artistMbid);
+
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(albumReleaseGroupMbid, artistMbid, "Back to Black", "Album", "2006-10-27");
+
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(singleReleaseGroupMbid, artistMbid, "Rehab", "Single", "2006-10-23");
+
+  const insertRelease = dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run(
+    albumReleaseMbid,
+    albumReleaseGroupMbid,
+    artistMbid,
+    "Back to Black",
+    "Official",
+    "2006-10-27",
+    1,
+    11,
+  );
+  insertRelease.run(
+    singleReleaseMbid,
+    singleReleaseGroupMbid,
+    artistMbid,
+    "Rehab",
+    "Official",
+    "2006-10-23",
+    1,
+    1,
+  );
+
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(artistMbid, albumReleaseGroupMbid, "stereo", 1, albumReleaseMbid);
+
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(artistMbid, singleReleaseGroupMbid, "stereo", 1, singleReleaseMbid);
+
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, title, length_ms)
+    VALUES (?, ?, ?)
+  `).run(recordingMbid, "Rehab", 214000);
+
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(albumTrackMbid, albumReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
+
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(singleTrackMbid, singleReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
+
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid, library_slot, file_path, relative_path,
+      library_root, filename, extension, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    artistMbid,
+    artistMbid,
+    albumReleaseGroupMbid,
+    albumReleaseMbid,
+    albumTrackMbid,
+    recordingMbid,
+    "stereo",
+    "/library/stereo/Amy Winehouse/Back to Black/Rehab.flac",
+    "Amy Winehouse/Back to Black/Rehab.flac",
+    "/library/stereo",
+    "Rehab.flac",
+    ".flac",
+    "track",
+    "LOSSLESS",
+  );
+
+  const albumTracks = await readServiceModule.MusicBrainzReleaseGroupReadService.getTracks(albumReleaseGroupMbid);
+  assert.equal(albumTracks.length, 1);
+  assert.equal(albumTracks[0].downloaded, true);
+  assert.equal(albumTracks[0].files.length, 1);
+
+  const singleTracks = await readServiceModule.MusicBrainzReleaseGroupReadService.getTracks(singleReleaseGroupMbid);
+  assert.equal(singleTracks.length, 1);
+  assert.equal(singleTracks[0].musicbrainz_track_id, singleTrackMbid);
+  assert.equal(singleTracks[0].musicbrainz_recording_id, recordingMbid);
+  assert.equal(singleTracks[0].files.length, 0);
+  assert.notEqual(singleTracks[0].downloaded, true);
+  assert.notEqual(singleTracks[0].is_downloaded, true);
 });
 

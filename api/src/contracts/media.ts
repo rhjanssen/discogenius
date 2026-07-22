@@ -167,6 +167,8 @@ export interface VideoAlbumRefContract {
   volume_number?: number | null;
   /** Total tracks on the matched release (for "Track N of M"). */
   track_count?: number | null;
+  /** Disc/medium count on the matched release (for multi-volume labels). */
+  media_count?: number | null;
 }
 
 export interface VideoDetailContract {
@@ -465,5 +467,6 @@ function parseVideoAlbumRefContract(value: unknown, indexLabel: string): VideoAl
     track_number: expectOptionalNumber(record.track_number, `${indexLabel}.track_number`) ?? null,
     volume_number: expectOptionalNumber(record.volume_number, `${indexLabel}.volume_number`) ?? null,
     track_count: expectOptionalNumber(record.track_count, `${indexLabel}.track_count`) ?? null,
+    media_count: expectOptionalNumber(record.media_count, `${indexLabel}.media_count`) ?? null,
   };
 }

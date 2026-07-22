@@ -1,5 +1,4 @@
 import {
-    Badge,
     Button,
     Caption1,
     Dialog,
@@ -8,38 +7,28 @@ import {
     DialogSurface,
     DialogTitle,
     Input,
-    Spinner,
+    Select,
+    Switch,
     Text,
     Tooltip,
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
 import {
-    ArrowSortDownLines24Regular,
-    ArrowSync24Regular,
     Dismiss24Regular,
     QuestionCircle24Regular,
-    ArrowSortDownLines24Filled,
-    ArrowSync24Filled,
     Dismiss24Filled,
     QuestionCircle24Filled,
     bundleIcon,
 } from "@fluentui/react-icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
-import {
-    RenamePreviewDialog,
-    type RenamePreviewItem,
-} from "@/components/mediafiles/FileMaintenanceDialogs";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useToast } from "@/hooks/useToast";
 import { api } from "@/services/api";
-import { dispatchActivityRefresh } from "@/utils/appEvents";
-import type { NamingConfigContract } from "@contracts/config";
+import type { NamingConfigContract, PathConfigContract } from "@contracts/config";
 
-const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
-const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
 const QuestionCircle24 = bundleIcon(QuestionCircle24Filled, QuestionCircle24Regular);
 const Dismiss24 = bundleIcon(Dismiss24Filled, Dismiss24Regular);
 
@@ -168,7 +157,7 @@ const NAMING_HELP: Record<
     },
     video_file: {
         title: "Music video file",
-        description: "Filename for music videos (no extension). Include {Video Type} (e.g. -video, -live, -lyrics) so Plex/Jellyfin recognize extras in a separated video library. Inline layout always uses the matched track filename plus that type suffix.",
+        description: "Filename for music videos (no extension). Include {Video Type} (e.g. -video, -live, -lyrics) so media servers can classify extras in a separated video library. Inline layout always uses the matched track filename plus that type suffix.",
         tokens: [
             { section: "Formats", token: "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}", example: "Around the World-video {TIDAL-12345}", mode: "replace" },
             ...ARTIST_NAMING_TOKENS,
@@ -187,28 +176,13 @@ const NAMING_HELP: Record<
     },
 };
 
-type NamingRenameSample = RenamePreviewItem;
-
-interface NamingRenameStatus {
-    total: number;
-    scanned: number;
-    limited: boolean;
-    renameNeeded: number;
-    conflicts: number;
-    missing: number;
-    sample: NamingRenameSample[];
-}
-
-interface NamingRenamePreviewResponse {
-    items: NamingRenameSample[];
-}
-
 type NamingPreviewResponse = Awaited<ReturnType<typeof api.previewNamingConfig>>;
 
 export interface NamingSettingsSectionProps {
+    pathSettings: PathConfigContract | null;
+    updatePathSettings: (updates: Partial<PathConfigContract>) => void | Promise<void>;
     namingSettings: NamingConfigContract | null;
     updateNamingSettings: (updates: Partial<NamingConfigContract>) => void | Promise<void>;
-    flushNamingSettings: (updates?: Partial<NamingConfigContract>) => Promise<unknown>;
 }
 
 const MEDIA = {
@@ -270,6 +244,11 @@ const useStyles = makeStyles({
         minWidth: 0,
         paddingTop: tokens.spacingVerticalXXS,
     },
+    controlMedium: {
+        width: "100%",
+        maxWidth: "280px",
+        minWidth: "180px",
+    },
     templateControl: {
         display: "flex",
         flexDirection: "column",
@@ -312,21 +291,6 @@ const useStyles = makeStyles({
             padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         },
     },
-    namingBadgeRow: {
-        display: "flex",
-        flexWrap: "wrap",
-        gap: tokens.spacingHorizontalXS,
-        rowGap: tokens.spacingVerticalXS,
-    },
-    namingActionGroup: {
-        display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalXS,
-        minWidth: "220px",
-        [MEDIA.mobile]: {
-            width: "100%",
-        },
-    },
     namingHelpContent: {
         display: "flex",
         flexDirection: "column",
@@ -356,7 +320,8 @@ const useStyles = makeStyles({
     pathInput: {
         flex: 1,
         width: "100%",
-        minWidth: 0,
+        maxWidth: "420px",
+        minWidth: "220px",
     },
     mutedText: {
         color: tokens.colorNeutralForeground2,
@@ -370,20 +335,15 @@ const useStyles = makeStyles({
 });
 
 export const NamingSettingsSection = ({
+    pathSettings,
+    updatePathSettings,
     namingSettings,
     updateNamingSettings,
-    flushNamingSettings,
 }: NamingSettingsSectionProps) => {
     const styles = useStyles();
     const { toast } = useToast();
 
     const [namingHelpField, setNamingHelpField] = useState<NamingFieldKey | null>(null);
-    const [renameStatus, setRenameStatus] = useState<NamingRenameStatus | null>(null);
-    const [renameStatusLoading, setRenameStatusLoading] = useState(false);
-    const [renameApplying, setRenameApplying] = useState(false);
-    const [renameStatusInitialized, setRenameStatusInitialized] = useState(false);
-    const [renamePreviewOpen, setRenamePreviewOpen] = useState(false);
-    const [renamePreviewItems, setRenamePreviewItems] = useState<NamingRenameSample[]>([]);
     const [namingPreviewResponse, setNamingPreviewResponse] = useState<NamingPreviewResponse | null>(null);
     const namingPreviewRequestRef = useRef(0);
     const namingInputRefs = useRef<Record<NamingFieldKey, HTMLInputElement | null>>({
@@ -408,8 +368,6 @@ export const NamingSettingsSection = ({
 
     const handleNamingChange = (key: keyof NamingConfigContract, value: string) => {
         setLocalNaming((prev) => ({ ...prev, [key]: value }));
-        setRenameStatus(null);
-        setRenameStatusInitialized(false);
     };
 
     const handleNamingCommit = (key: keyof NamingConfigContract) => {
@@ -439,117 +397,6 @@ export const NamingSettingsSection = ({
             void updateNamingSettings({ [key]: localNaming[key] });
         }
     };
-
-    const getCurrentNamingSettings = useCallback((): Partial<NamingConfigContract> => ({
-        ...localNaming,
-        artist_folder: namingInputRefs.current.artist_folder?.value ?? localNaming.artist_folder,
-        album_track_path_single: namingInputRefs.current.album_track_path_single?.value ?? localNaming.album_track_path_single,
-        album_track_path_multi: namingInputRefs.current.album_track_path_multi?.value ?? localNaming.album_track_path_multi,
-        video_file: namingInputRefs.current.video_file?.value ?? localNaming.video_file,
-    }), [localNaming]);
-
-    const loadRenameStatus = useCallback(async () => {
-        if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
-            toast({
-                title: "Rename plan blocked",
-                description: namingPreviewResponse
-                    ? "Fix the naming template errors before refreshing the rename plan."
-                    : "Wait for the naming preview before refreshing the rename plan.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        setRenameStatusLoading(true);
-        try {
-            await flushNamingSettings(getCurrentNamingSettings());
-            const status = await api.getLibraryRenameStatus({ sampleLimit: 8, scanLimit: 1000 });
-            setRenameStatus(status as NamingRenameStatus);
-        } catch (error: any) {
-            toast({
-                title: "Rename preview failed",
-                description: error.message || "Could not load the rename plan.",
-                variant: "destructive",
-            });
-        } finally {
-            setRenameStatusLoading(false);
-            setRenameStatusInitialized(true);
-        }
-    }, [flushNamingSettings, getCurrentNamingSettings, namingPreviewResponse, toast]);
-
-    const openRenamePreview = async () => {
-        if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
-            toast({
-                title: "Rename preview blocked",
-                description: namingPreviewResponse
-                    ? "Fix the naming template errors before previewing naming changes."
-                    : "Wait for the naming preview before previewing naming changes.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        setRenameStatusLoading(true);
-        try {
-            await flushNamingSettings(getCurrentNamingSettings());
-            const response = await api.getLibraryRenamePreview({ limit: 1000 }) as NamingRenamePreviewResponse;
-            const items = response.items.filter((item) => item.missing || item.conflict || item.needs_rename);
-            setRenamePreviewItems(items);
-            setRenamePreviewOpen(true);
-            await loadRenameStatus();
-        } catch (error: any) {
-            toast({
-                title: "Rename preview failed",
-                description: error.message || "Could not load the rename preview.",
-                variant: "destructive",
-            });
-        } finally {
-            setRenameStatusLoading(false);
-        }
-    };
-
-    const handleApplyLibraryNaming = async (ids?: number[]) => {
-        if (!namingPreviewResponse || namingPreviewResponse.valid === false) {
-            toast({
-                title: "Rename blocked",
-                description: namingPreviewResponse
-                    ? "Fix the naming template errors before applying naming to the library."
-                    : "Wait for the naming preview before applying naming to the library.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        setRenameApplying(true);
-        try {
-            await flushNamingSettings(getCurrentNamingSettings());
-            const result: any = await api.applyLibraryRenames(ids ? { ids } : { applyAll: true });
-            toast({
-                title: "Rename queued",
-                description: result?.message || "Queued the library rename task.",
-            });
-            dispatchActivityRefresh();
-            setRenamePreviewOpen(false);
-            window.setTimeout(() => void loadRenameStatus(), 1500);
-            window.setTimeout(() => void loadRenameStatus(), 5000);
-        } catch (error: any) {
-            toast({
-                title: "Failed to queue rename",
-                description: error.message || "Could not apply the current naming templates.",
-                variant: "destructive",
-            });
-        } finally {
-            setRenameApplying(false);
-        }
-    };
-
-    useEffect(() => {
-        if (!namingSettings || !namingPreviewResponse?.valid || renameStatus || renameStatusLoading || renameStatusInitialized) {
-            return;
-        }
-
-        loadRenameStatus().catch(() => undefined);
-    }, [loadRenameStatus, namingPreviewResponse?.valid, namingSettings, renameStatus, renameStatusInitialized, renameStatusLoading]);
 
     const effectiveNamingSettings = useMemo(
         () => namingSettings ? { ...namingSettings, ...localNaming } : null,
@@ -621,8 +468,6 @@ export const NamingSettingsSection = ({
 
         setLocalNaming((prev) => ({ ...prev, [namingHelpField]: next }));
         namingSelectionRef.current[namingHelpField] = { start: cursor, end: cursor };
-        setRenameStatus(null);
-        setRenameStatusInitialized(false);
     };
 
     const namingTokenGroups = (() => {
@@ -654,9 +499,6 @@ export const NamingSettingsSection = ({
             videoPath: [artistFolder, videoFile].filter(Boolean).join("/"),
         };
     })() : null;
-    const namingIsInvalid = namingPreviewResponse?.valid === false;
-    const namingPreviewPending = Boolean(effectiveNamingSettings && !namingPreviewResponse);
-    const namingActionsDisabled = namingIsInvalid || namingPreviewPending;
 
     const getNamingFieldErrors = (field: NamingFieldKey): string[] => {
         const result = namingPreviewResponse?.validation?.[field];
@@ -664,13 +506,82 @@ export const NamingSettingsSection = ({
     };
 
     return (
-        <>
             <SettingsSection
-                id="naming"
-                title="Naming"
-                description="Templates for artist folders, album tracks, and music video filenames. Use ? for tokens and examples."
+                id="media-management"
+                title="Media Management"
+                description="Library roots, folder layout, and naming templates for organized files."
                 className={styles.section}
             >
+                <div className={styles.card}>
+                    <div className={styles.row}>
+                        <div className={styles.rowContent}>
+                            <Text weight="semibold">Music Library Path</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                Standard stereo music library
+                            </Text>
+                        </div>
+                        <Input
+                            value={pathSettings?.music_path || ""}
+                            onChange={(_, data) => updatePathSettings({ music_path: data.value })}
+                            className={styles.pathInput}
+                        />
+                    </div>
+                    <div className={styles.row}>
+                        <div className={styles.rowContent}>
+                            <Text weight="semibold">Spatial Library Path</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                Spatial and surround music library
+                            </Text>
+                        </div>
+                        <Input
+                            value={pathSettings?.spatial_path || ""}
+                            onChange={(_, data) => updatePathSettings({ spatial_path: data.value })}
+                            className={styles.pathInput}
+                        />
+                    </div>
+                    <div className={styles.row}>
+                        <div className={styles.rowContent}>
+                            <Text weight="semibold">Video Library Path</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                Music videos library
+                            </Text>
+                        </div>
+                        <Input
+                            value={pathSettings?.video_path || ""}
+                            onChange={(_, data) => updatePathSettings({ video_path: data.value })}
+                            className={styles.pathInput}
+                        />
+                    </div>
+                    <div className={styles.row}>
+                        <div className={styles.rowContent}>
+                            <Text weight="semibold">Video Folder Layout</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                Keep videos in their own library, or store them alongside each artist's music.
+                            </Text>
+                        </div>
+                        <Select
+                            value={pathSettings?.video_folder_layout || "separated"}
+                            onChange={(_, data) => updatePathSettings({ video_folder_layout: data.value as "separated" | "inline" })}
+                            className={styles.controlMedium}
+                        >
+                            <option value="separated">Separated Library</option>
+                            <option value="inline">Inline with Audio Tracks</option>
+                        </Select>
+                    </div>
+                    <div className={styles.row}>
+                        <div className={styles.rowContent}>
+                            <Text weight="semibold">Create Empty Artist Folders</Text>
+                            <Text size={200} className={styles.mutedText}>
+                                Create a folder for every monitored artist, even before anything is downloaded.
+                            </Text>
+                        </div>
+                        <Switch
+                            checked={Boolean(pathSettings?.create_empty_artist_folders)}
+                            onChange={(_, data) => updatePathSettings({ create_empty_artist_folders: data.checked })}
+                        />
+                    </div>
+                </div>
+
                 <div className={styles.card}>
                     <div className={styles.namingRow}>
                         <div className={styles.rowContent}>
@@ -824,58 +735,6 @@ export const NamingSettingsSection = ({
                             ))}
                         </div>
                     </div>
-                    <div className={styles.row}>
-                        <div className={styles.rowContent}>
-                            <Text weight="semibold">Apply Current Naming To Library</Text>
-                            <Text size={200} className={styles.mutedText}>
-                                Refresh the rename plan after changing templates, then apply it to move existing files and remove empty leftover folders.
-                            </Text>
-                            <div className={styles.namingBadgeRow}>
-                                <Badge appearance="outline" color="brand">
-                                    {renameStatus?.total ?? 0} tracked
-                                </Badge>
-                                {renameStatus?.limited ? (
-                                    <Badge appearance="outline" color="informative">
-                                        {renameStatus.scanned} scanned
-                                    </Badge>
-                                ) : null}
-                                <Badge appearance="outline" color={(renameStatus?.renameNeeded ?? 0) > 0 ? "warning" : "success"}>
-                                    {renameStatus?.renameNeeded ?? 0}{renameStatus?.limited ? " in scan" : ""} need rename
-                                </Badge>
-                                <Badge appearance="outline" color={(renameStatus?.conflicts ?? 0) > 0 ? "warning" : "informative"}>
-                                    {renameStatus?.conflicts ?? 0}{renameStatus?.limited ? " in scan" : ""} conflicts
-                                </Badge>
-                                <Badge appearance="outline" color={(renameStatus?.missing ?? 0) > 0 ? "warning" : "informative"}>
-                                    {renameStatus?.missing ?? 0}{renameStatus?.limited ? " in scan" : ""} missing
-                                </Badge>
-                            </div>
-                            {renameStatus && !renameStatusLoading && (renameStatus.renameNeeded ?? 0) === 0 ? (
-                                <Text size={200} className={styles.mutedText}>
-                                    {renameStatus.limited
-                                        ? "No rename work detected in the fast scan."
-                                        : "No rename work detected for the current naming templates."}
-                                </Text>
-                            ) : null}
-                        </div>
-                        <div className={styles.namingActionGroup}>
-                            <Button
-                                appearance="outline"
-                                icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24 />}
-                                onClick={() => void loadRenameStatus()}
-                                disabled={renameStatusLoading || renameApplying || !namingSettings || namingActionsDisabled}
-                            >
-                                Scan library
-                            </Button>
-                            <Button
-                                appearance="outline"
-                                icon={renameStatusLoading ? <Spinner size="tiny" /> : <ArrowSortDownLines24 />}
-                                onClick={() => openRenamePreview()}
-                                disabled={renameStatusLoading || renameApplying || !namingSettings || namingActionsDisabled}
-                            >
-                                Preview changes
-                            </Button>
-                        </div>
-                    </div>
                 </div>
 
                 <Dialog
@@ -924,15 +783,6 @@ export const NamingSettingsSection = ({
                     </DialogSurface>
                 </Dialog>
             </SettingsSection>
-
-            <RenamePreviewDialog
-                open={renamePreviewOpen}
-                items={renamePreviewItems}
-                applying={renameApplying}
-                onOpenChange={setRenamePreviewOpen}
-                onApply={handleApplyLibraryNaming}
-            />
-        </>
     );
 };
 

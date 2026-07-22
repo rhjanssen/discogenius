@@ -2,6 +2,47 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.5.1] - 2026-07-22
+
+### Added
+- Artist delete from the Artist page (optional on-disk file removal) via a
+  proper library delete path instead of a bare DB row delete.
+- Deezer artist import sources: followed artists, favorite tracks, and
+  playlists (gw-light API with `error: []` treated as success).
+- Apple Music import: Made for You recommendations plus Library songs, with
+  truncated editorial subtitles so Import list rows stay readable.
+- Library selection-bar Preview Rename / Write Tags actions (Settings keeps
+  templates and tag policy only).
+
+### Changed
+- Product voice: drop Lidarr-style marketing and UI copy from README, AGENTS,
+  Settings/Naming, and related comments; TrackList drops dead Plex/provider
+  column shims.
+- Safer factory defaults for new installs: do not remove unmonitored files and
+  do not create empty artist folders by default.
+- MediaCover serves existing cached artwork immediately while preference
+  refresh runs in the background; derivatives are prepared before clearing the
+  previous cache variant.
+- Hybrid album acquisition keeps the full composite provider album id set and
+  falls back to coverage `trackSources` when ProviderItems lack MBIDs (e.g.
+  trailing discs / Bastille GMTF stereo vol 3).
+- Provider→MusicBrainz ISRC matching prefers releases whose track/media counts
+  match the provider album (stable MBID tie-break).
+- Music-video matching treats shared ISRC as a strong twin signal; video refresh
+  and affiliation navigation improvements.
+- YouTube Music bridge upgrades bare `Mozilla/5.0` user-agents and maps expired
+  cookie / liked-songs auth failures to a reconnect message (reconnect still
+  required when cookies are expired).
+
+### Fixed
+- TIDAL Hits / editorial playlist import images prefer `squareImage` (and mix
+  detail artwork) so landscape assets stop 403ing in the Import modal.
+- Album organize can bind provider tracks to the selected release by ISRC when
+  track/recording MBIDs were never written back onto ProviderItems.
+- Manual Import / unmapped table layout clamps to the viewport instead of
+  overflowing horizontally.
+- Import Artists modal clamps long subtitles to two lines.
+
 ## [2.5.0] - 2026-07-21
 
 ### Added

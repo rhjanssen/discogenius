@@ -4,7 +4,7 @@ import { db } from '../../database.js';
 import {CommandModel, CommandModelOf} from "../commands/command-model.js";
 import { DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
-import { getConfigSection } from '../config/config.js';
+import { getConfigSection, Config } from '../config/config.js';
 import { downloadEvents } from './download-events.js';
 import {
     invalidateAlbumDownloadStatus,
@@ -39,6 +39,7 @@ import type {
     ResolvedDownloadMetadata,
 } from '../commands/command-bodies.js';
 import { DownloadedTracksImportService } from '../mediafiles/downloaded-tracks-import-service.js';
+import { removeEmptyParents } from '../mediafiles/library-files.js';
 import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-events.js';
 import { CommandWorkerPool } from '../commands/worker/command-worker-pool.js';
 import type { CacheInvalidateTarget } from '../commands/worker/command-worker-protocol.js';
@@ -320,7 +321,8 @@ export class DownloadProcessor {
         const command = CommandQueueManager.get(commandId);
         if (!command || command.status !== 'started') {
             // Cancelled/deleted while waiting for a slot — nothing to import.
-            this.scheduleNext();
+            // Download phase already handed off the workspace; prune it now.
+            void this.cleanupDownloadSourcePath(importPayload.path || undefined).finally(() => this.scheduleNext());
             return;
         }
 
@@ -403,13 +405,7 @@ export class DownloadProcessor {
                     
                     const downloadPath = importPayload.path;
                     if (downloadPath) {
-                        try {
-                            if (fs.existsSync(downloadPath)) {
-                                fs.rmSync(downloadPath, { recursive: true, force: true });
-                            }
-                        } catch (e) {
-                            console.warn(`[DOWNLOAD-PROCESSOR] Failed to clean up path ${downloadPath} after cancellation:`, e);
-                        }
+                        await this.cleanupDownloadSourcePath(downloadPath);
                     }
                 } else {
                     console.error(`[DOWNLOAD-PROCESSOR] Failed to import command #${commandId}:`, error);
@@ -435,13 +431,7 @@ export class DownloadProcessor {
                     // already clean up). Leaving failed workspaces forever filled disks.
                     const downloadPath = importPayload.path;
                     if (downloadPath) {
-                        try {
-                            if (fs.existsSync(downloadPath)) {
-                                fs.rmSync(downloadPath, { recursive: true, force: true });
-                            }
-                        } catch (e) {
-                            console.warn(`[DOWNLOAD-PROCESSOR] Failed to clean up path ${downloadPath} after import failure:`, e);
-                        }
+                        await this.cleanupDownloadSourcePath(downloadPath);
                     }
                 }
             } finally {
@@ -530,6 +520,8 @@ export class DownloadProcessor {
         try {
             await fs.promises.rm(downloadPath, { recursive: true, force: true });
             console.log(`[DOWNLOAD-PROCESSOR] Cleaned up download source path: ${downloadPath}`);
+            // job_* is gone; prune empty provider/id/type parents so /downloads does not bloat.
+            removeEmptyParents(path.dirname(downloadPath), Config.getDownloadPath());
         } catch {
             // ignore cleanup errors
         }
@@ -1418,10 +1410,13 @@ export class DownloadProcessor {
             }
 
             // Keep the workspace across retries so the downloader resumes and
-            // skips already-completed items; only a permanently failed job
-            // (retries exhausted) gets its workspace cleaned up.
+            // skips already-completed items; permanently failed or explicitly
+            // cancelled jobs get their workspace cleaned (incl. empty video trees).
             const jobAttempts = CommandQueueManager.get(job.id)?.attempts ?? job.attempts;
-            if (jobAttempts >= MAX_RETRY_ATTEMPTS) {
+            const cancelled = entry.cancelRequested
+                && !this.isPaused
+                && this.explicitlyCancelledDownloads.has(job.id);
+            if (cancelled || jobAttempts >= MAX_RETRY_ATTEMPTS) {
                 await this.cleanupDownloadSourcePath(entry.downloadPath);
             }
         } finally {
@@ -1699,7 +1694,7 @@ export class DownloadProcessor {
                 });
 
                 // Flatten track workspace into the album job folder for import.
-                this.flattenTrackOfferWorkspace(trackDownloadPath, downloadPath);
+                this.flattenTrackOfferWorkspace(trackDownloadPath, downloadPath, offer.providerTrackId);
 
                 if (trackIndex >= 0) {
                     // Downloaded; stays non-completed until import finishes (orange in UI).
@@ -1727,8 +1722,13 @@ export class DownloadProcessor {
         }
     }
 
-    private flattenTrackOfferWorkspace(trackDownloadPath: string, albumDownloadPath: string): void {
+    private flattenTrackOfferWorkspace(
+        trackDownloadPath: string,
+        albumDownloadPath: string,
+        providerTrackId?: string,
+    ): void {
         if (!fs.existsSync(trackDownloadPath)) return;
+        const preferredStem = String(providerTrackId || "").trim();
         const walk = (dir: string) => {
             for (const entryName of fs.readdirSync(dir)) {
                 const fullPath = path.join(dir, entryName);
@@ -1737,15 +1737,28 @@ export class DownloadProcessor {
                     walk(fullPath);
                     continue;
                 }
-                const dest = path.join(albumDownloadPath, entryName);
+                const ext = path.extname(entryName);
+                // Hybrid tips must land as {providerTrackId}{ext} so organize can
+                // basename-match regardless of which tip album directory tiddl used.
+                const destName = preferredStem && this.isAudioExtension(ext)
+                    ? `${preferredStem}${ext.toLowerCase()}`
+                    : entryName;
+                let dest = path.join(albumDownloadPath, destName);
                 if (path.resolve(fullPath) === path.resolve(dest)) continue;
-                if (fs.existsSync(dest)) {
+                if (fs.existsSync(dest) && path.resolve(fullPath) !== path.resolve(dest)) {
+                    if (preferredStem && this.isAudioExtension(ext)) {
+                        // Same tip id already flattened — keep the first copy.
+                        try {
+                            fs.rmSync(fullPath, { force: true });
+                        } catch {
+                            // ignore
+                        }
+                        continue;
+                    }
                     const base = path.parse(entryName);
-                    const unique = `${base.name}-${Date.now()}${base.ext}`;
-                    fs.renameSync(fullPath, path.join(albumDownloadPath, unique));
-                } else {
-                    fs.renameSync(fullPath, dest);
+                    dest = path.join(albumDownloadPath, `${base.name}-${Date.now()}${base.ext}`);
                 }
+                fs.renameSync(fullPath, dest);
             }
         };
         walk(trackDownloadPath);
@@ -1754,6 +1767,11 @@ export class DownloadProcessor {
         } catch {
             // Best-effort cleanup of the per-track staging folder.
         }
+    }
+
+    private isAudioExtension(ext: string): boolean {
+        const normalized = String(ext || "").toLowerCase();
+        return [".flac", ".m4a", ".mp3", ".aac", ".alac", ".wav", ".aiff", ".aif", ".ogg", ".opus"].includes(normalized);
     }
 
     /**

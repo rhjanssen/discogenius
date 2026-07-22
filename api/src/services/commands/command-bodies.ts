@@ -40,6 +40,8 @@ export interface DownloadTrackStateEntry {
 export interface DownloadTrackOffer {
   provider: string;
   providerTrackId: string;
+  /** Source provider album for this tip (hybrid composites span multiple albums). */
+  providerAlbumId?: string | null;
   canonicalTrackMbid?: string | null;
   canonicalRecordingMbid?: string | null;
   title?: string;

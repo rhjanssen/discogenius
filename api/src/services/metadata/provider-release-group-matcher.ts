@@ -339,9 +339,11 @@ function scoreAlbumAgainstReleaseGroup(
         ? releases.find((release) => normalizeBarcode(release.barcode) === providerUpc)
         : undefined;
     const providerIsrcs = new Set((album.isrcs || []).map(normalizeIsrc).filter(Boolean));
-    let bestIsrcRelease: any = undefined;
+    let bestIsrcRelease: MusicBrainzReleaseForMatching | undefined;
+    let isrcCompatibleReleases: MusicBrainzReleaseForMatching[] = [];
     let maxIsrcOverlap = 0;
     if (providerIsrcs.size > 0) {
+        const isrcMatchedReleases: MusicBrainzReleaseForMatching[] = [];
         for (const release of releases) {
             const releaseIsrcsSet = new Set((release.isrcs || []).map(normalizeIsrc).filter(Boolean));
             let overlap = 0;
@@ -353,15 +355,47 @@ function scoreAlbumAgainstReleaseGroup(
             if (overlap > 0) {
                 if (overlap > maxIsrcOverlap) {
                     maxIsrcOverlap = overlap;
-                    bestIsrcRelease = release;
-                } else if (overlap === maxIsrcOverlap && bestIsrcRelease) {
-                    const currentDiff = Math.abs((bestIsrcRelease.trackCount || 0) - (album.trackCount || 0));
-                    const newDiff = Math.abs((release.trackCount || 0) - (album.trackCount || 0));
-                    if (newDiff < currentDiff) {
-                        bestIsrcRelease = release;
-                    }
+                    isrcMatchedReleases.length = 0;
+                    isrcMatchedReleases.push(release);
+                } else if (overlap === maxIsrcOverlap) {
+                    isrcMatchedReleases.push(release);
                 }
             }
+        }
+
+        if (isrcMatchedReleases.length > 0) {
+            const providerTrackCount = Number(album.trackCount || 0);
+            const providerVolumeCount = Number(album.volumeCount || 0);
+            bestIsrcRelease = [...isrcMatchedReleases].sort((left, right) => {
+                const leftTrackDiff = providerTrackCount > 0
+                    ? Math.abs(Number(left.trackCount || 0) - providerTrackCount)
+                    : 0;
+                const rightTrackDiff = providerTrackCount > 0
+                    ? Math.abs(Number(right.trackCount || 0) - providerTrackCount)
+                    : 0;
+                if (leftTrackDiff !== rightTrackDiff) {
+                    return leftTrackDiff - rightTrackDiff;
+                }
+                const leftVolumeDiff = providerVolumeCount > 0
+                    ? Math.abs(Number(left.mediaCount || 0) - providerVolumeCount)
+                    : 0;
+                const rightVolumeDiff = providerVolumeCount > 0
+                    ? Math.abs(Number(right.mediaCount || 0) - providerVolumeCount)
+                    : 0;
+                if (leftVolumeDiff !== rightVolumeDiff) {
+                    return leftVolumeDiff - rightVolumeDiff;
+                }
+                return String(left.mbid).localeCompare(String(right.mbid));
+            })[0];
+            const bestTrackDiff = providerTrackCount > 0
+                ? Math.abs(Number(bestIsrcRelease.trackCount || 0) - providerTrackCount)
+                : 0;
+            isrcCompatibleReleases = isrcMatchedReleases.filter((release) => {
+                const releaseTrackDiff = providerTrackCount > 0
+                    ? Math.abs(Number(release.trackCount || 0) - providerTrackCount)
+                    : 0;
+                return releaseTrackDiff === bestTrackDiff;
+            });
         }
     }
     const isrcOverlap = maxIsrcOverlap;
@@ -480,7 +514,7 @@ function scoreAlbumAgainstReleaseGroup(
             : matchedReleaseByUpc
                 ? [matchedReleaseByUpc]
                 : bestIsrcRelease
-            ? [bestIsrcRelease]
+            ? isrcCompatibleReleases
             : matchedReleaseByTitle
                 ? [matchedReleaseByTitle]
             : matchedReleaseBySpatial

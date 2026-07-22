@@ -235,9 +235,10 @@ function tomlString(value: string): string {
  *                                metadata embedding, templates, cache, m3u).
  *   - CLI args (tiddl-backend) → PER-JOB values that genuinely differ between
  *                                jobs: --path / --scan-path (per-job workspace),
- *                                -q (quality cap per offer/slot), --dolby-atmos
- *                                (stereo=allow, spatial=only), --videos
- *                                (album/track=none, video=only).
+ *                                -q (audio quality cap per offer/slot), -vq
+ *                                (video quality from Discogenius settings),
+ *                                --dolby-atmos (stereo=allow, spatial=only),
+ *                                --videos (album/track=none, video=only).
  *
  * We deliberately do NOT also write the per-job keys here — keeping a single
  * source of truth per setting instead of the old config/args duplication.

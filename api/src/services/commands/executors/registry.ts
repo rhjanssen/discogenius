@@ -24,8 +24,8 @@ import {
 } from "./index.js";
 
 /**
- * Command name ' executor registry.
- * Replaces the legacy handler map with Lidarr-style IExecuteCommand classes.
+ * Command name → executor registry.
+ * Maps queue command names to IExecuteCommand implementations.
  */
 export const commandExecutors: Record<string, IExecuteCommand<any>> = {
     [CommandNames.RefreshArtist]: new RefreshArtistCommand(),

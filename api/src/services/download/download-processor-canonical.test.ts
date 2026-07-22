@@ -387,3 +387,46 @@ test("download processor scopes provider offers when services reuse the same res
   assert.equal(processor.isCanonicalProviderItemDownloaded("7", "track", tidalTrackPayload), true);
 });
 
+test("resolveDownloadMetadata uses recording_id join when recording_mbid is null", () => {
+  const processor = new DownloadProcessor() as any;
+
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-rid", "Recording Id Artist");
+  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
+    .run("artist-rid", "Recording Id Artist", "artist-rid");
+  db.prepare("INSERT INTO Recordings (mbid, title, is_video) VALUES (?, ?, ?)")
+    .run("recording-rid-mbid", "Canonical Via Recording Id", 1);
+  const recordingId = (
+    db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get("recording-rid-mbid") as { id: number }
+  ).id;
+
+  // Servarr-style video offer: integer recording_id only, no recording_mbid.
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_id, recording_mbid,
+      title, quality, asset_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "tidal",
+    "video",
+    "tidal-video-rid",
+    "artist-rid",
+    recordingId,
+    null,
+    "Provider Video Title",
+    "1080p",
+    "video-rid-cover",
+  );
+
+  const resolved = processor.resolveDownloadMetadata(
+    "tidal-video-rid",
+    "video",
+    { type: "video", providerId: "tidal-video-rid", provider: "tidal" },
+  );
+
+  assert.notEqual(resolved.title, "Unknown");
+  assert.equal(resolved.title, "Canonical Via Recording Id");
+  assert.equal(resolved.artist, "Recording Id Artist");
+  assert.equal(resolved.cover, `/media-cover/Videos/${recordingId}/cover.jpg`);
+});
+

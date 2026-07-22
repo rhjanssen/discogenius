@@ -274,7 +274,7 @@ export function aggregateExplicitFlags(
 
 /**
  * Switch which MB release fills a given slot for a release group (the write half
- * of the Lidarr-style release switcher). Selection-only: this does not change a
+ * of the release switcher). Selection-only: this does not change a
  * slot's monitored / monitored_lock state — monitoring stays orthogonal. When no
  * provider is supplied, the best (highest-confidence) matched provider offer for
  * the chosen release is used. Returns the refreshed availability.

@@ -27,6 +27,10 @@ import {
   LockClosed24Filled,
   LockOpen24Filled,
   Speaker224Filled,
+  Rename24Filled,
+  Rename24Regular,
+  Tag24Filled,
+  Tag24Regular,
 } from "@fluentui/react-icons";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
 import { QualityBadge } from "@/components/ui/QualityBadge";
@@ -75,6 +79,7 @@ import {
   useLibraryArtistColumns,
 } from "@/pages/library/LibraryArtistsTab";
 import { LibraryToolbar } from "@/pages/library/LibraryToolbar";
+import { useLibraryFileMaintenance } from "@/pages/library/LibraryFileTools";
 
 const Search24 = bundleIcon(Search24Filled, Search24Regular);
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
@@ -86,6 +91,8 @@ const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
 const Person24 = bundleIcon(Person24Filled, Person24Regular);
 const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
 const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
+const Rename24 = bundleIcon(Rename24Filled, Rename24Regular);
+const Tag24 = bundleIcon(Tag24Filled, Tag24Regular);
 
 const downloadableVideoOffer = (video: any): { provider: string; providerId: string } | null => {
   const provider = String(video?.provider || "").trim();
@@ -213,6 +220,7 @@ const Library = () => {
   const dgCell = useDataGridCellStyles();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const fileMaintenance = useLibraryFileMaintenance();
 
   const persistedSettings = loadPersistedLibrarySettings();
   const [selectedTab, setSelectedTab] = useState<string>(
@@ -1068,7 +1076,7 @@ const Library = () => {
       render: (album: any) => {
         const files = Number(album.track_file_count ?? 0);
         const total = Number(album.track_count ?? album.num_tracks ?? 0);
-        // Lidarr album rows: "trackFileCount / trackCount"
+        // Album coverage: "trackFileCount / trackCount"
         const label = total > 0 ? `${files} / ${total}` : String(files);
         return (
           <Text size={200} className={styles.durationText} title={`${files} on disk of ${total} tracks`}>
@@ -1407,8 +1415,17 @@ const Library = () => {
           onScan={queueSelectedArtistScan}
           onCurate={queueSelectedArtistCurate}
           onDownload={queueSelectedArtistDownload}
+          onRename={() => fileMaintenance.openRenamePreview({
+            artistIds: artistSelection.selectedItems.map((artist: any) => String(artist.id)),
+          })}
+          onWriteTags={() => fileMaintenance.openRetagPreview({
+            artistIds: artistSelection.selectedItems.map((artist: any) => String(artist.id)),
+          })}
           onMonitor={() => void setSelectedArtistMonitoring(true)}
           onUnmonitor={() => void setSelectedArtistMonitoring(false)}
+          fileToolsBusy={fileMaintenance.busy}
+          renameIcon={fileMaintenance.renameIcon}
+          retagIcon={fileMaintenance.retagIcon}
         />
       );
     }
@@ -1428,6 +1445,24 @@ const Library = () => {
               icon: <ArrowDownload24 />,
               onClick: queueSelectedAlbumDownload,
               disabled: albumSelection.selectedCount === 0,
+            },
+            {
+              key: "rename",
+              label: "Preview Rename",
+              icon: (fileMaintenance.renameIcon as React.ReactElement) ?? <Rename24 />,
+              onClick: () => fileMaintenance.openRenamePreview({
+                albumIds: albumSelection.selectedItems.map((album: any) => String(album.id)),
+              }),
+              disabled: albumSelection.selectedCount === 0 || fileMaintenance.busy,
+            },
+            {
+              key: "retag",
+              label: "Write Tags",
+              icon: (fileMaintenance.retagIcon as React.ReactElement) ?? <Tag24 />,
+              onClick: () => fileMaintenance.openRetagPreview({
+                albumIds: albumSelection.selectedItems.map((album: any) => String(album.id)),
+              }),
+              disabled: albumSelection.selectedCount === 0 || fileMaintenance.busy,
             },
             {
               key: "monitor",
@@ -1479,6 +1514,40 @@ const Library = () => {
               disabled: trackSelection.selectedCount === 0,
             },
             {
+              key: "rename",
+              label: "Preview Rename",
+              icon: (fileMaintenance.renameIcon as React.ReactElement) ?? <Rename24 />,
+              onClick: () => {
+                const albumIds = trackSelection.selectedItems
+                  .map((track: any) => track.album_id ?? track.albumId)
+                  .filter(Boolean)
+                  .map(String);
+                const artistIds = trackSelection.selectedItems
+                  .map((track: any) => track.artist_id ?? track.artistId)
+                  .filter(Boolean)
+                  .map(String);
+                fileMaintenance.openRenamePreview(albumIds.length > 0 ? { albumIds } : { artistIds });
+              },
+              disabled: trackSelection.selectedCount === 0 || fileMaintenance.busy,
+            },
+            {
+              key: "retag",
+              label: "Write Tags",
+              icon: (fileMaintenance.retagIcon as React.ReactElement) ?? <Tag24 />,
+              onClick: () => {
+                const albumIds = trackSelection.selectedItems
+                  .map((track: any) => track.album_id ?? track.albumId)
+                  .filter(Boolean)
+                  .map(String);
+                const artistIds = trackSelection.selectedItems
+                  .map((track: any) => track.artist_id ?? track.artistId)
+                  .filter(Boolean)
+                  .map(String);
+                fileMaintenance.openRetagPreview(albumIds.length > 0 ? { albumIds } : { artistIds });
+              },
+              disabled: trackSelection.selectedCount === 0 || fileMaintenance.busy,
+            },
+            {
               key: "monitor",
               label: "Monitor",
               icon: <Eye24 />,
@@ -1526,6 +1595,40 @@ const Library = () => {
               icon: <ArrowDownload24 />,
               onClick: queueSelectedVideoDownload,
               disabled: videoSelection.selectedCount === 0,
+            },
+            {
+              key: "rename",
+              label: "Preview Rename",
+              icon: (fileMaintenance.renameIcon as React.ReactElement) ?? <Rename24 />,
+              onClick: () => {
+                const albumIds = videoSelection.selectedItems
+                  .map((video: any) => video.album_id ?? video.albumId)
+                  .filter(Boolean)
+                  .map(String);
+                const artistIds = videoSelection.selectedItems
+                  .map((video: any) => video.artist_id ?? video.artistId)
+                  .filter(Boolean)
+                  .map(String);
+                fileMaintenance.openRenamePreview(albumIds.length > 0 ? { albumIds } : { artistIds });
+              },
+              disabled: videoSelection.selectedCount === 0 || fileMaintenance.busy,
+            },
+            {
+              key: "retag",
+              label: "Write Tags",
+              icon: (fileMaintenance.retagIcon as React.ReactElement) ?? <Tag24 />,
+              onClick: () => {
+                const albumIds = videoSelection.selectedItems
+                  .map((video: any) => video.album_id ?? video.albumId)
+                  .filter(Boolean)
+                  .map(String);
+                const artistIds = videoSelection.selectedItems
+                  .map((video: any) => video.artist_id ?? video.artistId)
+                  .filter(Boolean)
+                  .map(String);
+                fileMaintenance.openRetagPreview(albumIds.length > 0 ? { albumIds } : { artistIds });
+              },
+              disabled: videoSelection.selectedCount === 0 || fileMaintenance.busy,
             },
             {
               key: "monitor",
@@ -1618,6 +1721,7 @@ const Library = () => {
           viewMode={viewMode}
           onViewModeChange={setViewMode}
         />
+        {fileMaintenance.dialogs}
 
         {selectedTab === "artists" && (
           <div className={styles.virtuosoContainer}>

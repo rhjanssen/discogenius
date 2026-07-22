@@ -24,6 +24,18 @@ const Circle24 = bundleIcon(Circle24Filled, Circle24Regular);
 const Eye16 = bundleIcon(Eye16Filled, Eye16Regular);
 const EyeOff16 = bundleIcon(EyeOff16Filled, EyeOff16Regular);
 
+/** Same-origin /media-cover paths share HTTP cache with UltraBlur heroes when CORS mode matches. */
+function isMediaCoverUrl(url: string): boolean {
+    if (url.startsWith("/media-cover/")) {
+        return true;
+    }
+    try {
+        return new URL(url).pathname.startsWith("/media-cover/");
+    } catch {
+        return false;
+    }
+}
+
 export interface MediaCardProps {
     /** Navigation path on click (optional if onClick is provided) */
     to?: string;
@@ -70,7 +82,7 @@ export interface MediaCardProps {
     downloadProgress?: number;
     /** Download overlay error message */
     downloadError?: string;
-    /** Lidarr-style poster selection control shown while the parent collection is in selection mode. */
+    /** Poster selection control shown while the parent collection is in selection mode. */
     selection?: {
         selected: boolean;
         label: string;
@@ -117,14 +129,28 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
     const [imageFailed, setImageFailed] = React.useState(false);
     const [fallbackFailed, setFallbackFailed] = React.useState(false);
     const [imageLoaded, setImageLoaded] = React.useState(false);
+    const imageRef = React.useRef<HTMLImageElement | null>(null);
     const isClickable = Boolean(onClick || to || selection);
     const longPressTimer = React.useRef<number | null>(null);
     const longPressFired = React.useRef(false);
+
+    const markLoadedIfComplete = useCallback((image: HTMLImageElement | null) => {
+        if (image?.complete && image.naturalWidth > 0) {
+            setImageLoaded(true);
+        }
+    }, []);
+
+    const handleImageRef = useCallback((node: HTMLImageElement | null) => {
+        imageRef.current = node;
+        markLoadedIfComplete(node);
+    }, [markLoadedIfComplete]);
+
     React.useEffect(() => {
         setImageFailed(false);
         setFallbackFailed(false);
         setImageLoaded(false);
-    }, [imageUrl, fallbackImageUrl]);
+        markLoadedIfComplete(imageRef.current);
+    }, [imageUrl, fallbackImageUrl, markLoadedIfComplete]);
 
     const handleClick = useCallback((event?: React.MouseEvent) => {
         if (longPressFired.current) {
@@ -248,11 +274,13 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                 {activeImageUrl ? (
                     <img
                         key={activeImageUrl}
+                        ref={handleImageRef}
                         src={activeImageUrl}
                         alt={alt}
                         className={mergeClasses(styles.cardImage, !imageLoaded && styles.cardImageLoading)}
                         loading="lazy"
                         decoding="async"
+                        crossOrigin={isMediaCoverUrl(activeImageUrl) ? "anonymous" : undefined}
                         onLoad={() => setImageLoaded(true)}
                         onError={() => {
                             setImageLoaded(false);

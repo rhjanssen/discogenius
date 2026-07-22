@@ -85,7 +85,7 @@ function deleteTrackFileRows(rows: TrackFileDeleteRow[]): Omit<DeleteLibraryFile
 }
 
 /**
- * Lidarr-style Manage → Delete files for a release group (optional slot).
+ * Manage → Delete files for a release group (optional slot).
  * Removes disk files under configured library roots and TrackFiles rows.
  * Does not delete MusicBrainz/catalog rows.
  */
@@ -129,7 +129,7 @@ export function deleteReleaseGroupLibraryFiles(
 }
 
 /**
- * Lidarr-style Manage → Delete files for an artist across all library roots.
+ * Manage → Delete files for an artist across all library roots.
  * Removes disk files + TrackFiles for the artist; keeps catalog/artist rows.
  */
 export function deleteArtistLibraryFiles(

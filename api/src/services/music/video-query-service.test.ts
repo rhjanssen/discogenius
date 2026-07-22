@@ -20,6 +20,8 @@ before(async () => {
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
+  dbModule.db.prepare("DELETE FROM RecordingRelations").run();
+  dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM AlbumReleases").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
@@ -289,6 +291,7 @@ test("video detail appears-on follows related audio via provider_video_for, not 
     track_number: 1,
     volume_number: 1,
     track_count: 1,
+    media_count: 1,
   }]);
 });
 
@@ -335,6 +338,7 @@ test("video detail surfaces album track position when the video is on a release 
   assert.equal(detail?.albums?.[0]?.track_number, 3);
   assert.equal(detail?.albums?.[0]?.volume_number, 2);
   assert.equal(detail?.albums?.[0]?.track_count, 2);
+  assert.equal(detail?.albums?.[0]?.media_count, 1);
   // Affiliation covers are local /media-cover URLs, not raw asset ids.
   assert.ok(
     detail?.albums?.[0]?.cover_id === expectedCover
@@ -358,13 +362,21 @@ test("video detail appears-on follows related audio recordings and prefers monit
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, monitored)
     VALUES
       ('rg-affil-single', 'artist-affil', 'Part Two', 'single', 0),
-      ('rg-affil-album', 'artist-affil', 'Ampersand', 'album', 1)
+      ('rg-affil-album', 'artist-affil', 'Ampersand', 'album', 0)
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count)
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
     VALUES
-      ('rel-affil-single', 'rg-affil-single', 'artist-affil', 'Part Two', '2024-01-01', 3),
-      ('rel-affil-album', 'rg-affil-album', 'artist-affil', 'Ampersand', '2024-06-01', 12)
+      ('rel-affil-single', 'rg-affil-single', 'artist-affil', 'Part Two', '2024-01-01', 3, 1),
+      ('rel-affil-album', 'rg-affil-album', 'artist-affil', 'Ampersand', '2024-06-01', 12, 1)
+  `).run();
+  // Wanted state lives on ReleaseGroupSlots, not Albums.monitored.
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
+    ) VALUES
+      ('artist-affil', 'rg-affil-album', 'stereo', 1, 'rel-affil-album'),
+      ('artist-affil', 'rg-affil-single', 'stereo', 0, 'rel-affil-single')
   `).run();
 
   const audio = dbModule.db.prepare(`
@@ -409,11 +421,63 @@ test("video detail appears-on follows related audio recordings and prefers monit
 
   const detail = videoQueryModule.getVideoDetail(String(video.id));
   assert.equal(detail?.albums?.length, 2);
-  assert.equal(detail?.albums?.[0]?.id, "rg-affil-album", "monitored album sorts first");
+  assert.equal(detail?.albums?.[0]?.id, "rg-affil-album", "slot-monitored album sorts first");
   assert.equal(detail?.albums?.[0]?.track_number, 5);
   assert.equal(detail?.albums?.[0]?.track_count, 12);
   assert.equal(detail?.albums?.[1]?.id, "rg-affil-single");
   assert.equal(detail?.albums?.[1]?.track_number, 2);
+});
+
+test("video detail appears-on prefers selected multi-disc release over earliest single", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-multivol', 'Multivol Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('artist-multivol', 'artist-multivol', 'Multivol Artist')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('rg-multivol', 'artist-multivol', 'Give Me The Future', 'album')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count
+    ) VALUES
+      ('rel-multivol-single', 'rg-multivol', 'artist-multivol', 'GMTF Single', '2021-01-01', 13, 1),
+      ('rel-multivol-full', 'rg-multivol', 'artist-multivol', 'GMTF 3CD', '2022-06-01', 27, 3)
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
+    ) VALUES ('artist-multivol', 'rg-multivol', 'stereo', 1, 'rel-multivol-full')
+  `).run();
+
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-multivol-video', ?, 'artist-multivol', 'Pompeii', 1, 'complete')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, recording_id,
+      medium_position, position, number, title
+    ) VALUES
+      ('track-multivol-early', 'rel-multivol-single', 'rec-multivol-video', ?, 1, 1, '1', 'Pompeii'),
+      ('track-multivol-full', 'rel-multivol-full', 'rec-multivol-video', ?, 1, 1, '1', 'Pompeii')
+  `).run(recording.id, recording.id);
+
+  const detail = videoQueryModule.getVideoDetail(String(recording.id));
+  assert.equal(detail?.albums?.[0]?.id, "rg-multivol");
+  assert.equal(detail?.albums?.[0]?.track_mbid, "track-multivol-full");
+  assert.equal(detail?.albums?.[0]?.track_number, 1);
+  assert.equal(detail?.albums?.[0]?.volume_number, 1);
+  assert.equal(detail?.albums?.[0]?.track_count, 27);
+  assert.equal(detail?.albums?.[0]?.media_count, 3);
 });
 
 test("video detail prefers provider title when recording title is Unknown Video", () => {

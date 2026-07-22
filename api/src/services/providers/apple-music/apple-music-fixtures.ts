@@ -207,6 +207,81 @@ export const LIBRARY_PLAYLIST_TRACKS_RESPONSE = {
   ],
 };
 
+export const LIBRARY_SONGS_RESPONSE = {
+  data: [
+    {
+      id: "i.library-song-1",
+      type: "library-songs",
+      attributes: {
+        name: "Pompeii",
+        artistName: "Bastille",
+      },
+      relationships: {
+        catalog: { data: [ALBUM_TRACKS_RESPONSE.data[0]] },
+      },
+    },
+  ],
+};
+
+export const RECOMMENDATIONS_RESPONSE = {
+  data: [
+    {
+      id: "rec.mix-1",
+      type: "personal-recommendation",
+      attributes: {
+        title: "Made for You",
+        reason: { stringForDisplay: "Based on your listening" },
+      },
+      relationships: {
+        contents: {
+          data: [{ id: "pl.made-for-you", type: "playlists" }],
+        },
+      },
+    },
+    {
+      id: "rec.mix-editorial",
+      type: "personal-recommendation",
+      attributes: {
+        title: "Rockhits uit 2021",
+      },
+      relationships: {
+        contents: {
+          data: [{ id: "pl.dancexl-2021", type: "playlists" }],
+        },
+      },
+    },
+  ],
+  included: [
+    {
+      id: "pl.made-for-you",
+      type: "playlists",
+      attributes: {
+        name: "New Music Mix",
+        description: { standard: "Fresh picks for you" },
+        trackCount: 25,
+        artwork: { url: "https://is1-ssl.mzstatic.com/image/thumb/mix/{w}x{h}bb.{f}" },
+      },
+    },
+    {
+      id: "pl.dancexl-2021",
+      type: "playlists",
+      attributes: {
+        name: "danceXL 2021",
+        description: {
+          standard:
+            "Rockhits uit 2021\n\nEDM is in de afgelopen tien jaar zo populair geworden dat je de invloed ervan overal kunt horen. Van pop tot hiphop, de beats en drops zijn niet meer weg te denken. danceXL 2021 verzamelt de grootste dancehits van het jaar.",
+        },
+        trackCount: 40,
+        artwork: { url: "https://is1-ssl.mzstatic.com/image/thumb/editorial/{w}x{h}bb.{f}" },
+      },
+    },
+  ],
+};
+
+export const RECOMMENDATION_PLAYLIST_TRACKS_RESPONSE = {
+  data: ALBUM_TRACKS_RESPONSE.data,
+};
+
 export const USER_STOREFRONT_RESPONSE = {
   data: [
     {
@@ -223,9 +298,12 @@ export const USER_STOREFRONT_RESPONSE = {
 /** Map an Apple Music API endpoint path to its fixture response. */
 export function fixtureFor(url: string): unknown {
   if (url.includes("/v1/me/storefront")) return USER_STOREFRONT_RESPONSE;
+  if (url.includes("/v1/me/recommendations")) return RECOMMENDATIONS_RESPONSE;
   if (url.includes("/v1/me/library/playlists/p.test/tracks")) return LIBRARY_PLAYLIST_TRACKS_RESPONSE;
   if (url.includes("/v1/me/library/playlists")) return LIBRARY_PLAYLISTS_RESPONSE;
+  if (url.includes("/v1/me/library/songs")) return LIBRARY_SONGS_RESPONSE;
   if (url.includes("/v1/me/library/artists")) return LIBRARY_ARTISTS_RESPONSE;
+  if (url.includes("/playlists/pl.made-for-you/tracks")) return RECOMMENDATION_PLAYLIST_TRACKS_RESPONSE;
   if (url.includes("/search?")) return SEARCH_RESPONSE;
   if (/\/artists\/\d+\/albums/.test(url)) return ARTIST_ALBUMS_RESPONSE;
   if (/\/artists\/\d+\/music-videos/.test(url)) return { data: VIDEO_RESPONSE.data };

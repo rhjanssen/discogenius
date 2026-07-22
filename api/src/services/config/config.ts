@@ -55,7 +55,7 @@ export interface NamingConfig {
 }
 
 /**
- * Controls when audio file tags are written (aligned with Lidarr's WriteAudioTagsType).
+ * Controls when audio file tags are written.
  * - "no"        — Never write tags
  * - "new_files" — Only write tags on newly downloaded/imported files
  * - "all_files" — Write tags on all files (existing + new)
@@ -82,9 +82,9 @@ export interface MetadataConfig {
   mark_explicit: boolean;
   upc_target: "UPC" | "EAN" | "BARCODE";
   embed_replaygain?: boolean;
-  /** Lidarr-aligned tag write policy. */
+  /** tag write policy. */
   write_audio_tags_policy?: WriteAudioTagsPolicy;
-  /** Remove all existing tags before writing desired ones (Lidarr's ScrubAudioTags). */
+  /** Remove all existing tags before writing desired ones (scrub existing tags first). */
   scrub_audio_tags?: boolean;
 }
 
@@ -160,7 +160,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   monitoring: {
     enable_active_monitoring: true,
     monitor_new_artists: true,
-    remove_unmonitored_files: true,
+    remove_unmonitored_files: false,
   },
   quality: {
     audio_quality: "max",
@@ -194,7 +194,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     music_path: "/library/stereo-music",
     spatial_path: "/library/spatial-music",
     video_path: "/library/music-videos",
-    create_empty_artist_folders: true,
+    create_empty_artist_folders: false,
     video_folder_layout: "separated",
   },
   naming: {

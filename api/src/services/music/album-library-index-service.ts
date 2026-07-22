@@ -1,7 +1,7 @@
 import { db } from "../../database.js";
 
 /**
- * Compact, Lidarr-style album library read model.
+ * Compact, album library read model.
  *
  * Canonical album metadata remains in Albums and slot state remains in
  * ReleaseGroupSlots. This projection only denormalizes the few fields needed

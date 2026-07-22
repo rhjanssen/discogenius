@@ -1,7 +1,7 @@
 import type { UltraBlurColors } from "@/ultrablur/colors";
 
 /**
- * Client port of the original Discogenius / Plex-style UltraBlur GetColors path:
+ * Client port of the Discogenius UltraBlur GetColors path:
  * sample only chromatic pixels (skip near-white / near-black / grey), k-means in
  * a simple Lab-ish space, pick four diverse saturated colours, arrange to corners.
  *
@@ -294,7 +294,7 @@ function arrangeToCorners(colors: RGB01[]): UltraBlurColors {
     bottomLeft = sum1 <= sum2 ? b : a;
   }
 
-  // Soften slightly toward the mean so corners merge in the bake (Plex soften≈0.12).
+  // Soften slightly toward the mean so corners merge in the bake (soften≈0.12).
   const avg = mixRgb(
     mixRgb(topLeft, topRight, 0.5),
     mixRgb(bottomLeft, bottomRight, 0.5),

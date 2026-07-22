@@ -457,7 +457,7 @@ test("download queue query resolves canonical release-group provider offers with
     assert.equal(live.items[0]?.album_id, "rg-gmtf");
     assert.equal(live.items[0]?.album_title, "Give Me the Future");
     assert.equal(live.items[0]?.quality, "HIRES_LOSSLESS");
-    // The download queue resolves covers through the same Lidarr-style local
+    // The download queue resolves covers through the same local
     // media-cover route as the rest of the app (no per-request upstream proxy).
     assert.equal(live.items[0]?.cover, "/media-cover/Albums/rg-gmtf/cover.jpg?source=canonical");
 
@@ -467,6 +467,76 @@ test("download queue query resolves canonical release-group provider offers with
         providerIds: ["tidal-gmtf-expanded"],
     });
     assert.deepEqual(details.map((item) => item.id), [commandId]);
+});
+
+test("download queue prefers video poster over stamped album cover for DownloadVideo", () => {
+    const { db } = dbModule;
+    db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+        .run("artist-video-cover", "Video Cover Artist");
+    db.prepare(`
+        INSERT INTO Albums (mbid, artist_mbid, title, primary_type, images)
+        VALUES (?, ?, ?, ?, ?)
+    `).run(
+        "rg-video-cover",
+        "artist-video-cover",
+        "Album With Cover",
+        "album",
+        JSON.stringify([{ coverType: "Cover", url: "https://images.example/album-cover.jpg" }]),
+    );
+    const recording = db.prepare(`
+        INSERT INTO Recordings (artist_mbid, title, is_video, metadata_status)
+        VALUES (?, ?, 1, 'provider_only')
+        RETURNING id
+    `).get("artist-video-cover", "Pompeii") as { id: number };
+    db.prepare(`
+        INSERT INTO ProviderItems (
+          provider, entity_type, provider_id, artist_mbid, recording_id,
+          release_group_mbid, title, cover
+        ) VALUES (?, 'video', ?, ?, ?, ?, ?, ?)
+    `).run(
+        "tidal",
+        "tidal-video-cover-1",
+        "artist-video-cover",
+        recording.id,
+        "rg-video-cover",
+        "Pompeii",
+        "provider-video-asset",
+    );
+
+    const commandId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.DownloadVideo,
+        {
+            type: "video",
+            provider: "tidal",
+            providerId: "tidal-video-cover-1",
+            canonicalRecordingId: String(recording.id),
+            title: "Pompeii",
+            artist: "Video Cover Artist",
+            // Missing cover forces gap-fill through resolveProviderItemMetadata.
+        },
+        "tidal-video-cover-1",
+    );
+
+    const live = downloadQueueQueryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 });
+    assert.equal(live.total, 1);
+    assert.equal(live.items[0]?.id, commandId);
+    assert.equal(live.items[0]?.type, "video");
+    assert.ok(
+        String(live.items[0]?.cover || "").startsWith(`/media-cover/Videos/${recording.id}/`),
+        `expected video poster URL, got ${live.items[0]?.cover}`,
+    );
+    assert.ok(
+        !String(live.items[0]?.cover || "").includes("/Albums/"),
+        "album cover must not win for DownloadVideo queue rows",
+    );
+
+    queueModule.CommandQueueManager.complete(commandId);
+    const history = downloadQueueQueryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 });
+    assert.equal(history.total, 1);
+    assert.ok(
+        String(history.items[0]?.cover || "").startsWith(`/media-cover/Videos/${recording.id}/`),
+        `expected history video poster URL, got ${history.items[0]?.cover}`,
+    );
 });
 
 test("download queue query resolves canonical track provider offers without ProviderMedia rows", () => {

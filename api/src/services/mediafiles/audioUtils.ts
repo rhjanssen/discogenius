@@ -448,7 +448,7 @@ export async function writeMetadata(filePath: string, tags: Record<string, strin
 }
 
 /**
- * Strip all metadata tags from an audio file (Lidarr's ScrubAudioTags equivalent).
+ * Strip all metadata tags from an audio file (equivalent of scrubbing all existing tags).
  * Uses ffmpeg with `-map_metadata -1` to remove all existing tags before a clean rewrite.
  */
 export async function removeAllTags(filePath: string): Promise<boolean> {

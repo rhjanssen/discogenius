@@ -148,8 +148,8 @@ export interface ImportStreamHandle {
   close: () => void;
 }
 
-// Business/resource endpoints are served under a single /api/v1 namespace
-// (Lidarr-style). A small set of infra/streaming endpoints stay un-versioned
+// Business/resource endpoints are served under a single /api/v1 namespace.
+// A small set of infra/streaming endpoints stay un-versioned
 // under /api and must match the backend mounts in server.ts.
 const UNVERSIONED_API_PREFIXES = ['/auth', '/app-auth', '/playback', '/health'];
 
@@ -1176,8 +1176,9 @@ class ApiClient {
     return this.updateArtist(artistId, { monitored });
   }
 
-  async deleteArtist(artistId: string) {
-    return this.request(`/v1/artist/${artistId}`, { method: 'DELETE' });
+  async deleteArtist(artistId: string, options?: { deleteFiles?: boolean }) {
+    const query = options?.deleteFiles ? '?deleteFiles=true' : '';
+    return this.request(`/v1/artist/${artistId}${query}`, { method: 'DELETE' });
   }
 
   // Download queue endpoints

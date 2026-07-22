@@ -35,7 +35,7 @@ import {
   ArrowSortDown24Filled,
   bundleIcon,
 } from "@fluentui/react-icons";
-import type { ReactNode } from "react";
+import type { ReactElement } from "react";
 import FilterMenu, { type ProviderFilterOption } from "@/components/FilterMenu";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { useResponsiveTabsStyles } from "@/components/ui/useResponsiveTabsStyles";
@@ -337,7 +337,7 @@ function LibraryControlActions(props: LibraryToolbarProps & { className?: string
   );
 }
 
-export function LibraryToolbar(props: LibraryToolbarProps): ReactNode {
+export function LibraryToolbar(props: LibraryToolbarProps): ReactElement {
   const styles = useStyles();
   const responsiveTabsStyles = useResponsiveTabsStyles();
   const { selectedTab, onSelectedTabChange, stats } = props;

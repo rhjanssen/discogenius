@@ -12,7 +12,7 @@ test("durationSimilarity is full credit inside the soft gate then falls off", ()
   assert.equal(durationSimilarity(301_000, 301_000), 1);
   assert.equal(durationSimilarity(301_000, 301_000 + VIDEO_DURATION_MATCH_MS), 1);
   assert.ok(durationSimilarity(301_000, 282_000) < 0.5);
-  assert.equal(durationSimilarity(301_000, null), 0.4);
+  assert.equal(durationSimilarity(301_000, null), 0.35);
 });
 
 test("dateSimilarity rewards same day and stays neutral when missing", () => {
@@ -68,4 +68,118 @@ test("tour-suffixed titles merge when duration aligns", () => {
   });
   assert.equal(match.matched, true);
   assert.ok(match.titleScore >= 0.88);
+});
+
+test("live and unlabeled studio variants stay split without cross-provider signal", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Distorted Light Beam",
+    titleB: "Distorted Light Beam (Live)",
+    lengthMsA: 214_000,
+    lengthMsB: 214_000,
+    releaseDateA: "2022-01-01",
+    releaseDateB: "2022-01-01",
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.reason, "variant-incompatible");
+});
+
+test("cross-provider bare live twins merge unlabeled main at exact duration", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Seasons & Narcissus",
+    titleB: "Seasons & Narcissus (Live)",
+    lengthMsA: 206_000,
+    lengthMsB: 206_000,
+    releaseDateA: "2023-06-09",
+    releaseDateB: "2023-06-09",
+    providerA: "tidal",
+    providerB: "apple-music",
+  });
+  assert.equal(match.matched, true);
+  assert.ok(match.score >= VIDEO_IDENTITY_MATCH_THRESHOLD);
+});
+
+test("OMV and bare live stay split even cross-provider at equal duration", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Pompeii (Official Music Video)",
+    titleB: "Pompeii (Live)",
+    lengthMsA: 214_000,
+    lengthMsB: 214_000,
+    releaseDateA: "2013-02-11",
+    releaseDateB: "2013-02-11",
+    providerA: "tidal",
+    providerB: "apple-music",
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.reason, "variant-incompatible");
+});
+
+test("named TV performance twins bare title only at exact duration", () => {
+  const sameDuration = scoreVideoIdentityMatch({
+    titleA: "Pompeii",
+    titleB: "Pompeii (Good Morning America Performance)",
+    lengthMsA: 228_000,
+    lengthMsB: 228_000,
+  });
+  assert.equal(sameDuration.matched, true);
+
+  const liveAtVenue = scoreVideoIdentityMatch({
+    titleA: "Back to Black",
+    titleB: "Back To Black (Live at Other Voices, 2006)",
+    lengthMsA: 253_000,
+    lengthMsB: 253_000,
+  });
+  assert.equal(liveAtVenue.matched, true);
+
+  const bareLiveWithoutVenue = scoreVideoIdentityMatch({
+    titleA: "Distorted Light Beam",
+    titleB: "Distorted Light Beam (Live)",
+    lengthMsA: 182_000,
+    lengthMsB: 182_000,
+  });
+  assert.equal(bareLiveWithoutVenue.matched, false);
+  assert.equal(bareLiveWithoutVenue.reason, "variant-incompatible");
+
+  const offByFiveSeconds = scoreVideoIdentityMatch({
+    titleA: "Pompeii",
+    titleB: "Pompeii (Good Morning America Performance)",
+    lengthMsA: 233_000,
+    lengthMsB: 228_000,
+  });
+  assert.equal(offByFiveSeconds.matched, false);
+});
+
+test("official and near-duration alternate cut do not merge past the 3s hard gate", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Pompeii",
+    titleB: "Pompeii",
+    lengthMsA: 233_000,
+    lengthMsB: 228_000,
+    releaseDateA: "2019-06-28",
+    releaseDateB: "2019-06-28",
+  });
+  assert.equal(match.matched, false);
+  assert.equal(match.reason, "duration-hard-reject");
+});
+
+test("shared ISRC + strong title merges across providers when one duration is missing", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Million Pieces",
+    titleB: "Million Pieces",
+    lengthMsA: 214_000,
+    lengthMsB: null,
+    isrcsA: "GBARL1401499",
+    isrcsB: "GBARL1401499",
+  });
+  assert.equal(match.matched, true);
+  assert.equal(match.durationScore, 1);
+});
+
+test("identical duration + strong title merges without dates or ISRC", () => {
+  const match = scoreVideoIdentityMatch({
+    titleA: "Million Pieces",
+    titleB: "Million Pieces",
+    lengthMsA: 214_000,
+    lengthMsB: 214_000,
+  });
+  assert.equal(match.matched, true);
 });

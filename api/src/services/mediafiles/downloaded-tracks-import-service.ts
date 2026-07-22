@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 import { db } from "../../database.js";
 import { OrganizerService, type OrganizeResult } from "./organizer.js";
 import {
@@ -17,6 +18,8 @@ import { MetadataIdentityService } from "../metadata/metadata-identity-service.j
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { ProviderTrackTagSupplementService } from "./provider-track-tag-supplement-service.js";
 import { TrackLyricsMaterializer, type TrackLyricsMaterializeResult } from "./track-lyrics-materializer.js";
+import { removeEmptyParents } from "./library-files.js";
+import { Config } from "../config/config.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
@@ -691,6 +694,7 @@ export class DownloadedTracksImportService {
         if (shouldCleanupDownloadPath) {
             try {
                 fs.rmSync(downloadPath, { recursive: true, force: true });
+                removeEmptyParents(path.dirname(downloadPath), Config.getDownloadPath());
             } catch {
                 // ignore cleanup errors
             }

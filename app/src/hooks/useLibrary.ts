@@ -263,14 +263,16 @@ export const useLibrary = (options?: { activeTab?: ActiveLibraryTab }) => {
     }
   }, [artistsQuery, statsQuery, toast]);
 
-  const deleteArtist = useCallback(async (providerId: string) => {
+  const deleteArtist = useCallback(async (providerId: string, options?: { deleteFiles?: boolean }) => {
     try {
-      await api.deleteArtist(providerId);
+      await api.deleteArtist(providerId, options);
       await Promise.all([artistsQuery.refetch(), statsQuery.refetch()]);
 
       toast({
         title: "Artist removed",
-        description: "Artist has been removed from your library",
+        description: options?.deleteFiles
+          ? "Artist and imported files have been removed from your library"
+          : "Artist has been removed from your library",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not remove artist";

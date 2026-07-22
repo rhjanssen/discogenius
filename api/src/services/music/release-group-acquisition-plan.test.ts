@@ -149,10 +149,24 @@ test("queueTrackAcquisitionPlan queues one DownloadAlbum with trackOffers for qu
 
   const payload = JSON.parse(albumJobs[0].payload);
   assert.equal(payload.acquisitionMode, "trackOffers");
+  assert.equal(payload.providerId, "290132977;287367980");
   assert.equal(payload.trackOffers.length, 3);
   assert.deepEqual(
     payload.trackOffers.map((offer: { providerTrackId: string }) => offer.providerTrackId).sort(),
     ["trk-nirvana", "trk-pompeii", "trk-softly"],
+  );
+  assert.deepEqual(
+    payload.trackOffers
+      .map((offer: { providerTrackId: string; providerAlbumId?: string }) => [
+        offer.providerTrackId,
+        offer.providerAlbumId,
+      ])
+      .sort((a: string[], b: string[]) => a[0].localeCompare(b[0])),
+    [
+      ["trk-nirvana", "287367980"],
+      ["trk-pompeii", "287367980"],
+      ["trk-softly", "290132977"],
+    ],
   );
   assert.equal(payload.downloadState.tracks.length, 3);
 });
@@ -246,6 +260,94 @@ test("queueCatalogAlbumDownload uses album mode when everything is missing for a
   assert.equal(payload.trackOffers, undefined);
 });
 
+test("queueCatalogAlbumDownload uses match_evidence trackSources when ProviderItems lack MBIDs for missing discs", () => {
+  const releaseGroupMbid = "rg-gmtf-stereo";
+  const releaseMbid = "rel-gmtf-3vol";
+  seedCatalogAlbum({
+    releaseGroupMbid,
+    releaseMbid,
+    tracks: [
+      { trackMbid: "t-v1", recordingMbid: "rec-v1", title: "Distorted Light Beam", position: 1 },
+      { trackMbid: "t-v3", recordingMbid: "rec-v3", title: "Running Away", position: 2 },
+    ],
+  });
+
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Bastille')
+  `).run();
+  db.prepare(`
+    INSERT INTO Artists (id, mbid, name, monitored) VALUES (1, 'artist-mbid', 'Bastille', 1)
+  `).run();
+  // Only disc 1 is on disk; disc/volume trailing tracks are missing.
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, file_type, library_slot, library_root, file_path, relative_path, filename, extension,
+      canonical_track_mbid, canonical_recording_mbid
+    ) VALUES (1, 'track', 'stereo', 'music', '/tmp/v1.flac', 'Bastille/Album/101.flac', '101.flac', 'flac', 't-v1', 'rec-v1')
+  `).run();
+  // ProviderItems exist but trailing disc has no track/recording MBIDs (ISRC-only).
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, provider_id, entity_type, provider_album_id, recording_mbid, track_mbid, isrc, title, quality
+    ) VALUES
+      ('tidal', 'trk-v1', 'track', '243864035', 'rec-v1', 't-v1', 'ISRC1', 'Distorted Light Beam', 'HIRES_LOSSLESS'),
+      ('tidal', 'trk-v3', 'track', '243864035', NULL, NULL, 'ISRC3', 'Running Away', 'HIRES_LOSSLESS')
+  `).run();
+  // Seed recording ISRC so album-offer ISRC fallback also works — but wipe
+  // recording ISRCs to force evidence trackSources path.
+  db.prepare(`UPDATE Recordings SET isrcs = NULL WHERE mbid = 'rec-v3'`).run();
+
+  const evidence = JSON.stringify({
+    matchKind: "direct",
+    trackSources: [
+      {
+        canonicalTrackMbid: "t-v1",
+        canonicalRecordingMbid: "rec-v1",
+        providerTrackId: "trk-v1",
+        providerAlbumId: "243864035",
+        title: "Distorted Light Beam",
+        trackNum: 1,
+        volumeNum: 1,
+      },
+      {
+        canonicalTrackMbid: "t-v3",
+        canonicalRecordingMbid: "rec-v3",
+        providerTrackId: "trk-v3",
+        providerAlbumId: "243864035",
+        title: "Running Away",
+        trackNum: 6,
+        volumeNum: 3,
+      },
+    ],
+  });
+
+  const result = acquisitionModule.queueCatalogAlbumDownload({
+    slot: "stereo",
+    selected_provider: "tidal",
+    selected_provider_id: "243864035",
+    selected_release_mbid: releaseMbid,
+    release_group_mbid: releaseGroupMbid,
+    match_method: "musicbrainz-recording-isrc",
+    match_evidence: evidence,
+    title: "Give Me the Future",
+    artist_name: "Bastille",
+    quality: "HIRES_LOSSLESS",
+  });
+
+  assert.equal(result.queued, true);
+  assert.equal(result.recognizedHybrid, false);
+  const payload = JSON.parse(
+    (db.prepare("SELECT payload FROM commands WHERE id = ?").get(result.commandId) as { payload: string }).payload,
+  );
+  assert.equal(payload.acquisitionMode, "trackOffers");
+  assert.equal(payload.trackOffers.length, 1);
+  assert.equal(payload.trackOffers[0].providerTrackId, "trk-v3");
+  assert.equal(payload.trackOffers[0].canonicalTrackMbid, "t-v3");
+  assert.equal(payload.downloadState.tracks[0].status, "skipped");
+  assert.equal(payload.downloadState.tracks[1].status, "queued");
+});
+
 test("queueTrackAcquisitionPlan recognizes strict_composite_track_coverage with trackSources", () => {
   const evidence = JSON.stringify({
     matchKind: "composite",
@@ -280,4 +382,23 @@ test("queueTrackAcquisitionPlan recognizes strict_composite_track_coverage with 
 
   assert.equal(result.recognized, true);
   assert.equal(result.commandIds.length, 1);
+
+  const { db } = dbModule;
+  const payload = JSON.parse(
+    (db.prepare("SELECT payload FROM commands WHERE id = ?").get(result.commandIds[0]) as { payload: string }).payload,
+  );
+  assert.equal(payload.providerId, "album-a;album-b");
+  assert.equal(payload.acquisitionMode, "trackOffers");
+  assert.deepEqual(
+    payload.trackOffers
+      .map((offer: { providerTrackId: string; providerAlbumId?: string }) => [
+        offer.providerTrackId,
+        offer.providerAlbumId,
+      ])
+      .sort((a: string[], b: string[]) => a[0].localeCompare(b[0])),
+    [
+      ["trk-a", "album-a"],
+      ["trk-b", "album-b"],
+    ],
+  );
 });

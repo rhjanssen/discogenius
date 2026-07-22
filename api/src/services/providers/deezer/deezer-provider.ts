@@ -9,6 +9,8 @@ import type {
   ProviderCapabilities,
   ProviderDiagnosticResult,
   ProviderDownloadOptions,
+  ProviderImportSelection,
+  ProviderImportSource,
   ProviderManifest,
   ProviderPlaybackInfo,
   ProviderReleaseGroupSearch,
@@ -202,14 +204,14 @@ export class DeezerProvider implements StreamingProvider {
       setupNote: "Uses the pinned Streamrip CLI and a Deezer ARL cookie.",
     }],
     catalog: { search: true, artistCatalog: true, releaseOffers: true, videos: false },
-    imports: { supported: [] },
+    imports: { supported: ["followed-artists", "favorite-tracks", "playlist"] },
     qualityMapping: { neutral: true, stereo: true, spatial: false, video: false },
     diagnostics: ["auth", "catalog", "download-backend", "rate-limit"],
   };
   readonly capabilities: ProviderCapabilities = {
     catalogSearch: true,
     artistCatalog: true,
-    followedArtists: false,
+    followedArtists: true,
     audioPreviews: true,
     audioDownloads: true,
     lossyStereo: true,
@@ -309,6 +311,16 @@ export class DeezerProvider implements StreamingProvider {
   async getPlaybackInfo(id: string | number): Promise<ProviderPlaybackInfo | null> {
     const resource = await deezerApiRequest<DeezerTrackResource>(`/track/${encodeURIComponent(String(id))}`, this.fetchImpl);
     return resource.preview ? { type: "bts", url: resource.preview } : null;
+  }
+
+  async listImportSources(): Promise<ProviderImportSource[]> {
+    const { getDeezerImportSources } = await import("./deezer-library.js");
+    return getDeezerImportSources(this.fetchImpl as import("./deezer-gw-api.js").DeezerGwFetchLike | undefined);
+  }
+
+  async getArtistsForImportSource(selection: ProviderImportSelection): Promise<ProviderArtist[]> {
+    const { getDeezerArtistsForImportSource } = await import("./deezer-library.js");
+    return getDeezerArtistsForImportSource(selection, this.fetchImpl as import("./deezer-gw-api.js").DeezerGwFetchLike | undefined);
   }
 
   async getArtworkUrl(request: ProviderArtworkRequest): Promise<string | null> {

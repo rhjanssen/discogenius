@@ -19,7 +19,7 @@ import {
  * slot candidates vs camelCase ProviderTrack), so each adapts its data into
  * the normalized shapes below rather than sharing a type.
  *
- * Design mirrors Lidarr's DistanceCalculator.TrackDistance: combine duration
+ * Design follows the DistanceCalculator.TrackDistance: combine duration
  * (10s grace), position, and a cleaned title — with NO hard title cutoff, so
  * provider title decorations ("(Bastille Vs. …)", "(feat. …)", "(demo)",
  * version suffixes) never produce a false "missing".
@@ -129,7 +129,7 @@ export function scoreTrackMatch(target: MatchTargetTrack, pt: MatchProviderTrack
         return 0.9;
     }
 
-    // 4. Blended fallback (Lidarr-style: title is the dominant signal, structure
+    // 4. Blended fallback (title is the dominant signal, structure
     //    only corroborates). Title is weighted so that position + duration alone
     //    cannot carry a match when the titles actively contradict — that avoids
     //    false coverage when two different songs share a slot and a coincidental

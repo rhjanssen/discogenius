@@ -16,6 +16,25 @@ Status: pending | in progress | decided | revisit
 - **Amazon Music / Spotify:** Auth shows **Soon** — no live validation until
   re-enabled.
 
+## 2.6.0 (future) — SoundCloud (experimental)
+
+Research (2026-07): yt-dlp covers **download** (tracks, sets, private links, user
+likes via URL); **catalog** and stable URNs need the official SoundCloud API
+(OAuth 2.1) or a thin api-v2 client — yt-dlp alone is CLI-shaped, omits ISRC,
+and is a poor fit for `ProviderItems`. Hybrid: API for catalog/auth/import;
+extend `YtDlpBackend` for acquisition. Lossy-only; no RG automation; major-label
+DRM/Go+ gaps; API ToS forbids file-save on registered credentials — label
+experimental and at-operator risk.
+
+- pending: experimental `soundcloud` provider — URL/track/set import, liked
+  tracks + playlist import only (no followed-artists → MB monitoring).
+- pending: OAuth token paste (or PKCE) + official API catalog adapter
+  (URN-native ids, search/resolve/getTrack/getAlbum).
+- pending: extend shared yt-dlp backend — SoundCloud URLs, OAuth header/cookie,
+  `{track_id}.{ext}` staging, bestaudio format selection.
+- defer: `searchReleaseGroup` / artist discography automation, ISRC-first
+  matching, lossless/hi-res/spatial, official-API download path.
+
 ## Post-2.4.0 priorities
 
 ### Performance and intake (top)

@@ -20,6 +20,10 @@ const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const COOKIE_EXPIRY = "2147483647";
 const YOUTUBE_MUSIC_COOKIE_HOST = "music.youtube.com";
 const HTTP_ONLY_PREFIX = "#HttpOnly_";
+/** Prefer a full browser UA — a bare "Mozilla/5.0" stub is rejected by some YTM endpoints. */
+const DEFAULT_YOUTUBE_MUSIC_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
+
 
 /** Headers ytmusicapi / Discogenius actually need — everything else from a fetch paste is dropped. */
 const STORED_HEADER_CANONICAL: Record<string, string> = {
@@ -332,8 +336,9 @@ export function saveYouTubeMusicCredentials(input: YouTubeMusicCredentialsInput)
   if (!findHeader(headers, "Accept")) {
     setHeader(headers, "Accept", "*/*");
   }
-  if (!findHeader(headers, "User-Agent")) {
-    setHeader(headers, "User-Agent", "Mozilla/5.0");
+  const existingUserAgent = findHeader(headers, "User-Agent")?.trim();
+  if (!existingUserAgent || existingUserAgent === "Mozilla/5.0") {
+    setHeader(headers, "User-Agent", DEFAULT_YOUTUBE_MUSIC_USER_AGENT);
   }
   if (!findHeader(headers, "x-origin") && !findHeader(headers, "Origin")) {
     setHeader(headers, "x-origin", "https://music.youtube.com");

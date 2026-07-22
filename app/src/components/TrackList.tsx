@@ -49,14 +49,7 @@ interface TrackListProps<T extends TrackListItem = TrackListItem> {
   showArtist?: boolean;
   showAlbum?: boolean;
   showQuality?: boolean;
-  /**
-   * @deprecated Provider marks now live inside the Quality column via
-   * ProviderQualityRow (same pattern as album/video lists). Kept so call sites compile.
-   */
-  showProviderColumn?: boolean;
   showLocalQuality?: boolean;
-  /** @deprecated Use showLocalQuality; retained for existing album call sites. */
-  showFileQualityDifferences?: boolean;
   showVolumeHeaders?: boolean;
   showDownloadedColumn?: boolean;
   /** Disable the sticky table header — set false for a virtualized full-page scroll container (e.g. Library). */
@@ -410,9 +403,7 @@ const TrackList = <T extends TrackListItem>({
   showArtist = false,
   showAlbum = false,
   showQuality = true,
-  showProviderColumn: _showProviderColumn = showQuality,
-  showLocalQuality,
-  showFileQualityDifferences = false,
+  showLocalQuality = false,
   showVolumeHeaders = false,
   showDownloadedColumn = false,
   disableStickyHeader = true,
@@ -427,7 +418,7 @@ const TrackList = <T extends TrackListItem>({
 }: TrackListProps<T>) => {
   const styles = useStyles();
   const dgCell = useDataGridCellStyles();
-  const shouldShowLocalQuality = showLocalQuality ?? showFileQualityDifferences;
+  const shouldShowLocalQuality = showLocalQuality;
   const navigate = useNavigate();
   const {
     getPlaybackSrc,

@@ -1,5 +1,5 @@
 /**
- * Pure helpers extracted from RenameTrackFileService (Lidarr-style incremental split).
+ * Pure helpers extracted from RenameTrackFileService (incremental split).
  * ID/filter/status builders — no DB, FS side effects, or service state.
  */
 

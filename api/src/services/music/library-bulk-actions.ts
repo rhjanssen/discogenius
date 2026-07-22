@@ -11,6 +11,7 @@ import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getConfigSection } from "../config/config.js";
+import { videoCoverLocalUrl } from "../metadata/media-cover-service.js";
 
 export const LIBRARY_BULK_ENTITIES = ["artist", "album", "track", "video"] as const;
 export const LIBRARY_BULK_ACTIONS = ["monitor", "unmonitor", "lock", "unlock", "download"] as const;
@@ -464,7 +465,7 @@ function queueVideoDownloads(videoIds: string[]): number[] {
             providerId: String(video.provider_id),
             title,
             artist: artistName,
-            cover: video.album_cover || null,
+            cover: videoCoverLocalUrl(video.id),
             quality: video.quality || null,
             artists: [artistName],
             description: `${title} by ${artistName}`,

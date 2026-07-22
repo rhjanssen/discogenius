@@ -15,7 +15,7 @@ import type { MetadataConfig } from "../config/config.js";
 import { resolveVideoTypeSuffix } from "./library-files.js";
 
 // Manually-imported files are a user's own pre-existing library files, not a
-// fresh Discogenius download (Lidarr's "not a new download" case) — only
+// fresh Discogenius download ("not a new download" case) — only
 // tag them when the policy explicitly asks for ALL files, not just new ones.
 export function shouldTagManuallyImportedFiles(config: MetadataConfig): boolean {
     return config.write_audio_tags_policy === "all_files";

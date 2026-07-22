@@ -1,8 +1,6 @@
 /**
  * Command status, the command-name → body type map, and the persisted command
- * record (`CommandModel`). Mirrors Lidarr's `CommandStatus.cs` + `CommandModel.cs`
- * (the body interfaces themselves live in `command-bodies.ts`, ≈ Lidarr's
- * individual `*Command.cs` files).
+ * record (`CommandModel`). Command body interfaces live in `command-bodies.ts`.
  */
 
 import { CommandNames, type CommandName } from "./command-names.js";

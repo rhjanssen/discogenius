@@ -335,19 +335,25 @@ function resizeRgbaNearest(
   return { width: targetWidth, height: targetHeight, data: output };
 }
 
-function writeResizedMediaCovers(originalBuffer: Buffer, entityId: string | number, coverEntity: MediaCoverEntity, coverType: string, extension: string): void {
+type PreparedMediaCoverDerivative = {
+  height: number;
+  buffer: Buffer;
+};
+
+function prepareResizedMediaCovers(originalBuffer: Buffer, extension: string): PreparedMediaCoverDerivative[] {
   let decoded: { width: number; height: number; data: Uint8Array } | null = null;
   try {
     decoded = decodeImage(originalBuffer, extension);
   } catch (error) {
     console.warn("[MediaCoverService] Failed to decode artwork for resizing:", (error as Error).message);
-    return;
+    return [];
   }
 
   if (!decoded) {
-    return;
+    return [];
   }
 
+  const derivatives: PreparedMediaCoverDerivative[] = [];
   for (const targetHeight of MEDIA_COVER_DEFAULT_HEIGHTS) {
     try {
       const resized = resizeRgbaNearest(decoded, targetHeight);
@@ -358,12 +364,12 @@ function writeResizedMediaCovers(originalBuffer: Buffer, entityId: string | numb
         }, quality).data);
       const encoded = candidates.find((candidate) => candidate.length < originalBuffer.length)
         ?? candidates.reduce((smallest, candidate) => candidate.length < smallest.length ? candidate : smallest);
-      const resizedPath = getMediaCoverPath(entityId, coverEntity, coverType, ".jpg", targetHeight);
-      fs.writeFileSync(resizedPath, encoded);
+      derivatives.push({ height: targetHeight, buffer: Buffer.from(encoded) });
     } catch (error) {
-      console.warn(`[MediaCoverService] Failed to write ${targetHeight}px artwork:`, (error as Error).message);
+      console.warn(`[MediaCoverService] Failed to prepare ${targetHeight}px artwork:`, (error as Error).message);
     }
   }
+  return derivatives;
 }
 
 export function getCoverArtArchiveReleaseGroupUrl(releaseGroupMbid: string | null | undefined): string | null {
@@ -424,27 +430,42 @@ export async function ensureCachedMediaCover(options: {
     fs.mkdirSync(folder, { recursive: true });
 
     const originalBuffer = Buffer.from(await response.arrayBuffer());
-    clearCachedCoverVariant(options.entityId, options.coverEntity, options.coverType);
-    writeResizedMediaCovers(originalBuffer, options.entityId, options.coverEntity, options.coverType, extension);
 
     if (options.coverEntity === "Video") {
       // TIDAL video artwork is requested at 1080x720. Keep that source for the
       // large video surface while the route serves 500/250 derivatives to grids.
+      const derivatives = prepareResizedMediaCovers(originalBuffer, extension);
+      clearCachedCoverVariant(options.entityId, options.coverEntity, options.coverType);
       const filePath = getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, extension);
       fs.writeFileSync(filePath, originalBuffer);
+      for (const derivative of derivatives) {
+        fs.writeFileSync(
+          getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, ".jpg", derivative.height),
+          derivative.buffer,
+        );
+      }
       return getMediaCoverUrl(options.entityId, options.coverEntity, options.coverType, extension);
     }
 
     // UI cache contains derivatives only. Full-resolution album/artist art is
     // stored exclusively beside managed media in the configured library roots.
+    const derivatives = prepareResizedMediaCovers(originalBuffer, extension);
+    if (derivatives.length === 0) {
+      return existing?.url ?? null;
+    }
+
+    clearCachedCoverVariant(options.entityId, options.coverEntity, options.coverType);
+    for (const derivative of derivatives) {
+      fs.writeFileSync(
+        getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, ".jpg", derivative.height),
+        derivative.buffer,
+      );
+    }
     for (const candidateExtension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
       try { fs.unlinkSync(getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, candidateExtension)); } catch { /* absent */ }
     }
-    const cached = existingMediaCover(options.entityId, options.coverEntity, options.coverType)?.url ?? null;
-    if (cached) {
-      writeSourceMarker(options.entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy);
-    }
-    return cached;
+    writeSourceMarker(options.entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy);
+    return existingMediaCover(options.entityId, options.coverEntity, options.coverType)?.url ?? null;
   } catch (error) {
     console.warn("[MediaCoverService] Failed to cache artwork:", (error as Error).message);
     return null;
@@ -477,6 +498,51 @@ export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
   return resolveMediaCoverFilePath(path.join(mediaCoverRoot(), artistId), parts[3]);
 }
 
+/**
+ * Remote origin URL that populated a MediaCover cache entry (from `.cover.source.json`).
+ * Library sidecars should fetch this instead of copying UI 500/250 derivatives.
+ */
+export function getCachedMediaCoverSourceUrlFromLocalUrl(value: unknown): string | null {
+  const text = String(value || "").trim();
+  if (!text.startsWith("/media-cover/")) {
+    return null;
+  }
+
+  const pathname = text.split(/[?#]/, 1)[0];
+  const parts = pathname.split("/").map((part) => decodeURIComponent(part));
+  if (parts.length < 4) {
+    return null;
+  }
+
+  let folder: string;
+  let filename: string;
+  if (parts[2] === "Albums" && parts.length >= 5) {
+    folder = path.join(mediaCoverRoot(), "Albums", safeMediaCoverEntityId(parts[3]));
+    filename = parts[4];
+  } else if (parts[2] === "Videos" && parts.length >= 5) {
+    folder = path.join(mediaCoverRoot(), "Videos", safeMediaCoverEntityId(parts[3]));
+    filename = parts[4];
+  } else {
+    folder = path.join(mediaCoverRoot(), safeMediaCoverEntityId(parts[2]));
+    filename = parts[3];
+  }
+
+  const coverType = String(filename || "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/-\d+$/, "")
+    .toLowerCase();
+  if (!coverType) {
+    return null;
+  }
+
+  try {
+    const marker = JSON.parse(fs.readFileSync(path.join(folder, `.${coverType}.source.json`), "utf-8"));
+    return normalizeArtworkUrl(marker?.url) || null;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveMediaCoverFilePath(folder: string, filename: string): string | null {
   const safeFilename = path.basename(String(filename || ""));
   if (!safeFilename || safeFilename !== filename) {
@@ -504,7 +570,7 @@ export function resolveMediaCoverFilePath(folder: string, filename: string): str
       return requested;
     }
   } catch {
-    // Try falling back from cover-250.jpg to cover.* like Lidarr's route does.
+    // Try falling back from cover-250.jpg to cover.* as in route does.
   }
 
   if (!resizedMatch) {
@@ -1076,14 +1142,14 @@ export function videoCoverLocalUrl(videoId: string | number | null | undefined):
     return null;
   }
 
-  // Always emit the Lidarr-style local URL for UI. Bytes are filled lazily by
+  // Always emit the local URL for UI. Bytes are filled lazily by
   // /media-cover (resolveVideoArtwork) — never expose raw provider asset UUIDs.
   return existingVideoMediaCoverUrl(normalizedVideoId)
     || getMediaCoverUrl(normalizedVideoId, "Video", "Cover", ".jpg");
 }
 
 /**
- * Lidarr-aligned read mapper — the equivalent of its
+ * read mapper — the equivalent of its
  * IMapCoversToLocal.ConvertToLocalUrls. Maps an album's STORED images (the
  * `images` column) to its local /media-cover URL. Image selection and any
  * provider-fallback artwork are resolved and persisted into `images` at

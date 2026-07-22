@@ -1,10 +1,9 @@
 /**
  * Command trigger + priority enums.
  *
- * Mirrors Lidarr's `CommandTrigger` and `CommandPriority`
- * (NzbDrone.Core/Messaging/Commands). Modelled as `as const` objects so the
- * numeric values persisted in the `commands.trigger` / `commands.priority`
- * columns stay stable while call sites read by name instead of magic numbers.
+ * Modelled as `as const` objects so the numeric values persisted in the
+ * `commands.trigger` / `commands.priority` columns stay stable while call sites
+ * read by name instead of magic numbers.
  */
 
 export const CommandTrigger = {

@@ -1227,12 +1227,49 @@ export function tidalSquareImageUrl(value: unknown, size = 640): string | null {
   return `https://resources.tidal.com/images/${image.replace(/-/g, "/")}/${size}x${size}.jpg`;
 }
 
-function getTidalPageImage(item: any): string | null {
-  return item?.images?.MEDIUM?.url
-    || item?.images?.LARGE?.url
-    || item?.images?.SMALL?.url
-    || item?.graphic?.images?.find?.((image: any) => /^https?:\/\//i.test(String(image?.url || "")))?.url
-    || tidalSquareImageUrl(item?.image || item?.squareImage);
+function tidalImageUrlFromCollection(collection: unknown): string | null {
+  if (!collection) return null;
+  if (Array.isArray(collection)) {
+    for (const entry of collection) {
+      if (typeof entry === "string" && /^https?:\/\//i.test(entry)) return entry;
+      const url = typeof entry === "object" && entry
+        ? String((entry as { url?: unknown }).url || "")
+        : "";
+      if (/^https?:\/\//i.test(url)) return url;
+    }
+    return null;
+  }
+  if (typeof collection !== "object") return null;
+  const sized = collection as Record<string, unknown>;
+  for (const key of ["MEDIUM", "LARGE", "SMALL"]) {
+    const entry = sized[key];
+    if (entry && typeof entry === "object") {
+      const url = String((entry as { url?: unknown }).url || "");
+      if (/^https?:\/\//i.test(url)) return url;
+    }
+  }
+  return null;
+}
+
+export function getTidalPageImage(item: any): string | null {
+  const source = item?.item ?? item;
+  if (!source) return null;
+
+  // Prefer squareImage over image: editorial playlists (Top Hits, Pop Hits, …)
+  // store a landscape asset in `image` that 403s at NxN resource sizes.
+  return tidalImageUrlFromCollection(source?.images)
+    || tidalImageUrlFromCollection(source?.mixImages)
+    || tidalImageUrlFromCollection(source?.detailMixImages)
+    || tidalImageUrlFromCollection(source?.sharingImages)
+    || source?.graphic?.images?.find?.((image: any) => /^https?:\/\//i.test(String(image?.url || "")))?.url
+    || tidalImageUrlFromCollection(source?.graphic?.images)
+    || tidalSquareImageUrl(source?.squareImage || source?.cover || source?.imageId || source?.image);
+}
+
+function isTidalMixListItem(item: any): boolean {
+  if (!item || item.uuid) return false;
+  if (item.mixType != null || String(item.type || "").toLowerCase() === "mix") return true;
+  return typeof item.id === "string" && item.id.length > 0;
 }
 
 /**
@@ -1325,9 +1362,10 @@ export function extractImportListsFromPage(data: any, defaultSubtitle: string): 
     for (const module of row?.modules || []) {
       const moduleTitle: string = module?.title || "";
       const items = module?.pagedList?.items || module?.items || [];
-      for (const item of items) {
-        const isMix = typeof item?.id === "string" && !item?.uuid;
-        const rawId = isMix ? item.id : item?.uuid;
+      for (const rawItem of items) {
+        const item = rawItem?.item ?? rawItem;
+        const isMix = isTidalMixListItem(item);
+        const rawId = isMix ? item?.id : item?.uuid;
         if (!rawId) continue;
         const key = `${isMix ? "mix" : "playlist"}:${rawId}`;
         if (seen.has(key)) continue;
@@ -1365,7 +1403,22 @@ export async function getHomeImportLists(): Promise<TidalImportList[]> {
     ...extractImportListsFromPage(homePage, "Mix"),
   ];
   const seen = new Set<string>();
-  return results.filter((item) => !seen.has(item.id) && Boolean(seen.add(item.id)));
+  const deduped = results.filter((item) => !seen.has(item.id) && Boolean(seen.add(item.id)));
+
+  // Some mixes only expose artwork on the mix detail endpoint, not in page modules.
+  await Promise.all(deduped.map(async (entry) => {
+    if (entry.image || !entry.id.startsWith("mix:")) return;
+    const mixId = entry.id.slice("mix:".length);
+    try {
+      const cc = getCountryCode();
+      const mix = await tidalApiRequest(`/mixes/${mixId}?countryCode=${cc}`) as any;
+      entry.image = getTidalPageImage(mix);
+    } catch (error) {
+      console.warn(`[TIDAL] Failed to fetch mix artwork for ${mixId}:`, error);
+    }
+  }));
+
+  return deduped;
 }
 
 /** Distinct artists for a home-screen entry id (`mix:…` or `playlist:…`). */

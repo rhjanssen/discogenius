@@ -7,6 +7,7 @@ import {
     getTiddlProgressWrapperScript,
     getTiddlPythonBinary,
     mapAudioQualityToTiddl,
+    mapVideoQualityToTiddl,
     syncTiddlSettings,
 } from "./tiddl.js";
 import { isSpatialAudioQuality } from "../../../utils/spatial-audio.js";
@@ -185,7 +186,10 @@ export class TiddlBackend implements DownloadBackend {
         ];
 
         if (request.entityType === "video") {
-            args.push("--videos", "only");
+            // Per-job video quality (Apple-parity). Config.toml is the default,
+            // but -vq makes the Discogenius setting authoritative for this job.
+            // Pass the app setting only — never catalog tags like MP4_480P.
+            args.push("--videos", "only", "-vq", mapVideoQualityToTiddl());
         } else {
             const isSpatial = isSpatialAudioQuality(request.quality);
             args.push("-q", capTiddlTrackQuality(mapAudioQualityToTiddl(request.quality), isSpatial));

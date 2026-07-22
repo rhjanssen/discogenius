@@ -294,7 +294,7 @@ function normalizeReleaseGroupListRow(
         monitored_lock: Boolean(row.monitored_lock),
         downloaded: downloadStats.downloadedPercent,
         is_downloaded: downloadStats.isDownloaded,
-        // Lidarr-style library stats: files on disk / tracks on the selected release(s).
+        // library stats: files on disk / tracks on the selected release(s).
         track_file_count: downloadStats.downloadedTracks,
         track_count: downloadStats.totalTracks,
         stereo_provider: row.stereo_provider || null,

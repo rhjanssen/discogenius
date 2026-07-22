@@ -1684,17 +1684,17 @@ test("CurationService does not mark Single redundant if title edit suffix differ
   insertRelease.run("release-album-edit", "rg-album-edit", "artist-mbid-bastille-edit", "MTV Unplugged", "Official", "2024-01-01", 2, 1);
   insertRelease.run("release-single-edit", "rg-single-edit", "artist-mbid-bastille-edit", "Killing Me Softly", "Official", "2024-01-01", 1, 1);
 
-  // Insert Recordings
+  // Insert Recordings with distinct ISRCs (Softly-style hybrid: unique edit must stay monitored)
   const insertRecording = db.prepare(`
-    INSERT INTO Recordings (mbid, title)
-    VALUES (?, ?)
+    INSERT INTO Recordings (mbid, title, isrcs)
+    VALUES (?, ?, ?)
   `);
   const albumEditRecordingMbid = testRecordingMbid(41);
   const albumOtherRecordingMbid = testRecordingMbid(42);
   const singleEditRecordingMbid = testRecordingMbid(43);
-  insertRecording.run(albumEditRecordingMbid, "Killing Me Softly With His Song");
-  insertRecording.run(albumOtherRecordingMbid, "Other Track");
-  insertRecording.run(singleEditRecordingMbid, "Killing Me Softly With His Song (edit)");
+  insertRecording.run(albumEditRecordingMbid, "Killing Me Softly With His Song", JSON.stringify(["GBUM72000001"]));
+  insertRecording.run(albumOtherRecordingMbid, "Other Track", JSON.stringify(["GBUM72000002"]));
+  insertRecording.run(singleEditRecordingMbid, "Killing Me Softly With His Song (edit)", JSON.stringify(["GBUM72000003"]));
 
   // Insert Tracks for Album
   const insertTrack = db.prepare(`
@@ -1725,6 +1725,114 @@ test("CurationService does not mark Single redundant if title edit suffix differ
 
   assert.equal(albumSlot.wanted, 1);
   assert.equal(singleSlot.wanted, 1); // Single should not be redundant because different edit versions are treated as distinct recordings when recording IDs/ISRCs differ!
+});
+
+test("CurationService marks Single redundant when recordings share ISRCs with a larger album (retitled masters)", async () => {
+  const { db } = dbModule;
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Bastille", "artist-mbid-bastille-isrc", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-bastille-isrc", "Bastille");
+
+  const insertReleaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  insertReleaseGroup.run(
+    "rg-album-deluxe",
+    "artist-mbid-bastille-isrc",
+    "Give Me the Future",
+    "Album",
+    "[]",
+  );
+  insertReleaseGroup.run(
+    "rg-piano-single",
+    "artist-mbid-bastille-isrc",
+    "No Bad Days (piano version)",
+    "Single",
+    JSON.stringify(["Remix"]),
+  );
+
+  const insertRelease = db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertRelease.run(
+    "release-deluxe",
+    "rg-album-deluxe",
+    "artist-mbid-bastille-isrc",
+    "Give Me the Future + Dreams of the Past",
+    "Official",
+    "2022-08-16",
+    3,
+    1,
+  );
+  insertRelease.run(
+    "release-piano",
+    "rg-piano-single",
+    "artist-mbid-bastille-isrc",
+    "No Bad Days (piano version)",
+    "Official",
+    "2021-01-01",
+    2,
+    1,
+  );
+
+  // Distinct recording MBIDs, but piano version and "No More Bad Days" share one ISRC
+  // (live Bastille case: GBUM72108141).
+  const insertRecording = db.prepare(`
+    INSERT INTO Recordings (mbid, title, isrcs)
+    VALUES (?, ?, ?)
+  `);
+  const albumVersionMbid = testRecordingMbid(51);
+  const pianoSingleMbid = testRecordingMbid(52);
+  const pianoOnDeluxeMbid = testRecordingMbid(53);
+  const otherDeluxeMbid = testRecordingMbid(54);
+  insertRecording.run(albumVersionMbid, "No Bad Days", JSON.stringify(["GBUM72104384"]));
+  insertRecording.run(pianoSingleMbid, "No Bad Days (piano version)", JSON.stringify(["GBUM72108141"]));
+  insertRecording.run(pianoOnDeluxeMbid, "No More Bad Days", JSON.stringify(["GBUM72108141"]));
+  insertRecording.run(otherDeluxeMbid, "Distorted Light Beam", JSON.stringify(["GBUM72100001"]));
+
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertTrack.run("track-deluxe-1", "release-deluxe", otherDeluxeMbid, 1, 1, "1", "Distorted Light Beam", 200000);
+  insertTrack.run("track-deluxe-2", "release-deluxe", albumVersionMbid, 1, 2, "2", "No Bad Days", 185000);
+  insertTrack.run("track-deluxe-3", "release-deluxe", pianoOnDeluxeMbid, 1, 3, "3", "No More Bad Days", 239000);
+  insertTrack.run("track-piano-1", "release-piano", pianoSingleMbid, 1, 1, "1", "No Bad Days (piano version)", 238000);
+  insertTrack.run("track-piano-2", "release-piano", albumVersionMbid, 1, 2, "2", "No Bad Days", 185000);
+
+  writeTestConfig({
+    filtering: {
+      include_album: true,
+      include_ep: true,
+      include_single: true,
+      include_remix: true,
+    },
+  });
+
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  const albumSlot = db.prepare(
+    "SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'",
+  ).get("rg-album-deluxe") as { wanted: number };
+  const singleSlot = db.prepare(
+    "SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'",
+  ).get("rg-piano-single") as { wanted: number };
+
+  assert.equal(albumSlot.wanted, 1);
+  assert.equal(
+    singleSlot.wanted,
+    0,
+    "Piano single must be redundant: its masters are already covered by shared ISRCs on the deluxe album",
+  );
 });
 
 test("CurationService marks a single redundant when its parent album is present in MusicBrainz metadata even if the parent album is unmatched to a provider", async () => {

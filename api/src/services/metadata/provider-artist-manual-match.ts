@@ -16,7 +16,7 @@ import { streamingProviderManager } from "../providers/index.js";
 
 /**
  * Manual remediation for provider artists automation could not match — the
- * human-in-the-loop half of the import pipeline, like Lidarr's manual mapping
+ * human-in-the-loop half of the import pipeline, as in manual mapping
  * of unmatched import-list items. Candidates are ranked with the SAME evidence
  * the automatic matcher uses (name/alias scoring + discography overlap), but
  * presented instead of auto-applied, so a person can settle what automation

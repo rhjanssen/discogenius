@@ -109,7 +109,7 @@ router.get("/", async (req, res) => {
         const remoteRequested = ["1", "true", "yes", "on"]
             .includes(String(req.query.remote || "").trim().toLowerCase());
         // Keep established-library search local and indexed, but give a fresh
-        // installation the same canonical discovery path as Lidarr's add flow.
+        // installation the same canonical discovery path as the add-artist flow.
         const libraryIsEmpty = !db.prepare("SELECT 1 FROM Artists LIMIT 1").get();
         const includeRemoteCatalog = remoteRequested || libraryIsEmpty;
 

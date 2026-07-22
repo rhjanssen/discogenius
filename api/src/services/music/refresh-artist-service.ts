@@ -752,12 +752,12 @@ export class RefreshArtistService {
     }
 
     /**
-     * Whether an artist has never been refreshed (Lidarr's `LastInfoSync == null`
-     * check). Lidarr has no scan-level concept — an artist is either refreshed or
-     * not — so this replaces the old scan-level state machine. The UI
-     * uses it only to auto-trigger an initial refresh; ongoing staleness is
-     * decided by shouldRefreshArtist. The RefreshArtist queue is per-ref
-     * exclusive, so a repeated trigger for a still-empty artist can't pile up.
+     * Whether an artist has never been refreshed (`last_info_sync` empty).
+     * An artist is either refreshed or not — this replaces the old scan-level
+     * state machine. The UI uses it only to auto-trigger an initial refresh;
+     * ongoing staleness is decided by shouldRefreshArtist. The RefreshArtist
+     * queue is per-ref exclusive, so a repeated trigger for a still-empty
+     * artist can't pile up.
      */
     static needsInitialRefresh(artistId: string): boolean {
         const row = db.prepare("SELECT last_scanned FROM Artists WHERE id = ?")
@@ -871,7 +871,7 @@ export class RefreshArtistService {
         const isNewArtist = !artistRow?.last_scanned;
         const beforeFingerprint = artistCatalogFingerprint(resolveArtistMbid());
 
-        // Lidarr's ShouldRefreshArtist staleness gate.
+        // ShouldRefreshArtist staleness gate.
         // Refresh iff forced, never scanned, or stale per the refresh policy
         // (12h-retry / 30d-hard / 2d-active / recent-release). One refresh path.
         const shouldRefresh =
@@ -951,7 +951,7 @@ export class RefreshArtistService {
      * release group, persist the offers, and select provider slots.
      *
      * Extracted verbatim from refreshArtist as the seam for a standalone
-     * MatchArtistProviders command that runs AFTER metadata refresh (Lidarr keeps
+     * MatchArtistProviders command that runs AFTER metadata refresh (keeps
      * import-list/availability work separate from metadata refresh). Behaviour-
      * preserving: same order, same writes, same logs. When the catalog was not
      * (re)hydrated this just rebuilds slot selections from stored offers; when no
@@ -1360,16 +1360,18 @@ export class RefreshArtistService {
                     ...providerVideoToOfferRow(video, artistId),
                     _provider: provider.id,
                 }));
-            // Artist video lists often omit publish/release dates and (for YouTube)
-            // concrete resolution. Fill gaps with a bounded getVideo pass — the
-            // YouTube adapter probes yt-dlp inside getVideo when needed.
+            // Fill missing publish dates / duration / quality, and always try to
+            // pick up album / related-track associations when the list payload
+            // omitted them (TIDAL list often has duration+quality but no album).
             if (provider.getVideo) {
                 const missingFacts = videos
                     .filter((video) =>
                         !String(video.release_date || "").trim()
                         || video.duration == null
-                        || !String(video.quality || "").trim())
-                    .slice(0, 60);
+                        || !String(video.quality || "").trim()
+                        || !String(video.album_id || "").trim()
+                        || !String(video.related_track_id || "").trim())
+                    .slice(0, 80);
                 if (missingFacts.length > 0) {
                     const limit = pLimit(4);
                     await Promise.all(missingFacts.map((video) => limit(async () => {

@@ -32,7 +32,7 @@ let _db: Database.Database | null = null;
 
 /**
  * Run a user-initiated write on the MAIN thread with an async busy-retry that
- * yields the event loop between attempts (never freezes it). Lidarr relies on
+ * yields the event loop between attempts (never freezes it). Relies on
  * SQLite's own locking + a short busy_timeout + retry rather than an app-level
  * write mutex; this is the main-thread equivalent for route/scheduler writes so
  * they ride out brief worker write-lock contention instead of failing fast.
@@ -54,12 +54,11 @@ const SQLITE_BUSY_RETRY_MAX_MS = 2000;
 // can afford to block — a generous timeout + many retries means heavy refresh
 // writes wait their turn instead of erroring. The MAIN thread *is* the event
 // loop, and better-sqlite3 is synchronous, so any wait here freezes every HTTP
-// request, SSE stream, and /health probe for its full duration. Lidarr keeps a
-// 100ms busy_timeout on its (multi-threaded, pooled) request path for exactly
-// this reason. We keep the main thread's timeout small and its retry to a single
-// quick attempt so a contended main-thread write (chiefly the markProcessing
-// job-claim, occasionally a route write) fails fast and is retried at the next
-// scheduler tick — never freezing the server for tens of seconds.
+// request, SSE stream, and /health probe for its full duration. Keep the main
+// thread's timeout small and its retry to a single quick attempt so a contended
+// main-thread write (chiefly the markProcessing job-claim, occasionally a route
+// write) fails fast and is retried at the next scheduler tick — never freezing
+// the server for tens of seconds.
 const MAIN_THREAD_BUSY_TIMEOUT_MS = 1000;
 const WORKER_THREAD_BUSY_TIMEOUT_MS = 30000;
 const SQLITE_BUSY_RETRY_ATTEMPTS = isMainThread ? 1 : 8;
@@ -67,7 +66,7 @@ const SQLITE_BUSY_RETRY_ATTEMPTS = isMainThread ? 1 : 8;
 // Optional write profiling: log any write transaction that holds the SQLite write
 // lock longer than this (ms). Off unless DISCOGENIUS_WRITE_PROFILE_MS is set. Used
 // to find slow writes by data, not guesswork — short writes are what keep the DB
-// responsive under load (Lidarr's model), so this surfaces the ones to shorten.
+// responsive under load, so this surfaces the ones to shorten.
 const WRITE_PROFILE_MS = (() => {
   const raw = Number.parseInt(String(process.env.DISCOGENIUS_WRITE_PROFILE_MS ?? ""), 10);
   return Number.isFinite(raw) && raw > 0 ? raw : 0;
@@ -327,7 +326,7 @@ export function closeDatabase() {
 
 /**
  * Run multiple prepared-statement executions inside a single SQLite transaction.
- * Equivalent to Lidarr's InsertMany/UpdateMany pattern — one commit instead of N.
+ * One commit instead of N.
  */
 export function batchRun(sql: string, argsList: unknown[][]): number {
   if (argsList.length === 0) return 0;
@@ -519,7 +518,7 @@ function createBaselineSchemaV38(): void {
   `);
 
   // ====================================================================
-  // TRACKFILES TABLE (Local file tracking; Lidarr-aligned file inventory)
+  // TRACKFILES TABLE (Local file tracking; file inventory)
   // ====================================================================
   db.exec(`
     CREATE TABLE TrackFiles (
@@ -535,7 +534,7 @@ function createBaselineSchemaV38(): void {
       canonical_track_mbid TEXT,
       canonical_recording_mbid TEXT,
 
-      -- Catalog integer FKs (Lidarr-style: files link straight to catalog rows;
+      -- Catalog integer FKs (files link straight to catalog rows;
       -- recording_id covers mbid-less provider videos too)
       release_group_id INTEGER REFERENCES Albums(id) ON DELETE SET NULL,
       album_release_id INTEGER REFERENCES AlbumReleases(id) ON DELETE SET NULL,

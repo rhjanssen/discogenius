@@ -5,7 +5,7 @@ import { handleApplyCuration } from "../handlers/curation-handlers.js";
 
 /**
  * Executor for ApplyCuration
- * Wraps the legacy handler to implement the new Lidarr-style IExecuteCommand contract.
+ * Dispatches to the command handler via the IExecuteCommand contract.
  */
 export class ApplyCurationCommand implements IExecuteCommand<any> {
     async execute(job: any, ctx: CommandHandlerContext): Promise<void> {

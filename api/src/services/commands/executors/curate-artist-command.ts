@@ -5,7 +5,7 @@ import { handleCurateArtist } from "../handlers/curation-handlers.js";
 
 /**
  * Executor for CurateArtist
- * Wraps the legacy handler to implement the new Lidarr-style IExecuteCommand contract.
+ * Dispatches to the command handler via the IExecuteCommand contract.
  */
 export class CurateArtistCommand implements IExecuteCommand<any> {
     async execute(job: any, ctx: CommandHandlerContext): Promise<void> {

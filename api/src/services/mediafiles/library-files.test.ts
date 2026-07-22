@@ -22,6 +22,8 @@ function writeTestConfig(overrides?: {
   artistFolder?: string;
   albumTrackPathSingle?: string;
   createEmptyArtistFolders?: boolean;
+  includeSpatial?: boolean;
+  includeVideos?: boolean;
 }) {
   const config = configModule.readConfig();
   config.path.music_path = path.join(tempDir, "library", "music");
@@ -35,6 +37,12 @@ function writeTestConfig(overrides?: {
   }
   if (overrides?.createEmptyArtistFolders !== undefined) {
     config.path.create_empty_artist_folders = overrides.createEmptyArtistFolders;
+  }
+  if (overrides?.includeSpatial !== undefined) {
+    config.filtering.include_spatial = overrides.includeSpatial;
+  }
+  if (overrides?.includeVideos !== undefined) {
+    config.filtering.include_videos = overrides.includeVideos;
   }
   configModule.writeConfig(config);
 }
@@ -281,8 +289,27 @@ test("resolveArtistFolderForPersistence prefers MusicBrainz disambiguation for s
   assert.equal(resolved, "Phoenix (French band)");
 });
 
-test("ensureEmptyArtistFoldersIfEnabled creates the artist folder under each configured library root", () => {
-  writeTestConfig({ createEmptyArtistFolders: true });
+test("ensureEmptyArtistFoldersIfEnabled creates only stereo folders when spatial/video are disabled", () => {
+  writeTestConfig({
+    createEmptyArtistFolders: true,
+    includeSpatial: false,
+    includeVideos: false,
+  });
+
+  const ensured = artistPathsModule.ensureEmptyArtistFoldersIfEnabled(path.join("Bastille {mbid-artist-mbid-1}"));
+
+  assert.equal(ensured.length, 1);
+  assert.ok(fs.existsSync(path.join(configModule.Config.getMusicPath(), "Bastille {mbid-artist-mbid-1}")));
+  assert.equal(fs.existsSync(path.join(configModule.Config.getSpatialPath(), "Bastille {mbid-artist-mbid-1}")), false);
+  assert.equal(fs.existsSync(path.join(configModule.Config.getVideoPath(), "Bastille {mbid-artist-mbid-1}")), false);
+});
+
+test("ensureEmptyArtistFoldersIfEnabled creates spatial and video folders when those features are enabled", () => {
+  writeTestConfig({
+    createEmptyArtistFolders: true,
+    includeSpatial: true,
+    includeVideos: true,
+  });
 
   const ensured = artistPathsModule.ensureEmptyArtistFoldersIfEnabled(path.join("Bastille {mbid-artist-mbid-1}"));
 
@@ -290,6 +317,34 @@ test("ensureEmptyArtistFoldersIfEnabled creates the artist folder under each con
   assert.ok(fs.existsSync(path.join(configModule.Config.getMusicPath(), "Bastille {mbid-artist-mbid-1}")));
   assert.ok(fs.existsSync(path.join(configModule.Config.getSpatialPath(), "Bastille {mbid-artist-mbid-1}")));
   assert.ok(fs.existsSync(path.join(configModule.Config.getVideoPath(), "Bastille {mbid-artist-mbid-1}")));
+});
+
+test("removeEmptyParents prunes nested empty download folders up to the stop directory", () => {
+  const downloadRoot = path.join(tempDir, "downloads-prune");
+  const jobDir = path.join(downloadRoot, "tidal", "12345", "album", "job_abc");
+  fs.mkdirSync(jobDir, { recursive: true });
+  fs.rmdirSync(jobDir);
+
+  libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot);
+
+  assert.equal(fs.existsSync(path.join(downloadRoot, "tidal", "12345", "album")), false);
+  assert.equal(fs.existsSync(path.join(downloadRoot, "tidal", "12345")), false);
+  assert.equal(fs.existsSync(path.join(downloadRoot, "tidal")), false);
+  assert.ok(fs.existsSync(downloadRoot));
+});
+
+test("removeEmptyParents prunes empty video job trees under downloads/videos", () => {
+  const downloadRoot = path.join(tempDir, "downloads-videos-prune");
+  const jobDir = path.join(downloadRoot, "videos", "tidal", "99999", "job_42");
+  fs.mkdirSync(jobDir, { recursive: true });
+  fs.rmdirSync(jobDir);
+
+  libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot);
+
+  assert.equal(fs.existsSync(path.join(downloadRoot, "videos", "tidal", "99999")), false);
+  assert.equal(fs.existsSync(path.join(downloadRoot, "videos", "tidal")), false);
+  assert.equal(fs.existsSync(path.join(downloadRoot, "videos")), false);
+  assert.ok(fs.existsSync(downloadRoot));
 });
 
 test("resolveArtistFolderForPersistence reuses the canonical folder for provider rows with the same MusicBrainz artist", () => {
@@ -665,7 +720,7 @@ test("upsertLibraryFile does not invent provider ids for canonical artist assets
   });
 });
 
-test("disk scan relinks Lidarr-style album covers and renamed lyrics to their provider album and track", () => {
+test("disk scan relinks album covers and renamed lyrics to their provider album and track", () => {
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)

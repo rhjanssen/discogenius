@@ -125,7 +125,7 @@ export function normalizeTitle(input: string): string {
  * / …") so a provider upload ("Living (feat. …) (Official Video)") compares equal
  * to the plain recording title. Lives here with the other title helpers rather
  * than duplicated in the video service. (See docs/MATCHING_SET_COVER_DESIGN.md §5
- * for the planned collapse of these variants into one Lidarr-style cleaner.)
+ * for the planned collapse of these variants into one cleaner.)
  */
 export function videoComparableTitle(value?: string | null): string {
     return String(value || "")

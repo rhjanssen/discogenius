@@ -25,10 +25,8 @@ import {
 } from "./command-ordering.js";
 
 // The command vocabulary, persisted model, and ordering helpers were split into
-// command-names.ts / command-model.ts / command-ordering.ts to mirror Lidarr's
-// Messaging/Commands layout (command identity, CommandModel.cs / CommandStatus.cs,
-// and the priority comparers). Re-export them so existing
-// `from "./command-queue.js"` imports keep working unchanged.
+// command-names.ts / command-model.ts / command-ordering.ts. Re-export them so
+// existing `from "./command-queue.js"` imports keep working unchanged.
 export {
     CommandNames,
     DOWNLOAD_COMMAND_NAMES,
@@ -56,7 +54,7 @@ export {
 import { appEvents, AppEvent, CommandEventPayload } from "./app-events.js";
 
 // ---------------------------------------------------------------------------
-// Throttled COMMAND_UPDATED emission (Lidarr-style debounce)
+// Throttled COMMAND_UPDATED emission (debounced broadcast)
 // ---------------------------------------------------------------------------
 // Structural status changes (processing, completed, failed, cancelled) emit
 // immediately. Progress / description-only updates are coalesced so that at
@@ -458,9 +456,8 @@ ${buildExecutionOrderClause()}
      * to the window. Without it, a deep backlog of one type (e.g. hundreds of
      * queued RefreshArtist during intake) fills the whole window; if that type is
      * concurrency-capped, every other queued type is starved out of consideration
-     * and worker slots idle. Lidarr's CommandQueue.TryGet filters the ENTIRE
-     * in-memory queue so it can't have this problem — the per-type rank is the
-     * bounded-SQL equivalent.
+     * and worker slots idle. The per-type rank keeps a deep backlog of one
+     * type from starving every other queued type out of the bounded SQL window.
      */
     static getTopPendingJobsByTypes(types: readonly CommandName[], limit: number = 20, perTypeLimit?: number): CommandModel[] {
         if (types.length === 0) return [];

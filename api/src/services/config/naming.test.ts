@@ -330,7 +330,36 @@ test("renderRelativePath returns \"Unknown\" when all segments collapse", () => 
   assert.equal(rendered, "Unknown");
 });
 
-test("validateNamingConfig accepts Lidarr-style templates and returns backend previews", () => {
+test("factory default naming templates render Plex/Jellyfin-friendly previews", () => {
+  const config = {
+    artist_folder: "{Artist Name} {mbid-{Artist MbId}}",
+    album_track_path_single: "{Album FullTitle} ({Release Year})/{track:00} - {Track FullTitle}",
+    album_track_path_multi: "{Album FullTitle} ({Release Year})/{medium:0}{track:00} - {Track FullTitle}",
+    video_file: "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}",
+  };
+
+  const validation = validateNamingConfig(config);
+  assert.equal(Object.values(validation).every((result) => result.valid), true);
+
+  const preview = previewNamingConfig(config);
+  const normalize = (value: string) => value.replace(/\\/g, "/");
+  assert.deepEqual(
+    {
+      artistFolder: normalize(preview.artistFolder),
+      standardTrack: normalize(preview.standardTrack),
+      multiDiscTrack: normalize(preview.multiDiscTrack),
+      video: normalize(preview.video),
+    },
+    {
+      artistFolder: "Bastille {mbid-7808accb-6395-4b25-858c-678bbb73896b}",
+      standardTrack: "Bad Blood (The Extended Cut) (2013)/01 - Pompeii (Live From MTV Unplugged).flac",
+      multiDiscTrack: "Bad Blood (The Extended Cut) (2013)/203 - Pompeii (Live From MTV Unplugged).flac",
+      video: "Pompeii (Live At The O2)-video {TIDAL-26065587}.mp4",
+    },
+  );
+});
+
+test("validateNamingConfig accepts templates and returns backend previews", () => {
   const config = {
     artist_folder: "{artistCleanNameThe}",
     album_track_path_single: "{Album CleanTitle} ({Release Year})/{track:00} - {Track CleanTitle}",
@@ -409,7 +438,7 @@ test("provider-neutral tokens and double-bracket nested expressions render corre
 
 });
 
-test("spaced Lidarr-style provider/video tokens resolve via the provider registry", () => {
+test("spaced provider/video tokens resolve via the provider registry", () => {
   const rendered = renderFileStem(
     "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}",
     {
@@ -443,7 +472,7 @@ test("validateNamingConfig accepts provider-neutral tokens", () => {
   assert.equal(Object.values(validation).every((result) => result.valid), true);
 });
 
-test("reserved Windows device names are sanitized when followed by an extension (Lidarr-aligned)", () => {
+test("reserved Windows device names are sanitized when followed by an extension", () => {
   assert.equal(cleanPathSegment("con.flac"), "con_.flac");
   assert.equal(cleanPathSegment("CON.flac"), "CON_.flac");
   assert.equal(cleanPathSegment("aux.mp3"), "aux_.mp3");

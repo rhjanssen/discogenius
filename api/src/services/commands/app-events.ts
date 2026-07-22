@@ -16,8 +16,7 @@ export enum AppEvent {
     QUEUE_CLEARED = 'queue.cleared',
     HISTORY_ADDED = 'history.added',
 
-    // Scanner Events — Lidarr vocabulary: "refresh" = metadata refresh,
-    // "scan" = disk scan. (ArtistRefreshCompleteEvent / ArtistScannedEvent.)
+    // Scanner Events — "refresh" = metadata refresh, "scan" = disk scan.
     ARTIST_REFRESH_COMPLETE = 'artist.refresh.complete',
     ARTIST_SCANNED = 'artist.scanned',
 
@@ -44,7 +43,7 @@ export interface CommandEventPayload {
     error?: string;
 }
 
-// Raised when a metadata refresh completes (Lidarr ArtistRefreshCompleteEvent).
+// Raised when a metadata refresh completes.
 export interface ArtistRefreshCompleteEventPayload {
     artistId: string;
     artistName: string;
@@ -57,7 +56,7 @@ export interface ArtistRefreshCompleteEventPayload {
     trigger: number;
 }
 
-// Raised when a disk scan completes (Lidarr ArtistScannedEvent).
+// Raised when a disk scan completes.
 export interface ArtistScannedEventPayload {
     artistId: string;
     artistName: string;

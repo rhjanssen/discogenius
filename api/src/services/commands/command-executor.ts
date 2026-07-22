@@ -17,9 +17,9 @@ const SCHEDULER_THREAD_LIMIT = readIntEnv('DISCOGENIUS_SCHEDULER_THREAD_LIMIT', 
 
 /**
  * CommandExecutor - executes queued non-download jobs (scans, curation,
- * maintenance). Analogous to Lidarr's CommandExecutor: it drains the command
- * queue and runs handlers, up to SCHEDULER_THREAD_LIMIT at a time. (The periodic
- * trigger that *enqueues* scheduled tasks lives in scheduler.ts.)
+ * maintenance). Drains the command queue and runs handlers, up to
+ * SCHEDULER_THREAD_LIMIT at a time. (The periodic trigger that *enqueues*
+ * scheduled tasks lives in scheduler.ts.)
  *
  * Respects command exclusivity rules:
  * - Per-ref-exclusive commands (e.g. only one RefreshArtist/CurateArtist per artist at a time;
@@ -155,16 +155,15 @@ export class CommandExecutor {
         if (!CommandQueueManager.markProcessing(job.id)) {
             return;
         }
-        // Lidarr's CommandExecutor.ExecuteCommands catches every command failure,
-        // logs it, and moves on — a failed command must never take down the
-        // executor. Here that means the job promise must never reject unhandled
-        // (an escaped rejection aborts the whole Node process).
+        // Catch every command failure, log it, and move on — a failed command
+        // must never take down the executor. Here that means the job promise
+        // must never reject unhandled (an escaped rejection aborts the whole
+        // Node process).
         const promise = this.processJob(job)
             .catch(async (error: unknown) => {
                 if (isPoolShutdownError(error)) {
                     // Deploy/restart interruption, not a failure: leave the row
-                    // 'started' so boot recovery re-queues it immediately
-                    // (Lidarr's OrphanStarted model).
+                    // 'started' so boot recovery re-queues it immediately.
                     console.log(`[CommandExecutor] Command #${job.id} (${job.name}) interrupted by shutdown; will re-queue on next start`);
                     return;
                 }
@@ -188,7 +187,7 @@ export class CommandExecutor {
     /**
      * Run a command's full lifecycle. In the live app the worker pool is running,
      * so the command executes on a real OS thread (worker_threads) — the direct
-     * analogue of Lidarr's off-thread CommandExecutor — and *all* of its
+     * off-thread CommandExecutor — and *all* of its
      * command-table writes (claim/complete/fail/next-pass) happen on the worker's
      * connection, never blocking the main HTTP+SSE loop. When the pool isn't
      * running (unit tests calling processJob directly), the lifecycle runs inline

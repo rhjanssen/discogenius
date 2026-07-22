@@ -20,20 +20,17 @@ import {
 } from "./command-worker-protocol.js";
 
 /**
- * Main-thread pool of command worker threads — the off-thread execution backend for
- * the `CommandExecutor`, modelled on Lidarr's `THREAD_LIMIT = 3` real-thread
- * `CommandExecutor`. Each worker runs one command handler at a time on its own
- * OS thread + DB connection, so heavy synchronous better-sqlite3 / CPU work
- * never blocks the main thread's HTTP + SSE loop.
+ * Main-thread pool of command worker threads — the off-thread execution backend
+ * for the `CommandExecutor` (default THREAD_LIMIT = 3). Each worker runs one
+ * command handler at a time on its own OS thread + DB connection, so heavy
+ * synchronous better-sqlite3 / CPU work never blocks the main thread's HTTP +
+ * SSE loop.
  *
- * Always on in the running app — the pool is started unconditionally at boot,
- * mirroring Lidarr's `CommandExecutor`, which spawns its thread pool on
- * ApplicationStartedEvent with no single/multi toggle. Callers dispatch to the
- * pool when it `isActive()` (i.e. started); otherwise they run the work
- * in-process. The only context where the pool isn't started is unit tests that
- * exercise handler logic directly (cf. Lidarr's CommandExecutorFixture, which
- * runs `IExecute` handlers in-process without the real thread pool). See
- * `CommandExecutor`.
+ * Always on in the running app — the pool is started unconditionally at boot
+ * with no single/multi toggle. Callers dispatch to the pool when it
+ * `isActive()` (i.e. started); otherwise they run the work in-process. The only
+ * context where the pool isn't started is unit tests that exercise handler
+ * logic directly. See `CommandExecutor`.
  */
 
 /** Optional per-run hooks. `onProgress` receives ImportDownload progress states. */
@@ -44,8 +41,8 @@ export interface JobRunOptions {
 /**
  * Marker for jobs interrupted by pool shutdown (deploy/restart), as opposed to
  * jobs that genuinely failed. Callers use this to leave the command row in
- * 'started' so boot recovery re-queues it immediately (Lidarr's OrphanStarted
- * model) instead of persisting a failure that waits for the next due-check.
+ * 'started' so boot recovery re-queues it immediately instead of persisting a
+ * failure that waits for the next due-check.
  */
 export const POOL_SHUTDOWN_MESSAGE = "Job worker pool shutting down";
 

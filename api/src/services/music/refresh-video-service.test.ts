@@ -309,7 +309,49 @@ test("a parenthetical qualifier one provider omits still dedupes when durations 
   assert.equal(offers[0].recordingId, videos[0].id);
 });
 
-test("unlabeled live cuts merge with an explicitly Live-titled peer when durations agree", () => {
+test("two exact same-provider offers merge; near-duration same-provider offers stay split", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-tears-a",
+    title: "Tears Dry On Their Own",
+    artist_name: "Amy Winehouse",
+    duration: 187,
+  }, {
+    provider: "tidal",
+    provider_id: "tidal-tears-b",
+    title: "Tears Dry On Their Own",
+    artist_name: "Amy Winehouse",
+    duration: 187,
+  }]);
+
+  const exact = dbModule.db.prepare(`
+    SELECT COUNT(DISTINCT recording_id) AS c FROM ProviderItems WHERE entity_type = 'video'
+  `).get() as { c: number };
+  assert.equal(exact.c, 1);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-pompeii-official",
+    title: "Pompeii",
+    artist_name: "Bastille",
+    duration: 233,
+  }, {
+    provider: "tidal",
+    provider_id: "tidal-pompeii-gma",
+    title: "Pompeii",
+    artist_name: "Bastille",
+    duration: 228,
+  }]);
+
+  const near = dbModule.db.prepare(`
+    SELECT COUNT(DISTINCT recording_id) AS c
+    FROM ProviderItems
+    WHERE entity_type = 'video' AND provider_id LIKE 'tidal-pompeii%'
+  `).get() as { c: number };
+  assert.equal(near.c, 2, "5s duration gap keeps same-provider cuts separate");
+});
+
+test("unlabeled live cuts merge with an explicitly Live-at-titled peer at exact duration", () => {
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
     provider_id: "tidal-good-grief-live",
@@ -329,15 +371,7 @@ test("unlabeled live cuts merge with an explicitly Live-titled peer when duratio
   const videos = dbModule.db.prepare(`
     SELECT id, title FROM Recordings WHERE is_video = 1
   `).all() as Array<{ id: number; title: string }>;
-  assert.equal(videos.length, 1);
-
-  const offers = dbModule.db.prepare(`
-    SELECT provider, provider_id AS providerId, recording_id AS recordingId, quality
-    FROM ProviderItems WHERE entity_type = 'video'
-    ORDER BY provider
-  `).all() as Array<{ provider: string; providerId: string; recordingId: number; quality: string | null }>;
-  assert.equal(offers.length, 2);
-  assert.equal(offers[0].recordingId, offers[1].recordingId);
+  assert.equal(videos.length, 1, "Live From/At + bare title merge at exact duration");
 });
 
 test("qualifier-tolerant dedup does NOT merge when durations differ beyond tolerance", () => {
@@ -407,7 +441,7 @@ test("refresh retro-merges pre-existing duplicate provider-only video recordings
   assert.equal(videos[0].id, offers[0].recordingId);
 });
 
-test("lyric and unlabeled merge when durations agree within 5s", () => {
+test("lyric and unlabeled merge when durations agree within 2s", () => {
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
     provider_id: "tidal-oblivion",
@@ -438,7 +472,7 @@ test("lyric and unlabeled merge when durations agree within 5s", () => {
   assert.equal(offers[0].recordingId, offers[1].recordingId);
 });
 
-test("lyric and unlabeled stay separate when duration delta exceeds 5s", () => {
+test("lyric and unlabeled stay separate when duration delta exceeds 2s", () => {
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
     provider_id: "tidal-oblivion",
@@ -459,7 +493,7 @@ test("lyric and unlabeled stay separate when duration delta exceeds 5s", () => {
   assert.equal(videos.length, 2);
 });
 
-test("live and unlabeled at exactly 10s do not merge; within 5s still can", () => {
+test("live and unlabeled studio never merge even within 2s", () => {
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "youtube-music",
     provider_id: "yt-oblivion-studio",
@@ -496,12 +530,10 @@ test("live and unlabeled at exactly 10s do not merge; within 5s still can", () =
     duration: 280,
   }]);
 
-  const withinFive = dbModule.db.prepare(`
+  const withinTwo = dbModule.db.prepare(`
     SELECT id, title, video_variant FROM Recordings WHERE is_video = 1
   `).all() as Array<{ id: number; title: string; video_variant: string | null }>;
-  assert.equal(withinFive.length, 1, "live↔unlabeled within 5s still merges");
-  assert.equal(withinFive[0].title, "Good Grief (Live From O2)");
-  assert.equal(withinFive[0].video_variant, "live");
+  assert.equal(withinTwo.length, 2, "live↔studio must stay separate even within 2s");
 });
 
 test("official music video still does not absorb a same-duration live cut", () => {
@@ -523,6 +555,30 @@ test("official music video still does not absorb a same-duration live cut", () =
     SELECT id FROM Recordings WHERE is_video = 1
   `).all() as Array<{ id: number }>;
   assert.equal(videos.length, 2);
+});
+
+test("cross-provider bare live twin merges with unlabeled main at exact duration", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-seasons",
+    title: "Seasons & Narcissus",
+    artist_name: "Bastille",
+    duration: 206,
+    release_date: "2023-06-09",
+  }, {
+    provider: "apple-music",
+    provider_id: "apple-seasons-live",
+    title: "Seasons & Narcissus (Live)",
+    artist_name: "Bastille",
+    duration: 206,
+    release_date: "2023-06-09",
+  }]);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id, title, video_variant FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number; title: string; video_variant: string | null }>;
+  assert.equal(videos.length, 1);
+  assert.equal(videos[0].title, "Seasons & Narcissus");
 });
 
 test("refresh splits a live offer wrongly glued onto a studio recording", () => {

@@ -1,11 +1,11 @@
 /**
  * Command handler contract.
  *
- * Mirrors Lidarr's `IExecute<TCommand>`: one handler per command, resolved from
- * a registry by command name. The `CommandExecutor` builds a per-command
- * `CommandHandlerContext` (progress/description helpers, cooperative yield) and
- * invokes the matching handler. Keeping handlers as discrete units — rather than
- * one monolithic switch — is what makes off-thread execution tractable later.
+ * One handler per command, resolved from a registry by command name. The
+ * `CommandExecutor` builds a per-command `CommandHandlerContext`
+ * (progress/description helpers, cooperative yield) and invokes the matching
+ * handler. Keeping handlers as discrete units — rather than one monolithic
+ * switch — is what makes off-thread execution tractable later.
  */
 
 import type {CommandModel, CommandModelOf} from "../command-model.js";

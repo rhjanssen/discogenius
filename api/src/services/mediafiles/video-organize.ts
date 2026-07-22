@@ -1,5 +1,5 @@
 /**
- * Video-organize helpers (Lidarr-style split from OrganizerService).
+ * Video-organize helpers (split from OrganizerService).
  * Bundled-video import naming + catalog lookup after upsert.
  * DB reads only — no FS side effects or Organizer class state.
  */

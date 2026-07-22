@@ -60,6 +60,8 @@ export interface QueueItemContract {
   cover?: string | null;
   album_id?: string | null;
   album_title?: string | null;
+  /** Canonical video recording id when type === "video". */
+  media_id?: string | null;
   currentFileNum?: number;
   totalFiles?: number;
   currentTrack?: string;
@@ -269,6 +271,7 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
     cover: expectNullableString(record.cover, `${label}.cover`),
     album_id: expectNullableString(record.album_id, `${label}.album_id`),
     album_title: expectNullableString(record.album_title, `${label}.album_title`),
+    media_id: expectNullableString(record.media_id, `${label}.media_id`),
     currentFileNum: expectOptionalNumber(record.currentFileNum, `${label}.currentFileNum`),
     totalFiles: expectOptionalNumber(record.totalFiles, `${label}.totalFiles`),
     currentTrack: expectOptionalString(record.currentTrack, `${label}.currentTrack`),

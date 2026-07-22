@@ -740,6 +740,51 @@ test("uses ISRC overlap and track count as fallback evidence", () => {
     assert.equal(match.evidence.isrcOverlap, 2);
 });
 
+test("prefers matching media count when ISRC overlap and track count tie", () => {
+    const sharedIsrcs = Array.from({ length: 27 }, (_, index) =>
+        `GBUM7220${String(index + 1).padStart(4, "0")}`);
+    const volumeTieReleaseGroups = [{
+        mbid: "bc411157-431c-4f04-81e1-18e1c21d50ec",
+        title: "Give Me the Future",
+        primaryType: "Album",
+        secondaryTypes: [],
+        firstReleaseDate: "2022-02-04",
+        releases: [
+            {
+                mbid: "0a0bd5a8-two-disc-release",
+                trackCount: 27,
+                mediaCount: 2,
+                isrcs: sharedIsrcs,
+            },
+            {
+                mbid: "063b19f1-three-disc-release",
+                trackCount: 27,
+                mediaCount: 3,
+                isrcs: sharedIsrcs,
+            },
+        ],
+    }];
+
+    const match = matchProviderAlbumToReleaseGroup({
+        providerId: "expanded-hires",
+        title: "Give Me The Future + Dreams Of The Past",
+        releaseDate: "2022-08-26",
+        type: "ALBUM",
+        isrcs: sharedIsrcs,
+        trackCount: 27,
+        volumeCount: 3,
+    }, volumeTieReleaseGroups);
+
+    assert.equal(match.method, "musicbrainz-recording-isrc");
+    assert.equal(match.releaseMbid, "063b19f1-three-disc-release");
+    assert.deepEqual(match.evidence.availableReleaseMbids, [
+        "0a0bd5a8-two-disc-release",
+        "063b19f1-three-disc-release",
+    ]);
+    assert.equal(match.evidence.volumeCountMatched, true);
+    assert.equal(match.evidence.targetVolumeCount, 3);
+});
+
 test("does not force weak provider rows into an MB release group", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "1",

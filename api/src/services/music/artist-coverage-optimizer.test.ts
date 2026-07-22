@@ -64,3 +64,23 @@ test("fewest-releases cover keeps disjoint release groups", () => {
 
   assert.deepEqual([...retained].sort(), ["rg-album", "rg-other"]);
 });
+
+test("fewest-releases cover treats shared ISRC keys as the same recording", () => {
+  const retained = selectFewestReleaseGroupsForCoverage([
+    {
+      mbid: "rg-deluxe",
+      recordingIds: new Set(["isrc:GBUM72104384", "isrc:GBUM72108141", "isrc:GBUM72100001"]),
+      providerAlbumCount: 1,
+      typePriority: 100,
+    },
+    {
+      mbid: "rg-piano-single",
+      // Distinct MB recording for the piano master, but same ISRC as deluxe track
+      recordingIds: new Set(["isrc:GBUM72108141", "isrc:GBUM72104384"]),
+      providerAlbumCount: 1,
+      typePriority: 60,
+    },
+  ]);
+
+  assert.deepEqual([...retained], ["rg-deluxe"]);
+});

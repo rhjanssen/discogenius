@@ -71,7 +71,7 @@ function buildVideoNavPath(videoId: unknown): string | null {
 
 function getQueueHistoryNavPath(item: QueueItem): string | null {
     if (item.type === "video") {
-        return buildVideoNavPath(item.providerId);
+        return buildVideoNavPath(item.media_id ?? item.providerId);
     }
 
     if (item.type === "album") {

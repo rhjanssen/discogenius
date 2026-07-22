@@ -60,8 +60,8 @@ function isHybridTrackPlan(slot: PlannedReleaseGroupSlot): boolean {
     || providerAlbumIds.length > 1;
 }
 
-function parseTrackSources(slot: PlannedReleaseGroupSlot): TrackSource[] | null {
-  if (!isHybridTrackPlan(slot) || !slot.match_evidence) return null;
+function parseEvidenceTrackSources(slot: PlannedReleaseGroupSlot): TrackSource[] | null {
+  if (!slot.match_evidence) return null;
 
   let evidence: { trackSources?: Array<Record<string, unknown>> };
   try {
@@ -90,6 +90,12 @@ function parseTrackSources(slot: PlannedReleaseGroupSlot): TrackSource[] | null 
     });
   }
   return sources.length > 0 ? sources : null;
+}
+
+function parseTrackSources(slot: PlannedReleaseGroupSlot): TrackSource[] | null {
+  // Hybrid/composite plans must drive acquisition from evidence (multi-album tips).
+  if (!isHybridTrackPlan(slot)) return null;
+  return parseEvidenceTrackSources(slot);
 }
 
 function resolveReleaseMbid(slot: PlannedReleaseGroupSlot): string | null {
@@ -262,6 +268,17 @@ function primaryProviderAlbumId(slot: PlannedReleaseGroupSlot): string | null {
   return parts[0] || null;
 }
 
+/** Full composite album id list (primary first) for hybrid jobs / organizer scope. */
+function compositeProviderAlbumId(slot: PlannedReleaseGroupSlot): string | null {
+  const parts = String(slot.selected_provider_id || "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  // Dedupe while preserving primary-first order.
+  return Array.from(new Set(parts)).join(";");
+}
+
 /**
  * Queue one catalog-anchored DownloadAlbum for a release-group slot.
  *
@@ -275,10 +292,15 @@ export function queueCatalogAlbumDownload(
   options: QueueTrackAcquisitionPlanOptions = {},
 ): { queued: boolean; recognizedHybrid: boolean; commandId: number | null } {
   const releaseGroupMbid = String(slot.release_group_mbid || "").trim();
-  const providerAlbumId = primaryProviderAlbumId(slot);
-  if (!releaseGroupMbid || !providerAlbumId) {
+  const primaryAlbumId = primaryProviderAlbumId(slot);
+  if (!releaseGroupMbid || !primaryAlbumId) {
     return { queued: false, recognizedHybrid: false, commandId: null };
   }
+  // Single-album jobs keep one id; hybrids pass the full semicolon-joined set so
+  // organize/refresh see every tip album (not only the primary quality donor).
+  const providerAlbumId = isHybridTrackPlan(slot)
+    ? (compositeProviderAlbumId(slot) || primaryAlbumId)
+    : primaryAlbumId;
   if (options.canQueue && !options.canQueue()) {
     return { queued: false, recognizedHybrid: isHybridTrackPlan(slot), commandId: null };
   }
@@ -297,6 +319,10 @@ export function queueCatalogAlbumDownload(
   const releaseMbid = resolveReleaseMbid(slot);
   const catalogTracks = loadCatalogTracks(releaseMbid);
   const hybridSources = parseTrackSources(slot);
+  // Non-hybrid slots still carry coverage trackSources (direct matches). Use them
+  // as a provider-track fallback when ProviderItems lack track/recording MBIDs
+  // (common on trailing discs) without forcing hybrid trackOffers mode.
+  const evidenceSources = hybridSources || parseEvidenceTrackSources(slot);
   const provider = String(slot.selected_provider || "tidal");
   const artistName = slot.artist_name || slot.provider_artist_name || "Unknown Artist";
   const albumTitle = slot.title || slot.provider_title || "Unknown Album";
@@ -309,9 +335,17 @@ export function queueCatalogAlbumDownload(
       if (source.canonicalRecordingMbid) hybridByRecording.set(source.canonicalRecordingMbid, source);
     }
   }
+  const evidenceByTrack = new Map<string, TrackSource>();
+  const evidenceByRecording = new Map<string, TrackSource>();
+  if (evidenceSources) {
+    for (const source of evidenceSources) {
+      if (source.canonicalTrackMbid) evidenceByTrack.set(source.canonicalTrackMbid, source);
+      if (source.canonicalRecordingMbid) evidenceByRecording.set(source.canonicalRecordingMbid, source);
+    }
+  }
 
   const albumProviderOffers = (!hybridSources && catalogTracks.length > 0)
-    ? resolveProviderTrackOffersForAlbum(provider, providerAlbumId, catalogTracks)
+    ? resolveProviderTrackOffersForAlbum(provider, primaryAlbumId, catalogTracks)
     : new Map<string, { providerTrackId: string; quality: string | null }>();
 
   const trackStates: DownloadTrackStateEntry[] = [];
@@ -327,9 +361,14 @@ export function queueCatalogAlbumDownload(
       );
       const hybrid = hybridByTrack.get(track.track_mbid)
         || (track.recording_mbid ? hybridByRecording.get(track.recording_mbid) : undefined);
+      const evidence = evidenceByTrack.get(track.track_mbid)
+        || (track.recording_mbid ? evidenceByRecording.get(track.recording_mbid) : undefined);
       const albumOffer = albumProviderOffers.get(track.track_mbid);
-      const providerTrackId = hybrid?.providerTrackId || albumOffer?.providerTrackId || undefined;
-      const trackQuality = hybrid?.quality || albumOffer?.quality || slot.quality || null;
+      const providerTrackId = hybrid?.providerTrackId
+        || albumOffer?.providerTrackId
+        || evidence?.providerTrackId
+        || undefined;
+      const trackQuality = hybrid?.quality || albumOffer?.quality || evidence?.quality || slot.quality || null;
 
       trackStates.push({
         title: track.title,
@@ -349,6 +388,7 @@ export function queueCatalogAlbumDownload(
         missingOffers.push({
           provider,
           providerTrackId,
+          providerAlbumId: hybrid?.providerAlbumId || evidence?.providerAlbumId || primaryAlbumId,
           canonicalTrackMbid: track.track_mbid,
           canonicalRecordingMbid: track.recording_mbid,
           title: track.title,
@@ -382,6 +422,7 @@ export function queueCatalogAlbumDownload(
         missingOffers.push({
           provider,
           providerTrackId: source.providerTrackId,
+          providerAlbumId: source.providerAlbumId || primaryAlbumId,
           canonicalTrackMbid: source.canonicalTrackMbid || null,
           canonicalRecordingMbid: source.canonicalRecordingMbid || null,
           title: source.title,

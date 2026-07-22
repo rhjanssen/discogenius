@@ -66,7 +66,7 @@ export function parseJsonObject(value: unknown): Record<string, any> {
 }
 
 // ArtistMetadata.genres / Albums.genres store a JSON array of strings.
-// Naming tokens use the primary (first) genre, matching Lidarr's
+// Naming tokens use the primary (first) genre, matching the
 // `Genres?.FirstOrDefault()` convention.
 export function firstGenre(genresJson: string | null | undefined): string | null {
   if (!genresJson) return null;
@@ -197,6 +197,7 @@ type OrganizeRequest = {
   trackOffers?: Array<{
     provider?: string;
     providerTrackId: string;
+    providerAlbumId?: string | null;
     canonicalTrackMbid?: string | null;
     canonicalRecordingMbid?: string | null;
     title?: string;
@@ -450,14 +451,19 @@ export class OrganizerService {
 
   private static resolveCanonicalAlbumImportContext(raw: OrganizeRequest, providerAlbumId: string): CanonicalAlbumImportContext | null {
     const provider = String(raw.provider || getDefaultStreamingSource()).trim() || getDefaultStreamingSource();
+    // Job acquisition-plan identity outranks slot/ProviderItems. Hybrid tips
+    // (e.g. BTB hires core 77661290) can also be exact selected_provider_id for
+    // an unrelated single (Rehab); without a job-RG constraint that single wins.
     const releaseGroupMbid = String(raw.releaseGroupMbid || raw.albumId || "").trim();
+    const releaseMbid = String(raw.releaseMbid || "").trim();
     const requestedSlot = String(raw.slot || "").trim().toLowerCase();
+    const compositeProviderId = String(raw.providerId || providerAlbumId || "").trim();
     const row = db.prepare(`
       SELECT
         COALESCE(rgs.selected_provider, pi.provider, ?) AS provider,
         COALESCE(rgs.selected_provider_id, pi.provider_id, ?) AS providerAlbumId,
-        COALESCE(rgs.release_group_mbid, pi.release_group_mbid, rg.mbid) AS releaseGroupMbid,
-        COALESCE(rgs.selected_release_mbid, pi.release_mbid, ?) AS releaseMbid,
+        COALESCE(NULLIF(?, ''), rgs.release_group_mbid, pi.release_group_mbid, rg.mbid) AS releaseGroupMbid,
+        COALESCE(NULLIF(?, ''), rgs.selected_release_mbid, pi.release_mbid) AS releaseMbid,
         COALESCE(rgs.slot, pi.library_slot, ?) AS slot,
         COALESCE(rgs.quality, pi.quality) AS quality,
         rg.title,
@@ -494,29 +500,44 @@ export class OrganizerService {
           OR rgs.selected_provider_id LIKE '%;' || pi.provider_id
        )
        AND (? = '' OR rgs.slot = ?)
-      LEFT JOIN Albums rg ON rg.mbid = COALESCE(rgs.release_group_mbid, pi.release_group_mbid, ?)
+       AND (? = '' OR rgs.release_group_mbid = ?)
+      LEFT JOIN Albums rg ON rg.mbid = COALESCE(NULLIF(?, ''), rgs.release_group_mbid, pi.release_group_mbid)
       LEFT JOIN ArtistMetadata am ON am.mbid = rg.artist_mbid
-      LEFT JOIN AlbumReleases selected_release ON selected_release.mbid = COALESCE(rgs.selected_release_mbid, pi.release_mbid, ?)
+      LEFT JOIN AlbumReleases selected_release ON selected_release.mbid = COALESCE(NULLIF(?, ''), rgs.selected_release_mbid, pi.release_mbid)
       WHERE pi.provider = ?
         AND pi.entity_type = 'album'
         AND pi.provider_id = ?
         AND (? = '' OR pi.release_group_mbid = ? OR rgs.release_group_mbid = ?)
       ORDER BY
-        CASE WHEN rgs.slot = ? THEN 0 ELSE 1 END,
+        CASE
+          WHEN ? != '' AND rgs.selected_provider_id = ? THEN 0
+          WHEN ? != '' AND rgs.release_group_mbid = ? THEN 1
+          WHEN INSTR(COALESCE(rgs.selected_provider_id, ''), ';') > 0 THEN 2
+          WHEN rgs.slot = ? THEN 3
+          ELSE 4
+        END,
+        LENGTH(COALESCE(rgs.selected_provider_id, '')) DESC,
         pi.updated_at DESC
       LIMIT 1
     `).get(
       provider,
       providerAlbumId,
-      raw.releaseMbid || null,
+      releaseGroupMbid || null,
+      releaseMbid || null,
       requestedSlot || "stereo",
       requestedSlot,
       requestedSlot,
+      releaseGroupMbid,
+      releaseGroupMbid,
       releaseGroupMbid || null,
-      raw.releaseMbid || null,
+      releaseMbid || null,
       provider,
       providerAlbumId,
       releaseGroupMbid,
+      releaseGroupMbid,
+      releaseGroupMbid,
+      compositeProviderId,
+      compositeProviderId,
       releaseGroupMbid,
       releaseGroupMbid,
       requestedSlot || "stereo",
@@ -563,14 +584,27 @@ export class OrganizerService {
     albumId: string,
     files: string[],
     context?: CanonicalAlbumImportContext | null,
+    trackOffers?: OrganizeRequest["trackOffers"],
   ): Promise<Map<string, string>> {
-    const albumIds = albumId.split(";").filter(Boolean);
+    const albumIds = Array.from(new Set([
+      ...albumId.split(";").map((part) => part.trim()).filter(Boolean),
+      ...(trackOffers || [])
+        .map((offer) => String(offer.providerAlbumId || "").trim())
+        .filter(Boolean),
+    ]));
     if (albumIds.length === 0) {
       return new Map();
     }
 
     const provider = String(context?.provider || "").trim();
-    let providerTrackIds = this.loadProviderTrackIdSet(albumIds, provider);
+    const unionOfferIds = (ids: Set<string>) => {
+      for (const offer of trackOffers || []) {
+        const tipId = String(offer.providerTrackId || "").trim();
+        if (tipId) ids.add(tipId);
+      }
+      return ids;
+    };
+    let providerTrackIds = unionOfferIds(this.loadProviderTrackIdSet(albumIds, provider));
     const refreshProviderTrackIds = async () => {
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
       for (const id of albumIds) {
@@ -580,7 +614,7 @@ export class OrganizerService {
           console.warn(`[Organizer] Failed to materialize provider track offers for album ${id}:`, error);
         }
       }
-      providerTrackIds = this.loadProviderTrackIdSet(albumIds, provider);
+      providerTrackIds = unionOfferIds(this.loadProviderTrackIdSet(albumIds, provider));
     };
 
     if (providerTrackIds.size === 0) {
@@ -1230,7 +1264,7 @@ export class OrganizerService {
     });
     const librarySlot = canonicalIdentity.librarySlot;
 
-    // Linked sidecars live in their own tables (Lidarr-aligned): lyrics in
+    // Linked sidecars live in their own tables: lyrics in
     // LyricFiles, image/other sidecars in MetadataFiles — never TrackFiles
     // (track/video media only). LyricFiles has no file_type column (the table
     // *is* the type), so that filter only applies to MetadataFiles.
@@ -1806,7 +1840,13 @@ export class OrganizerService {
     [musicRoot, spatialRoot, videoRoot].forEach((root) => this.ensureDir(root));
 
     if (type === "album") {
-      const albumIds = providerId.split(";").filter(Boolean);
+      const offerAlbumIds = (raw.trackOffers || [])
+        .map((offer) => String(offer.providerAlbumId || "").trim())
+        .filter(Boolean);
+      const albumIds = Array.from(new Set([
+        ...providerId.split(";").map((part) => part.trim()).filter(Boolean),
+        ...offerAlbumIds,
+      ]));
       if (albumIds.length === 0) throw new Error("Missing tidal id");
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
       for (const albumIdVal of albumIds) {
@@ -1830,6 +1870,14 @@ export class OrganizerService {
       if (!album) throw new Error(`Album ${albumIds[0]} offer not found in ProviderItems after scan`);
 
       const canonicalContext = this.resolveCanonicalAlbumImportContext(raw, albumIds[0]);
+      // Prefer the acquisition-plan job MBIDs over any slot/ProviderItems context.
+      // Competing singles that share a tip album id must not rebind the hybrid.
+      const jobReleaseGroupMbid = String(raw.releaseGroupMbid || "").trim()
+        || canonicalContext?.releaseGroupMbid
+        || null;
+      const jobReleaseMbid = String(raw.releaseMbid || "").trim()
+        || canonicalContext?.releaseMbid
+        || null;
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
       const artistId = artistContext.artistId;
       const artistMbId = artistContext.artistMbId;
@@ -1849,8 +1897,8 @@ export class OrganizerService {
       }
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
       const canonicalAlbumForNaming = getCanonicalAlbumMetadata({
-        canonicalReleaseGroupMbid: canonicalContext?.releaseGroupMbid || album.mb_release_group_id,
-        canonicalReleaseMbid: canonicalContext?.releaseMbid || album.mbid,
+        canonicalReleaseGroupMbid: jobReleaseGroupMbid || album.mb_release_group_id,
+        canonicalReleaseMbid: jobReleaseMbid || album.mbid,
       });
 
       const trackTemplate = Number(canonicalAlbumForNaming?.volumeCount || canonicalContext?.volumeCount || album.num_volumes || 1) > 1
@@ -1868,9 +1916,20 @@ export class OrganizerService {
       }
 
       const audioFiles = files.filter((file) => this.AUDIO_EXTENSIONS.has(path.extname(file).toLowerCase()));
-      const matchedTrackIdsByFile = await this.matchAlbumFilesToTracks(providerId, audioFiles, canonicalContext);
+      const matchedTrackIdsByFile = await this.matchAlbumFilesToTracks(
+        albumIds.join(";"),
+        audioFiles,
+        canonicalContext,
+        raw.trackOffers,
+      );
       if (audioFiles.length > 0 && matchedTrackIdsByFile.size === 0) {
         throw new Error(`[Organizer] Could not match downloaded album files for ${providerId} to Discogenius tracks in ${sourceAlbumDir}`);
+      }
+
+      const trackOffersByProviderIdEarly = new Map<string, NonNullable<OrganizeRequest["trackOffers"]>[number]>();
+      for (const offer of raw.trackOffers || []) {
+        const key = String(offer.providerTrackId || "").trim();
+        if (key) trackOffersByProviderIdEarly.set(key, offer);
       }
 
       const unmatchedAudioFiles = audioFiles.filter((srcFile) => {
@@ -1879,15 +1938,21 @@ export class OrganizerService {
         const idFromName = /^\d+$/.test(base) ? base : null;
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         if (!trackId) return true;
-        if (canonicalContext?.releaseMbid) {
+        // Hybrid tips with catalog MBIDs are importable even when the primary
+        // album ProviderItems row cannot resolve them yet.
+        const tipOffer = trackOffersByProviderIdEarly.get(String(trackId));
+        if (tipOffer?.canonicalTrackMbid || tipOffer?.canonicalRecordingMbid) {
+          return false;
+        }
+        if (jobReleaseMbid) {
           const trackRow = this.resolveMatchedCanonicalAlbumTrackRow({
-            provider: canonicalContext.provider,
+            provider: canonicalContext?.provider || streamingProviderId,
             trackId,
-            releaseMbid: canonicalContext.releaseMbid,
+            releaseMbid: jobReleaseMbid,
             fallbackAlbumId: albumIds[0],
             fallbackAlbumIds: albumIds,
             fallbackArtistId: artistId,
-            fallbackQuality: canonicalContext.quality || album.quality || null,
+            fallbackQuality: canonicalContext?.quality || album.quality || null,
           });
           return !trackRow;
         } else {
@@ -1953,11 +2018,11 @@ export class OrganizerService {
         const trackId = matchedTrackIdsByFile.get(srcFile) || idFromName;
         const placeholders = albumIds.map(() => '?').join(', ');
         const trackOffer = trackId ? trackOffersByProviderId.get(String(trackId)) : undefined;
-        // Catalog-first: bind position/title via Tracks on the best-known release
-        // (canonical context, else the album's own release mbid). Acquisition-plan
-        // offers supply the catalog MBIDs — never trust ProviderItems track/RG
-        // MBIDs for hybrid composites (those can point at unrelated singles).
-        const fallbackReleaseMbid = canonicalContext?.releaseMbid || album.mbid || null;
+        // Catalog-first: bind position/title via Tracks on the job's selected
+        // release. Acquisition-plan offers supply the catalog MBIDs — never trust
+        // ProviderItems track/RG MBIDs for hybrid composites (those can point at
+        // unrelated singles that share a tip album id).
+        const fallbackReleaseMbid = jobReleaseMbid || album.mbid || null;
         const offerTrackMbid = String(trackOffer?.canonicalTrackMbid || "").trim() || null;
         const offerRecordingMbid = String(trackOffer?.canonicalRecordingMbid || "").trim() || null;
 
@@ -1999,7 +2064,7 @@ export class OrganizerService {
           if (offered) {
             trackRow = {
               id: trackId,
-              album_id: canonicalContext?.releaseGroupMbid || albumIds[0],
+              album_id: jobReleaseGroupMbid || albumIds[0],
               artist_id: artistId,
               title: offered.title,
               version: null,
@@ -2053,11 +2118,6 @@ export class OrganizerService {
         // hybrid/partial albums (correct catalog MBID + disc/track numbers).
         const resolvedCanonicalTrackMbid = offerTrackMbid || trackRow.canonical_track_mbid || null;
         const resolvedCanonicalRecordingMbid = offerRecordingMbid || trackRow.canonical_recording_mbid || null;
-        // Hybrid jobs must keep the monitored RG even when ProviderItems children
-        // still carry a mismatched single/EP release_group_mbid.
-        const jobReleaseGroupMbid = canonicalContext?.releaseGroupMbid
-          || String(raw.releaseGroupMbid || "").trim()
-          || null;
 
         const canonicalIdentity = resolveLibraryFileIdentity({
           artistId,
@@ -2072,7 +2132,7 @@ export class OrganizerService {
           librarySlot: canonicalContext?.slot || (isSpatial ? "spatial" : "stereo"),
           canonicalArtistMbid: canonicalContext?.artistMbid || artistMbId || null,
           canonicalReleaseGroupMbid: jobReleaseGroupMbid,
-          canonicalReleaseMbid: canonicalContext?.releaseMbid || null,
+          canonicalReleaseMbid: jobReleaseMbid,
           canonicalTrackMbid: resolvedCanonicalTrackMbid,
           canonicalRecordingMbid: resolvedCanonicalRecordingMbid,
         });
@@ -2172,7 +2232,7 @@ export class OrganizerService {
         // import finalizer after MusicBrainz identity is resolved.
         const fileFingerprint: string | null = null;
 
-        // Batch all per-track DB writes in a single transaction (Lidarr-style).
+        // Batch all per-track DB writes in a single transaction.
         // This reduces ~5-6 auto-commits per track to 1 committed batch.
         const mediaIdStr = trackRow?.id ? String(trackRow.id) : trackId;
         let importedTrackFileId: number | null = null;
@@ -2743,7 +2803,7 @@ export class OrganizerService {
       // Fingerprinting and embedded tags are applied by the post-organize
       // import finalizer after MusicBrainz identity is resolved.
       const fileFingerprint: string | null = null;
-      // Batch all per-track DB writes in a single transaction (Lidarr-style).
+      // Batch all per-track DB writes in a single transaction.
       let importedTrackFileId: number | null = null;
       db.transaction(() => {
         const libraryFileId = this.upsertLibraryFile({
@@ -3246,7 +3306,7 @@ export class OrganizerService {
         providerId,
       });
 
-      // Batch all per-video DB writes in a single transaction (Lidarr-style).
+      // Batch all per-video DB writes in a single transaction.
       let libraryFileId: number | null = null;
       db.transaction(() => {
         libraryFileId = this.upsertLibraryFile({

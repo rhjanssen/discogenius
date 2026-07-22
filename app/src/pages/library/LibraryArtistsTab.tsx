@@ -1,5 +1,5 @@
 /**
- * Artists tab pieces extracted from Library.tsx (Lidarr-style incremental split).
+ * Artists tab pieces extracted from Library.tsx.
  * Column defs, no-results empty state, and selection toolbar — Fluent UI.
  */
 import { Text, mergeClasses } from "@fluentui/react-components";
@@ -10,15 +10,19 @@ import {
   EyeOff24Regular,
   ArrowSortDownLines24Regular,
   Search24Regular,
+  Tag24Regular,
+  Rename24Regular,
   ArrowSync24Filled,
   ArrowDownload24Filled,
   Eye24Filled,
   EyeOff24Filled,
   ArrowSortDownLines24Filled,
   Search24Filled,
+  Tag24Filled,
+  Rename24Filled,
   bundleIcon,
 } from "@fluentui/react-icons";
-import { useMemo, type MouseEvent, type ReactElement } from "react";
+import { useMemo, type MouseEvent, type ReactElement, type ReactNode } from "react";
 import { EmptyState } from "@/components/ui/ContentState";
 import { NotScannedBadge } from "@/components/ui/StatusBadges";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
@@ -32,6 +36,8 @@ const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
 const EyeOff24 = bundleIcon(EyeOff24Filled, EyeOff24Regular);
 const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
 const Search24 = bundleIcon(Search24Filled, Search24Regular);
+const Tag24 = bundleIcon(Tag24Filled, Tag24Regular);
+const Rename24 = bundleIcon(Rename24Filled, Rename24Regular);
 
 export function formatArtistLastScanned(date: string | null): string | null {
   if (!date) return null;
@@ -65,8 +71,13 @@ type ArtistSelectionBarProps = {
   onScan: () => void;
   onCurate: () => void;
   onDownload: () => void;
+  onRename: () => void;
+  onWriteTags: () => void;
   onMonitor: () => void;
   onUnmonitor: () => void;
+  fileToolsBusy?: boolean;
+  renameIcon?: ReactNode;
+  retagIcon?: ReactNode;
 };
 
 /** Selection toolbar shown above the artists grid/list when selection mode is on. */
@@ -79,8 +90,13 @@ export function LibraryArtistsSelectionBar({
   onScan,
   onCurate,
   onDownload,
+  onRename,
+  onWriteTags,
   onMonitor,
   onUnmonitor,
+  fileToolsBusy,
+  renameIcon,
+  retagIcon,
 }: ArtistSelectionBarProps): ReactElement {
   return (
     <LibrarySelectionBar
@@ -110,6 +126,20 @@ export function LibraryArtistsSelectionBar({
           icon: <ArrowDownload24 />,
           onClick: onDownload,
           disabled: selectedCount === 0,
+        },
+        {
+          key: "rename",
+          label: "Preview Rename",
+          icon: (renameIcon as ReactElement) ?? <Rename24 />,
+          onClick: onRename,
+          disabled: selectedCount === 0 || Boolean(fileToolsBusy),
+        },
+        {
+          key: "retag",
+          label: "Write Tags",
+          icon: (retagIcon as ReactElement) ?? <Tag24 />,
+          onClick: onWriteTags,
+          disabled: selectedCount === 0 || Boolean(fileToolsBusy),
         },
         {
           key: "monitor",

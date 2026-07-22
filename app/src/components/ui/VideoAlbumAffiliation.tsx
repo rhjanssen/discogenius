@@ -15,39 +15,51 @@ const useStyles = makeStyles({
   root: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalXS,
+    gap: tokens.spacingVerticalS,
     minWidth: 0,
+    width: "100%",
   },
   label: {
     color: tokens.colorNeutralForeground3,
     fontWeight: tokens.fontWeightSemibold,
   },
+  // Mobile: stacked list. Desktop: up to 3 cards across (covers stay readable).
   list: {
-    display: "flex",
-    flexDirection: "column",
+    display: "grid",
+    gridTemplateColumns: "1fr",
     gap: tokens.spacingVerticalXS,
+    width: "100%",
     minWidth: 0,
+    "@media (min-width: 640px)": {
+      gridTemplateColumns: "repeat(2, minmax(200px, 1fr))",
+      gap: tokens.spacingHorizontalS,
+    },
+    "@media (min-width: 960px)": {
+      gridTemplateColumns: "repeat(3, minmax(220px, 1fr))",
+    },
   },
-  // Queue-inspired media object: square cover + title/subtitle, whole row navigates.
+  // Tracklist-style frosted hover (DataGrid row).
   row: {
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
     minWidth: 0,
-    maxWidth: "420px",
+    width: "100%",
     margin: 0,
-    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalXS}`,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
     border: `${tokens.strokeWidthThin} solid transparent`,
     borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: "transparent",
+    backgroundColor: tokens.colorSubtleBackground,
     color: "inherit",
     textAlign: "left",
     cursor: "pointer",
-    transitionProperty: "background-color, border-color",
-    transitionDuration: tokens.durationFaster,
+    transitionProperty: "background-color, backdrop-filter",
+    transitionDuration: tokens.durationFast,
     transitionTimingFunction: tokens.curveEasyEase,
     ":hover": {
-      backgroundColor: tokens.colorNeutralBackground1Hover,
+      backgroundColor: tokens.colorNeutralBackgroundAlpha,
+      backdropFilter: "blur(14px) saturate(140%)",
+      WebkitBackdropFilter: "blur(14px) saturate(140%)",
     },
     ":focus-visible": {
       outline: `2px solid ${tokens.colorStrokeFocus2}`,
@@ -103,14 +115,15 @@ function formatTrackPosition(album: VideoAlbumRefContract): string | null {
   if (track <= 0) {
     return null;
   }
-  const total = album.track_count == null || !Number.isFinite(album.track_count)
-    ? null
-    : Math.trunc(album.track_count);
-  const trackLabel = total != null && total > 0
-    ? `Track ${track} of ${total}`
-    : `Track ${track}`;
+  const trackLabel = `Track ${track}`;
   const volume = album.volume_number == null ? null : Math.trunc(album.volume_number);
-  if (volume != null && volume > 1) {
+  const mediaCount = album.media_count == null || !Number.isFinite(album.media_count)
+    ? null
+    : Math.trunc(album.media_count);
+  const showDisc = volume != null
+    && volume > 0
+    && (volume > 1 || (mediaCount != null && mediaCount > 1));
+  if (showDisc) {
     return `Disc ${volume} · ${trackLabel}`;
   }
   return trackLabel;

@@ -61,9 +61,9 @@ export interface AlbumContract {
   is_monitored: boolean;
   is_downloaded: boolean;
   downloaded?: number;
-  /** Tracks present on disk for the selected slot release(s). Lidarr: TrackFileCount. */
+  /** Tracks present on disk for the selected slot release(s). */
   track_file_count?: number;
-  /** Expected track count on the selected slot release(s). Lidarr: TrackCount. */
+  /** Expected track count on the selected slot release(s). */
   track_count?: number;
   artist_id: string;
   artist_name: string;

@@ -544,6 +544,26 @@ function buildCoveragePlanForProvider(
     };
 }
 
+function releaseMediaCountFromTargets(tracks: TargetTrack[]): number {
+    return tracks.reduce((max, track) => Math.max(max, Number(track.mediumPosition || 1)), 0);
+}
+
+function providerVolumeCountFromPlan(plan: ReleaseCoveragePlan): number {
+    return plan.candidates.reduce((max, candidate) => Math.max(
+        max,
+        Number(candidate.album.volumeCount || candidate.match.evidence?.providerVolumeCount || 0),
+    ), 0);
+}
+
+function volumeCountMatchDelta(plan: ReleaseCoveragePlan): number {
+    const providerVolumeCount = providerVolumeCountFromPlan(plan);
+    const releaseMediaCount = releaseMediaCountFromTargets(plan.targetTracks);
+    if (providerVolumeCount <= 0 || releaseMediaCount <= 0) {
+        return Number.MAX_SAFE_INTEGER;
+    }
+    return Math.abs(releaseMediaCount - providerVolumeCount);
+}
+
 function compareCoveragePlans(left: ReleaseCoveragePlan, right: ReleaseCoveragePlan): number {
     // Complete always beats incomplete (Amy 22/27 stitch must not beat 11/11).
     const completeCmp = Number(right.complete) - Number(left.complete);
@@ -558,11 +578,16 @@ function compareCoveragePlans(left: ReleaseCoveragePlan, right: ReleaseCoverageP
             if (editionCmp !== 0) {
                 return editionCmp;
             }
+            const volumeMatchCmp = volumeCountMatchDelta(left) - volumeCountMatchDelta(right);
+            if (volumeMatchCmp !== 0) {
+                return volumeMatchCmp;
+            }
         }
         // Same release (or equal-length editions): hybrid and direct are equal —
         // pick by quality (TIDAL MAX beats Apple HIGH), then fewer albums.
         return right.qualityTotal - left.qualityTotal
             || left.candidates.length - right.candidates.length
+            || volumeCountMatchDelta(left) - volumeCountMatchDelta(right)
             || right.identityCompatibleAssignments - left.identityCompatibleAssignments
             || left.extraProviderTracks - right.extraProviderTracks
             || right.scoreTotal - left.scoreTotal
@@ -1066,7 +1091,7 @@ export class ReleaseGroupSlotService {
         const filteringConfig = getConfigSection("filtering");
         const selections = selectReleaseGroupSlotAlbums(candidates, {
             // Discovery and provider matching remain independent from wanted state.
-            // Curation applies the user's spatial toggle after refresh, like Lidarr's
+            // Curation applies the user's spatial toggle after refresh, as in
             // metadata hydration followed by monitored-release selection.
             includeSpatial: true,
             preferExplicit: filteringConfig.prefer_explicit !== false,

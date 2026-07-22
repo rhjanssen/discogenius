@@ -517,8 +517,7 @@ const duplicateProviderArtistPredicate = `NOT (
 
 // Credit/collaborator seeding can create artist rows knowing only the MBID
 // (name = mbid). Until a visit or refresh hydrates real display metadata they
-// carry nothing a library view can render, so keep them out of the listing —
-// Lidarr's index never lists non-managed artist shells either.
+// carry nothing a library view can render, so keep them out of the listing.
 const unhydratedArtistShellPredicate = `NOT (
     a.name = CAST(a.mbid AS TEXT)
     AND a.path IS NULL
@@ -1056,7 +1055,7 @@ export class ArtistQueryService {
             : [];
 
         // Similar artists were a provider-exclusive feature (TIDAL's getSimilarArtists);
-        // MusicBrainz/Servarr Metadata Server has no similar-artist concept and Lidarr has no such
+        // MusicBrainz / the online catalog has no similar-artist concept and Discogenius has no such
         // section, so the feature was removed during the provider-table retirement.
 
         const topTrackIdentity = includeTracks

@@ -9,7 +9,12 @@ import type {
   ProviderTrack,
   ProviderVideo,
 } from "../streaming-provider.js";
-import { PythonYtMusicBridge, type YtMusicBridge } from "./ytmusicapi-bridge.js";
+import { getYouTubeMusicCredentialState } from "./youtube-music-auth.js";
+import {
+  PythonYtMusicBridge,
+  YOUTUBE_MUSIC_AUTH_REQUIRED_MESSAGE,
+  type YtMusicBridge,
+} from "./ytmusicapi-bridge.js";
 import { youtubeVideoQualityTagFromHeight } from "./youtube-music-quality.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -283,6 +288,7 @@ interface ImportSourcePayload {
   libraryArtists?: unknown[];
   playlists?: unknown[];
   favoriteTracksAvailable?: boolean;
+  discoveryPlaylists?: unknown[];
 }
 
 export class YouTubeMusicCatalog {
@@ -459,15 +465,42 @@ export class YouTubeMusicCatalog {
         lists: playlists,
       });
     }
+    const discovery = (payload.discoveryPlaylists || []).map((rawValue) => {
+      const raw = record(rawValue);
+      return {
+        id: text(raw.playlistId, raw.id, raw.browseId),
+        title: text(raw.title, raw.name) || "Discovery playlist",
+        subtitle: nullableText(raw.author, raw.description),
+        image: imageFrom(raw),
+        itemCount: numeric(raw.count ?? raw.trackCount),
+      };
+    }).filter((playlist) => playlist.id);
+    if (discovery.length > 0) {
+      result.push({
+        category: "mix",
+        label: "Mixed for you",
+        description: "Artists from a personalized YouTube Music home-screen playlist",
+        requiresListSelection: true,
+        lists: discovery,
+      });
+    }
     return result;
   }
 
   async getArtistsForImportSource(selection: ProviderImportSelection): Promise<ProviderArtist[]> {
-    if (selection.category === "playlist" && !selection.listId) {
+    if ((selection.category === "playlist" || selection.category === "mix") && !selection.listId) {
       throw new Error("A YouTube Music playlist must be selected.");
     }
-    if (!["library-artists", "favorite-tracks", "playlist"].includes(selection.category)) {
+    if (!["library-artists", "favorite-tracks", "playlist", "mix"].includes(selection.category)) {
       throw new Error(`Unsupported YouTube Music import source: ${selection.category}`);
+    }
+    // Library/liked imports need browser cookies. Fail before the Python bridge
+    // so missing auth never surfaces as a ytmusicapi KeyError dump.
+    if (selection.category === "library-artists" || selection.category === "favorite-tracks") {
+      const state = getYouTubeMusicCredentialState();
+      if (!state.browserHeadersConfigured) {
+        throw new Error(YOUTUBE_MUSIC_AUTH_REQUIRED_MESSAGE);
+      }
     }
     const raw = await this.bridge.request<unknown[]>("get_import_artists", {
       category: selection.category,

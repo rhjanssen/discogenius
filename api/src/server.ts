@@ -198,10 +198,10 @@ app.use("/api/app-auth", appAuthRouter);
 app.use("/media-cover", mediaCoverRouter);
 app.use("/media-cover-proxy", mediaCoverProxyRouter);
 
-// Auth is an infra endpoint, kept un-versioned (like Lidarr's /login, /ping).
+// Auth is an infra endpoint, kept un-versioned (as in /login, /ping).
 app.use("/api/auth", authMiddleware, authRouter);
 
-// All business/resource routers live under a single /api/v1 namespace (Lidarr-style).
+// All business/resource routers live under a single /api/v1 namespace.
 app.use("/api/v1/config", authMiddleware, configRouter);
 app.use("/api/v1/artist", authMiddleware, artistsRouter);
 app.use("/api/v1/album", authMiddleware, albumsRouter);
@@ -318,10 +318,9 @@ const server = app.listen(port, () => {
 
   scheduleStartupMaintenance();
 
-  // Always start the off-thread command worker pool (Lidarr's CommandExecutor spawns
-  // its threads at startup with no toggle). Both the command executor and the
-  // download processor's import step dispatch heavy work here so it never blocks
-  // the main HTTP/SSE thread.
+  // Always start the off-thread command worker pool at boot (no toggle). Both
+  // the command executor and the download processor's import step dispatch
+  // heavy work here so it never blocks the main HTTP/SSE thread.
   try {
     CommandWorkerPool.start();
   } catch (error) {
@@ -412,7 +411,7 @@ process.on("SIGINT", () => {
   void shutdown("SIGINT");
 });
 
-// Last-resort guards (Lidarr's GlobalExceptionHandlers): a failure escaping a
+// Last-resort guards: a failure escaping a
 // background task must be logged, never abort the server. Node's default for an
 // unhandled rejection is process death — under heavy write load that turned one
 // SQLITE_BUSY into a crash-restart loop that lost hours of queued work.

@@ -4,8 +4,10 @@
  * Lidarr has no music-video matcher; its audio DistanceCalculator weights
  * title / length / year together. We do the same for provider video merges:
  * title, duration, and release date all contribute — none alone dominates.
+ * Shared ISRC is a strong cross-provider twin signal when duration is sparse.
  */
 import { videoComparableTitle } from "../mediafiles/import-matching-utils.js";
+import { parseIsrcValues } from "./refresh-video-support.js";
 import {
   VIDEO_DURATION_MATCH_MS,
   cleanVideoGroupTitle,
@@ -23,8 +25,12 @@ const WEIGHT_TOTAL = TITLE_WEIGHT + DURATION_WEIGHT + DATE_WEIGHT;
 /** Soft match threshold on the weighted average (0–1). */
 export const VIDEO_IDENTITY_MATCH_THRESHOLD = 0.85;
 
-/** Hard reject when both durations are known and farther apart than this. */
-export const VIDEO_DURATION_HARD_REJECT_MS = 15_000;
+/**
+ * Hard reject when both durations are known and farther apart than this.
+ * Videos that differ by more than a couple seconds are different cuts
+ * (official vs TV performance, radio edit, etc.) — keep this tight.
+ */
+export const VIDEO_DURATION_HARD_REJECT_MS = 3_000;
 
 export type VideoIdentitySignals = {
   titleA: string;
@@ -35,6 +41,14 @@ export type VideoIdentitySignals = {
   releaseDateB?: string | null;
   variantA?: VideoVariant | string | null;
   variantB?: VideoVariant | string | null;
+  /** Optional ISRC evidence (ProviderItems.isrc / Recordings.isrcs). */
+  isrcsA?: string | string[] | null;
+  isrcsB?: string | string[] | null;
+  /** Provider ids when known — bare live↔main twin requires cross-provider. */
+  providerA?: string | null;
+  providerB?: string | null;
+  /** Skip cross-provider gate when revalidating an offer already on a recording. */
+  allowSameProviderBareLiveTwin?: boolean;
 };
 
 export type VideoIdentityMatchResult = {
@@ -66,16 +80,135 @@ function variantsCompatible(
   const lyricPair = (clsA === "lyric" && isMainVideoVariant(clsB))
     || (clsB === "lyric" && isMainVideoVariant(clsA));
   if (lyricPair) return true;
+  // Live cuts must never share a recording with studio / official / unlabeled
+  // main videos — cleaned titles strip "(Live)" and durations can agree.
+  // Named TV/venue performances and cross-provider bare "(Live)" twins may still
+  // pair with an unlabeled main offer — see canMergeLiveMainPerformanceTwin and
+  // canMergeBareLiveMainTwin.
   const livePair = (clsA === "live" && isMainVideoVariant(clsB))
     || (clsB === "live" && isMainVideoVariant(clsA));
-  if (livePair) {
-    // Live must not attach to an explicitly "official" studio OMV.
-    const officialMarker = /\bofficial\b/i;
-    if (officialMarker.test(titleA) || officialMarker.test(titleB)) return false;
-    if (clsA === "official" || clsB === "official") return false;
-    return true;
-  }
+  if (livePair) return false;
   return false;
+}
+
+function isUnlabeledVideoVariant(
+  title: string,
+  stored?: VideoVariant | string | null,
+): boolean {
+  return resolveVariant(title, stored) === "video";
+}
+
+function isBareLiveVariant(
+  title: string,
+  stored?: VideoVariant | string | null,
+): boolean {
+  const cls = resolveVariant(title, stored);
+  return cls === "live" && !hasNamedPerformanceQualifier(title);
+}
+
+function isCrossProvider(
+  providerA?: string | null,
+  providerB?: string | null,
+): boolean {
+  const left = String(providerA || "").trim();
+  const right = String(providerB || "").trim();
+  return Boolean(left && right && left !== right);
+}
+
+function exactSecondDurationMatch(
+  lengthMsA: number | null,
+  lengthMsB: number | null,
+): boolean {
+  if (lengthMsA == null || lengthMsB == null) return false;
+  return Math.round(Number(lengthMsA) / 1000) === Math.round(Number(lengthMsB) / 1000);
+}
+
+function releaseDatesCompatibleWhenKnown(
+  releaseDateA?: string | null,
+  releaseDateB?: string | null,
+): boolean {
+  const a = parseDateParts(releaseDateA);
+  const b = parseDateParts(releaseDateB);
+  if (!a || !b) return true;
+  return dateSimilarity(releaseDateA, releaseDateB) >= 1;
+}
+
+/**
+ * True when the live title names a TV/show or venue performance — not bare
+ * "(Live)". Providers (esp. TIDAL) often omit the venue on the twin offer.
+ */
+function hasNamedPerformanceQualifier(title: string): boolean {
+  return /\bperformance\b|\blive\s+at\b|\blive\s+from\b/i.test(String(title || ""));
+}
+
+/**
+ * Allow bare OMV title ↔ named venue/TV live twin only when durations agree to
+ * the second. Plain "(Live)" without a venue stays blocked from unlabeled
+ * studio cuts even at equal duration.
+ */
+function canMergeLiveMainPerformanceTwin(input: VideoIdentitySignals): boolean {
+  const titleA = String(input.titleA || "");
+  const titleB = String(input.titleB || "");
+  const clsA = resolveVariant(titleA, input.variantA);
+  const clsB = resolveVariant(titleB, input.variantB);
+  const liveMain = (clsA === "live" && isMainVideoVariant(clsB))
+    || (clsB === "live" && isMainVideoVariant(clsA));
+  if (!liveMain) return false;
+
+  const liveTitle = clsA === "live" ? titleA : titleB;
+  if (!hasNamedPerformanceQualifier(liveTitle)) return false;
+
+  if (!exactSecondDurationMatch(
+    input.lengthMsA == null ? null : Number(input.lengthMsA),
+    input.lengthMsB == null ? null : Number(input.lengthMsB),
+  )) return false;
+
+  return titleSimilarity(titleA, titleB) >= 0.9;
+}
+
+/**
+ * Cross-provider bare "(Live)" ↔ unlabeled main video twin when durations agree
+ * to the second and titles match tightly. OMV/official main cuts stay blocked;
+ * named venue/TV performances use {@link canMergeLiveMainPerformanceTwin}.
+ */
+function canMergeBareLiveMainTwin(input: VideoIdentitySignals): boolean {
+  const titleA = String(input.titleA || "");
+  const titleB = String(input.titleB || "");
+  const bareLiveMain = (isBareLiveVariant(titleA, input.variantA) && isUnlabeledVideoVariant(titleB, input.variantB))
+    || (isBareLiveVariant(titleB, input.variantB) && isUnlabeledVideoVariant(titleA, input.variantA));
+  if (!bareLiveMain) return false;
+  if (!input.allowSameProviderBareLiveTwin && !isCrossProvider(input.providerA, input.providerB)) return false;
+  if (!exactSecondDurationMatch(
+    input.lengthMsA == null ? null : Number(input.lengthMsA),
+    input.lengthMsB == null ? null : Number(input.lengthMsB),
+  )) return false;
+  if (titleSimilarity(titleA, titleB) < 0.9) return false;
+  if (!releaseDatesCompatibleWhenKnown(input.releaseDateA, input.releaseDateB)) return false;
+  return true;
+}
+
+/**
+ * Same-provider twins (rare duplicate IDs for one upload) must match more
+ * tightly than cross-provider merges: exact second + strong title.
+ */
+export function isExactVideoTwin(input: VideoIdentitySignals): boolean {
+  const match = scoreVideoIdentityMatch(input);
+  if (!match.matched) return false;
+  const lengthMsA = input.lengthMsA == null ? null : Number(input.lengthMsA);
+  const lengthMsB = input.lengthMsB == null ? null : Number(input.lengthMsB);
+  if (lengthMsA == null || lengthMsB == null) return false;
+  if (Math.round(lengthMsA / 1000) !== Math.round(lengthMsB / 1000)) return false;
+  return match.titleScore >= 0.95;
+}
+
+function sharedIsrc(
+  isrcsA?: string | string[] | null,
+  isrcsB?: string | string[] | null,
+): boolean {
+  const left = parseIsrcValues(isrcsA);
+  const right = parseIsrcValues(isrcsB);
+  if (left.length === 0 || right.length === 0) return false;
+  return left.some((isrc) => right.includes(isrc));
 }
 
 function titleSimilarity(titleA: string, titleB: string): number {
@@ -107,19 +240,19 @@ function titleSimilarity(titleA: string, titleB: string): number {
 }
 
 /**
- * Lidarr-style length score: full credit inside the soft gate, then linear
- * falloff. Unknown durations contribute a neutral mid score so date/title can
- * still carry a match when one side lacks length.
+ * length score: full credit inside the soft gate, then linear
+ * falloff. Unknown durations contribute a weak mid score so date/title can
+ * still carry a match only when ISRC (or both dates + near-perfect title) help.
  */
 export function durationSimilarity(
   lengthMsA: number | null | undefined,
   lengthMsB: number | null | undefined,
 ): number {
-  if (lengthMsA == null || lengthMsB == null) return 0.4;
+  if (lengthMsA == null || lengthMsB == null) return 0.35;
   const diff = Math.abs(Number(lengthMsA) - Number(lengthMsB));
   if (diff <= VIDEO_DURATION_MATCH_MS) return 1;
   if (diff >= VIDEO_DURATION_HARD_REJECT_MS) return 0;
-  // 5s → 1.0, 15s → 0.0
+  // soft → 1.0, hard → 0.0
   return Math.max(0, 1 - (diff - VIDEO_DURATION_MATCH_MS) / (VIDEO_DURATION_HARD_REJECT_MS - VIDEO_DURATION_MATCH_MS));
 }
 
@@ -159,7 +292,9 @@ export function dateSimilarity(
 export function scoreVideoIdentityMatch(input: VideoIdentitySignals): VideoIdentityMatchResult {
   const titleA = String(input.titleA || "");
   const titleB = String(input.titleB || "");
-  if (!variantsCompatible(titleA, titleB, input.variantA, input.variantB)) {
+  const performanceTwin = canMergeLiveMainPerformanceTwin(input);
+  const bareLiveTwin = canMergeBareLiveMainTwin(input);
+  if (!variantsCompatible(titleA, titleB, input.variantA, input.variantB) && !performanceTwin && !bareLiveTwin) {
     return {
       matched: false,
       score: 0,
@@ -199,16 +334,26 @@ export function scoreVideoIdentityMatch(input: VideoIdentitySignals): VideoIdent
     };
   }
 
-  const durationScore = durationSimilarity(lengthMsA, lengthMsB);
-  const dateScore = dateSimilarity(input.releaseDateA, input.releaseDateB);
+  const isrcOverlap = sharedIsrc(input.isrcsA, input.isrcsB);
+  // Shared ISRC is strong twin evidence across providers when one side lacks
+  // duration (common for sparse Apple/YouTube payloads).
+  const durationScore = isrcOverlap
+    ? 1
+    : durationSimilarity(lengthMsA, lengthMsB);
+  const datesKnown = Boolean(parseDateParts(input.releaseDateA) && parseDateParts(input.releaseDateB));
+  // When durations agree tightly, missing dates should not drag a strong
+  // title+duration twin under the threshold (tour/edition suffixes score ~0.88).
+  const dateScore = datesKnown
+    ? dateSimilarity(input.releaseDateA, input.releaseDateB)
+    : (durationScore >= 0.95 ? 0.55 : 0.4);
   const score = (titleScore * TITLE_WEIGHT + durationScore * DURATION_WEIGHT + dateScore * DATE_WEIGHT)
     / WEIGHT_TOTAL;
 
-  // When either side lacks a release date, lean on duration: title+weak-date
+  // When either side lacks a release date, lean on duration/ISRC: title+weak-date
   // alone must not glue lyric/live cuts that are several seconds apart.
-  const datesKnown = Boolean(parseDateParts(input.releaseDateA) && parseDateParts(input.releaseDateB));
+  const durationsKnown = lengthMsA != null && lengthMsB != null;
   const matched = score >= VIDEO_IDENTITY_MATCH_THRESHOLD
-    && (datesKnown || durationScore >= 0.95);
+    && (isrcOverlap || durationsKnown || (datesKnown && durationScore >= 0.95));
 
   return {
     matched,

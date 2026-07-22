@@ -584,17 +584,37 @@ function normalizeLibraryFileFromRow(row: any) {
     };
 }
 
-function attachCanonicalFilesToTracks(tracks: AlbumTrackContract[]): AlbumTrackContract[] {
+function attachCanonicalFilesToTracks(
+    tracks: AlbumTrackContract[],
+    releaseGroupMbid: string,
+): AlbumTrackContract[] {
     const trackMbids = Array.from(new Set(
         tracks
             .map((track) => String(track.musicbrainz_track_id || track.id || "").trim())
             .filter(Boolean)
     ));
-    if (trackMbids.length === 0) {
+    const recordingMbids = Array.from(new Set(
+        tracks
+            .map((track) => String(track.musicbrainz_recording_id || "").trim())
+            .filter(Boolean)
+    ));
+    if (trackMbids.length === 0 && recordingMbids.length === 0) {
         return tracks;
     }
 
-    const placeholders = trackMbids.map(() => "?").join(",");
+    const matchConditions: string[] = [];
+    const matchParams: string[] = [];
+    if (trackMbids.length > 0) {
+        matchConditions.push(`lf.canonical_track_mbid IN (${trackMbids.map(() => "?").join(",")})`);
+        matchParams.push(...trackMbids);
+    }
+    if (recordingMbids.length > 0) {
+        matchConditions.push(
+            `(lf.canonical_recording_mbid IN (${recordingMbids.map(() => "?").join(",")}) AND lf.canonical_release_group_mbid = ?)`,
+        );
+        matchParams.push(...recordingMbids, releaseGroupMbid);
+    }
+
     const rows = db.prepare(`
       SELECT
         lf.id AS file_id,
@@ -625,26 +645,71 @@ function attachCanonicalFilesToTracks(tracks: AlbumTrackContract[]): AlbumTrackC
         lf.codec,
         lf.duration
       FROM TrackFiles lf
-      WHERE lf.canonical_track_mbid IN (${placeholders})
+      WHERE (${matchConditions.join(" OR ")})
         AND lf.file_type IN ('track', 'lyrics')
       ORDER BY lf.file_type ASC, lf.id ASC
-    `).all(...trackMbids) as any[];
+    `).all(...matchParams) as any[];
 
     if (rows.length === 0) {
         return tracks;
     }
 
-    const filesByTrackMbid = new Map<string, any[]>();
+    const trackMbidsSet = new Set(trackMbids);
+    const filesByTrackMbid = new Map<string, ReturnType<typeof normalizeLibraryFileFromRow>[]>();
+    const filesByRecordingMbid = new Map<string, ReturnType<typeof normalizeLibraryFileFromRow>[]>();
     for (const row of rows) {
-        const key = String(row.canonical_track_mbid);
-        const list = filesByTrackMbid.get(key) || [];
-        list.push(normalizeLibraryFileFromRow(row));
-        filesByTrackMbid.set(key, list);
+        const file = normalizeLibraryFileFromRow(row);
+        if (row.canonical_track_mbid != null && String(row.canonical_track_mbid).trim()) {
+            const key = String(row.canonical_track_mbid);
+            const list = filesByTrackMbid.get(key) || [];
+            list.push(file);
+            filesByTrackMbid.set(key, list);
+        }
+        if (row.canonical_recording_mbid != null && String(row.canonical_recording_mbid).trim()) {
+            const key = String(row.canonical_recording_mbid);
+            const list = filesByRecordingMbid.get(key) || [];
+            list.push(file);
+            filesByRecordingMbid.set(key, list);
+        }
     }
 
     return tracks.map((track) => {
         const trackMbid = String(track.musicbrainz_track_id || track.id || "");
-        const canonicalFiles = filesByTrackMbid.get(trackMbid) || [];
+        const recordingMbid = String(track.musicbrainz_recording_id || "").trim();
+        const canonicalFiles: ReturnType<typeof normalizeLibraryFileFromRow>[] = [];
+        const seenFileIds = new Set<number>();
+
+        const addFile = (file: ReturnType<typeof normalizeLibraryFileFromRow>) => {
+            if (seenFileIds.has(file.id)) {
+                return;
+            }
+            seenFileIds.add(file.id);
+            canonicalFiles.push(file);
+        };
+
+        for (const file of filesByTrackMbid.get(trackMbid) || []) {
+            addFile(file);
+        }
+        if (recordingMbid) {
+            for (const file of filesByRecordingMbid.get(recordingMbid) || []) {
+                const fileReleaseGroupMbid = file.canonical_release_group_mbid == null
+                    ? null
+                    : String(file.canonical_release_group_mbid).trim();
+                if (fileReleaseGroupMbid !== releaseGroupMbid) {
+                    continue;
+                }
+                const fileTrackMbid = file.canonical_track_mbid == null
+                    ? null
+                    : String(file.canonical_track_mbid).trim();
+                // Spatial/Atmos files often carry a track MBID from a different
+                // release in the same group; attach by recording when that track
+                // is not on the displayed stereo tracklist.
+                if (!fileTrackMbid || !trackMbidsSet.has(fileTrackMbid)) {
+                    addFile(file);
+                }
+            }
+        }
+
         if (canonicalFiles.length === 0) {
             return track;
         }
@@ -968,7 +1033,7 @@ async function buildReleaseGroupTrackContracts(
         album.artist_id,
         Boolean(releaseGroup.wanted),
     );
-    const withCanonicalFiles = attachCanonicalFilesToTracks(canonicalTracks);
+    const withCanonicalFiles = attachCanonicalFilesToTracks(canonicalTracks, releaseGroup.mbid);
     return attachProviderPreviewTracks(withCanonicalFiles, releaseGroup);
 }
 

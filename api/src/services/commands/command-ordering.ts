@@ -1,11 +1,11 @@
 /**
  * Command queue ordering + row hydration helpers.
  *
- * The SQL `ORDER BY` builders and the in-memory priority comparators mirror
- * Lidarr's `CommandPriorityComparer` / `CommandQueue` ordering; `safeParsePayload`
- * + `hydrateJobRow` turn a raw `commands` row into a typed `CommandModel`. Pure
- * functions (no `CommandQueueManager` dependency) so they're independently
- * testable (see queue-ordering.test.ts) and don't form an import cycle.
+ * The SQL `ORDER BY` builders and the in-memory priority comparators define
+ * queue execution order; `safeParsePayload` + `hydrateJobRow` turn a raw
+ * `commands` row into a typed `CommandModel`. Pure functions (no
+ * `CommandQueueManager` dependency) so they're independently testable
+ * (see queue-ordering.test.ts) and don't form an import cycle.
  */
 
 import { CommandTrigger } from "./command-trigger.js";

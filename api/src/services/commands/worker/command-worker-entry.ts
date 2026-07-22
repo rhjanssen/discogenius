@@ -12,10 +12,10 @@ import { initCurationListeners } from "../../music/curation.listener.js";
 import { forwardImportProgress, isCommandWorker, type MainToWorkerMessage, type WorkerToMainMessage } from "./command-worker-protocol.js";
 
 /**
- * Command worker thread entrypoint — one of the pool's real OS threads, the
- * direct analogue of a Lidarr `CommandExecutor` thread. It opens its *own*
- * better-sqlite3 connection (a fresh module instance per thread; WAL allows
- * concurrent readers + one writer) and runs one command at a time.
+ * Command worker thread entrypoint — one of the pool's real OS threads.
+ * It opens its *own* better-sqlite3 connection (a fresh module instance per
+ * thread; WAL allows concurrent readers + one writer) and runs one command at
+ * a time.
  *
  * The worker owns the command's *full lifecycle* (markProcessing → handler →
  * complete/fail → next monitoring pass) on its own connection, so the only

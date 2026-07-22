@@ -13,6 +13,7 @@ import { resolveFfmpegBinary } from "./audioUtils.js";
 import {
     albumProviderArtworkCandidatesFromRow,
     imageContainerFromImagesColumn,
+    getCachedMediaCoverSourceUrlFromLocalUrl,
     getMediaCoverFilePathFromUrl,
     normalizeArtworkUrl,
     parseJsonObject,
@@ -437,21 +438,38 @@ async function downloadProviderArtwork(
     url: string | null | undefined,
     outputPath: string,
     label: string,
+    options: { preferRemoteOrigin?: boolean } = {},
 ): Promise<boolean> {
     if (!url) {
         console.log(`ℹ️ [METADATA] No ${label} available, skipping.`);
         return false;
     }
 
-    const localFilePath = getMediaCoverFilePathFromUrl(url);
-    if (localFilePath) {
-        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        fs.copyFileSync(localFilePath, outputPath);
-        console.log(`✅ [METADATA] ${label} copied from MediaCover cache: ${outputPath}`);
-        return true;
+    // Library sidecars want full-resolution origin bytes. MediaCover only keeps
+    // UI 500/250 derivatives — prefer the remote URL recorded in the source marker.
+    let fetchSource = String(url);
+    if (options.preferRemoteOrigin) {
+        const originRemote = getCachedMediaCoverSourceUrlFromLocalUrl(url);
+        if (originRemote) {
+            fetchSource = originRemote;
+        } else if (fetchSource.startsWith("/media-cover/")) {
+            // No marker yet and only a UI alias — do not copy a 500px derivative.
+            console.log(`ℹ️ [METADATA] No origin source for ${label}; skipping MediaCover derivative copy.`);
+            return false;
+        }
+    } else {
+        const localFilePath = getMediaCoverFilePathFromUrl(url);
+        if (localFilePath) {
+            fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+            fs.copyFileSync(localFilePath, outputPath);
+            console.log(`✅ [METADATA] ${label} copied from MediaCover cache: ${outputPath}`);
+            return true;
+        }
     }
 
-    const fetchUrl = resolveMediaCoverProxyUrl(url);
+    const fetchUrl = resolveMediaCoverProxyUrl(fetchSource) || (
+        /^https?:\/\//i.test(fetchSource) ? fetchSource : null
+    );
     if (!fetchUrl) {
         console.log(`⚠️ [METADATA] Invalid ${label} URL: ${url}`);
         return false;
@@ -479,6 +497,12 @@ async function downloadProviderArtwork(
 
     console.log(`✅ [METADATA] ${label} saved: ${outputPath}`);
     return true;
+}
+
+function wantsLibraryOriginArtwork(resolution: number | string): boolean {
+    if (resolution === "origin") return true;
+    const size = Number(resolution);
+    return Number.isFinite(size) && size >= 1000;
 }
 
 function loadAlbumArtworkContext(albumId: string, provider?: string | null): {
@@ -601,8 +625,8 @@ function loadArtistArtworkContext(artistId: string): {
 
 /**
  * Download album cover at specified resolution.
- * Uses media-cover-service resolveAlbumArtwork (same preference ladder as UI)
- * then copies from the media-cover cache into the library path.
+ * Uses media-cover-service resolveAlbumArtwork (same preference ladder as UI).
+ * Library origin/full-res writes fetch the remote source — never the UI 500px cache.
  */
 export async function downloadAlbumCover(
     albumId: string,
@@ -615,20 +639,21 @@ export async function downloadAlbumCover(
         ? context.providerCandidates
         : [{ provider: options.provider || streamingProviderManager.getDefaultProviderId(), entityId: albumId }];
     const albumMbid = context?.albumMbid || (/^[0-9a-f-]{36}$/i.test(String(albumId).trim()) ? String(albumId).trim() : null);
+    const preferRemoteOrigin = wantsLibraryOriginArtwork(resolution);
 
     const localUrl = await resolveAlbumArtwork({
         albumMbid,
         servarrMetadataData: context?.servarrMetadataData ?? null,
         providerCandidates,
-        size: resolution,
+        size: preferRemoteOrigin ? "origin" : resolution,
     });
-    if (await downloadProviderArtwork(localUrl, outputPath, `album cover for ${albumId}`)) {
+    if (await downloadProviderArtwork(localUrl, outputPath, `album cover for ${albumId}`, { preferRemoteOrigin })) {
         return;
     }
 
     // Last resort: direct provider fetch if resolve returned nothing usable.
-    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "album", resolution);
-    await downloadProviderArtwork(providerUrl, outputPath, `album cover for ${albumId}`);
+    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "album", preferRemoteOrigin ? "origin" : resolution);
+    await downloadProviderArtwork(providerUrl, outputPath, `album cover for ${albumId}`, { preferRemoteOrigin });
 }
 
 /**
@@ -788,6 +813,7 @@ export async function downloadAlbumVideoCover(
 /**
  * Download artist picture at specified resolution.
  * Uses media-cover-service resolveArtistArtwork (same preference ladder as UI).
+ * Library origin/full-res writes fetch the remote source — never the UI 500px cache.
  */
 export async function downloadArtistPicture(
     artistId: string,
@@ -801,20 +827,21 @@ export async function downloadArtistPicture(
         : [{ provider: streamingProviderManager.getDefaultProviderId(), entityId: artistId }];
     const artistMbid = context?.artistMbid
         || (/^[0-9a-f-]{36}$/i.test(String(artistId).trim()) ? String(artistId).trim() : null);
+    const preferRemoteOrigin = wantsLibraryOriginArtwork(resolution);
 
     const localUrl = await resolveArtistArtwork({
         artistMbid,
         servarrMetadataData: context?.servarrMetadataData ?? null,
         providerCandidates,
         preferredCoverTypes,
-        size: resolution,
+        size: preferRemoteOrigin ? "origin" : resolution,
     });
-    if (await downloadProviderArtwork(localUrl, outputPath, `artist picture for ${artistId}`)) {
+    if (await downloadProviderArtwork(localUrl, outputPath, `artist picture for ${artistId}`, { preferRemoteOrigin })) {
         return;
     }
 
-    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "artist", resolution);
-    await downloadProviderArtwork(providerUrl, outputPath, `artist picture for ${artistId}`);
+    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "artist", preferRemoteOrigin ? "origin" : resolution);
+    await downloadProviderArtwork(providerUrl, outputPath, `artist picture for ${artistId}`, { preferRemoteOrigin });
 }
 
 /**
@@ -869,7 +896,7 @@ export async function getTrackLyrics(trackId: string, provider?: string | null):
 
 /**
  * Save synchronized lyrics to `.lrc`, or unsynchronized lyrics to the
- * Lidarr-compatible plain `.txt` sidecar format.
+ * plain `.txt` sidecar format.
  * @param trackId - Tidal track ID
  * @param outputPath - Adjacent lyric path (its extension is replaced when the
  * provider only supplies plain lyrics)

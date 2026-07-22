@@ -3,6 +3,7 @@ import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
 import { LibraryFilesService } from "../mediafiles/library-files.js";
+import { normalizeIsrc } from "../mediafiles/import-matching-utils.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
@@ -36,7 +37,12 @@ type CurationTrack = {
 type PreferredReleaseRecordings = {
     releaseMbid: string;
     tracks: CurationTrack[];
-    recordingIds: Set<string>;
+    /**
+     * Identity keys for artist-wide coverage: prefer `isrc:…` when MusicBrainz
+     * has ISRCs so retitled/split recordings of the same master collapse; else
+     * fall back to the recording MBID.
+     */
+    coverageIds: Set<string>;
 };
 
 type ArtistCurationIdentity = {
@@ -84,6 +90,35 @@ export class CurationService {
         return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
     }
 
+    private static parseRecordingIsrcs(value: unknown): string[] {
+        if (Array.isArray(value)) {
+            return value.map(normalizeIsrc).filter(Boolean);
+        }
+        const raw = String(value || "").trim();
+        if (!raw) {
+            return [];
+        }
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                return parsed.map(normalizeIsrc).filter(Boolean);
+            }
+        } catch {
+            // Fall through to single-token parse.
+        }
+        const single = normalizeIsrc(raw);
+        return single ? [single] : [];
+    }
+
+    /** Coverage identity: ISRC when known, else recording MBID (docs/CURATION_DEDUPLICATION.md). */
+    private static coverageIdentityKeys(recordingMbid: string, isrcsRaw: unknown): string[] {
+        const isrcs = this.parseRecordingIsrcs(isrcsRaw);
+        if (isrcs.length > 0) {
+            return isrcs.map((isrc) => `isrc:${isrc}`);
+        }
+        return [`mbid:${recordingMbid}`];
+    }
+
     private static getPreferredReleaseRecordings(
         releaseGroupMbid: string,
         representativeReleaseMbid?: string | null,
@@ -91,29 +126,36 @@ export class CurationService {
     ): PreferredReleaseRecordings | null {
         const mapTracks = (releaseMbid: string): PreferredReleaseRecordings | null => {
             const rows = db.prepare(`
-                SELECT recording_mbid, title
-                FROM Tracks
-                WHERE release_mbid = ?
-            `).all(releaseMbid) as Array<{ recording_mbid: string | null; title: string | null }>;
+                SELECT t.recording_mbid, t.title, rec.isrcs AS recording_isrcs
+                FROM Tracks t
+                LEFT JOIN Recordings rec ON rec.mbid = t.recording_mbid
+                WHERE t.release_mbid = ?
+            `).all(releaseMbid) as Array<{
+                recording_mbid: string | null;
+                title: string | null;
+                recording_isrcs: string | null;
+            }>;
 
             if (rows.length === 0) {
                 return null;
             }
 
             const tracks: CurationTrack[] = [];
-            const recordingIds = new Set<string>();
+            const coverageIds = new Set<string>();
 
             for (const row of rows) {
                 const recId = row.recording_mbid ? String(row.recording_mbid).trim() : null;
 
                 if (recId && this.looksLikeMusicBrainzMbid(recId)) {
                     tracks.push({ recordingMbid: recId });
-                    recordingIds.add(recId);
+                    for (const key of this.coverageIdentityKeys(recId, row.recording_isrcs)) {
+                        coverageIds.add(key);
+                    }
                 }
             }
 
             if (tracks.length > 0) {
-                return { releaseMbid, tracks, recordingIds };
+                return { releaseMbid, tracks, coverageIds };
             }
             return null;
         };
@@ -240,7 +282,7 @@ export class CurationService {
         const retainedMbids = selectFewestReleaseGroupsForCoverage(
             hydratedGroups.map(({ releaseGroup, preferredRelease }) => ({
                 mbid: releaseGroup.mbid,
-                recordingIds: preferredRelease.recordingIds,
+                recordingIds: preferredRelease.coverageIds,
                 providerAlbumCount: providerAlbumCounts.get(releaseGroup.mbid) ?? 1,
                 typePriority: this.getReleaseGroupPriority(releaseGroup),
             })),

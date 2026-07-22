@@ -3,10 +3,15 @@
  * whose preferred recordings cover the filtered discography, with least
  * redundant overlap. Used by curation redundancy instead of pure largest-first
  * containment (MATCHING_SET_COVER_DESIGN / TASKS).
+ *
+ * `recordingIds` are coverage identity keys from curation: `isrc:…` when
+ * MusicBrainz has ISRCs (so retitled masters of the same recording collapse),
+ * otherwise `mbid:…` / bare recording MBIDs.
  */
 
 export type CoverageReleaseGroupCandidate = {
   mbid: string;
+  /** Coverage identity keys (ISRC-preferred, else recording MBID). */
   recordingIds: ReadonlySet<string>;
   /** Provider albums needed to acquire the selected edition (`;`-split count). */
   providerAlbumCount: number;

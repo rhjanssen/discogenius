@@ -22,9 +22,6 @@ export const VIDEO_TYPE_SUFFIXES = [
   "-video",
 ] as const;
 
-/** @deprecated Prefer VIDEO_TYPE_SUFFIXES */
-export const PLEX_VIDEO_TYPE_SUFFIXES = VIDEO_TYPE_SUFFIXES;
-
 export function resolveVideoTypeSuffix(
   title: string | null | undefined,
   videoVariant?: string | null,
@@ -37,13 +34,7 @@ export function resolveVideoTypeSuffix(
   );
 }
 
-/** @deprecated Prefer resolveVideoTypeSuffix */
-export const resolvePlexVideoSuffix = resolveVideoTypeSuffix;
-
 export function stemEndsWithVideoTypeSuffix(stem: string | null | undefined): boolean {
   const lower = String(stem || "").toLowerCase();
   return VIDEO_TYPE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 }
-
-/** @deprecated Prefer stemEndsWithVideoTypeSuffix */
-export const stemEndsWithPlexVideoType = stemEndsWithVideoTypeSuffix;

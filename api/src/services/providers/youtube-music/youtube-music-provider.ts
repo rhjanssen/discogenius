@@ -190,7 +190,7 @@ export class YouTubeMusicProvider implements StreamingProvider {
       setupNote: "Requires ytmusicapi for catalog access plus yt-dlp and ffmpeg for lossy audio/video downloads.",
     }],
     catalog: { search: true, artistCatalog: true, releaseOffers: true, videos: true },
-    imports: { supported: ["library-artists", "playlist", "favorite-tracks"] },
+    imports: { supported: ["library-artists", "playlist", "favorite-tracks", "mix"] },
     qualityMapping: { neutral: true, stereo: true, spatial: false, video: true },
     diagnostics: ["auth", "catalog", "download-backend"],
   };

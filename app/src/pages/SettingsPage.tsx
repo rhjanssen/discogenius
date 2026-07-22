@@ -1,7 +1,6 @@
 import {
     Button,
     Badge,
-    Input,
     Select,
     Switch,
     Radio,
@@ -16,10 +15,8 @@ import {
 import {
   DoorArrowLeft24Regular,
   ArrowSync24Regular,
-  ArrowSortDownLines24Regular,
   DoorArrowLeft24Filled,
   ArrowSync24Filled,
-  ArrowSortDownLines24Filled,
   bundleIcon
 } from "@fluentui/react-icons";
 import { SettingsSection } from "@/components/settings/SettingsSection";
@@ -31,15 +28,11 @@ import { useAppAuth } from "@/providers/appAuthContext";
 import { useTheme } from "@/providers/themeContext";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
 import { useQuery } from "@tanstack/react-query";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { api } from "@/services/api";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/useToast";
 import { ErrorState } from "@/components/ui/ContentState";
-import {
-    RetagPreviewDialog,
-    type RetagPreviewItem,
-} from "@/components/mediafiles/FileMaintenanceDialogs";
 import { AppearanceSettingsSection } from "@/pages/settings/AppearanceSettingsSection";
 import { AudioQualitySettingsSection } from "@/pages/settings/AudioQualitySettingsSection";
 import { CurationSettingsSection } from "@/pages/settings/CurationSettingsSection";
@@ -58,7 +51,6 @@ import type { AppReleaseInfoContract } from "@contracts/release";
 
 const DoorArrowLeft24 = bundleIcon(DoorArrowLeft24Filled, DoorArrowLeft24Regular);
 const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
-const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
 
 const MIN_RUN_NOW_FEEDBACK_MS = 600;
 
@@ -206,21 +198,6 @@ const useStyles = makeStyles({
         minHeight: '32px',
         paddingTop: tokens.spacingVerticalXXS,
     },
-    namingBadgeRow: {
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: tokens.spacingHorizontalXS,
-        rowGap: tokens.spacingVerticalXS,
-    },
-    namingActionGroup: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalXS,
-        minWidth: '220px',
-        [MEDIA.mobile]: {
-            width: '100%',
-        },
-    },
     // Row without bottom border divider
     rowNoDivider: {
         ...rowBase,
@@ -344,22 +321,6 @@ const useStyles = makeStyles({
     },
 });
 
-type RetagStatusSample = RetagPreviewItem;
-
-interface RetagStatus {
-    enabled: boolean;
-    total: number;
-    scanned: number;
-    limited: boolean;
-    retagNeeded: number;
-    missing: number;
-    sample: RetagStatusSample[];
-}
-
-interface RetagPreviewResponse {
-    items: RetagStatusSample[];
-}
-
 const SettingsPage = () => {
     const styles = useStyles();
     const navigate = useNavigate();
@@ -375,7 +336,6 @@ const SettingsPage = () => {
         updatePathSettings,
         namingSettings,
         updateNamingSettings,
-        flushNamingSettings,
     } = useUserSettings();
     const { isLoading: providerLoading } = useProviderConnection();
     const {
@@ -405,77 +365,7 @@ const SettingsPage = () => {
     const [checkingNow, setCheckingNow] = useState(false);
     const [searchingMissingAlbums, setSearchingMissingAlbums] = useState(false);
     const [releaseInfo, setReleaseInfo] = useState<AppReleaseInfoContract | null>(null);
-    const [retagStatus, setRetagStatus] = useState<RetagStatus | null>(null);
-    const [retagStatusLoading, setRetagStatusLoading] = useState(false);
-    const [retagApplying, setRetagApplying] = useState(false);
-    const [retagStatusInitialized, setRetagStatusInitialized] = useState(false);
-    const [retagPreviewOpen, setRetagPreviewOpen] = useState(false);
-    const [retagPreviewItems, setRetagPreviewItems] = useState<RetagStatusSample[]>([]);
     const writeAudioTagsPolicy = metadataSettings?.write_audio_tags_policy ?? "no";
-    const audioRetaggingEnabled =
-        metadataSettings?.enable_fingerprinting === true
-        || writeAudioTagsPolicy !== "no"
-        || metadataSettings?.embed_replaygain !== false;
-
-    const loadRetagStatus = useCallback(async () => {
-        setRetagStatusLoading(true);
-        try {
-            const status = await api.getRetagStatus({ sampleLimit: 8, scanLimit: 1000 });
-            setRetagStatus(status as RetagStatus);
-            setRetagStatusInitialized(true);
-        } catch (error: any) {
-            toast({
-                title: "Retag preview failed",
-                description: error.message || "Could not load the retag plan.",
-                variant: "destructive",
-            });
-        } finally {
-            setRetagStatusLoading(false);
-        }
-    }, [toast]);
-
-    const openRetagPreview = async () => {
-        setRetagStatusLoading(true);
-        try {
-            const response = await api.getRetagPreview({ limit: 1000 }) as RetagPreviewResponse;
-            setRetagPreviewItems(response.items);
-            setRetagPreviewOpen(true);
-            await loadRetagStatus();
-        } catch (error: any) {
-            toast({
-                title: "Retag preview failed",
-                description: error.message || "Could not load the retag preview.",
-                variant: "destructive",
-            });
-        } finally {
-            setRetagStatusLoading(false);
-        }
-    };
-
-    const handleApplyRetags = async (ids?: number[]) => {
-        setRetagApplying(true);
-        try {
-            const result: any = await api.applyRetags(ids ? { ids } : { applyAll: true });
-            toast({
-                title: "Retag queued",
-                description: result?.message || "Queued the audio retag task.",
-            });
-            dispatchActivityRefresh();
-            setRetagPreviewOpen(false);
-        } catch (error: any) {
-            toast({
-                title: "Failed to queue retag",
-                description: error.message || "Could not apply the current metadata tags.",
-                variant: "destructive",
-            });
-        } finally {
-            setRetagApplying(false);
-        }
-    };
-
-    useEffect(() => {
-        fetchConfigs();
-    }, []);
 
     // Match Library: default chromatic wash, not the previous artist/album UltraBlur.
     useEffect(() => {
@@ -484,21 +374,8 @@ const SettingsPage = () => {
     }, [setArtwork, setBrandKeyColor]);
 
     useEffect(() => {
-        if (audioRetaggingEnabled) {
-            return;
-        }
-
-        setRetagStatus(null);
-        setRetagStatusInitialized(false);
-    }, [audioRetaggingEnabled]);
-
-    useEffect(() => {
-        if (!audioRetaggingEnabled || retagStatus || retagStatusLoading || retagStatusInitialized) {
-            return;
-        }
-
-        loadRetagStatus().catch(() => undefined);
-    }, [audioRetaggingEnabled, loadRetagStatus, retagStatus, retagStatusInitialized, retagStatusLoading]);
+        void fetchConfigs();
+    }, []);
 
     useEffect(() => {
         let active = true;
@@ -535,7 +412,7 @@ const SettingsPage = () => {
             // Set defaults on error
             setMonitoringConfig({
                 enabled: false,
-                monitorNewArtists: false,
+                monitorNewArtists: true,
                 removeUnmonitoredFiles: false,
             });
             setMonitoringStatus({ running: false, checking: false });
@@ -665,7 +542,7 @@ const SettingsPage = () => {
                 <ErrorState
                     className={styles.loadingState}
                     title="Settings unavailable"
-                    description="Discogenius could not load the settings payload. Refresh the page or check the API health if this persists."
+                    description="Discogenius could not load settings. Refresh the page or check that the app is running."
                 />
             </div>
         );
@@ -693,10 +570,10 @@ const SettingsPage = () => {
             : "Check unavailable";
     const latestVersionLabel = releaseInfo?.latestVersion ? `v${releaseInfo.latestVersion}` : "Unavailable";
     const versionHint = releaseInfo?.updateStatus === "update-available"
-        ? "A newer Discogenius image is available. Update Docker deployments by pulling the new image and redeploying the container."
+        ? "A newer Discogenius image is available. Pull the updated image and restart the container."
         : releaseInfo?.updateStatus === "current"
             ? "This installation is on the latest stable release."
-            : "Discogenius could not reach the release feed right now. Docker deployments still update by pulling a newer image and redeploying the container.";
+            : "Discogenius could not reach the release feed right now. You can still update by pulling a newer image and restarting the container.";
 
     const renderToggleRow = ({
         title,
@@ -920,8 +797,6 @@ const SettingsPage = () => {
                                     updateMetadataSettings({
                                         write_audio_tags_policy: data.value as "no" | "new_files" | "all_files",
                                     });
-                                    setRetagStatus(null);
-                                    setRetagStatusInitialized(false);
                                 }}
                                 className={styles.controlMedium}
                             >
@@ -954,7 +829,7 @@ const SettingsPage = () => {
                                 })}
                                 className={styles.controlMedium}
                             >
-                                <option value="canonical">Catalog (MusicBrainz / Fanart)</option>
+                                <option value="canonical">Catalog artwork</option>
                                 <option value="provider">Streaming service</option>
                             </Select>
                             </div>
@@ -962,7 +837,7 @@ const SettingsPage = () => {
 
                         {renderToggleRow({
                             title: "Save NFO files",
-                            description: "Write sidecar info files for apps like Jellyfin and Kodi.",
+                            description: "Write sidecar info files next to albums for media servers and scrapers.",
                             checked: metadataSettings?.save_nfo === true,
                             onChange: (checked) => updateMetadataSettings({ save_nfo: checked }),
                         })}
@@ -983,7 +858,7 @@ const SettingsPage = () => {
 
                         {renderToggleRow({
                             title: "Save video thumbnails",
-                            description: "Keep a thumbnail image next to each music video (Plex/Jellyfin-friendly).",
+                            description: "Keep a thumbnail image next to each music video for media servers.",
                             checked: metadataSettings?.save_video_thumbnail === true,
                             onChange: (checked) => updateMetadataSettings({ save_video_thumbnail: checked }),
                         })}
@@ -999,147 +874,16 @@ const SettingsPage = () => {
                             title: "Fingerprint imported files",
                             description: "For files you already have, use audio fingerprinting to confirm the correct track before tagging.",
                             checked: metadataSettings?.enable_fingerprinting === true,
-                            onChange: (checked) => {
-                                updateMetadataSettings({ enable_fingerprinting: checked });
-                                setRetagStatus(null);
-                                setRetagStatusInitialized(false);
-                            },
+                            onChange: (checked) => updateMetadataSettings({ enable_fingerprinting: checked }),
                         })}
-
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Update Tags On Existing Files</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Re-apply the settings above to files already in your library. Preview the changes first, then run it.
-                                </Text>
-                                <div className={styles.namingBadgeRow}>
-                                    <Badge appearance="outline" color="brand">
-                                        {retagStatus?.total ?? 0} tracked
-                                    </Badge>
-                                    {retagStatus?.limited ? (
-                                        <Badge appearance="outline" color="informative">
-                                            {retagStatus.scanned} scanned
-                                        </Badge>
-                                    ) : null}
-                                    <Badge appearance="outline" color={(retagStatus?.retagNeeded ?? 0) > 0 ? "warning" : "success"}>
-                                        {retagStatus?.retagNeeded ?? 0}{retagStatus?.limited ? " in scan" : ""} need retag
-                                    </Badge>
-                                    <Badge appearance="outline" color={(retagStatus?.missing ?? 0) > 0 ? "warning" : "informative"}>
-                                        {retagStatus?.missing ?? 0}{retagStatus?.limited ? " in scan" : ""} missing
-                                    </Badge>
-                                </div>
-                                {retagStatus && !retagStatusLoading && audioRetaggingEnabled && (retagStatus.retagNeeded ?? 0) === 0 ? (
-                                    <Text size={200} className={styles.mutedText}>
-                                        {retagStatus.limited ? "No retag work detected in the fast scan." : "No retag work detected."}
-                                    </Text>
-                                ) : !audioRetaggingEnabled ? (
-                                    <Text size={200} className={styles.mutedText}>Enable tag writing, ReplayGain, or fingerprinting to generate a retag plan.</Text>
-                                ) : null}
-                            </div>
-                            <div className={styles.namingActionGroup}>
-                                <Button
-                                    appearance="outline"
-                                    icon={retagStatusLoading ? <Spinner size="tiny" /> : <ArrowSync24 />}
-                                    onClick={() => void loadRetagStatus()}
-                                    disabled={retagStatusLoading || retagApplying || !audioRetaggingEnabled}
-                                >
-                                    Scan library
-                                </Button>
-                                <Button
-                                    appearance="outline"
-                                    icon={retagStatusLoading ? <Spinner size="tiny" /> : <ArrowSortDownLines24 />}
-                                    onClick={() => openRetagPreview()}
-                                    disabled={retagStatusLoading || retagApplying || !audioRetaggingEnabled}
-                                >
-                                    Preview changes
-                                </Button>
-                            </div>
-                        </div>
-                    </div>
-                </SettingsSection>
-
-                {/* Storage */}
-                <SettingsSection
-                    id="storage"
-                    title="Storage"
-                    description="Folders where Discogenius stores your organized music and videos."
-                    className={styles.section}
-                >
-                    <div className={styles.card}>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Music Library Path</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Standard stereo music library
-                                </Text>
-                            </div>
-                            <Input
-                                value={pathSettings?.music_path || ''}
-                                onChange={(_, data) => updatePathSettings({ music_path: data.value })}
-                                className={styles.pathInput}
-                            />
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Spatial Library Path</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Spatial and surround music library
-                                </Text>
-                            </div>
-                            <Input
-                                value={pathSettings?.spatial_path || ''}
-                                onChange={(_, data) => updatePathSettings({ spatial_path: data.value })}
-                                className={styles.pathInput}
-                            />
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Video Library Path</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Music videos library
-                                </Text>
-                            </div>
-                            <Input
-                                value={pathSettings?.video_path || ''}
-                                onChange={(_, data) => updatePathSettings({ video_path: data.value })}
-                                className={styles.pathInput}
-                            />
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Video Folder Layout</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Keep videos in their own library, or store them alongside each artist's music.
-                                </Text>
-                            </div>
-                            <Select
-                                value={pathSettings?.video_folder_layout || 'separated'}
-                                onChange={(_, data) => updatePathSettings({ video_folder_layout: data.value as 'separated' | 'inline' })}
-                                className={styles.controlMedium}
-                            >
-                                <option value="separated">Separated Library</option>
-                                <option value="inline">Inline with Audio Tracks</option>
-                            </Select>
-                        </div>
-                        <div className={styles.row}>
-                            <div className={styles.rowContent}>
-                                <Text weight="semibold">Create Empty Artist Folders</Text>
-                                <Text size={200} className={styles.mutedText}>
-                                    Create a folder for every monitored artist, even before anything is downloaded.
-                                </Text>
-                            </div>
-                            <Switch
-                                checked={Boolean(pathSettings?.create_empty_artist_folders)}
-                                onChange={(_, data) => updatePathSettings({ create_empty_artist_folders: data.checked })}
-                            />
-                        </div>
                     </div>
                 </SettingsSection>
 
                 <NamingSettingsSection
+                    pathSettings={pathSettings}
+                    updatePathSettings={updatePathSettings}
                     namingSettings={namingSettings}
                     updateNamingSettings={updateNamingSettings}
-                    flushNamingSettings={flushNamingSettings}
                 />
 
                 <AppearanceSettingsSection
@@ -1217,14 +961,6 @@ const SettingsPage = () => {
                         </div>
                     </div>
                 </SettingsSection>
-
-                <RetagPreviewDialog
-                    open={retagPreviewOpen}
-                    items={retagPreviewItems}
-                    applying={retagApplying}
-                    onOpenChange={setRetagPreviewOpen}
-                    onApply={handleApplyRetags}
-                />
             </div >
         </div >
     );

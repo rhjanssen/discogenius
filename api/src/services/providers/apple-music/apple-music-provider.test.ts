@@ -28,7 +28,11 @@ import {
   parseAppleDownloaderProgressLine,
 } from "./apple-music-backend.js";
 import { fixtureFor } from "./apple-music-fixtures.js";
-import { getAppleArtistsForImportSource, getAppleImportSources } from "./apple-music-library.js";
+import {
+  getAppleArtistsForImportSource,
+  getAppleImportSources,
+  shortImportListSubtitle,
+} from "./apple-music-library.js";
 import { appleMusicQualityMapping } from "./apple-music-quality.js";
 
 test("describeAppleDownloaderFailure maps decryption/session errors to a re-auth instruction", () => {
@@ -231,7 +235,7 @@ test("provider exposes core capability descriptor and conforms to interface", as
   assert.equal(provider.capabilities.lyrics, false);
   assert.equal("getLyrics" in provider, false);
   assert.equal(provider.capabilities.followedArtists, false);
-  assert.deepEqual(provider.manifest.imports.supported, ["library-artists", "playlist"]);
+  assert.deepEqual(provider.manifest.imports.supported, ["library-artists", "favorite-tracks", "playlist", "mix"]);
   assert.equal(provider.manifest.integration.catalogSource, "official-api");
   assert.equal(provider.manifest.integration.downloadSource, "native-cli");
 
@@ -243,19 +247,57 @@ test("provider exposes core capability descriptor and conforms to interface", as
 
 test("Apple import sources expose library artists and playlists through the common contract", async () => {
   const sources = await getAppleImportSources(opts());
-  assert.deepEqual(sources.map((source) => source.category), ["library-artists", "playlist"]);
+  assert.deepEqual(
+    sources.map((source) => source.category),
+    ["library-artists", "favorite-tracks", "playlist", "mix"],
+  );
   const playlist = sources.find((source) => source.category === "playlist");
   assert.equal(playlist?.lists?.[0]?.id, "p.test");
   assert.equal(playlist?.lists?.[0]?.title, "Apple Test Playlist");
+  assert.equal(playlist?.lists?.[0]?.subtitle, "Fixture playlist");
+  const mix = sources.find((source) => source.category === "mix");
+  assert.equal(mix?.label, "Made for You");
+  assert.equal(mix?.lists?.[0]?.id, "pl.made-for-you");
+  assert.equal(mix?.lists?.[0]?.title, "New Music Mix");
+  assert.equal(mix?.lists?.[0]?.subtitle, "Based on your listening");
+  const editorialMix = mix?.lists?.find((list) => list.id === "pl.dancexl-2021");
+  assert.equal(editorialMix?.title, "danceXL 2021");
+  // Multi-paragraph Apple editorial description must not become the list subtitle.
+  assert.equal(editorialMix?.subtitle, "40 tracks");
 
   const libraryArtists = await getAppleArtistsForImportSource({ category: "library-artists" }, opts());
   assert.equal(libraryArtists.length, 1);
   assert.equal(libraryArtists[0].providerId, "1419227");
   assert.equal(libraryArtists[0].name, "Bastille");
 
+  const favoriteArtists = await getAppleArtistsForImportSource({ category: "favorite-tracks" }, opts());
+  assert.equal(favoriteArtists.length, 1);
+  assert.equal(favoriteArtists[0].name, "Bastille");
+
   const playlistArtists = await getAppleArtistsForImportSource({ category: "playlist", listId: "p.test" }, opts());
   assert.equal(playlistArtists.length, 1);
   assert.equal(playlistArtists[0].name, "Bastille");
+
+  const mixArtists = await getAppleArtistsForImportSource({ category: "mix", listId: "pl.made-for-you" }, opts());
+  assert.equal(mixArtists.length, 1);
+  assert.equal(mixArtists[0].name, "Bastille");
+});
+
+test("Apple import list subtitles keep short copy and omit editorial blobs", () => {
+  assert.equal(shortImportListSubtitle("Based on your listening"), "Based on your listening");
+  assert.equal(shortImportListSubtitle("Fresh picks for you"), "Fresh picks for you");
+  assert.equal(
+    shortImportListSubtitle("Rockhits uit 2021\n\nEDM is in de afgelopen tien jaar zo populair geworden."),
+    null,
+  );
+  assert.equal(
+    shortImportListSubtitle("<p>Short blurb</p><p>Longer editorial paragraph that should be omitted.</p>"),
+    null,
+  );
+  assert.equal(
+    shortImportListSubtitle("A".repeat(120)),
+    `${"A".repeat(95)}…`,
+  );
 });
 
 test("Apple credential validation probes the user's storefront", async () => {
