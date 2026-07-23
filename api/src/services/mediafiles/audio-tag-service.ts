@@ -1103,7 +1103,7 @@ export class AudioTagService {
         )
       LEFT JOIN AlbumReleases ar ON ar.mbid = COALESCE(lf.canonical_release_mbid, provider_album.release_mbid, provider_track.release_mbid)
       LEFT JOIN Albums alb ON alb.mbid = COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid, provider_track.release_group_mbid)
-      LEFT JOIN ArtistMetadata am ON am.id = artist.artist_metadata_id OR (artist.artist_metadata_id IS NULL AND am.mbid = artist.mbid)
+      LEFT JOIN ArtistMetadata am ON am.mbid = artist.mbid
       WHERE ${whereClause}
         AND (provider_track.provider_id IS NOT NULL OR canonical_track.mbid IS NOT NULL OR provider_canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR provider_recording.mbid IS NOT NULL)
       ORDER BY lf.artist_id, COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid), COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id
