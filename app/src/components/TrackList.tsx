@@ -943,7 +943,7 @@ const TrackList = <T extends TrackListItem>({
     if (showDownloadedColumn) {
       trackColumns.push({
         key: "downloaded",
-        header: "Downloaded",
+        header: "Status",
         width: "88px",
         align: "right",
         minWidth: 768,

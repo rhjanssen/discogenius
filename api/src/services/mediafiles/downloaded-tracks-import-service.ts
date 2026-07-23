@@ -334,6 +334,23 @@ export class DownloadedTracksImportService {
         throw new Error(`ImportDownload job has unsupported media type: ${type}`);
     }
 
+    if (type === "video" && !Config.getFilteringConfig().include_videos) {
+        console.log(`[ImportDownload] Skipping video import ${providerId} because music video monitoring (include_videos) is disabled in settings.`);
+        const downloadPath = payloadPath
+            ? validateDownloadWorkspacePath(payloadPath)
+            : getDownloadWorkspacePath(type, providerId, provider || undefined);
+        if (downloadPath && fs.existsSync(downloadPath)) {
+            try { fs.rmSync(downloadPath, { recursive: true, force: true }); } catch { /* best-effort */ }
+        }
+        options.updateState({
+            progress: 100,
+            description: "Video import skipped (music videos disabled in settings)",
+            state: "completed",
+            outcome: "ok",
+        });
+        return;
+    }
+
     const downloadPath = payloadPath
         ? validateDownloadWorkspacePath(payloadPath)
         : getDownloadWorkspacePath(type, providerId, provider || undefined);

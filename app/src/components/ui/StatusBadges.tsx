@@ -3,16 +3,30 @@
  * Centralized badge definitions to ensure consistency across the app
  */
 
-import { Badge } from "@fluentui/react-components";
+import { Badge, tokens } from "@fluentui/react-components";
+import { CheckmarkCircle16Filled } from "@fluentui/react-icons";
 import React from "react";
 
 /**
  * Downloaded badge - indicates media is available in library
  */
 export const DownloadedBadge: React.FC<{ className?: string }> = ({ className }) => (
-    <Badge appearance="filled" color="success" size="small" className={className}>
-        Downloaded
-    </Badge>
+    <div
+        className={className}
+        title="Downloaded"
+        style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: tokens.colorPaletteGreenBackground3,
+            color: tokens.colorPaletteGreenForeground3,
+            borderRadius: tokens.borderRadiusCircular,
+            padding: tokens.spacingHorizontalXXS,
+            boxShadow: tokens.shadow4,
+        }}
+    >
+        <CheckmarkCircle16Filled style={{ width: "12px", height: "12px" }} />
+    </div>
 );
 
 export const NotScannedBadge: React.FC<{ className?: string }> = ({ className }) => (

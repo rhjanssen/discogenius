@@ -1,7 +1,7 @@
 import React from "react";
 import { Badge, Button, Link, makeStyles, mergeClasses, tokens, shorthands } from "@fluentui/react-components";
 import { Checkmark12Filled } from "@fluentui/react-icons";
-import { QualityBadge } from "./QualityBadge";
+import { QualityBadge, formatQualityForSlot } from "./QualityBadge";
 import { ExplicitBadge } from "./ExplicitBadge";
 import { ProviderMark } from "./ProviderMark";
 import { providerAlbumUrl, providerKey, providerMarkFor, providerTrackUrl, providerVideoUrl } from "./providerMarks";
@@ -610,14 +610,15 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             interactive: Boolean(onSelectOffer),
         });
 
-        const hasKnownQuality = !isUnknownQualityTag(offer.quality);
+        const offerQuality = offer.slot === "video" ? formatQualityForSlot(offer.quality, true) : String(offer.quality || "");
+        const hasKnownQuality = !isUnknownQualityTag(offerQuality);
         const chipSizeClass = size === "small"
             ? styles.videoOfferChipSmall
             : size === "large"
                 ? styles.videoOfferChipLarge
                 : styles.videoOfferChipMedium;
         const badge = hasKnownQuality
-            ? <QualityBadge quality={String(offer.quality)} size={size} className={styles.badge} showTooltip={false} />
+            ? <QualityBadge quality={offerQuality} size={size} className={styles.badge} showTooltip={false} />
             : offer.slot === "video"
                 ? (
                     <Badge

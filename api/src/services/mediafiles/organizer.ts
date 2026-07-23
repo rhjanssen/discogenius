@@ -657,6 +657,11 @@ export class OrganizerService {
     releaseGroupMbid: string | null;
     videoRoot: string;
   }): Promise<boolean> {
+    if (!Config.getFilteringConfig().include_videos) {
+      console.log(`[Organizer] Skipping bundled video ${params.src} because music video monitoring (include_videos) is disabled in settings.`);
+      try { fs.rmSync(params.src, { force: true }); } catch { /* staging cleanup is best-effort */ }
+      return false;
+    }
     const row = db.prepare(`
       SELECT
         COALESCE(NULLIF(TRIM(recording.title), ''), pi.title) AS title,

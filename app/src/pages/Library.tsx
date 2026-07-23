@@ -1018,39 +1018,34 @@ const Library = () => {
 
   const albumColumns = useMemo<DataGridColumn[]>(() => [
     {
-      key: "thumb",
-      header: "",
-      width: "40px",
-      media: true,
-      render: (album: any) => {
-        const src = mediaCoverSrc(album);
-        return src ? (
-          <img
-            src={src}
-            alt={album.title}
-            className={dgCell.thumbnailSquare}
-          />
-        ) : (
-          <div className={mergeClasses(dgCell.thumbnailSquare, dgCell.thumbnailPlaceholder)}>?</div>
-        );
-      },
-    },
-    {
       key: "title",
       header: "Title",
       width: "minmax(0, 1fr)",
       wrap: true,
       render: (album: any) => {
+        const src = mediaCoverSrc(album);
         const quality = renderAlbumQuality(album);
         return (
-          <div className={dgCell.nameStack}>
-            <span className={dgCell.nameCell} title={album.title}>{album.title}</span>
-            <Text size={200} className={dgCell.subtitleText} truncate>{album.artist_name}</Text>
-            {quality ? (
-              <div className={dgCell.mobileQuality} aria-label="Available provider quality">
-                {quality}
-              </div>
-            ) : null}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
+            {src ? (
+              <img
+                src={src}
+                alt={album.title}
+                className={dgCell.thumbnailSquare}
+                style={{ flexShrink: 0 }}
+              />
+            ) : (
+              <div className={mergeClasses(dgCell.thumbnailSquare, dgCell.thumbnailPlaceholder)} style={{ flexShrink: 0 }}>?</div>
+            )}
+            <div className={dgCell.nameStack}>
+              <span className={dgCell.nameCell} title={album.title}>{album.title}</span>
+              <Text size={200} className={dgCell.subtitleText} truncate>{album.artist_name}</Text>
+              {quality ? (
+                <div className={dgCell.mobileQuality} aria-label="Available provider quality">
+                  {quality}
+                </div>
+              ) : null}
+            </div>
           </div>
         );
       },
@@ -1086,13 +1081,38 @@ const Library = () => {
       },
     },
     {
+      key: "status",
+      header: "Status",
+      width: "60px",
+      align: "center",
+      minWidth: 768,
+      className: dgCell.hideOnMobile,
+      render: (album: any) => {
+        const isDownloaded = album.is_downloaded ?? album.downloaded;
+        return isDownloaded ? <DownloadedBadge /> : null;
+      },
+    },
+    {
       key: "quality",
-      header: "Quality",
+      header: "Available",
       width: "max-content",
       align: "left",
       minWidth: 768,
       className: dgCell.hideOnMobile,
       render: (album: any) => renderAlbumQuality(album),
+    },
+    {
+      key: "localQuality",
+      header: "Library",
+      width: "max-content",
+      align: "left",
+      minWidth: 768,
+      className: dgCell.hideOnMobile,
+      render: (album: any) => {
+        const isDownloaded = album.is_downloaded ?? album.downloaded;
+        const localQuality = album.local_quality || (isDownloaded ? album.quality : null);
+        return localQuality ? <QualityBadge quality={localQuality} size="small" /> : <span className={styles.durationText}>—</span>;
+      },
     },
     {
       key: "actions",

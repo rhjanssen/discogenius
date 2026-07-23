@@ -22,6 +22,18 @@ export type AudioQuality = string;
 
 type BadgeSize = DiscogeniusBadgeSize;
 
+export function formatQualityForSlot(quality: string | null | undefined, isVideo = false): string {
+  const norm = String(quality || "").trim().toUpperCase();
+  if (isVideo && (!norm || !isVideoResolutionQuality(norm))) {
+    if (norm === "MAX" || norm === "HIRES" || norm === "UHD" || norm === "2160P") return "UHD";
+    if (norm === "HIGH" || norm === "LOSSLESS" || norm === "FHD" || norm === "1080P") return "FHD";
+    if (norm === "NORMAL" || norm === "HD" || norm === "720P") return "HD";
+    if (norm === "LOW" || norm === "SD" || norm === "480P") return "SD";
+    return "FHD";
+  }
+  return String(quality || "");
+}
+
 interface QualityBadgeProps {
   quality: string;
   className?: string;
