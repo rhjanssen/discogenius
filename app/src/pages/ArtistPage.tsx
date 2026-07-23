@@ -57,7 +57,10 @@ import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
-import { useHorizontalScrollRestore } from "@/hooks/useHorizontalScrollRestore";
+import {
+  useHorizontalScrollRestore,
+  useHorizontalScrollRestoreGroup,
+} from "@/hooks/useHorizontalScrollRestore";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { readArtistViewMode, writeArtistViewMode, type ArtistViewMode } from "@/utils/artistViewMode";
 import { WarningBadge } from "@/components/ui/WarningBadge";
@@ -562,7 +565,7 @@ const ArtistPage = () => {
   ));
   const [filterInitialized, setFilterInitialized] = useState(() => Boolean(readArtistFilterPrefs(artistId)));
   const videoCarouselRef = useHorizontalScrollRestore(`artist:${artistId || "unknown"}:videos`);
-  const albumCarouselRef = useHorizontalScrollRestore(`artist:${artistId || "unknown"}:albums`);
+  const albumCarouselRefFor = useHorizontalScrollRestoreGroup(`artist:${artistId || "unknown"}:albums`);
   const [topTracksExpanded, setTopTracksExpanded] = useState(false);
   const [artistInfoOpen, setArtistInfoOpen] = useState(false);
 
@@ -1372,9 +1375,10 @@ const ArtistPage = () => {
 
     const isFirst = claimFirstVisible();
 
+    const albumSectionKey = String(module.title || module.type || "albums");
     const renderGridOrCarousel = () => (
       <div
-        ref={viewMode === "carousel" ? albumCarouselRef : undefined}
+        ref={viewMode === "carousel" ? albumCarouselRefFor(albumSectionKey) : undefined}
         className={viewMode === 'grid' ? styles.grid : styles.carousel}
       >
         {rendered}
