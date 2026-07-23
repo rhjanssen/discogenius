@@ -58,3 +58,8 @@ pnpm-lock.yaml
 
 # Local environment overrides (secrets, host-specific config). Use .env.example as the template.
 .env
+
+# Runtime SQLite databases (never commit; live DB lives under the gitignored config/)
+*.db
+*.db-wal
+*.db-shm

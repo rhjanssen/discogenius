@@ -40,22 +40,54 @@ if (testFiles.length === 0) {
 }
 
 const tsxBin = join(root, "..", "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
-const testArgs = ["--test", "--test-concurrency=1", ...runnerArgs, ...testFiles];
 
-function runOnce() {
-  return spawnSync(tsxBin, testArgs, {
-    cwd: root,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
+const CLONE_FLAKE_SIGNATURE = "Unable to deserialize cloned data";
+
+function runOnce(files, { capture = false } = {}) {
+  return spawnSync(
+    tsxBin,
+    ["--test", "--test-concurrency=1", ...runnerArgs, ...files],
+    {
+      cwd: root,
+      // Capture stdout so we can identify which file(s) hit the clone flake and
+      // re-run just those; stderr still streams live for progress/log output.
+      stdio: capture ? ["inherit", "pipe", "inherit"] : "inherit",
+      shell: process.platform === "win32",
+      encoding: capture ? "utf8" : undefined,
+      maxBuffer: 256 * 1024 * 1024,
+    },
+  );
 }
 
-let result = runOnce();
-// Node's test runner occasionally fails a whole file with
-// "Unable to deserialize cloned data" — retry once in isolation of the suite.
-if ((result.status ?? 1) !== 0) {
-  console.warn("[api tests] First run failed; retrying once for known test-runner clone flakes.");
-  result = runOnce();
+// Parse the top-level TAP results for failed test *files* (node --test reports
+// one numbered subtest per file: "not ok 102 - src/…/foo.test.ts").
+function parseFailedFiles(stdout) {
+  const failed = new Set();
+  for (const rawLine of String(stdout || "").split(/\r?\n/)) {
+    const match = /^not ok \d+ - (\S.*\.test\.ts)(?:\s|$)/.exec(rawLine.trim());
+    if (match) failed.add(match[1].trim());
+  }
+  return [...failed];
+}
+
+let result = runOnce(testFiles, { capture: true });
+if (result.stdout) process.stdout.write(result.stdout);
+
+// Node's test runner intermittently fails a whole file with "Unable to
+// deserialize cloned data" — a child-process result-serialization flake in the
+// runner itself, not a test assertion. It reproduces under full-suite load, so a
+// whole-suite retry hits it again; re-running only the affected file(s) in
+// isolation clears it. Real assertion failures do not match this signature and
+// fail immediately without a retry.
+if ((result.status ?? 1) !== 0 && String(result.stdout || "").includes(CLONE_FLAKE_SIGNATURE)) {
+  const failedFiles = parseFailedFiles(result.stdout);
+  if (failedFiles.length > 0) {
+    console.warn(`[api tests] Test-runner clone flake detected; re-running ${failedFiles.length} affected file(s) in isolation: ${failedFiles.join(", ")}`);
+    result = runOnce(failedFiles, { capture: false });
+  } else {
+    console.warn("[api tests] Test-runner clone flake detected; retrying whole suite once.");
+    result = runOnce(testFiles, { capture: false });
+  }
 }
 
 process.exit(result.status ?? 1);
