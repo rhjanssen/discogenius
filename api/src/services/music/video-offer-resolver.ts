@@ -93,8 +93,10 @@ export function resolveVideoOfferForProvider(provider: string, recordingRef: str
  * the user's provider priority. Codec order is AV1 > VP9 > HEVC > h.264 so an
  * FHD Apple Music (HEVC) offer beats FHD TIDAL (h.264) regardless of settings.
  *
- * ProviderItems do not store codec yet; assume per-provider catalog codecs:
- * YouTube AV1 at UHD / VP9 otherwise, Apple Music HEVC, TIDAL h.264.
+ * ProviderItems do not store codec yet; assume per-provider catalog codecs
+ * from TrackFiles evidence (2026-07 Bastille/Bakermat library): YouTube AV1
+ * (FHD+ downloads are overwhelmingly AV1, not VP9), Apple Music HEVC for
+ * catalog offers, TIDAL h.264.
  */
 export function videoOfferQualityRank(quality: string | null | undefined): number {
     const normalized = String(quality || "").trim().toUpperCase().replace(/-/g, "_");
@@ -141,9 +143,8 @@ export function videoOfferCodecRank(
     }
 
     const providerId = String(provider || "").trim().toLowerCase();
-    if (providerId === "youtube" || providerId === "youtube-music") {
-        return videoOfferQualityRank(quality) >= 5 ? 400 : 300;
-    }
+    // Live TrackFiles: youtube-music FHD is almost all av1 (VP9 is rare).
+    if (providerId === "youtube" || providerId === "youtube-music") return 400;
     if (providerId === "apple-music" || providerId === "apple") return 200;
     if (providerId === "tidal") return 100;
     return 0;

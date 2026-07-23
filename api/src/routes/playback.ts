@@ -56,6 +56,51 @@ function signUrl(providerId: string, id: string, expires: number, quality?: stri
     return hmac.digest("hex");
 }
 
+function signHlsProxyUrl(providerId: string, trackId: string, expires: number, quality: string | null, targetUrl: string): string {
+    const hmac = crypto.createHmac("sha256", getSecret());
+    hmac.update(`${providerId}:${trackId}:${quality || ""}:${expires}:${targetUrl}`);
+    return hmac.digest("hex");
+}
+
+/** Resolve a possibly-relative m3u8 URI against the playlist URL. */
+function resolvePlaylistUri(playlistUrl: string, uri: string): string {
+    try {
+        return new URL(uri, playlistUrl).toString();
+    } catch {
+        return uri;
+    }
+}
+
+/**
+ * Rewrite an upstream HLS playlist so media/key/map URIs go through our signed
+ * segment proxy (SoundCloud CDN has no CORS for browser hls.js).
+ */
+function rewriteHlsPlaylistForProxy(
+    playlistText: string,
+    playlistUrl: string,
+    segmentUri: (absoluteUrl: string) => string,
+): string {
+    const lines = playlistText.split(/\r?\n/);
+    const out: string[] = [];
+    for (const line of lines) {
+        if (!line || line.startsWith("#")) {
+            // Rewrite URI="..." attributes on EXT-X-KEY / EXT-X-MAP / etc.
+            if (/URI="/i.test(line)) {
+                out.push(line.replace(/URI="([^"]+)"/gi, (_match, rawUri: string) => {
+                    const absolute = resolvePlaylistUri(playlistUrl, rawUri);
+                    return `URI="${segmentUri(absolute)}"`;
+                }));
+            } else {
+                out.push(line);
+            }
+            continue;
+        }
+        const absolute = resolvePlaylistUri(playlistUrl, line.trim());
+        out.push(segmentUri(absolute));
+    }
+    return out.join("\n");
+}
+
 function getCachedPlaybackInfo(
     providerId: string,
     trackId: string,
@@ -183,6 +228,9 @@ async function loadSignedPlaybackInfo(providerId: string, trackId: string, quali
  * stream/seek without the proxy materializing the whole file first. The init
  * segment is exposed via EXT-X-MAP; media segments stream through
  * /stream/seg/:trackId/:index on demand.
+ *
+ * Also rewrites provider-native HLS playlists (SoundCloud plain HLS) so
+ * segment fetches go through /stream/hls-proxy (CORS).
  */
 router.get("/stream/hls/:trackId", async (req: Request, res: Response) => {
     const trackId = req.params.trackId as string;
@@ -192,6 +240,37 @@ router.get("/stream/hls/:trackId", async (req: Request, res: Response) => {
     try {
         const info = await loadSignedPlaybackInfo(verified.providerId, trackId, verified.quality);
         if (!info) return res.status(502).json({ error: "No playable quality available" });
+
+        if (info.type === "hls") {
+            const upstream = await fetch(info.url, {
+                headers: { "User-Agent": "Mozilla/5.0 (compatible; Discogenius/1.0)" },
+            });
+            if (!upstream.ok) {
+                return res.status(502).json({ error: `Upstream HLS playlist fetch failed (${upstream.status})` });
+            }
+            const playlistText = await upstream.text();
+            // Build per-segment signatures over the absolute target URL.
+            const segmentUri = (absoluteUrl: string) => {
+                const segSig = signHlsProxyUrl(
+                    verified.providerId,
+                    trackId,
+                    Number(req.query.exp),
+                    verified.quality,
+                    absoluteUrl,
+                );
+                return `/api/playback/stream/hls-proxy/${encodeURIComponent(trackId)}`
+                    + `?exp=${encodeURIComponent(String(req.query.exp))}`
+                    + `&sig=${encodeURIComponent(segSig)}`
+                    + `&provider=${encodeURIComponent(verified.providerId)}`
+                    + (verified.quality ? `&quality=${encodeURIComponent(verified.quality)}` : "")
+                    + `&u=${encodeURIComponent(absoluteUrl)}`;
+            };
+            const rewritten = rewriteHlsPlaylistForProxy(playlistText, info.url, segmentUri);
+            res.setHeader("content-type", "application/vnd.apple.mpegurl");
+            res.setHeader("cache-control", "private, max-age=60");
+            return res.send(rewritten);
+        }
+
         if (info.type !== "dash") {
             // Progressive source — the client should use the plain play URL.
             return res.status(409).json({ error: "progressive source", progressiveOnly: true });
@@ -226,6 +305,82 @@ router.get("/stream/hls/:trackId", async (req: Request, res: Response) => {
     } catch (err: any) {
         console.error("[Playback] HLS playlist error:", err);
         if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+/**
+ * GET /stream/hls-proxy/:trackId
+ * Proxies a single HLS segment/key/map URI from a provider CDN. Signature
+ * covers the absolute target URL so the browser cannot fetch arbitrary hosts.
+ */
+router.get("/stream/hls-proxy/:trackId", async (req: Request, res: Response) => {
+    const trackId = req.params.trackId as string;
+    const exp = String(req.query.exp ?? "") || undefined;
+    const sig = String(req.query.sig ?? "") || undefined;
+    const requestedQuality = req.query.quality;
+    const quality = normalizePlaybackQuality(requestedQuality);
+    const providerId = String(req.query.provider ?? "").trim();
+    const targetUrl = String(req.query.u ?? "").trim();
+
+    if (!exp || !sig) return res.status(403).json({ error: "Missing signature" });
+    if (requestedQuality !== undefined && !quality) return res.status(400).json({ error: "Unsupported playback quality" });
+    if (!providerId) return res.status(400).json({ error: "Missing provider" });
+    if (!targetUrl) return res.status(400).json({ error: "Missing segment URL" });
+
+    const expires = parseInt(exp, 10);
+    if (Date.now() / 1000 > expires) return res.status(403).json({ error: "URL expired" });
+
+    const expected = signHlsProxyUrl(providerId, trackId, expires, quality, targetUrl);
+    if (sig !== expected) return res.status(403).json({ error: "Invalid signature" });
+
+    let parsed: URL;
+    try {
+        parsed = new URL(targetUrl);
+    } catch {
+        return res.status(400).json({ error: "Invalid segment URL" });
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+        return res.status(400).json({ error: "Unsupported segment URL scheme" });
+    }
+
+    try {
+        const upstream = await fetch(targetUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; Discogenius/1.0)" },
+        });
+        if (!upstream.ok || !upstream.body) {
+            return res.status(502).json({ error: `Upstream segment fetch failed (${upstream.status})` });
+        }
+
+        // Nested media playlists (master → variant) also need URI rewriting.
+        const contentType = upstream.headers.get("content-type") || "";
+        if (/mpegurl|m3u8/i.test(contentType) || /\.m3u8(\?|$)/i.test(parsed.pathname)) {
+            const playlistText = await upstream.text();
+            const rewritten = rewriteHlsPlaylistForProxy(playlistText, targetUrl, (absoluteUrl) => {
+                const segSig = signHlsProxyUrl(providerId, trackId, expires, quality, absoluteUrl);
+                return `/api/playback/stream/hls-proxy/${encodeURIComponent(trackId)}`
+                    + `?exp=${encodeURIComponent(String(expires))}`
+                    + `&sig=${encodeURIComponent(segSig)}`
+                    + `&provider=${encodeURIComponent(providerId)}`
+                    + (quality ? `&quality=${encodeURIComponent(quality)}` : "")
+                    + `&u=${encodeURIComponent(absoluteUrl)}`;
+            });
+            res.setHeader("content-type", "application/vnd.apple.mpegurl");
+            res.setHeader("cache-control", "private, max-age=60");
+            return res.send(rewritten);
+        }
+
+        res.setHeader("content-type", contentType || "application/octet-stream");
+        res.setHeader("cache-control", "private, max-age=600");
+        const length = upstream.headers.get("content-length");
+        if (length) res.setHeader("content-length", length);
+
+        const nodeStream = Readable.fromWeb(upstream.body as any);
+        await streamPipeline(nodeStream, res);
+    } catch (err: any) {
+        if (err?.code === "ERR_STREAM_PREMATURE_CLOSE") return;
+        console.error("[Playback] HLS proxy error:", err);
+        if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+        else res.end();
     }
 });
 
@@ -338,6 +493,12 @@ router.get("/stream/play/:trackId", async (req: Request, res: Response) => {
             const nodeStream = Readable.fromWeb(upstream.body as any);
             await streamPipeline(nodeStream, res);
             return;
+        }
+
+        if (info.type === "hls") {
+            // Browser should use the signed hlsUrl; progressive play cannot
+            // stream an m3u8 without hls.js + the segment proxy.
+            return res.status(409).json({ error: "hls source", hlsOnly: true });
         }
 
         console.log(`[Playback] Seekable DASH stream for track ${trackId} (${info.segments.length} segments)`);

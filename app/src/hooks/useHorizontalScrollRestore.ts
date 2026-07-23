@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type React from "react";
-import { useLocation, useNavigationType } from "react-router-dom";
+import { useNavigationType } from "react-router-dom";
 
 const STORAGE_KEY = "discogenius-horizontal-scroll";
 const MAX_STORED_KEYS = 64;
@@ -41,31 +41,37 @@ function writeStoredPositions(positions: Record<string, number>) {
 /**
  * Persist and restore horizontal `scrollLeft` for carousel strips across
  * back/forward navigations (window ScrollRestoration only covers scrollY).
+ *
+ * Keys by the stable `storageKey` only — React Router `location.key` changes
+ * on every push, so mixing it in made POP restores miss the saved position.
+ * Save on scroll and on unmount; restore when content has a scrollable width.
  */
 export function useHorizontalScrollRestore(
   storageKey: string,
 ): React.RefObject<HTMLDivElement> {
   const ref = useRef<HTMLDivElement | null>(null);
-  const location = useLocation();
   const navigationType = useNavigationType();
   const positionsRef = useRef<Record<string, number>>(readStoredPositions());
-  const key = `${location.key}:${storageKey}`;
+  const key = String(storageKey || "").trim();
 
   useEffect(() => {
+    if (!key) return;
     const node = ref.current;
     if (!node) return;
     const positions = positionsRef.current;
     const save = () => {
       positions[key] = node.scrollLeft;
+      writeStoredPositions(positions);
     };
     node.addEventListener("scroll", save, { passive: true });
     return () => {
+      save();
       node.removeEventListener("scroll", save);
-      writeStoredPositions(positions);
     };
   }, [key]);
 
   useLayoutEffect(() => {
+    if (!key) return;
     const saved = positionsRef.current[key];
     if (navigationType !== "POP" || typeof saved !== "number" || saved <= 0) {
       return;
@@ -74,7 +80,10 @@ export function useHorizontalScrollRestore(
     let cancelled = false;
     const restore = () => {
       if (cancelled || !ref.current) return;
-      ref.current.scrollLeft = saved;
+      const node = ref.current;
+      // Wait until children have laid out a scrollable strip.
+      if (node.scrollWidth <= node.clientWidth + 1) return;
+      node.scrollLeft = saved;
     };
     restore();
     const raf = window.requestAnimationFrame(restore);

@@ -1631,6 +1631,18 @@ export class DownloadProcessor {
                             primaryProvider,
                             fallbackProvider,
                         );
+                    } else {
+                        // Promote backend soft warnings (partial SoundCloud album,
+                        // skipped DRM/SNIP tracks) into completedWithWarning.
+                        const downloadState = (CommandQueueManager.get(commandId)?.payload?.downloadState
+                            || {}) as DownloadStatePayload;
+                        if (downloadState.warningMessage && downloadState.outcome !== "completedWithWarning") {
+                            this.persistDownloadState(commandId, {
+                                outcome: "completedWithWarning",
+                                warningMessage: downloadState.warningMessage,
+                                statusMessage: downloadState.warningMessage,
+                            });
+                        }
                     }
                     // Keep command payload aligned with the offer that actually downloaded.
                     if (

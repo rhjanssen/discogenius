@@ -24,6 +24,8 @@ export interface DownloadProgress {
     trackProgress?: number;
     trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
     statusMessage?: string;
+    /** Soft warning for partial album success (skipped DRM/SNIP/private tracks). */
+    warningMessage?: string;
     state?: 'queued' | 'downloading' | 'completed' | 'failed' | 'paused' | 'importPending' | 'importing' | 'importFailed';
     speed?: string;
     eta?: string;

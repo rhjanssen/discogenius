@@ -20,6 +20,8 @@ test("parseVideoVariant classifies lyric/live/audio/visualizer/video", () => {
   assert.equal(parseVideoVariant("Pompeii (Official Audio)"), "audio");
   assert.equal(parseVideoVariant("Quarter Past Midnight (Audio)"), "audio");
   assert.equal(parseVideoVariant("Pompeii (Visualizer)"), "visualizer");
+  assert.equal(parseVideoVariant("Head Down (Moving artwork video)"), "visualizer");
+  assert.equal(parseVideoVariant("Come as You Are (MTV Unplugged)"), "live");
   assert.equal(parseVideoVariant("Pompeii (Official Music Video)"), "official");
   assert.equal(parseVideoVariant("Pompeii"), "video");
 });

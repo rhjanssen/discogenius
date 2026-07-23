@@ -527,14 +527,20 @@ export class SoundCloudProvider implements StreamingProvider {
     const { resolveSoundCloudMediaUrl } = await import("./soundcloud-api.js");
     // Browser preview may use SNIP progressive (30s) when full streams are
     // DRM-only or unavailable for the account. Downloads still reject SNIP.
-    // Only progressive HTTP is safe for the BTS play proxy; plain HLS would
-    // need the HLS playlist path, and encrypted HLS needs DRM.
+    // Progressive → BTS play proxy; plain HLS → rewritten playlist + segment
+    // proxy (CORS). Encrypted HLS is never previewed.
     const media = await resolveSoundCloudMediaUrl(track, {
       ...this.fetchOptions(),
       allowSnipped: true,
     });
-    if (!media?.url || media.protocol !== "progressive") return null;
-    return { type: "bts", url: media.url };
+    if (!media?.url) return null;
+    if (media.protocol === "progressive") {
+      return { type: "bts", url: media.url };
+    }
+    if (media.protocol === "hls") {
+      return { type: "hls", url: media.url };
+    }
+    return null;
   }
 
   async listImportSources(): Promise<ProviderImportSource[]> {

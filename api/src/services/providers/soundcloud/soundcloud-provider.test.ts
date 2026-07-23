@@ -397,12 +397,14 @@ test("SoundCloud native backend downloads progressive MP3 named by provider id",
   assert.ok(progress.length > 0);
 });
 
-test("SoundCloud album rejects DRM-only tracks instead of falling through to yt-dlp", async () => {
+test("SoundCloud album skips DRM-only tracks and completes the playable remainder", async () => {
   saveSoundCloudCredentials({ oauthToken: "2-326587-test-token" });
-  const downloadPath = path.join(tempDir, "album-preflight-dl");
+  const downloadPath = path.join(tempDir, "album-partial-dl");
   fs.rmSync(downloadPath, { recursive: true, force: true });
   fs.mkdirSync(downloadPath, { recursive: true });
   let fallbackRuns = 0;
+  const warnings: string[] = [];
+  const skippedStatuses: string[] = [];
   const backend = new SoundCloudBackend({
     fetchImpl: fixtureFetch,
     preferNative: true,
@@ -419,22 +421,27 @@ test("SoundCloud album rejects DRM-only tracks instead of falling through to yt-
       queueMicrotask(() => child.emit("close", 0, null));
       return child as any;
     },
-    mediaFileFinder: async () => [path.join(downloadPath, "194886453.mp3")],
   });
 
-  await assert.rejects(
-    () => backend.download({
-      provider: "soundcloud",
-      entityType: "album",
-      providerId: "1891733180",
-      downloadPath,
-    }, {
-      onProgress: () => undefined,
-    }),
-    /DRM-protected/,
-  );
+  await backend.download({
+    provider: "soundcloud",
+    entityType: "album",
+    providerId: "1891733180",
+    downloadPath,
+  }, {
+    onProgress: (event) => {
+      if (event.warningMessage) warnings.push(event.warningMessage);
+      if (event.tracks) {
+        for (const track of event.tracks) {
+          if (track.status === "skipped") skippedStatuses.push(track.providerTrackId || track.title);
+        }
+      }
+    },
+  });
   assert.equal(fallbackRuns, 0);
-  assert.deepEqual(fs.readdirSync(downloadPath), []);
+  assert.deepEqual(fs.readdirSync(downloadPath).sort(), ["194886453.mp3"]);
+  assert.ok(warnings.some((message) => /skipped 1 DRM\/SNIP/i.test(message)));
+  assert.ok(skippedStatuses.includes("194886454"));
 });
 
 test("SoundCloud removes staged native album files when a later transfer fails", async () => {

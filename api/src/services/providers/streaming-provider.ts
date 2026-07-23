@@ -254,6 +254,7 @@ export interface ProviderDownloadOptions {
 
 export type ProviderPlaybackInfo =
   | { type: "bts"; url: string }
+  | { type: "hls"; url: string }
   | { type: "dash"; segments: string[]; durations?: number[]; contentType: string };
 
 export type ProviderVideoPlaybackInfo = {

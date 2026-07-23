@@ -777,7 +777,14 @@ export class LibraryFilesService {
                 rr.target_recording_id AS audio_recording_id,
                 audio.mbid AS audio_recording_mbid,
                 audio.title AS audio_title,
-                COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid) AS release_group_mbid
+                COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid) AS release_group_mbid,
+                COALESCE(track_rg.track_count, 0) AS track_count,
+                CASE WHEN EXISTS (
+                  SELECT 1 FROM ReleaseGroupSlots rgs
+                  WHERE rgs.release_group_mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
+                    AND rgs.slot = 'stereo'
+                    AND rgs.monitored = 1
+                ) THEN 1 ELSE 0 END AS stereo_monitored
               FROM RecordingRelations rr
               JOIN Recordings audio ON audio.id = rr.target_recording_id
               LEFT JOIN TrackFiles tf
@@ -788,8 +795,8 @@ export class LibraryFilesService {
                 ON (t.recording_mbid = audio.mbid OR t.recording_id = audio.id)
               LEFT JOIN AlbumReleases track_rg ON track_rg.mbid = t.release_mbid
               WHERE rr.source_recording_id = ?
-                AND rr.relation_type = 'provider_video_for'
-              ORDER BY rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
+                AND rr.relation_type IN ('provider_video_for', 'music_video_for')
+              ORDER BY stereo_monitored DESC, track_count DESC, rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
               LIMIT 1
             `).get(videoRecordingId) as {
               audio_recording_id?: number;
@@ -1155,27 +1162,81 @@ export class LibraryFilesService {
 
     if (row.file_type === "lyrics") {
       if (!row.media_id && !canonicalIdentity.canonicalTrackMbid) return { expectedPath: null, reason: "missing_media_id" };
-      const trackFile = db.prepare(`
-        SELECT extension FROM TrackFiles
-        WHERE (
-            (provider_id IS NOT NULL AND provider_id = ?)
-            OR (canonical_track_mbid IS NOT NULL AND canonical_track_mbid = ?)
-          )
-          AND file_type = 'track' AND library_slot = ?
-        ORDER BY id ASC
-        LIMIT 1
-      `).get(row.media_id, canonicalIdentity.canonicalTrackMbid, row.library_slot || "stereo") as any || db.prepare(`
-        SELECT extension FROM TrackFiles
-        WHERE (
-            (provider_id IS NOT NULL AND provider_id = ?)
-            OR (canonical_track_mbid IS NOT NULL AND canonical_track_mbid = ?)
-          )
-          AND file_type = 'track'
-        ORDER BY id ASC
-        LIMIT 1
-      `).get(row.media_id, canonicalIdentity.canonicalTrackMbid) as any;
+      const slot = row.library_slot || "stereo";
+      // Prefer an exact provider_id match so a radio-edit lyric does not bind to
+      // an extended cut that shares a remapped canonical_track_mbid (OR + ORDER
+      // BY id ASC previously preferred the wrong TrackFile).
+      const trackFileByProvider = row.media_id
+        ? db.prepare(`
+            SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
+                   canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+                   canonical_track_mbid, canonical_recording_mbid,
+                   file_path, relative_path, library_root, file_type, extension,
+                   library_slot, provider, provider_entity_type, provider_id,
+                   quality, codec, bitrate, sample_rate, bit_depth, channels
+            FROM TrackFiles
+            WHERE provider_id IS NOT NULL
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+              AND file_type = 'track'
+              AND library_slot = ?
+            ORDER BY id ASC
+            LIMIT 1
+          `).get(String(row.media_id), slot) as LibraryFileRow | undefined
+        : undefined;
+      const trackFileByCanonical = !trackFileByProvider && canonicalIdentity.canonicalTrackMbid
+        ? db.prepare(`
+            SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
+                   canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+                   canonical_track_mbid, canonical_recording_mbid,
+                   file_path, relative_path, library_root, file_type, extension,
+                   library_slot, provider, provider_entity_type, provider_id,
+                   quality, codec, bitrate, sample_rate, bit_depth, channels
+            FROM TrackFiles
+            WHERE canonical_track_mbid IS NOT NULL
+              AND canonical_track_mbid = ?
+              AND file_type = 'track'
+              AND library_slot = ?
+            ORDER BY id ASC
+            LIMIT 1
+          `).get(canonicalIdentity.canonicalTrackMbid, slot) as LibraryFileRow | undefined
+        : undefined;
+      const trackFile = trackFileByProvider || trackFileByCanonical
+        || (row.media_id
+          ? db.prepare(`
+              SELECT id, artist_id, NULL AS album_id, provider_id AS media_id,
+                     canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+                     canonical_track_mbid, canonical_recording_mbid,
+                     file_path, relative_path, library_root, file_type, extension,
+                     library_slot, provider, provider_entity_type, provider_id,
+                     quality, codec, bitrate, sample_rate, bit_depth, channels
+              FROM TrackFiles
+              WHERE provider_id IS NOT NULL
+                AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                AND file_type = 'track'
+              ORDER BY id ASC
+              LIMIT 1
+            `).get(String(row.media_id)) as LibraryFileRow | undefined
+          : undefined);
 
-      const canonicalTrack = getCanonicalTrackMetadata(canonicalIdentity.canonicalTrackMbid);
+      // Lidarr-style: lyrics follow their linked audio file's stem.
+      if (trackFile) {
+        const audioExpected = LibraryFilesService.computeExpectedPath(trackFile).expectedPath
+          || resolveStoredLibraryPath({
+            filePath: trackFile.file_path,
+            libraryRoot: trackFile.library_root,
+            relativePath: trackFile.relative_path,
+          });
+        if (audioExpected) {
+          const lyricExtension = String(row.extension || "lrc").toLowerCase() === "txt" ? ".txt" : ".lrc";
+          return {
+            expectedPath: audioExpected.replace(new RegExp(`${path.extname(audioExpected).replace(".", "\\.")}$`), lyricExtension),
+          };
+        }
+      }
+
+      const canonicalTrack = getCanonicalTrackMetadata(
+        trackFile?.canonical_track_mbid || canonicalIdentity.canonicalTrackMbid,
+      );
       if (!canonicalTrack) return { expectedPath: null, reason: "track_not_found" };
 
       const trackArtist = canonicalTrack.recording_artist_mbid
@@ -1183,7 +1244,8 @@ export class LibraryFilesService {
         : null;
 
       const ext = (trackFile?.extension as string | undefined) || "flac";
-      const canonicalPosition = getCanonicalTrackPosition(canonicalIdentity.canonicalTrackMbid);
+      const positionMbid = trackFile?.canonical_track_mbid || canonicalIdentity.canonicalTrackMbid;
+      const canonicalPosition = getCanonicalTrackPosition(positionMbid);
       const trackContext: NamingContext = {
         ...albumContext,
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",

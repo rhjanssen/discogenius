@@ -17,8 +17,11 @@ export const VIDEO_DURATION_MATCH_MS = 2_000;
 const VARIANT_CLASS_RULES: Array<{ variant: VideoVariant; re: RegExp }> = [
   { variant: "audio", re: /\baudio\b/i },
   { variant: "lyric", re: /\blyrics?\b/i },
-  { variant: "visualizer", re: /\bvisuali[sz]er\b/i },
-  { variant: "live", re: /\blive\b|\bperformance\b/i },
+  // Moving artwork / visualiser cuts share the Visualizer filter — keep them
+  // out of Official Audio / bare OMV buckets.
+  { variant: "visualizer", re: /\bvisuali[sz]er\b|\bmoving\s+artwork\b/i },
+  // MTV Unplugged (and similar branded sessions) are live performances.
+  { variant: "live", re: /\blive\b|\bperformance\b|\bmtv\s+unplugged\b/i },
   { variant: "official", re: /\bofficial\b|\bmusic\s*video\b/i },
 ];
 
@@ -67,11 +70,11 @@ export function cleanVideoGroupTitle(title: string | null | undefined): string {
 
   const cleaned = raw
     .replace(
-      /\s*[([][^)\]]*\b(lyrics?|live|performance|audio|visuali[sz]er|official(?:\s+music)?\s*video|music\s*video|official)[^)\]]*[)\]]/gi,
+      /\s*[([][^)\]]*\b(lyrics?|live|performance|audio|visuali[sz]er|moving\s+artwork|mtv\s+unplugged|official(?:\s+music)?\s*video|music\s*video|official)[^)\]]*[)\]]/gi,
       "",
     )
     .replace(
-      /\s+[-–—]\s*(?:official\s+)?(?:lyric(?:s)?(?:\s+video)?|live(?:\s+.*)?|audio(?:\s+.*)?|visuali[sz]er(?:\s+.*)?)?\s*$/i,
+      /\s+[-–—]\s*(?:official\s+)?(?:lyric(?:s)?(?:\s+video)?|live(?:\s+.*)?|audio(?:\s+.*)?|visuali[sz]er(?:\s+.*)?|moving\s+artwork(?:\s+.*)?)?\s*$/i,
       "",
     )
     .replace(/\s+/g, " ")

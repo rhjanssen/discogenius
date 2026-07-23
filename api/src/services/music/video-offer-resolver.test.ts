@@ -124,7 +124,7 @@ test("same-resolution ranking prefers HEVC Apple Music over h.264 TIDAL", () => 
     ) < 0,
   );
   assert.equal(resolver.videoOfferCodecRank("youtube-music", "UHD"), 400);
-  assert.equal(resolver.videoOfferCodecRank("youtube-music", "FHD"), 300);
+  assert.equal(resolver.videoOfferCodecRank("youtube-music", "FHD"), 400);
   assert.equal(resolver.videoOfferCodecRank("apple-music", "FHD"), 200);
   assert.equal(resolver.videoOfferCodecRank("tidal", "FHD"), 100);
 });

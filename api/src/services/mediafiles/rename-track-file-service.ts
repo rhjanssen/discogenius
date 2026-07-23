@@ -159,7 +159,10 @@ export class RenameTrackFileService {
         `).get(decoded.id, expectedPath, expectedPath);
 
         conflict = normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath)
-          && (fs.existsSync(expectedPath) || Boolean(dbConflict));
+          && (fs.existsSync(expectedPath) || Boolean(dbConflict))
+          // Lyric duplicates that claim the same stem are resolved on apply
+          // (drop source), so the preview must not count them as conflicts.
+          && !(row.file_type === "lyrics" && tableName === "LyricFiles");
       }
 
       updates.push({ id: row.id, expectedPath, needsRename: needsRename ? 1 : 0 });
@@ -391,6 +394,11 @@ export class RenameTrackFileService {
               // Target exists on disk at this scope's canonical sidecar path.
               duplicateOfSameScope = true;
             }
+          } else if (row.file_type === "lyrics" && tableName === "LyricFiles") {
+            // Lidarr-style lyric move: when two .lrc rows claim the same audio
+            // stem, keep the destination occupant and drop the duplicate source
+            // instead of a permanent Rename Conflict.
+            duplicateOfSameScope = true;
           }
 
           if (duplicateOfSameScope) {
@@ -415,7 +423,9 @@ export class RenameTrackFileService {
                 deletedPath: resolvedFilePath,
                 replacementPath: expectedPath,
                 fileType: row.file_type,
-                reason: "merged-root-sidecar-duplicate",
+                reason: row.file_type === "lyrics"
+                  ? "lyric-sidecar-duplicate"
+                  : "merged-root-sidecar-duplicate",
               },
             });
             const sourceRoot = resolveLibraryRootPath(row.library_root, resolvedFilePath);
@@ -648,7 +658,7 @@ export class RenameTrackFileService {
          OR CAST(tf.provider_id AS TEXT) = CAST(pi.provider_id AS TEXT)
        )
       WHERE rr.target_recording_id IN (${recordingPlaceholders})
-        AND rr.relation_type = 'provider_video_for'
+        AND rr.relation_type IN ('provider_video_for', 'music_video_for')
     `).all(...recordingIds) as Array<{ id: number }>).map((row) => Number(row.id));
 
     if (relatedVideoFileIds.length === 0) {

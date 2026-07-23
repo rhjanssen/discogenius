@@ -458,7 +458,8 @@ export function getVideoDetail(videoId: string): VideoDetailContract | null {
  * Videos associated with an album (release group) for album-page UX.
  *
  * Sources (unioned, de-duped by video recording id):
- *  1. `provider_video_for` from a video → audio recording that appears on this RG
+ *  1. `provider_video_for` / `music_video_for` from a video → audio recording
+ *     that appears on this RG
  *  2. Video recordings that themselves appear as tracks on this RG
  *
  * Track position prefers the stereo-selected / richest edition (same idea as
@@ -606,7 +607,7 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
         ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
         LIMIT 1
       )
-    WHERE rr.relation_type = 'provider_video_for'
+    WHERE rr.relation_type IN ('provider_video_for', 'music_video_for')
       AND EXISTS (
         SELECT 1
         FROM Tracks t
@@ -917,9 +918,10 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
  *
  * Sources (unioned):
  *  1. Canonical release tracks pointing at this video recording (MB video tracks)
- *  2. Related audio recordings (`RecordingRelations.provider_video_for`) — album
- *     membership lives on the audio tracklist (YouTube ATV↔OMV counterparts,
- *     Apple/TIDAL title+duration links, etc.)
+ *  2. Related audio recordings (`RecordingRelations.provider_video_for` /
+ *     `music_video_for`) — album membership lives on the audio tracklist
+ *     (YouTube ATV↔OMV counterparts, Apple/TIDAL title+duration links,
+ *     MusicBrainz music-video relations, etc.)
  *
  * Provider video offers may carry stamped `release_group_mbid` /
  * `provider_album_id` after album refresh, but those are processing artifacts,
@@ -928,7 +930,8 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
  *
  * Track/disc position prefers the monitored/selected release when present,
  * then richer multi-disc editions, then earliest date. Wanted albums
- * (`ReleaseGroupSlots.monitored`) sort first.
+ * (`ReleaseGroupSlots.monitored`) sort first, then largest track count
+ * (prefer the full album over a single/EP that shares the audio cut).
  */
 function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
   const videoOrRelatedAudio = `
@@ -941,7 +944,7 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       SELECT rr.target_recording_id
       FROM RecordingRelations rr
       WHERE CAST(rr.source_recording_id AS TEXT) = CAST(? AS TEXT)
-        AND rr.relation_type = 'provider_video_for'
+        AND rr.relation_type IN ('provider_video_for', 'music_video_for')
         AND rr.target_recording_id IS NOT NULL
     )
   `;
@@ -1058,7 +1061,27 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
         OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
       WHERE ${videoOrRelatedAudio}
     )
-    ORDER BY wanted DESC, a.title COLLATE NOCASE ASC
+    ORDER BY wanted DESC,
+      COALESCE((
+        SELECT COALESCE(
+          NULLIF(ar.track_count, 0),
+          (
+            SELECT COUNT(*)
+            FROM Tracks t2
+            WHERE t2.album_release_id = ar.id
+               OR (t2.release_mbid IS NOT NULL AND t2.release_mbid = ar.mbid)
+          )
+        )
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        WHERE ar.release_group_mbid = a.mbid
+          AND (${videoOrRelatedAudio})
+        ORDER BY ${trackPickOrder}
+        LIMIT 1
+      ), 0) DESC,
+      a.title COLLATE NOCASE ASC
   `).all(
     // Per position subquery: videoOrRelatedAudio (3) + trackPickOrder (2)
     // × 5 subqueries (track_mbid, track_number, volume_number, track_count, media_count)
@@ -1066,6 +1089,8 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
     recordingId, recordingId, recordingId, recordingId, recordingId,
     recordingId, recordingId, recordingId, recordingId, recordingId,
     recordingId, recordingId, recordingId, recordingId, recordingId,
+    recordingId, recordingId, recordingId, recordingId, recordingId,
+    // ORDER BY largest track_count among matching editions: videoOrRelatedAudio (3) + trackPickOrder (2)
     recordingId, recordingId, recordingId, recordingId, recordingId,
     // IN-clause Tracks branch: videoOrRelatedAudio (3)
     recordingId, recordingId, recordingId,

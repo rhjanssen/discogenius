@@ -29,6 +29,7 @@ type ResolvedNativeTrack = {
   title: string;
   mediaUrl: string;
   mimeType: string;
+  protocol: "progressive" | "hls";
 };
 
 function abortError(): Error {
@@ -209,24 +210,76 @@ export class SoundCloudBackend implements DownloadBackend {
       );
     }
 
+    // Prefer progressive, then plain HLS. Encrypted HLS is DRM — never decrypt.
     const media = await resolveSoundCloudMediaUrl(track, { fetchImpl: this.options.fetchImpl });
-    if (!media || media.protocol !== "progressive") {
-      const transcodings = track.media?.transcodings || [];
-      const hasEncrypted = transcodings.some((item) =>
-        String(item.format?.protocol || "").toLowerCase().includes("encrypted"));
-      if (hasEncrypted || policy === "BLOCK") {
-        throw new Error(
-          `SoundCloud track ${trackId} (${title}) is DRM-protected (encrypted HLS / Go+). Discogenius cannot download DRM streams.`,
-        );
-      }
-      return null;
+    if (media && (media.protocol === "progressive" || media.protocol === "hls")) {
+      return {
+        trackId,
+        title,
+        mediaUrl: media.url,
+        mimeType: media.mimeType,
+        protocol: media.protocol === "hls" ? "hls" : "progressive",
+      };
     }
-    return {
-      trackId,
-      title,
-      mediaUrl: media.url,
-      mimeType: media.mimeType,
-    };
+
+    const transcodings = track.media?.transcodings || [];
+    const hasEncrypted = transcodings.some((item) =>
+      String(item.format?.protocol || "").toLowerCase().includes("encrypted"));
+    if (hasEncrypted || policy === "BLOCK") {
+      throw new Error(
+        `SoundCloud track ${trackId} (${title}) is DRM-protected (encrypted HLS / Go+). Discogenius cannot download DRM streams.`,
+      );
+    }
+    return null;
+  }
+
+  private async downloadHlsTrack(
+    track: ResolvedNativeTrack,
+    destination: string,
+    options: { signal?: AbortSignal },
+  ): Promise<void> {
+    const { resolveFfmpegBinary } = await import("../../mediafiles/audioUtils.js");
+    const ffmpeg = resolveFfmpegBinary();
+    await fs.promises.mkdir(path.dirname(destination), { recursive: true });
+    const temporary = `${destination}.${process.pid}.tmp${path.extname(destination)}`;
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(ffmpeg, [
+        "-y",
+        "-loglevel", "error",
+        "-i", track.mediaUrl,
+        "-c", "copy",
+        temporary,
+      ], { stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+        if (stderr.length > 4_000) stderr = stderr.slice(-4_000);
+      });
+      const onAbort = () => {
+        child.kill("SIGTERM");
+      };
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      child.on("error", (error) => {
+        options.signal?.removeEventListener("abort", onAbort);
+        reject(error);
+      });
+      child.on("close", (code) => {
+        options.signal?.removeEventListener("abort", onAbort);
+        if (options.signal?.aborted) {
+          fs.rmSync(temporary, { force: true });
+          reject(abortError());
+          return;
+        }
+        if (code !== 0) {
+          fs.rmSync(temporary, { force: true });
+          reject(new Error(
+            `ffmpeg SoundCloud HLS download failed${stderr.trim() ? `: ${stderr.trim()}` : ""}`,
+          ));
+          return;
+        }
+        void fs.promises.rename(temporary, destination).then(() => resolve(), reject);
+      });
+    });
   }
 
   private async downloadResolvedTrackNative(
@@ -247,10 +300,14 @@ export class SoundCloudBackend implements DownloadBackend {
       trackStatus: "downloading",
       statusMessage: `Downloading ${track.title}`,
     });
-    await downloadHttpFile(track.mediaUrl, destination, {
-      signal: options.signal,
-      fetchImpl: this.options.fetchImpl,
-    });
+    if (track.protocol === "hls") {
+      await this.downloadHlsTrack(track, destination, { signal: options.signal });
+    } else {
+      await downloadHttpFile(track.mediaUrl, destination, {
+        signal: options.signal,
+        fetchImpl: this.options.fetchImpl,
+      });
+    }
     options.onProgress({
       progress: options.index && options.total
         ? Math.round((options.index / options.total) * 100)
@@ -269,7 +326,11 @@ export class SoundCloudBackend implements DownloadBackend {
   private async downloadResolvedSetNative(
     tracks: ResolvedNativeTrack[],
     downloadPath: string,
-    options: { signal?: AbortSignal; onProgress: (progress: DownloadProgress) => void },
+    options: {
+      signal?: AbortSignal;
+      onProgress: (progress: DownloadProgress) => void;
+      warningMessage?: string;
+    },
   ): Promise<boolean> {
     if (tracks.length === 0) return false;
     const stagingPath = await fs.promises.mkdtemp(path.join(downloadPath, ".soundcloud-native-"));
@@ -297,6 +358,14 @@ export class SoundCloudBackend implements DownloadBackend {
         await fs.promises.link(source, destination);
         promotedFiles.push(destination);
       }
+      if (options.warningMessage) {
+        options.onProgress({
+          progress: 100,
+          state: "downloading",
+          statusMessage: options.warningMessage,
+          warningMessage: options.warningMessage,
+        });
+      }
       return true;
     } catch (error) {
       await Promise.allSettled(promotedFiles.map(
@@ -306,6 +375,11 @@ export class SoundCloudBackend implements DownloadBackend {
     } finally {
       await fs.promises.rm(stagingPath, { recursive: true, force: true });
     }
+  }
+
+  private isTerminalAccountRestriction(error: unknown): boolean {
+    return error instanceof Error
+      && /policy=SNIP|DRM-protected|encrypted HLS|Go\+/iu.test(error.message);
   }
 
   private async tryNativeDownload(
@@ -326,18 +400,92 @@ export class SoundCloudBackend implements DownloadBackend {
         .map((track) => soundcloudResourceId(track.id))
         .filter((id) => TRACK_ID.test(id));
       if (tracks.length === 0) return false;
-      // Resolve the complete playlist before writing anything. One encrypted or
-      // otherwise non-progressive track must send the whole job to yt-dlp; a
-      // mid-playlist fallback would otherwise leave native AAC/MP3 files beside
-      // yt-dlp's output for the same provider ids.
+
+      // Resolve playable tracks; skip DRM/SNIP so the rest of the album can
+      // still import. Never fall through to yt-dlp for Widevine/encrypted HLS.
       const resolved: ResolvedNativeTrack[] = [];
+      const skipped: Array<{ trackId: string; title: string; reason: string }> = [];
+      const trackStatuses: NonNullable<DownloadProgress["tracks"]> = [];
       for (const trackId of tracks) {
         if (options.signal?.aborted) throw abortError();
-        const track = await this.resolveTrackNative(trackId);
-        if (!track) return false;
-        resolved.push(track);
+        try {
+          const track = await this.resolveTrackNative(trackId);
+          if (!track) {
+            const reason = "no progressive/HLS stream";
+            skipped.push({ trackId, title: trackId, reason });
+            trackStatuses.push({
+              title: trackId,
+              status: "skipped",
+              providerTrackId: trackId,
+            });
+            options.onProgress({
+              state: "downloading",
+              currentProviderTrackId: trackId,
+              currentTrack: trackId,
+              trackStatus: "skipped",
+              statusMessage: `Skipped SoundCloud track ${trackId}: ${reason}`,
+              tracks: [...trackStatuses],
+            });
+            continue;
+          }
+          resolved.push(track);
+          trackStatuses.push({
+            title: track.title,
+            status: "queued",
+            providerTrackId: track.trackId,
+          });
+        } catch (error) {
+          if (error instanceof Error && error.name === "AbortError") throw error;
+          if (this.isTerminalAccountRestriction(error)) {
+            const reason = error instanceof Error ? error.message : String(error);
+            const titleMatch = reason.match(/\(([^)]+)\) is (?:preview-only|DRM-protected)/u);
+            const title = titleMatch?.[1] || trackId;
+            skipped.push({ trackId, title, reason });
+            trackStatuses.push({
+              title,
+              status: "skipped",
+              providerTrackId: trackId,
+            });
+            options.onProgress({
+              state: "downloading",
+              currentProviderTrackId: trackId,
+              currentTrack: title,
+              trackStatus: "skipped",
+              statusMessage: `Skipped: ${reason}`,
+              tracks: [...trackStatuses],
+            });
+            continue;
+          }
+          throw error;
+        }
       }
-      return this.downloadResolvedSetNative(resolved, request.downloadPath, options);
+      if (resolved.length === 0) {
+        if (skipped.length > 0) {
+          throw new Error(
+            `SoundCloud album ${playlistId}: all ${skipped.length} track(s) are DRM/SNIP-only or unplayable for this account.`,
+          );
+        }
+        return false;
+      }
+      const warningMessage = skipped.length > 0
+        ? `Downloaded ${resolved.length}/${tracks.length} SoundCloud tracks; skipped ${skipped.length} DRM/SNIP/unplayable track(s).`
+        : undefined;
+      const downloaded = await this.downloadResolvedSetNative(resolved, request.downloadPath, {
+        ...options,
+        warningMessage,
+        onProgress: (progress) => {
+          if (progress.currentProviderTrackId && progress.trackStatus === "completed") {
+            const row = trackStatuses.find((item) => item.providerTrackId === progress.currentProviderTrackId);
+            if (row) row.status = "completed";
+          }
+          options.onProgress({
+            ...progress,
+            tracks: [...trackStatuses],
+            warningMessage: progress.warningMessage || warningMessage,
+          });
+        },
+      });
+      return downloaded;
     }
 
     if (request.entityType !== "track") return false;

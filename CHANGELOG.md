@@ -2,6 +2,37 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.6.5] - 2026-07-23
+
+### Added
+- SoundCloud plain-HLS preview: `getPlaybackInfo` returns HLS when progressive
+  is unavailable; playback rewrites the playlist through a signed segment proxy
+  so hls.js can play past CDN CORS (encrypted HLS remains unplayable).
+- SoundCloud native plain-HLS download via ffmpeg when progressive resolve fails
+  but unencrypted HLS resolves.
+
+### Changed
+- SoundCloud album jobs skip DRM/SNIP (and other account-terminal) tracks,
+  download the playable remainder, emit per-track `skipped` status, and finish
+  with `completedWithWarning` — no whole-set abort, no Widevine decrypt, no
+  analog-hole capture (see `docs/PROVIDER_DOWNLOADER_DECISION.md`).
+- Video associations honor MusicBrainz `music_video_for` as well as
+  `provider_video_for`; Appears On / inline placement prefer the largest
+  monitored stereo release group.
+- `(Moving artwork)` titles classify as Visualizer; `MTV Unplugged` titles
+  classify as Live (Visualizer stays separate from Official Audio).
+- Video offer codec defaults: YouTube/YouTube Music assumed AV1 at all
+  resolutions (TrackFiles evidence), not VP9 below UHD.
+- Horizontal carousel scroll restore keys by stable `storageKey` only (not
+  React Router `location.key`), saves on unmount, and waits for scrollable
+  content before restoring.
+- Lyric rename expected paths prefer the exact provider-id TrackFile (Lidarr-
+  style stem follow); duplicate `.lrc` rows that collide on the same stem are
+  deduped instead of permanent Rename Conflicts.
+
+### Fixed
+- SoundCloud preview no longer returns null for plain-HLS-only tracks.
+
 ## [2.6.4] - 2026-07-23
 
 ### Added

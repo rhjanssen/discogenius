@@ -65,10 +65,19 @@ OPH (`375227dd-…`, EP + Mixtape/Street) ↔ `emmatad/sets/other-peoples-hearta
   (api-v2 catalog matching, oauth token paste auth, native progressive download
   + yt-dlp fallback, liked-tracks + playlist import sources, mixtape playlist
   coverage matching).
-- pending: richer permalink resolve, Go+ encrypted-HLS path validation, Auth /
-  Settings / diagnostics polish, contract parity with other lossy providers.
+- decided (2026-07-23): **no** Widevine/FairPlay decrypt and **no** analog-hole
+  (browser→loopback) capture for `cbc-`/`ctr-encrypted-hls`. Evidence and
+  rationale: `docs/PROVIDER_DOWNLOADER_DECISION.md` § SoundCloud DRM. yt-dlp/scdl
+  refuse the same streams; Apple’s FairPlay wrapper pattern does not transfer.
+- shipped (2.6.5): skip DRM/SNIP tracks + complete partial albums with per-track
+  `skipped` status and a job-level warning (no abort of the whole set; no
+  yt-dlp fallthrough for encrypted formats).
+- pending: richer permalink resolve; Auth / Settings / diagnostics polish;
+  contract parity with other lossy providers.
 - defer: followed artists → MB monitoring, official-API download path /
-  registered-app PKCE, ISRC-first matching automation, lossless/hi-res/spatial.
+  registered-app PKCE, ISRC-first matching automation, lossless/hi-res/spatial;
+  any DRM decrypt/record revisit only if a maintained, non-CDM-theft SoundCloud
+  backend appears (unlikely).
 
 ### Local-MB refresh concurrency redesign
 
