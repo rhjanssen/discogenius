@@ -306,7 +306,7 @@ test("SoundCloud URL builders accept numeric ids and permalink hosts", () => {
   );
   assert.equal(
     buildSoundCloudSourceUrl("album", "1891733180"),
-    "https://soundcloud.com/playlists/1891733180",
+    "https://api.soundcloud.com/playlists/1891733180",
   );
   assert.deepEqual(
     parseSoundCloudUrl("https://api.soundcloud.com/tracks/194886453"),

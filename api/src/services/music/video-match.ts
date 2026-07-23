@@ -115,12 +115,17 @@ function isCrossProvider(
   return Boolean(left && right && left !== right);
 }
 
-function exactSecondDurationMatch(
+/**
+ * Live↔main performance / bare-live twins share the soft ±2s catalog-rounding
+ * gate used by {@link isExactVideoTwin}. Requiring identical whole seconds
+ * left Apple 180s vs TIDAL 179s twins on separate recordings.
+ */
+function softDurationTwinMatch(
   lengthMsA: number | null,
   lengthMsB: number | null,
 ): boolean {
   if (lengthMsA == null || lengthMsB == null) return false;
-  return Math.round(Number(lengthMsA) / 1000) === Math.round(Number(lengthMsB) / 1000);
+  return Math.abs(Number(lengthMsA) - Number(lengthMsB)) <= VIDEO_DURATION_MATCH_MS;
 }
 
 function releaseDatesCompatibleWhenKnown(
@@ -142,9 +147,9 @@ function hasNamedPerformanceQualifier(title: string): boolean {
 }
 
 /**
- * Allow bare OMV title ↔ named venue/TV live twin only when durations agree to
- * the second. Plain "(Live)" without a venue stays blocked from unlabeled
- * studio cuts even at equal duration.
+ * Allow bare OMV title ↔ named venue/TV live twin when durations agree within
+ * the soft ±2s gate. Plain "(Live)" without a venue stays blocked from
+ * unlabeled studio cuts even at equal duration.
  */
 function canMergeLiveMainPerformanceTwin(input: VideoIdentitySignals): boolean {
   const titleA = String(input.titleA || "");
@@ -158,7 +163,7 @@ function canMergeLiveMainPerformanceTwin(input: VideoIdentitySignals): boolean {
   const liveTitle = clsA === "live" ? titleA : titleB;
   if (!hasNamedPerformanceQualifier(liveTitle)) return false;
 
-  if (!exactSecondDurationMatch(
+  if (!softDurationTwinMatch(
     input.lengthMsA == null ? null : Number(input.lengthMsA),
     input.lengthMsB == null ? null : Number(input.lengthMsB),
   )) return false;
@@ -168,8 +173,9 @@ function canMergeLiveMainPerformanceTwin(input: VideoIdentitySignals): boolean {
 
 /**
  * Cross-provider bare "(Live)" ↔ unlabeled main video twin when durations agree
- * to the second and titles match tightly. OMV/official main cuts stay blocked;
- * named venue/TV performances use {@link canMergeLiveMainPerformanceTwin}.
+ * within the soft ±2s gate and titles match tightly. OMV/official main cuts
+ * stay blocked; named venue/TV performances use
+ * {@link canMergeLiveMainPerformanceTwin}.
  */
 function canMergeBareLiveMainTwin(input: VideoIdentitySignals): boolean {
   const titleA = String(input.titleA || "");
@@ -178,7 +184,7 @@ function canMergeBareLiveMainTwin(input: VideoIdentitySignals): boolean {
     || (isBareLiveVariant(titleB, input.variantB) && isUnlabeledVideoVariant(titleA, input.variantA));
   if (!bareLiveMain) return false;
   if (!input.allowSameProviderBareLiveTwin && !isCrossProvider(input.providerA, input.providerB)) return false;
-  if (!exactSecondDurationMatch(
+  if (!softDurationTwinMatch(
     input.lengthMsA == null ? null : Number(input.lengthMsA),
     input.lengthMsB == null ? null : Number(input.lengthMsB),
   )) return false;
@@ -189,7 +195,9 @@ function canMergeBareLiveMainTwin(input: VideoIdentitySignals): boolean {
 
 /**
  * Same-provider twins (rare duplicate IDs for one upload) must match more
- * tightly than cross-provider merges: exact second + strong title.
+ * tightly than cross-provider merges: strong title + duration inside the
+ * soft gate. Catalog rounding often disagrees by 1s (232 vs 233); requiring
+ * identical whole seconds left TIDAL listing twins on separate recordings.
  */
 export function isExactVideoTwin(input: VideoIdentitySignals): boolean {
   const match = scoreVideoIdentityMatch(input);
@@ -197,7 +205,7 @@ export function isExactVideoTwin(input: VideoIdentitySignals): boolean {
   const lengthMsA = input.lengthMsA == null ? null : Number(input.lengthMsA);
   const lengthMsB = input.lengthMsB == null ? null : Number(input.lengthMsB);
   if (lengthMsA == null || lengthMsB == null) return false;
-  if (Math.round(lengthMsA / 1000) !== Math.round(lengthMsB / 1000)) return false;
+  if (Math.abs(lengthMsA - lengthMsB) > VIDEO_DURATION_MATCH_MS) return false;
   return match.titleScore >= 0.95;
 }
 

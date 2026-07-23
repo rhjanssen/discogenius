@@ -195,6 +195,10 @@ export interface AlbumAssociatedVideoContract {
   video_variant?: string | null;
   explicit?: boolean;
   release_date?: string | null;
+  /** Selected/best provider offer for the download + quality badge. */
+  provider?: string | null;
+  quality?: string | null;
+  provider_id?: string | null;
   is_monitored: boolean;
   monitored_lock: boolean;
   downloaded: boolean;
@@ -374,6 +378,9 @@ function parseAlbumAssociatedVideoContract(value: unknown, index: number): Album
     video_variant: expectNullableString(record.video_variant, `${label}.video_variant`),
     explicit: expectOptionalBoolean(record.explicit, `${label}.explicit`),
     release_date: expectNullableString(record.release_date, `${label}.release_date`),
+    provider: expectNullableString(record.provider, `${label}.provider`),
+    quality: expectNullableString(record.quality, `${label}.quality`),
+    provider_id: expectNullableString(record.provider_id, `${label}.provider_id`),
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
     monitored_lock: expectOptionalBoolean(record.monitored_lock, `${label}.monitored_lock`) ?? false,
     downloaded: expectBoolean(record.downloaded, `${label}.downloaded`),

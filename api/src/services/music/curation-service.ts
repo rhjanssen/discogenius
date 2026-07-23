@@ -9,6 +9,7 @@ import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } fro
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { selectFewestReleaseGroupsForCoverage } from "./artist-coverage-optimizer.js";
+import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -479,39 +480,75 @@ export class CurationService {
         return { newAlbums: slotUpdates, upgradedAlbums: 0 };
     }
 
+    /**
+     * Assign monitor state for unlocked canonical videos from curation filters.
+     * Master `include_videos` plus per-type checkboxes (official / lyric / live /
+     * visualizer / official audio) decide wanted-ness — same gate as download-missing.
+     * Respects `monitored_lock` (never flips locked rows).
+     */
     private static updateCanonicalVideoMonitoring(
         artistMbid: string,
         curationConfig: FilteringConfig,
     ): number {
         const includeVideos = curationConfig.include_videos !== false;
         const requireProvider = curationConfig.require_provider_availability === true;
-        const providerAvailableExpression = `EXISTS (
-            SELECT 1
-            FROM ProviderItems provider_item
-            WHERE provider_item.entity_type = 'video'
-              AND provider_item.artist_mbid = Recordings.artist_mbid
-              AND (
-                (Recordings.mbid IS NOT NULL AND provider_item.recording_mbid = Recordings.mbid)
-                OR (Recordings.id IS NOT NULL AND provider_item.recording_id = Recordings.id)
-              )
-        )`;
-        const targetMonitoredExpression = !includeVideos
-            ? "0"
-            : requireProvider
-                ? `CASE WHEN ${providerAvailableExpression} THEN 1 ELSE 0 END`
-                : "1";
-        return db.prepare(`
+
+        const rows = db.prepare(`
+            SELECT
+              recording.id AS id,
+              recording.video_variant AS video_variant,
+              recording.monitored AS monitored,
+              EXISTS (
+                SELECT 1
+                FROM ProviderItems provider_item
+                WHERE provider_item.entity_type = 'video'
+                  AND provider_item.artist_mbid = recording.artist_mbid
+                  AND (
+                    (recording.mbid IS NOT NULL AND provider_item.recording_mbid = recording.mbid)
+                    OR provider_item.recording_id = recording.id
+                  )
+              ) AS has_provider
+            FROM Recordings recording
+            WHERE recording.is_video = 1
+              AND recording.artist_mbid = ?
+              AND (recording.monitored_lock = 0 OR recording.monitored_lock IS NULL)
+        `).all(artistMbid) as Array<{
+            id: number;
+            video_variant: string | null;
+            monitored: number;
+            has_provider: number;
+        }>;
+
+        const updates: Array<{ id: number; monitored: number }> = [];
+        for (const row of rows) {
+            const typeAllowed = includeVideos
+                && isVideoVariantDownloadAllowed(row.video_variant, curationConfig);
+            const want = typeAllowed && (!requireProvider || Number(row.has_provider) === 1)
+                ? 1
+                : 0;
+            if (Number(row.monitored || 0) !== want) {
+                updates.push({ id: row.id, monitored: want });
+            }
+        }
+
+        if (updates.length === 0) {
+            return 0;
+        }
+
+        const updateStmt = db.prepare(`
             UPDATE Recordings
-            SET monitored = ${targetMonitoredExpression},
+            SET monitored = ?,
                 monitored_at = CASE
-                  WHEN ${targetMonitoredExpression} = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
+                  WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP)
                   ELSE monitored_at
                 END
-            WHERE is_video = 1
-              AND artist_mbid = ?
+            WHERE id = ?
               AND (monitored_lock = 0 OR monitored_lock IS NULL)
-              AND monitored != ${targetMonitoredExpression}
-        `).run(artistMbid).changes;
+        `);
+        runChunkedWrite(updates, (update) => {
+            updateStmt.run(update.monitored, update.monitored, update.id);
+        });
+        return updates.length;
     }
 
     private static ensureReleaseGroupSlotRows(

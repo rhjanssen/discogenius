@@ -471,6 +471,50 @@ test("video cover proxies preserve source aspect ratio (no forced 3:2 crop)", as
   }
 });
 
+test("ensureCachedMediaCover falls back to a lower-res YouTube thumbnail when hq720 404s", async () => {
+  const videoId = "yt-fallback-video";
+  const sourceUrl = "https://i.ytimg.com/vi/jZMTjKwOHWM/hq720.jpg";
+  const image = jpeg.encode({
+    width: 640,
+    height: 480,
+    data: Buffer.alloc(640 * 480 * 4, 120),
+  }, 92).data;
+  const requested: string[] = [];
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const href = String(url);
+    requested.push(href);
+    if (/\/(hq720|maxresdefault)\.jpg/.test(href)) {
+      return new Response("not found", { status: 404 });
+    }
+    if (/\/(sddefault|hqdefault)\.jpg/.test(href)) {
+      return new Response(image, { status: 200, headers: { "content-type": "image/jpeg" } });
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const cached = await mediaCoverServiceModule.ensureCachedMediaCover({
+      entityId: videoId,
+      coverEntity: "Video",
+      coverType: "Cover",
+      sourceUrl,
+    });
+    assert.equal(cached, `/media-cover/Videos/${videoId}/cover.jpg`);
+    assert.ok(requested.some((href) => href.includes("/hq720.jpg")), "hq720 should be attempted first");
+    assert.ok(requested.some((href) => href.includes("/sddefault.jpg")), "sddefault fallback should serve the bytes");
+
+    const folder = path.join(tempDir, "media-cover", "Videos", videoId);
+    assert.ok(fs.existsSync(path.join(folder, "cover.jpg")), "cover bytes are written via the fallback");
+
+    // The source marker records the logical hq720 URL so a later request short-circuits.
+    const marker = JSON.parse(fs.readFileSync(path.join(folder, ".cover.source.json"), "utf-8"));
+    assert.equal(marker.url, sourceUrl);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("provider video artwork can resolve from provider id when no image id is stored", async () => {
   const providerModule = await import("../providers/index.js");
   const image = jpeg.encode({

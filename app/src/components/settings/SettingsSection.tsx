@@ -14,11 +14,10 @@ const useStyles = makeStyles({
     section: {
         display: "flex",
         width: "100%",
+        minWidth: 0,
         flexDirection: "column",
-        gap: tokens.spacingVerticalM,
-        breakInside: "avoid",
-        WebkitColumnBreakInside: "avoid",
-        pageBreakInside: "avoid",
+        // Tight header→card gap; panel-level column supplies section spacing.
+        gap: tokens.spacingVerticalS,
         scrollMarginTop: tokens.spacingVerticalXXXL,
     },
     header: {
@@ -39,12 +38,21 @@ const useStyles = makeStyles({
     },
     description: {
         color: tokens.colorNeutralForeground2,
+        maxWidth: "72ch",
     },
     actions: {
         display: "flex",
         alignItems: "flex-start",
         gap: tokens.spacingHorizontalXS,
         flexWrap: "wrap",
+    },
+    body: {
+        display: "flex",
+        flexDirection: "column",
+        // Fluent size200 (20px) between stacked Cards in one section.
+        gap: tokens.spacingVerticalL,
+        width: "100%",
+        minWidth: 0,
     },
 });
 
@@ -67,7 +75,7 @@ export const SettingsSection = ({
                 </div>
                 {actions ? <div className={styles.actions}>{actions}</div> : null}
             </div>
-            {children}
+            <div className={styles.body}>{children}</div>
         </section>
     );
 };

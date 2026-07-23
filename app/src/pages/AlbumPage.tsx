@@ -1663,6 +1663,12 @@ const AlbumPage = () => {
                 const trackLabel = formatAssociatedVideoTrackLabel(video);
                 const year = video.release_date ? new Date(video.release_date).getFullYear() : null;
                 const subtitle = [trackLabel, year || null].filter(Boolean).join(" · ");
+                const videoProvider = String(video.provider || "").trim() || null;
+                const videoProviderId = String(video.provider_id || "").trim() || null;
+                const videoQuality = String(video.quality || "").trim() || null;
+                const videoOffers: ProviderQualityOffer[] = (videoProvider || videoQuality)
+                  ? [{ slot: "video", quality: videoQuality, provider: videoProvider, providerAlbumId: videoProviderId }]
+                  : [];
                 return (
                   <div
                     key={videoId}
@@ -1675,6 +1681,9 @@ const AlbumPage = () => {
                       title={video.title}
                       subtitle={subtitle || undefined}
                       explicit={video.explicit}
+                      qualityBadges={videoOffers.length > 0 ? (
+                        <ProviderQualityRow size="small" offers={videoOffers} />
+                      ) : undefined}
                       monitored={Boolean(video.is_monitored)}
                       monitoringLocked={Boolean(video.monitored_lock)}
                       videoAspect

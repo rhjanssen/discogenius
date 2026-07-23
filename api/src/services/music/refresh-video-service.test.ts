@@ -477,16 +477,38 @@ test("two exact same-provider offers merge; near-duration same-provider offers s
   `).get() as { c: number };
   assert.equal(exact.c, 1);
 
+  // 1s catalog rounding (Pompeii-shaped TIDAL twins) must still merge.
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
-    provider_id: "tidal-pompeii-official",
+    provider_id: "tidal-pompeii-a",
     title: "Pompeii",
+    artist_name: "Bastille",
+    duration: 232,
+  }, {
+    provider: "tidal",
+    provider_id: "tidal-pompeii-b",
+    title: "Pompeii",
+    artist_name: "Bastille",
+    duration: 233,
+  }]);
+
+  const oneSecond = dbModule.db.prepare(`
+    SELECT COUNT(DISTINCT recording_id) AS c
+    FROM ProviderItems
+    WHERE entity_type = 'video' AND provider_id LIKE 'tidal-pompeii-%'
+  `).get() as { c: number };
+  assert.equal(oneSecond.c, 1, "±1s same-provider twins share one recording");
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-oblivion-official",
+    title: "Oblivion",
     artist_name: "Bastille",
     duration: 233,
   }, {
     provider: "tidal",
-    provider_id: "tidal-pompeii-gma",
-    title: "Pompeii",
+    provider_id: "tidal-oblivion-gma",
+    title: "Oblivion",
     artist_name: "Bastille",
     duration: 228,
   }]);
@@ -494,9 +516,90 @@ test("two exact same-provider offers merge; near-duration same-provider offers s
   const near = dbModule.db.prepare(`
     SELECT COUNT(DISTINCT recording_id) AS c
     FROM ProviderItems
-    WHERE entity_type = 'video' AND provider_id LIKE 'tidal-pompeii%'
+    WHERE entity_type = 'video' AND provider_id LIKE 'tidal-oblivion-%'
   `).get() as { c: number };
   assert.equal(near.c, 2, "5s duration gap keeps same-provider cuts separate");
+});
+
+test("same-provider TIDAL twin attaches to MusicBrainz video within 2s", () => {
+  const artistMbid = "artist-mbid";
+  const recordingMbid = "9d31439c-9505-4e66-b130-fd3db4b41351";
+  dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms, video_variant,
+      is_video, metadata_status, release_date
+    ) VALUES (?, ?, ?, 'Pompeii', 232000, 'official', 1, 'musicbrainz', '2013-01-01')
+  `).run(recordingMbid, recordingMbid, artistMbid);
+
+  // First TIDAL listing already on the MB row.
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "93155190",
+    title: "Pompeii",
+    artist_name: "Bastille",
+    artist_mbid: artistMbid,
+    duration: 232,
+    release_date: "2013-01-01",
+  }]);
+
+  // Second TIDAL id (±1s) plus YouTube must land on the same MB recording.
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "25704375",
+    title: "Pompeii",
+    artist_name: "Bastille",
+    artist_mbid: artistMbid,
+    duration: 233,
+    release_date: "2013-03-01",
+  }, {
+    provider: "youtube-music",
+    provider_id: "F90Cw4l-8NY",
+    title: "Pompeii (Official Music Video)",
+    artist_name: "Bastille",
+    artist_mbid: artistMbid,
+    duration: 233,
+    release_date: "2013-01-20",
+    quality: "FHD",
+  }]);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id, mbid FROM Recordings WHERE is_video = 1 ORDER BY id
+  `).all() as Array<{ id: number; mbid: string | null }>;
+  assert.equal(videos.length, 1, "no provider-only duplicate beside the MB video");
+  assert.equal(videos[0].mbid, recordingMbid);
+
+  const offers = dbModule.db.prepare(`
+    SELECT provider, CAST(provider_id AS TEXT) AS provider_id, recording_id
+    FROM ProviderItems WHERE entity_type = 'video' ORDER BY provider, provider_id
+  `).all() as Array<{ provider: string; provider_id: string; recording_id: number }>;
+  assert.equal(offers.length, 3);
+  assert.ok(offers.every((o) => o.recording_id === videos[0].id));
+});
+
+test("video refresh preserves probed quality when list payload sends null", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-probed",
+    title: "Good Grief",
+    artist_name: "Bastille",
+    duration: 221,
+    quality: "FHD",
+  }]);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-probed",
+    title: "Good Grief",
+    artist_name: "Bastille",
+    duration: 221,
+    quality: null,
+  }]);
+
+  const row = dbModule.db.prepare(`
+    SELECT quality FROM ProviderItems
+    WHERE provider = 'tidal' AND CAST(provider_id AS TEXT) = 'tidal-probed'
+  `).get() as { quality: string | null };
+  assert.equal(row.quality, "FHD");
 });
 
 test("unlabeled live cuts merge with an explicitly Live-at-titled peer at exact duration", () => {
@@ -641,7 +744,7 @@ test("lyric and unlabeled stay separate when duration delta exceeds 2s", () => {
   assert.equal(videos.length, 2);
 });
 
-test("live and unlabeled studio never merge even within 2s", () => {
+test("live and unlabeled studio stay separate beyond the soft duration gate", () => {
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "youtube-music",
     provider_id: "yt-oblivion-studio",
@@ -664,6 +767,7 @@ test("live and unlabeled studio never merge even within 2s", () => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
 
+  // Named Live From + unlabeled main merge inside the soft ±2s gate (catalog rounding).
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
     provider_id: "tidal-good-grief",
@@ -681,7 +785,8 @@ test("live and unlabeled studio never merge even within 2s", () => {
   const withinTwo = dbModule.db.prepare(`
     SELECT id, title, video_variant FROM Recordings WHERE is_video = 1
   `).all() as Array<{ id: number; title: string; video_variant: string | null }>;
-  assert.equal(withinTwo.length, 2, "live↔studio must stay separate even within 2s");
+  assert.equal(withinTwo.length, 1, "Live From + unlabeled merge within ±2s");
+  assert.equal(withinTwo[0].video_variant, "live");
 });
 
 test("official music video still does not absorb a same-duration live cut", () => {
@@ -703,6 +808,31 @@ test("official music video still does not absorb a same-duration live cut", () =
     SELECT id FROM Recordings WHERE is_video = 1
   `).all() as Array<{ id: number }>;
   assert.equal(videos.length, 2);
+});
+
+test("cross-provider bare live twin merges with unlabeled main within ±2s", () => {
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "tidal",
+    provider_id: "tidal-friday-night",
+    title: "You Know I'm No Good",
+    artist_name: "Amy Winehouse",
+    duration: 179,
+    release_date: "2026-07-10",
+  }, {
+    provider: "apple-music",
+    provider_id: "apple-friday-night",
+    title: "You Know I'm No Good (Live From Friday Night Project / 2007)",
+    artist_name: "Amy Winehouse",
+    duration: 180,
+    release_date: "2026-07-10",
+  }]);
+
+  const videos = dbModule.db.prepare(`
+    SELECT id, title, video_variant FROM Recordings WHERE is_video = 1
+  `).all() as Array<{ id: number; title: string; video_variant: string | null }>;
+  assert.equal(videos.length, 1, "Apple 180s + TIDAL 179s Friday Night Project twin");
+  assert.equal(videos[0].video_variant, "live");
+  assert.match(videos[0].title, /Friday Night Project/i);
 });
 
 test("cross-provider bare live twin merges with unlabeled main at exact duration", () => {
@@ -911,4 +1041,57 @@ test("orphan artist video does not link via title+duration even within 5s", () =
     WHERE relation_type = 'provider_video_for'
   `).get();
   assert.equal(relation, undefined, "must not artist-wide match live MV to studio audio");
+});
+
+test("backfillMissingVideoOfferQuality fills null quality from the provider getVideo probe without overwriting a tag", async () => {
+  const providerModule = await import("../providers/index.js");
+  const manager = providerModule.streamingProviderManager as unknown as {
+    getStreamingProvider: (id: string) => unknown;
+  };
+  const original = manager.getStreamingProvider;
+
+  const nullQualityVideo = dbModule.db.prepare(`
+    INSERT INTO Recordings (artist_mbid, title, is_video, video_variant, metadata_status, monitored)
+    VALUES ('artist-mbid', 'Pompeii', 1, 'video', 'provider_only', 1)
+    RETURNING id
+  `).get() as { id: number };
+  const taggedVideo = dbModule.db.prepare(`
+    INSERT INTO Recordings (artist_mbid, title, is_video, video_variant, metadata_status, monitored)
+    VALUES ('artist-mbid', 'Things We Lost', 1, 'video', 'provider_only', 1)
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_id, title, quality)
+    VALUES ('youtube-music', 'video', 'H5uf6fhbRek', 'artist-mbid', ?, 'Pompeii', NULL)
+  `).run(nullQualityVideo.id);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_id, title, quality)
+    VALUES ('youtube-music', 'video', 'alreadyTagged', 'artist-mbid', ?, 'Things We Lost', 'HD')
+  `).run(taggedVideo.id);
+
+  const probed: string[] = [];
+  manager.getStreamingProvider = (id: string) => {
+    if (id === "youtube-music") {
+      return {
+        getVideo: async (providerId: string) => {
+          probed.push(providerId);
+          return { quality: "FHD" };
+        },
+      };
+    }
+    throw new Error(`unknown provider ${id}`);
+  };
+
+  try {
+    const updated = await refreshVideoModule.RefreshVideoService.backfillMissingVideoOfferQuality("artist-mbid");
+    assert.equal(updated, 1);
+    assert.deepEqual(probed, ["H5uf6fhbRek"], "only the null-quality offer is probed");
+
+    const filled = dbModule.db.prepare("SELECT quality FROM ProviderItems WHERE provider_id = 'H5uf6fhbRek'").get() as { quality: string };
+    assert.equal(filled.quality, "FHD");
+    const untouched = dbModule.db.prepare("SELECT quality FROM ProviderItems WHERE provider_id = 'alreadyTagged'").get() as { quality: string };
+    assert.equal(untouched.quality, "HD", "an existing quality tag is never overwritten");
+  } finally {
+    manager.getStreamingProvider = original;
+  }
 });

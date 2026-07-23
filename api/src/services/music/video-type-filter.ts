@@ -1,10 +1,12 @@
 /**
  * Music-video type filters for download/monitor automation.
- * Unchecked types are skipped by download-missing; existing files are kept.
+ * Unchecked types are skipped by download-missing and unmonitored by Apply
+ * Curation (unlocked rows only). Existing imported files are kept on disk
+ * unless remove_unmonitored_files is enabled.
  *
- * Exposed Settings checkboxes: official/OMV, lyric, live, visualizer.
- * Catalog `audio` shares the OMV/Plex `-video` slot and follows the official
- * filter (not separately exposed).
+ * Exposed Settings checkboxes: official/OMV, lyric, live, visualizer,
+ * official audio. Catalog `audio` ("(Official Audio)" / "(Audio)") is its own
+ * filter — same pattern as Visualizer.
  */
 
 import type { FilteringConfig } from "../config/config.js";
@@ -14,7 +16,12 @@ import {
   type VideoVariant,
 } from "./video-variant.js";
 
-export type VideoTypeFilterKey = "official" | "lyric" | "live" | "visualizer";
+export type VideoTypeFilterKey =
+  | "official"
+  | "lyric"
+  | "live"
+  | "visualizer"
+  | "official_audio";
 
 export function resolveVideoTypeFilterKey(
   variant: VideoVariant | string | null | undefined,
@@ -23,13 +30,14 @@ export function resolveVideoTypeFilterKey(
   if (normalized === "lyric") return "lyric";
   if (normalized === "live") return "live";
   if (normalized === "visualizer") return "visualizer";
-  // video / official / audio → official OMV bucket
+  if (normalized === "audio") return "official_audio";
+  // video / official → official OMV bucket
   return "official";
 }
 
 /**
- * Whether download-missing (and similar automation) should queue this video.
- * Does not affect already-imported files.
+ * Whether curation should monitor this variant and download-missing should
+ * queue it. Does not delete already-imported files by itself.
  */
 export function isVideoVariantDownloadAllowed(
   variant: VideoVariant | string | null | undefined,
@@ -39,12 +47,14 @@ export function isVideoVariantDownloadAllowed(
     | "include_video_lyric"
     | "include_video_live"
     | "include_video_visualizer"
+    | "include_video_official_audio"
   >,
 ): boolean {
   const key = resolveVideoTypeFilterKey(variant);
   if (key === "lyric") return filtering.include_video_lyric !== false;
   if (key === "live") return filtering.include_video_live !== false;
   if (key === "visualizer") return filtering.include_video_visualizer !== false;
+  if (key === "official_audio") return filtering.include_video_official_audio !== false;
   return filtering.include_video_official !== false;
 }
 
@@ -52,6 +62,5 @@ export function isVideoVariantDownloadAllowed(
 export function isOfficialMusicVideoVariant(
   variant: VideoVariant | string | null | undefined,
 ): boolean {
-  const normalized = normalizeVideoVariant(variant);
-  return isMainVideoVariant(normalized) || normalized === "audio";
+  return isMainVideoVariant(normalizeVideoVariant(variant));
 }

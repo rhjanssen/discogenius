@@ -45,7 +45,9 @@ import {
   PLAYLIST_TRACKLIST_COVERAGE_METHOD,
   playlistCoversCanonicalTracklist,
   rankSoundCloudPlaylistCandidates,
+  scorePlaylistTracklistCoverage,
   shouldWideSearchSoundCloudPlaylists,
+  soundCloudMixtapeSearchTitles,
   type CanonicalTrackForCoverage,
 } from "./soundcloud-playlist-match.js";
 
@@ -382,28 +384,31 @@ export class SoundCloudProvider implements StreamingProvider {
     }
 
     // Mixtape / dj-mix / demo / Other: cast a wider net across user playlists/sets.
-    const [albumHits, playlistHits, titlePlaylistHits] = await Promise.all([
-      soundcloudApiRequest<{ collection?: SoundCloudPlaylistResource[] }>(
-        `/search/albums?q=${encodeURIComponent(artistQuery)}&limit=25`,
-        this.fetchOptions(),
-      ),
+    const titleQueries = soundCloudMixtapeSearchTitles(titleQuery);
+    const playlistSearches = [
       soundcloudApiRequest<{ collection?: SoundCloudPlaylistResource[] }>(
         `/search/playlists?q=${encodeURIComponent(artistQuery)}&limit=25`,
         this.fetchOptions(),
       ),
-      titleQuery && titleQuery.toLowerCase() !== artistQuery.toLowerCase()
-        ? soundcloudApiRequest<{ collection?: SoundCloudPlaylistResource[] }>(
-          `/search/playlists?q=${encodeURIComponent(titleQuery)}&limit=25`,
+      ...titleQueries
+        .filter((queryText) => queryText.toLowerCase() !== artistQuery.toLowerCase())
+        .map((queryText) => soundcloudApiRequest<{ collection?: SoundCloudPlaylistResource[] }>(
+          `/search/playlists?q=${encodeURIComponent(queryText)}&limit=25`,
           this.fetchOptions(),
-        )
-        : Promise.resolve({ collection: [] as SoundCloudPlaylistResource[] }),
+        )),
+    ];
+    const [albumHits, ...playlistHitPages] = await Promise.all([
+      soundcloudApiRequest<{ collection?: SoundCloudPlaylistResource[] }>(
+        `/search/albums?q=${encodeURIComponent(artistQuery)}&limit=25`,
+        this.fetchOptions(),
+      ),
+      ...playlistSearches,
     ]);
 
     const byId = new Map<string, ProviderAlbum>();
     for (const resource of [
       ...(albumHits.collection || []),
-      ...(playlistHits.collection || []),
-      ...(titlePlaylistHits.collection || []),
+      ...playlistHitPages.flatMap((page) => page.collection || []),
     ]) {
       const album = mapAlbum(resource);
       if (!album.providerId || byId.has(album.providerId)) continue;
@@ -425,25 +430,35 @@ export class SoundCloudProvider implements StreamingProvider {
       return ranked.slice(0, 10);
     }
 
-    const covering: Array<{ album: ProviderAlbum; extras: number }> = [];
+    const covering: Array<{ album: ProviderAlbum; extras: number; covered: number }> = [];
     for (const candidate of ranked.slice(0, 8)) {
+      // Skip explicit empty album shells — they cannot cover a tracklist.
+      if (candidate.trackCount === 0) continue;
       try {
         const tracks = await this.getAlbumTracks(candidate.providerId);
         if (!playlistCoversCanonicalTracklist(preferredTracks as CanonicalTrackForCoverage[], tracks)) {
           continue;
         }
+        const coverage = scorePlaylistTracklistCoverage(
+          preferredTracks as CanonicalTrackForCoverage[],
+          tracks,
+        );
         const extras = Math.max(0, tracks.length - preferredTracks.length);
         // Stamp coverage method on raw so the artist-match path can force probable.
         covering.push({
           album: {
             ...candidate,
+            trackCount: tracks.length || candidate.trackCount,
             raw: {
               ...(candidate.raw && typeof candidate.raw === "object" ? candidate.raw as object : {}),
               _discogeniusMatchMethod: PLAYLIST_TRACKLIST_COVERAGE_METHOD,
               _discogeniusCoverageExtras: extras,
+              _discogeniusCoverageRatio: coverage.ratio,
+              _discogeniusCoverageCovered: coverage.covered,
             },
           },
           extras,
+          covered: coverage.covered,
         });
       } catch {
         // Skip playlists we cannot hydrate.
@@ -451,7 +466,8 @@ export class SoundCloudProvider implements StreamingProvider {
     }
 
     covering.sort((left, right) =>
-      left.extras - right.extras
+      right.covered - left.covered
+      || left.extras - right.extras
       || String(left.album.providerId).localeCompare(String(right.album.providerId)));
     return covering.map((row) => row.album);
   }

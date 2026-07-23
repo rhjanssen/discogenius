@@ -31,8 +31,8 @@ import {
 } from "@fluentui/react-icons";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import { ErrorState } from "@/components/ui/ContentState";
 import { ImportArtistsModal } from "@/components/ui/ImportArtistsModal";
 import { ProviderMark } from "@/components/ui/ProviderMark";
@@ -68,24 +68,17 @@ const useStyles = makeStyles({
     section: {
         display: "flex",
         width: "100%",
-        breakInside: "avoid",
-        WebkitColumnBreakInside: "avoid",
-        pageBreakInside: "avoid",
-        marginBottom: tokens.spacingVerticalM,
+        minWidth: 0,
+        marginBottom: tokens.spacingVerticalNone,
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
     },
-    card: {
-        ...glassSurfaceStyles,
-        borderRadius: tokens.borderRadiusMedium,
-        padding: tokens.spacingVerticalNone,
-        overflow: "hidden",
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    },
+    // Dense SettingsCard-style provider row: identity + actions stay clustered
+    // (no space-between stretch that strands buttons on the far right).
     profileRow: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
+        justifyContent: "flex-start",
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         flexWrap: "wrap",
         columnGap: tokens.spacingHorizontalM,
@@ -94,33 +87,41 @@ const useStyles = makeStyles({
         [MEDIA.mobile]: {
             columnGap: tokens.spacingHorizontalS,
             rowGap: tokens.spacingVerticalS,
-            padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXS}`,
+            padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
         },
     },
     profileDetails: {
         display: "flex",
         flexDirection: "column",
-        gap: tokens.spacingVerticalS,
-        flex: 1,
+        gap: tokens.spacingVerticalXXS,
+        flex: "1 1 auto",
+        minWidth: 0,
     },
     profileActions: {
         display: "flex",
-        justifyContent: "flex-end",
+        alignItems: "center",
+        justifyContent: "flex-start",
         gap: tokens.spacingHorizontalS,
         flexWrap: "wrap",
-        marginLeft: "auto",
-        flexShrink: 0,
+        flex: "0 0 auto",
+        [MEDIA.mobile]: {
+            width: "100%",
+            paddingLeft: "40px",
+        },
     },
     providerStatusRow: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalM,
-        flex: 1,
-        minWidth: "220px",
+        // Content-sized so actions sit beside the name instead of stretching
+        // to the far edge of a wide card.
+        flex: "0 1 auto",
+        minWidth: 0,
+        maxWidth: "100%",
     },
     providerIconBox: {
-        width: "48px",
-        height: "48px",
+        width: "40px",
+        height: "40px",
         display: "grid",
         placeItems: "center",
         flexShrink: 0,
@@ -339,7 +340,7 @@ export const ProvidersSettingsSection = ({
                 description="Connect download services. Drag to set preference — higher entries win when quality is equal."
                 className={styles.section}
             >
-                <div className={styles.card}>
+                <SettingsCard>
                     {(() => {
                         // Only connected services get a row; everything else is
                         // reachable through the always-visible "Add Provider" flow.
@@ -491,7 +492,7 @@ export const ProvidersSettingsSection = ({
                             </>
                         );
                     })()}
-                </div>
+                </SettingsCard>
 
                 <Dialog open={detailsProvider !== null} onOpenChange={(_, data) => { if (!data.open) setDetailsProviderId(null); }}>
                     <DialogSurface>

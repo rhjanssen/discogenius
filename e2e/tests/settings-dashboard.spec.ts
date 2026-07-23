@@ -2,74 +2,111 @@ import { expect, test } from '@playwright/test';
 
 const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
+const SETTINGS_TABS = [
+  'Providers',
+  'Metadata Source',
+  'Audio',
+  'Music Videos',
+  'Curation',
+  'Monitoring',
+  'Media Management',
+  'Metadata',
+  'Appearance',
+  'About',
+] as const;
+
+async function selectSettingsCategory(page: import('@playwright/test').Page, label: string) {
+  const desktopTab = page.getByTestId('settings-category-tabs').getByRole('tab', { name: label, exact: true });
+  if (await desktopTab.isVisible().catch(() => false)) {
+    await desktopTab.click();
+    return;
+  }
+
+  const menuButton = page.getByTestId('settings-category-menu');
+  await menuButton.click();
+  await page.getByRole('menuitem', { name: label, exact: true }).click();
+}
+
 test.describe('Settings page', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`${baseURL}/settings`, { waitUntil: 'domcontentloaded' });
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
   });
 
-  test('renders settings sections', async ({ page }) => {
+  test('renders settings category navigation', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
-
     await expect(page.getByRole('main').getByText('Settings', { exact: true })).toBeVisible();
-    await expect(page.locator('#media-management')).toBeVisible();
-    await expect(page.locator('#streaming-providers').getByText('Streaming Providers', { exact: true })).toBeVisible();
-    await expect(page.locator('#metadata-source')).toBeVisible();
-    await expect(page.locator('#metadata')).toBeVisible();
-    await expect(page.locator('#audio-quality')).toBeVisible();
-    await expect(page.locator('#video-quality')).toBeVisible();
-    await expect(page.locator('#curation').getByText('Curation', { exact: true })).toBeVisible();
-    await expect(page.locator('#monitoring').getByText('Monitoring', { exact: true })).toBeVisible();
-    await expect(page.locator('#appearance').getByText('Appearance', { exact: true })).toBeVisible();
-    await expect(page.locator('#about').getByText('About', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('settings-layout')).toBeVisible();
+    await expect(page.getByTestId('settings-sections')).toBeVisible();
 
-    // Subject-flow order (app-access is conditional and omitted here).
-    const sectionOrder = await page.locator('[data-testid="settings-sections"] > section[id]').evaluateAll(
-      (elements) => elements.map((el) => el.id),
-    );
-    const expectedOrder = [
-      'media-management',
-      'streaming-providers',
-      'metadata-source',
-      'metadata',
-      'audio-quality',
-      'video-quality',
-      'curation',
-      'monitoring',
-      'appearance',
-      'about',
-    ];
-    expect(sectionOrder.filter((id) => id !== 'app-access')).toEqual(expectedOrder);
+    // Default category: Providers
+    await expect(page.locator('#streaming-providers')).toBeVisible();
+
+    // Desktop TabList or mobile category menu must expose all categories.
+    const desktopTabs = page.getByTestId('settings-category-tabs');
+    if (await desktopTabs.isVisible().catch(() => false)) {
+      for (const label of SETTINGS_TABS) {
+        await expect(desktopTabs.getByRole('tab', { name: label, exact: true })).toBeVisible();
+      }
+    } else {
+      await expect(page.getByTestId('settings-category-menu')).toBeVisible();
+    }
   });
 
-  test('uses masonry-style layout for settings sections', async ({ page }) => {
+  test('category tabs switch focused settings panels', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
 
-    const layout = await page.locator('#audio-quality').evaluate((element) => {
-      const container = element.parentElement?.closest('[data-testid="settings-sections"]') as HTMLElement | null;
-      if (!container) {
-        return null;
-      }
+    await selectSettingsCategory(page, 'Providers');
+    await expect(page.locator('#streaming-providers').getByText('Streaming Providers', { exact: true })).toBeVisible();
 
-      const styles = window.getComputedStyle(container);
+    await selectSettingsCategory(page, 'Metadata Source');
+    await expect(page.locator('#metadata-source')).toBeVisible();
+
+    await selectSettingsCategory(page, 'Metadata');
+    await expect(page.locator('#metadata')).toBeVisible();
+
+    await selectSettingsCategory(page, 'Audio');
+    await expect(page.locator('#audio-quality')).toBeVisible();
+
+    await selectSettingsCategory(page, 'Music Videos');
+    await expect(page.locator('#music-videos')).toBeVisible();
+
+    await selectSettingsCategory(page, 'Curation');
+    await expect(page.locator('#curation').getByText('Curation', { exact: true })).toBeVisible();
+
+    await selectSettingsCategory(page, 'Monitoring');
+    await expect(page.locator('#monitoring').getByText('Monitoring', { exact: true })).toBeVisible();
+
+    await selectSettingsCategory(page, 'Appearance');
+    await expect(page.locator('#appearance').getByText('Appearance', { exact: true })).toBeVisible();
+
+    await selectSettingsCategory(page, 'About');
+    await expect(page.locator('#about').getByText('About', { exact: true })).toBeVisible();
+  });
+
+  test('uses tabbed settings layout on desktop', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(page.locator('main')).toBeVisible();
+
+    const layout = await page.getByTestId('settings-layout').evaluate((element) => {
+      const styles = window.getComputedStyle(element);
       return {
         display: styles.display,
-        columnWidth: styles.columnWidth,
-        columnFill: styles.columnFill,
+        flexDirection: styles.flexDirection,
       };
     });
 
-    expect(layout).not.toBeNull();
-    expect(layout?.display).toBe('block');
-    expect(layout?.columnWidth).not.toBe('auto');
-    expect(layout?.columnFill).toBe('balance');
+    expect(layout.display).toBe('flex');
+    expect(layout.flexDirection).toBe('row');
+    await expect(page.getByTestId('settings-category-tabs')).toBeVisible();
+    await expect(page.getByRole('tablist').first()).toBeVisible();
   });
 
   test('theme selector works', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
 
+    await selectSettingsCategory(page, 'Appearance');
     const appearanceHeading = page.locator('#appearance').getByText('Appearance', { exact: true });
-    await appearanceHeading.scrollIntoViewIfNeeded();
     await expect(appearanceHeading).toBeVisible();
     await expect(page.getByRole('radio', { name: /light/i })).toBeVisible();
     await expect(page.getByRole('radio', { name: /dark/i })).toBeVisible();
@@ -100,8 +137,8 @@ test('settings about section shows current and latest version status', async ({ 
   await page.goto(`${baseURL}/settings`, { waitUntil: 'domcontentloaded' });
   await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
+  await selectSettingsCategory(page, 'About');
   const aboutHeading = page.locator('#about').getByText('About', { exact: true });
-  await aboutHeading.scrollIntoViewIfNeeded();
   await expect(aboutHeading).toBeVisible();
 
   await expect(page.locator('#about').getByText(/Current Version/i)).toBeVisible();
@@ -146,4 +183,3 @@ test.describe('Dashboard page', () => {
     }
   });
 });
-

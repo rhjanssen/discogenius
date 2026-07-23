@@ -684,9 +684,17 @@ export function matchProviderAlbumToReleaseGroup(
         && !best.providerUrlMatched
         && !best.upcMatched
         && best.confidence < 0.78;
+    // Explicit empty provider tracklists (SoundCloud album shells with
+    // track_count: 0) must not sit at probable — offer switchers treat
+    // probable as a real match while the album header correctly shows no tips.
+    // Unknown/null track counts stay probable (title/year shape evidence).
+    const emptyProviderTracklist = album.trackCount === 0
+      || best.providerTrackCount === 0;
     const status: ProviderReleaseGroupMatchStatus = ambiguousWith.length > 0
         ? "ambiguous"
         : weakCoverageCandidate
+            ? "candidate"
+        : emptyProviderTracklist
             ? "candidate"
         : (strongIdentityMatch || verifiedTrackMatch || verifiedSpatialReleaseMatch || verifiedExactTitleMatch)
             ? "verified"

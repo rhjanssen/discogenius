@@ -34,7 +34,7 @@ export interface FilteringConfig {
 
   include_spatial: boolean;            // Include spatial/surround release-group slots
   include_videos: boolean;             // Monitor music videos
-  /** Official Music Video / OMV (`video` + `official`; also gates audio). Factory default ON. */
+  /** Official Music Video / OMV (`video` + `official`). Factory default ON. */
   include_video_official: boolean;
   /** Official lyric videos (`lyric`). Factory default ON. */
   include_video_lyric: boolean;
@@ -42,6 +42,8 @@ export interface FilteringConfig {
   include_video_live: boolean;
   /** Visualizer / visualiser cuts (`visualizer`). Factory default ON. */
   include_video_visualizer: boolean;
+  /** Official Audio / Audio cuts (`audio`). Factory default ON. */
+  include_video_official_audio: boolean;
   prefer_explicit: boolean;            // Prefer explicit versions over clean
   enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
   require_provider_availability: boolean; // Only mark release groups wanted when a provider offer exists
@@ -201,6 +203,7 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
     include_video_lyric: true,
     include_video_live: true,
     include_video_visualizer: true,
+    include_video_official_audio: true,
     require_provider_availability: true,
   },
   path: {
@@ -295,6 +298,8 @@ function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConf
     include_video_lyric: raw?.include_video_lyric ?? DEFAULT_CONFIG.filtering.include_video_lyric,
     include_video_live: raw?.include_video_live ?? DEFAULT_CONFIG.filtering.include_video_live,
     include_video_visualizer: raw?.include_video_visualizer ?? DEFAULT_CONFIG.filtering.include_video_visualizer,
+    include_video_official_audio:
+      raw?.include_video_official_audio ?? DEFAULT_CONFIG.filtering.include_video_official_audio,
     require_provider_availability: raw?.require_provider_availability ?? DEFAULT_CONFIG.filtering.require_provider_availability,
   };
 }

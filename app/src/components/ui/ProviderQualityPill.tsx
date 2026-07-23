@@ -238,17 +238,13 @@ function providerDisplayName(provider?: string | null): string {
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
-/** Compact chip label for video offers without a resolution quality tag. */
-function providerShortChipLabel(provider?: string | null): string {
-    const normalized = providerKey(provider);
-    if (normalized === "tidal") return "TIDAL";
-    if (normalized.startsWith("apple")) return "Apple";
-    if (normalized === "amazon" || normalized === "amazon_music" || normalized === "amazon-music") return "Amazon";
-    if (normalized === "spotify") return "Spotify";
-    if (normalized === "youtube" || normalized === "youtube_music" || normalized === "youtube-music") return "YT";
-    if (normalized === "deezer") return "Deezer";
-    if (normalized === "soundcloud") return "SC";
-    return providerDisplayName(provider);
+/**
+ * Compact chip when a video offer has no SD/HD/FHD/UHD tag yet.
+ * Never echo the provider name here — the mark already identifies the source,
+ * and a "TIDAL"/"Apple" chip reads as a mistaken quality badge.
+ */
+function videoOfferUnknownQualityLabel(): string {
+    return "Video";
 }
 
 function slotDisplayName(slot: SlotName): string {
@@ -622,9 +618,9 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
                             backgroundColor: badgeGlassFill(palette.SpatialBackground, isDarkMode),
                             color: palette.SpatialText,
                         }}
-                        aria-label={`${providerDisplayName(offer.provider)} video offer`}
+                        aria-label={`${providerDisplayName(offer.provider)} video offer (quality unknown)`}
                     >
-                        <span className={styles.videoOfferChipLabel}>{providerShortChipLabel(offer.provider)}</span>
+                        <span className={styles.videoOfferChipLabel}>{videoOfferUnknownQualityLabel()}</span>
                     </Badge>
                 )
                 : null;

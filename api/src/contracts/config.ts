@@ -130,6 +130,7 @@ export interface FilteringConfigContract {
   include_video_lyric: boolean;
   include_video_live: boolean;
   include_video_visualizer: boolean;
+  include_video_official_audio: boolean;
   prefer_explicit: boolean;
   enable_redundancy_filter: boolean;
   require_provider_availability: boolean;
@@ -290,6 +291,10 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     include_video_lyric: expectBoolean(record.include_video_lyric, "curation.include_video_lyric"),
     include_video_live: expectBoolean(record.include_video_live, "curation.include_video_live"),
     include_video_visualizer: expectBoolean(record.include_video_visualizer, "curation.include_video_visualizer"),
+    include_video_official_audio: expectBoolean(
+      record.include_video_official_audio,
+      "curation.include_video_official_audio",
+    ),
     prefer_explicit: expectBoolean(record.prefer_explicit, "curation.prefer_explicit"),
     enable_redundancy_filter: expectBoolean(record.enable_redundancy_filter, "curation.enable_redundancy_filter"),
     require_provider_availability: expectBoolean(record.require_provider_availability, "curation.require_provider_availability"),

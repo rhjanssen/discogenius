@@ -235,7 +235,11 @@ const useStyles = makeStyles({
     paddingTop: tokens.spacingVerticalM,
     boxSizing: "border-box",
     width: "100%",
-    overflowX: "hidden",
+    // `overflow-x: hidden` forces overflow-y to compute to `auto`, which makes
+    // <main> a sticky containing block as tall as its content — so sticky
+    // descendants (e.g. Settings category TabList) scroll away with the page.
+    // `clip` still suppresses horizontal bleed without creating a scrollport.
+    overflowX: "clip",
     "@media (min-width: 640px)": {
       padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
       paddingLeft: `max(${tokens.spacingHorizontalM}, env(safe-area-inset-left))`,

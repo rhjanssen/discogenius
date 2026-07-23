@@ -9,8 +9,8 @@ import {
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
+import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import type { CatalogConfigContract } from "@contracts/config";
 
 export type CatalogConnectionTestState = {
@@ -41,19 +41,10 @@ const useStyles = makeStyles({
     section: {
         display: "flex",
         width: "100%",
-        breakInside: "avoid",
-        WebkitColumnBreakInside: "avoid",
-        pageBreakInside: "avoid",
-        marginBottom: tokens.spacingVerticalM,
+        minWidth: 0,
+        marginBottom: tokens.spacingVerticalNone,
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
-    },
-    card: {
-        ...glassSurfaceStyles,
-        borderRadius: tokens.borderRadiusMedium,
-        padding: tokens.spacingVerticalNone,
-        overflow: "hidden",
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     nestedFields: {
         display: "flex",
@@ -112,11 +103,11 @@ export const MetadataSourceSettingsSection = ({
     return (
         <SettingsSection
             id="metadata-source"
-            title="Catalog"
+            title="Metadata Source"
             description="Choose where artist, album, and track details come from."
             className={styles.section}
         >
-            <div className={styles.card}>
+            <SettingsCard>
                 <RadioGroup
                     className={styles.qualityRadioGroup}
                     value={metadataSource}
@@ -179,7 +170,7 @@ export const MetadataSourceSettingsSection = ({
                         </Button>
                     </div>
                 ) : null}
-            </div>
+            </SettingsCard>
         </SettingsSection>
     );
 };

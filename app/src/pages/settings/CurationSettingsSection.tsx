@@ -13,9 +13,9 @@ import {
     bundleIcon,
 } from "@fluentui/react-icons";
 import type { ReactNode } from "react";
+import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
-import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import type { FilteringConfigContract } from "@contracts/config";
 
 const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
@@ -72,30 +72,14 @@ const secondaryReleaseTypeRows = [
     { key: "include_demo", title: "Demo" },
 ] as const;
 
-const musicVideoTypeRows = [
-    { key: "include_video_official", title: "Official Music Video" },
-    { key: "include_video_lyric", title: "Official Lyric Video" },
-    { key: "include_video_live", title: "Live" },
-    { key: "include_video_visualizer", title: "Visualizer" },
-] as const;
-
 const useStyles = makeStyles({
     section: {
         display: "flex",
         width: "100%",
-        breakInside: "avoid",
-        WebkitColumnBreakInside: "avoid",
-        pageBreakInside: "avoid",
-        marginBottom: tokens.spacingVerticalM,
+        minWidth: 0,
+        marginBottom: tokens.spacingVerticalNone,
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
-    },
-    card: {
-        ...glassSurfaceStyles,
-        borderRadius: tokens.borderRadiusMedium,
-        padding: tokens.spacingVerticalNone,
-        overflow: "hidden",
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     subsectionHeader: {
         display: "flex",
@@ -234,7 +218,7 @@ export const CurationSettingsSection = ({
             description="Which release and video types to keep, and how to choose between versions."
             className={styles.section}
         >
-            <div className={styles.card}>
+            <SettingsCard>
                 <div className={styles.subsectionHeader}>
                     <Text weight="semibold">Primary release types</Text>
                 </div>
@@ -254,20 +238,6 @@ export const CurationSettingsSection = ({
                         rowKey: row.key,
                         title: row.title,
                         checked: curationConfig?.[row.key] === true,
-                        onChange: (checked) => void onUpdate({ [row.key]: checked }),
-                    }))}
-                </div>
-                <div className={styles.subsectionHeader}>
-                    <Text weight="semibold">Music video types</Text>
-                    <Text size={200} className={styles.mutedText}>
-                        Unchecked types are skipped by download automation. Existing files are kept.
-                    </Text>
-                </div>
-                <div className={styles.checkboxList}>
-                    {musicVideoTypeRows.map((row) => renderCheckboxRow({
-                        rowKey: row.key,
-                        title: row.title,
-                        checked: curationConfig?.[row.key] !== false,
                         onChange: (checked) => void onUpdate({ [row.key]: checked }),
                     }))}
                 </div>
@@ -301,7 +271,7 @@ export const CurationSettingsSection = ({
                         {updating ? "Queueing..." : "Curate Library"}
                     </Button>
                 </div>
-            </div>
+            </SettingsCard>
         </SettingsSection>
     );
 };

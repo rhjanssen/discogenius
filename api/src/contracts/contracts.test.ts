@@ -82,12 +82,14 @@ test("config contract parsers normalize expected public settings shapes", () => 
     include_video_lyric: true,
     include_video_live: true,
     include_video_visualizer: true,
+    include_video_official_audio: true,
     prefer_explicit: true,
     enable_redundancy_filter: true,
     require_provider_availability: true,
   });
   assert.equal(curation.include_videos, true);
   assert.equal(curation.include_video_official, true);
+  assert.equal(curation.include_video_official_audio, true);
 });
 
 test("media contract parsers validate album tracks and video detail payloads", () => {

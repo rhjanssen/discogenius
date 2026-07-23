@@ -7,6 +7,7 @@ import {
 } from "../streaming-provider.js";
 import { appleMusicApiRequest, AppleMusicApiOptions, storefrontFor } from "./apple-music-api.js";
 import { appleVideoQualityTag } from "./apple-music-quality.js";
+import { appleVideoQualityFromAttributes } from "./apple-music-video-probe.js";
 
 /**
  * Apple Music catalog resources are JSON:API-style objects:
@@ -326,7 +327,16 @@ export async function getAppleVideo(id: string, options: AppleMusicApiOptions = 
   );
   const resource = first(res);
   if (!resource) throw new Error(`Apple Music video not found: ${id}`);
-  return mapAppleVideo(resource);
+  const video = mapAppleVideo(resource);
+  // List payloads only expose has4K; probe the preview HLS ladder for SD/HD/FHD.
+  if (!video.quality) {
+    const attrs = (resource.attributes ?? {}) as {
+      has4K?: boolean;
+      previews?: Array<{ url?: string; hlsUrl?: string }>;
+    };
+    video.quality = await appleVideoQualityFromAttributes(attrs, options);
+  }
+  return video;
 }
 
 function firstPreviewUrl(resource: AppleResource | null): { url: string; hlsUrl?: string } | null {

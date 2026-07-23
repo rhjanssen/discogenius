@@ -83,8 +83,9 @@ export const appleMusicQualityMapping: ProviderQualityMapping = {
 
 /**
  * Apple catalog only exposes `has4K` for music videos (no height).
- * 4K → UHD; otherwise leave unknown — inventing FHD caused offers to claim
- * Full HD when the download could only fetch HD/SD.
+ * 4K → UHD; otherwise leave unknown so getVideo can probe the preview HLS
+ * ladder for SD/HD/FHD. Inventing FHD from !has4K caused offers to claim
+ * Full HD when the stream topped out at HD/SD.
  */
 export function appleVideoQualityTag(has4K: boolean | null | undefined): string | null {
   return has4K === true ? formatNeutralVideoTag("uhd") : null;

@@ -1134,6 +1134,12 @@ const ArtistPage = () => {
     const imageUrl = mediaCoverProxySrc(item);
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
     const subtitle = [artistName, year || ''].filter(Boolean).join(' · ');
+    const videoProvider = String(item.provider || "").trim() || null;
+    const videoProviderId = String(item.provider_id || "").trim() || null;
+    const videoQuality = String(item.quality || "").trim() || null;
+    const videoOffers = (videoProvider || videoQuality)
+      ? [{ slot: "video" as const, quality: videoQuality, provider: videoProvider, providerAlbumId: videoProviderId }]
+      : [];
 
     // Library filter
     if (libraryFilter === 'stereo' || libraryFilter === 'spatial') return null;
@@ -1171,6 +1177,9 @@ const ArtistPage = () => {
           title={title}
           subtitle={subtitle}
           explicit={item.explicit}
+          qualityBadges={videoOffers.length > 0 ? (
+            <ProviderQualityRow size="small" offers={videoOffers} />
+          ) : undefined}
           monitored={isVideoMonitored}
           monitoringLocked={isLocked}
           videoAspect

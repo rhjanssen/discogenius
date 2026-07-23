@@ -210,7 +210,7 @@ test("Apple quality mapping translates raw traits into the neutral model", () =>
   assert.equal(appleMusicQualityMapping.fromNeutralAudio("lossless"), "lossless");
 });
 
-test("Apple music-video quality maps has4K to UHD and otherwise stays unknown", async () => {
+test("Apple music-video quality maps has4K to UHD and probes HLS when unknown", async () => {
   const { appleVideoQualityTag } = await import("./apple-music-quality.js");
   assert.equal(appleVideoQualityTag(true), "UHD");
   assert.equal(appleVideoQualityTag(false), null);
@@ -218,6 +218,39 @@ test("Apple music-video quality maps has4K to UHD and otherwise stays unknown", 
 
   const video = await getAppleVideo("1452310551", opts());
   assert.equal(video.quality, "UHD");
+
+  const { appleVideoQualityFromAttributes } = await import("./apple-music-video-probe.js");
+  const hlsMaster = [
+    "#EXTM3U",
+    '#EXT-X-STREAM-INF:BANDWIDTH=700000,RESOLUTION=640x360',
+    "a.m3u8",
+    '#EXT-X-STREAM-INF:BANDWIDTH=4500000,RESOLUTION=1920x1080',
+    "b.m3u8",
+  ].join("\n");
+  const probed = await appleVideoQualityFromAttributes(
+    {
+      has4K: false,
+      previews: [{ hlsUrl: "https://example.test/preview.m3u8" }],
+    },
+    {
+      fetchImpl: async (url) => {
+        assert.equal(url, "https://example.test/preview.m3u8");
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+          text: async () => hlsMaster,
+        } as { ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> };
+      },
+    },
+  );
+  assert.equal(probed, "FHD");
+
+  const stillUnknown = await appleVideoQualityFromAttributes(
+    { has4K: false, previews: [] },
+    { fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }) },
+  );
+  assert.equal(stillUnknown, null);
 });
 
 test("provider exposes core capability descriptor and conforms to interface", async () => {

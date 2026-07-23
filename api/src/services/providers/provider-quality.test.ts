@@ -8,6 +8,7 @@ import {
   isNeutralSpatial,
   neutralVideoFromHeight,
   neutralVideoTagFromHeight,
+  parseM3u8MaxHeight,
 } from "./provider-quality.js";
 import { tidalQualityMapping } from "./tidal/tidal-quality.js";
 
@@ -25,6 +26,18 @@ test("classifyNeutralVideo maps legacy MP4_* and neutral tags", () => {
   assert.equal(classifyNeutralVideo("SOURCE"), null);
   assert.equal(neutralVideoFromHeight(1080), "fhd");
   assert.equal(neutralVideoTagFromHeight(2160), "UHD");
+});
+
+test("parseM3u8MaxHeight reads the tallest RESOLUTION line", () => {
+  const master = [
+    "#EXTM3U",
+    '#EXT-X-STREAM-INF:BANDWIDTH=700000,RESOLUTION=640x360',
+    "a.m3u8",
+    '#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1280x720',
+    "b.m3u8",
+  ].join("\n");
+  assert.equal(parseM3u8MaxHeight(master), 720);
+  assert.equal(parseM3u8MaxHeight(""), null);
 });
 
 test("configuredVideoMaxHeight maps settings tiers to pixel ceilings", async () => {

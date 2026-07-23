@@ -62,7 +62,10 @@ export function buildSoundCloudSourceUrl(
     throw new Error(`Invalid SoundCloud id: ${candidate || "(empty)"}`);
   }
   if (entityType === "album") {
-    return `https://soundcloud.com/playlists/${candidate}`;
+    // yt-dlp's SoundcloudPlaylistIE only resolves numeric playlist ids on the
+    // api host; the public soundcloud.com/playlists/<id> form 404s (falls
+    // through to the track extractor). Mirror the api-host track branch below.
+    return `https://api.soundcloud.com/playlists/${candidate}`;
   }
   return `https://api.soundcloud.com/tracks/${candidate}`;
 }

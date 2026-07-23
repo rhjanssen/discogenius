@@ -2,6 +2,52 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.6.3] - 2026-07-23
+
+### Added
+- Settings: a dedicated **Music Videos** category that consolidates the video
+  download toggle, maximum resolution, music-video type filters, and folder
+  layout that were previously scattered across Quality, Curation, and Media
+  Management.
+- Settings: grouped, reordered navigation (Connections / Music & Video / Library
+  / Application) on desktop and a grouped dropdown on mobile. Catalog is renamed
+  Metadata Source and Quality is split into Audio + Music Videos.
+- Provider + quality badge on music-video cards (album "Associated videos" and
+  the artist page), matching album cards.
+- Settings Curation: Official Audio music-video type filter
+  (`include_video_official_audio`, default on) — catalog `audio` variant
+  ("(Official Audio)" / "(Audio)") is no longer folded into Official.
+- Video offer quality backfill: RefreshArtist probes youtube-music video offers
+  ingested from MusicBrainz streaming-URL relations (previously stored with no
+  resolution tag) through the provider `getVideo` height probe.
+
+### Changed
+- Album "Associated videos" now honors the monitored state and music-video type
+  filters — a video whose type is turned off (e.g. lyric videos) no longer shows
+  — while videos already downloaded to disk stay visible.
+- Download queue reorder is optimistic: moving a queued item updates its position
+  immediately (instead of only after a manual reload) and reconciles with the
+  server list.
+
+### Fixed
+- YouTube-only video thumbnails: fall back to `sddefault` / `hqdefault` when the
+  `hq720` still 404s on YouTube's CDN, so youtube-only music videos reliably
+  render a poster/thumbnail instead of a blank frame.
+- SoundCloud album/playlist download: use the api-host playlist URL
+  (`api.soundcloud.com/playlists/<id>`) that yt-dlp can resolve — fixes 404s on
+  sets whose tracks preview fine in the browser.
+- Organizer file matching after a cross-provider download fallback: the import
+  now scopes to the provider that actually produced the files (e.g. YouTube
+  Music) instead of the failed primary (e.g. Deezer), so downloaded album files
+  match their tracks instead of failing with "Could not match downloaded album
+  files".
+- SoundCloud mixtape playlist matching: accept near-complete tracklist coverage
+  (≥85%), strip `Artist - Title` fan-upload prefixes, and rank out empty official
+  album stubs so unofficial sets (e.g. Other People’s Heartache) can match.
+- Cover prefetch: RefreshArtist / MatchArtistProviders warm missing artist,
+  album, and video bytes into `config/media-cover` based on on-disk cache
+  (not `cover_image_id`); page `/media-cover` routes remain a cold fallback.
+
 ## [2.6.2] - 2026-07-22
 
 ### Added

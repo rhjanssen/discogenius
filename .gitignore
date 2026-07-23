@@ -41,6 +41,11 @@ api/src/**/*.js
 /tmp/
 /test-results/
 
+# Python bytecode cache (tiddl / provider tooling) and scratch cover dirs
+__pycache__/
+*.pyc
+.tmp-*/
+
 # Lock files from other package managers
 package-lock.json
 bun.lockb

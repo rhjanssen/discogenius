@@ -14,8 +14,8 @@ import {
     DesktopMac24Filled,
     bundleIcon,
 } from "@fluentui/react-icons";
+import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import type { ThemeMode } from "@/providers/themeContext";
 
 const WeatherMoon24 = bundleIcon(WeatherMoon24Filled, WeatherMoon24Regular);
@@ -42,19 +42,10 @@ const useStyles = makeStyles({
     section: {
         display: "flex",
         width: "100%",
-        breakInside: "avoid",
-        WebkitColumnBreakInside: "avoid",
-        pageBreakInside: "avoid",
-        marginBottom: tokens.spacingVerticalM,
+        minWidth: 0,
+        marginBottom: tokens.spacingVerticalNone,
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
-    },
-    card: {
-        ...glassSurfaceStyles,
-        borderRadius: tokens.borderRadiusMedium,
-        padding: tokens.spacingVerticalNone,
-        overflow: "hidden",
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     qualityOption: {
         display: "flex",
@@ -108,7 +99,7 @@ export const AppearanceSettingsSection = ({
             description="Choose the theme used across the app."
             className={styles.section}
         >
-            <div className={styles.card}>
+            <SettingsCard>
                 <RadioGroup
                     className={styles.qualityRadioGroup}
                     value={theme}
@@ -142,7 +133,7 @@ export const AppearanceSettingsSection = ({
                         </div>
                     </label>
                 </RadioGroup>
-            </div>
+            </SettingsCard>
         </SettingsSection>
     );
 };

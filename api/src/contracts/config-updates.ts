@@ -109,6 +109,7 @@ const FILTERING_UPDATE_KEYS = [
   "include_video_lyric",
   "include_video_live",
   "include_video_visualizer",
+  "include_video_official_audio",
   "prefer_explicit",
   "enable_redundancy_filter",
   "require_provider_availability",

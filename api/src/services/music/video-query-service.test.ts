@@ -173,6 +173,57 @@ test("video list and detail use canonical video recordings with provider offers"
   assert.equal(unavailableProvider.total, 0);
 });
 
+test("video detail backfills null offer quality from TrackFiles", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('file-quality-artist', 'File Quality Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('file-quality-artist', 'file-quality-artist', 'File Quality Artist')
+  `).run();
+
+  const recording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
+      title, length_ms, is_video, metadata_status, monitored
+    )
+    VALUES (
+      'file-quality-video', NULL, ?, 'file-quality-artist',
+      'Pompeii', 233000, 1, 'provider_only', 1
+    )
+    RETURNING id
+  `).get(artist.id) as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, recording_id,
+      title, quality, duration, availability
+    ) VALUES (
+      'tidal', 'video', '25704375', 'file-quality-artist', ?,
+      'Pompeii', NULL, 233, 'available'
+    )
+  `).run(recording.id);
+
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, recording_id, provider, provider_entity_type, provider_id,
+      library_slot, file_path, relative_path, library_root, filename, extension,
+      file_type, quality, width, height
+    ) VALUES (
+      'file-quality-artist', ?, 'tidal', 'video', '25704375',
+      'video', 'C:/library/Pompeii.mp4', 'Pompeii.mp4', 'C:/library',
+      'Pompeii.mp4', '.mp4', 'video', 'FHD', 1920, 1080
+    )
+  `).run(recording.id);
+
+  const detail = videoQueryModule.getVideoDetail(String(recording.id));
+  assert.equal(detail?.offers?.length, 1);
+  assert.equal(detail?.offers?.[0]?.provider, "tidal");
+  assert.equal(detail?.offers?.[0]?.quality, "FHD");
+});
+
 test("video list and detail ignore legacy provider-media-only video rows", () => {
   dbModule.db.prepare("INSERT INTO Artists (id, name) VALUES (?, ?)")
     .run("artist-id", "Legacy Artist");
@@ -598,4 +649,77 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
   assert.equal(associated[0]?.volume_number, 1);
   assert.equal(associated[0]?.audio_recording_mbid, "rec-audio-assoc");
   assert.equal(associated[0]?.is_monitored, true);
+});
+
+test("album associated videos honor monitored state and music-video type filters", async () => {
+  const configModule = await import("../config/config.js");
+  const config = configModule.readConfig();
+  config.filtering = { ...config.filtering, include_video_lyric: false };
+  configModule.writeConfig(config);
+
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-mbid', 'Video Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name) VALUES ('artist-mbid', 'artist-mbid', 'Video Artist')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('rg-filter', 'artist-mbid', 'Filter Album', 'album')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
+    VALUES ('rel-filter', 'rg-filter', 'artist-mbid', 'Filter Album', '2024-01-01', 1, 1)
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid)
+    VALUES ('artist-mbid', 'rg-filter', 'stereo', 1, 'rel-filter')
+  `).run();
+  const audio = dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status)
+    VALUES ('rec-audio-filter', ?, 'artist-mbid', 'Anchor', 0, 'complete')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, recording_id, medium_position, position, number, title)
+    VALUES ('track-filter-1', 'rel-filter', 'rec-audio-filter', ?, 1, 1, '1', 'Anchor')
+  `).run(audio.id);
+
+  const makeVideo = (title: string, variant: string, monitored: number): number => {
+    const row = dbModule.db.prepare(`
+      INSERT INTO Recordings (artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status, monitored)
+      VALUES (?, 'artist-mbid', ?, 1, ?, 'provider_only', ?)
+      RETURNING id
+    `).get(artist.id, title, variant, monitored) as { id: number };
+    dbModule.db.prepare(`
+      INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, source, confidence)
+      VALUES (?, ?, 'provider_video_for', 'tidal', 0.95)
+    `).run(row.id, audio.id);
+    return row.id;
+  };
+
+  const monitoredOfficial = makeVideo("Monitored Official", "official", 1);
+  makeVideo("Unmonitored Official", "official", 0); // hidden: unmonitored
+  makeVideo("Monitored Lyric", "lyric", 1); // hidden: lyric type disabled
+  const downloadedUnmonitored = makeVideo("Downloaded Lyric", "lyric", 0); // visible: on disk
+
+  // A downloaded file keeps its video visible even when unmonitored / type-off.
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, library_slot, file_path, relative_path, library_root, filename, extension, file_type, recording_id
+    ) VALUES (
+      'artist-mbid', 'video', '/library/music-videos/Downloaded Lyric.mp4', 'Downloaded Lyric.mp4',
+      '/library/music-videos', 'Downloaded Lyric', '.mp4', 'video', ?
+    )
+  `).run(downloadedUnmonitored);
+
+  const associated = videoQueryModule.getAlbumAssociatedVideos("rg-filter");
+  const ids = associated.map((video) => video.id).sort();
+  assert.deepEqual(
+    ids,
+    [String(monitoredOfficial), String(downloadedUnmonitored)].sort(),
+    "only the monitored official video and the downloaded (on-disk) video should appear",
+  );
 });

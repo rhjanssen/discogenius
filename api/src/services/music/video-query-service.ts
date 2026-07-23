@@ -9,6 +9,8 @@ import type {
 import { streamingProviderManager } from "../providers/index.js";
 import { videoCoverLocalUrl, albumCoverLocalUrl, imageContainerFromImagesColumn } from "../metadata/media-cover-service.js";
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
+import { getConfigSection } from "../config/config.js";
+import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
 
@@ -495,6 +497,9 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       video.monitored AS monitored,
       video.monitored_lock AS monitored_lock,
       CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
+      pi.provider AS provider,
+      pi.quality AS quality,
+      CAST(pi.provider_id AS TEXT) AS provider_id,
       CASE WHEN EXISTS (
         SELECT 1 FROM TrackFiles lf
         WHERE lf.file_type = 'video'
@@ -601,6 +606,9 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
     monitored: number | boolean | null;
     monitored_lock: number | boolean | null;
     explicit: number | boolean | null;
+    provider: string | null;
+    quality: string | null;
+    provider_id: string | null;
     downloaded: number;
     track_mbid: string | null;
     track_title: string | null;
@@ -628,6 +636,9 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       video.monitored AS monitored,
       video.monitored_lock AS monitored_lock,
       CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
+      pi.provider AS provider,
+      pi.quality AS quality,
+      CAST(pi.provider_id AS TEXT) AS provider_id,
       CASE WHEN EXISTS (
         SELECT 1 FROM TrackFiles lf
         WHERE lf.file_type = 'video'
@@ -732,6 +743,9 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
     monitored: number | boolean | null;
     monitored_lock: number | boolean | null;
     explicit: number | boolean | null;
+    provider: string | null;
+    quality: string | null;
+    provider_id: string | null;
     downloaded: number;
     track_mbid: string | null;
     track_title: string | null;
@@ -740,10 +754,21 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
     audio_recording_mbid: string | null;
   }>;
 
+  // Honor the same monitored + music-video-type gating the tracklist glyphs and
+  // download automation use, so a video whose type is turned off in Settings
+  // (e.g. lyric videos) or that curation has unmonitored no longer clutters the
+  // album page. Anything already on disk stays visible — never hide a video the
+  // user physically has downloaded.
+  const filtering = getConfigSection("filtering");
   const byId = new Map<string, AlbumAssociatedVideoContract>();
   const upsert = (row: typeof linkedViaRelation[number]) => {
     const id = String(row.id);
     if (byId.has(id)) return;
+    const isDownloaded = Boolean(row.downloaded);
+    if (!isDownloaded) {
+      if (!row.monitored) return;
+      if (!isVideoVariantDownloadAllowed(row.video_variant, filtering)) return;
+    }
     const coverArtUrl = videoCoverLocalUrl(id);
     byId.set(id, {
       id,
@@ -753,6 +778,9 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       cover_art_url: coverArtUrl,
       video_variant: row.video_variant ?? null,
       release_date: row.release_date ?? null,
+      provider: row.provider ?? null,
+      quality: row.quality ?? null,
+      provider_id: row.provider_id ?? null,
       explicit: row.explicit == null ? undefined : Boolean(row.explicit),
       is_monitored: Boolean(row.monitored),
       monitored_lock: Boolean(row.monitored_lock),
@@ -784,7 +812,26 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
 /** All provider VIDEO offers for the canonical recording, preference-ordered. */
 function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract[] {
   const rows = db.prepare(`
-    SELECT pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality, pi.provider_url AS url
+    SELECT
+      pi.provider,
+      CAST(pi.provider_id AS TEXT) AS provider_id,
+      -- Prefer probed/catalog offer quality; fall back to an on-disk file for
+      -- that provider id so badges show SD/HD/FHD/UHD instead of a blank/name chip.
+      COALESCE(
+        NULLIF(TRIM(pi.quality), ''),
+        (
+          SELECT NULLIF(TRIM(tf.quality), '')
+          FROM TrackFiles tf
+          WHERE tf.provider = pi.provider
+            AND CAST(tf.provider_id AS TEXT) = CAST(pi.provider_id AS TEXT)
+            AND (tf.provider_entity_type = 'video' OR tf.library_slot = 'video' OR tf.file_type = 'video')
+            AND tf.quality IS NOT NULL
+            AND TRIM(tf.quality) != ''
+          ORDER BY tf.modified_at DESC
+          LIMIT 1
+        )
+      ) AS quality,
+      pi.provider_url AS url
     FROM ProviderItems pi
     WHERE pi.entity_type = 'video'
       -- availability is stored as text ('available') or NULL for live offers,

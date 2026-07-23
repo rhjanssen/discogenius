@@ -224,9 +224,10 @@ test("marks exact title and type matches as verified", () => {
     assert.equal(match.evidence.trackCountMatched, true);
 });
 
-test("exact title without a provider track count stays probable", () => {
+test("exact title without a provider track count stays candidate", () => {
     // SoundCloud album stubs often report title/year with track_count 0.
-    // Title-only shells must not become verified availability with no tracklist.
+    // Title-only shells must not become probable/verified availability with no
+    // tracklist — that leaves the offer switcher showing a match with no tips.
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "2881942",
         title: "Other People’s Heartache, Pt. 2",
@@ -249,7 +250,7 @@ test("exact title without a provider track count stays probable", () => {
     }]);
 
     assert.equal(match.releaseGroup?.mbid, "2d1c5d7d-56e3-4f7c-8194-d065595302d8");
-    assert.equal(match.status, "probable");
+    assert.equal(match.status, "candidate");
     assert.equal(match.evidence.trackCountMatched, false);
     assert.equal(match.evidence.providerTrackCount, 0);
 });

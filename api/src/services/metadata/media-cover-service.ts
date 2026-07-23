@@ -63,6 +63,7 @@ function mediaCoverRoot(): string {
 }
 
 type MediaCoverEntity = "Artist" | "Album" | "Video";
+export type MediaCoverEntityKind = MediaCoverEntity;
 
 const CONTENT_TYPES_BY_EXTENSION: Record<string, string> = {
   ".gif": "image/gif",
@@ -247,6 +248,15 @@ function getMediaCoverPath(entityId: string | number, coverEntity: MediaCoverEnt
 
 function getMediaCoverUrl(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string, extension: string, height?: number | null): string {
   return `${mediaCoverUrlFolder(entityId, coverEntity)}/${filenameForCover(coverType, extension, height)}`;
+}
+
+/** True when config/media-cover already has bytes for this entity/type. */
+export function hasCachedMediaCover(
+  entityId: string | number | null | undefined,
+  coverEntity: MediaCoverEntity,
+  coverType: string,
+): boolean {
+  return existingMediaCover(entityId, coverEntity, coverType) != null;
 }
 
 function existingMediaCover(entityId: string | number | null | undefined, coverEntity: MediaCoverEntity, coverType: string): { path: string; url: string } | null {
@@ -445,6 +455,56 @@ export function getCoverArtArchiveReleaseGroupUrl(releaseGroupMbid: string | nul
   return mbid ? `https://coverartarchive.org/release-group/${mbid}/front` : null;
 }
 
+/**
+ * YouTube renders `hq720.jpg` / `maxresdefault.jpg` only for some uploads; many
+ * videos 404 on those and only expose the 4:3 stills. `sddefault` is present for
+ * most, and `hqdefault` is generated for every video, so this ladder guarantees
+ * a cover for the whole youtube-only-video class instead of a blank poster when
+ * the normalized hq720 URL 404s.
+ */
+function youTubeThumbnailFallbacks(url: string): string[] {
+  const match = url.match(/^https?:\/\/i\.ytimg\.com\/vi\/([^/?#]+)\/(?:hq720|maxresdefault)\.jpg(?:$|\?)/i);
+  if (!match) {
+    return [];
+  }
+  const videoId = match[1];
+  return [
+    `https://i.ytimg.com/vi/${videoId}/sddefault.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+  ];
+}
+
+/**
+ * Fetch artwork, trying provider-specific lower-res fallbacks when the primary
+ * URL 404s (see youTubeThumbnailFallbacks). Returns the first OK response and
+ * the URL it actually came from (so the extension is derived correctly), or null
+ * when every candidate fails.
+ */
+async function fetchArtworkWithFallbacks(sourceUrl: string): Promise<{ response: Response; fetchedUrl: string } | null> {
+  const candidates = [sourceUrl, ...youTubeThumbnailFallbacks(sourceUrl)];
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(candidate, {
+        redirect: "follow",
+        headers: {
+          "User-Agent": getDiscogeniusUserAgent("media cover"),
+        },
+        // Without a timeout a dead/slow image host hangs this fetch forever,
+        // freezing the RefreshArtist worker (0 CPU, never resolves) — and with
+        // maxConcurrent=1 that one hang deadlocks the whole refresh queue.
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (response.ok) {
+        return { response, fetchedUrl: candidate };
+      }
+    } catch {
+      // Try the next candidate; a transient failure on one still should not
+      // abandon a video that has a working lower-res still.
+    }
+  }
+  return null;
+}
+
 export async function ensureCachedMediaCover(options: {
   entityId: string | number | null | undefined;
   coverEntity: MediaCoverEntity;
@@ -488,18 +548,9 @@ export async function ensureCachedMediaCover(options: {
   }
 
   try {
-    const response = await fetch(sourceUrl, {
-      redirect: "follow",
-      headers: {
-        "User-Agent": getDiscogeniusUserAgent("media cover"),
-      },
-      // Without a timeout a dead/slow image host hangs this fetch forever,
-      // freezing the RefreshArtist worker (0 CPU, never resolves) — and with
-      // maxConcurrent=1 that one hang deadlocks the whole refresh queue.
-      signal: AbortSignal.timeout(30_000),
-    });
+    const fetched = await fetchArtworkWithFallbacks(sourceUrl);
 
-    if (!response.ok) {
+    if (!fetched) {
       // Keep the previous cache file as a last-resort display fallback, but do
       // not mark it as though it came from the source that just failed. The
       // resolver must be able to continue to its next candidate (for example
@@ -508,8 +559,9 @@ export async function ensureCachedMediaCover(options: {
       return null;
     }
 
+    const { response, fetchedUrl } = fetched;
     const contentType = response.headers.get("content-type");
-    const extension = extensionForImage(contentType, sourceUrl);
+    const extension = extensionForImage(contentType, fetchedUrl);
     const folder = mediaCoverFolder(options.entityId, options.coverEntity);
     fs.mkdirSync(folder, { recursive: true });
 
@@ -1361,8 +1413,9 @@ export function videoCoverLocalUrl(videoId: string | number | null | undefined):
  * `images` column) to its local /media-cover URL. Image selection and any
  * provider-fallback artwork are resolved and persisted into `images` at
  * refresh/match time (see resolveAlbumArtwork / persistResolvedFallbackArtwork),
- * so a page read never re-derives a cover from raw provider data. The
- * /media-cover route fetches the bytes on first request.
+ * so a page read never re-derives a cover from raw provider data. Bytes are
+ * warmed into config/media-cover during RefreshArtist / MatchArtistProviders;
+ * the /media-cover route only fetches as a rare cold-cache fallback.
  */
 export function albumCoverLocalUrl(options: {
   albumMbid?: string | null;

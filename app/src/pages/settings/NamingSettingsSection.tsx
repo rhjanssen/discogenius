@@ -7,7 +7,6 @@ import {
     DialogSurface,
     DialogTitle,
     Input,
-    Select,
     Switch,
     Text,
     makeStyles,
@@ -21,8 +20,8 @@ import {
     bundleIcon,
 } from "@fluentui/react-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import { useToast } from "@/hooks/useToast";
@@ -196,64 +195,49 @@ const MODAL_LAYOUT = {
     },
 };
 
-const rowBase = {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    flexWrap: "nowrap" as const,
-    padding: MODAL_LAYOUT.rowPadding.base,
-    columnGap: tokens.spacingHorizontalM,
-    rowGap: tokens.spacingVerticalS,
-    [MEDIA.mobile]: {
-        flexDirection: "column" as const,
-        alignItems: "stretch",
-        flexWrap: "nowrap" as const,
-        padding: MODAL_LAYOUT.rowPadding.mobile,
-        columnGap: tokens.spacingHorizontalNone,
-        rowGap: tokens.spacingVerticalS,
-    },
-};
-
 const useStyles = makeStyles({
     section: {
         display: "flex",
         width: "100%",
-        breakInside: "avoid",
-        WebkitColumnBreakInside: "avoid",
-        pageBreakInside: "avoid",
-        marginBottom: tokens.spacingVerticalM,
+        minWidth: 0,
+        marginBottom: tokens.spacingVerticalNone,
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
     },
-    card: {
-        ...glassSurfaceStyles,
-        borderRadius: tokens.borderRadiusMedium,
-        padding: tokens.spacingVerticalNone,
-        overflow: "hidden",
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    },
-    row: {
-        ...rowBase,
+    /**
+     * Fluent Field-like vertical rows: label + hint above, control full width.
+     * Avoids cramped label|control pairs for paths/selects on desktop and mobile.
+     */
+    fieldRow: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: tokens.spacingVerticalS,
+        padding: MODAL_LAYOUT.rowPadding.base,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        minWidth: 0,
         "&:last-child": {
             borderBottom: "none",
         },
-    },
-    /** Switch/toggle rows stay side-by-side on mobile — control is compact. */
-    rowInline: {
-        ...rowBase,
         [MEDIA.mobile]: {
-            flexDirection: "row",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
-            flexWrap: "nowrap",
+            padding: MODAL_LAYOUT.rowPadding.mobile,
+        },
+    },
+    /** Compact toggle rows keep label left / switch right (WinUI SettingsCard). */
+    rowInline: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: tokens.spacingHorizontalM,
+        padding: MODAL_LAYOUT.rowPadding.base,
+        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        minWidth: 0,
+        "&:last-child": {
+            borderBottom: "none",
+        },
+        [MEDIA.mobile]: {
             padding: MODAL_LAYOUT.rowPadding.mobile,
             columnGap: tokens.spacingHorizontalS,
-            rowGap: tokens.spacingVerticalXS,
-        },
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        "&:last-child": {
-            borderBottom: "none",
         },
     },
     rowContent: {
@@ -262,29 +246,13 @@ const useStyles = makeStyles({
         gap: tokens.spacingVerticalXXS,
         flex: "1 1 auto",
         minWidth: 0,
-        paddingTop: tokens.spacingVerticalXXS,
-        [MEDIA.mobile]: {
-            flex: "0 0 auto",
-            width: "100%",
-        },
     },
     labelWithHelp: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalXXS,
         minHeight: "32px",
-    },
-    controlMedium: {
-        width: "100%",
-        maxWidth: "320px",
-        minWidth: "200px",
-        flex: "1 1 auto",
-        [MEDIA.mobile]: {
-            maxWidth: "none",
-            minWidth: 0,
-            width: "100%",
-            flex: "0 0 auto",
-        },
+        minWidth: 0,
     },
     templateControl: {
         display: "flex",
@@ -305,6 +273,7 @@ const useStyles = makeStyles({
     },
     templatePreview: {
         color: tokens.colorNeutralForeground2,
+        overflowWrap: "anywhere",
     },
     templateError: {
         color: tokens.colorPaletteRedForeground1,
@@ -315,6 +284,7 @@ const useStyles = makeStyles({
         gap: tokens.spacingVerticalS,
         padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        minWidth: 0,
         "&:last-child": {
             borderBottom: "none",
         },
@@ -322,46 +292,11 @@ const useStyles = makeStyles({
             padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         },
     },
-    namingHelpContent: {
-        display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalM,
-    },
-    tokenGroup: {
-        display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalS,
-    },
-    tokenList: {
-        display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalS,
-    },
-    tokenRow: {
-        display: "grid",
-        gridTemplateColumns: "max-content 1fr",
-        columnGap: tokens.spacingHorizontalM,
-        alignItems: "center",
-    },
-    tokenCode: {
-        fontFamily: tokens.fontFamilyMonospace,
-        overflowWrap: "anywhere",
-        whiteSpace: "normal",
-    },
-    /** Library path inputs: side-by-side on desktop with generous width; full-bleed on mobile. */
     pathInput: {
-        flex: "1 1 auto",
         width: "100%",
-        maxWidth: "560px",
-        minWidth: "240px",
-        [MEDIA.mobile]: {
-            maxWidth: "none",
-            minWidth: 0,
-            width: "100%",
-            flex: "0 0 auto",
-        },
+        minWidth: 0,
+        maxWidth: "100%",
     },
-    /** Naming templates stretch edge-to-edge of the content column. */
     templateInput: {
         width: "100%",
         minWidth: 0,
@@ -370,11 +305,64 @@ const useStyles = makeStyles({
     mutedText: {
         color: tokens.colorNeutralForeground2,
     },
-    dialogTitleRow: {
+    // Fluent Dialog: constrain surface; scroll inside DialogContent only.
+    helpSurface: {
+        width: "min(560px, calc(100vw - 32px))",
+        maxWidth: "560px",
+    },
+    helpContent: {
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: tokens.spacingHorizontalM,
+        flexDirection: "column",
+        gap: tokens.spacingVerticalL,
+        minWidth: 0,
+        maxWidth: "100%",
+        overflowX: "hidden",
+    },
+    tokenGroup: {
+        display: "flex",
+        flexDirection: "column",
+        gap: tokens.spacingVerticalS,
+        minWidth: 0,
+    },
+    tokenList: {
+        display: "flex",
+        flexDirection: "column",
+        gap: tokens.spacingVerticalXS,
+        minWidth: 0,
+    },
+    tokenItem: {
+        ...glassButtonStyles,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: tokens.spacingVerticalXXS,
+        width: "100%",
+        minWidth: 0,
+        maxWidth: "100%",
+        boxSizing: "border-box",
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        textAlign: "left",
+        cursor: "pointer",
+        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        borderRadius: tokens.borderRadiusMedium,
+        backgroundColor: tokens.colorNeutralBackground1,
+        "&:hover": {
+            backgroundColor: tokens.colorNeutralBackground1Hover,
+        },
+    },
+    tokenCode: {
+        fontFamily: tokens.fontFamilyMonospace,
+        fontSize: tokens.fontSizeBase200,
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
+        whiteSpace: "pre-wrap",
+        minWidth: 0,
+    },
+    tokenExample: {
+        color: tokens.colorNeutralForeground2,
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
+        minWidth: 0,
     },
 });
 
@@ -559,8 +547,8 @@ export const NamingSettingsSection = ({
                 description="Library roots, folder layout, and naming templates for organized files."
                 className={styles.section}
             >
-                <div className={styles.card}>
-                    <div className={styles.row}>
+                <SettingsCard>
+                    <div className={styles.fieldRow}>
                         <div className={styles.rowContent}>
                             <Text weight="semibold">Music Library Path</Text>
                             <Text size={200} className={styles.mutedText}>
@@ -573,7 +561,7 @@ export const NamingSettingsSection = ({
                             className={styles.pathInput}
                         />
                     </div>
-                    <div className={styles.row}>
+                    <div className={styles.fieldRow}>
                         <div className={styles.rowContent}>
                             <Text weight="semibold">Spatial Library Path</Text>
                             <Text size={200} className={styles.mutedText}>
@@ -586,7 +574,7 @@ export const NamingSettingsSection = ({
                             className={styles.pathInput}
                         />
                     </div>
-                    <div className={styles.row}>
+                    <div className={styles.fieldRow}>
                         <div className={styles.rowContent}>
                             <Text weight="semibold">Video Library Path</Text>
                             <Text size={200} className={styles.mutedText}>
@@ -598,45 +586,6 @@ export const NamingSettingsSection = ({
                             onChange={(_, data) => updatePathSettings({ video_path: data.value })}
                             className={styles.pathInput}
                         />
-                    </div>
-                    <div className={styles.row}>
-                        <div className={styles.rowContent}>
-                            <div className={styles.labelWithHelp}>
-                                <Text weight="semibold">Video Folder Layout</Text>
-                                <AppTooltip
-                                    relationship="description"
-                                    withArrow
-                                    content={
-                                        "Separated keeps videos in the video library. "
-                                        + "Inline places a linked video beside its stereo track when the album is monitored; otherwise it stays separated. "
-                                        + "Album-linked only uses that inline placement but never downloads videos that would only land in the video library. "
-                                        + "Importing stereo for a linked track relocates already-downloaded separated videos inline. "
-                                        + "Broader path changes still use Preview Rename."
-                                    }
-                                >
-                                    <Button
-                                        appearance="subtle"
-                                        icon={<QuestionCircle24 />}
-                                        className={styles.templateHelpButton}
-                                        aria-label="Video folder layout help"
-                                    />
-                                </AppTooltip>
-                            </div>
-                            <Text size={200} className={styles.mutedText}>
-                                Where music videos live relative to albums
-                            </Text>
-                        </div>
-                        <Select
-                            value={pathSettings?.video_folder_layout || "separated"}
-                            onChange={(_, data) => updatePathSettings({
-                                video_folder_layout: data.value as "separated" | "inline" | "inline_only",
-                            })}
-                            className={styles.controlMedium}
-                        >
-                            <option value="separated">Separated library</option>
-                            <option value="inline">Inline with albums when possible</option>
-                            <option value="inline_only">Album-linked only</option>
-                        </Select>
                     </div>
                     <div className={styles.rowInline}>
                         <div className={styles.rowContent}>
@@ -650,9 +599,9 @@ export const NamingSettingsSection = ({
                             onChange={(_, data) => updatePathSettings({ create_empty_artist_folders: data.checked })}
                         />
                     </div>
-                </div>
+                </SettingsCard>
 
-                <div className={styles.card}>
+                <SettingsCard>
                     <div className={styles.namingRow}>
                         <div className={styles.rowContent}>
                             <div className={styles.labelWithHelp}>
@@ -809,7 +758,7 @@ export const NamingSettingsSection = ({
                             ))}
                         </div>
                     </div>
-                </div>
+                </SettingsCard>
 
                 <Dialog
                     open={Boolean(namingHelpMeta)}
@@ -817,41 +766,46 @@ export const NamingSettingsSection = ({
                         if (!data.open) setNamingHelpField(null);
                     }}
                 >
-                    <DialogSurface>
+                    <DialogSurface className={styles.helpSurface}>
                         <DialogBody>
-                            <DialogTitle>
-                                <div className={styles.dialogTitleRow}>
-                                    <span>{namingHelpMeta?.title}</span>
-                                    <Button appearance="subtle" icon={<Dismiss24 />} onClick={() => setNamingHelpField(null)} />
-                                </div>
+                            <DialogTitle
+                                action={
+                                    <Button
+                                        appearance="subtle"
+                                        aria-label="Close"
+                                        icon={<Dismiss24 />}
+                                        onClick={() => setNamingHelpField(null)}
+                                    />
+                                }
+                            >
+                                {namingHelpMeta?.title}
                             </DialogTitle>
-                            <DialogContent>
-                                <div className={styles.namingHelpContent}>
-                                    <Text className={styles.mutedText}>
-                                        {namingHelpMeta?.description}
-                                    </Text>
-                                    {namingTokenGroups.map((group) => (
-                                        <div key={group.section} className={styles.tokenGroup}>
-                                            <Text size={200} weight="semibold">{group.section}</Text>
-                                            <div className={styles.tokenList}>
-                                                {group.tokens.map((t) => (
-                                                    <div key={`${group.section}-${t.token}`} className={styles.tokenRow}>
-                                                        <Button
-                                                            appearance="subtle"
-                                                            size="small"
-                                                            onClick={() => insertNamingToken(t)}
-                                                        >
-                                                            <span className={styles.tokenCode}>{t.token}</span>
-                                                        </Button>
-                                                        <Text size={200} className={styles.mutedText}>
-                                                            Example: <span className={styles.tokenCode}>{t.example}</span>
-                                                        </Text>
-                                                    </div>
-                                                ))}
-                                            </div>
+                            <DialogContent className={styles.helpContent}>
+                                <Text size={200} className={styles.mutedText}>
+                                    {namingHelpMeta?.description}
+                                    {" "}
+                                    Click a token to insert it into the template.
+                                </Text>
+                                {namingTokenGroups.map((group) => (
+                                    <div key={group.section} className={styles.tokenGroup}>
+                                        <Text weight="semibold">{group.section}</Text>
+                                        <div className={styles.tokenList}>
+                                            {group.tokens.map((t) => (
+                                                <button
+                                                    key={`${group.section}-${t.token}`}
+                                                    type="button"
+                                                    className={styles.tokenItem}
+                                                    onClick={() => insertNamingToken(t)}
+                                                >
+                                                    <span className={styles.tokenCode}>{t.token}</span>
+                                                    <Caption1 className={styles.tokenExample}>
+                                                        Example: {t.example}
+                                                    </Caption1>
+                                                </button>
+                                            ))}
                                         </div>
-                                    ))}
-                                </div>
+                                    </div>
+                                ))}
                             </DialogContent>
                         </DialogBody>
                     </DialogSurface>

@@ -17,6 +17,8 @@ test("parseVideoVariant classifies lyric/live/audio/visualizer/video", () => {
   assert.equal(parseVideoVariant("Oblivion (Lyric Video)"), "lyric");
   assert.equal(parseVideoVariant("Oblivion (Live From Capitol Studios)"), "live");
   assert.equal(parseVideoVariant("Don't Want You Back (Audio)"), "audio");
+  assert.equal(parseVideoVariant("Pompeii (Official Audio)"), "audio");
+  assert.equal(parseVideoVariant("Quarter Past Midnight (Audio)"), "audio");
   assert.equal(parseVideoVariant("Pompeii (Visualizer)"), "visualizer");
   assert.equal(parseVideoVariant("Pompeii (Official Music Video)"), "official");
   assert.equal(parseVideoVariant("Pompeii"), "video");

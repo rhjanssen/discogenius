@@ -15,8 +15,8 @@ export const glassButtonStyles = {
     WebkitBackdropFilter: "blur(14px) saturate(140%)",
     ...shorthands.borderColor(tokens.colorNeutralStroke1Hover),
     boxShadow: tokens.shadow8,
-    // Avoid translateY lift — parents with overflow-x:hidden (Layout main)
-    // clip the raised button top into a flat hover pill.
+    // Avoid translateY lift — Layout <main> clips overflow-x; a raised hover
+    // would still look like a flat pill against the clip edge.
   },
   "&:active": {
     backgroundColor: tokens.colorNeutralBackgroundAlpha2,

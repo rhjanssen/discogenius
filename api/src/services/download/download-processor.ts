@@ -1338,8 +1338,17 @@ export class DownloadProcessor {
             // shows one row advancing by state instead of a download row vanishing
             // and an import row appearing.
             const importPayload: ImportDownloadCommand = {
-                provider: payload.provider,
-                providerId: payload.providerId ?? providerId,
+                // Source the provider identity from the offer that actually
+                // produced the files on disk. On a cross-provider fallback,
+                // downloadItem() updates entry.provider/entry.providerId to the
+                // used offer (and entry.downloadPath already points at its job
+                // folder); the primary payload.provider/providerId are stale, so
+                // using them made the organizer scope to the wrong provider's
+                // track ids and match zero files (e.g. Deezer ids vs YouTube
+                // file basenames). entry.* default to the payload values when no
+                // fallback occurred, so this is safe for every download path.
+                provider: entry.provider || payload.provider,
+                providerId: entry.providerId || payload.providerId || providerId,
                 releaseGroupMbid: payload.releaseGroupMbid,
                 releaseMbid: payload.releaseMbid,
                 canonicalTrackMbid: payload.canonicalTrackMbid,

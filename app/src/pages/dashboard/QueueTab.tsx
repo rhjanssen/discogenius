@@ -918,11 +918,74 @@ const QueueTab = () => {
         return Object.values(groups).sort((a, b) => a.sortIndex - b.sortIndex);
     }, [liveQueueItems]);
 
+    // Optimistic reorder. The server reflects a reorder immediately, but the
+    // client refetch can race the write (most visible when the queue is idle, so
+    // no incidental churn-triggered refetch masks it) and a move could appear to
+    // do nothing until a manual reload. Applying the intended order locally makes
+    // the move instant; the reconciler below drops the override once the server
+    // list catches up, or when churn changes which groups are still pending.
+    const [pendingOrderOverride, setPendingOrderOverride] = useState<string[] | null>(null);
+
+    const displayGroups = useMemo(() => {
+        if (!pendingOrderOverride) return groupedDownloads;
+        const orderIndex = new Map(pendingOrderOverride.map((id, index) => [id, index] as const));
+        const pendingPositions: number[] = [];
+        groupedDownloads.forEach((group, index) => {
+            if (isPendingReorderableGroup(group)) pendingPositions.push(index);
+        });
+        const reorderedPending = groupedDownloads
+            .filter((group) => isPendingReorderableGroup(group))
+            .slice()
+            .sort((left, right) => (
+                (orderIndex.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+                - (orderIndex.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+            ));
+        // Permute only the pending groups within their existing slots so active
+        // (started) rows keep their exact position.
+        const result = groupedDownloads.slice();
+        pendingPositions.forEach((position, index) => {
+            result[position] = reorderedPending[index];
+        });
+        return result;
+    }, [groupedDownloads, pendingOrderOverride]);
+
+    // Server-derived pending order, ignoring the optimistic override.
+    const serverPendingGroupIds = useMemo(
+        () => groupedDownloads.filter((group) => isPendingReorderableGroup(group)).map((group) => group.id),
+        [groupedDownloads],
+    );
+
+    useEffect(() => {
+        if (!pendingOrderOverride) return;
+        const serverSet = new Set(serverPendingGroupIds);
+        const sameMembership = serverSet.size === pendingOrderOverride.length
+            && pendingOrderOverride.every((id) => serverSet.has(id));
+        // Churn changed which groups are pending — trust the server list again.
+        if (!sameMembership) {
+            setPendingOrderOverride(null);
+            return;
+        }
+        // Server list has caught up to the intended order — drop the override.
+        if (serverPendingGroupIds.every((id, index) => id === pendingOrderOverride[index])) {
+            setPendingOrderOverride(null);
+        }
+    }, [serverPendingGroupIds, pendingOrderOverride]);
+
+    // Safety net: if the server never reflects the move (e.g. the reorder request
+    // failed), release the optimistic order so the list can't get stuck showing a
+    // phantom order. The match-based reconciler above clears a successful reorder
+    // well before this fires.
+    useEffect(() => {
+        if (!pendingOrderOverride) return;
+        const timer = setTimeout(() => setPendingOrderOverride(null), 10_000);
+        return () => clearTimeout(timer);
+    }, [pendingOrderOverride]);
+
     const ACTIVE_PAGE_SIZE = 25;
     const [visibleActiveLimit, setVisibleActiveLimit] = useState(ACTIVE_PAGE_SIZE);
     const visibleGroupedDownloads = useMemo(
-        () => groupedDownloads.slice(0, visibleActiveLimit),
-        [groupedDownloads, visibleActiveLimit],
+        () => displayGroups.slice(0, visibleActiveLimit),
+        [displayGroups, visibleActiveLimit],
     );
     const hasMoreLocalActiveGroups = groupedDownloads.length > visibleActiveLimit;
     const hasMoreActiveGroups = hasMoreLocalActiveGroups || hasMoreQueueItems;
@@ -965,8 +1028,8 @@ const QueueTab = () => {
     ]);
 
     const pendingReorderGroups = useMemo(
-        () => groupedDownloads.filter((group) => isPendingReorderableGroup(group)),
-        [groupedDownloads],
+        () => displayGroups.filter((group) => isPendingReorderableGroup(group)),
+        [displayGroups],
     );
     const pendingGroupSelection = useSelectableCollection({
         items: pendingReorderGroups,
@@ -1101,6 +1164,16 @@ const QueueTab = () => {
             return;
         }
 
+        const ids = pendingReorderGroups.map((group) => group.id);
+        const fromIndex = ids.indexOf(groupId);
+        if (fromIndex >= 0) {
+            const toIndex = action === 'top' ? 0
+                : action === 'bottom' ? ids.length - 1
+                    : action === 'up' ? Math.max(0, fromIndex - 1)
+                        : Math.min(ids.length - 1, fromIndex + 1);
+            setPendingOrderOverride(moveArrayItem(ids, fromIndex, toIndex));
+        }
+
         await withBusyGroups([groupId], null, async () => {
             await reorderItems(reorderRequest);
         });
@@ -1124,6 +1197,12 @@ const QueueTab = () => {
             return;
         }
 
+        const movingSet = new Set(selectedPendingGroupIds);
+        const ids = pendingReorderGroups.map((group) => group.id);
+        const moving = ids.filter((id) => movingSet.has(id));
+        const rest = ids.filter((id) => !movingSet.has(id));
+        setPendingOrderOverride(action === 'top' ? [...moving, ...rest] : [...rest, ...moving]);
+
         await withBusyGroups(selectedPendingGroupIds, action === 'top' ? 'move-top' : 'move-bottom', async () => {
             await reorderItems(reorderRequest);
         });
@@ -1140,6 +1219,18 @@ const QueueTab = () => {
         const traversalOrder = direction === 'up' ? orderedSelection : [...orderedSelection].reverse();
         let workingGroups = [...pendingReorderGroups];
         let didReorder = false;
+
+        // Mirror the per-step swaps at the id level for an instant optimistic move.
+        let optimisticIds = pendingReorderGroups.map((group) => group.id);
+        for (const groupId of traversalOrder) {
+            const currentIndex = optimisticIds.indexOf(groupId);
+            if (currentIndex < 0) continue;
+            const neighborIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+            if (neighborIndex < 0 || neighborIndex >= optimisticIds.length) continue;
+            if (selectedPendingGroupIdSet.has(optimisticIds[neighborIndex])) continue;
+            optimisticIds = moveArrayItem(optimisticIds, currentIndex, neighborIndex);
+        }
+        setPendingOrderOverride(optimisticIds);
 
         await withBusyGroups(selectedPendingGroupIds, direction === 'up' ? 'move-up' : 'move-down', async () => {
             for (const groupId of traversalOrder) {
@@ -1285,6 +1376,15 @@ const QueueTab = () => {
             setDraggingGroupId(null);
             setDropTarget(null);
             return;
+        }
+
+        const ids = pendingReorderGroups.map((group) => group.id);
+        const moving = ids.filter((id) => movingGroupIdSet.has(id));
+        const rest = ids.filter((id) => !movingGroupIdSet.has(id));
+        const anchorIndex = rest.indexOf(groupId);
+        if (anchorIndex >= 0) {
+            const insertIndex = position === 'before' ? anchorIndex : anchorIndex + 1;
+            setPendingOrderOverride([...rest.slice(0, insertIndex), ...moving, ...rest.slice(insertIndex)]);
         }
 
         await withBusyGroups(movingGroupIds, null, async () => {

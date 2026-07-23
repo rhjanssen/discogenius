@@ -8,8 +8,11 @@ import {
   formatNeutralVideoTag,
   neutralVideoFromHeight,
   neutralVideoTagFromHeight,
+  parseM3u8MaxHeight,
 } from "../provider-quality.js";
 import { isSpatialAudioQuality } from "../../../utils/spatial-audio.js";
+
+export { parseM3u8MaxHeight };
 
 /**
  * TIDAL <-> neutral quality mapping.
@@ -134,24 +137,6 @@ export function tidalStreamVideoQualityTier(
     default:
       return classifyNeutralVideo(streamQuality);
   }
-}
-
-/**
- * Parse an HLS master playlist and return the highest RESOLUTION height.
- * TIDAL MEDIUM manifests can top out at 480p even though the tier name implies 720p.
- */
-export function parseM3u8MaxHeight(masterPlaylist: string): number | null {
-  let maxHeight: number | null = null;
-  for (const line of String(masterPlaylist || "").split(/\r?\n/)) {
-    const match = /RESOLUTION\s*=\s*(\d+)\s*x\s*(\d+)/i.exec(line);
-    if (!match) continue;
-    const height = Number(match[2]);
-    if (!Number.isFinite(height) || height <= 0) continue;
-    if (maxHeight == null || height > maxHeight) {
-      maxHeight = height;
-    }
-  }
-  return maxHeight;
 }
 
 /** Height (preferred) or stream-tier fallback → persisted neutral tag. */

@@ -6,8 +6,8 @@ import {
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
+import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import type { QualityConfigContract } from "@contracts/config";
 
 export type AudioQualityValue = QualityConfigContract["audio_quality"];
@@ -64,19 +64,10 @@ const useStyles = makeStyles({
     section: {
         display: "flex",
         width: "100%",
-        breakInside: "avoid",
-        WebkitColumnBreakInside: "avoid",
-        pageBreakInside: "avoid",
-        marginBottom: tokens.spacingVerticalM,
+        minWidth: 0,
+        marginBottom: tokens.spacingVerticalNone,
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
-    },
-    card: {
-        ...glassSurfaceStyles,
-        borderRadius: tokens.borderRadiusMedium,
-        padding: tokens.spacingVerticalNone,
-        overflow: "hidden",
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
     qualityOption: {
         display: "flex",
@@ -153,7 +144,7 @@ export const AudioQualitySettingsSection = ({
             description="Preferred quality for new stereo downloads and upgrades."
             className={styles.section}
         >
-            <div className={styles.card}>
+            <SettingsCard>
                 <RadioGroup
                     className={styles.qualityRadioGroup}
                     value={audioQuality || "max"}
@@ -187,7 +178,7 @@ export const AudioQualitySettingsSection = ({
                         />
                     </div>
                 </div>
-            </div>
+            </SettingsCard>
         </SettingsSection>
     );
 };

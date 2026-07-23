@@ -4,6 +4,7 @@ import {
   VIDEO_IDENTITY_MATCH_THRESHOLD,
   dateSimilarity,
   durationSimilarity,
+  isExactVideoTwin,
   scoreVideoIdentityMatch,
 } from "./video-match.js";
 import { VIDEO_DURATION_MATCH_MS } from "./video-variant.js";
@@ -113,7 +114,7 @@ test("OMV and bare live stay split even cross-provider at equal duration", () =>
   assert.equal(match.reason, "variant-incompatible");
 });
 
-test("named TV performance twins bare title only at exact duration", () => {
+test("named TV performance twins bare title within the soft ±2s duration gate", () => {
   const sameDuration = scoreVideoIdentityMatch({
     titleA: "Pompeii",
     titleB: "Pompeii (Good Morning America Performance)",
@@ -136,6 +137,21 @@ test("named TV performance twins bare title only at exact duration", () => {
   });
   assert.equal(liveAtVenue.matched, true);
   assert.ok(liveAtVenue.score >= VIDEO_IDENTITY_MATCH_THRESHOLD);
+
+  // Catalog rounding: Apple 180s vs TIDAL 179s for the same Friday Night Project cut.
+  const oneSecondRounding = scoreVideoIdentityMatch({
+    titleA: "You Know I'm No Good",
+    titleB: "You Know I'm No Good (Live From Friday Night Project / 2007)",
+    lengthMsA: 179_000,
+    lengthMsB: 180_000,
+    releaseDateA: "2026-07-10",
+    releaseDateB: "2026-07-10",
+    variantA: "video",
+    variantB: "live",
+    providerA: "tidal",
+    providerB: "apple-music",
+  });
+  assert.equal(oneSecondRounding.matched, true);
 
   const bareLiveWithoutVenue = scoreVideoIdentityMatch({
     titleA: "Distorted Light Beam",
@@ -189,4 +205,28 @@ test("identical duration + strong title merges without dates or ISRC", () => {
     lengthMsB: 214_000,
   });
   assert.equal(match.matched, true);
+});
+
+test("isExactVideoTwin allows ±2s catalog rounding but rejects farther cuts", () => {
+  const base = {
+    titleA: "Pompeii",
+    titleB: "Pompeii",
+    variantA: "official" as const,
+    variantB: "official" as const,
+  };
+  assert.equal(isExactVideoTwin({
+    ...base,
+    lengthMsA: 233_000,
+    lengthMsB: 232_000,
+  }), true);
+  assert.equal(isExactVideoTwin({
+    ...base,
+    lengthMsA: 233_000,
+    lengthMsB: 231_000,
+  }), true);
+  assert.equal(isExactVideoTwin({
+    ...base,
+    lengthMsA: 233_000,
+    lengthMsB: 228_000,
+  }), false);
 });

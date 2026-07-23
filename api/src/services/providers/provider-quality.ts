@@ -107,6 +107,24 @@ export function neutralVideoTagFromHeight(height: number | null | undefined): Ne
   return tier ? formatNeutralVideoTag(tier) : null;
 }
 
+/**
+ * Parse an HLS master playlist and return the highest RESOLUTION height.
+ * Shared by TIDAL stream probes and Apple Music preview masters.
+ */
+export function parseM3u8MaxHeight(masterPlaylist: string): number | null {
+  let maxHeight: number | null = null;
+  for (const line of String(masterPlaylist || "").split(/\r?\n/)) {
+    const match = /RESOLUTION\s*=\s*(\d+)\s*x\s*(\d+)/i.exec(line);
+    if (!match) continue;
+    const height = Number(match[2]);
+    if (!Number.isFinite(height) || height <= 0) continue;
+    if (maxHeight == null || height > maxHeight) {
+      maxHeight = height;
+    }
+  }
+  return maxHeight;
+}
+
 /** Settings `video_quality` → max download/request height in pixels. */
 export function configuredVideoMaxHeight(setting?: string | null): number {
   switch (String(setting ?? "uhd").trim().toLowerCase()) {

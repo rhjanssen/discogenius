@@ -235,6 +235,98 @@ test("CurationService requires provider availability before monitoring canonical
   ]);
 });
 
+test("CurationService unmonitors disabled music-video types and respects locks", async () => {
+  const { db } = dbModule;
+
+  writeTestConfig({
+    filtering: {
+      include_videos: true,
+      include_video_official: true,
+      include_video_lyric: true,
+      include_video_live: true,
+      include_video_visualizer: true,
+      include_video_official_audio: false,
+    },
+  });
+
+  db.prepare(`
+    INSERT INTO Artists (id, name, mbid, monitored)
+    VALUES (?, ?, ?, ?)
+  `).run("artist-1", "Bakermat", "artist-mbid-1", 1);
+
+  db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, ?)
+  `).run("artist-mbid-1", "Bakermat");
+
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, mbid, artist_mbid, title, is_video, video_variant, monitored, monitored_lock
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(301, "video-omv", "artist-mbid-1", "Glory", 1, "official", 0, 0);
+
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, mbid, artist_mbid, title, is_video, video_variant, monitored, monitored_lock
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(302, "video-audio", "artist-mbid-1", "Glory (Official Audio)", 1, "audio", 1, 0);
+
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, mbid, artist_mbid, title, is_video, video_variant, monitored, monitored_lock
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(303, "video-audio-locked", "artist-mbid-1", "Life (Official Audio)", 1, "audio", 1, 1);
+
+  db.prepare(`
+    INSERT INTO Recordings (
+      id, mbid, artist_mbid, title, is_video, video_variant, monitored, monitored_lock
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(304, "video-lyric", "artist-mbid-1", "Glory (Lyric Video)", 1, "lyric", 0, 0);
+
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  const afterAudioOff = db.prepare(`
+    SELECT id, monitored
+    FROM Recordings
+    WHERE id IN (301, 302, 303, 304)
+    ORDER BY id
+  `).all() as Array<{ id: number; monitored: number }>;
+
+  assert.deepEqual(afterAudioOff, [
+    { id: 301, monitored: 1 },
+    { id: 302, monitored: 0 },
+    { id: 303, monitored: 1 },
+    { id: 304, monitored: 1 },
+  ]);
+
+  writeTestConfig({
+    filtering: {
+      include_videos: true,
+      include_video_official: true,
+      include_video_lyric: false,
+      include_video_live: true,
+      include_video_visualizer: true,
+      include_video_official_audio: true,
+    },
+  });
+
+  await curationServiceModule.CurationService.processAll("artist-1");
+
+  const afterLyricOff = db.prepare(`
+    SELECT id, monitored
+    FROM Recordings
+    WHERE id IN (301, 302, 303, 304)
+    ORDER BY id
+  `).all() as Array<{ id: number; monitored: number }>;
+
+  assert.deepEqual(afterLyricOff, [
+    { id: 301, monitored: 1 },
+    { id: 302, monitored: 1 },
+    { id: 303, monitored: 1 },
+    { id: 304, monitored: 0 },
+  ]);
+});
+
 test("CurationService unmonitors release-group slot without mutating provider album or track rows", async () => {
   const { db } = dbModule;
 

@@ -598,8 +598,9 @@ function sameProviderVideo(
 /**
  * Providers rarely publish two IDs for the exact same music video. Two offers
  * from the same provider on one recording are allowed only when title+duration
- * are an exact twin (TIDAL sometimes lists the same MV twice). Otherwise keep
- * them separate — official vs live cuts often share a fuzzy title.
+ * are an exact twin within the soft duration gate (TIDAL sometimes lists the
+ * same MV twice with 1s catalog rounding). Otherwise keep them separate —
+ * official vs live cuts often share a fuzzy title.
  */
 function recordingHasOtherOfferFromProvider(
     recordingId: number,
@@ -1262,6 +1263,77 @@ export class RefreshVideoService {
     }
 
     /**
+     * Backfill quality on video offers that were persisted without it — notably
+     * youtube-music offers ingested from MusicBrainz free-streaming URL relations
+     * (upsertMusicBrainzVideoUrlOffers writes those inside a synchronous
+     * transaction, so it cannot run the async provider height probe inline).
+     * Reuses the provider getVideo hook and only fills NULL/empty quality; an
+     * existing tag is never overwritten. Best-effort and throttled like the
+     * getVideo enrichment path.
+     */
+    static async backfillMissingVideoOfferQuality(
+        artistMbid: string,
+        options: { limit?: number } = {},
+    ): Promise<number> {
+        const mbid = String(artistMbid || "").trim();
+        if (!mbid) return 0;
+
+        const limitCount = Math.max(1, Math.min(options.limit ?? 80, 200));
+        const rows = db.prepare(`
+            SELECT DISTINCT pi.provider AS provider, pi.provider_id AS providerId
+            FROM ProviderItems pi
+            JOIN Recordings r ON r.id = pi.recording_id
+            WHERE pi.entity_type = 'video'
+              AND (pi.quality IS NULL OR TRIM(pi.quality) = '')
+              AND r.is_video = 1
+              AND r.artist_mbid = ?
+              AND pi.provider_id IS NOT NULL
+              AND TRIM(pi.provider_id) != ''
+            LIMIT ?
+        `).all(mbid, limitCount) as Array<{ provider: string; providerId: string }>;
+        if (!rows.length) return 0;
+
+        const updateQuality = db.prepare(`
+            UPDATE ProviderItems
+            SET quality = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE provider = ?
+              AND entity_type = 'video'
+              AND provider_id = ?
+              AND (quality IS NULL OR TRIM(quality) = '')
+        `);
+
+        const pLimit = (await import("p-limit")).default;
+        const limit = pLimit(4);
+        let updated = 0;
+
+        await Promise.all(rows.map((row) => limit(async () => {
+            const provider = (() => {
+                try {
+                    return streamingProviderManager.getStreamingProvider(row.provider);
+                } catch {
+                    return null;
+                }
+            })();
+            if (!provider?.getVideo) return;
+            try {
+                const detailed: ProviderVideo = await provider.getVideo(String(row.providerId));
+                const quality = String(detailed?.quality || "").trim();
+                if (quality) {
+                    const result = updateQuality.run(quality, row.provider, String(row.providerId));
+                    if (result.changes > 0) updated += 1;
+                }
+            } catch (error) {
+                console.warn(
+                    `[RefreshVideoService] quality backfill getVideo failed for ${row.provider}:${row.providerId}:`,
+                    error,
+                );
+            }
+        })));
+
+        return updated;
+    }
+
+    /**
      * Persist YouTube Music (and similar) ATV→OMV counterparts as album-scoped
      * video offers linked to the audio recording. Powers video-page "From album"
      * links, download offers, and inline video layout via provider_video_for.
@@ -1356,7 +1428,9 @@ export class RefreshVideoService {
                 release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
                 release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
                 title = COALESCE(NULLIF(TRIM(excluded.title), ''), ProviderItems.title),
-                quality = excluded.quality,
+                -- List endpoints often send null quality (untrusted TIDAL catalog
+                -- MP4_1080P / Apple non-4K). Never wipe a probed SD/HD/FHD/UHD tag.
+                quality = COALESCE(NULLIF(TRIM(excluded.quality), ''), ProviderItems.quality),
                 duration = COALESCE(excluded.duration, ProviderItems.duration),
                 release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
                 availability = excluded.availability,
@@ -1455,7 +1529,9 @@ export class RefreshVideoService {
                 artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
                 recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
                 title = COALESCE(NULLIF(TRIM(excluded.title), ''), ProviderItems.title),
-                quality = excluded.quality,
+                -- List endpoints often send null quality (untrusted TIDAL catalog
+                -- MP4_1080P / Apple non-4K). Never wipe a probed SD/HD/FHD/UHD tag.
+                quality = COALESCE(NULLIF(TRIM(excluded.quality), ''), ProviderItems.quality),
                 duration = COALESCE(excluded.duration, ProviderItems.duration),
                 release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
                 availability = excluded.availability,

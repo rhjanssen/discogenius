@@ -28,6 +28,7 @@ import {
     resolveAlbumArtwork,
     resolveArtistArtwork,
     resolveVideoArtwork,
+    hasCachedMediaCover,
     type ProviderArtworkCandidate,
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
@@ -113,6 +114,18 @@ export class RefreshArtistService {
             if (syncedVideos > 0) {
                 console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
             }
+            // MusicBrainz free-streaming URL offers are written inside a sync
+            // transaction and cannot probe resolution inline, so they land with
+            // quality=NULL. Fill those (and any other missing tags) via the
+            // provider getVideo probe now that we're outside that transaction.
+            try {
+                const backfilled = await RefreshVideoService.backfillMissingVideoOfferQuality(artistMbid);
+                if (backfilled > 0) {
+                    console.log(`[RefreshArtistService] Backfilled quality on ${backfilled} video offer(s) for artist ${artistMbid}`);
+                }
+            } catch (error) {
+                console.warn(`[RefreshArtistService] Video offer quality backfill failed for ${artistMbid}:`, error);
+            }
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to sync canonical metadata for artist ${artistId} (${artistMbid}):`, error);
         }
@@ -122,12 +135,12 @@ export class RefreshArtistService {
 
     private static async hydrateScopedReleaseGroups(artistMbid: string): Promise<void> {
         const releaseGroups = db.prepare(`
-            SELECT DISTINCT rg.mbid, rg.cover_image_id AS coverImageId
+            SELECT DISTINCT rg.mbid
             FROM Albums rg
             LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
             WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
             ORDER BY rg.mbid ASC
-        `).all(artistMbid, artistMbid) as Array<{ mbid: string; coverImageId?: string | null }>;
+        `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
 
         // Reconcile EVERY scoped release group. Missing-releases-only hydration
         // froze Softly-class albums after first write (null ISRCs, empty labels)
@@ -140,10 +153,11 @@ export class RefreshArtistService {
             console.warn(`[RefreshArtistService] Failed to bulk-hydrate release groups for ${artistMbid}:`, error);
         }
 
-        // Cover art is network-bound — only fetch for groups that still lack a
-        // local cover after reconcile, not every album on every refresh.
+        // Cover art is network-bound — only fetch when config/media-cover lacks
+        // local bytes (not merely when cover_image_id is empty). Page visits
+        // should serve cache; refresh/match is the primary warm path.
         const needingArtwork = releaseGroups
-            .filter((releaseGroup) => !String(releaseGroup.coverImageId || "").trim())
+            .filter((releaseGroup) => !hasCachedMediaCover(releaseGroup.mbid, "Album", "Cover"))
             .map((releaseGroup) => releaseGroup.mbid);
         const limit = pLimit(6);
         await Promise.all(needingArtwork.map((releaseGroupMbid) => limit(async () => {
@@ -1216,6 +1230,7 @@ export class RefreshArtistService {
                 await this.refreshProviderVideos(videoCatalogProviders, artistId, artistMbid, options);
             }
             ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
+            await this.precacheArtistMediaCovers(artistId, artistMbid);
             return;
         }
 
@@ -1230,6 +1245,7 @@ export class RefreshArtistService {
                 await this.refreshProviderVideos(videoCatalogProviders, artistId, artistMbid, options);
             }
             ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
+            await this.precacheArtistMediaCovers(artistId, artistMbid);
             return;
         }
 
@@ -1605,6 +1621,7 @@ export class RefreshArtistService {
             console.log(`[RefreshArtistService] Selected provider offers for ${totalSlotCounts.stereo} stereo and ${totalSlotCounts.spatial} spatial release-group slots`);
         }
         ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
+        await this.precacheArtistMediaCovers(artistId, artistMbid);
     }
 
     private static async refreshProviderVideos(
@@ -1702,6 +1719,72 @@ export class RefreshArtistService {
     }
 
     /**
+     * Warm artist/album/video covers during MatchArtistProviders so page visits
+     * serve config/media-cover cache. resolve*Artwork is idempotent when bytes
+     * already exist; only missing (or preference-stale) entities hit the network.
+     */
+    private static async precacheArtistMediaCovers(
+        artistId: string,
+        artistMbid: string | null,
+    ): Promise<void> {
+        if (artistMbid) {
+            try {
+                if (
+                    !hasCachedMediaCover(artistMbid, "Artist", "Poster")
+                    && !hasCachedMediaCover(artistMbid, "Artist", "Headshot")
+                ) {
+                    await resolveArtistArtwork({
+                        artistMbid,
+                        preferredCoverTypes: ["Poster", "Headshot"],
+                    });
+                }
+                if (!hasCachedMediaCover(artistMbid, "Artist", "Fanart")) {
+                    await resolveArtistArtwork({
+                        artistMbid,
+                        preferredCoverTypes: ["Fanart"],
+                    });
+                }
+            } catch (error) {
+                console.warn(
+                    `[RefreshArtistService] Failed to pre-cache artist artwork for ${artistMbid}:`,
+                    error,
+                );
+            }
+
+            await this.precacheArtistAlbumArtwork(artistMbid);
+        }
+
+        await this.precacheArtistVideoArtwork(artistId);
+    }
+
+    private static async precacheArtistAlbumArtwork(artistMbid: string): Promise<void> {
+        const releaseGroups = db.prepare(`
+            SELECT DISTINCT rg.mbid
+            FROM Albums rg
+            LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+            WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+            ORDER BY rg.mbid ASC
+        `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
+        const needingArtwork = releaseGroups.filter(
+            (releaseGroup) => !hasCachedMediaCover(releaseGroup.mbid, "Album", "Cover"),
+        );
+        if (needingArtwork.length === 0) {
+            return;
+        }
+        const limit = pLimit(6);
+        await Promise.all(needingArtwork.map((releaseGroup) => limit(async () => {
+            try {
+                await resolveAlbumArtwork({ albumMbid: releaseGroup.mbid });
+            } catch (error) {
+                console.warn(
+                    `[RefreshArtistService] Failed to pre-cache album artwork for ${releaseGroup.mbid}:`,
+                    error,
+                );
+            }
+        })));
+    }
+
+    /**
      * Warm video thumbnails during refresh (parallel, off the request thread)
      * so the artist page never has to fetch them on load — the same shape as
      * resolveAlbumArtwork for album covers. Only cold-loading an artist straight
@@ -1722,11 +1805,14 @@ export class RefreshArtistService {
               AND (recording.artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = ?)
                    OR recording.artist_mbid = ?)
         `).all(artistMbid, artistMbid) as Array<{ id: number }>;
-        if (videoIds.length === 0) {
+        const needingArtwork = videoIds.filter(
+            (video) => !hasCachedMediaCover(video.id, "Video", "Cover"),
+        );
+        if (needingArtwork.length === 0) {
             return;
         }
         const limit = pLimit(6);
-        await Promise.all(videoIds.map((video) => limit(async () => {
+        await Promise.all(needingArtwork.map((video) => limit(async () => {
             try {
                 await resolveVideoArtwork({ videoId: video.id });
             } catch (error) {

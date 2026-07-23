@@ -15,6 +15,8 @@ export type FetchLike = (url: string, init?: { headers?: Record<string, string> 
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
+  /** Present on real Response; fixtures may omit and return JSON only. */
+  text?(): Promise<string>;
 }>;
 
 export interface AppleMusicApiOptions {
