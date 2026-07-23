@@ -46,12 +46,14 @@ enough.
 
 | File | Lines | Lidarr decomposition to mirror |
 |---|---|---|
-| `mediafiles/organizer.ts` | ~2540 | `Organizer/FileNameBuilder` + `MediaFiles/*MovingService` + `MediaFiles/UpgradeMediaFileService` |
-| `mediafiles/library-files.ts` | ~2350 | `MediaFiles/MediaFileService` + `MediaFiles/MediaFileRepository` |
-| `mediafiles/audio-tag-service.ts` | ~2090 | `MediaFiles/AudioTag` + tag read/write split |
-| `database.ts` | ~1690 | `Datastore/` — connection vs schema vs per-migration files vs `TableMapping` |
-| `commands/command-history.ts` | ~1100 | `History/EntityHistory` + `EntityHistoryRepository` + `EntityHistoryService` |
-| `providers/tidal/tidal.ts` | ~1610 | n/a (provider client; no direct Lidarr analogue) |
+| `mediafiles/organizer.ts` | ~3450 | `Organizer/FileNameBuilder` + `MediaFiles/*MovingService` + `MediaFiles/UpgradeMediaFileService` |
+| `mediafiles/library-files.ts` | ~2560 | `MediaFiles/MediaFileService` + `MediaFiles/MediaFileRepository` |
+| `mediafiles/audio-tag-service.ts` | ~2560 | `MediaFiles/AudioTag` + tag read/write split |
+| `commands/command-history.ts` | ~1150 | `History/EntityHistory` + `EntityHistoryRepository` + `EntityHistoryService` |
+| `providers/tidal/tidal.ts` | ~1910 | n/a (provider client; no direct Lidarr analogue) |
+
+`database.ts` was previously listed here at ~1690 lines; it is now ~890 (schema
+extracted into `database/schema/`), so it is no longer a split candidate.
 
 **Intentional divergence:** the service folder and v1 route use `mediafiles`/
 `/api/v1/mediaFile` (not Lidarr's `TrackFile`) because Discogenius manages video +

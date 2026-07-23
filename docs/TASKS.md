@@ -32,7 +32,7 @@ Residual / follow-ups below. Manual provider validation still needed (see top).
 - pending: SoundCloud Auth/Go+/permalink polish; contract parity
 - pending: measure Bastille/Bakermat bulk refresh under local-MB with gate + 2
 - pending: migrate one provider end-to-end (SoundCloud pilot) for modularity
-- pending: structure audit incremental moves (see `docs/STRUCTURE_AUDIT_2.6.md`)
+- pending: structure audit incremental moves (provider-folder migration; core↔provider boundary-debt cleanup — see "Repo-wide structure audit" below)
 
 ### SoundCloud provider (experimental)
 
@@ -124,8 +124,7 @@ remove, or swap a provider without core entanglement.
 Today we are **adapters in a folder**, not true plugins: shared
 `StreamingProvider` / `ProviderManifest` contract and per-id folders under
 `api/src/services/providers/<id>/`. Registration is compile-time. See
-`docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md` (§ 2.6 modularity target) and
-`docs/STRUCTURE_AUDIT_2.6.md`.
+`docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md` (§ 2.6 modularity target).
 
 - shipped (phase 1): public surface at `api/src/providers/` (registry +
   types). `services/providers/index.ts` re-exports for compatibility. Concrete
@@ -141,9 +140,14 @@ Today we are **adapters in a folder**, not true plugins: shared
 
 ### Repo-wide structure audit
 
-- shipped: findings doc `docs/STRUCTURE_AUDIT_2.6.md` — proposed incremental
-  moves; no mass move yet. Leave sibling `.tmp-*` scratch until those threads
-  finish.
+- pending: incremental provider-folder moves — relocate adapters from
+  `services/providers/<id>/` to `api/src/providers/<id>/` behind the stable
+  registry barrel, smallest/experimental first (SoundCloud → Deezer → Apple /
+  YouTube / TIDAL last). Leave a thin re-export stub for one release, then delete
+  stubs once grep is clean. No reorg-only mass move; split alongside feature work.
+- pending: boundary debt — replace core→provider-private imports
+  (`commands/health.ts` → `providers/tidal/tiddl`) with backend-id-keyed
+  diagnostics from the provider contract.
 - Guides (present checkouts only): `.ref_lidarr` (core folder map —
   `docs/LIDARR_STRUCTURE_ALIGNMENT.md`), `.ref_tidarr` (TS streaming-arr shape),
   `.ref_jellyfin` / `.ref_kodi` (media-server / sidecar metadata layout). Also
@@ -177,23 +181,27 @@ Today we are **adapters in a folder**, not true plugins: shared
 
 ### Matching and curation
 
-- decided (2026-07-23): MV↔audio matching vs Lidarr/Jellyfin —
-  `docs/VIDEO_MATCHING_VS_LIDARR_JELLYFIN.md`. Architecture (MB
-  `music_video_for`, `provider_video_for`, duration/variant/ISRC) is sound.
-  **2.6.7:** centralized `live-performance-markers.ts` (`live` /
-  `performance` / `unplugged` + live-album-only membership); removed Bastille
-  TV-show deny phrases. Live↔studio gate applies even when duration is close.
-  Next: larger artist stress-test; fix failures structurally, not with more
+- decided (2026-07-23): MV↔audio matching vs Lidarr/Jellyfin — architecture (MB
+  `music_video_for`, `provider_video_for`, duration/variant/ISRC) is sound; there
+  is no open-source MV↔track matcher to copy (Lidarr is audio-only; Jellyfin uses
+  a closed extras token list + NFO/provider ids). **2.6.7:** centralized
+  `live-performance-markers.ts` (`live` / `performance` / `unplugged` +
+  live-album-only membership); removed Bastille TV-show deny phrases. Live↔studio
+  gate applies even when duration is close. Next: larger artist stress-test; fix
+  failures structurally (RG types, venue signatures, MB relations), not with more
   show-name `LIKE`s.
-- deferred (post-2.6.6): partial video-stream / Chromaprint grouping evidence —
-  research verdict in `docs/VIDEO_CONTENT_MATCHING_FEASIBILITY.md`. Reject
-  refresh-time stream sampling; optional later import-only `fpcalc` on
-  downloaded MVs (variant-gated). Do not block 2.6.6.
+- deferred (post-2.6.6): partial video-stream / Chromaprint grouping evidence.
+  Reject refresh-time stream sampling — multi-second fixed cost per offer × N
+  videos = minutes/artist + rate-limit/ToS risk, and audio-only fingerprints
+  false-merge lyric↔OMV. Optional later: import-only `fpcalc` on downloaded MVs,
+  local compare, `video_variant`-gated, top-K / already-downloaded only — never
+  full-offer refresh, never a sole merge key.
 - deferred (post-2.6.6): semi-official YouTube sources (VEVO / MTV / similar) —
-  verdict **DEFER WITH GUARDRAILS** in
-  `docs/YOUTUBE_SEMI_OFFICIAL_SOURCES.md`. Reject automatic MTV/network-channel
-  harvest; keep YTM artist catalog + MB free-streaming URLs. Optional later:
-  channel preference scoring only (VEVO/Topic/Official), never sole accept.
+  **DEFER WITH GUARDRAILS**. Reject automatic MTV/network-channel harvest (mixed
+  artists/promos, title-parsed attribution, multi-upload twin risk); keep YTM
+  artist catalog + MB free-streaming URL relations as the only discovery paths.
+  Optional later: channel preference scoring only (VEVO / `- Topic` / Official /
+  verified artist channel) as ranking evidence, never sole acceptance.
 - pending: hybrid / multi-provider album fills — decide whether incomplete
   single-provider coverage should warn (yellow) vs require full set-cover before
   marking an album complete; Lioness-style missing-track cases are the litmus.

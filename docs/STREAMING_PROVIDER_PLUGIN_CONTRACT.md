@@ -99,7 +99,7 @@ registry + shared types. Concrete adapters remain under
 public barrel for compatibility. Some core modules still import provider-private
 helpers (notably TIDAL/`tiddl` health).
 
-Goal for 2.6 (see `docs/TASKS.md` and `docs/STRUCTURE_AUDIT_2.6.md`): make each
+Goal for 2.6 (see `docs/TASKS.md`, "Provider plugin modularity"): make each
 streaming service a separable module — logic **and** file tree — so core
 catalog/library/queue work without a given streamer. Prefer incremental moves
 toward `api/src/providers/<id>/` (or `plugins/<id>/`) with a single public entry

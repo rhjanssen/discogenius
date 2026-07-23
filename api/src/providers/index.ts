@@ -5,7 +5,8 @@
  * helpers (tiddl, streamrip bridges, auth file IO) stay under
  * `services/providers/<id>/` until incremental per-provider moves.
  *
- * See `docs/STRUCTURE_AUDIT_2.6.md` and `docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md`.
+ * See `docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md` and the "Provider plugin
+ * modularity" section of `docs/TASKS.md`.
  */
 export { streamingProviderManager } from "./registry.js";
 export type * from "./types.js";
