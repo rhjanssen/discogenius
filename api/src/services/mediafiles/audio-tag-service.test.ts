@@ -355,3 +355,29 @@ test("buildAudioTagWriteMap maps tags correctly for APE (.ape)", () => {
     RELEASECOUNTRY: "US",
   });
 });
+
+test("buildAudioTagWriteMap expands release_type writeAliases for FLAC/Vorbis", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "release_type",
+      label: "Release Type",
+      ffmpegKey: "release_type",
+      targetValue: "album; ep; live",
+      writeAliases: [
+        "RELEASETYPE",
+        "MUSICBRAINZ_ALBUMTYPE",
+      ],
+    },
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), {
+    RELEASETYPE: "album; ep; live",
+  });
+
+  // Without extension (generic fallback), both writeAliases are emitted:
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags), {
+    release_type: "album; ep; live",
+    RELEASETYPE: "album; ep; live",
+    MUSICBRAINZ_ALBUMTYPE: "album; ep; live",
+  });
+});

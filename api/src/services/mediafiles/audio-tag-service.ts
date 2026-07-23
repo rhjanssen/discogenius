@@ -22,6 +22,7 @@ import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
 import { cleanProviderText, downloadAlbumCover } from "./metadata-files.js";
+import { getMediaCoverFilePathFromUrl } from "../metadata/media-cover-service.js";
 import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
 import { classifyLyricsForSidecar } from "../extras/lyrics/lyric-sidecar.js";
 
@@ -257,25 +258,24 @@ async function resolvePreferredEmbeddedCover(
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
-      // Prefer the album-folder cover.jpg the organizer already wrote: it is the
-      // same canonical (or provider-preferred, per artwork_preference) full-res
-      // image, resolved once per album. Reusing it keeps the embedded art and the
-      // sidecar byte-identical and avoids a redundant origin re-fetch. Only fetch
-      // when the sidecar is genuinely absent, so a hybrid import still overwrites
-      // a foreign source-edition cover with the destination album's art.
-      if (fs.existsSync(sidecarPath)) return sidecarPath;
+      // Embedded tags should use a 500px proxy (~50 KiB) instead of embedding the
+      // multi-megabyte master origin cover into every track file (saving ~80 MB per
+      // album and matching Lidarr/Plex embedded art defaults).
+      const cached500Path = getMediaCoverFilePathFromUrl(`/media-cover/Albums/${albumId}/cover-500.jpg`);
+      if (cached500Path && fs.existsSync(cached500Path)) {
+        return cached500Path;
+      }
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-embedded-cover-"));
       context.temporaryDirectories.push(tempDir);
-      const tempCover = path.join(tempDir, "cover.jpg");
+      const tempCover = path.join(tempDir, "cover-500.jpg");
       try {
-        await downloadAlbumCover(albumId, "origin", tempCover, { provider: row.file_provider });
+        await downloadAlbumCover(albumId, 500, tempCover, { provider: row.file_provider });
         if (fs.existsSync(tempCover)) return tempCover;
       } catch (error) {
-        console.warn(`[AudioCover] Failed to resolve preferred artwork for ${albumId}:`, error);
+        console.warn(`[AudioCover] Failed to resolve preferred 500px artwork for ${albumId}:`, error);
       }
-      // No canonical/provider cover and no sidecar: return null. The caller logs
-      // this so a file left carrying foreign download-embedded art is visible
-      // instead of silently kept, and the metadata backfill retries the cover.
+      // Fallback: if 500px proxy resolution fails, use the sidecar file if present
+      if (fs.existsSync(sidecarPath)) return sidecarPath;
       return null;
     })();
     context.byAlbum.set(key, pending);
@@ -2072,7 +2072,18 @@ export class AudioTagService {
             // ignore
           }
         }
-        releaseType = [primary, ...secondaryList].join("; ");
+        // If secondary release types exist (e.g. live, compilation, soundtrack, remix)
+        // and primary is not "album", prepend "album" so Plex and media scanners
+        // categorize the release properly (e.g. "album; ep; live" or "album; live").
+        const typeSet = new Set<string>();
+        if (secondaryList.length > 0 && primary !== "album") {
+          typeSet.add("album");
+        }
+        typeSet.add(primary);
+        for (const sec of secondaryList) {
+          typeSet.add(sec);
+        }
+        releaseType = Array.from(typeSet).join("; ");
       }
       if (releaseType) {
         tags.push({
@@ -2085,6 +2096,12 @@ export class AudioTagService {
             "release_type",
             "musicbrainz album type",
             "MusicBrainz Album Type",
+            "musicbrainz_albumtype",
+            "MUSICBRAINZ_ALBUMTYPE",
+          ],
+          writeAliases: [
+            "RELEASETYPE",
+            "MUSICBRAINZ_ALBUMTYPE",
           ],
         });
       }
