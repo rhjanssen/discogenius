@@ -1002,7 +1002,11 @@ export class AudioTagService {
         COALESCE(canonical_release.barcode, provider_album.upc) AS album_upc,
         COALESCE(canonical_group.genres, alb.genres, am.genres) AS album_genres,
         COALESCE(canonical_group.first_release_date, alb.first_release_date) AS album_original_date,
-        'Digital Media' AS media_format,
+        COALESCE(
+          CASE WHEN json_valid(canonical_release.media) AND json_extract(canonical_release.media, '$[0].format') IS NOT NULL AND json_extract(canonical_release.media, '$[0].format') != '' THEN json_extract(canonical_release.media, '$[0].format') END,
+          CASE WHEN json_valid(ar.media) AND json_extract(ar.media, '$[0].format') IS NOT NULL AND json_extract(ar.media, '$[0].format') != '' THEN json_extract(ar.media, '$[0].format') END,
+          'Digital Media'
+        ) AS media_format,
         canonical_release.label AS album_label,
         COALESCE(
           canonical_group.review_text,
