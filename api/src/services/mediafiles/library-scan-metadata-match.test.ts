@@ -101,15 +101,17 @@ test("metadata rematch marks rename leftovers as duplicates of an existing Track
   const { db } = dbModule;
   seedArtist();
   seedOffer({ providerId: "2001", title: "Good Grief", albumId: "album-2", duration: 206 });
+  // Alternate edition of the same recording — must not win over the folder sibling.
+  seedOffer({ providerId: "2002", title: "Good Grief", albumId: "album-2-complete", duration: 206 });
 
   const folder = "/library/stereo-music/Bastille/Wild World (2016)";
   db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, provider, provider_entity_type, provider_id, file_type, library_slot,
-      library_root, file_path, relative_path, filename, extension
+      library_root, file_path, relative_path, filename, extension, duration
     ) VALUES (
       'artist-1', 'tidal', 'track', '2001', 'track', 'stereo',
-      'music', ?, 'Bastille/Wild World/101 - Good Grief.flac', '101 - Good Grief.flac', 'flac'
+      'music', ?, 'Bastille/Wild World/101 - Good Grief.flac', '101 - Good Grief.flac', 'flac', 206
     )
   `).run(`${folder}/101 - Good Grief.flac`);
 

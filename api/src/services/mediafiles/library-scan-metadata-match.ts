@@ -234,6 +234,58 @@ function offersByTitleForArtist(
     );
 }
 
+function findSameFolderDuplicate(
+    filePath: string,
+    artistId: string,
+    tags: ParsedAudioTags,
+): { provider: string; providerId: string; albumId: string | null; quality: string | null; librarySlot: string; existingFilePath: string } | null {
+    if (!tags.title) return null;
+    const folder = path.dirname(filePath).replace(/\\/g, "/");
+    const rows = db.prepare(`
+        SELECT tf.file_path, tf.provider, tf.provider_id, tf.library_slot, tf.quality, tf.duration,
+               pi.title, pi.provider_album_id, pi.duration AS offer_duration, pi.recording_id
+        FROM TrackFiles tf
+        LEFT JOIN ProviderItems pi
+          ON CAST(pi.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
+         AND pi.entity_type IN ('track', 'video')
+         AND (tf.provider IS NULL OR pi.provider = tf.provider)
+        WHERE tf.artist_id = ?
+          AND tf.file_type = 'track'
+          AND tf.provider_id IS NOT NULL
+          AND replace(tf.file_path, '\\', '/') LIKE ? || '/%'
+    `).all(artistId, folder) as Array<{
+        file_path: string;
+        provider: string | null;
+        provider_id: string;
+        library_slot: string | null;
+        quality: string | null;
+        duration: number | null;
+        title: string | null;
+        provider_album_id: string | null;
+        offer_duration: number | null;
+        recording_id: number | null;
+    }>;
+
+    const candidates = rows.filter((row) => {
+        if (path.resolve(row.file_path) === path.resolve(filePath)) return false;
+        const title = row.title || path.parse(row.file_path).name.replace(/^\d+\s*-\s*/, "");
+        if (!sameRecordingTitle(tags.title, title)) return false;
+        const duration = row.offer_duration ?? row.duration;
+        return durationClose(tags.durationSeconds, duration);
+    });
+
+    if (candidates.length !== 1) return null;
+    const hit = candidates[0];
+    return {
+        provider: hit.provider || "tidal",
+        providerId: String(hit.provider_id),
+        albumId: hit.provider_album_id ? String(hit.provider_album_id) : null,
+        quality: hit.quality || null,
+        librarySlot: hit.library_slot || "stereo",
+        existingFilePath: hit.file_path,
+    };
+}
+
 /**
  * Rematch an on-disk audio file that lacks an embedded provider id / expected
  * path, using tags + nearby album-folder TrackFiles. Used by library scan so
@@ -247,6 +299,24 @@ export function matchAudioFileByMetadata(
     tags: ParsedAudioTags,
 ): MetadataMatchResult | null {
     const preferredSlot = librarySlotForRoot(libraryRoot);
+
+    // Prefer same-folder title+duration siblings first. Wild World Complete vs
+    // standard share a recording MBID but different provider album ids; linking
+    // the leftover 201 file to Complete Edition would create a second TrackFile.
+    const folderDuplicate = findSameFolderDuplicate(filePath, artistId, tags);
+    if (folderDuplicate) {
+        return {
+            albumId: folderDuplicate.albumId,
+            mediaId: folderDuplicate.providerId,
+            provider: folderDuplicate.provider,
+            fileType: "track",
+            quality: folderDuplicate.quality,
+            librarySlot: folderDuplicate.librarySlot || preferredSlot,
+            duplicateOfExisting: true,
+            existingFilePath: folderDuplicate.existingFilePath,
+        };
+    }
+
     const preferredAlbumIds = folderAlbumIds(filePath, artistId);
     const isrc = firstIsrc(tags.isrc);
     const recordingMbid = tags.musicbrainzRecordingId?.trim() || null;
