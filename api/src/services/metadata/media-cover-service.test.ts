@@ -301,7 +301,7 @@ test("provider artwork ids resolve through the provider interface before caching
   }]);
   assert.equal(fetchCalls.includes(providerUrl), true);
   const albumCache = path.join(tempDir, "media-cover", "Albums", albumMbid);
-  assert.equal(fs.existsSync(path.join(albumCache, "cover.jpg")), false);
+  assert.equal(fs.existsSync(path.join(albumCache, "cover.jpg")), true);
   assert.equal(fs.existsSync(path.join(albumCache, "cover-500.jpg")), true);
   assert.equal(fs.existsSync(path.join(albumCache, "cover-250.jpg")), true);
 });
@@ -716,7 +716,7 @@ test("album artwork resolver caches Cover Art Archive artwork locally when metad
 
   assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg`);
   assert.deepEqual(calls, [`https://coverartarchive.org/release-group/${albumMbid}/front`]);
-  assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover.jpg")), false);
+  assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover.jpg")), true);
   assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover-500.jpg")), true);
   assert.equal(fs.existsSync(path.join(tempDir, "media-cover", "Albums", albumMbid, "cover-250.jpg")), true);
 

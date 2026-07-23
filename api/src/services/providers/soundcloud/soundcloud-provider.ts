@@ -387,13 +387,38 @@ export class SoundCloudProvider implements StreamingProvider {
     const artistQuery = `${query.artistName} ${query.releaseGroupTitle}`.trim();
     const titleQuery = String(query.releaseGroupTitle || "").trim();
 
-    // Official Album/EP/Single path: album search only (no noisy fan playlists).
+    const preferredTracks = Array.isArray(query.preferredTracks)
+      ? query.preferredTracks.filter((track) => String(track.title || "").trim())
+      : [];
+
+    // Official Album/EP/Single path: try album search first.
     if (!widePlaylistSearch) {
       const result = await this.search(artistQuery, { types: ["albums"], limit: 25 });
-      return result.albums;
+      if (preferredTracks.length === 0) {
+        return result.albums;
+      }
+      // Validate downloadability of official album candidates.
+      const validOfficialAlbums: ProviderAlbum[] = [];
+      for (const candidate of result.albums) {
+        try {
+          const tracks = await this.getAlbumTracks(candidate.providerId);
+          if (playlistCoversCanonicalTracklistDownloadable(
+            preferredTracks as CanonicalTrackForCoverage[],
+            tracks,
+          )) {
+            validOfficialAlbums.push(candidate);
+          }
+        } catch {
+          // Ignore hydration failures
+        }
+      }
+      if (validOfficialAlbums.length > 0) {
+        return validOfficialAlbums;
+      }
+      // Official album has DRM tracks or fails downloadability: fall through to wide playlist search.
     }
 
-    // Mixtape / dj-mix / demo / Other: cast a wider net across user playlists/sets.
+    // Mixtape / dj-mix / demo / Other (or DRM fallback): cast a wider net across user playlists/sets.
     const titleQueries = soundCloudMixtapeSearchTitles(titleQuery);
     const playlistSearches = [
       soundcloudApiRequest<{ collection?: SoundCloudPlaylistResource[] }>(
@@ -431,9 +456,6 @@ export class SoundCloudProvider implements StreamingProvider {
       query.preferredTrackCount,
     );
 
-    const preferredTracks = Array.isArray(query.preferredTracks)
-      ? query.preferredTracks.filter((track) => String(track.title || "").trim())
-      : [];
     if (preferredTracks.length === 0) {
       // Without a tracklist we only return title-ranked candidates; the caller
       // should supply preferredTracks for mixtape coverage conviction.

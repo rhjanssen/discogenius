@@ -421,23 +421,18 @@ function existingMediaCover(entityId: string | number | null | undefined, coverE
     return null;
   }
 
-  // Videos: prefer full-res origin, then the small card proxy. Album/artist: proxies only.
+  // Prefer full-res origin (height null), then resized proxies (500, 250).
   // Public URL identity is always bare `{coverType}.jpg` (Lidarr-style). Height is a
   // request-layer rewrite (`cover-250.jpg`) so list and detail share one cover id.
   const heights: Array<number | null> = coverEntity === "Video"
     ? [null, ...MEDIA_COVER_VIDEO_HEIGHTS]
-    : [...MEDIA_COVER_DEFAULT_HEIGHTS];
+    : [null, ...MEDIA_COVER_DEFAULT_HEIGHTS];
   for (const height of heights) {
     for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
       const filePath = getMediaCoverPath(normalizedEntityId, coverEntity, coverType, extension, height);
       try {
         const stats = fs.statSync(filePath);
         if (stats.isFile() && stats.size > 0) {
-          if (coverEntity !== "Video" && height) {
-            for (const originalExtension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-              try { fs.unlinkSync(getMediaCoverPath(normalizedEntityId, coverEntity, coverType, originalExtension)); } catch { /* absent */ }
-            }
-          }
           return { path: filePath, url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, ".jpg") };
         }
       } catch {
@@ -688,29 +683,58 @@ export async function ensureCachedMediaCover(options: {
       return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, extension);
     }
 
-    // UI cache contains derivatives only. Full-resolution album/artist art is
-    // stored exclusively beside managed media in the configured library roots.
+    // Full-resolution album/artist origin for detail/embed (Lidarr-style) + 500/250 proxies.
     const derivatives = prepareResizedMediaCovers(originalBuffer, extension);
     if (derivatives.length === 0) {
       return existing?.url ?? null;
     }
 
     clearCachedCoverVariant(entityId, options.coverEntity, options.coverType);
+    const filePath = getMediaCoverPath(entityId, options.coverEntity, options.coverType, extension);
+    fs.writeFileSync(filePath, originalBuffer);
     for (const derivative of derivatives) {
       fs.writeFileSync(
         getMediaCoverPath(entityId, options.coverEntity, options.coverType, ".jpg", derivative.height),
         derivative.buffer,
       );
     }
-    for (const candidateExtension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-      try { fs.unlinkSync(getMediaCoverPath(entityId, options.coverEntity, options.coverType, candidateExtension)); } catch { /* absent */ }
-    }
     writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy);
-    return existingMediaCover(entityId, options.coverEntity, options.coverType)?.url ?? null;
+    return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, extension);
   } catch (error) {
     console.warn("[MediaCoverService] Failed to cache artwork:", (error as Error).message);
     return null;
   }
+}
+
+/**
+ * When the user toggles artwork_preference in settings ("canonical" <-> "provider"),
+ * invalidate/refresh media cover caches across all stored albums and artists.
+ */
+export function refreshAllMediaCoversOnPreferenceChange(): void {
+  queueMicrotask(async () => {
+    try {
+      const albums = db.prepare("SELECT mbid FROM Albums WHERE mbid IS NOT NULL").all() as Array<{ mbid: string }>;
+      for (const row of albums) {
+        if (!row.mbid) continue;
+        try {
+          await resolveAlbumArtwork({ albumMbid: row.mbid });
+        } catch {
+          // best effort
+        }
+      }
+      const artists = db.prepare("SELECT mbid FROM ArtistMetadata WHERE mbid IS NOT NULL").all() as Array<{ mbid: string }>;
+      for (const row of artists) {
+        if (!row.mbid) continue;
+        try {
+          await resolveArtistArtwork({ artistMbid: row.mbid });
+        } catch {
+          // best effort
+        }
+      }
+    } catch (error) {
+      console.warn("[MediaCoverService] Failed to refresh media covers on preference change:", error);
+    }
+  });
 }
 
 export function getMediaCoverFilePathFromUrl(value: unknown): string | null {

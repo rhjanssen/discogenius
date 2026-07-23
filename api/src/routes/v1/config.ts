@@ -230,9 +230,16 @@ router.get("/metadata", (_, res) => {
 
 router.post("/metadata", async (req, res) => {
   try {
+    const previousPreference = getConfigSection("metadata")?.artwork_preference;
     const updates = parseMetadataConfigUpdate(getObjectBody(req.body), getConfigSection("metadata"));
     updateConfig("metadata", updates);
     await syncDownloadBackends();
+
+    if (updates.artwork_preference && updates.artwork_preference !== previousPreference) {
+      import("../../services/metadata/media-cover-service.js").then(({ refreshAllMediaCoversOnPreferenceChange }) => {
+        refreshAllMediaCoversOnPreferenceChange();
+      });
+    }
 
     // Queue a config prune job to clean up orphaned metadata sidecars
     import("../../services/commands/command-queue-manager.js").then(({ CommandNames, CommandQueueManager }) => {

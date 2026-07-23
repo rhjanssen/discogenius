@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.9] - 2026-07-23
+
+### Fixed
+- **SoundCloud DRM Filtering & Match Rejection**: Official SoundCloud release searches that yield DRM-encrypted tracks (such as track `26282908`) now evaluate downloadable coverage and fall back to wide playlist searches for downloadable, non-DRM fan sets (e.g. `emmatad` releases with progressive streams). If no DRM-free alternative exists, the DRM-only offer is rejected so Discogenius does not register an undownloadable match.
+- **Lidarr-Style Full-Resolution Media Cover Storage**: Full-resolution origin cover images are now stored locally in the `MediaCover` folder alongside 500/250 proxies for both albums and artists (Lidarr-style), ensuring embedded artwork and sidecars can read origin files directly without fragile import-time re-fetches.
+- **Artwork Preference Toggle Refresh**: Toggling `artwork_preference` in Settings ("canonical" ↔ "provider") now triggers a background cover refresh across all stored albums and artists to re-resolve artwork according to the new preference and regenerate proxies.
+- **Incomplete Album Track Downloading**: Hardened catalog album acquisition so incomplete albums (`presentCount > 0`) download missing tracks via `trackOffers` mode, using fallback ProviderItems track/recording lookups when child items are unlinked.
+
 ## [2.6.8] - 2026-07-23
 
 ### Fixed

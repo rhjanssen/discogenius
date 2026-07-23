@@ -251,13 +251,49 @@ function resolveProviderTrackOffersForAlbum(
   const isrcByTrack = new Map(catalogIsrcs.map((row) => [String(row.track_mbid), String(row.isrc)]));
 
   const offers = new Map<string, { providerTrackId: string; quality: string | null }>();
+  const unmatchedTracks = catalogTracks.filter((t) => !byTrack.has(t.track_mbid) && (!t.recording_mbid || !byRecording.has(t.recording_mbid)));
+
+  const fallbackByTrack = new Map<string, { provider_id: string; quality: string | null }>();
+  const fallbackByRecording = new Map<string, { provider_id: string; quality: string | null }>();
+  if (unmatchedTracks.length > 0) {
+    const trackMbids = unmatchedTracks.map((t) => t.track_mbid).filter(Boolean);
+    const recordingMbids = unmatchedTracks.map((t) => t.recording_mbid).filter((id): id is string => Boolean(id));
+    if (trackMbids.length > 0 || recordingMbids.length > 0) {
+      const fallbackRows = db.prepare(`
+        SELECT
+          CAST(provider_id AS TEXT) AS provider_id,
+          recording_mbid,
+          track_mbid,
+          quality
+        FROM ProviderItems
+        WHERE provider = ?
+          AND entity_type = 'track'
+          AND (
+            track_mbid IN (${trackMbids.length > 0 ? trackMbids.map(() => "?").join(",") : "''"})
+            OR recording_mbid IN (${recordingMbids.length > 0 ? recordingMbids.map(() => "?").join(",") : "''"})
+          )
+      `).all(provider, ...trackMbids, ...recordingMbids) as Array<{
+        provider_id: string;
+        recording_mbid: string | null;
+        track_mbid: string | null;
+        quality: string | null;
+      }>;
+      for (const row of fallbackRows) {
+        if (row.track_mbid) fallbackByTrack.set(String(row.track_mbid), row);
+        if (row.recording_mbid) fallbackByRecording.set(String(row.recording_mbid), row);
+      }
+    }
+  }
+
   for (const track of catalogTracks) {
     const match = byTrack.get(track.track_mbid)
       || (track.recording_mbid ? byRecording.get(track.recording_mbid) : undefined)
       || (() => {
         const isrc = isrcByTrack.get(track.track_mbid);
         return isrc ? byIsrc.get(isrc) : undefined;
-      })();
+      })()
+      || fallbackByTrack.get(track.track_mbid)
+      || (track.recording_mbid ? fallbackByRecording.get(track.recording_mbid) : undefined);
     if (!match?.provider_id) continue;
     offers.set(track.track_mbid, {
       providerTrackId: String(match.provider_id),
