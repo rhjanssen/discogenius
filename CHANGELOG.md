@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Video offer codec defaults (provider×tier, TrackFiles audit): YouTube/YTM
+  HD+ assumed AV1; YouTube SD left with no assumed codec (sample too thin);
+  Apple Music UHD assumed AV1 and FHD/below h.264 (not HEVC); TIDAL remains
+  h.264. Replaces the 2.6.5 shallow YouTube→AV1-everywhere flip.
+
 ## [2.6.5] - 2026-07-23
 
 ### Added

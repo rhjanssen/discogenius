@@ -110,21 +110,40 @@ test("preferred offer chooses Apple 4K over a preferred-provider TIDAL 1080p off
   });
 });
 
-test("same-resolution ranking prefers HEVC Apple Music over h.264 TIDAL", () => {
-  assert.ok(
-    resolver.compareVideoOffersByQualityThenProvider(
-      { provider: "apple-music", quality: "FHD", provider_id: "a" },
-      { provider: "tidal", quality: "FHD", provider_id: "t" },
-    ) < 0,
-  );
+test("same-resolution ranking uses TrackFiles-backed provider×tier codec defaults", () => {
+  // FHD Apple and TIDAL are both assumed h.264 → codec tie; provider preference decides.
+  assert.equal(resolver.videoOfferCodecRank("apple-music", "FHD"), 100);
+  assert.equal(resolver.videoOfferCodecRank("tidal", "FHD"), 100);
+  // YouTube FHD/HD/UHD assumed AV1 → beats Apple/TIDAL FHD h.264.
   assert.ok(
     resolver.compareVideoOffersByQualityThenProvider(
       { provider: "youtube-music", quality: "FHD", provider_id: "y" },
       { provider: "apple-music", quality: "FHD", provider_id: "a" },
     ) < 0,
   );
+  assert.ok(
+    resolver.compareVideoOffersByQualityThenProvider(
+      { provider: "youtube-music", quality: "HD", provider_id: "y" },
+      { provider: "tidal", quality: "HD", provider_id: "t" },
+    ) < 0,
+  );
+  // Apple UHD assumed AV1 → beats TIDAL FHD on resolution first; at UHD beats h.264.
+  assert.equal(resolver.videoOfferCodecRank("apple-music", "UHD"), 400);
+  assert.ok(
+    resolver.compareVideoOffersByQualityThenProvider(
+      { provider: "apple-music", quality: "UHD", provider_id: "a" },
+      { provider: "tidal", quality: "UHD", provider_id: "t" },
+    ) < 0,
+  );
+
   assert.equal(resolver.videoOfferCodecRank("youtube-music", "UHD"), 400);
   assert.equal(resolver.videoOfferCodecRank("youtube-music", "FHD"), 400);
-  assert.equal(resolver.videoOfferCodecRank("apple-music", "FHD"), 200);
+  assert.equal(resolver.videoOfferCodecRank("youtube-music", "HD"), 400);
+  // SD sample too thin — no assumed codec preference.
+  assert.equal(resolver.videoOfferCodecRank("youtube-music", "SD"), 0);
+  assert.equal(resolver.videoOfferCodecRank("youtube-music", null), 400);
   assert.equal(resolver.videoOfferCodecRank("tidal", "FHD"), 100);
+  // Explicit codec still overrides provider defaults.
+  assert.equal(resolver.videoOfferCodecRank("youtube-music", "SD", "h264"), 100);
+  assert.equal(resolver.videoOfferCodecRank("apple-music", "FHD", "hevc"), 200);
 });

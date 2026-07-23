@@ -90,13 +90,14 @@ export function resolveVideoOfferForProvider(provider: string, recordingRef: str
 
 /**
  * Prefer higher video resolution first, then assumed video codec quality, then
- * the user's provider priority. Codec order is AV1 > VP9 > HEVC > h.264 so an
- * FHD Apple Music (HEVC) offer beats FHD TIDAL (h.264) regardless of settings.
+ * the user's provider priority. Codec order is AV1 > VP9 > HEVC > h.264.
  *
- * ProviderItems do not store codec yet; assume per-provider catalog codecs
- * from TrackFiles evidence (2026-07 Bastille/Bakermat library): YouTube AV1
- * (FHD+ downloads are overwhelmingly AV1, not VP9), Apple Music HEVC for
- * catalog offers, TIDAL h.264.
+ * ProviderItems do not store codec yet. Defaults come from live TrackFiles
+ * (2026-07 Bastille/Bakermat library, height-only tiers):
+ * - YouTube/YTM HD+ overwhelmingly AV1 (FHD 34/37, HD 3/3, UHD 8/8); SD sample
+ *   too thin (2×av1 / 1×h264) so SD gets no assumed codec preference.
+ * - Apple Music UHD mostly AV1; FHD/below mostly h.264 (not HEVC).
+ * - TIDAL all sampled tiers h.264.
  */
 export function videoOfferQualityRank(quality: string | null | undefined): number {
     const normalized = String(quality || "").trim().toUpperCase().replace(/-/g, "_");
@@ -116,7 +117,7 @@ export function videoOfferQualityRank(quality: string | null | undefined): numbe
     return 0;
 }
 
-/** Higher is better. Explicit codec strings win; otherwise use provider defaults. */
+/** Higher is better. Explicit codec strings win; otherwise use provider×tier defaults. */
 export function videoOfferCodecRank(
     provider: string | null | undefined,
     quality?: string | null,
@@ -143,9 +144,17 @@ export function videoOfferCodecRank(
     }
 
     const providerId = String(provider || "").trim().toLowerCase();
-    // Live TrackFiles: youtube-music FHD is almost all av1 (VP9 is rare).
-    if (providerId === "youtube" || providerId === "youtube-music") return 400;
-    if (providerId === "apple-music" || providerId === "apple") return 200;
+    const qualityRank = videoOfferQualityRank(quality);
+    if (providerId === "youtube" || providerId === "youtube-music") {
+        // HD+ → AV1. SD left at 0 (sample too thin to lock h.264 vs AV1).
+        // Unknown quality → AV1 (library downloads are FHD-heavy AV1).
+        if (qualityRank === 1) return 0;
+        return 400;
+    }
+    if (providerId === "apple-music" || providerId === "apple") {
+        // UHD mostly AV1 on disk; FHD/below mostly h.264 (HEVC is rare).
+        return qualityRank >= 5 ? 400 : 100;
+    }
     if (providerId === "tidal") return 100;
     return 0;
 }

@@ -79,6 +79,19 @@ OPH (`375227dd-…`, EP + Mixtape/Street) ↔ `emmatad/sets/other-peoples-hearta
   any DRM decrypt/record revisit only if a maintained, non-CDM-theft SoundCloud
   backend appears (unlikely).
 
+### Video offer codec×resolution map
+
+- shipped (2.6.4): same-resolution codec preference AV1 > VP9 > HEVC > h.264;
+  YouTube assumed AV1@UHD / VP9 otherwise; Apple HEVC; TIDAL h.264.
+- shipped (2.6.5): **shallow** YouTube/YTM default flipped to AV1 at all
+  resolutions. No full provider × quality-tier matrix audit in that tag.
+- live audit (2026-07-23, Bastille/Bakermat TrackFiles, height-only): YTM
+  FHD 34×av1 / 2×h264 / 1×vp9; HD 3×av1; UHD 8×av1; SD 2×av1 / 1×h264
+  (too thin); TIDAL all h.264; Apple UHD 9×av1 / 1×hevc; Apple FHD 15×h264
+  / 5×av1.
+- pending ship (2.6.6): evidence-based `videoOfferCodecRank` — YTM HD+ AV1,
+  YTM SD no assumption (rank 0), Apple UHD AV1 / else h.264, TIDAL h.264.
+
 ### Local-MB refresh concurrency redesign
 
 Motivated by local Postgres MB **not** being public-API rate-limited (bulk SQL
