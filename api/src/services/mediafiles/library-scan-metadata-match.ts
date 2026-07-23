@@ -25,6 +25,7 @@ export type ParsedAudioTags = {
     isrc?: string | string[] | null;
     musicbrainzRecordingId?: string | null;
     musicbrainzTrackId?: string | null;
+    musicbrainzAlbumId?: string | null;
     durationSeconds?: number | null;
 };
 
@@ -107,23 +108,14 @@ function pickBestOffer(
     return best.offer;
 }
 
-function folderAlbumIds(filePath: string, artistId: string): Set<string> {
+function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTags): Set<string> {
     const folder = path.dirname(filePath);
-    const rows = db.prepare(`
-        SELECT DISTINCT CAST(pi.provider_album_id AS TEXT) AS album_id
-        FROM TrackFiles tf
-        JOIN ProviderItems pi
-          ON CAST(pi.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
-         AND pi.entity_type IN ('track', 'video')
-         AND (tf.provider IS NULL OR pi.provider = tf.provider)
-        WHERE tf.artist_id = ?
-          AND tf.provider_id IS NOT NULL
-          AND tf.file_path LIKE ? || '/%'
-          AND pi.provider_album_id IS NOT NULL
-    `).all(artistId, folder.replace(/\\/g, "/")) as Array<{ album_id: string }>;
+    const normalizedFolder = folder.replace(/\\/g, "/");
+    const folderName = path.basename(folder).replace(/\s*\(\d{4}\)\s*$/, "").trim();
 
-    // Also accept Windows-style separators stored in older rows.
-    const windowsRows = db.prepare(`
+    const albumIds = new Set<string>();
+
+    const rows = db.prepare(`
         SELECT DISTINCT CAST(pi.provider_album_id AS TEXT) AS album_id
         FROM TrackFiles tf
         JOIN ProviderItems pi
@@ -134,9 +126,46 @@ function folderAlbumIds(filePath: string, artistId: string): Set<string> {
           AND tf.provider_id IS NOT NULL
           AND replace(tf.file_path, '\\', '/') LIKE ? || '/%'
           AND pi.provider_album_id IS NOT NULL
-    `).all(artistId, folder.replace(/\\/g, "/")) as Array<{ album_id: string }>;
+    `).all(artistId, normalizedFolder) as Array<{ album_id: string }>;
 
-    return new Set([...rows, ...windowsRows].map((row) => String(row.album_id)).filter(Boolean));
+    for (const row of rows) {
+        if (row.album_id) albumIds.add(String(row.album_id));
+    }
+
+    // Check tags.musicbrainzAlbumId if present
+    const mbid = tags?.musicbrainzAlbumId?.trim() || null;
+    if (mbid) {
+        const mbidOffers = db.prepare(`
+            SELECT DISTINCT CAST(provider_id AS TEXT) AS provider_album_id
+            FROM ProviderItems
+            WHERE entity_type = 'album'
+              AND (release_mbid = ? OR release_group_mbid = ?)
+        `).all(mbid, mbid) as Array<{ provider_album_id: string }>;
+        for (const row of mbidOffers) {
+            if (row.provider_album_id) albumIds.add(String(row.provider_album_id));
+        }
+    }
+
+    // Match album title from tags or folder name against Albums & ProviderItems
+    const albumTitleCandidate = tags?.album?.trim() || folderName;
+    if (albumTitleCandidate) {
+        const albumRows = db.prepare(`
+            SELECT pi.provider_id AS provider_album_id, COALESCE(a.title, pi.title) AS title
+            FROM ProviderItems pi
+            LEFT JOIN Albums a ON a.mbid = pi.release_group_mbid
+            JOIN Artists artist ON artist.mbid = pi.artist_mbid OR CAST(artist.id AS TEXT) = CAST(pi.artist_mbid AS TEXT)
+            WHERE pi.entity_type = 'album'
+              AND artist.id = ?
+        `).all(artistId) as Array<{ provider_album_id: string; title: string }>;
+
+        for (const row of albumRows) {
+            if (row.provider_album_id && row.title && sameRecordingTitle(albumTitleCandidate, row.title)) {
+                albumIds.add(String(row.provider_album_id));
+            }
+        }
+    }
+
+    return albumIds;
 }
 
 function existingTrackFileForOffer(
@@ -317,7 +346,7 @@ export function matchAudioFileByMetadata(
         };
     }
 
-    const preferredAlbumIds = folderAlbumIds(filePath, artistId);
+    const preferredAlbumIds = folderAlbumIds(filePath, artistId, tags);
     const isrc = firstIsrc(tags.isrc);
     const recordingMbid = tags.musicbrainzRecordingId?.trim() || null;
 

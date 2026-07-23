@@ -478,6 +478,7 @@ function getReleaseTrackContracts(
       FROM Tracks t
       LEFT JOIN Recordings r ON t.recording_mbid = r.mbid
       WHERE t.release_mbid = ?
+        AND (r.is_video IS NULL OR r.is_video = 0)
       ORDER BY t.medium_position ASC, t.position ASC
     `).all(releaseMbid) as any[];
 
