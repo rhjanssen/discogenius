@@ -27,6 +27,21 @@ test("classifyDownloadFailure treats 404 / not found as permanent", () => {
   assert.equal(classifyDownloadFailure(new Error("Album unavailable")), "permanent");
 });
 
+test("classifyDownloadFailure treats private YouTube and SoundCloud DRM as permanent", () => {
+  assert.equal(
+    classifyDownloadFailure(new Error("ERROR: [youtube] 6NhkjW9DYLw: Private video. Sign in if you've been granted access")),
+    "permanent",
+  );
+  assert.equal(
+    classifyDownloadFailure(new Error("yt-dlp SoundCloud: This video is DRM protected")),
+    "permanent",
+  );
+  assert.equal(
+    classifyDownloadFailure(new Error("SoundCloud album 1: all 3 track(s) are DRM/SNIP-only or unplayable for this account.")),
+    "permanent",
+  );
+});
+
 test("sameOfferBackoffMs doubles from base", () => {
   assert.equal(sameOfferBackoffMs(1), 100);
   assert.equal(sameOfferBackoffMs(2), 200);

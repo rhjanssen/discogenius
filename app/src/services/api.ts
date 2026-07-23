@@ -670,7 +670,7 @@ class ApiClient {
     types: string[] = ['artists', 'albums', 'tracks', 'videos'],
     limit: number = 10,
     signal?: AbortSignal,
-    options?: { remote?: boolean },
+    options?: { remote?: boolean; local?: boolean },
   ): Promise<SearchResponseContract> {
     const params = new URLSearchParams({
       query,
@@ -679,6 +679,9 @@ class ApiClient {
     });
     if (options?.remote) {
       params.set('remote', '1');
+    }
+    if (options?.local === false) {
+      params.set('local', '0');
     }
     return this.request(`/search?${params}`, { signal }, parseSearchResponseContract);
   }

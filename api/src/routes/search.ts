@@ -108,10 +108,15 @@ router.get("/", async (req, res) => {
         const requestedTypeSet = new Set(requestedTypes);
         const remoteRequested = ["1", "true", "yes", "on"]
             .includes(String(req.query.remote || "").trim().toLowerCase());
+        const includeLocalLibrary = !["0", "false", "no", "off"]
+            .includes(String(req.query.local || "").trim().toLowerCase());
         // Keep established-library search local and indexed, but give a fresh
         // installation the same canonical discovery path as the add-artist flow.
         const libraryIsEmpty = !db.prepare("SELECT 1 FROM Artists LIMIT 1").get();
-        const includeRemoteCatalog = remoteRequested || libraryIsEmpty;
+        // Remote only when explicitly requested, or when a local search on an
+        // empty library needs discovery (Lidarr Add New). A remote-only follow-up
+        // must not re-run local enrichment.
+        const includeRemoteCatalog = remoteRequested || (libraryIsEmpty && includeLocalLibrary);
 
         if (!query || query.length < 2) {
             return res.status(400).json({ detail: "Query must be at least 2 characters" });
@@ -138,7 +143,7 @@ router.get("/", async (req, res) => {
             : null;
 
         // 1. Local library search
-        {
+        if (includeLocalLibrary) {
             if (requestedTypeSet.has("artists")) {
                 const ftsQuery = toFtsPrefixQuery(query);
                 const matchedArtistIds = ftsQuery
@@ -150,7 +155,9 @@ router.get("/", async (req, res) => {
                     `).all(ftsQuery, limit * 2) as Array<{ id: string }>).map((row) => row.id)
                     : [];
                 const artistMarks = matchedArtistIds.map(() => "?").join(", ");
-                const localArtists = db
+                // Prefer MB-linked rows over provider-only duplicates with the same
+                // name (COLLATE NOCASE uses idx_artists_name; avoid lower() scans).
+                const localArtists = matchedArtistIds.length === 0 ? [] : db
                     .prepare(
                         `SELECT current_artist.id, current_artist.mbid, current_artist.name,
                                 current_artist.picture, current_artist.cover_image_url,
@@ -159,13 +166,13 @@ router.get("/", async (req, res) => {
                          FROM Artists current_artist
                          LEFT JOIN ArtistMetadata artist_metadata
                            ON artist_metadata.mbid = current_artist.mbid
-                         WHERE CAST(current_artist.id AS TEXT) IN (${artistMarks || "NULL"})
+                         WHERE current_artist.id IN (${artistMarks})
                            AND NOT EXISTS (
                              SELECT 1
                              FROM Artists canonical_artist
                              WHERE canonical_artist.mbid IS NOT NULL
                                AND canonical_artist.id != current_artist.id
-                               AND lower(canonical_artist.name) = lower(current_artist.name)
+                               AND canonical_artist.name = current_artist.name COLLATE NOCASE
                            )
                          ORDER BY
                            CASE WHEN current_artist.mbid IS NOT NULL THEN 0 ELSE 1 END,
@@ -274,6 +281,9 @@ router.get("/", async (req, res) => {
                     ).all(ftsQuery, limit) as Array<{ mbid: string }>).map((row) => row.mbid)
                     : [];
                 const trackMarks = matchedTrackMbids.map(() => "?").join(", ");
+                // Autocomplete only needs title/artist/duration/quality/monitor +
+                // album cover from Albums.images — skip album ProviderItems and
+                // unused cover_provider columns that used to inflate each row.
                 const localTracks = matchedTrackMbids.length === 0 ? [] : db
                     .prepare(
                         `SELECT
@@ -284,15 +294,8 @@ router.get("/", async (req, res) => {
               COALESCE(provider_track.explicit, 0) AS explicit,
               COALESCE(ROUND(COALESCE(t.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0), 0) AS duration,
               COALESCE(release.date, rg.first_release_date) AS release_date,
-              COALESCE(
-                selected_slot.cover,
-                provider_album.asset_id,
-                provider_track.asset_id,
-                provider_track.cover
-              ) AS album_cover,
               rg.mbid AS release_group_mbid,
               rg.images AS rg_images,
-              COALESCE(selected_slot.selected_provider, provider_album.provider, provider_track.provider) AS cover_provider,
               CASE WHEN EXISTS (
                 SELECT 1
                 FROM ReleaseGroupSlots monitored_slot
@@ -332,18 +335,6 @@ router.get("/", async (req, res) => {
                     preferred_provider_track.provider_id ASC
                   LIMIT 1
                 )
-              )
-            LEFT JOIN ProviderItems provider_album
-              ON provider_album.rowid = (
-                SELECT preferred_provider_album.rowid
-                FROM ProviderItems preferred_provider_album
-                WHERE preferred_provider_album.entity_type = 'album'
-                  AND preferred_provider_album.release_group_mbid = rg.mbid
-                ORDER BY
-                  CASE preferred_provider_album.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-                  preferred_provider_album.updated_at DESC,
-                  preferred_provider_album.provider_id ASC
-                LIMIT 1
               )
             LEFT JOIN ReleaseGroupSlots selected_slot
               ON selected_slot.release_group_mbid = rg.mbid
@@ -420,17 +411,7 @@ router.get("/", async (req, res) => {
                 SELECT lf.quality
                 FROM TrackFiles lf
                 WHERE lf.file_type = 'video'
-                  AND (
-                    CAST(lf.provider_id AS TEXT) = CAST(provider_video.provider_id AS TEXT)
-                    OR (
-                      recording.mbid IS NOT NULL
-                      AND lf.canonical_recording_mbid = recording.mbid
-                    )
-                    OR (
-                      recording.foreign_recording_id IS NOT NULL
-                      AND lf.canonical_recording_mbid = recording.foreign_recording_id
-                    )
-                  )
+                  AND lf.canonical_recording_mbid = recording.mbid
                 ORDER BY lf.verified_at DESC, lf.id DESC
                 LIMIT 1
               ), (
@@ -445,35 +426,71 @@ router.get("/", async (req, res) => {
             LEFT JOIN ArtistMetadata artist ON artist.mbid = recording.artist_mbid
             LEFT JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
             LEFT JOIN ProviderItems provider_video
-              ON provider_video.rowid = (
-                SELECT preferred_provider_video.rowid
-                FROM ProviderItems preferred_provider_video
-                WHERE preferred_provider_video.entity_type = 'video'
-                  AND (
-                    preferred_provider_video.match_status IS NULL
-                    OR LOWER(preferred_provider_video.match_status) <> 'rejected'
-                  )
-                  AND (
-                    preferred_provider_video.availability IS NULL
-                    OR LOWER(CAST(preferred_provider_video.availability AS TEXT))
-                       NOT IN ('0', 'false', 'unavailable', 'no', '')
-                  )
-                  AND (
-                    preferred_provider_video.recording_id = recording.id
-                    OR (
-                      recording.mbid IS NOT NULL
-                      AND preferred_provider_video.recording_mbid = recording.mbid
+              -- Same COALESCE-of-indexed-lookups pattern as tracks: OR across
+              -- recording_id / recording_mbid / provider_id defeats indexes.
+              ON provider_video.rowid = COALESCE(
+                (
+                  SELECT preferred_provider_video.rowid
+                  FROM ProviderItems preferred_provider_video
+                  WHERE preferred_provider_video.entity_type = 'video'
+                    AND preferred_provider_video.recording_id = recording.id
+                    AND (
+                      preferred_provider_video.match_status IS NULL
+                      OR LOWER(preferred_provider_video.match_status) <> 'rejected'
                     )
-                    OR (
-                      recording.foreign_recording_id IS NOT NULL
-                      AND preferred_provider_video.provider_id = recording.foreign_recording_id
+                    AND (
+                      preferred_provider_video.availability IS NULL
+                      OR LOWER(CAST(preferred_provider_video.availability AS TEXT))
+                         NOT IN ('0', 'false', 'unavailable', 'no', '')
                     )
-                  )
-                ORDER BY
-                  preferred_provider_video.updated_at DESC,
-                  preferred_provider_video.provider ASC,
-                  preferred_provider_video.provider_id ASC
-                LIMIT 1
+                  ORDER BY
+                    preferred_provider_video.updated_at DESC,
+                    preferred_provider_video.provider ASC,
+                    preferred_provider_video.provider_id ASC
+                  LIMIT 1
+                ),
+                (
+                  SELECT preferred_provider_video.rowid
+                  FROM ProviderItems preferred_provider_video
+                  WHERE preferred_provider_video.entity_type = 'video'
+                    AND recording.mbid IS NOT NULL
+                    AND preferred_provider_video.recording_mbid = recording.mbid
+                    AND (
+                      preferred_provider_video.match_status IS NULL
+                      OR LOWER(preferred_provider_video.match_status) <> 'rejected'
+                    )
+                    AND (
+                      preferred_provider_video.availability IS NULL
+                      OR LOWER(CAST(preferred_provider_video.availability AS TEXT))
+                         NOT IN ('0', 'false', 'unavailable', 'no', '')
+                    )
+                  ORDER BY
+                    preferred_provider_video.updated_at DESC,
+                    preferred_provider_video.provider ASC,
+                    preferred_provider_video.provider_id ASC
+                  LIMIT 1
+                ),
+                (
+                  SELECT preferred_provider_video.rowid
+                  FROM ProviderItems preferred_provider_video
+                  WHERE preferred_provider_video.entity_type = 'video'
+                    AND recording.foreign_recording_id IS NOT NULL
+                    AND preferred_provider_video.provider_id = recording.foreign_recording_id
+                    AND (
+                      preferred_provider_video.match_status IS NULL
+                      OR LOWER(preferred_provider_video.match_status) <> 'rejected'
+                    )
+                    AND (
+                      preferred_provider_video.availability IS NULL
+                      OR LOWER(CAST(preferred_provider_video.availability AS TEXT))
+                         NOT IN ('0', 'false', 'unavailable', 'no', '')
+                    )
+                  ORDER BY
+                    preferred_provider_video.updated_at DESC,
+                    preferred_provider_video.provider ASC,
+                    preferred_provider_video.provider_id ASC
+                  LIMIT 1
+                )
               )
             WHERE recording.id IN (${videoMarks})
               AND (managed_artist.id IS NOT NULL OR provider_video.provider_id IS NOT NULL)

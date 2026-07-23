@@ -24,6 +24,7 @@ import {
   tableTouchedAtColumn,
   type RenameFileEvent,
   type RenameLibraryFileRow,
+  type RenameTableName,
 } from "./rename-track-file-paths.js";
 
 function moveFileCrossDevice(sourcePath: string, destPath: string) {
@@ -129,9 +130,54 @@ export class RenameTrackFileService {
     return Number(row?.count || 0);
   }
 
-  private static evaluateRenameRows(rows: RenameLibraryFileRow[]): RenamePreviewItem[] {
+  private static evaluateRenameRows(
+    rows: RenameLibraryFileRow[],
+    options: { persist?: boolean } = {},
+  ): RenamePreviewItem[] {
+    const persist = options.persist === true;
     const updates: Array<{ id: number; expectedPath: string | null; needsRename: number }> = [];
     const relativePathUpdates: Array<{ id: number; relativePath: string; libraryRoot: string }> = [];
+
+    // Lidarr-style: conflict detection for a preview page is in-memory over the
+    // candidate set first, then one indexed DB probe — not N prepares + FS stats.
+    const expectedOccupants = new Map<string, number>();
+    for (const row of rows) {
+      const resolvedFilePath = resolveStoredLibraryPath({
+        filePath: row.file_path,
+        libraryRoot: row.library_root,
+        relativePath: row.relative_path,
+      });
+      expectedOccupants.set(normalizeResolvedPath(resolvedFilePath), row.id);
+    }
+
+    const pathConflictStmtByTable = new Map<string, any>();
+    const expectedConflictStmtByTable = new Map<string, any>();
+    const getPathConflictStmt = (tableName: RenameTableName): any => {
+      let stmt = pathConflictStmtByTable.get(tableName);
+      if (!stmt) {
+        const idCol = tableIdColumn(tableName);
+        stmt = db.prepare(`
+          SELECT ${idCol} AS id FROM ${tableName}
+          WHERE ${idCol} != ? AND file_path = ?
+          LIMIT 1
+        `);
+        pathConflictStmtByTable.set(tableName, stmt);
+      }
+      return stmt;
+    };
+    const getExpectedConflictStmt = (tableName: RenameTableName): any => {
+      let stmt = expectedConflictStmtByTable.get(tableName);
+      if (!stmt) {
+        const idCol = tableIdColumn(tableName);
+        stmt = db.prepare(`
+          SELECT ${idCol} AS id FROM ${tableName}
+          WHERE ${idCol} != ? AND expected_path = ?
+          LIMIT 1
+        `);
+        expectedConflictStmtByTable.set(tableName, stmt);
+      }
+      return stmt;
+    };
 
     const results: RenamePreviewItem[] = rows.map((row) => {
       const resolvedFilePath = resolveStoredLibraryPath({
@@ -139,46 +185,54 @@ export class RenameTrackFileService {
         libraryRoot: row.library_root,
         relativePath: row.relative_path,
       });
-      const missing = !fs.existsSync(resolvedFilePath);
+      // Preview is DB/path computation only (Lidarr). Disk existence is checked on Apply.
+      const missing = false;
 
       const { expectedPath, reason } = LibraryFilesService.computeExpectedPath(row);
       const needsRename = Boolean(expectedPath && normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath));
 
       let conflict = false;
-      if (expectedPath) {
+      let dropDuplicate = false;
+      let conflictMessage: string | undefined;
+      if (expectedPath && needsRename) {
         const decoded = decodeSyntheticId(row.id);
         const tableName = decoded.tableName;
-        const idCol = tableIdColumn(tableName);
+        const normalizedExpected = normalizeResolvedPath(expectedPath);
+        const pageOccupantId = expectedOccupants.get(normalizedExpected);
+        const pageConflict = pageOccupantId != null && pageOccupantId !== row.id;
+        const dbConflict = getPathConflictStmt(tableName).get(decoded.id, expectedPath)
+          || getExpectedConflictStmt(tableName).get(decoded.id, expectedPath);
 
-        const dbConflict = db.prepare(`
-          SELECT ${idCol} AS id
-          FROM ${tableName}
-          WHERE ${idCol} != ?
-            AND (file_path = ? OR expected_path = ?)
-          LIMIT 1
-        `).get(decoded.id, expectedPath, expectedPath);
-
-        conflict = normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath)
-          && (fs.existsSync(expectedPath) || Boolean(dbConflict))
-          // Lyric duplicates that claim the same stem are resolved on apply
-          // (drop source), so the preview must not count them as conflicts.
-          && !(row.file_type === "lyrics" && tableName === "LyricFiles");
+        const hasCollision = pageConflict || Boolean(dbConflict);
+        if (hasCollision) {
+          if (row.file_type === "lyrics" && tableName === "LyricFiles") {
+            // Same audio stem claimed by two lyric rows — Apply keeps the
+            // destination and deletes this source (not a hard Conflict).
+            dropDuplicate = true;
+            conflictMessage = `Duplicate lyric for the same track stem. Apply keeps ${expectedPath} and removes this file.`;
+          } else {
+            conflict = true;
+            conflictMessage = `Another library file already uses or targets ${expectedPath} (often a disc/track renumber collision). Apply skips this row until the destination is free.`;
+          }
+        }
       }
 
-      updates.push({ id: row.id, expectedPath, needsRename: needsRename ? 1 : 0 });
+      if (persist) {
+        updates.push({ id: row.id, expectedPath, needsRename: needsRename ? 1 : 0 });
 
-      try {
-        const root = resolveLibraryRootPath(null, resolvedFilePath)
-          || resolveLibraryRootPath(row.library_root, resolvedFilePath);
-        if (root) {
-          relativePathUpdates.push({
-            id: row.id,
-            relativePath: path.relative(root, resolvedFilePath),
-            libraryRoot: root,
-          });
+        try {
+          const root = resolveLibraryRootPath(null, resolvedFilePath)
+            || resolveLibraryRootPath(row.library_root, resolvedFilePath);
+          if (root) {
+            relativePathUpdates.push({
+              id: row.id,
+              relativePath: path.relative(root, resolvedFilePath),
+              libraryRoot: root,
+            });
+          }
+        } catch {
+          // Ignore relative path drift until the next successful scan.
         }
-      } catch {
-        // Ignore relative path drift until the next successful scan.
       }
 
       return {
@@ -190,56 +244,60 @@ export class RenameTrackFileService {
         media_id: row.media_id,
         file_path: resolvedFilePath,
         expected_path: expectedPath,
-        needs_rename: needsRename,
+        needs_rename: needsRename && !dropDuplicate,
         conflict,
+        drop_duplicate: dropDuplicate || undefined,
         missing,
         reason,
+        conflict_message: conflictMessage,
       };
     });
 
-    db.transaction(() => {
-      for (const row of updates) {
-        const decoded = decodeSyntheticId(row.id);
-        const idCol = tableIdColumn(decoded.tableName);
+    if (persist) {
+      db.transaction(() => {
+        for (const row of updates) {
+          const decoded = decodeSyntheticId(row.id);
+          const idCol = tableIdColumn(decoded.tableName);
 
-        db.prepare(`
-          UPDATE ${decoded.tableName}
-          SET expected_path = ?,
-              needs_rename = ?
-          WHERE ${idCol} = ?
-        `).run(row.expectedPath, row.needsRename, decoded.id);
-      }
+          db.prepare(`
+            UPDATE ${decoded.tableName}
+            SET expected_path = ?,
+                needs_rename = ?
+            WHERE ${idCol} = ?
+          `).run(row.expectedPath, row.needsRename, decoded.id);
+        }
 
-      for (const row of relativePathUpdates) {
-        const decoded = decodeSyntheticId(row.id);
-        const idCol = tableIdColumn(decoded.tableName);
+        for (const row of relativePathUpdates) {
+          const decoded = decodeSyntheticId(row.id);
+          const idCol = tableIdColumn(decoded.tableName);
 
-        db.prepare(`
-          UPDATE ${decoded.tableName}
-          SET relative_path = ?,
-              library_root = ?
-          WHERE ${idCol} = ?
-        `).run(row.relativePath, row.libraryRoot, decoded.id);
-      }
-    })();
+          db.prepare(`
+            UPDATE ${decoded.tableName}
+            SET relative_path = ?,
+                library_root = ?
+            WHERE ${idCol} = ?
+          `).run(row.relativePath, row.libraryRoot, decoded.id);
+        }
+      })();
+    }
 
     return results;
   }
 
   static getRenamePreviews(options: RenameScopeOptions): RenamePreviewItem[] {
-    return this.evaluateRenameRows(this.getRenameRows(options, true));
+    return this.evaluateRenameRows(this.getRenameRows(options, true), { persist: false });
   }
 
   static getRenameStatus(options: RenameScopeOptions = {}, sampleLimit = 10): RenameStatusSummary {
     const total = this.getRenameCandidateCount(options);
     const scanLimit = Math.max(1, Math.min(1000, options.limit ?? 25));
-    const results = this.evaluateRenameRows(this.getRenameRows({ ...options, limit: scanLimit, offset: 0 }, true));
+    const results = this.evaluateRenameRows(this.getRenameRows({ ...options, limit: scanLimit, offset: 0 }, true), { persist: false });
     return buildRenameStatusSummary(total, results, sampleLimit);
   }
 
   static executeRenameFilesByQuery(options: RenameScopeOptions = {}): RenameApplyResult {
-    const ids = this.evaluateRenameRows(this.getRenameRows(options, false))
-      .filter((item) => item.needs_rename)
+    const ids = this.evaluateRenameRows(this.getRenameRows(options, false), { persist: false })
+      .filter((item) => item.needs_rename || item.drop_duplicate)
       .map((item) => item.id);
 
     return this.executeRenameFiles(ids, { reconcileSeparatedSidecars: true });

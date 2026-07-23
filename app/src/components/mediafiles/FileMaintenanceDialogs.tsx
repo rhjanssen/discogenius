@@ -37,6 +37,8 @@ export interface RenamePreviewItem {
   needs_rename: boolean;
   missing: boolean;
   conflict: boolean;
+  drop_duplicate?: boolean;
+  conflict_message?: string;
 }
 
 export interface RetagPreviewChange {
@@ -175,7 +177,8 @@ function usePreviewSelection<T extends { id: number }>(
   return { selectedIds, selectableIds, allSelected, someSelected, toggleAll, toggle };
 }
 
-const selectableRename = (item: RenamePreviewItem) => !item.missing && !item.conflict && item.needs_rename;
+const selectableRename = (item: RenamePreviewItem) =>
+  !item.missing && !item.conflict && (item.needs_rename || Boolean(item.drop_duplicate));
 const selectableRetag = (item: RetagPreviewItem) => !item.missing && !item.error && item.changes.length > 0;
 
 export function RenamePreviewDialog({
@@ -219,6 +222,7 @@ export function RenamePreviewDialog({
               <Badge appearance="outline" color="brand">{items.length} changes</Badge>
               <Badge appearance="filled" color="informative">{selection.selectedIds.size} selected</Badge>
               <Badge appearance="outline" color="warning">{items.filter((item) => item.conflict).length} conflicts</Badge>
+              <Badge appearance="outline" color="informative">{items.filter((item) => item.drop_duplicate).length} duplicates</Badge>
               <Badge appearance="outline" color="informative">{items.filter((item) => item.missing).length} missing</Badge>
             </div>
             {items.length > 0 ? (
@@ -249,7 +253,15 @@ export function RenamePreviewDialog({
                       {item.missing ? (
                         <span className={styles.warning}>Missing on disk</span>
                       ) : item.conflict ? (
-                        <span className={styles.warning}>Conflict: {item.expected_path ?? "target path unavailable"}</span>
+                        <span className={styles.warning}>
+                          {item.conflict_message
+                            || `Conflict: another file already uses or targets ${item.expected_path ?? "this path"}. Apply skips this row.`}
+                        </span>
+                      ) : item.drop_duplicate ? (
+                        <span className={styles.warning}>
+                          {item.conflict_message
+                            || `Duplicate — Apply keeps ${item.expected_path ?? "the destination"} and removes this file.`}
+                        </span>
                       ) : (
                         <span className={styles.newValue}>+ {item.expected_path ?? "target path unavailable"}</span>
                       )}

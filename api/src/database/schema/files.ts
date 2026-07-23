@@ -139,11 +139,14 @@ export function createExtraFileSchema(db: Database.Database): void {
     CREATE INDEX idx_lyric_files_track_file ON LyricFiles(track_file_id);
     CREATE INDEX idx_lyric_files_provider ON LyricFiles(provider, provider_entity_type, provider_id);
     CREATE INDEX idx_lyric_files_recording ON LyricFiles(canonical_recording_mbid);
+    CREATE INDEX idx_lyric_files_expected_path ON LyricFiles(expected_path);
     CREATE INDEX idx_extra_files_artist ON ExtraFiles(artist_id, file_type);
     CREATE INDEX idx_extra_files_track_file ON ExtraFiles(track_file_id);
     CREATE INDEX idx_extra_files_canonical_release_group ON ExtraFiles(canonical_release_group_mbid, file_type);
     CREATE INDEX idx_extra_files_canonical_track ON ExtraFiles(canonical_track_mbid, file_type);
     CREATE INDEX idx_extra_files_canonical_recording ON ExtraFiles(canonical_recording_mbid, file_type);
+    CREATE INDEX idx_extra_files_expected_path ON ExtraFiles(expected_path);
+    CREATE INDEX idx_metadata_files_expected_path ON MetadataFiles(expected_path);
   `);
 }
 

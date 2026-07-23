@@ -91,7 +91,7 @@ export function useLibraryFileMaintenance(): LibraryFileMaintenanceApi {
         const id = Number(item.id);
         if (!Number.isFinite(id) || seen.has(id)) return false;
         seen.add(id);
-        return Boolean(item.missing || item.conflict || item.needs_rename);
+        return Boolean(item.missing || item.conflict || item.needs_rename || item.drop_duplicate);
       });
       setRenamePreviewItems(items);
       setRenamePreviewOpen(true);

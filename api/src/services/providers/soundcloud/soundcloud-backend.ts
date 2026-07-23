@@ -379,7 +379,7 @@ export class SoundCloudBackend implements DownloadBackend {
 
   private isTerminalAccountRestriction(error: unknown): boolean {
     return error instanceof Error
-      && /policy=SNIP|DRM-protected|encrypted HLS|Go\+/iu.test(error.message);
+      && /\bpolicy=SNIP\b|\bDRM[\s/_-]?protected\b|\bDRM\/SNIP\b|\bencrypted HLS\b|\bGo\+/iu.test(error.message);
   }
 
   private async tryNativeDownload(
@@ -624,7 +624,7 @@ export class SoundCloudBackend implements DownloadBackend {
       if (error instanceof Error && error.name === "AbortError") throw error;
       if (
         error instanceof Error
-        && /policy=SNIP|DRM-protected|encrypted HLS|Go\+/iu.test(error.message)
+        && /\bpolicy=SNIP\b|\bDRM[\s/_-]?protected\b|\bDRM\/SNIP\b|\bencrypted HLS\b|\bGo\+/iu.test(error.message)
       ) {
         throw error;
       }

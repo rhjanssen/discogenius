@@ -482,11 +482,35 @@ export function initDatabase() {
   } else {
     // Existing schema-39 database (guaranteed by assertDatabaseVersionCanStart):
     // open only. No ADD COLUMN / repair / FTS rebuild on this path.
+    // Safe IF NOT EXISTS indexes may still be added for query performance.
+    ensureRuntimePerformanceIndexes();
     runStartupIntegrityCheck();
     console.log(`✅ Opened existing schema ${BASE_SCHEMA_VERSION} database`);
   }
 
   initializeDefaultData();
+}
+
+/**
+ * Additive indexes that older schema-39 databases may lack. CREATE INDEX IF
+ * NOT EXISTS is safe on every boot and does not change user_version.
+ */
+function ensureRuntimePerformanceIndexes(): void {
+  const statements = [
+    "CREATE INDEX IF NOT EXISTS idx_track_files_expected_path ON TrackFiles(expected_path)",
+    "CREATE INDEX IF NOT EXISTS idx_track_files_recording_id ON TrackFiles(recording_id)",
+    "CREATE INDEX IF NOT EXISTS idx_track_files_provider_id_type_slot ON TrackFiles(provider_id, file_type, library_slot)",
+    "CREATE INDEX IF NOT EXISTS idx_lyric_files_expected_path ON LyricFiles(expected_path)",
+    "CREATE INDEX IF NOT EXISTS idx_metadata_files_expected_path ON MetadataFiles(expected_path)",
+    "CREATE INDEX IF NOT EXISTS idx_extra_files_expected_path ON ExtraFiles(expected_path)",
+  ];
+  for (const sql of statements) {
+    try {
+      db.exec(sql);
+    } catch (error) {
+      console.warn(`[SQLite] Skipping runtime index: ${sql} (${error instanceof Error ? error.message : error})`);
+    }
+  }
 }
 
 /**
@@ -701,6 +725,8 @@ function createBaselineSchemaV38(): void {
   db.exec(`CREATE INDEX idx_track_files_canonical_release ON TrackFiles(canonical_release_mbid)`);
   db.exec(`CREATE INDEX idx_track_files_provider_resource ON TrackFiles(provider, provider_entity_type, provider_id)`);
   db.exec(`CREATE INDEX idx_track_files_slot_type ON TrackFiles(library_slot, file_type)`);
+  db.exec(`CREATE INDEX idx_track_files_expected_path ON TrackFiles(expected_path)`);
+  db.exec(`CREATE INDEX idx_track_files_provider_id_type_slot ON TrackFiles(provider_id, file_type, library_slot)`);
   db.exec("CREATE INDEX idx_artist_statistics_mbid ON ArtistStatistics(artist_mbid)");
 
   db.exec(`CREATE INDEX idx_metadata_identity_status_status ON metadata_identity_status(status, updated_at DESC)`);

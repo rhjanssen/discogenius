@@ -292,8 +292,12 @@ export type RenamePreviewItem = {
   expected_path: string | null;
   needs_rename: boolean;
   conflict: boolean;
+  /** When set, Apply will drop this file as a same-stem duplicate instead of renaming. */
+  drop_duplicate?: boolean;
   missing: boolean;
   reason?: string;
+  /** Human-readable conflict explanation for the preview UI. */
+  conflict_message?: string;
 };
 
 export type RenameApplyResult = {

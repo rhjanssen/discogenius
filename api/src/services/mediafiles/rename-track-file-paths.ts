@@ -166,13 +166,13 @@ export function buildRenameStatusSummary(
   results: RenamePreviewItem[],
   sampleLimit = 10,
 ): RenameStatusSummary {
-  const actionable = results.filter((item) => item.needs_rename || item.conflict || item.missing);
+  const actionable = results.filter((item) => item.needs_rename || item.conflict || item.missing || item.drop_duplicate);
 
   return {
     total,
     scanned: results.length,
     limited: total > results.length,
-    renameNeeded: results.filter((item) => item.needs_rename).length,
+    renameNeeded: results.filter((item) => item.needs_rename || item.drop_duplicate).length,
     conflicts: results.filter((item) => item.conflict).length,
     missing: results.filter((item) => item.missing).length,
     sample: actionable.slice(0, Math.max(0, sampleLimit)),

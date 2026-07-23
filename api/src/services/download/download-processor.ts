@@ -1338,6 +1338,15 @@ export class DownloadProcessor {
             const completedDownloadState = (CommandQueueManager.get(job.id)?.payload?.downloadState as DownloadStatePayload | undefined) ?? {};
             const importTracks = resetTracksForImportState(completedDownloadState.tracks ?? initialTracks);
 
+            // Re-read the live queue payload so hybrid trackOffers fallbacks that
+            // patched providerTrackIds during download are what organize matches
+            // (basename = tip id). The in-memory `payload` can still hold the
+            // pre-fallback tip list.
+            const liveQueuePayload = CommandQueueManager.get(job.id)?.payload as DownloadAlbumCommand | undefined;
+            const resolvedTrackOffers = Array.isArray(liveQueuePayload?.trackOffers)
+              ? liveQueuePayload.trackOffers
+              : (payload as DownloadAlbumCommand).trackOffers;
+
             // Download finished — transition THIS command into its import phase.
             // The command stays 'started' (one queue entity spans download →
             // import, Lidarr TrackedDownload-style); it moves to History only when
@@ -1363,7 +1372,7 @@ export class DownloadProcessor {
                 slot: payload.slot,
                 trackNumber: payload.trackNumber ?? null,
                 volumeNumber: payload.volumeNumber ?? null,
-                trackOffers: (payload as DownloadAlbumCommand).trackOffers,
+                trackOffers: resolvedTrackOffers,
                 acquisitionMode: (payload as DownloadAlbumCommand).acquisitionMode,
                 type,
                 path: entry.downloadPath,

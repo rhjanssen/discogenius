@@ -277,6 +277,11 @@ test("named venue live attaches to unlabeled MusicBrainz video at exact duration
     assert.equal(offers[0].recordingId, canonical.id, sample.title);
 
     assert.equal(videos.length, 1, `${sample.title}: ${JSON.stringify(videos)}`);
+    assert.equal(
+      (videos[0] as { title: string }).title,
+      sample.title,
+      `${sample.title}: catalog title must stay bare; venue text stays on ProviderItems`,
+    );
   }
 });
 

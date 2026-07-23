@@ -205,7 +205,9 @@ export const runStreamripCommand: StreamripCommandRunner = (command, args, optio
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  let stderr = "";
+  // Streamrip often prints failures on stdout (text_output=true); keep a
+  // combined recent tail so exit-1 is never "unknown error" with an empty stderr.
+  let outputTail = "";
   const buffers = { stdout: "", stderr: "" };
 
   const consume = (source: "stdout" | "stderr", chunk: Buffer | string) => {
@@ -213,7 +215,7 @@ export const runStreamripCommand: StreamripCommandRunner = (command, args, optio
     const lines = buffers[source].split(/\r?\n/u);
     buffers[source] = lines.pop() || "";
     for (const line of lines) {
-      if (source === "stderr") stderr = `${stderr}\n${line}`.trim().slice(-4000);
+      outputTail = `${outputTail}\n${line}`.trim().slice(-4000);
       options.onLine(line);
     }
   };
@@ -229,14 +231,18 @@ export const runStreamripCommand: StreamripCommandRunner = (command, args, optio
   child.once("close", (code, signal) => {
     options.signal?.removeEventListener("abort", abort);
     for (const source of ["stdout", "stderr"] as const) {
-      if (buffers[source].trim()) options.onLine(buffers[source].trim());
+      if (buffers[source].trim()) {
+        const leftover = buffers[source].trim();
+        outputTail = `${outputTail}\n${leftover}`.trim().slice(-4000);
+        options.onLine(leftover);
+      }
     }
     if (options.signal?.aborted) {
       reject(new Error("Deezer download cancelled."));
     } else if (code === 0) {
       resolve();
     } else {
-      reject(new Error(`Streamrip exited with ${signal || code}: ${stderr || "unknown error"}`));
+      reject(new Error(`Streamrip exited with ${signal || code}: ${outputTail || "unknown error"}`));
     }
   });
 });

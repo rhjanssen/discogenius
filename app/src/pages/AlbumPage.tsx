@@ -1080,7 +1080,7 @@ const AlbumPage = () => {
     setRenameApplying(true);
     try {
       const response = await api.getLibraryRenamePreview({ albumId, limit: 1000 }) as { items: RenamePreviewItem[] };
-      const items = response.items.filter((item) => item.missing || item.conflict || item.needs_rename);
+      const items = response.items.filter((item) => item.missing || item.conflict || item.needs_rename || item.drop_duplicate);
       setRenamePreviewItems(items);
       setRenamePreviewOpen(true);
     } catch (error) {

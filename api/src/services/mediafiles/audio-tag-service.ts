@@ -2280,7 +2280,9 @@ export class AudioTagService {
     }
 
     const rows = this.getTrackRows(options, true);
-    const items = await this.evaluateRows(rows, config);
+    // Preview must not network-fetch lyrics (status already disables this).
+    // Disk tag reads alone decide what would change on Apply.
+    const items = await this.evaluateRows(rows, config, { includeExternalMetadata: false });
     return items.filter((item) => item.missing || item.changes.length > 0);
   }
 

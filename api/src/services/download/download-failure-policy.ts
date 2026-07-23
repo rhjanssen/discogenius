@@ -36,6 +36,21 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\bunauthorized\b/i,
   /\bquality not available\b/i,
   /\bno stream(?:ing)? (?:url|available)\b/i,
+  // YouTube / yt-dlp entitlement — retries and cookie re-attempts will not help
+  // once the account still sees private / members-only.
+  /\bprivate video\b/i,
+  /\bmembers[- ]only\b/i,
+  /\bsign in if you've been granted access\b/i,
+  /\blogin required\b/i,
+  // SoundCloud DRM / SNIP (native + yt-dlp wording variants)
+  /\bDRM[\s/_-]?protected\b/i,
+  /\bDRM\/SNIP\b/i,
+  /\bpolicy=SNIP\b/i,
+  /\bencrypted HLS\b/i,
+  // Deezer / Streamrip permanent entitlement
+  /\bnot available in (?:your|this) country\b/i,
+  /\binvalid (?:arl|token)\b/i,
+  /\barl (?:expired|invalid)\b/i,
 ];
 
 const TRANSIENT_PATTERNS: RegExp[] = [

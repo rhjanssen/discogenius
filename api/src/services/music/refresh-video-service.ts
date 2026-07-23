@@ -532,18 +532,13 @@ function applyCatalogVideoIdentity(
     if (!existing) return;
 
     const existingTitle = String(existing.title || "");
-    // Named venue/TV live twin onto a bare MB main title: adopt the fuller
-    // live title with the live variant. Keeping bare title + live variant
-    // breaks reverse matching (TIDAL unlabeled then fails to re-attach).
-    const incomingNamedLive = input.offerVariant === "live"
-        && /\bperformance\b|\blive\s+at\b|\blive\s+from\b/i.test(input.groupTitle);
-    const existingBareMain = isMainVideoVariant(
-        normalizeVideoVariant(existing.video_variant || parseVideoVariant(existingTitle)),
-    ) && !/\bperformance\b|\blive\s+at\b|\blive\s+from\b/i.test(existingTitle);
-    const adoptNamedLiveTitle = Boolean(existing.mbid && incomingNamedLive && existingBareMain);
-
+    // Keep MusicBrainz / catalog titles stable. Venue-live marketing text
+    // ("Live at Other Voices") belongs on ProviderItems.title for that offer;
+    // adopting it onto Recordings.title made rename append "(live at …)" to
+    // files that imported under the bare title. Matching still attaches the
+    // offer to this recording_id without mutating the catalog title.
     const mergedVariant = preferredVideoVariant(existing.video_variant, input.offerVariant);
-    const preferIncomingTitle = adoptNamedLiveTitle || (!input.preserveMbTitle && !existing.mbid);
+    const preferIncomingTitle = !input.preserveMbTitle && !existing.mbid;
     const nextTitle = preferIncomingTitle
         ? (preferredMergedVideoTitle(existingTitle, input.groupTitle) || input.groupTitle)
         : (existingTitle.trim() || input.groupTitle);

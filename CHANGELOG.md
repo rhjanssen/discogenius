@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Global search paints local FTS hits before remote catalog discovery (Lidarr-
+  style), slims track/video enrichment SQL (indexed COALESCE lookups, no
+  album-offer join for autocomplete), and uses `COLLATE NOCASE` artist dedupe
+  instead of `lower()` scans.
+- Rename/retag preview no longer writes `expected_path` on every GET; conflict
+  probes use cached statements + page-local occupancy maps; runtime indexes
+  cover `expected_path` / `(provider_id, file_type, library_slot)`. Lyric same-
+  stem collisions show as selectable duplicates (“Apply keeps destination and
+  removes this file”) instead of opaque Conflicts; hard conflicts explain
+  destination collisions. Retag preview skips external lyrics network fetches.
+- MusicBrainz video titles stay bare when venue-live provider titles attach
+  (`Live at …` stays on `ProviderItems`); rename no longer rewrites imported
+  bare stems with marketing parentheticals.
+- Hybrid album `trackOffers` import re-reads resolved tip ids from the live
+  queue payload after per-track fallback (fixes organizer “Could not match
+  downloaded album files”). Private YouTube / SoundCloud DRM classified as
+  permanent; SoundCloud all-DRM album errors no longer fall through to yt-dlp;
+  Streamrip exit-1 includes stdout+stderr (not opaque “unknown error”).
 - Library scan rematches Discogenius-organized audio that lacks an embedded
   provider id: tag title/duration (and MBID/ISRC when present) against sibling
   album provider offers so missing album tracks become TrackFiles instead of

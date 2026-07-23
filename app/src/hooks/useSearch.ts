@@ -98,30 +98,16 @@ export const useSearch = () => {
         const searchId = ++latestSearchIdRef.current;
 
         setIsSearching(true);
+        let paintedLocal = false;
         try {
-            // Global search is also the add-new-artist discovery path, so it
-            // always asks the API to include remote canonical results; local
-            // index hits still return first in the merged response.
-            const data: SearchResponseContract = await api.search(
-                query,
-                ['artists', 'albums', 'tracks', 'videos'],
-                10,
-                controller.signal,
-                { remote: true },
-            );
-
-            // Ignore stale responses from older requests.
-            if (searchId !== latestSearchIdRef.current) return;
-
+            // Lidarr-style: paint local FTS hits first, then merge remote catalog
+            // discovery without blocking the keystroke on SkyHook/MB latency.
             const formatItem = (item: SearchResultContract, type: 'artist' | 'album' | 'track' | 'video'): SearchResultItem => {
-
-                // Helper to get year
                 const getYear = (date?: string | null) => {
                     if (!date) return '';
                     return new Date(date).getFullYear().toString();
                 };
 
-                // Format the subtitle: Type · Artist · Info
                 const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);
                 const artistPart = item.subtitle || undefined;
 
@@ -134,47 +120,90 @@ export const useSearch = () => {
                 if (artistPart) parts.push(artistPart);
                 if (infoPart) parts.push(infoPart);
 
-                const finalSubtitle = parts.join(' · ');
-
                 return {
                     id: String(item.id),
                     providerId: item.id?.toString(),
                     name: item.name,
-                    imageUrl: null, // Computed on frontend now
+                    imageUrl: null,
                     type,
-                    subtitle: finalSubtitle, // Pre-formatted subtitle
+                    subtitle: parts.join(' · '),
                     monitored: !!item.monitored,
                     inLibrary: !!item.in_library,
                     imageId: item.imageId || undefined,
                 };
             };
 
-            // Backend returns grouped library results
-            const results = data.results;
+            const pickTopResult = (
+                artists: SearchResultItem[],
+                albums: SearchResultItem[],
+                tracks: SearchResultItem[],
+                lowerQuery: string,
+            ): SearchResultItem | undefined =>
+                tracks.find((a) => a.name.toLowerCase() === lowerQuery)
+                || artists.find((a) => a.name.toLowerCase() === lowerQuery)
+                || albums.find((a) => a.name.toLowerCase() === lowerQuery)
+                || artists[0]
+                || tracks[0]
+                || albums[0];
 
-            const artists = (results.artists || []).map((i) => formatItem(i, 'artist'));
-            const albums = (results.albums || []).map((i) => formatItem(i, 'album'));
-            const tracks = (results.tracks || []).map((i) => formatItem(i, 'track'));
-            const videos = (results.videos || []).map((i) => formatItem(i, 'video'));
+            const localData: SearchResponseContract = await api.search(
+                query,
+                ['artists', 'albums', 'tracks', 'videos'],
+                10,
+                controller.signal,
+                { remote: false },
+            );
 
+            if (searchId !== latestSearchIdRef.current) return;
 
-            // Determine top result
-            // Priority: Exact Track Match > Exact Artist Match > Exact Album Match > First Artist > First Track
             const lowerQuery = query.toLowerCase();
-
-            const topResult: SearchResultItem | undefined = tracks.find((a: SearchResultItem) => a.name.toLowerCase() === lowerQuery) ||
-                artists.find((a: SearchResultItem) => a.name.toLowerCase() === lowerQuery) ||
-                albums.find((a: SearchResultItem) => a.name.toLowerCase() === lowerQuery) ||
-                artists[0] ||
-                tracks[0] ||
-                albums[0];
+            let artists = (localData.results.artists || []).map((i) => formatItem(i, 'artist'));
+            let albums = (localData.results.albums || []).map((i) => formatItem(i, 'album'));
+            const tracks = (localData.results.tracks || []).map((i) => formatItem(i, 'track'));
+            const videos = (localData.results.videos || []).map((i) => formatItem(i, 'video'));
 
             setSearchResults({
                 artists,
                 albums,
                 tracks,
                 videos,
-                topResult,
+                topResult: pickTopResult(artists, albums, tracks, lowerQuery),
+            });
+            paintedLocal = true;
+            setIsSearching(false);
+
+            // Remote discovery for Add New (artists/albums not already in library).
+            const remoteData: SearchResponseContract = await api.search(
+                query,
+                ['artists', 'albums'],
+                10,
+                controller.signal,
+                { remote: true, local: false },
+            );
+
+            if (searchId !== latestSearchIdRef.current) return;
+
+            const seenArtistIds = new Set(artists.map((item) => item.id));
+            const seenAlbumIds = new Set(albums.map((item) => item.id));
+            for (const item of (remoteData.results.artists || []).map((i) => formatItem(i, 'artist'))) {
+                if (!seenArtistIds.has(item.id)) {
+                    artists = [...artists, item];
+                    seenArtistIds.add(item.id);
+                }
+            }
+            for (const item of (remoteData.results.albums || []).map((i) => formatItem(i, 'album'))) {
+                if (!seenAlbumIds.has(item.id)) {
+                    albums = [...albums, item];
+                    seenAlbumIds.add(item.id);
+                }
+            }
+
+            setSearchResults({
+                artists,
+                albums,
+                tracks,
+                videos,
+                topResult: pickTopResult(artists, albums, tracks, lowerQuery),
             });
         } catch (error: any) {
             const isHidden = typeof document !== 'undefined' && document.visibilityState !== 'visible';
@@ -186,6 +215,12 @@ export const useSearch = () => {
             }
 
             if (searchId !== latestSearchIdRef.current) return;
+
+            // Keep already-painted local hits if only the remote discovery leg failed.
+            if (paintedLocal) {
+                console.warn('Remote catalog search failed; keeping local results:', error);
+                return;
+            }
 
             console.error('Search error:', error);
             toastRef.current({
