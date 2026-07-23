@@ -1,5 +1,6 @@
 import {
     albumCoverLocalUrl,
+    albumProviderArtworkCandidatesFromRow,
     imageContainerFromImagesColumn,
 } from "./media-cover-service.js";
 
@@ -11,5 +12,6 @@ export async function resolveHydratedReleaseGroupArtwork(
     return albumCoverLocalUrl({
         albumMbid: releaseGroup.mbid,
         images: imageContainerFromImagesColumn(releaseGroup.images),
+        providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });
 }

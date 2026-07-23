@@ -48,12 +48,14 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         COALESCE(stereo.quality, spatial.quality) AS selected_quality,
         stereo.selected_provider AS stereo_provider,
         stereo.selected_provider_id AS stereo_provider_id,
+        stereo_provider_item.provider_url AS stereo_provider_url,
         stereo.selected_release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
         stereo.match_evidence AS stereo_match_evidence,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
+        spatial_provider_item.provider_url AS spatial_provider_url,
         spatial.selected_release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
@@ -66,6 +68,26 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
       LEFT JOIN ReleaseGroupSlots spatial
         ON spatial.release_group_mbid = rg.mbid
        AND spatial.slot = 'spatial'
+      LEFT JOIN ProviderItems stereo_provider_item
+        ON stereo_provider_item.provider = stereo.selected_provider
+       AND stereo_provider_item.entity_type = 'album'
+       AND stereo_provider_item.provider_id = stereo.selected_provider_id
+       AND (stereo_provider_item.match_status IS NULL OR LOWER(stereo_provider_item.match_status) <> 'rejected')
+       AND (
+         stereo_provider_item.availability IS NULL
+         OR LOWER(CAST(stereo_provider_item.availability AS TEXT))
+            NOT IN ('0', 'false', 'unavailable', 'no', '')
+       )
+      LEFT JOIN ProviderItems spatial_provider_item
+        ON spatial_provider_item.provider = spatial.selected_provider
+       AND spatial_provider_item.entity_type = 'album'
+       AND spatial_provider_item.provider_id = spatial.selected_provider_id
+       AND (spatial_provider_item.match_status IS NULL OR LOWER(spatial_provider_item.match_status) <> 'rejected')
+       AND (
+         spatial_provider_item.availability IS NULL
+         OR LOWER(CAST(spatial_provider_item.availability AS TEXT))
+            NOT IN ('0', 'false', 'unavailable', 'no', '')
+       )
       WHERE rg.mbid = ?
     `).get(releaseGroupMbid) as any | null;
 }
@@ -301,6 +323,7 @@ function chooseReleaseGroupArtwork(releaseGroup: any): string | null {
     return albumCoverLocalUrl({
         albumMbid: releaseGroup.mbid,
         images: imageContainerFromImagesColumn(releaseGroup.images),
+        providerCandidates: albumProviderArtworkCandidatesFromRow(releaseGroup),
     });
 }
 
@@ -411,11 +434,13 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
         quality: "",
         stereo_provider: releaseGroup.stereo_provider || null,
         stereo_provider_id: releaseGroup.stereo_provider_id || null,
+        stereo_provider_url: releaseGroup.stereo_provider_url || null,
         stereo_quality: releaseGroup.stereo_quality || null,
         stereo_match_status: releaseGroup.stereo_match_status || null,
         stereo_release_mbid: releaseGroup.stereo_release_mbid || null,
         spatial_provider: includeSpatial ? releaseGroup.spatial_provider || null : null,
         spatial_provider_id: includeSpatial ? releaseGroup.spatial_provider_id || null : null,
+        spatial_provider_url: includeSpatial ? releaseGroup.spatial_provider_url || null : null,
         spatial_quality: includeSpatial ? releaseGroup.spatial_quality || null : null,
         spatial_match_status: includeSpatial ? releaseGroup.spatial_match_status || null : null,
         spatial_release_mbid: includeSpatial ? releaseGroup.spatial_release_mbid || null : null,
@@ -752,6 +777,8 @@ type ProviderTrackSelection = {
 type AnnotatedProviderTrack = ProviderTrack & {
     __providerId: string;
     __providerAlbumId: string;
+    __providerAlbumUrl: string | null;
+    __providerTrackUrl: string | null;
     __slot: ProviderTrackSlot;
     __albumQuality: string | null;
     __key: string;
@@ -1021,13 +1048,51 @@ async function attachProviderPreviewTracks(
         // selected slot mirrors stereo when both are set; prefer stereo tips.
         const selectedTips = stereoTips.size > 0 ? stereoTips : spatialTips;
 
+        const lookupProviderItemUrl = db.prepare(`
+            SELECT provider_url
+            FROM ProviderItems
+            WHERE provider = ?
+              AND entity_type = ?
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+              AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
+              AND (
+                availability IS NULL
+                OR LOWER(CAST(availability AS TEXT))
+                   NOT IN ('0', 'false', 'unavailable', 'no', '')
+              )
+            LIMIT 1
+        `);
+        const storedProviderUrl = (
+            provider: string,
+            entityType: "album" | "track",
+            providerId: string,
+        ): string | null => {
+            const row = lookupProviderItemUrl.get(provider, entityType, providerId) as {
+                provider_url?: string | null;
+            } | undefined;
+            return String(row?.provider_url || "").trim() || null;
+        };
+
         const providerTracks = (await Promise.all(providerAlbumSelections.map(async (selection) => {
             const provider = streamingProviderManager.getStreamingProvider(selection.providerId);
             const albumTracks = await provider.getAlbumTracks(selection.providerAlbumId);
+            const providerAlbumUrl = storedProviderUrl(
+                selection.providerId,
+                "album",
+                selection.providerAlbumId,
+            );
             return albumTracks.map((track, index) => ({
                 ...track,
                 __providerId: selection.providerId,
                 __providerAlbumId: selection.providerAlbumId,
+                __providerAlbumUrl: providerAlbumUrl
+                    || String(track.album?.url || "").trim()
+                    || null,
+                __providerTrackUrl: storedProviderUrl(
+                    selection.providerId,
+                    "track",
+                    String(track.providerId || ""),
+                ) || String(track.url || "").trim() || null,
                 __slot: selection.slot,
                 __albumQuality: selection.quality,
                 __key: `${selection.providerId}:${selection.providerAlbumId}:${track.providerId || index}`,
@@ -1097,19 +1162,31 @@ async function attachProviderPreviewTracks(
                     slot: "stereo",
                     provider: stereoBest.providerTrack.__providerId,
                     providerAlbumId: stereoBest.providerTrack.__providerAlbumId,
+                    ...(stereoBest.providerTrack.__providerAlbumUrl
+                        ? { providerUrl: stereoBest.providerTrack.__providerAlbumUrl }
+                        : {}),
                     quality: offerDisplayQuality(stereoBest.providerTrack, "stereo"),
                     matchStatus: releaseGroup.stereo_match_status || null,
                     selectedReleaseMbid: releaseGroup.stereo_release_mbid || null,
                     providerTrackId: String(stereoBest.providerTrack.providerId || "").trim() || null,
+                    ...(stereoBest.providerTrack.__providerTrackUrl
+                        ? { providerTrackUrl: stereoBest.providerTrack.__providerTrackUrl }
+                        : {}),
                 } : null,
                 spatialBest ? {
                     slot: "spatial",
                     provider: spatialBest.providerTrack.__providerId,
                     providerAlbumId: spatialBest.providerTrack.__providerAlbumId,
+                    ...(spatialBest.providerTrack.__providerAlbumUrl
+                        ? { providerUrl: spatialBest.providerTrack.__providerAlbumUrl }
+                        : {}),
                     quality: offerDisplayQuality(spatialBest.providerTrack, "spatial"),
                     matchStatus: releaseGroup.spatial_match_status || null,
                     selectedReleaseMbid: releaseGroup.spatial_release_mbid || null,
                     providerTrackId: String(spatialBest.providerTrack.providerId || "").trim() || null,
+                    ...(spatialBest.providerTrack.__providerTrackUrl
+                        ? { providerTrackUrl: spatialBest.providerTrack.__providerTrackUrl }
+                        : {}),
                 } : null,
             ].filter((offer): offer is NonNullable<typeof offer> => Boolean(offer));
 

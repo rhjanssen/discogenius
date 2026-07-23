@@ -62,14 +62,16 @@ test("canonical resolution prefers higher resolution within a provider", () => {
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, recording_mbid, recording_id,
-      title, quality, availability, library_slot
+      title, quality, availability, library_slot, match_status
     ) VALUES
       ('tidal', 'video', 'z-unavailable', 'canonical-recording', 11,
-       'Canonical asset', 'MP4_2160P', 'unavailable', 'video'),
+       'Canonical asset', 'MP4_2160P', 'unavailable', 'video', NULL),
+      ('tidal', 'video', 'rejected-4k', 'canonical-recording', 11,
+       'Canonical asset', 'MP4_2160P', 'available', 'video', 'rejected'),
       ('tidal', 'video', 'b-available', 'canonical-recording', 11,
-       'Canonical asset', 'MP4_1080P', 'available', 'video'),
+       'Canonical asset', 'MP4_1080P', 'available', 'video', NULL),
       ('tidal', 'video', 'a-available', 'canonical-recording', 11,
-       'Canonical asset', 'MP4_720P', 'available', 'video')
+       'Canonical asset', 'MP4_720P', 'available', 'video', NULL)
   `).run();
 
   assert.deepEqual(resolver.resolveVideoOfferForProvider("tidal", "11"), {
@@ -79,6 +81,8 @@ test("canonical resolution prefers higher resolution within a provider", () => {
     recordingId: "11",
     recordingMbid: "canonical-recording",
   });
+  assert.equal(resolver.isKnownProviderVideoOffer("tidal", "rejected-4k"), false);
+  assert.equal(resolver.resolveRequestedVideoOffer("tidal", "rejected-4k"), null);
 });
 
 test("preferred offer chooses Apple 4K over a preferred-provider TIDAL 1080p offer", () => {
@@ -104,4 +108,23 @@ test("preferred offer chooses Apple 4K over a preferred-provider TIDAL 1080p off
     recordingId: "21",
     recordingMbid: "shared-recording",
   });
+});
+
+test("same-resolution ranking prefers HEVC Apple Music over h.264 TIDAL", () => {
+  assert.ok(
+    resolver.compareVideoOffersByQualityThenProvider(
+      { provider: "apple-music", quality: "FHD", provider_id: "a" },
+      { provider: "tidal", quality: "FHD", provider_id: "t" },
+    ) < 0,
+  );
+  assert.ok(
+    resolver.compareVideoOffersByQualityThenProvider(
+      { provider: "youtube-music", quality: "FHD", provider_id: "y" },
+      { provider: "apple-music", quality: "FHD", provider_id: "a" },
+    ) < 0,
+  );
+  assert.equal(resolver.videoOfferCodecRank("youtube-music", "UHD"), 400);
+  assert.equal(resolver.videoOfferCodecRank("youtube-music", "FHD"), 300);
+  assert.equal(resolver.videoOfferCodecRank("apple-music", "FHD"), 200);
+  assert.equal(resolver.videoOfferCodecRank("tidal", "FHD"), 100);
 });

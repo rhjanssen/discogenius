@@ -7,11 +7,13 @@ import type { ProviderQualityOffer } from "@/components/ui/ProviderQualityPill";
  */
 export function albumSelectedQualityOffers(album: {
   stereo_provider_id?: string | null;
+  stereo_provider_url?: string | null;
   stereo_quality?: string | null;
   stereo_provider?: string | null;
   stereo_match_status?: string | null;
   stereo_release_mbid?: string | null;
   spatial_provider_id?: string | null;
+  spatial_provider_url?: string | null;
   spatial_quality?: string | null;
   spatial_provider?: string | null;
   spatial_match_status?: string | null;
@@ -30,6 +32,7 @@ export function albumSelectedQualityOffers(album: {
       provider: album.stereo_provider || album.selected_provider,
       matchStatus: album.stereo_match_status,
       providerAlbumId: album.stereo_provider_id,
+      providerUrl: album.stereo_provider_url,
       selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
     });
   }
@@ -40,6 +43,7 @@ export function albumSelectedQualityOffers(album: {
       provider: album.spatial_provider || album.selected_provider,
       matchStatus: album.spatial_match_status,
       providerAlbumId: album.spatial_provider_id,
+      providerUrl: album.spatial_provider_url,
       selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
     });
   }

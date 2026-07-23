@@ -31,13 +31,13 @@ describe("artwork helpers", () => {
     );
   });
 
-  it("toMediaCoverProxyUrl preserves source and lastWrite query params", () => {
+  it("toMediaCoverProxyUrl preserves source and revision query params", () => {
     expect(
-      toMediaCoverProxyUrl("/media-cover/Videos/12/cover.jpg?lastWrite=99"),
-    ).toBe("/media-cover/Videos/12/cover-250.jpg?lastWrite=99");
+      toMediaCoverProxyUrl("/media-cover/Videos/12/cover.jpg?rev=abc123"),
+    ).toBe("/media-cover/Videos/12/cover-250.jpg?rev=abc123");
     expect(
-      toMediaCoverProxyUrl("/media-cover/Albums/rg/cover.jpg?source=canonical&lastWrite=42"),
-    ).toBe("/media-cover/Albums/rg/cover-500.jpg?source=canonical&lastWrite=42");
+      toMediaCoverProxyUrl("/media-cover/Albums/rg/cover.jpg?source=canonical&rev=def456"),
+    ).toBe("/media-cover/Albums/rg/cover-500.jpg?source=canonical&rev=def456");
   });
 
   it("toMediaCoverProxyUrl leaves remote URLs alone", () => {

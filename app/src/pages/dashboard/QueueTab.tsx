@@ -186,7 +186,7 @@ function inferAlbumTrackStatus(
         currentProviderTrackId?: string | null;
         trackStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
         state?: string;
-        progress?: number;
+        progress?: number | null;
     } | undefined,
     tracks: Array<{ title: string; trackNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }>,
     persistedStatus?: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped',
@@ -1610,23 +1610,27 @@ const QueueTab = () => {
                                                             <ProgressBar
                                                                 thickness="medium"
                                                                 color="brand"
-                                                                value={prog.progress !== undefined ? prog.progress / 100 : undefined}
+                                                                value={typeof prog.progress === "number" ? prog.progress / 100 : undefined}
                                                             />
                                                         </div>
                                                         <Text className={styles.progressText}>
-                                                            {prog.progress !== undefined ? `${prog.progress}%` : "…"}
-                                                            {group.type === "album"
-                                                                ? (() => {
-                                                                    const catalogTotal = prog.tracks?.length || 0;
-                                                                    const total = catalogTotal > 0
-                                                                        ? catalogTotal
-                                                                        : (prog.totalFiles ?? null);
-                                                                    const current = total != null && prog.currentFileNum != null
-                                                                        ? Math.min(prog.currentFileNum, total)
-                                                                        : prog.currentFileNum;
-                                                                    return ` · ${current ?? "…"}/${total ?? "…"} files`;
-                                                                })()
-                                                                : ""}
+                                                            {typeof prog.progress === "number"
+                                                                ? `${prog.progress}%`
+                                                                : null}
+                                                            {(() => {
+                                                                const catalogTotal = prog.tracks?.length || 0;
+                                                                const total = catalogTotal > 0
+                                                                    ? catalogTotal
+                                                                    : (prog.totalFiles ?? null);
+                                                                if (total == null || total <= 0) {
+                                                                    return typeof prog.progress === "number" ? "" : "…";
+                                                                }
+                                                                const current = prog.currentFileNum != null
+                                                                    ? Math.min(prog.currentFileNum, total)
+                                                                    : null;
+                                                                const prefix = typeof prog.progress === "number" ? " · " : "";
+                                                                return `${prefix}${current ?? "…"}/${total} files`;
+                                                            })()}
                                                         </Text>
                                                     </div>
                                                 )}

@@ -695,6 +695,7 @@ const VideoPage = () => {
                                             quality: offer.quality,
                                             provider: offer.provider,
                                             providerAlbumId: offer.provider_id,
+                                            providerUrl: offer.url,
                                             available: offer.available,
                                             canPreview: offer.can_preview,
                                             canDownload: offer.can_download,

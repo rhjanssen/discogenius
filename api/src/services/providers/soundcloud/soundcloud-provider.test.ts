@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { test } from "node:test";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-soundcloud-"));
@@ -162,6 +164,8 @@ function fixtureFetch(input: string) {
     payload = ophIncompletePlaylist;
   } else if (url.pathname === "/tracks/194886453") {
     payload = track;
+  } else if (url.pathname === "/tracks/194886454") {
+    payload = album.tracks[1];
   } else if (url.pathname.startsWith("/media/")) {
     payload = { url: "https://cf-media.sndcdn.com/fixture.128.mp3" };
   } else if (url.hostname === "cf-media.sndcdn.com") {
@@ -239,6 +243,44 @@ test("SoundCloud maps api-v2 search into provider-neutral resources", async () =
   assert.equal(result.tracks[0]?.isrc, "GBUM71234567");
   assert.equal(result.tracks[0]?.duration, 210);
   assert.equal(result.videos.length, 0);
+});
+
+test("SoundCloud mappers do not fabricate public links from numeric ids", async () => {
+  saveSoundCloudCredentials({ oauthToken: "2-326587-test-token" });
+  const withoutPermalinks = (input: string) => {
+    const url = new URL(input);
+    let payload: unknown;
+    if (url.pathname === "/users/1478437") {
+      payload = { ...user, permalink_url: undefined };
+    } else if (url.pathname === "/playlists/1891733180") {
+      payload = {
+        ...album,
+        permalink_url: undefined,
+        user: { ...user, permalink_url: undefined },
+      };
+    } else if (url.pathname === "/tracks/194886453") {
+      payload = {
+        ...track,
+        permalink_url: undefined,
+        user: { ...user, permalink_url: undefined },
+      };
+    } else {
+      return fixtureFetch(input);
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => payload,
+      arrayBuffer: async () => new ArrayBuffer(0),
+      text: async () => JSON.stringify(payload),
+    });
+  };
+  const provider = new SoundCloudProvider(withoutPermalinks);
+
+  assert.equal((await provider.getArtist("1478437")).url, undefined);
+  assert.equal((await provider.getAlbum("1891733180")).url, undefined);
+  assert.equal((await provider.getTrack("194886453")).url, undefined);
 });
 
 test("SoundCloud album tracklists keep provider track ids and positions", async () => {
@@ -347,12 +389,138 @@ test("SoundCloud native backend downloads progressive MP3 named by provider id",
     providerId: "194886453",
     downloadPath,
   }, {
-    onProgress: (event) => progress.push(event.progress),
+    onProgress: (event) => progress.push(event.progress ?? -1),
   });
   const output = path.join(downloadPath, "194886453.mp3");
   assert.ok(fs.existsSync(output));
   assert.ok(fs.statSync(output).size > 0);
   assert.ok(progress.length > 0);
+});
+
+test("SoundCloud album rejects DRM-only tracks instead of falling through to yt-dlp", async () => {
+  saveSoundCloudCredentials({ oauthToken: "2-326587-test-token" });
+  const downloadPath = path.join(tempDir, "album-preflight-dl");
+  fs.rmSync(downloadPath, { recursive: true, force: true });
+  fs.mkdirSync(downloadPath, { recursive: true });
+  let fallbackRuns = 0;
+  const backend = new SoundCloudBackend({
+    fetchImpl: fixtureFetch,
+    preferNative: true,
+    spawnImpl: () => {
+      fallbackRuns += 1;
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+        kill: () => boolean;
+      };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => true;
+      queueMicrotask(() => child.emit("close", 0, null));
+      return child as any;
+    },
+    mediaFileFinder: async () => [path.join(downloadPath, "194886453.mp3")],
+  });
+
+  await assert.rejects(
+    () => backend.download({
+      provider: "soundcloud",
+      entityType: "album",
+      providerId: "1891733180",
+      downloadPath,
+    }, {
+      onProgress: () => undefined,
+    }),
+    /DRM-protected/,
+  );
+  assert.equal(fallbackRuns, 0);
+  assert.deepEqual(fs.readdirSync(downloadPath), []);
+});
+
+test("SoundCloud removes staged native album files when a later transfer fails", async () => {
+  saveSoundCloudCredentials({ oauthToken: "2-326587-test-token" });
+  const downloadPath = path.join(tempDir, "album-transfer-failure-dl");
+  fs.rmSync(downloadPath, { recursive: true, force: true });
+  fs.mkdirSync(downloadPath, { recursive: true });
+  const progressiveSecondTrack = {
+    ...album.tracks[1],
+    media: {
+      transcodings: [{
+        url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:194886454/progressive",
+        snipped: false,
+        format: { protocol: "progressive", mime_type: "audio/mpeg" },
+      }],
+    },
+  };
+  const transferFailureFetch = (input: string) => {
+    const url = new URL(input);
+    if (url.pathname === "/tracks/194886454") {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => progressiveSecondTrack,
+        arrayBuffer: async () => new ArrayBuffer(0),
+        text: async () => JSON.stringify(progressiveSecondTrack),
+      });
+    }
+    if (url.pathname.startsWith("/media/")) {
+      const providerTrackId = url.pathname.match(/tracks:(\d+)/u)?.[1] || "unknown";
+      const payload = { url: `https://cf-media.sndcdn.com/${providerTrackId}.mp3` };
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => payload,
+        arrayBuffer: async () => new ArrayBuffer(0),
+        text: async () => JSON.stringify(payload),
+      });
+    }
+    if (url.hostname === "cf-media.sndcdn.com") {
+      const fails = url.pathname.includes("194886454");
+      const body = Buffer.from("ID3fixture-audio");
+      return Promise.resolve({
+        ok: !fails,
+        status: fails ? 503 : 200,
+        headers: { get: () => "audio/mpeg" },
+        json: async () => ({}),
+        arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+        text: async () => "",
+      });
+    }
+    return fixtureFetch(input);
+  };
+  let fallbackRuns = 0;
+  const backend = new SoundCloudBackend({
+    fetchImpl: transferFailureFetch,
+    preferNative: true,
+    spawnImpl: () => {
+      fallbackRuns += 1;
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+        kill: () => boolean;
+      };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => true;
+      queueMicrotask(() => child.emit("close", 0, null));
+      return child as any;
+    },
+    mediaFileFinder: async () => [path.join(downloadPath, "194886453.mp3")],
+  });
+
+  await backend.download({
+    provider: "soundcloud",
+    entityType: "album",
+    providerId: "1891733180",
+    downloadPath,
+  }, {
+    onProgress: () => undefined,
+  });
+
+  assert.equal(fallbackRuns, 1);
+  assert.deepEqual(fs.readdirSync(downloadPath), []);
 });
 
 test("SoundCloud provider auth status reports connected user from /me", async () => {

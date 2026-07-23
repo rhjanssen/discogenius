@@ -5,8 +5,9 @@
 <h1 align="center">Discogenius</h1>
 
 <p align="center">
-  A self-hosted music library manager: MusicBrainz identity, curated
-  discographies, and streaming-provider availability/downloads.
+  A self-hosted music collection manager for streaming libraries.
+  MusicBrainz identity, curated discographies, and downloads from your
+  streaming providers.
 </p>
 
 <p align="center">
@@ -23,17 +24,18 @@
 
 > [!WARNING]
 > Discogenius is **not** affiliated with Amazon Music, Apple Music, Deezer,
-> Google/YouTube, SoundCloud, Spotify, TIDAL, MusicBrainz/MetaBrainz, or Lidarr. Provider
-> tools and credentials are yours to use lawfully — **do not** use Discogenius
-> to distribute or pirate music.
+> Google/YouTube, SoundCloud, Spotify, TIDAL, MusicBrainz/MetaBrainz, or Lidarr.
+> Provider tools and credentials are yours to use lawfully — **do not** use
+> Discogenius to distribute or pirate music.
 
 ## Features
 
-- MusicBrainz-canonical artists, release groups, releases, tracks, and recordings
-- Curated stereo / spatial / music-video library slots with discography deduplication
-- Provider plugins for availability, previews, downloads, and allowed metadata supplements
-- Organize, retag, fingerprint (AcoustID), and import existing libraries
-- Command queue, scheduling, and quality profiles
+- Monitor artists and download missing albums, tracks, and music videos
+- MusicBrainz-canonical catalog with stereo, spatial, and video library slots
+- Streaming providers for availability and downloads (TIDAL, Apple Music,
+  YouTube Music, Deezer, SoundCloud; Amazon Music and Spotify coming soon)
+- Organize, rename, retag, and import existing libraries
+- Quality profiles, upgrades, and a command queue with scheduling
 
 ## Demo
 
@@ -45,8 +47,8 @@
 
 ### Docker (recommended)
 
-Copy [`docker-compose.example.yml`](docker-compose.example.yml) (or use the
-snippet below), set paths/PUID/PGID, then:
+Copy [`docker-compose.example.yml`](docker-compose.example.yml), set paths /
+PUID / PGID, then:
 
 ```bash
 docker compose up -d
@@ -55,7 +57,6 @@ docker compose up -d
 ```yaml
 services:
   discogenius:
-    # Prefer a release tag on NAS hosts that cache `latest` aggressively.
     image: rhjanssen/discogenius:latest
     container_name: discogenius
     environment:
@@ -67,7 +68,7 @@ services:
       - ${DISCOGENIUS_BIND_IP:-127.0.0.1}:${PORT:-3737}:${PORT:-3737}
     volumes:
       - /path/to/config:/config
-      - /path/to/downloads:/downloads   # optional staging area
+      - /path/to/downloads:/downloads
       - /path/to/library:/library
     restart: unless-stopped
 ```
@@ -76,14 +77,13 @@ Open [http://localhost:3737](http://localhost:3737).
 
 | Volume | Purpose |
 | --- | --- |
-| `/config` | SQLite DB, settings, provider tokens (persist this) |
-| `/downloads` | Transient download workspace (optional but recommended) |
+| `/config` | Database, settings, and provider tokens |
+| `/downloads` | Temporary download workspace |
 | `/library` | Your music library roots |
 
-**Apple Music downloads** need the `apple-music-wrapper` service in the compose
-file (FairPlay decryption). It starts with a normal `docker compose up -d`.
-Delete that service block from the compose file if you will not use Apple Music
-downloads — catalog/auth still work without it.
+Apple Music downloads also need the `apple-music-wrapper` service from the
+example compose file. Remove that service if you will not use Apple Music
+downloads.
 
 **Updates:**
 
@@ -91,37 +91,16 @@ downloads — catalog/auth still work without it.
 docker compose pull && docker compose up -d
 ```
 
-Pin a release tag (for example `rhjanssen/discogenius:2.4.0`) if your host
-keeps serving a cached `latest`.
+Prefer a pinned tag (for example `rhjanssen/discogenius:2.6.4`) on hosts that
+cache `latest` aggressively.
 
-> **Note:** Image upgrades that bump the SQLite schema version currently require
-> a fresh `/config` database (files on disk can stay). Prefer soak/test
+> **Note:** Image upgrades that bump the SQLite schema currently need a fresh
+> `/config` database (library files on disk can stay). Prefer soak/test
 > deployments until schema migrations ship.
-
-### Streaming providers
-
-MusicBrainz is the catalog source of truth. Providers supply offers, downloads,
-artwork/previews, and allowed supplements — not a parallel catalog.
-
-| Provider | Status | Catalog | Downloads |
-| --- | --- | --- | --- |
-| **TIDAL** | Connect in Auth | TIDAL API (device login) | `tiddl` — stereo / hi-res / Atmos / video |
-| **Apple Music** | Connect in Auth | Media-user token | Downloader + optional decrypt wrapper — AAC/ALAC / Atmos / video |
-| **YouTube Music** | Connect in Auth | Public `ytmusicapi` (+ optional cookies) | `yt-dlp` — lossy audio / video |
-| **Deezer** | Connect in Auth | Public Deezer API | Streamrip (+ `arl`) — MP3 / FLAC |
-| **SoundCloud** | Connect in Auth (experimental) | Unofficial `api-v2` + oauth token | Native progressive MP3 / `yt-dlp` fallback — lossy |
-| **Amazon Music** | Soon | Unofficial API (in-tree) | Re-enable when token host is reliable |
-| **Spotify** | Soon | Official Web API (in-tree) | Re-enable when connect UX is simpler |
-
-Auth-page cards show the exact credential fields and steps. Tool versions,
-sidecars, and packaging notes live in
-[docs/EXTERNAL_DEPENDENCIES.md](docs/EXTERNAL_DEPENDENCIES.md); backend choices
-in [docs/PROVIDER_DOWNLOADER_DECISION.md](docs/PROVIDER_DOWNLOADER_DECISION.md).
 
 ### From source
 
-Requires Node.js 22+, Yarn 1.22.x, and (for live downloads) the provider tools
-documented in [docs/EXTERNAL_DEPENDENCIES.md](docs/EXTERNAL_DEPENDENCIES.md).
+Requires Node.js 22+ and Yarn 1.22.x.
 
 ```bash
 yarn install
@@ -129,18 +108,14 @@ yarn dev          # API + app
 yarn ci           # lint, typecheck, api tests, build
 ```
 
-Contributor rules: [AGENTS.md](AGENTS.md).
-
 ## Documentation
 
 | Doc | Contents |
 | --- | --- |
-| [docs/README.md](docs/README.md) | Full documentation map |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current architecture |
-| [docs/MB_LOCAL_MODE.md](docs/MB_LOCAL_MODE.md) | Local MusicBrainz catalog mode |
-| [docs/CURATION_DEDUPLICATION.md](docs/CURATION_DEDUPLICATION.md) | Slot curation & deduplication |
-| [docs/TASKS.md](docs/TASKS.md) | Outstanding work |
-| [CHANGELOG.md](CHANGELOG.md) | Shipped history |
+| [docs/README.md](docs/README.md) | Documentation map |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [docs/EXTERNAL_DEPENDENCIES.md](docs/EXTERNAL_DEPENDENCIES.md) | Provider tools and sidecars |
+| [AGENTS.md](AGENTS.md) | Contributor conventions |
 
 ## Support
 
@@ -149,7 +124,7 @@ Bugs and feature requests: [GitHub Issues](https://github.com/rhjanssen/discogen
 ## Contributing
 
 1. Fork and create a feature branch
-2. Keep changes focused; open an issue first for large work
+2. Keep changes focused
 3. Run `yarn ci` before opening a pull request
 4. Follow [AGENTS.md](AGENTS.md)
 
@@ -157,9 +132,6 @@ Bugs and feature requests: [GitHub Issues](https://github.com/rhjanssen/discogen
 
 Provider integrations use official APIs, unofficial APIs, and third-party
 download tools. You are responsible for accounts, subscriptions, regional
-entitlements, and compliance with each service’s terms (including
-[Spotify’s Developer Policy](https://developer.spotify.com/policy) if/when
-Spotify downloads are re-enabled).
+entitlements, and each service’s terms.
 
-This project includes AI-assisted code. Review carefully before production use:
-features may be incomplete, and subtle bugs are possible.
+This project includes AI-assisted code. Review carefully before production use.

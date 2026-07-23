@@ -129,6 +129,11 @@ test("getReleaseGroupAvailability expands dual-capability Apple albums into ster
 test("getReleaseGroupAvailability reports per-release provider availability and current selection", () => {
   const { db } = dbModule;
   seedReleaseGroup();
+  db.prepare(`
+    UPDATE ProviderItems
+    SET provider_url = 'https://tidal.com/browse/album/prov-stereo'
+    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = 'prov-stereo'
+  `).run();
   providerMatches.upsertProviderReleaseMatch({ provider: "tidal", providerId: "prov-stereo", releaseMbid: "rel-stereo", status: "verified", confidence: 0.95 });
   providerMatches.upsertProviderReleaseMatch({ provider: "tidal", providerId: "prov-atmos", releaseMbid: "rel-atmos", status: "verified", confidence: 0.9 });
   db.prepare(`INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid)
@@ -151,6 +156,10 @@ test("getReleaseGroupAvailability reports per-release provider availability and 
   assert.equal(stereo.duration, 354);
   assert.equal(stereo.availability[0].provider, "tidal");
   assert.equal(stereo.availability[0].providerAlbumId, "prov-stereo");
+  assert.equal(
+    stereo.availability[0].providerUrl,
+    "https://tidal.com/browse/album/prov-stereo",
+  );
   assert.equal(stereo.availability[0].quality, "LOSSLESS");
 
   const atmos = result.releases.find((r) => r.releaseMbid === "rel-atmos");
@@ -163,6 +172,41 @@ test("getReleaseGroupAvailability reports per-release provider availability and 
   const vinyl = withVinyl.releases.find((r) => r.releaseMbid === "rel-vinyl");
   assert.ok(vinyl);
   assert.equal(vinyl.availability.length, 0);
+});
+
+test("getReleaseGroupAvailability does not resurrect rejected or unavailable album offers", () => {
+  const { db } = dbModule;
+  seedReleaseGroup();
+  providerMatches.upsertProviderReleaseMatch({
+    provider: "tidal",
+    providerId: "prov-stereo",
+    releaseMbid: "rel-stereo",
+    status: "verified",
+    confidence: 0.95,
+  });
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid, quality
+    ) VALUES (
+      'artist-mbid-1', 'rg-1', 'stereo', 1,
+      'tidal', 'prov-stereo', 'rel-stereo', 'LOSSLESS'
+    )
+  `).run();
+  db.prepare(`
+    UPDATE ProviderItems
+    SET availability = 'unavailable', match_status = 'rejected'
+    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = 'prov-stereo'
+  `).run();
+
+  const result = providerMatches.getReleaseGroupAvailability("rg-1");
+  const stereo = result.releases.find((release) => release.releaseMbid === "rel-stereo");
+
+  assert.ok(stereo);
+  assert.equal(
+    stereo.availability.some((offer) => offer.providerAlbumId === "prov-stereo"),
+    false,
+  );
 });
 
 test("getReleaseGroupAvailability hides stale direct match edges after rematching a provider album", () => {

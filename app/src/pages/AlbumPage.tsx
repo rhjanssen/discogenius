@@ -79,6 +79,7 @@ import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
 import { useToast } from "@/hooks/useToast";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
+import { useHorizontalScrollRestore } from "@/hooks/useHorizontalScrollRestore";
 import { parseWimpLinks } from "@/utils/wimpLinks";
 import { formatMetadataAttribution } from "@/utils/date";
 import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
@@ -99,7 +100,12 @@ import {
   type RenamePreviewItem,
   type RetagPreviewItem,
 } from "@/components/mediafiles/FileMaintenanceDialogs";
-import { ReleaseSwitcher, selectedOfferExplicitForSlot, type SwitchableSlot } from "@/pages/album/ReleaseSwitcher";
+import {
+  ReleaseSwitcher,
+  selectedOfferExplicitForSlot,
+  selectedProviderOfferForSlot,
+  type SwitchableSlot,
+} from "@/pages/album/ReleaseSwitcher";
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
@@ -118,21 +124,17 @@ function albumAssociatedVideoElementId(videoId: string): string {
 }
 
 function formatAssociatedVideoTrackLabel(video: AlbumAssociatedVideo): string | null {
-  const trackTitle = String(video.track_title || "").trim();
   const trackNumber = video.track_number == null || !Number.isFinite(video.track_number)
     ? null
     : Math.trunc(video.track_number);
   const volumeNumber = video.volume_number == null || !Number.isFinite(video.volume_number)
     ? null
     : Math.trunc(video.volume_number);
-  const trackPart = trackNumber != null && trackNumber > 0
-    ? (trackTitle ? `Track ${trackNumber} · ${trackTitle}` : `Track ${trackNumber}`)
-    : (trackTitle || null);
-  if (!trackPart) return null;
+  if (trackNumber == null || trackNumber <= 0) return null;
   if (volumeNumber != null && volumeNumber > 1) {
-    return `Disc ${volumeNumber} · ${trackPart}`;
+    return `Disc ${volumeNumber} · Track ${trackNumber}`;
   }
-  return trackPart;
+  return `Track ${trackNumber}`;
 }
 
 const useStyles = makeStyles({
@@ -649,6 +651,9 @@ const AlbumPage = () => {
   const [stripTagsApplying, setStripTagsApplying] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
   const handledTrackScrollKeyRef = useRef<string | null>(null);
+  const associatedVideoCarouselRef = useHorizontalScrollRestore(
+    `album:${albumId || "unknown"}:associated-videos`,
+  );
 
   const { data: pageData, isLoading: loading, error, refetch } = useAlbumPage(albumId);
   const album = pageData?.album ?? null;
@@ -769,6 +774,30 @@ const AlbumPage = () => {
     album?.spatial_release_mbid,
     album?.stereo_provider,
     album?.stereo_provider_id,
+    album?.stereo_release_mbid,
+    releaseAvailability,
+  ]);
+  const selectedProviderUrlBySlot = useMemo(() => ({
+    stereo: selectedProviderOfferForSlot(releaseAvailability, "stereo", {
+      provider: album?.stereo_provider || album?.selected_provider,
+      providerAlbumId: album?.stereo_provider_id,
+      releaseMbid: album?.stereo_release_mbid || album?.selected_release_mbid,
+    })?.providerUrl ?? album?.stereo_provider_url ?? null,
+    spatial: selectedProviderOfferForSlot(releaseAvailability, "spatial", {
+      provider: album?.spatial_provider || album?.selected_provider,
+      providerAlbumId: album?.spatial_provider_id,
+      releaseMbid: album?.spatial_release_mbid || album?.selected_release_mbid,
+    })?.providerUrl ?? album?.spatial_provider_url ?? null,
+  }), [
+    album?.selected_provider,
+    album?.selected_release_mbid,
+    album?.spatial_provider,
+    album?.spatial_provider_id,
+    album?.spatial_provider_url,
+    album?.spatial_release_mbid,
+    album?.stereo_provider,
+    album?.stereo_provider_id,
+    album?.stereo_provider_url,
     album?.stereo_release_mbid,
     releaseAvailability,
   ]);
@@ -1445,6 +1474,7 @@ const AlbumPage = () => {
                               provider: album.stereo_provider || album.selected_provider,
                               matchStatus: album.stereo_match_status,
                               providerAlbumId: album.stereo_provider_id,
+                              providerUrl: selectedProviderUrlBySlot.stereo,
                               selectedReleaseMbid: album.stereo_release_mbid || album.selected_release_mbid,
                               explicit: selectedOfferExplicitBySlot.stereo,
                             }]
@@ -1456,6 +1486,7 @@ const AlbumPage = () => {
                               provider: album.spatial_provider || album.selected_provider,
                               matchStatus: album.spatial_match_status,
                               providerAlbumId: album.spatial_provider_id,
+                              providerUrl: selectedProviderUrlBySlot.spatial,
                               selectedReleaseMbid: album.spatial_release_mbid || album.selected_release_mbid,
                               explicit: selectedOfferExplicitBySlot.spatial,
                             }]
@@ -1657,7 +1688,10 @@ const AlbumPage = () => {
             <div className={styles.sectionHeader}>
               <Title2>Associated videos</Title2>
             </div>
-            <div className={videoViewMode === "grid" ? styles.videoGrid : styles.videoCarousel}>
+            <div
+              ref={videoViewMode === "carousel" ? associatedVideoCarouselRef : undefined}
+              className={videoViewMode === "grid" ? styles.videoGrid : styles.videoCarousel}
+            >
               {associatedVideos.map((video) => {
                 const videoId = String(video.id);
                 const trackLabel = formatAssociatedVideoTrackLabel(video);
@@ -1667,7 +1701,13 @@ const AlbumPage = () => {
                 const videoProviderId = String(video.provider_id || "").trim() || null;
                 const videoQuality = String(video.quality || "").trim() || null;
                 const videoOffers: ProviderQualityOffer[] = (videoProvider || videoQuality)
-                  ? [{ slot: "video", quality: videoQuality, provider: videoProvider, providerAlbumId: videoProviderId }]
+                  ? [{
+                      slot: "video",
+                      quality: videoQuality,
+                      provider: videoProvider,
+                      providerAlbumId: videoProviderId,
+                      providerUrl: video.provider_url,
+                    }]
                   : [];
                 return (
                   <div

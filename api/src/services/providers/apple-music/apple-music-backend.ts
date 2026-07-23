@@ -2,6 +2,8 @@ import { spawn } from "child_process";
 import fs from "fs";
 import net from "net";
 import { DownloadBackend, DownloadRequest, DownloadProgress } from "../../download/download-backend.js";
+import { Config } from "../../config/config.js";
+import { classifyNeutralAudio } from "../provider-quality.js";
 import {
   APPLE_MUSIC_DOWNLOADER_DIR,
   loadStoredAppleMusicToken,
@@ -9,6 +11,7 @@ import {
   resolveAppleVideoMaxHeight,
   syncTokenToDownloader,
 } from "./apple-music-auth.js";
+import { appleMusicQualityMapping } from "./apple-music-quality.js";
 
 export function getAppleMusicDownloaderBinary(): string {
   return process.env.APPLE_MUSIC_DL_BIN || "apple-music-dl";
@@ -45,6 +48,52 @@ export function describeAppleDownloaderFailure(code: number | null, errorDetail:
 
 export function resolveAppleMusicProviderStorefront(): string {
   return loadStoredAppleMusicToken()?.storefront || resolveAppleStorefront();
+}
+
+type AppleAudioQualitySetting = "low" | "normal" | "high" | "max";
+
+function configuredAppleAudioQuality(): AppleAudioQualitySetting {
+  try {
+    const configured = String(Config.getQualityConfig()?.audio_quality || "max").trim().toLowerCase();
+    if (configured === "low" || configured === "normal" || configured === "high" || configured === "max") {
+      return configured;
+    }
+  } catch {
+    // Config can be unavailable during early bootstrap; preserve the historical
+    // highest-quality default in that case.
+  }
+  return "max";
+}
+
+/**
+ * Translate the global stereo ceiling into apple-music-dl's existing modes.
+ * The tool exposes one AAC mode (Apple's 256 kbps floor) plus an ALAC sample
+ * rate ceiling, so Low and Normal intentionally share AAC while High caps ALAC
+ * at 48 kHz and Max allows the offer's highest lossless tier.
+ */
+export function appleAudioQualityArgs(
+  requestedQuality: string | null | undefined,
+  configuredQuality: AppleAudioQualitySetting = configuredAppleAudioQuality(),
+): string[] {
+  const requestedNeutral = appleMusicQualityMapping.toNeutralAudio(requestedQuality)
+    ?? classifyNeutralAudio(requestedQuality);
+
+  if (configuredQuality === "low" || configuredQuality === "normal") {
+    return ["--aac"];
+  }
+  if (requestedNeutral === "lossy") {
+    return ["--aac"];
+  }
+  if (configuredQuality === "high") {
+    return ["--alac-max", "48000"];
+  }
+  if (requestedNeutral === "hires-lossless") {
+    return ["--alac-max", "192000"];
+  }
+  if (requestedNeutral === "lossless") {
+    return ["--alac-max", "48000"];
+  }
+  return [];
 }
 
 function commandExists(command: string): boolean {
@@ -321,13 +370,8 @@ export class AppleMusicBackend implements DownloadBackend {
       const quality = String(request.quality || "").trim();
       if (request.slot === "spatial" || /atmos|spatial/i.test(quality)) {
         args.push("--atmos");
-      } else if (/hi.?res/i.test(quality)) {
-        args.push("--alac-max", "192000");
-      } else if (/^(low|lossy(?:[_ -]stereo)?|aac)$/i.test(quality)) {
-        // Only genuinely-lossy requests get AAC 256. "high"/"standard" are NOT
-        // listed: our HIGH tier means 16-bit lossless, so an ambiguous label must
-        // fall through to the default ALAC (lossless) branch, never lossy AAC.
-        args.push("--aac");
+      } else {
+        args.push(...appleAudioQualityArgs(quality));
       }
     }
     args.push(url);
@@ -388,11 +432,12 @@ export class AppleMusicBackend implements DownloadBackend {
         const completedItems = totalFiles && currentFileNum
           ? Math.max(0, currentFileNum - (trackStatus === "completed" ? 0 : 1))
           : 0;
+        // Only emit a percent when the tool reports Track N of M (file-level
+        // progress). Single-file / video runs rarely do — leave progress unset
+        // so the queue shows an indeterminate bar instead of a fake ramp.
         const progress = totalFiles
           ? toOverallPercent(Math.min(1, completedItems / totalFiles))
-          // Single-file / video downloads rarely emit "Track N of M" — use a
-          // soft ramp instead of a flat 50% that looks hung until close.
-          : toOverallPercent(Math.min(0.9, 0.15 + ((current.currentFileNum || 1) * 0.2)));
+          : null;
         options.onProgress({
           progress,
           currentFileNum: currentFileNum ?? 1,

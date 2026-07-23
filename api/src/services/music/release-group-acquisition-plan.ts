@@ -57,6 +57,10 @@ function isHybridTrackPlan(slot: PlannedReleaseGroupSlot): boolean {
   return slot.match_method === "strict_partial_track_coverage"
     || slot.match_method === "quality_optimized_composite_track_coverage"
     || slot.match_method === "strict_composite_track_coverage"
+    // User playlists are mutable containers. The coverage evidence already
+    // names the exact canonical track tips, so acquire those tracks instead of
+    // downloading whatever the playlist happens to contain later.
+    || slot.match_method === "playlist-tracklist-coverage"
     || providerAlbumIds.length > 1;
 }
 

@@ -5,6 +5,10 @@ import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-
 import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from "./provider-track-matcher.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { streamingProviderManager } from "../providers/index.js";
+import {
+    projectProviderSpatialOffer,
+    providerAudioQualityRank,
+} from "../providers/provider-offer-ranking.js";
 import { normalizeIsrc } from "../mediafiles/import-matching-utils.js";
 import {
     upsertProviderReleaseMatch,
@@ -107,12 +111,18 @@ function bestStereoQualityFromTags(tags: string[]): string | null {
 }
 
 function slotVariantsForAlbum(
+    provider: string,
     album: ProviderAlbumSlotCandidate,
     includeSpatial: boolean,
 ): Array<{ slot: ReleaseGroupLibrarySlot; album: ProviderAlbumSlotCandidate }> {
     const qualityTags = qualityTagsForAlbum(album);
     const scalarIsSpatial = isSpatialQualityTag(album.quality);
-    const hasSpatial = scalarIsSpatial || qualityTags.some(isSpatialQualityTag);
+    const spatialProjection = projectProviderSpatialOffer(
+        provider,
+        [album.quality, ...qualityTags],
+        scalarIsSpatial || qualityTags.some(isSpatialQualityTag),
+    );
+    const hasSpatial = Boolean(spatialProjection);
     const stereoQuality = !scalarIsSpatial && album.quality
         ? album.quality
         : bestStereoQualityFromTags(qualityTags);
@@ -124,10 +134,10 @@ function slotVariantsForAlbum(
             album: { ...album, quality: stereoQuality, qualityTags },
         });
     }
-    if (includeSpatial && hasSpatial) {
+    if (includeSpatial && spatialProjection) {
         variants.push({
             slot: "spatial",
-            album: { ...album, quality: "DOLBY_ATMOS", qualityTags },
+            album: { ...album, quality: spatialProjection.quality, qualityTags },
         });
     }
 
@@ -139,7 +149,11 @@ function slotVariantsForAlbum(
     return variants;
 }
 
-function qualityScore(slot: ReleaseGroupLibrarySlot, quality?: string | null): number {
+function qualityScore(
+    slot: ReleaseGroupLibrarySlot,
+    provider: string,
+    quality?: string | null,
+): number {
     const normalized = normalizeQualityTag(quality);
     if (slot === "spatial") {
         if (normalized === "DOLBY_ATMOS") return 1000;
@@ -147,14 +161,11 @@ function qualityScore(slot: ReleaseGroupLibrarySlot, quality?: string | null): n
         return 0;
     }
 
-    if (normalized === "HIRES_LOSSLESS" || normalized === "HI_RES_LOSSLESS") return 1000;
-    if (normalized === "LOSSLESS") return 900;
-    if (normalized === "HIGH") return 200;
-    if (normalized === "LOW") return 50;
-    return 100;
+    return providerAudioQualityRank(provider, quality);
 }
 
 function scoreCandidate(
+    provider: string,
     album: ProviderAlbumSlotCandidate,
     match: ProviderReleaseGroupMatch,
     slot: ReleaseGroupLibrarySlot,
@@ -209,7 +220,7 @@ function scoreCandidate(
     const titleQualityBonus = Math.round(Number(evidence.titleScore || 0) * 40);
 
     return Number((
-        qualityScore(slot, album.quality)
+        qualityScore(slot, provider, album.quality)
         + matchBonus
         + identityBonus
         + titleQualityBonus
@@ -293,8 +304,8 @@ function isTrackCovered(target: TargetTrack, providerTracks: Array<ProviderTrack
 
 function sortCandidatesForSlot(slot: ReleaseGroupLibrarySlot, candidates: ProviderAlbumCandidateWithTracks[]): void {
     candidates.sort((a, b) => {
-        const qA = qualityScore(slot, a.album.quality);
-        const qB = qualityScore(slot, b.album.quality);
+        const qA = qualityScore(slot, a.provider, a.album.quality);
+        const qB = qualityScore(slot, b.provider, b.album.quality);
         if (qA !== qB) {
             return qB - qA;
         }
@@ -443,7 +454,7 @@ function buildCoveragePlanForProvider(
                     key,
                     candidate,
                     providerTrack,
-                    quality: qualityScore(slot, candidate.album.quality),
+                    quality: qualityScore(slot, candidate.provider, candidate.album.quality),
                 });
             }
         });
@@ -546,7 +557,8 @@ function buildCoveragePlanForProvider(
         assignments,
         candidates: selectedCandidates,
         complete: assignments.length === target.tracks.length,
-        qualityTotal: assignments.reduce((sum, assignment) => sum + qualityScore(slot, assignment.candidate.album.quality), 0),
+        qualityTotal: assignments.reduce((sum, assignment) =>
+            sum + qualityScore(slot, assignment.candidate.provider, assignment.candidate.album.quality), 0),
         identityCompatibleAssignments: assignments.filter((assignment) =>
             compatibleReleaseMbids(assignment.candidate.match).includes(target.releaseMbid),
         ).length,
@@ -640,7 +652,7 @@ function dominantPlanQuality(plan: ReleaseCoveragePlan, slot: ReleaseGroupLibrar
     return [...counts.entries()]
         .sort((left, right) =>
             right[1] - left[1]
-            || qualityScore(slot, right[0]) - qualityScore(slot, left[0]),
+            || qualityScore(slot, plan.provider, right[0]) - qualityScore(slot, plan.provider, left[0]),
         )[0]?.[0] || null;
 }
 
@@ -787,8 +799,8 @@ export function selectReleaseGroupSlotAlbums(
             continue;
         }
 
-        for (const variant of slotVariantsForAlbum(album, includeSpatial)) {
-            const score = scoreCandidate(variant.album, match, variant.slot, preferExplicit);
+        for (const variant of slotVariantsForAlbum(provider, album, includeSpatial)) {
+            const score = scoreCandidate(provider, variant.album, match, variant.slot, preferExplicit);
             const key = `${match.releaseGroup.mbid}:${variant.slot}`;
 
             let list = candidatesByGroupAndSlot.get(key);

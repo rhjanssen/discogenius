@@ -84,6 +84,7 @@ export interface VideoProviderOffer {
   provider: string;
   provider_id: string;
   quality: string | null;
+  url?: string | null;
 }
 
 export interface Video {
@@ -184,6 +185,7 @@ const VideoGrid = ({ videos, loading, onToggleMonitor, onDownload, onOpenVideo, 
                 quality: selectedQuality,
                 provider: selectedProvider,
                 providerAlbumId: selectedProviderId,
+                providerUrl: video.url,
               }]
             : [];
 

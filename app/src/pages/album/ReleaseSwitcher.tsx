@@ -121,11 +121,11 @@ function offersForSlot(
   return Array.from(deduped.values());
 }
 
-export function selectedOfferExplicitForSlot(
+export function selectedProviderOfferForSlot(
   availability: ReleaseGroupAvailability | null,
   slot: SwitchableSlot,
   fallback: { provider?: string | null; providerAlbumId?: string | null; releaseMbid?: string | null },
-): boolean | null {
+): ReleaseGroupAvailability["releases"][number]["availability"][number] | null {
   if (!availability) {
     return null;
   }
@@ -143,7 +143,15 @@ export function selectedOfferExplicitForSlot(
     candidate.provider === provider
     && sameProviderAlbumSelection(candidate.providerAlbumId, providerAlbumId)
   ));
-  return offer?.explicit ?? null;
+  return offer ?? null;
+}
+
+export function selectedOfferExplicitForSlot(
+  availability: ReleaseGroupAvailability | null,
+  slot: SwitchableSlot,
+  fallback: { provider?: string | null; providerAlbumId?: string | null; releaseMbid?: string | null },
+): boolean | null {
+  return selectedProviderOfferForSlot(availability, slot, fallback)?.explicit ?? null;
 }
 
 function sortReleasesForSwitcher(
@@ -289,6 +297,7 @@ export function ReleaseSwitcher({
               coverageSummary: offer.coverageSummary,
               providerAlbumId: offer.providerAlbumId,
               providerAlbumIds: offer.providerAlbumIds,
+              providerUrl: offer.providerUrl,
               selectedReleaseMbid: release.releaseMbid,
             } satisfies ProviderQualityOffer);
           }
@@ -337,6 +346,7 @@ export function ReleaseSwitcher({
                     coverageSummary: offer.coverageSummary,
                     providerAlbumId: offer.providerAlbumId,
                     providerAlbumIds: offer.providerAlbumIds,
+                    providerUrl: offer.providerUrl,
                     selectedReleaseMbid: release.releaseMbid,
                     explicit: offer.explicit,
                   }));

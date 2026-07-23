@@ -23,6 +23,7 @@ function findDirectProviderVideoOffer(
         WHERE entity_type = 'video'
           AND provider = ?
           AND CAST(provider_id AS TEXT) = ?
+          AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
           AND (availability IS NULL
                OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
         LIMIT 1
@@ -61,6 +62,7 @@ export function resolveVideoOfferForProvider(provider: string, recordingRef: str
         FROM ProviderItems
         WHERE entity_type = 'video' AND provider = ?
           AND (CAST(recording_id AS TEXT) = ? OR recording_mbid = ?)
+          AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
           AND (availability IS NULL
                OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
     `).all(String(provider), key, key) as Array<{
@@ -87,9 +89,12 @@ export function resolveVideoOfferForProvider(provider: string, recordingRef: str
 }
 
 /**
- * Prefer higher video resolution first, then the user's provider priority.
- * Ranks align with UI badge tiers: UHD (2160) > FHD (1080) > HD (720) > SD (480).
- * Unknown placeholders such as SOURCE rank as 0 (never as a stereo NORMAL stand-in).
+ * Prefer higher video resolution first, then assumed video codec quality, then
+ * the user's provider priority. Codec order is AV1 > VP9 > HEVC > h.264 so an
+ * FHD Apple Music (HEVC) offer beats FHD TIDAL (h.264) regardless of settings.
+ *
+ * ProviderItems do not store codec yet; assume per-provider catalog codecs:
+ * YouTube AV1 at UHD / VP9 otherwise, Apple Music HEVC, TIDAL h.264.
  */
 export function videoOfferQualityRank(quality: string | null | undefined): number {
     const normalized = String(quality || "").trim().toUpperCase().replace(/-/g, "_");
@@ -109,12 +114,64 @@ export function videoOfferQualityRank(quality: string | null | undefined): numbe
     return 0;
 }
 
+/** Higher is better. Explicit codec strings win; otherwise use provider defaults. */
+export function videoOfferCodecRank(
+    provider: string | null | undefined,
+    quality?: string | null,
+    codec?: string | null,
+): number {
+    const explicit = String(codec || "").trim().toLowerCase().replace(/[\s_-]+/gu, "");
+    if (explicit.includes("av1") || explicit.includes("av01")) return 400;
+    if (explicit.includes("vp9") || explicit.includes("vp09")) return 300;
+    if (
+        explicit.includes("hevc")
+        || explicit.includes("h265")
+        || explicit.includes("hev1")
+        || explicit.includes("hvc1")
+    ) {
+        return 200;
+    }
+    if (
+        explicit.includes("avc")
+        || explicit.includes("h264")
+        || explicit.includes("avc1")
+        || explicit === "x264"
+    ) {
+        return 100;
+    }
+
+    const providerId = String(provider || "").trim().toLowerCase();
+    if (providerId === "youtube" || providerId === "youtube-music") {
+        return videoOfferQualityRank(quality) >= 5 ? 400 : 300;
+    }
+    if (providerId === "apple-music" || providerId === "apple") return 200;
+    if (providerId === "tidal") return 100;
+    return 0;
+}
+
 export function compareVideoOffersByQualityThenProvider(
-    left: { provider: string; quality?: string | null; providerId?: string; provider_id?: string },
-    right: { provider: string; quality?: string | null; providerId?: string; provider_id?: string },
+    left: {
+        provider: string;
+        quality?: string | null;
+        codec?: string | null;
+        video_codec?: string | null;
+        providerId?: string;
+        provider_id?: string;
+    },
+    right: {
+        provider: string;
+        quality?: string | null;
+        codec?: string | null;
+        video_codec?: string | null;
+        providerId?: string;
+        provider_id?: string;
+    },
 ): number {
     const qualityDelta = videoOfferQualityRank(right.quality) - videoOfferQualityRank(left.quality);
     if (qualityDelta !== 0) return qualityDelta;
+    const codecDelta = videoOfferCodecRank(right.provider, right.quality, right.codec ?? right.video_codec)
+        - videoOfferCodecRank(left.provider, left.quality, left.codec ?? left.video_codec);
+    if (codecDelta !== 0) return codecDelta;
     const providerDelta = streamingProviderManager.getProviderPreferenceRank(left.provider)
         - streamingProviderManager.getProviderPreferenceRank(right.provider);
     if (providerDelta !== 0) return providerDelta;
@@ -139,6 +196,7 @@ export function resolvePreferredVideoOffer(recordingRef: string | null | undefin
         FROM ProviderItems
         WHERE entity_type = 'video'
           AND (CAST(recording_id AS TEXT) = ? OR recording_mbid = ?)
+          AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
           AND (availability IS NULL
                OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
     `).all(key, key) as Array<{

@@ -8,7 +8,6 @@ import {
     DialogContent,
     DialogSurface,
     DialogTitle,
-    Link,
     Spinner,
     Text,
     makeStyles,
@@ -43,11 +42,15 @@ import { useToast } from "@/hooks/useToast";
 import { api, type StreamingProviderStatus } from "@/services/api";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import { videoCapabilityLabel, videoTierFromMaxHeight } from "@/utils/qualityTier";
+import {
+    dropConnectedProviderOn,
+    reorderConnectedProviderIds,
+} from "./providerPriority";
 
-const DoorArrowLeft24 = bundleIcon(DoorArrowLeft24Filled, DoorArrowLeft24Regular);
 const ArrowImport24 = bundleIcon(ArrowImport24Filled, ArrowImport24Regular);
 const ArrowSync24 = bundleIcon(ArrowSync24Filled, ArrowSync24Regular);
 const Open24 = bundleIcon(Open24Filled, Open24Regular);
+const DoorArrowLeft24 = bundleIcon(DoorArrowLeft24Filled, DoorArrowLeft24Regular);
 const ChevronDown24 = bundleIcon(ChevronDown24Filled, ChevronDown24Regular);
 const ChevronUp24 = bundleIcon(ChevronUp24Filled, ChevronUp24Regular);
 
@@ -60,146 +63,115 @@ export interface ProvidersSettingsSectionProps {
     onRefetch: () => void | Promise<unknown>;
 }
 
-const MEDIA = {
-    mobile: "@media (max-width: 640px)",
-};
+const MEDIA = { mobile: "@media (max-width: 720px)" };
 
 const useStyles = makeStyles({
     section: {
         display: "flex",
         width: "100%",
         minWidth: 0,
-        marginBottom: tokens.spacingVerticalNone,
         flexDirection: "column",
         gap: tokens.spacingVerticalS,
     },
-    // Dense SettingsCard-style provider row: identity + actions stay clustered
-    // (no space-between stretch that strands buttons on the far right).
-    profileRow: {
+    // Identity (left) fills the row so capabilities + actions right-align — no
+    // stranded buttons clustered next to the name on a wide card.
+    providerRow: {
         display: "flex",
         alignItems: "center",
-        justifyContent: "flex-start",
-        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-        flexWrap: "wrap",
-        columnGap: tokens.spacingHorizontalM,
+        columnGap: tokens.spacingHorizontalL,
         rowGap: tokens.spacingVerticalS,
+        flexWrap: "wrap",
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+        "&:last-of-type": { borderBottom: "none" },
         [MEDIA.mobile]: {
             columnGap: tokens.spacingHorizontalS,
-            rowGap: tokens.spacingVerticalS,
-            padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+            padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS}`,
         },
     },
-    profileDetails: {
-        display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalXXS,
-        flex: "1 1 auto",
-        minWidth: 0,
-    },
-    profileActions: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "flex-start",
-        gap: tokens.spacingHorizontalS,
-        flexWrap: "wrap",
-        flex: "0 0 auto",
-        [MEDIA.mobile]: {
-            width: "100%",
-            paddingLeft: "40px",
-        },
-    },
-    providerStatusRow: {
+    identity: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalM,
-        // Content-sized so actions sit beside the name instead of stretching
-        // to the far edge of a wide card.
-        flex: "0 1 auto",
+        flex: "1 1 220px",
         minWidth: 0,
-        maxWidth: "100%",
     },
-    providerIconBox: {
-        width: "40px",
-        height: "40px",
+    reorderColumn: {
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+    },
+    iconBox: {
+        width: "36px",
+        height: "36px",
         display: "grid",
         placeItems: "center",
         flexShrink: 0,
     },
-    capabilitySummaryGrid: {
-        display: "grid",
-        gridTemplateColumns: "repeat(3, minmax(140px, 1fr))",
-        gap: tokens.spacingHorizontalS,
-        width: "100%",
-        [MEDIA.mobile]: {
-            gridTemplateColumns: "1fr",
-        },
-    },
-    capabilitySummaryItem: {
+    identityText: {
         display: "flex",
         flexDirection: "column",
         gap: "2px",
-        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-        borderRadius: tokens.borderRadiusMedium,
-        backgroundColor: tokens.colorNeutralBackground2,
         minWidth: 0,
     },
-    capabilitySummaryValue: {
-        fontWeight: tokens.fontWeightSemibold,
+    nameRow: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalXS,
-        minHeight: "22px",
+        minWidth: 0,
     },
-    capabilitySectionHeader: {
+    // Capability chips sit in the middle, filling the horizontal space that used
+    // to be empty; on mobile they drop below the identity on their own row.
+    capabilities: {
         display: "flex",
-        flexDirection: "column",
-        gap: "2px",
-    },
-    signOutButton: {
-        minHeight: "36px",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalXS,
+        flexWrap: "wrap",
+        flex: "0 1 auto",
         [MEDIA.mobile]: {
-            minHeight: "40px",
+            flex: "1 1 100%",
+            paddingLeft: "48px",
         },
     },
-    mutedText: {
-        color: tokens.colorNeutralForeground2,
+    capabilityPlaceholder: {
+        color: tokens.colorNeutralForeground3,
     },
-    mutedTextBlock: {
-        color: tokens.colorNeutralForeground2,
-        display: "block",
-    },
-    optionIconRow: {
+    actions: {
         display: "flex",
         alignItems: "center",
         gap: tokens.spacingHorizontalS,
+        flex: "0 0 auto",
+        marginLeft: "auto",
+        flexWrap: "wrap",
+        [MEDIA.mobile]: {
+            marginLeft: 0,
+            flex: "1 1 100%",
+            paddingLeft: "48px",
+        },
     },
+    actionButton: {
+        minHeight: "34px",
+    },
+    addRow: {
+        display: "flex",
+        justifyContent: "center",
+        padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
+    },
+    emptyState: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: tokens.spacingVerticalM,
+        textAlign: "center",
+        padding: "32px 16px",
+    },
+    mutedText: { color: tokens.colorNeutralForeground2 },
+    mutedTextBlock: { color: tokens.colorNeutralForeground2, display: "block" },
 });
 
-const reorderConnectedProviderIds = (
-    providers: Array<Pick<StreamingProviderStatus, "id" | "authenticated">>,
-    providerId: string,
-    direction: -1 | 1,
-): string[] | null => {
-    const connectedIds = providers
-        .filter((provider) => provider.authenticated)
-        .map((provider) => provider.id);
-    const connectedIndex = connectedIds.indexOf(providerId);
-    const targetProviderId = connectedIds[connectedIndex + direction];
-    if (connectedIndex === -1 || !targetProviderId) return null;
+type ProviderCapability = { label: string; badgeQuality: string | null; caption: string };
 
-    const ids = providers.map((provider) => provider.id);
-    const from = ids.indexOf(providerId);
-    const to = ids.indexOf(targetProviderId);
-    const fromId = ids[from];
-    const toId = ids[to];
-    if (!fromId || !toId) return null;
-    ids[from] = toId;
-    ids[to] = fromId;
-    return ids;
-};
-
-const getProviderCapabilitySummary = (provider: StreamingProviderStatus) => {
+const getProviderCapabilitySummary = (provider: StreamingProviderStatus): ProviderCapability[] => {
     const caps = provider.capabilities;
 
     const stereoBadge = caps.hiResStereo
@@ -208,10 +180,10 @@ const getProviderCapabilitySummary = (provider: StreamingProviderStatus) => {
             ? "LOSSLESS"
             : caps.lossyStereo
                 ? (provider.id === "youtube-music"
-                          ? "YOUTUBE_LOSSY"
-                          : provider.id === "soundcloud"
-                            ? "SOUNDCLOUD_LOSSY"
-                            : "MP3_320")
+                    ? "YOUTUBE_LOSSY"
+                    : provider.id === "soundcloud"
+                        ? "SOUNDCLOUD_LOSSY"
+                        : "MP3_320")
                 : null;
     const spatialBadge = caps.spatialAudio
         ? (caps.spatialFormats?.includes("DOLBY_ATMOS") ? "DOLBY_ATMOS" : "SPATIAL")
@@ -227,17 +199,10 @@ const getProviderCapabilitySummary = (provider: StreamingProviderStatus) => {
                     ? "MP4_480P"
                     : null;
 
-    const stereoCaption = caps.stereoQuality
-        ?? (stereoBadge ? undefined : "Not available");
-    const spatialCaption = caps.spatialQuality
-        ?? (spatialBadge ? "Dolby Atmos" : "Not available");
-    const videoCaption = caps.videoQuality
-        ?? videoCapabilityLabel(caps.maxVideoResolution);
-
     return [
-        { label: "Stereo quality", badgeQuality: stereoBadge, caption: stereoCaption || "Not available" },
-        { label: "Spatial audio", badgeQuality: spatialBadge, caption: spatialCaption },
-        { label: "Music video", badgeQuality: videoBadge, caption: videoCaption },
+        { label: "Stereo", badgeQuality: stereoBadge, caption: caps.stereoQuality ?? (stereoBadge ? "" : "Not available") },
+        { label: "Spatial", badgeQuality: spatialBadge, caption: caps.spatialQuality ?? (spatialBadge ? "Dolby Atmos" : "Not available") },
+        { label: "Video", badgeQuality: videoBadge, caption: caps.videoQuality ?? videoCapabilityLabel(caps.maxVideoResolution) },
     ];
 };
 
@@ -253,21 +218,27 @@ export const ProvidersSettingsSection = ({
     const navigate = useNavigate();
     const { toast } = useToast();
     const [importProviderId, setImportProviderId] = useState<string | null>(null);
-    const [detailsProviderId, setDetailsProviderId] = useState<string | null>(null);
     const [draggingProviderId, setDraggingProviderId] = useState<string | null>(null);
     const [savingProviderOrder, setSavingProviderOrder] = useState(false);
+    const [disconnectTarget, setDisconnectTarget] = useState<{
+        id: string;
+        name: string;
+    } | null>(null);
+    const [disconnectingProviderId, setDisconnectingProviderId] = useState<string | null>(null);
 
     const openProviderAuth = () => navigate("/auth", {
         state: { mode: "add-provider", from: { pathname: "/settings" } },
     });
 
     const handleDisconnectProvider = async (providerId: string, providerName: string) => {
+        setDisconnectingProviderId(providerId);
         try {
             await api.logoutProvider(providerId);
             await onRefetch();
+            setDisconnectTarget(null);
             toast({
                 title: `${providerName} disconnected`,
-                description: "Provider availability, previews, followed artists, and downloads are disabled until you reconnect.",
+                description: "Availability, previews, followed artists, and downloads are disabled until you reconnect.",
             });
         } catch (error) {
             console.error(`Error disconnecting ${providerName}:`, error);
@@ -276,19 +247,18 @@ export const ProvidersSettingsSection = ({
                 description: error instanceof Error ? error.message : `Could not disconnect ${providerName}.`,
                 variant: "destructive",
             });
+        } finally {
+            setDisconnectingProviderId(null);
         }
     };
 
     const handleImportComplete = () => {
         dispatchActivityRefresh();
-        toast({
-            title: "Import complete",
-            description: "The artist list has been refreshed.",
-        });
+        toast({ title: "Import complete", description: "The artist list has been refreshed." });
     };
 
-    // The list order IS the provider preference: first = default provider and
-    // the winner of equal-quality matching tie-breaks.
+    // The list order IS the provider preference: first = default provider and the
+    // winner of equal-quality matching tie-breaks.
     const persistProviderOrder = async (orderedIds: string[]) => {
         setSavingProviderOrder(true);
         try {
@@ -306,12 +276,8 @@ export const ProvidersSettingsSection = ({
     };
 
     const moveProvider = (providerId: string, direction: -1 | 1) => {
-        // Swap the two connected providers in their full registry slots. This
-        // keeps every disconnected provider in the persisted priority list
-        // while still making one button press visibly move by one connected row.
         const ids = reorderConnectedProviderIds(providers, providerId, direction);
-        if (!ids) return;
-        void persistProviderOrder(ids);
+        if (ids) void persistProviderOrder(ids);
     };
 
     const dropProviderOn = (targetProviderId: string) => {
@@ -319,264 +285,209 @@ export const ProvidersSettingsSection = ({
             setDraggingProviderId(null);
             return;
         }
-        const ids = providers.map((provider) => provider.id);
-        const from = ids.indexOf(draggingProviderId);
-        const to = ids.indexOf(targetProviderId);
+        const ids = dropConnectedProviderOn(providers, draggingProviderId, targetProviderId);
         setDraggingProviderId(null);
-        if (from === -1 || to === -1) return;
-        ids.splice(from, 1);
-        ids.splice(to, 0, draggingProviderId);
+        if (!ids) return;
         void persistProviderOrder(ids);
     };
 
-    const detailsProvider = providers.find((provider) => provider.id === detailsProviderId) || null;
-    const activeProviders = providers.filter((p) => p.authenticated);
+    const activeProviders = providers.filter((provider) => provider.authenticated);
+    const reorderable = activeProviders.length > 1;
+
+    const renderProviderRow = (provider: StreamingProviderStatus, index: number) => {
+        const hasMark = Boolean(providerMarkFor(provider.id));
+        const capabilities = getProviderCapabilitySummary(provider);
+        const availableCapabilities = capabilities.filter((capability) => capability.badgeQuality);
+
+        return (
+            <div
+                key={provider.id}
+                className={styles.providerRow}
+                draggable={reorderable && !savingProviderOrder}
+                onDragStart={() => setDraggingProviderId(provider.id)}
+                onDragEnd={() => setDraggingProviderId(null)}
+                onDragOver={(event) => { if (draggingProviderId) event.preventDefault(); }}
+                onDrop={() => dropProviderOn(provider.id)}
+                style={draggingProviderId === provider.id ? { opacity: 0.5 } : undefined}
+            >
+                <div className={styles.identity}>
+                    {reorderable ? (
+                        <div className={styles.reorderColumn} aria-label={`Reorder ${provider.name}`}>
+                            <Button
+                                appearance="subtle"
+                                size="small"
+                                icon={<ChevronUp24 />}
+                                aria-label={`Move ${provider.name} up`}
+                                disabled={savingProviderOrder || index === 0}
+                                onClick={() => moveProvider(provider.id, -1)}
+                            />
+                            <Button
+                                appearance="subtle"
+                                size="small"
+                                icon={<ChevronDown24 />}
+                                aria-label={`Move ${provider.name} down`}
+                                disabled={savingProviderOrder || index === activeProviders.length - 1}
+                                onClick={() => moveProvider(provider.id, 1)}
+                            />
+                        </div>
+                    ) : null}
+                    <div className={styles.iconBox}>
+                        {hasMark ? (
+                            <ProviderMark provider={provider.id} size={28} />
+                        ) : (
+                            <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
+                        )}
+                    </div>
+                    <div className={styles.identityText}>
+                        <div className={styles.nameRow}>
+                            <Text weight="semibold" size={400}>{provider.name}</Text>
+                            {provider.isDefault ? (
+                                <Badge appearance="tint" color="informative">Default</Badge>
+                            ) : null}
+                        </div>
+                        <Caption1 className={styles.mutedText}>
+                            {index === 0 && reorderable ? "First priority" : "Connected"}
+                        </Caption1>
+                    </div>
+                </div>
+
+                <div className={styles.capabilities}>
+                    {availableCapabilities.length > 0 ? (
+                        availableCapabilities.map((capability) => (
+                            <AppTooltip
+                                key={capability.label}
+                                relationship="description"
+                                withArrow
+                                content={`${capability.label}: ${capability.caption || capability.badgeQuality}`}
+                            >
+                                <span style={{ display: "inline-flex" }}>
+                                    <QualityBadge quality={String(capability.badgeQuality)} size="small" showTooltip={false} />
+                                </span>
+                            </AppTooltip>
+                        ))
+                    ) : (
+                        <Caption1 className={styles.capabilityPlaceholder}>No download tiers</Caption1>
+                    )}
+                </div>
+
+                <div className={styles.actions}>
+                    {provider.management.canImportArtists ? (
+                        <Button
+                            appearance="outline"
+                            className={styles.actionButton}
+                            icon={<ArrowImport24 />}
+                            onClick={() => setImportProviderId(provider.id)}
+                        >
+                            Import artists
+                        </Button>
+                    ) : null}
+                    {provider.management.canDisconnect ? (
+                        <Button
+                            appearance="subtle"
+                            className={styles.actionButton}
+                            icon={<DoorArrowLeft24 />}
+                            disabled={disconnectingProviderId !== null}
+                            onClick={() => setDisconnectTarget({ id: provider.id, name: provider.name })}
+                        >
+                            Disconnect
+                        </Button>
+                    ) : null}
+                </div>
+            </div>
+        );
+    };
 
     return (
         <>
             <SettingsSection
                 id="streaming-providers"
-                title="Streaming Providers"
-                description="Connect download services. Drag to set preference — higher entries win when quality is equal."
+                title="Providers"
+                description="Drag or use the arrows to order equal-quality matches and fallbacks. Discogenius chooses complete, higher-quality audio and higher-resolution video first; the top provider is also the default for provider metadata and manual lookups."
                 className={styles.section}
             >
                 <SettingsCard>
-                    {(() => {
-                        // Only connected services get a row; everything else is
-                        // reachable through the always-visible "Add Provider" flow.
-
-                        if (loadFailed) {
-                            return (
-                                <ErrorState
-                                    minHeight="220px"
-                                    title="Streaming providers unavailable"
-                                    error={loadError instanceof Error
-                                        ? loadError
-                                        : "Discogenius could not load the provider registry."}
-                                    actions={(
-                                        <Button
-                                            appearance="outline"
-                                            icon={fetching ? <Spinner size="tiny" /> : <ArrowSync24 />}
-                                            disabled={fetching}
-                                            onClick={() => { void onRefetch(); }}
-                                        >
-                                            Retry
-                                        </Button>
-                                    )}
-                                />
-                            );
-                        }
-
-                        if (activeProviders.length === 0 && !loading) {
-                            return (
-                                <div className={styles.profileRow} style={{ justifyContent: "center", padding: "32px 16px" }}>
-                                    <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
-                                        <div>
-                                            <Text weight="semibold" size={400} block style={{ marginBottom: "4px" }}>
-                                                No Provider Connected
-                                            </Text>
-                                            <Caption1 className={styles.mutedTextBlock}>
-                                                Connect a streaming service to enable downloads and metadata features.
-                                            </Caption1>
-                                        </div>
-                                        <Button
-                                            appearance="primary"
-                                            onClick={openProviderAuth}
-                                            size="large"
-                                            icon={<Open24 />}
-                                        >
-                                            Add Provider
-                                        </Button>
-                                    </div>
-                                </div>
-                            );
-                        }
-
-                        const reorderable = activeProviders.length > 1;
-
-                        return (
-                            <>
-                                {activeProviders.map((provider, index) => {
-                                    const hasMark = Boolean(providerMarkFor(provider.id));
-                                    const publiclyAvailable = provider.authenticated
-                                        && !provider.management.canAuthenticate
-                                        && !provider.management.canDisconnect;
-
-                                    return (
-                                        <div
-                                            key={provider.id}
-                                            className={styles.profileRow}
-                                            draggable={reorderable && !savingProviderOrder}
-                                            onDragStart={() => setDraggingProviderId(provider.id)}
-                                            onDragEnd={() => setDraggingProviderId(null)}
-                                            onDragOver={(event) => { if (draggingProviderId) event.preventDefault(); }}
-                                            onDrop={() => dropProviderOn(provider.id)}
-                                            style={draggingProviderId === provider.id ? { opacity: 0.5 } : undefined}
-                                        >
-                                            <div className={styles.providerStatusRow}>
-                                                {reorderable ? (
-                                                    <div style={{ display: "flex", flexDirection: "column" }} aria-label={`Reorder ${provider.name}`}>
-                                                        <Button
-                                                            appearance="subtle"
-                                                            size="small"
-                                                            icon={<ChevronUp24 />}
-                                                            aria-label={`Move ${provider.name} up`}
-                                                            disabled={savingProviderOrder || index === 0}
-                                                            onClick={() => moveProvider(provider.id, -1)}
-                                                        />
-                                                        <Button
-                                                            appearance="subtle"
-                                                            size="small"
-                                                            icon={<ChevronDown24 />}
-                                                            aria-label={`Move ${provider.name} down`}
-                                                            disabled={savingProviderOrder || index === activeProviders.length - 1}
-                                                            onClick={() => moveProvider(provider.id, 1)}
-                                                        />
-                                                    </div>
-                                                ) : null}
-                                                <div className={styles.providerIconBox}>
-                                                    {hasMark ? (
-                                                        <ProviderMark provider={provider.id} size={30} />
-                                                    ) : (
-                                                        <Text weight="semibold">{provider.name.slice(0, 1)}</Text>
-                                                    )}
-                                                </div>
-                                                <div className={styles.profileDetails}>
-                                                    <div className={styles.optionIconRow}>
-                                                        <Text weight="semibold" size={400}>{provider.name}</Text>
-                                                        {provider.isDefault ? (
-                                                            <Badge appearance="tint" color="informative">Default</Badge>
-                                                        ) : null}
-                                                    </div>
-                                                    <Caption1 className={styles.mutedText}>
-                                                        {publiclyAvailable
-                                                            ? "Ready to search and browse."
-                                                            : "Ready to search, browse, and download."}
-                                                    </Caption1>
-                                                </div>
-                                            </div>
-                                            <div className={styles.profileActions}>
-                                                {provider.management.canImportArtists ? (
-                                                    <Button
-                                                        appearance="outline"
-                                                        className={styles.signOutButton}
-                                                        icon={<ArrowImport24 />}
-                                                        onClick={() => setImportProviderId(provider.id)}
-                                                        disabled={!provider.authenticated}
-                                                    >
-                                                        Import artists
-                                                    </Button>
-                                                ) : null}
-                                                <Button
-                                                    appearance="subtle"
-                                                    className={styles.signOutButton}
-                                                    onClick={() => setDetailsProviderId(provider.id)}
-                                                >
-                                                    Details
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                                {activeProviders.length > 0 && (
-                                    <div className={styles.profileRow} style={{ justifyContent: "center" }}>
-                                        <Button
-                                            appearance="outline"
-                                            icon={<Open24 />}
-                                            onClick={openProviderAuth}
-                                        >
-                                            Add Provider
-                                        </Button>
-                                    </div>
-                                )}
-                            </>
-                        );
-                    })()}
+                    {loadFailed ? (
+                        <ErrorState
+                            minHeight="220px"
+                            title="Streaming providers unavailable"
+                            error={loadError instanceof Error ? loadError : "Discogenius could not load the provider registry."}
+                            actions={(
+                                <Button
+                                    appearance="outline"
+                                    icon={fetching ? <Spinner size="tiny" /> : <ArrowSync24 />}
+                                    disabled={fetching}
+                                    onClick={() => { void onRefetch(); }}
+                                >
+                                    Retry
+                                </Button>
+                            )}
+                        />
+                    ) : activeProviders.length === 0 && !loading ? (
+                        <div className={styles.emptyState}>
+                            <div>
+                                <Text weight="semibold" size={400} block style={{ marginBottom: "4px" }}>
+                                    No provider connected
+                                </Text>
+                                <Caption1 className={styles.mutedTextBlock}>
+                                    Connect a streaming service to enable downloads and metadata features.
+                                </Caption1>
+                            </div>
+                            <Button appearance="primary" onClick={openProviderAuth} size="large" icon={<Open24 />}>
+                                Add provider
+                            </Button>
+                        </div>
+                    ) : (
+                        <>
+                            {activeProviders.map(renderProviderRow)}
+                            <div className={styles.addRow}>
+                                <Button appearance="outline" icon={<Open24 />} onClick={openProviderAuth}>
+                                    Add provider
+                                </Button>
+                            </div>
+                        </>
+                    )}
                 </SettingsCard>
-
-                <Dialog open={detailsProvider !== null} onOpenChange={(_, data) => { if (!data.open) setDetailsProviderId(null); }}>
-                    <DialogSurface>
-                        <DialogBody>
-                            <DialogTitle>
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: "10px" }}>
-                                    {detailsProvider && providerMarkFor(detailsProvider.id) ? (
-                                        <ProviderMark provider={detailsProvider.id} size={24} />
-                                    ) : null}
-                                    {detailsProvider?.name}
-                                </span>
-                            </DialogTitle>
-                            <DialogContent>
-                                {detailsProvider ? (
-                                    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                                        <div className={styles.optionIconRow}>
-                                            <Badge appearance="filled" color={detailsProvider.authenticated ? "success" : "subtle"}>
-                                                {detailsProvider.authenticated ? "Connected" : "Not connected"}
-                                            </Badge>
-                                            {detailsProvider.isDefault ? (
-                                                <Badge appearance="tint" color="informative">Default provider</Badge>
-                                            ) : null}
-                                        </div>
-                                        <div className={styles.capabilitySectionHeader}>
-                                            <Text weight="semibold">Supported capabilities</Text>
-                                            <Caption1 className={styles.mutedText}>
-                                                Read-only quality ceilings for this service — not user-configurable.
-                                            </Caption1>
-                                        </div>
-                                        <div className={styles.capabilitySummaryGrid}>
-                                            {getProviderCapabilitySummary(detailsProvider).map((capability) => (
-                                                <div key={capability.label} className={styles.capabilitySummaryItem}>
-                                                    <Caption1 className={styles.mutedText}>{capability.label}</Caption1>
-                                                    <div className={styles.capabilitySummaryValue}>
-                                                        {capability.badgeQuality ? (
-                                                            <QualityBadge
-                                                                quality={capability.badgeQuality}
-                                                                size="large"
-                                                                tooltip={capability.caption}
-                                                            />
-                                                        ) : (
-                                                            <AppTooltip
-                                                                content={capability.caption}
-                                                                relationship="description"
-                                                                withArrow
-                                                            >
-                                                                <span style={{ display: "inline-flex" }}>
-                                                                    <Text size={200}>Not available</Text>
-                                                                </span>
-                                                            </AppTooltip>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <Text size={200} className={styles.mutedText}>
-                                            For connection and download health, see{" "}
-                                            <Link onClick={() => { setDetailsProviderId(null); navigate("/system/status"); }}>System Status</Link>.
-                                        </Text>
-                                    </div>
-                                ) : null}
-                            </DialogContent>
-                            <DialogActions>
-                                {detailsProvider?.management.canAuthenticate && !detailsProvider.authenticated ? (
-                                    <Button appearance="primary" onClick={openProviderAuth}>Connect</Button>
-                                ) : null}
-                                {detailsProvider?.management.canDisconnect && detailsProvider.authenticated ? (
-                                    <Button
-                                        appearance="outline"
-                                        icon={<DoorArrowLeft24 />}
-                                        onClick={() => {
-                                            setDetailsProviderId(null);
-                                            void handleDisconnectProvider(detailsProvider.id, detailsProvider.name);
-                                        }}
-                                    >
-                                        Disconnect
-                                    </Button>
-                                ) : null}
-                                <Button appearance="secondary" onClick={() => setDetailsProviderId(null)}>Close</Button>
-                            </DialogActions>
-                        </DialogBody>
-                    </DialogSurface>
-                </Dialog>
             </SettingsSection>
+
+            <Dialog
+                open={disconnectTarget !== null}
+                onOpenChange={(_, data) => {
+                    if (!data.open && !disconnectingProviderId) setDisconnectTarget(null);
+                }}
+            >
+                <DialogSurface>
+                    <DialogBody>
+                        <DialogTitle>
+                            Disconnect {disconnectTarget?.name || "provider"}?
+                        </DialogTitle>
+                        <DialogContent>
+                            This removes its saved credentials and disables its availability checks,
+                            previews, imports, and downloads. Existing library files and catalog matches
+                            are kept.
+                        </DialogContent>
+                        <DialogActions>
+                            <Button
+                                appearance="secondary"
+                                disabled={disconnectingProviderId !== null}
+                                onClick={() => setDisconnectTarget(null)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                appearance="primary"
+                                disabled={!disconnectTarget || disconnectingProviderId !== null}
+                                onClick={() => {
+                                    if (disconnectTarget) {
+                                        void handleDisconnectProvider(disconnectTarget.id, disconnectTarget.name);
+                                    }
+                                }}
+                            >
+                                {disconnectingProviderId ? "Disconnecting…" : "Disconnect"}
+                            </Button>
+                        </DialogActions>
+                    </DialogBody>
+                </DialogSurface>
+            </Dialog>
 
             <ImportArtistsModal
                 open={Boolean(importProviderId)}
@@ -587,3 +498,5 @@ export const ProvidersSettingsSection = ({
         </>
     );
 };
+
+export default ProvidersSettingsSection;

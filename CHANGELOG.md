@@ -2,6 +2,38 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.6.4] - 2026-07-23
+
+### Added
+- Video offer ranking: same-resolution codec preference
+  (AV1 > VP9 > HEVC > h.264), so FHD Apple Music (HEVC) beats FHD TIDAL
+  (h.264) regardless of provider priority order.
+- Horizontal carousel scroll restore on artist and album video strips when
+  navigating back from a video detail page.
+- Housekeeping: prune orphaned `/downloads/**/job_*` folders and re-tag video
+  quality from stored width/height (fixes ultrawide Apple Music “UHD” files
+  that were mislabeled FHD).
+
+### Changed
+- Cover art GET path is Lidarr-style static serve with long-lived cache headers;
+  missing files still warm on demand, but existing bytes are never blocked on
+  preference re-checks.
+- Queue progress is transparent: granular percent when the downloader reports
+  it, file x/y when that is all we have, and an indeterminate bar when there is
+  no file-level progress (no more fake Apple Music ~35% ramp).
+- Artist video cards show release year only (not artist name); album associated
+  videos show disc/track number only (not track title).
+- README trimmed toward a Lidarr/Jellyfin-style overview.
+
+### Fixed
+- Artist page video provider badges: API now returns `provider` / `provider_id`
+  for ranked video offers.
+- Apple Music video quality: probe preview HLS before trusting catalog `has4K`,
+  prefer on-disk probed quality in offer badges, and classify ultrawide masters
+  (e.g. 3832×1592) as UHD via the longer edge.
+- SoundCloud: do not fall through to yt-dlp for SNIP/DRM-only tracks (clear
+  error instead); playlist downloads continue to use the api-host URL.
+
 ## [2.6.3] - 2026-07-23
 
 ### Added

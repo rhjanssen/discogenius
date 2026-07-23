@@ -275,9 +275,12 @@ export class VotifyBackend implements DownloadBackend {
         if (event.trackStatus === "error" || (source === "stderr" && /error|exception|critical/i.test(event.statusMessage))) {
           lastError = event.statusMessage;
         }
+        const totalFiles = undefined;
+        const currentFileNum = event.currentFileNum;
         options.onProgress({
-          progress: event.trackStatus === "completed" ? 95 : event.currentFileNum ? Math.min(90, 5 + event.currentFileNum * 10) : 5,
-          currentFileNum: event.currentFileNum,
+          progress: null,
+          currentFileNum,
+          totalFiles,
           currentTrack: event.currentTrack,
           trackStatus: event.trackStatus,
           statusMessage: event.statusMessage,

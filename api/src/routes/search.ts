@@ -450,6 +450,15 @@ router.get("/", async (req, res) => {
                 FROM ProviderItems preferred_provider_video
                 WHERE preferred_provider_video.entity_type = 'video'
                   AND (
+                    preferred_provider_video.match_status IS NULL
+                    OR LOWER(preferred_provider_video.match_status) <> 'rejected'
+                  )
+                  AND (
+                    preferred_provider_video.availability IS NULL
+                    OR LOWER(CAST(preferred_provider_video.availability AS TEXT))
+                       NOT IN ('0', 'false', 'unavailable', 'no', '')
+                  )
+                  AND (
                     preferred_provider_video.recording_id = recording.id
                     OR (
                       recording.mbid IS NOT NULL
@@ -478,7 +487,7 @@ router.get("/", async (req, res) => {
                         id: row.id,
                         name: row.title,
                         artist_name: row.artist_name,
-                        image_id: videoCoverLocalUrl(row.id),
+                        image_id: videoCoverLocalUrl(row.id, row.cover_url),
                         quality: row.current_quality,
                         release_date: row.release_date,
                         monitored: !!row.monitored,

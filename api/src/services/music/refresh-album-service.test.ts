@@ -181,6 +181,7 @@ test("album track scan stores provider track offers linked to the selected canon
         peak: 0.97,
         popularity: 56,
         quality: "LOSSLESS",
+        url: "https://example.test/tracks/provider-track-1",
         artist: { providerId: "fake-artist", name: "Bastille" },
         // Raw provider payloads can use their own field casing. The normalized
         // provider DTO above remains authoritative for loudness supplements.
@@ -243,7 +244,7 @@ dbModule.db.prepare(`
   await refreshServiceModule.RefreshAlbumService.refreshTracks("provider-album-1", { resolveMusicBrainz: false });
 
   const offer = dbModule.db.prepare(`
-    SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method, isrc, copyright, popularity, replay_gain, peak
+    SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method, isrc, copyright, popularity, replay_gain, peak, provider_url
     FROM ProviderItems
     WHERE provider = 'fake' AND entity_type = 'track' AND provider_id = 'provider-track-1'
   `).get() as any;
@@ -261,12 +262,119 @@ dbModule.db.prepare(`
   // track offer, not the canonical MusicBrainz Recording.
   assert.equal(offer.replay_gain, -8.4);
   assert.equal(offer.peak, 0.97);
+  assert.equal(offer.provider_url, "https://example.test/tracks/provider-track-1");
 
   const recording = dbModule.db.prepare("SELECT copyright, popularity, isrcs FROM Recordings WHERE mbid = ?")
     .get(recordingMbid) as { copyright: string | null; popularity: number | null; isrcs: string | null };
   assert.equal(recording.copyright, "(P) 2024 Track");
   assert.equal(recording.popularity, 56);
   assert.equal(recording.isrcs, null);
+});
+
+test("SoundCloud playlist tracks map to canonical identity by title and duration, not playlist order", async () => {
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const releaseGroupMbid = "71111111-1111-4111-8111-111111111111";
+  const releaseMbid = "72222222-2222-4222-8222-222222222222";
+  const firstRecordingMbid = "73333333-3333-4333-8333-333333333333";
+  const secondRecordingMbid = "74444444-4444-4444-8444-444444444444";
+  const firstTrackMbid = "75555555-5555-4555-8555-555555555555";
+  const secondTrackMbid = "76666666-6666-4666-8666-666666666666";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
+    .run(releaseGroupMbid, artistMbid, "Other People's Heartache");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status)
+    VALUES (?, ?, ?, ?, 'Official')
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(firstRecordingMbid, artistMbid, "First Song");
+  dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(secondRecordingMbid, artistMbid, "Second Song");
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
+    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+  `).run(firstTrackMbid, releaseMbid, firstRecordingMbid, 1, "1", "First Song", 180000);
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
+    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+  `).run(secondTrackMbid, releaseMbid, secondRecordingMbid, 2, "2", "Second Song", 200000);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, artist_mbid, release_group_mbid,
+      release_mbid, library_slot, match_status, match_method, availability
+    ) VALUES ('soundcloud', 'album', 'sc-playlist', ?, ?, ?, ?, 'stereo',
+              'probable', 'playlist-tracklist-coverage', 'available')
+  `).run("Other People's Heartache", artistMbid, releaseGroupMbid, releaseMbid);
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider,
+      selected_provider_id, selected_release_mbid, match_status, match_method
+    ) VALUES (?, ?, 'stereo', 1, 'soundcloud', 'sc-playlist', ?,
+              'probable', 'playlist-tracklist-coverage')
+  `).run(artistMbid, releaseGroupMbid, releaseMbid);
+  // Simulate children left behind by an earlier invalidation and positional map.
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, title, track_mbid,
+      recording_mbid, match_status, match_method, availability
+    ) VALUES ('soundcloud', 'track', 'sc-second', 'sc-playlist', 'Second Song',
+              ?, ?, 'rejected', 'selected-release-position', 'unavailable')
+  `).run(firstTrackMbid, firstRecordingMbid);
+
+  await refreshServiceModule.RefreshAlbumService.storeProviderTrackOffers(
+    "soundcloud",
+    "sc-playlist",
+    [
+      {
+        provider_id: "sc-second",
+        title: "Second Song",
+        duration: 200,
+        track_number: 1,
+        volume_number: 1,
+        url: "https://soundcloud.com/example/second-song",
+      },
+      {
+        provider_id: "sc-first",
+        title: "First Song",
+        duration: 180,
+        track_number: 2,
+        volume_number: 1,
+        url: "https://soundcloud.com/example/first-song",
+      },
+    ],
+    null,
+  );
+
+  const offers = dbModule.db.prepare(`
+    SELECT provider_id, track_mbid, recording_mbid, match_status, match_method, availability
+    FROM ProviderItems
+    WHERE provider = 'soundcloud'
+      AND entity_type = 'track'
+      AND provider_album_id = 'sc-playlist'
+    ORDER BY provider_id
+  `).all() as Array<Record<string, string | null>>;
+  assert.deepEqual(offers, [
+    {
+      provider_id: "sc-first",
+      track_mbid: firstTrackMbid,
+      recording_mbid: firstRecordingMbid,
+      match_status: "matched",
+      match_method: "playlist-tracklist-coverage",
+      availability: "available",
+    },
+    {
+      provider_id: "sc-second",
+      track_mbid: secondTrackMbid,
+      recording_mbid: secondRecordingMbid,
+      match_status: "matched",
+      match_method: "playlist-tracklist-coverage",
+      availability: "available",
+    },
+  ]);
 });
 
 test("album refresh level does not borrow tracks from a colliding provider ID", () => {

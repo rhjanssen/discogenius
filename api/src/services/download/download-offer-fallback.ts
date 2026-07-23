@@ -1,6 +1,10 @@
 import { db } from "../../database.js";
-import { streamingProviderManager } from "../providers/index.js";
 import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
+import {
+  compareAudioOffersByQualityThenProvider,
+  compareSpatialOffersByQualityThenProvider,
+  projectProviderSpatialOffer,
+} from "../providers/provider-offer-ranking.js";
 
 export type RankedDownloadOffer = {
   provider: string;
@@ -9,27 +13,107 @@ export type RankedDownloadOffer = {
   providerAlbumId?: string | null;
 };
 
-const AVAILABILITY_SQL = `
-  (availability IS NULL
-   OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
-`;
+type AudioOfferRow = {
+  provider: string;
+  provider_id: string;
+  quality: string | null;
+  library_slot: string | null;
+  match_evidence: string | null;
+  provider_album_id?: string | null;
+  parent_quality?: string | null;
+  parent_library_slot?: string | null;
+  parent_match_evidence?: string | null;
+};
+
+type SpatialRankedDownloadOffer = RankedDownloadOffer & {
+  spatialRank: number;
+};
+
+function availabilitySql(column: string): string {
+  return `(
+    ${column} IS NULL
+    OR LOWER(CAST(${column} AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
+  )`;
+}
 
 function offerKey(provider: string, providerId: string): string {
   return `${String(provider).trim().toLowerCase()}::${String(providerId).trim()}`;
 }
 
-function sortByProviderPreference(offers: RankedDownloadOffer[]): RankedDownloadOffer[] {
-  return [...offers].sort((left, right) => {
-    const rankDelta = streamingProviderManager.getProviderPreferenceRank(left.provider)
-      - streamingProviderManager.getProviderPreferenceRank(right.provider);
-    if (rankDelta !== 0) return rankDelta;
-    const qualityLeft = String(left.quality || "");
-    const qualityRight = String(right.quality || "");
-    if (qualityLeft !== qualityRight) {
-      return qualityRight.localeCompare(qualityLeft);
-    }
-    return left.providerId.localeCompare(right.providerId);
-  });
+function sortAudioOffers(offers: RankedDownloadOffer[]): RankedDownloadOffer[] {
+  return [...offers].sort((left, right) => compareAudioOffersByQualityThenProvider(
+    { provider: left.provider, quality: left.quality, providerId: left.providerId },
+    { provider: right.provider, quality: right.quality, providerId: right.providerId },
+  ));
+}
+
+function sortSpatialOffers(offers: SpatialRankedDownloadOffer[]): RankedDownloadOffer[] {
+  return [...offers]
+    .sort((left, right) => compareSpatialOffersByQualityThenProvider(
+      {
+        provider: left.provider,
+        quality: left.quality,
+        providerId: left.providerId,
+        spatialRank: left.spatialRank,
+      },
+      {
+        provider: right.provider,
+        quality: right.quality,
+        providerId: right.providerId,
+        spatialRank: right.spatialRank,
+      },
+    ))
+    .map(({ spatialRank: _spatialRank, ...offer }) => offer);
+}
+
+function parseProviderQualityTags(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as { providerQualityTags?: unknown };
+    return Array.isArray(parsed?.providerQualityTags)
+      ? parsed.providerQualityTags.map((tag) => String(tag ?? "").trim()).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function rowSlot(row: AudioOfferRow): string {
+  return String(row.library_slot || "stereo").trim().toLowerCase();
+}
+
+function toDownloadOffer(row: AudioOfferRow): RankedDownloadOffer {
+  return {
+    provider: row.provider,
+    providerId: row.provider_id,
+    quality: row.quality ?? null,
+    ...(row.provider_album_id === undefined
+      ? {}
+      : { providerAlbumId: row.provider_album_id }),
+  };
+}
+
+function toSpatialDownloadOffer(row: AudioOfferRow): SpatialRankedDownloadOffer | null {
+  const projection = projectProviderSpatialOffer(
+    row.provider,
+    [
+      row.quality,
+      row.parent_quality,
+      ...parseProviderQualityTags(row.match_evidence),
+      ...parseProviderQualityTags(row.parent_match_evidence),
+    ],
+    rowSlot(row) === "spatial"
+      || String(row.parent_library_slot || "").trim().toLowerCase() === "spatial",
+  );
+  if (!projection) return null;
+
+  return {
+    ...toDownloadOffer(row),
+    // Backends branch on the quality tag as well as the slot, so do not pass a
+    // stereo scalar (for example Apple HIRES_LOSSLESS) into a spatial job.
+    quality: projection.quality,
+    spatialRank: projection.rank,
+  };
 }
 
 function dedupeOffers(offers: RankedDownloadOffer[]): RankedDownloadOffer[] {
@@ -53,68 +137,87 @@ export function listRankedAlbumOffers(
 
   const slot = String(librarySlot || "").trim().toLowerCase();
   const rows = db.prepare(`
-    SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality, library_slot
-    FROM ProviderItems
-    WHERE entity_type = 'album'
-      AND release_group_mbid = ?
-      AND ${AVAILABILITY_SQL}
-  `).all(mbid) as Array<{
-    provider: string;
-    provider_id: string;
-    quality: string | null;
-    library_slot: string | null;
-  }>;
+    SELECT item.provider,
+           CAST(item.provider_id AS TEXT) AS provider_id,
+           item.quality,
+           item.library_slot,
+           item.match_evidence
+    FROM ProviderItems item
+    WHERE item.entity_type = 'album'
+      AND item.release_group_mbid = ?
+      AND (item.match_status IS NULL OR LOWER(item.match_status) <> 'rejected')
+      AND ${availabilitySql("item.availability")}
+  `).all(mbid) as AudioOfferRow[];
 
-  const filtered = rows.filter((row) => {
-    if (!slot || slot === "stereo") {
-      // Stereo (default) accepts stereo/unset; spatial slot must match.
-      const rowSlot = String(row.library_slot || "stereo").trim().toLowerCase();
-      return rowSlot !== "spatial";
-    }
-    if (slot === "spatial") {
-      return String(row.library_slot || "").trim().toLowerCase() === "spatial";
-    }
-    return true;
-  });
+  if (slot === "spatial") {
+    return dedupeOffers(sortSpatialOffers(
+      rows
+        .map(toSpatialDownloadOffer)
+        .filter((offer): offer is SpatialRankedDownloadOffer => Boolean(offer)),
+    ));
+  }
 
-  return sortByProviderPreference(dedupeOffers(filtered.map((row) => ({
-    provider: row.provider,
-    providerId: row.provider_id,
-    quality: row.quality ?? null,
-  }))));
+  // Album offers are audio resources. A spatial-only album remains a valid
+  // last-resort stereo-library acquisition per the configured slot semantics.
+  return dedupeOffers(sortAudioOffers(rows.map(toDownloadOffer)));
 }
 
 export function listRankedTrackOffers(options: {
   trackMbid?: string | null;
   recordingMbid?: string | null;
+  librarySlot?: string | null;
 }): RankedDownloadOffer[] {
   const trackMbid = String(options.trackMbid || "").trim();
   const recordingMbid = String(options.recordingMbid || "").trim();
   if (!trackMbid && !recordingMbid) return [];
 
   const rows = db.prepare(`
-    SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality,
-           CAST(provider_album_id AS TEXT) AS provider_album_id
-    FROM ProviderItems
-    WHERE entity_type = 'track'
+    SELECT item.provider,
+           CAST(item.provider_id AS TEXT) AS provider_id,
+           item.quality,
+           CAST(item.provider_album_id AS TEXT) AS provider_album_id,
+           item.library_slot,
+           item.match_evidence,
+           parent.quality AS parent_quality,
+           parent.library_slot AS parent_library_slot,
+           parent.match_evidence AS parent_match_evidence
+    FROM ProviderItems item
+    LEFT JOIN ProviderItems parent
+      ON parent.provider = item.provider
+     AND parent.entity_type = 'album'
+     AND parent.provider_id = item.provider_album_id
+    WHERE item.entity_type = 'track'
+      AND (item.match_status IS NULL OR LOWER(item.match_status) <> 'rejected')
       AND (
-        (? != '' AND track_mbid = ?)
-        OR (? != '' AND recording_mbid = ?)
+        (? != '' AND item.track_mbid = ?)
+        OR (? != '' AND item.recording_mbid = ?)
       )
-      AND ${AVAILABILITY_SQL}
-  `).all(trackMbid, trackMbid, recordingMbid, recordingMbid) as Array<{
-    provider: string;
-    provider_id: string;
-    quality: string | null;
-    provider_album_id: string | null;
-  }>;
+      AND ${availabilitySql("item.availability")}
+      AND (
+        parent.rowid IS NULL
+        OR (
+          (parent.match_status IS NULL OR LOWER(parent.match_status) <> 'rejected')
+          AND ${availabilitySql("parent.availability")}
+        )
+      )
+  `).all(trackMbid, trackMbid, recordingMbid, recordingMbid) as AudioOfferRow[];
 
-  return sortByProviderPreference(dedupeOffers(rows.map((row) => ({
-    provider: row.provider,
-    providerId: row.provider_id,
-    quality: row.quality ?? null,
-    providerAlbumId: row.provider_album_id,
-  }))));
+  const slot = String(options.librarySlot || "stereo").trim().toLowerCase();
+  if (slot === "spatial") {
+    return dedupeOffers(sortSpatialOffers(
+      rows
+        .map(toSpatialDownloadOffer)
+        .filter((offer): offer is SpatialRankedDownloadOffer => Boolean(offer)),
+    ));
+  }
+
+  // Sort before deduplication: stereo/spatial variants can share a provider id,
+  // and retaining the first SQLite row made the chosen quality nondeterministic.
+  return dedupeOffers(sortAudioOffers(
+    rows
+      .filter((row) => rowSlot(row) !== "video")
+      .map(toDownloadOffer),
+  ));
 }
 
 export function listRankedVideoOffers(recordingRef: string | null | undefined): RankedDownloadOffer[] {
@@ -122,11 +225,12 @@ export function listRankedVideoOffers(recordingRef: string | null | undefined): 
   if (!key) return [];
 
   const rows = db.prepare(`
-    SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality
-    FROM ProviderItems
-    WHERE entity_type = 'video'
-      AND (CAST(recording_id AS TEXT) = ? OR recording_mbid = ?)
-      AND ${AVAILABILITY_SQL}
+    SELECT item.provider, CAST(item.provider_id AS TEXT) AS provider_id, item.quality
+    FROM ProviderItems item
+    WHERE item.entity_type = 'video'
+      AND (item.match_status IS NULL OR LOWER(item.match_status) <> 'rejected')
+      AND (CAST(item.recording_id AS TEXT) = ? OR item.recording_mbid = ?)
+      AND ${availabilitySql("item.availability")}
   `).all(key, key) as Array<{
     provider: string;
     provider_id: string;

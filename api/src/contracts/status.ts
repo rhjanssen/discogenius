@@ -116,7 +116,8 @@ export interface DownloadProgressContract {
   title?: string;
   artist?: string;
   cover?: string | null;
-  progress: number;
+  /** 0-100 when known. Null/omit when the downloader has no file-level progress. */
+  progress?: number | null;
   speed?: string;
   eta?: string;
   currentFile?: string;
@@ -440,7 +441,9 @@ export function parseDownloadProgressContract(value: unknown): DownloadProgressC
     title: expectOptionalString(record.title, "downloadProgress.title"),
     artist: expectOptionalString(record.artist, "downloadProgress.artist"),
     cover: expectNullableString(record.cover, "downloadProgress.cover"),
-    progress: expectNumber(record.progress, "downloadProgress.progress"),
+    progress: record.progress == null
+      ? null
+      : expectOptionalNumber(record.progress, "downloadProgress.progress") ?? null,
     speed: expectOptionalString(record.speed, "downloadProgress.speed"),
     eta: expectOptionalString(record.eta, "downloadProgress.eta"),
     currentFile: expectOptionalString(record.currentFile, "downloadProgress.currentFile"),

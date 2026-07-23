@@ -12,6 +12,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let configModule: typeof import("../config/config.js");
+let providersModule: typeof import("../providers/index.js");
 let slotServiceModule: typeof import("./release-group-slot-service.js");
 
 function writeTestConfig(overrides?: {
@@ -68,6 +69,7 @@ before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   configModule = await import("../config/config.js");
+  providersModule = await import("../providers/index.js");
   slotServiceModule = await import("./release-group-slot-service.js");
   writeTestConfig();
 });
@@ -381,6 +383,54 @@ test("equal-merit offers from two providers tie-break by provider preference, no
   assert.equal(stereo?.album.providerId, "tidal-album-1");
 });
 
+test("lossless audio beats a preferred lossy provider", () => {
+  const releaseGroupMbid = "rg-mbid-quality-over-priority";
+  const releaseMbid = "release-mbid-quality-over-priority";
+  const manager = providersModule.streamingProviderManager;
+  const originalPriority = manager.getProviderPriority.bind(manager);
+  manager.getProviderPriority = () => ["youtube-music", "deezer"];
+
+  try {
+    const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+      {
+        provider: "youtube-music",
+        album: {
+          providerId: "youtube-album-1",
+          title: "A Night at the Opera",
+          quality: "YOUTUBE_LOSSY",
+          trackCount: 12,
+          volumeCount: 1,
+        },
+        match: {
+          ...buildMatch(releaseGroupMbid, "youtube-album-1"),
+          releaseMbid,
+        },
+      },
+      {
+        provider: "deezer",
+        album: {
+          providerId: "deezer-album-1",
+          title: "A Night at the Opera",
+          quality: "FLAC",
+          trackCount: 12,
+          volumeCount: 1,
+        },
+        match: {
+          ...buildMatch(releaseGroupMbid, "deezer-album-1"),
+          releaseMbid,
+        },
+      },
+    ], {});
+
+    const stereo = selections.find((selection) => selection.slot === "stereo");
+    assert.ok(stereo);
+    assert.equal(stereo?.provider, "deezer");
+    assert.equal(stereo?.album.providerId, "deezer-album-1");
+  } finally {
+    manager.getProviderPriority = originalPriority;
+  }
+});
+
 test("provider slot selection links an Atmos-only release to both stereo and spatial slots", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-atmos-only";
@@ -449,6 +499,30 @@ test("provider slot selection links an Atmos-only release to both stereo and spa
       quality: "DOLBY_ATMOS",
     },
   ]);
+});
+
+test("provider slot selection preserves Sony 360 Reality Audio instead of requesting Atmos", () => {
+  const releaseGroupMbid = "rg-mbid-sony-360";
+  const releaseMbid = "release-mbid-sony-360";
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([{
+    provider: "tidal",
+    album: {
+      providerId: "provider-album-sony-360",
+      title: "A Night at the Opera",
+      quality: "SONY_360RA",
+      qualityTags: ["SONY_360RA"],
+      trackCount: 12,
+      volumeCount: 1,
+    },
+    match: {
+      ...buildMatch(releaseGroupMbid, "provider-album-sony-360"),
+      releaseMbid,
+    },
+  }], { includeSpatial: true });
+
+  const spatial = selections.find((selection) => selection.slot === "spatial");
+  assert.ok(spatial);
+  assert.equal(spatial.album.quality, "SONY_360RA");
 });
 
 test("provider slot selection can bind stereo and Atmos to different releases and provider identifiers", () => {

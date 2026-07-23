@@ -42,11 +42,15 @@ export interface AlbumContract {
   popularity?: number;
   stereo_provider?: string | null;
   stereo_provider_id?: string | null;
+  /** Human-facing provider permalink for the selected stereo offer. */
+  stereo_provider_url?: string | null;
   stereo_quality?: string | null;
   stereo_match_status?: string | null;
   stereo_release_mbid?: string | null;
   spatial_provider?: string | null;
   spatial_provider_id?: string | null;
+  /** Human-facing provider permalink for the selected spatial offer. */
+  spatial_provider_url?: string | null;
   spatial_quality?: string | null;
   spatial_match_status?: string | null;
   spatial_release_mbid?: string | null;
@@ -121,6 +125,7 @@ export interface VideoListProviderOfferContract {
   provider: string;
   provider_id: string;
   quality: string | null;
+  url?: string | null;
 }
 
 export interface LibraryStatsBucketContract {
@@ -218,11 +223,13 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     popularity: expectOptionalNumber(record.popularity, `${label}.popularity`),
     stereo_provider: expectOptionalString(record.stereo_provider, `${label}.stereo_provider`) ?? null,
     stereo_provider_id: expectOptionalString(record.stereo_provider_id, `${label}.stereo_provider_id`) ?? null,
+    stereo_provider_url: expectNullableString(record.stereo_provider_url, `${label}.stereo_provider_url`) ?? null,
     stereo_quality: expectOptionalString(record.stereo_quality, `${label}.stereo_quality`) ?? null,
     stereo_match_status: expectOptionalString(record.stereo_match_status, `${label}.stereo_match_status`) ?? null,
     stereo_release_mbid: expectOptionalString(record.stereo_release_mbid, `${label}.stereo_release_mbid`) ?? null,
     spatial_provider: expectOptionalString(record.spatial_provider, `${label}.spatial_provider`) ?? null,
     spatial_provider_id: expectOptionalString(record.spatial_provider_id, `${label}.spatial_provider_id`) ?? null,
+    spatial_provider_url: expectNullableString(record.spatial_provider_url, `${label}.spatial_provider_url`) ?? null,
     spatial_quality: expectOptionalString(record.spatial_quality, `${label}.spatial_quality`) ?? null,
     spatial_match_status: expectOptionalString(record.spatial_match_status, `${label}.spatial_match_status`) ?? null,
     spatial_release_mbid: expectOptionalString(record.spatial_release_mbid, `${label}.spatial_release_mbid`) ?? null,
@@ -292,6 +299,7 @@ function parseVideoContract(value: unknown, index: number): VideoContract {
             provider: expectString(offerRecord.provider, `${offerLabel}.provider`),
             provider_id: expectString(offerRecord.provider_id, `${offerLabel}.provider_id`),
             quality: expectNullableString(offerRecord.quality, `${offerLabel}.quality`) ?? null,
+            url: expectNullableString(offerRecord.url, `${offerLabel}.url`) ?? null,
           };
         }),
     cover: expectNullableString(record.cover, `${label}.cover`),

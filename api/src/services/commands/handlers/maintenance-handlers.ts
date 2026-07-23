@@ -26,6 +26,8 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s)`,
         `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s)`,
         `pruned ${summary.historyJobsPruned} old job(s)`,
+        `${summary.orphanDownloadFoldersRemoved} orphan download folder(s)`,
+        `corrected ${summary.videoQualitiesCorrected} video quality tag(s)`,
         `and optimized the database`,
     ];
     ctx.updateCommandDescription(job, {

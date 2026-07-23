@@ -20,6 +20,7 @@ import {
   searchApple,
 } from "./apple-music-catalog.js";
 import {
+  appleAudioQualityArgs,
   AppleMusicBackend,
   describeAppleDownloaderFailure,
   describeAppleDownloaderMissingPrerequisites,
@@ -499,8 +500,7 @@ test("Apple downloader backend builds provider-id based tool invocations", () =>
       }),
       ["--song", "--aac", "https://music.apple.com/us/song/1440904918"],
     );
-    // "HIGH" is our LOSSLESS tier name, NOT a lossy label: it must fall through
-    // to the default ALAC-lossless branch, never lossy AAC.
+    // Apple stores its lossy-stereo catalog trait as HIGH in ProviderItems.
     assert.deepEqual(
       backend.buildArgs("1440904918", {
         provider: "apple-music",
@@ -510,7 +510,7 @@ test("Apple downloader backend builds provider-id based tool invocations", () =>
         slot: "stereo",
         quality: "HIGH",
       }),
-      ["--song", "https://music.apple.com/us/song/1440904918"],
+      ["--song", "--aac", "https://music.apple.com/us/song/1440904918"],
     );
     assert.deepEqual(
       backend.buildArgs("1440904918", {
@@ -539,6 +539,15 @@ test("Apple downloader backend builds provider-id based tool invocations", () =>
       process.env.APPLE_MUSIC_STOREFRONT = previousStorefront;
     }
   }
+});
+
+test("Apple audio arguments apply the configured stereo quality ceiling", () => {
+  assert.deepEqual(appleAudioQualityArgs("HIRES_LOSSLESS", "low"), ["--aac"]);
+  assert.deepEqual(appleAudioQualityArgs("HIRES_LOSSLESS", "normal"), ["--aac"]);
+  assert.deepEqual(appleAudioQualityArgs("HIRES_LOSSLESS", "high"), ["--alac-max", "48000"]);
+  assert.deepEqual(appleAudioQualityArgs("HIRES_LOSSLESS", "max"), ["--alac-max", "192000"]);
+  assert.deepEqual(appleAudioQualityArgs("LOSSLESS", "max"), ["--alac-max", "48000"]);
+  assert.deepEqual(appleAudioQualityArgs("HIGH", "max"), ["--aac"]);
 });
 
 test("Apple downloader URLs use the configured storefront", () => {

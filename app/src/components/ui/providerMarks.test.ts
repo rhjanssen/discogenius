@@ -13,9 +13,23 @@ describe("provider marks", () => {
     expect(providerAlbumUrl("youtube-music", "MPREb_test")).toBe("https://music.youtube.com/browse/MPREb_test");
     expect(providerAlbumUrl("youtube-music", "OLAK5uy_test")).toBe("https://music.youtube.com/playlist?list=OLAK5uy_test");
     expect(providerAlbumUrl("deezer", "42")).toBe("https://www.deezer.com/album/42");
-    expect(providerAlbumUrl("soundcloud", "1891733180")).toBe("https://soundcloud.com/playlists/1891733180");
+    expect(providerAlbumUrl("soundcloud", "1891733180")).toBeNull();
+    expect(providerAlbumUrl(
+      "soundcloud",
+      "1891733180",
+      "https://soundcloud.com/bastilleuk/sets/ampersand",
+    )).toBe("https://soundcloud.com/bastilleuk/sets/ampersand");
+    expect(providerAlbumUrl("soundcloud", "1891733180", "javascript:alert(1)"))
+      .toBeNull();
+    expect(providerAlbumUrl("soundcloud", "1891733180", "https://user:secret@soundcloud.com/private"))
+      .toBeNull();
+    expect(providerAlbumUrl("tidal", "394045534", "https://soundcloud.com/phishing"))
+      .toBe("https://tidal.com/browse/album/394045534");
+    expect(providerAlbumUrl("amazon-music", "B0ABC", "https://music.amazon.evil.example/phishing"))
+      .toBe("https://music.amazon.com/albums/B0ABC");
     expect(providerMarkFor("soundcloud")?.src).toBe("/assets/images/soundcloud_icon.svg");
     expect(providerVideoUrl("youtube-music", "dQw4w9WgXcQ")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     expect(providerTrackUrl("tidal", "394045534")).toBe("https://tidal.com/browse/track/394045534");
+    expect(providerTrackUrl("soundcloud", "26282908")).toBeNull();
   });
 });

@@ -13,7 +13,8 @@ export interface DownloadRequest {
 }
 
 export interface DownloadProgress {
-    progress: number; // 0-100
+    /** 0-100 when known. Omit/null when the tool gives no file-level progress. */
+    progress?: number | null;
     currentFileNum?: number;
     totalFiles?: number;
     currentTrack?: string;

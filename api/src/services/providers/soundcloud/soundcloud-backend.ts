@@ -24,6 +24,13 @@ const MEDIA_EXTENSIONS = new Set([".mp3", ".m4a", ".aac", ".opus", ".ogg", ".mp4
 
 export type SpawnSoundCloudYtDlp = SpawnYtDlp;
 
+type ResolvedNativeTrack = {
+  trackId: string;
+  title: string;
+  mediaUrl: string;
+  mimeType: string;
+};
+
 function abortError(): Error {
   const error = new Error("SoundCloud download aborted.");
   error.name = "AbortError";
@@ -189,11 +196,7 @@ export class SoundCloudBackend implements DownloadBackend {
     return args;
   }
 
-  private async downloadTrackNative(
-    trackId: string,
-    downloadPath: string,
-    options: { signal?: AbortSignal; onProgress: (progress: DownloadProgress) => void; index?: number; total?: number },
-  ): Promise<boolean> {
+  private async resolveTrackNative(trackId: string): Promise<ResolvedNativeTrack | null> {
     const track = await soundcloudApiRequest<SoundCloudTrackResource>(
       `/tracks/${encodeURIComponent(trackId)}`,
       { fetchImpl: this.options.fetchImpl },
@@ -208,22 +211,43 @@ export class SoundCloudBackend implements DownloadBackend {
 
     const media = await resolveSoundCloudMediaUrl(track, { fetchImpl: this.options.fetchImpl });
     if (!media || media.protocol !== "progressive") {
-      return false;
+      const transcodings = track.media?.transcodings || [];
+      const hasEncrypted = transcodings.some((item) =>
+        String(item.format?.protocol || "").toLowerCase().includes("encrypted"));
+      if (hasEncrypted || policy === "BLOCK") {
+        throw new Error(
+          `SoundCloud track ${trackId} (${title}) is DRM-protected (encrypted HLS / Go+). Discogenius cannot download DRM streams.`,
+        );
+      }
+      return null;
     }
-    const destination = path.join(downloadPath, `${trackId}${extensionForMime(media.mimeType)}`);
+    return {
+      trackId,
+      title,
+      mediaUrl: media.url,
+      mimeType: media.mimeType,
+    };
+  }
+
+  private async downloadResolvedTrackNative(
+    track: ResolvedNativeTrack,
+    downloadPath: string,
+    options: { signal?: AbortSignal; onProgress: (progress: DownloadProgress) => void; index?: number; total?: number },
+  ): Promise<void> {
+    const destination = path.join(downloadPath, `${track.trackId}${extensionForMime(track.mimeType)}`);
     options.onProgress({
       progress: options.index && options.total
         ? Math.round(((options.index - 1) / options.total) * 100)
         : 5,
       state: "downloading",
-      currentProviderTrackId: trackId,
-      currentTrack: title,
+      currentProviderTrackId: track.trackId,
+      currentTrack: track.title,
       currentFileNum: options.index,
       totalFiles: options.total,
       trackStatus: "downloading",
-      statusMessage: `Downloading ${title}`,
+      statusMessage: `Downloading ${track.title}`,
     });
-    await downloadHttpFile(media.url, destination, {
+    await downloadHttpFile(track.mediaUrl, destination, {
       signal: options.signal,
       fetchImpl: this.options.fetchImpl,
     });
@@ -232,15 +256,56 @@ export class SoundCloudBackend implements DownloadBackend {
         ? Math.round((options.index / options.total) * 100)
         : 100,
       state: "downloading",
-      currentProviderTrackId: trackId,
-      currentTrack: title,
+      currentProviderTrackId: track.trackId,
+      currentTrack: track.title,
       currentFileNum: options.index,
       totalFiles: options.total,
       trackProgress: 100,
       trackStatus: "completed",
-      statusMessage: `Downloaded ${title}`,
+      statusMessage: `Downloaded ${track.title}`,
     });
-    return true;
+  }
+
+  private async downloadResolvedSetNative(
+    tracks: ResolvedNativeTrack[],
+    downloadPath: string,
+    options: { signal?: AbortSignal; onProgress: (progress: DownloadProgress) => void },
+  ): Promise<boolean> {
+    if (tracks.length === 0) return false;
+    const stagingPath = await fs.promises.mkdtemp(path.join(downloadPath, ".soundcloud-native-"));
+    const promotedFiles: string[] = [];
+    try {
+      for (let index = 0; index < tracks.length; index += 1) {
+        if (options.signal?.aborted) throw abortError();
+        await this.downloadResolvedTrackNative(tracks[index]!, stagingPath, {
+          signal: options.signal,
+          onProgress: options.onProgress,
+          index: index + 1,
+          total: tracks.length,
+        });
+      }
+
+      // Promote only after the entire native set has transferred. The staging
+      // directory lives under the destination, so a hard link is an atomic,
+      // same-filesystem create that cannot leave a partial destination. It also
+      // preserves pre-existing output by failing when the target already exists.
+      for (const track of tracks) {
+        if (options.signal?.aborted) throw abortError();
+        const fileName = `${track.trackId}${extensionForMime(track.mimeType)}`;
+        const source = path.join(stagingPath, fileName);
+        const destination = path.join(downloadPath, fileName);
+        await fs.promises.link(source, destination);
+        promotedFiles.push(destination);
+      }
+      return true;
+    } catch (error) {
+      await Promise.allSettled(promotedFiles.map(
+        (file) => fs.promises.rm(file, { force: true }),
+      ));
+      throw error;
+    } finally {
+      await fs.promises.rm(stagingPath, { recursive: true, force: true });
+    }
   }
 
   private async tryNativeDownload(
@@ -261,37 +326,29 @@ export class SoundCloudBackend implements DownloadBackend {
         .map((track) => soundcloudResourceId(track.id))
         .filter((id) => TRACK_ID.test(id));
       if (tracks.length === 0) return false;
-      let completed = 0;
-      for (let index = 0; index < tracks.length; index += 1) {
+      // Resolve the complete playlist before writing anything. One encrypted or
+      // otherwise non-progressive track must send the whole job to yt-dlp; a
+      // mid-playlist fallback would otherwise leave native AAC/MP3 files beside
+      // yt-dlp's output for the same provider ids.
+      const resolved: ResolvedNativeTrack[] = [];
+      for (const trackId of tracks) {
         if (options.signal?.aborted) throw abortError();
-        const ok = await this.downloadTrackNative(tracks[index]!, request.downloadPath, {
-          signal: options.signal,
-          onProgress: options.onProgress,
-          index: index + 1,
-          total: tracks.length,
-        });
-        if (!ok) return false;
-        completed += 1;
+        const track = await this.resolveTrackNative(trackId);
+        if (!track) return false;
+        resolved.push(track);
       }
-      return completed > 0;
+      return this.downloadResolvedSetNative(resolved, request.downloadPath, options);
     }
 
     if (request.entityType !== "track") return false;
-    let allOk = true;
-    for (let index = 0; index < ids.length; index += 1) {
+    const resolved: ResolvedNativeTrack[] = [];
+    for (const id of ids) {
       if (options.signal?.aborted) throw abortError();
-      const ok = await this.downloadTrackNative(soundcloudResourceId(ids[index]), request.downloadPath, {
-        signal: options.signal,
-        onProgress: options.onProgress,
-        index: index + 1,
-        total: ids.length,
-      });
-      if (!ok) {
-        allOk = false;
-        break;
-      }
+      const track = await this.resolveTrackNative(soundcloudResourceId(id));
+      if (!track) return false;
+      resolved.push(track);
     }
-    return allOk;
+    return this.downloadResolvedSetNative(resolved, request.downloadPath, options);
   }
 
   private async downloadWithYtDlp(
@@ -415,10 +472,17 @@ export class SoundCloudBackend implements DownloadBackend {
         if (mediaFiles.length > 0) return;
       }
     } catch (error) {
-      // Native path may fail on encrypted/Go+ tracks; fall through to yt-dlp.
+      // SNIP / DRM are terminal for this account — yt-dlp cannot decrypt them either.
       if (error instanceof Error && error.name === "AbortError") throw error;
+      if (
+        error instanceof Error
+        && /policy=SNIP|DRM-protected|encrypted HLS|Go\+/iu.test(error.message)
+      ) {
+        throw error;
+      }
+      // Native path may fail on transient resolve issues; fall through to yt-dlp.
       options.onProgress({
-        progress: 0,
+        progress: null,
         state: "downloading",
         statusMessage: error instanceof Error
           ? `Native SoundCloud stream unavailable (${error.message}); trying yt-dlp`

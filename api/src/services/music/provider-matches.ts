@@ -28,6 +28,8 @@ export interface ReleaseAvailabilityProvider {
   provider: string;
   providerAlbumId: string | null;
   providerAlbumIds?: string[];
+  /** Canonical/permalink URL captured from the provider offer. */
+  providerUrl?: string | null;
   quality: string | null;
   librarySlot: string | null;
   status: string | null;
@@ -485,7 +487,8 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       pi.quality          AS quality,
       pi.library_slot     AS library_slot,
       pi.explicit         AS explicit,
-      pi.match_evidence   AS match_evidence
+      pi.match_evidence   AS match_evidence,
+      pi.provider_url     AS provider_url
     FROM AlbumReleases ar
     LEFT JOIN ProviderItemMatches pm
       ON pm.provider_item_type = 'album'
@@ -500,6 +503,12 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
          WHERE current_pi.provider = pm.provider
            AND current_pi.entity_type = 'album'
            AND current_pi.provider_id = pm.provider_item_id
+           AND (current_pi.match_status IS NULL OR LOWER(current_pi.match_status) <> 'rejected')
+           AND (
+             current_pi.availability IS NULL
+             OR LOWER(CAST(current_pi.availability AS TEXT))
+                NOT IN ('0', 'false', 'unavailable', 'no', '')
+           )
            AND (
              current_pi.release_mbid IS NULL
              OR current_pi.release_mbid = pm.musicbrainz_release_mbid
@@ -510,7 +519,8 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       ON pi.provider = pm.provider
      AND pi.entity_type = 'album'
      AND pi.provider_id = pm.provider_item_id
-    WHERE ar.release_group_mbid = ?
+    WHERE (pm.status IS NULL OR LOWER(pm.status) <> 'rejected')
+      AND ar.release_group_mbid = ?
     ORDER BY
       (ar.date IS NULL),
       ar.date,
@@ -553,11 +563,18 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
     library_slot: string | null;
     explicit: number | null;
     match_evidence: string | null;
+    provider_url: string | null;
   }>;
 
-  const lookupExplicit = db.prepare(`
-    SELECT explicit FROM ProviderItems
+  const lookupOfferFacts = db.prepare(`
+    SELECT explicit, provider_url FROM ProviderItems
     WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
+      AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
+      AND (
+        availability IS NULL
+        OR LOWER(CAST(availability AS TEXT))
+           NOT IN ('0', 'false', 'unavailable', 'no', '')
+      )
   `);
 
   const byRelease = new Map<string, ReleaseAvailability>();
@@ -598,10 +615,17 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
         const providerAlbumIds = Array.isArray(parsed.providerAlbumIds) && parsed.providerAlbumIds.length > 0
           ? parsed.providerAlbumIds.map((id) => String(id))
           : splitProviderAlbumIds(r.provider_item_id);
-        const memberExplicit = providerAlbumIds.map((albumId) => {
-          const row = lookupExplicit.get(r.provider, albumId) as { explicit: number | null } | undefined;
-          return row?.explicit == null ? null : Boolean(row.explicit);
-        });
+        const memberFacts = providerAlbumIds.map((albumId) =>
+          lookupOfferFacts.get(r.provider, albumId) as {
+            explicit: number | null;
+            provider_url: string | null;
+          } | undefined);
+        // A persisted composite is only usable while every member offer is
+        // still live. Refresh rebuilds composites, but reads must not surface a
+        // stale set between invalidation and that rebuild.
+        if (memberFacts.some((row) => !row)) continue;
+        const memberExplicit = memberFacts.map((row) =>
+          row?.explicit == null ? null : Boolean(row.explicit));
         const evidenceExplicit = typeof parsed.explicit === "boolean" ? parsed.explicit : null;
         rel.availability.push({
           provider: r.provider,
@@ -620,6 +644,7 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
         const directOffer: ReleaseAvailabilityProvider = {
           provider: r.provider,
           providerAlbumId: r.provider_album_id,
+          providerUrl: r.provider_url,
           quality: r.quality,
           librarySlot: r.library_slot,
           status: r.status,
@@ -683,16 +708,22 @@ export function getReleaseGroupAvailability(releaseGroupMbid: string): ReleaseGr
       && (offer.librarySlot || "") === s.slot
       && sameProviderAlbumSet(offer.providerAlbumId, providerAlbumId));
     if (alreadyPresent) continue;
+    const memberFacts = albumIds.map((albumId) =>
+      lookupOfferFacts.get(provider, albumId) as {
+        explicit: number | null;
+        provider_url: string | null;
+      } | undefined);
+    if (memberFacts.some((row) => !row)) continue;
     const explicit = isComposite
-      ? aggregateExplicitFlags(albumIds.map((albumId) => {
-        const row = lookupExplicit.get(provider, albumId) as { explicit: number | null } | undefined;
-        return row?.explicit == null ? null : Boolean(row.explicit);
-      }))
-      : (lookupExplicit.get(provider, providerAlbumId) as { explicit: number | null } | undefined)?.explicit ?? null;
+      ? aggregateExplicitFlags(memberFacts.map((row) =>
+        row?.explicit == null ? null : Boolean(row.explicit)))
+      : memberFacts[0]?.explicit ?? null;
+    const providerUrl = isComposite ? null : memberFacts[0]?.provider_url ?? null;
     rel.availability.push({
       provider,
       providerAlbumId: isComposite ? joinProviderAlbumIds(albumIds) : providerAlbumId,
       providerAlbumIds: isComposite ? albumIds : undefined,
+      providerUrl,
       quality: s.quality,
       librarySlot: s.slot,
       status: "verified",
@@ -783,6 +814,11 @@ export function persistCompositeReleaseMatches(releaseGroupMbid: string): void {
     WHERE entity_type = 'album'
       AND (artist_mbid = ? OR discovered_from_artist_mbid = ?)
       AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
+      AND (
+        availability IS NULL
+        OR LOWER(CAST(availability AS TEXT))
+           NOT IN ('0', 'false', 'unavailable', 'no', '')
+      )
   `).all(groupArtist.artist_mbid, groupArtist.artist_mbid) as ProviderAlbumRow[];
 
   if (providerAlbums.length < 2) return;

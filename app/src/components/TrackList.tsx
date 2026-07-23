@@ -364,9 +364,11 @@ const getRemoteProviderQualityOffers = (track: TrackListItem): ProviderQualityOf
         quality: offer.quality,
         provider: offer.provider,
         providerAlbumId: offer.providerAlbumId,
+        providerUrl: offer.providerUrl,
         matchStatus: offer.matchStatus,
         selectedReleaseMbid: offer.selectedReleaseMbid || track.musicbrainz_release_id || null,
         providerTrackId: providerTrackId || null,
+        providerTrackUrl: offer.providerTrackUrl,
         musicbrainzTrackId: track.musicbrainz_track_id || null,
         musicbrainzRecordingId: track.musicbrainz_recording_id || null,
       };

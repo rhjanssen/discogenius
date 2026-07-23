@@ -127,12 +127,12 @@ function seedCanonicalArtistPage() {
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid,
       release_mbid, title, quality, asset_id, library_slot, album_release_id,
-      match_status, match_confidence
+      match_status, match_confidence, provider_url
     )
     VALUES (
       'tidal', 'album', 'provider-album-1', 'artist-mbid-1', 'release-group-mbid-1',
       'release-mbid-1', 'Canonical Album', 'LOSSLESS', '13bb32e2-e326-4ee5-be74-f3320ad3379c', 'stereo', 201,
-      'verified', 0.99
+      'verified', 0.99, 'https://soundcloud.com/example/sets/canonical-album'
     )
   `).run();
 
@@ -185,7 +185,9 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(albums[0].source, "musicbrainz");
   assert.equal(albums[0].monitored_lock, true);
   assert.equal(albums[0].selected_provider_id, "provider-album-1");
-  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
+  assert.equal(albums[0].stereo_provider_url, "https://soundcloud.com/example/sets/canonical-album");
+  assert.match(albums[0].cover_art_url, /^\/media-cover\/Albums\/release-group-mbid-1\/cover\.jpg\?source=canonical&rev=[a-f0-9]{16}$/);
+  assert.equal(albums[0].stereo_provider_url, "https://soundcloud.com/example/sets/canonical-album");
   assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 
@@ -199,6 +201,8 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(videos.length, 1);
   assert.equal(videos[0].id, "501");
   assert.equal(videos[0].title, "Canonical Video");
+  assert.equal(videos[0].provider, "tidal");
+  assert.equal(String(videos[0].provider_id), "provider-video-1");
   assert.equal(videos[0].is_monitored, true);
   assert.equal(videos.some((video: any) => video.title === "Stale provider Video"), false);
 });
@@ -510,7 +514,7 @@ test("artist list and album helper count canonical release groups and tracks", (
   assert.equal(albums[0].id, "release-group-mbid-1");
   assert.equal(albums[0].title, "Canonical Album");
   assert.equal(albums[0].source, "musicbrainz");
-  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
+  assert.match(albums[0].cover_art_url, /^\/media-cover\/Albums\/release-group-mbid-1\/cover\.jpg\?source=canonical&rev=[a-f0-9]{16}$/);
   assert.equal(albums.some((album: any) => album.title === "Stale provider Album"), false);
 });
 
@@ -560,7 +564,7 @@ test("artist page album cards prefer cached Servarr Metadata Server artwork over
     .find((module: any) => module.title === "Albums")?.items || [];
 
   assert.equal(albums.length, 1);
-  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
+  assert.match(albums[0].cover_art_url, /^\/media-cover\/Albums\/release-group-mbid-1\/cover\.jpg\?source=canonical&rev=[a-f0-9]{16}$/);
   assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
 });
 
@@ -581,7 +585,7 @@ test("artist page album cards resolve Servarr Metadata Server artwork before pro
     .find((module: any) => module.title === "Albums")?.items || [];
 
   assert.equal(albums.length, 1);
-  assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
+  assert.match(albums[0].cover_art_url, /^\/media-cover\/Albums\/release-group-mbid-1\/cover\.jpg\?source=canonical&rev=[a-f0-9]{16}$/);
   assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
 });
 
@@ -613,7 +617,7 @@ test("artist page uses provider fallback without hydrating missing release-group
       .find((module: any) => module.title === "Albums")?.items || [];
 
     assert.equal(albums.length, 1);
-    assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
+    assert.match(albums[0].cover_art_url, /^\/media-cover\/Albums\/release-group-mbid-1\/cover\.jpg\?source=canonical&rev=[a-f0-9]{16}$/);
     // provider_cover_id is the provider-native identifier (the plugin builds the
     // fetchable URL); core never renders it directly. The provider-fallback URL
     // stored in Albums.images surfaces only through the cached cover_art_url above.
@@ -646,7 +650,10 @@ test("artist page uses selected provider artwork for blank release-group artwork
     assert.equal(albums.length, 1);
     // Local media-cover URL is always emitted for the album MBID (bytes fill
     // lazily). Blank Albums.images must not trigger read-time Servarr hydration.
-    assert.equal(albums[0].cover_art_url, "/media-cover/Albums/release-group-mbid-1/cover.jpg?source=canonical");
+    assert.match(
+      albums[0].cover_art_url,
+      /^\/media-cover\/Albums\/release-group-mbid-1\/cover\.jpg\?source=canonical&rev=[a-f0-9]{16}$/,
+    );
     assert.equal(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
     assert.equal(syncCalled, false);
   } finally {

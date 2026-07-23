@@ -198,11 +198,10 @@ test("download processor resolves canonical album provider offers without legacy
   };
 
   assert.equal(processor.hasAlbumMetadataReady("tidal-gmtf-expanded", payload), true);
-  assert.deepEqual(processor.resolveDownloadMetadata("tidal-gmtf-expanded", "album", payload), {
-    title: "Give Me the Future",
-    artist: "Bastille",
-    cover: "/media-cover/Albums/rg-gmtf/cover.jpg?source=canonical",
-  });
+  const albumMeta = processor.resolveDownloadMetadata("tidal-gmtf-expanded", "album", payload);
+  assert.equal(albumMeta.title, "Give Me the Future");
+  assert.equal(albumMeta.artist, "Bastille");
+  assert.ok(String(albumMeta.cover || "").startsWith("/media-cover/Albums/rg-gmtf/cover.jpg?source=canonical"));
   assert.equal(processor.resolveDownloadQuality("tidal-gmtf-expanded", "album", payload), "HIRES_LOSSLESS");
 });
 
@@ -304,11 +303,10 @@ test("download processor detects canonical track and video files without Provide
   );
 
   assert.equal(processor.hasTrackMetadataReady("tidal-track", { type: "track", providerId: "tidal-track" }), true);
-  assert.deepEqual(processor.resolveDownloadMetadata("tidal-track", "track", { type: "track", providerId: "tidal-track" }), {
-    title: "Canonical Track",
-    artist: "Media Artist",
-    cover: "/media-cover/Albums/rg-media/cover.jpg?source=canonical",
-  });
+  const trackMeta = processor.resolveDownloadMetadata("tidal-track", "track", { type: "track", providerId: "tidal-track" });
+  assert.equal(trackMeta.title, "Canonical Track");
+  assert.equal(trackMeta.artist, "Media Artist");
+  assert.ok(String(trackMeta.cover || "").startsWith("/media-cover/Albums/rg-media/cover.jpg?source=canonical"));
   assert.equal(processor.isCanonicalProviderItemDownloaded("tidal-track", "track", { type: "track", providerId: "tidal-track" }), true);
 
   assert.equal(processor.hasVideoMetadataReady("tidal-video", { type: "video", providerId: "tidal-video" }), true);
@@ -377,11 +375,10 @@ test("download processor scopes provider offers when services reuse the same res
 
   assert.equal(processor.resolveCanonicalProviderOffer("42", "album", appleAlbumPayload)?.provider, "apple-music");
   assert.equal(processor.resolveCanonicalProviderOffer("7", "track", appleTrackPayload)?.provider, "apple-music");
-  assert.deepEqual(processor.resolveDownloadMetadata("7", "track", appleTrackPayload), {
-    title: "Apple Track",
-    artist: "Apple Artist",
-    cover: "/media-cover/Albums/rg-apple/cover.jpg?source=canonical",
-  });
+  const appleTrackMeta = processor.resolveDownloadMetadata("7", "track", appleTrackPayload);
+  assert.equal(appleTrackMeta.title, "Apple Track");
+  assert.equal(appleTrackMeta.artist, "Apple Artist");
+  assert.ok(String(appleTrackMeta.cover || "").startsWith("/media-cover/Albums/rg-apple/cover.jpg?source=canonical"));
   assert.equal(processor.resolveDownloadQuality("7", "track", appleTrackPayload), "HIRES_LOSSLESS");
   assert.equal(processor.isCanonicalProviderItemDownloaded("7", "track", appleTrackPayload), false);
   assert.equal(processor.isCanonicalProviderItemDownloaded("7", "track", tidalTrackPayload), true);

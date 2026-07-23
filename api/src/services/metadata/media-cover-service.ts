@@ -81,21 +81,37 @@ const EXTENSIONS_BY_CONTENT_TYPE: Record<string, string> = {
   "image/webp": ".webp",
 };
 
+export function normalizeMediaCoverEntityId(entityId: string | number | null | undefined): string | null {
+  const raw = String(entityId ?? "").trim();
+  if (!raw || raw === "." || raw === "..") {
+    return null;
+  }
+  const safe = raw.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return safe && safe !== "." && safe !== ".." ? safe : null;
+}
+
 function safeMediaCoverEntityId(entityId: string | number): string {
-  const safe = String(entityId || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_");
-  return safe || "unknown";
+  return normalizeMediaCoverEntityId(entityId) || "unknown";
+}
+
+function resolveWithinMediaCoverRoot(...segments: string[]): string {
+  const root = path.resolve(mediaCoverRoot());
+  const candidate = path.resolve(root, ...segments);
+  if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
+    throw new Error("Media-cover path escaped its configured root");
+  }
+  return candidate;
 }
 
 function mediaCoverFolder(entityId: string | number, coverEntity: MediaCoverEntity): string {
   const safeId = safeMediaCoverEntityId(entityId);
-  const root = mediaCoverRoot();
   if (coverEntity === "Album") {
-    return path.join(root, "Albums", safeId);
+    return resolveWithinMediaCoverRoot("Albums", safeId);
   }
   if (coverEntity === "Video") {
-    return path.join(root, "Videos", safeId);
+    return resolveWithinMediaCoverRoot("Videos", safeId);
   }
-  return path.join(root, safeId);
+  return resolveWithinMediaCoverRoot(safeId);
 }
 
 function mediaCoverUrlFolder(entityId: string | number, coverEntity: MediaCoverEntity): string {
@@ -112,6 +128,31 @@ function mediaCoverUrlFolder(entityId: string | number, coverEntity: MediaCoverE
 function normalizedCoverType(coverType: string): string {
   const normalized = String(coverType || "cover").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
   return normalized || "cover";
+}
+
+function canonicalArtworkCoverTypes(
+  coverEntity: "Album" | "Artist",
+  requestedCoverType: string,
+): string[] {
+  const requested = normalizedCoverType(requestedCoverType);
+  if (coverEntity === "Album" && requested === "cover") {
+    return ["cover", "poster"];
+  }
+  if (coverEntity === "Artist" && (requested === "poster" || requested === "headshot")) {
+    return requested === "poster"
+      ? ["poster", "headshot"]
+      : ["headshot", "poster"];
+  }
+  if (
+    coverEntity === "Artist"
+    && (requested === "fanart" || requested === "background" || requested === "landscape")
+  ) {
+    return [
+      requested,
+      ...["fanart", "background", "landscape"].filter((type) => type !== requested),
+    ];
+  }
+  return [requested];
 }
 
 function filenameForCover(coverType: string, extension: string, height?: number | null): string {
@@ -197,6 +238,7 @@ function looksLikeProviderArtworkUrl(url: unknown): boolean {
 function hasStoredCanonicalArtwork(
   entityId: string | number,
   coverEntity: "Album" | "Artist",
+  coverType: string,
 ): boolean {
   try {
     const row = coverEntity === "Album"
@@ -205,13 +247,73 @@ function hasStoredCanonicalArtwork(
     if (!row?.images) return false;
     const images = JSON.parse(row.images);
     if (!Array.isArray(images)) return false;
+    const acceptedTypes = new Set(canonicalArtworkCoverTypes(coverEntity, coverType));
     return images.some((image) => {
       if (!image || typeof image !== "object") return false;
       if (isProviderFallbackImage(image as Record<string, any>)) return false;
-      return Boolean(imageUrl(image as ServarrMetadataImage));
+      return acceptedTypes.has(imageCoverType(image as ServarrMetadataImage))
+        && Boolean(imageUrl(image as ServarrMetadataImage));
     });
   } catch {
     return false;
+  }
+}
+
+function storedProviderArtworkSource(
+  entityId: string | number,
+  coverEntity: "Album" | "Artist",
+  coverType: string,
+): string | null {
+  try {
+    const row = coverEntity === "Album"
+      ? db.prepare("SELECT images FROM Albums WHERE mbid = ?").get(String(entityId)) as { images?: string | null } | undefined
+      : db.prepare("SELECT images FROM ArtistMetadata WHERE mbid = ?").get(String(entityId)) as { images?: string | null } | undefined;
+    const images = row?.images ? JSON.parse(row.images) : [];
+    if (!Array.isArray(images)) return null;
+    for (const acceptedType of canonicalArtworkCoverTypes(coverEntity, coverType)) {
+      const match = images.find((image) => (
+        image
+        && typeof image === "object"
+        && isProviderFallbackImage(image as Record<string, any>)
+        && imageCoverType(image as ServarrMetadataImage) === acceptedType
+        && imageUrl(image as ServarrMetadataImage)
+      ));
+      if (match) {
+        return imageUrl(match as ServarrMetadataImage);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function storedCanonicalArtworkSource(
+  entityId: string | number,
+  coverEntity: "Album" | "Artist",
+  coverType: string,
+): string | null {
+  try {
+    const row = coverEntity === "Album"
+      ? db.prepare("SELECT images FROM Albums WHERE mbid = ?").get(String(entityId)) as { images?: string | null } | undefined
+      : db.prepare("SELECT images FROM ArtistMetadata WHERE mbid = ?").get(String(entityId)) as { images?: string | null } | undefined;
+    const images = row?.images ? JSON.parse(row.images) : [];
+    if (!Array.isArray(images)) return null;
+    for (const acceptedType of canonicalArtworkCoverTypes(coverEntity, coverType)) {
+      const match = images.find((image) => (
+        image
+        && typeof image === "object"
+        && !isProviderFallbackImage(image as Record<string, any>)
+        && imageCoverType(image as ServarrMetadataImage) === acceptedType
+        && imageUrl(image as ServarrMetadataImage)
+      ));
+      if (match) {
+        return imageUrl(match as ServarrMetadataImage);
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -233,7 +335,38 @@ export function isArtworkPreferenceCacheCurrent(
 
     const fulfilledByProvider = marker?.fulfilledBy === "provider"
       || (marker?.fulfilledBy == null && looksLikeProviderArtworkUrl(marker?.url));
-    if (preference === "canonical" && fulfilledByProvider && hasStoredCanonicalArtwork(entityId, coverEntity)) {
+    const canonicalSource = storedCanonicalArtworkSource(entityId, coverEntity, coverType);
+    const normalizedCanonicalSource = normalizeArtworkUrl(canonicalSource);
+    const normalizedProviderSource = preference === "provider" && fulfilledByProvider
+      ? normalizeArtworkUrl(
+        directProviderArtworkSourceFromCandidates(
+          coverEntity === "Album"
+            ? loadAlbumProviderArtworkCandidates(String(entityId))
+            : loadArtistProviderArtworkCandidates(String(entityId)),
+          coverEntity === "Album" ? "album" : "artist",
+        ) || storedProviderArtworkSource(entityId, coverEntity, coverType),
+      )
+      : null;
+    if (
+      !fulfilledByProvider
+      && normalizedCanonicalSource
+      && normalizeArtworkUrl(marker?.url) !== normalizedCanonicalSource
+    ) {
+      return false;
+    }
+    if (
+      preference === "canonical"
+      && fulfilledByProvider
+      && hasStoredCanonicalArtwork(entityId, coverEntity, coverType)
+    ) {
+      return false;
+    }
+    if (
+      preference === "provider"
+      && fulfilledByProvider
+      && normalizedProviderSource
+      && normalizeArtworkUrl(marker?.url) !== normalizedProviderSource
+    ) {
       return false;
     }
     return true;
@@ -259,8 +392,32 @@ export function hasCachedMediaCover(
   return existingMediaCover(entityId, coverEntity, coverType) != null;
 }
 
+/**
+ * True when local bytes exist and their source marker matches the source that
+ * the catalog/provider currently advertises. This is intended for refresh
+ * workers; UI response mapping must remain filesystem-free.
+ */
+export function isMediaCoverSourceCacheCurrent(
+  entityId: string | number | null | undefined,
+  coverEntity: MediaCoverEntity,
+  coverType: string,
+  sourceUrl: string | null | undefined,
+): boolean {
+  const normalizedSource = normalizeArtworkUrl(sourceUrl);
+  if (
+    entityId == null
+    || String(entityId).trim() === ""
+    || !normalizedSource
+    || !existingMediaCover(entityId, coverEntity, coverType)
+  ) {
+    return false;
+  }
+  return cachedSourceMatches(entityId, coverEntity, coverType, normalizedSource);
+}
+
 function existingMediaCover(entityId: string | number | null | undefined, coverEntity: MediaCoverEntity, coverType: string): { path: string; url: string } | null {
-  if (entityId == null || String(entityId).trim() === "") {
+  const normalizedEntityId = normalizeMediaCoverEntityId(entityId);
+  if (!normalizedEntityId) {
     return null;
   }
 
@@ -272,16 +429,16 @@ function existingMediaCover(entityId: string | number | null | undefined, coverE
     : [...MEDIA_COVER_DEFAULT_HEIGHTS];
   for (const height of heights) {
     for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-      const filePath = getMediaCoverPath(entityId, coverEntity, coverType, extension, height);
+      const filePath = getMediaCoverPath(normalizedEntityId, coverEntity, coverType, extension, height);
       try {
         const stats = fs.statSync(filePath);
         if (stats.isFile() && stats.size > 0) {
           if (coverEntity !== "Video" && height) {
             for (const originalExtension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-              try { fs.unlinkSync(getMediaCoverPath(entityId, coverEntity, coverType, originalExtension)); } catch { /* absent */ }
+              try { fs.unlinkSync(getMediaCoverPath(normalizedEntityId, coverEntity, coverType, originalExtension)); } catch { /* absent */ }
             }
           }
-          return { path: filePath, url: getMediaCoverUrl(entityId, coverEntity, coverType, ".jpg") };
+          return { path: filePath, url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, ".jpg") };
         }
       } catch {
         // try next candidate
@@ -292,62 +449,8 @@ function existingMediaCover(entityId: string | number | null | undefined, coverE
   return null;
 }
 
-/** Newest on-disk cover mtime for Lidarr-like `?lastWrite=` cache busting. */
-function mediaCoverRevisionMs(
-  entityId: string | number | null | undefined,
-  coverEntity: MediaCoverEntity,
-  coverType: string,
-): number | null {
-  if (entityId == null || String(entityId).trim() === "") {
-    return null;
-  }
-
-  const heights: Array<number | null> = coverEntity === "Video"
-    ? [null, ...MEDIA_COVER_VIDEO_HEIGHTS, ...MEDIA_COVER_ALL_HEIGHTS]
-    : [null, ...MEDIA_COVER_DEFAULT_HEIGHTS];
-  // Deduplicate heights while preserving order.
-  const uniqueHeights = [...new Set(heights)];
-  let latest: number | null = null;
-  for (const height of uniqueHeights) {
-    for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-      try {
-        const stats = fs.statSync(getMediaCoverPath(entityId, coverEntity, coverType, extension, height));
-        if (stats.isFile() && stats.size > 0) {
-          latest = latest == null ? stats.mtimeMs : Math.max(latest, stats.mtimeMs);
-        }
-      } catch {
-        // try next candidate
-      }
-    }
-  }
-  return latest == null ? null : Math.trunc(latest);
-}
-
 function appendMediaCoverQuery(url: string, key: string, value: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(value)}`;
-}
-
-/**
- * Append `?lastWrite=<mtimeMs>` when cached bytes exist so immutable HTTP
- * caching cannot pin list/detail to different generations of the same path.
- */
-function withMediaCoverLastWrite(
-  url: string | null,
-  entityId: string | number | null | undefined,
-  coverEntity: MediaCoverEntity,
-  coverType: string,
-): string | null {
-  if (!url || !url.startsWith("/media-cover/") || entityId == null) {
-    return url;
-  }
-  if (/[?&]lastWrite=/.test(url)) {
-    return url;
-  }
-  const revision = mediaCoverRevisionMs(entityId, coverEntity, coverType);
-  if (revision == null) {
-    return url;
-  }
-  return appendMediaCoverQuery(url, "lastWrite", String(revision));
 }
 
 function contentTypeForExtension(extension: string): string {
@@ -514,14 +617,15 @@ export async function ensureCachedMediaCover(options: {
   fulfilledBy?: "canonical" | "provider";
 }): Promise<string | null> {
   const sourceUrl = normalizeArtworkUrl(options.sourceUrl);
-  if (!sourceUrl || options.entityId == null || String(options.entityId).trim() === "") {
+  const entityId = normalizeMediaCoverEntityId(options.entityId);
+  if (!sourceUrl || !entityId) {
     return null;
   }
 
   const fulfilledBy = options.fulfilledBy
     ?? (looksLikeProviderArtworkUrl(sourceUrl) ? "provider" : "canonical");
 
-  const existing = existingMediaCover(options.entityId, options.coverEntity, options.coverType);
+  const existing = existingMediaCover(entityId, options.coverEntity, options.coverType);
   // Albums/artists refresh when the preference/source marker changes. Videos
   // historically skipped markers and kept the first cached bytes forever —
   // that froze cropped YouTube `sqp=` thumbs. Match on source when a marker
@@ -529,13 +633,13 @@ export async function ensureCachedMediaCover(options: {
   // (uncropped YT / landscape Apple mv) so we do not re-download every video
   // cover on every request.
   if (existing) {
-    if (cachedSourceMatches(options.entityId, options.coverEntity, options.coverType, sourceUrl)) {
+    if (cachedSourceMatches(entityId, options.coverEntity, options.coverType, sourceUrl)) {
       return existing.url;
     }
     if (options.coverEntity === "Video") {
       let hasMarker = false;
       try {
-        fs.accessSync(sourceMarkerPath(options.entityId, options.coverEntity, options.coverType));
+        fs.accessSync(sourceMarkerPath(entityId, options.coverEntity, options.coverType));
         hasMarker = true;
       } catch {
         hasMarker = false;
@@ -562,7 +666,7 @@ export async function ensureCachedMediaCover(options: {
     const { response, fetchedUrl } = fetched;
     const contentType = response.headers.get("content-type");
     const extension = extensionForImage(contentType, fetchedUrl);
-    const folder = mediaCoverFolder(options.entityId, options.coverEntity);
+    const folder = mediaCoverFolder(entityId, options.coverEntity);
     fs.mkdirSync(folder, { recursive: true });
 
     const originalBuffer = Buffer.from(await response.arrayBuffer());
@@ -571,17 +675,17 @@ export async function ensureCachedMediaCover(options: {
       // Full-aspect origin for detail/embed; a single 250px proxy for cards/lists.
       // Video thumbs are typically ~720p already, so a 500px derivative is wasteful.
       const derivatives = prepareResizedMediaCovers(originalBuffer, extension, MEDIA_COVER_VIDEO_HEIGHTS);
-      clearCachedCoverVariant(options.entityId, options.coverEntity, options.coverType);
-      const filePath = getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, extension);
+      clearCachedCoverVariant(entityId, options.coverEntity, options.coverType);
+      const filePath = getMediaCoverPath(entityId, options.coverEntity, options.coverType, extension);
       fs.writeFileSync(filePath, originalBuffer);
       for (const derivative of derivatives) {
         fs.writeFileSync(
-          getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, ".jpg", derivative.height),
+          getMediaCoverPath(entityId, options.coverEntity, options.coverType, ".jpg", derivative.height),
           derivative.buffer,
         );
       }
-      writeSourceMarker(options.entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy);
-      return getMediaCoverUrl(options.entityId, options.coverEntity, options.coverType, extension);
+      writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy);
+      return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, extension);
     }
 
     // UI cache contains derivatives only. Full-resolution album/artist art is
@@ -591,18 +695,18 @@ export async function ensureCachedMediaCover(options: {
       return existing?.url ?? null;
     }
 
-    clearCachedCoverVariant(options.entityId, options.coverEntity, options.coverType);
+    clearCachedCoverVariant(entityId, options.coverEntity, options.coverType);
     for (const derivative of derivatives) {
       fs.writeFileSync(
-        getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, ".jpg", derivative.height),
+        getMediaCoverPath(entityId, options.coverEntity, options.coverType, ".jpg", derivative.height),
         derivative.buffer,
       );
     }
     for (const candidateExtension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-      try { fs.unlinkSync(getMediaCoverPath(options.entityId, options.coverEntity, options.coverType, candidateExtension)); } catch { /* absent */ }
+      try { fs.unlinkSync(getMediaCoverPath(entityId, options.coverEntity, options.coverType, candidateExtension)); } catch { /* absent */ }
     }
-    writeSourceMarker(options.entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy);
-    return existingMediaCover(options.entityId, options.coverEntity, options.coverType)?.url ?? null;
+    writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy);
+    return existingMediaCover(entityId, options.coverEntity, options.coverType)?.url ?? null;
   } catch (error) {
     console.warn("[MediaCoverService] Failed to cache artwork:", (error as Error).message);
     return null;
@@ -616,23 +720,34 @@ export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
   }
 
   const pathname = text.split(/[?#]/, 1)[0];
-  const parts = pathname.split("/").map((part) => decodeURIComponent(part));
+  let parts: string[];
+  try {
+    parts = pathname.split("/").map((part) => decodeURIComponent(part));
+  } catch {
+    return null;
+  }
   if (parts.length < 4) {
     return null;
   }
 
   if (parts[2] === "Albums" && parts.length >= 5) {
-    const albumId = safeMediaCoverEntityId(parts[3]);
-    return resolveMediaCoverFilePath(path.join(mediaCoverRoot(), "Albums", albumId), parts[4]);
+    const albumId = normalizeMediaCoverEntityId(parts[3]);
+    return albumId
+      ? resolveMediaCoverFilePath(resolveWithinMediaCoverRoot("Albums", albumId), parts[4])
+      : null;
   }
 
   if (parts[2] === "Videos" && parts.length >= 5) {
-    const videoId = safeMediaCoverEntityId(parts[3]);
-    return resolveMediaCoverFilePath(path.join(mediaCoverRoot(), "Videos", videoId), parts[4]);
+    const videoId = normalizeMediaCoverEntityId(parts[3]);
+    return videoId
+      ? resolveMediaCoverFilePath(resolveWithinMediaCoverRoot("Videos", videoId), parts[4])
+      : null;
   }
 
-  const artistId = safeMediaCoverEntityId(parts[2]);
-  return resolveMediaCoverFilePath(path.join(mediaCoverRoot(), artistId), parts[3]);
+  const artistId = normalizeMediaCoverEntityId(parts[2]);
+  return artistId
+    ? resolveMediaCoverFilePath(resolveWithinMediaCoverRoot(artistId), parts[3])
+    : null;
 }
 
 /**
@@ -646,7 +761,12 @@ export function getCachedMediaCoverSourceUrlFromLocalUrl(value: unknown): string
   }
 
   const pathname = text.split(/[?#]/, 1)[0];
-  const parts = pathname.split("/").map((part) => decodeURIComponent(part));
+  let parts: string[];
+  try {
+    parts = pathname.split("/").map((part) => decodeURIComponent(part));
+  } catch {
+    return null;
+  }
   if (parts.length < 4) {
     return null;
   }
@@ -654,13 +774,19 @@ export function getCachedMediaCoverSourceUrlFromLocalUrl(value: unknown): string
   let folder: string;
   let filename: string;
   if (parts[2] === "Albums" && parts.length >= 5) {
-    folder = path.join(mediaCoverRoot(), "Albums", safeMediaCoverEntityId(parts[3]));
+    const albumId = normalizeMediaCoverEntityId(parts[3]);
+    if (!albumId) return null;
+    folder = resolveWithinMediaCoverRoot("Albums", albumId);
     filename = parts[4];
   } else if (parts[2] === "Videos" && parts.length >= 5) {
-    folder = path.join(mediaCoverRoot(), "Videos", safeMediaCoverEntityId(parts[3]));
+    const videoId = normalizeMediaCoverEntityId(parts[3]);
+    if (!videoId) return null;
+    folder = resolveWithinMediaCoverRoot("Videos", videoId);
     filename = parts[4];
   } else {
-    folder = path.join(mediaCoverRoot(), safeMediaCoverEntityId(parts[2]));
+    const artistId = normalizeMediaCoverEntityId(parts[2]);
+    if (!artistId) return null;
+    folder = resolveWithinMediaCoverRoot(artistId);
     filename = parts[3];
   }
 
@@ -869,8 +995,29 @@ const ARTIST_BACKDROP_COVER_TYPES = new Set([
   "background",
 ]);
 
+function artistArtworkCoverTypes(value: string | string[] | undefined): string[] {
+  const requested = preferredTypes(value, [...ARTIST_PROFILE_COVER_TYPES]);
+  const expanded: string[] = [];
+  for (const coverType of requested) {
+    const normalized = normalizedCoverType(coverType);
+    const aliases = normalized === "poster" || normalized === "headshot"
+      ? canonicalArtworkCoverTypes("Artist", normalized)
+      : (
+        normalized === "fanart" || normalized === "background" || normalized === "landscape"
+          ? canonicalArtworkCoverTypes("Artist", normalized)
+          : [normalized]
+      );
+    for (const alias of aliases) {
+      if (!expanded.includes(alias)) {
+        expanded.push(alias);
+      }
+    }
+  }
+  return expanded;
+}
+
 function existingArtistMediaCoverUrl(artistMbid: string | null | undefined, coverTypes: string | string[] | undefined): string | null {
-  const types = preferredTypes(coverTypes, [...ARTIST_PROFILE_COVER_TYPES]);
+  const types = artistArtworkCoverTypes(coverTypes);
   for (const coverType of types) {
     const existing = existingMediaCover(artistMbid, "Artist", coverType);
     if (existing) {
@@ -906,6 +1053,11 @@ function firstStoredImageUrl(images: ServarrMetadataImage[] | undefined | null, 
   }
 
   const allowBackdrop = coverTypes.some((type) => ARTIST_BACKDROP_COVER_TYPES.has(type.trim().toLowerCase()));
+  if (allowBackdrop) {
+    // Backdrop roles are not interchangeable with arbitrary canonical art.
+    // Requested aliases were already checked above.
+    return null;
+  }
   const fallback = images.find((img) => {
     const imageType = String(img.coverType || img.CoverType || "").trim().toLowerCase();
     const source = String((img as any).source || (img as any).Source || "").trim().toLowerCase();
@@ -931,10 +1083,11 @@ function expectedMediaCoverUrl(
   sourceUrl: string | null | undefined,
 ): string | null {
   const normalizedSource = normalizeArtworkUrl(sourceUrl);
-  if (entityId == null || String(entityId).trim() === "" || !normalizedSource) {
+  const normalizedEntityId = normalizeMediaCoverEntityId(entityId);
+  if (!normalizedEntityId || !normalizedSource) {
     return null;
   }
-  return getMediaCoverUrl(entityId, coverEntity, coverType, extensionForImage(null, normalizedSource));
+  return getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, extensionForImage(null, normalizedSource));
 }
 
 function firstStoredProviderFallbackUrl(
@@ -945,6 +1098,24 @@ function firstStoredProviderFallbackUrl(
   return firstStoredImageUrl(providerImages, coverTypes, true);
 }
 
+function directProviderArtworkSourceFromCandidates(
+  candidates: ProviderArtworkCandidate[],
+  entityType: "album" | "artist",
+): string | null {
+  for (const candidate of candidates) {
+    const direct = normalizeArtworkUrl(candidate.imageId)
+      || renderableProviderArtworkUrl(
+        candidate.imageId,
+        candidate.provider,
+        entityType === "album" ? "origin" : 750,
+      );
+    if (direct) {
+      return normalizeArtworkUrl(direct);
+    }
+  }
+  return null;
+}
+
 export function configuredArtworkPreference(): "canonical" | "provider" {
   try {
     return getConfigSection("metadata")?.artwork_preference === "provider" ? "provider" : "canonical";
@@ -953,25 +1124,49 @@ export function configuredArtworkPreference(): "canonical" | "provider" {
   }
 }
 
-function withArtworkPreferenceRevision(
+export function artworkSourceRevision(sourceUrl: string | null | undefined): string | null {
+  const normalizedSource = normalizeArtworkUrl(sourceUrl);
+  return normalizedSource
+    ? crypto.createHash("sha256").update(normalizedSource).digest("hex").slice(0, 16)
+    : null;
+}
+
+export function isMediaCoverRevisionCacheCurrent(
+  entityId: string | number | null | undefined,
+  coverEntity: MediaCoverEntity,
+  coverType: string,
+  requestedRevision: string | null | undefined,
+): boolean {
+  const revision = String(requestedRevision || "").trim().toLowerCase();
+  const normalizedEntityId = normalizeMediaCoverEntityId(entityId);
+  if (!normalizedEntityId || !/^[a-f0-9]{16}$/.test(revision)) {
+    return false;
+  }
+  try {
+    const marker = JSON.parse(
+      fs.readFileSync(sourceMarkerPath(normalizedEntityId, coverEntity, coverType), "utf-8"),
+    );
+    return artworkSourceRevision(marker?.url) === revision;
+  } catch {
+    return false;
+  }
+}
+
+function withArtworkPreference(
   url: string | null,
-  options?: {
-    entityId?: string | number | null;
-    coverEntity?: MediaCoverEntity;
-    coverType?: string;
-  },
+  preference: "canonical" | "provider" = configuredArtworkPreference(),
+  selectedSourceUrl?: string | null,
 ): string | null {
   if (!url || !url.startsWith("/media-cover/")) {
     return url;
   }
-  const preference = configuredArtworkPreference();
-  const withSource = /[?&]source=/.test(url)
+  const withPreference = /[?&]source=/.test(url)
     ? url
     : appendMediaCoverQuery(url, "source", preference);
-  if (!options?.entityId || !options.coverEntity || !options.coverType) {
-    return withSource;
-  }
-  return withMediaCoverLastWrite(withSource, options.entityId, options.coverEntity, options.coverType);
+  const revision = artworkSourceRevision(selectedSourceUrl);
+  return revision && !/[?&]rev=/.test(withPreference)
+    ? appendMediaCoverQuery(withPreference, "rev", revision)
+    : withPreference;
 }
 
 export function mapAlbumArtworkToLocalUrl(options: {
@@ -989,21 +1184,30 @@ export function mapAlbumArtworkToLocalUrl(options: {
     false,
   ) || getServarrMetadataAlbumImageUrl({ images: canonicalImages });
   const storedProviderFallback = firstStoredProviderFallbackUrl(allImages, coverTypes);
+  const currentProviderSource = directProviderArtworkSourceFromCandidates(
+    options.providerCandidates || [],
+    "album",
+  );
   const providerSource = options.includeExpectedProviderFallback === false
     ? null
-    : storedProviderFallback || providerArtworkIdFromCandidates(options.providerCandidates || [], "album");
+    : currentProviderSource || storedProviderFallback;
   const canonicalUrl = expectedMediaCoverUrl(options.albumMbid, "Album", "Cover", canonicalSource);
   const providerUrl = expectedMediaCoverUrl(options.albumMbid, "Album", "Cover", providerSource);
-  const selected = configuredArtworkPreference() === "provider"
-    ? providerUrl || canonicalUrl
-    : canonicalUrl || providerUrl;
+  const preference = configuredArtworkPreference();
+  const selected = preference === "provider"
+    ? (providerUrl ? { url: providerUrl, source: providerSource } : { url: canonicalUrl, source: canonicalSource })
+    : (canonicalUrl ? { url: canonicalUrl, source: canonicalSource } : { url: providerUrl, source: providerSource });
   // Always emit a local /media-cover URL when we know the album MBID so UI
   // never falls back to raw provider asset ids. Bytes fill on first request.
-  return withArtworkPreferenceRevision(
-    selected
-      || existingAlbumMediaCoverUrl(options.albumMbid)
-      || (options.albumMbid ? getMediaCoverUrl(options.albumMbid, "Album", "Cover", ".jpg") : null),
-    { entityId: options.albumMbid, coverEntity: "Album", coverType: "Cover" },
+  return withArtworkPreference(
+    selected.url
+      || (
+        normalizeMediaCoverEntityId(options.albumMbid)
+          ? getMediaCoverUrl(options.albumMbid!, "Album", "Cover", ".jpg")
+          : null
+      ),
+    preference,
+    selected.source,
   );
 }
 
@@ -1014,14 +1218,18 @@ export function mapArtistArtworkToLocalUrl(options: {
   preferredCoverTypes?: string | string[];
   sourceUrls?: Array<string | null | undefined>;
 }): string | null {
-  const types = preferredTypes(options.preferredCoverTypes, [...ARTIST_PROFILE_COVER_TYPES]);
+  const types = artistArtworkCoverTypes(options.preferredCoverTypes);
   const allImages = getServarrMetadataImages(options.servarrMetadataData);
   const canonicalImages = allImages.filter((image) => !isProviderFallbackImage(image as Record<string, any>));
   const canonicalSource = firstStoredImageUrl(canonicalImages, types, false)
     || getServarrMetadataArtistImageUrl({ images: canonicalImages }, types);
   const storedProviderSource = firstStoredProviderFallbackUrl(allImages, types);
   const explicitSource = options.sourceUrls?.map(normalizeArtworkUrl).find((url): url is string => Boolean(url));
-  const providerSource = providerArtworkIdFromCandidates(options.providerCandidates || [], "artist");
+  const providerSource = directProviderArtworkSourceFromCandidates(
+    options.providerCandidates || [],
+    "artist",
+  );
+  const selectedProviderSource = providerSource || storedProviderSource;
   const canonicalUrl = expectedMediaCoverUrl(
     options.artistMbid,
     "Artist",
@@ -1032,18 +1240,29 @@ export function mapArtistArtworkToLocalUrl(options: {
     options.artistMbid,
     "Artist",
     types[0] || "Poster",
-    storedProviderSource || providerSource,
+    selectedProviderSource,
   );
-  const selected = configuredArtworkPreference() === "provider"
-    ? providerUrl || canonicalUrl
-    : canonicalUrl || providerUrl;
-  return withArtworkPreferenceRevision(
-    selected || existingArtistMediaCoverUrl(options.artistMbid, types),
-    {
-      entityId: options.artistMbid,
-      coverEntity: "Artist",
-      coverType: types[0] || "Poster",
-    },
+  const preference = configuredArtworkPreference();
+  const selected = preference === "provider"
+    ? (
+      providerUrl
+        ? { url: providerUrl, source: selectedProviderSource }
+        : { url: canonicalUrl, source: canonicalSource || explicitSource }
+    )
+    : (
+      canonicalUrl
+        ? { url: canonicalUrl, source: canonicalSource || explicitSource }
+        : { url: providerUrl, source: selectedProviderSource }
+    );
+  return withArtworkPreference(
+    selected.url
+      || (
+        normalizeMediaCoverEntityId(options.artistMbid)
+          ? getMediaCoverUrl(options.artistMbid!, "Artist", types[0] || "Poster", ".jpg")
+          : null
+      ),
+    preference,
+    selected.source,
   );
 }
 
@@ -1202,7 +1421,7 @@ const TIDAL_IMAGE_ASSET_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
 export function renderableProviderArtworkUrl(
   value: unknown,
   provider?: string | null,
-  size: number = 320,
+  size: number | "origin" = 320,
 ): string | null {
   const text = textOrNull(value);
   if (!text) {
@@ -1212,8 +1431,10 @@ export function renderableProviderArtworkUrl(
     return text;
   }
   if (TIDAL_IMAGE_ASSET_RE.test(text) && (!provider || provider.toLowerCase() === "tidal")) {
-    const dimension = Math.max(80, Math.round(size));
-    return `https://resources.tidal.com/images/${text.replace(/-/g, "/")}/${dimension}x${dimension}.jpg`;
+    const variant = size === "origin"
+      ? "origin"
+      : `${Math.max(80, Math.round(size))}x${Math.max(80, Math.round(size))}`;
+    return `https://resources.tidal.com/images/${text.replace(/-/g, "/")}/${variant}.jpg`;
   }
   return null;
 }
@@ -1315,9 +1536,12 @@ export function getServarrMetadataImageUrl(
 
   const preferred = preferredTypes(preferredCoverTypes, []).map((type) => type.trim().toLowerCase());
   const allowBackdrop = preferred.some((type) => ARTIST_BACKDROP_COVER_TYPES.has(type));
-  const fallbackCandidates = allowBackdrop
-    ? images
-    : images.filter((image) => !ARTIST_BACKDROP_COVER_TYPES.has(imageCoverType(image)));
+  if (allowBackdrop) {
+    // Requested backdrop aliases were checked above; a Poster/Banner/Logo must
+    // not silently fill a missing Fanart slot.
+    return null;
+  }
+  const fallbackCandidates = images.filter((image) => !ARTIST_BACKDROP_COVER_TYPES.has(imageCoverType(image)));
   if (fallbackCandidates.length === 0) {
     return null;
   }
@@ -1388,23 +1612,22 @@ export function videoProviderArtworkCandidatesFromRow(row: Record<string, any>):
   }].filter((candidate) => candidate.provider || candidate.imageId || candidate.entityId);
 }
 
-export function videoCoverLocalUrl(videoId: string | number | null | undefined): string | null {
+export function videoCoverLocalUrl(
+  videoId: string | number | null | undefined,
+  sourceUrl?: string | null,
+): string | null {
   const normalizedVideoId = textOrNull(videoId);
-  if (!normalizedVideoId) {
+  if (!normalizedVideoId || normalizeMediaCoverEntityId(normalizedVideoId) == null) {
     return null;
   }
 
   // Always emit the local URL for UI. Bytes are filled lazily by
   // /media-cover (resolveVideoArtwork) — never expose raw provider asset UUIDs.
-  // Identity is entity + cover type; `lastWrite` busts immutable browser cache
-  // when origin + card proxies are rewritten together.
-  return withMediaCoverLastWrite(
-    existingVideoMediaCoverUrl(normalizedVideoId)
-      || getMediaCoverUrl(normalizedVideoId, "Video", "Cover", ".jpg"),
-    normalizedVideoId,
-    "Video",
-    "Cover",
-  );
+  // The route serves validators (ETag + Last-Modified) for this stable identity;
+  // response mapping must never scan derivative files to manufacture a revision.
+  const localUrl = getMediaCoverUrl(normalizedVideoId, "Video", "Cover", ".jpg");
+  const revision = artworkSourceRevision(sourceUrl);
+  return revision ? appendMediaCoverQuery(localUrl, "rev", revision) : localUrl;
 }
 
 /**
@@ -1420,6 +1643,7 @@ export function videoCoverLocalUrl(videoId: string | number | null | undefined):
 export function albumCoverLocalUrl(options: {
   albumMbid?: string | null;
   images?: ServarrMetadataImageContainer | null;
+  providerCandidates?: ProviderArtworkCandidate[];
   skipStoredImageLookup?: boolean;
 }): string | null {
   let images = options.images;
@@ -1435,6 +1659,7 @@ export function albumCoverLocalUrl(options: {
   return mapAlbumArtworkToLocalUrl({
     albumMbid: options.albumMbid,
     servarrMetadataData: images,
+    providerCandidates: options.providerCandidates,
   });
 }
 
@@ -1450,7 +1675,7 @@ function configuredArtistPictureResolution(): number {
 function persistResolvedFallbackArtwork(
   table: "Albums" | "ArtistMetadata",
   mbid: string | null | undefined,
-  coverType: "Cover" | "Headshot",
+  coverType: string,
   url: string,
 ): void {
   const canonicalMbid = String(mbid || "").trim();
@@ -1462,13 +1687,36 @@ function persistResolvedFallbackArtwork(
     const row = db.prepare(`SELECT images FROM ${table} WHERE mbid = ?`).get(canonicalMbid) as {
       images?: string | null;
     } | undefined;
-    const existing = row?.images ? JSON.parse(row.images) : [];
-    if (Array.isArray(existing) && existing.length > 0) {
+    const parsed = row?.images ? JSON.parse(row.images) : [];
+    const existing = Array.isArray(parsed) ? parsed : [];
+    const coverEntity = table === "Albums" ? "Album" : "Artist";
+    const replacedTypes = new Set(canonicalArtworkCoverTypes(coverEntity, coverType));
+    const retained = existing.filter((image) => (
+      !image
+      || typeof image !== "object"
+      || !isProviderFallbackImage(image)
+      || !replacedTypes.has(imageCoverType(image))
+    ));
+    const normalizedUrl = normalizeArtworkUrl(url);
+    const current = existing.find((image) => (
+      image
+      && typeof image === "object"
+      && isProviderFallbackImage(image)
+      && replacedTypes.has(imageCoverType(image))
+      && imageUrl(image) === normalizedUrl
+    ));
+    if (current && retained.length === existing.length - 1) {
       return;
     }
 
     db.prepare(`UPDATE ${table} SET images = ?, updated_at = CURRENT_TIMESTAMP WHERE mbid = ?`)
-      .run(JSON.stringify([{ coverType, url, source: "provider-fallback" }]), canonicalMbid);
+      .run(
+        JSON.stringify([
+          ...retained,
+          { coverType, url: normalizedUrl || url, source: "provider-fallback" },
+        ]),
+        canonicalMbid,
+      );
   } catch (error) {
     console.warn(`[MediaCoverService] Failed to cache fallback artwork for ${table}:${canonicalMbid}:`, error);
   }
@@ -1757,7 +2005,7 @@ export async function resolveArtistArtwork(options: {
   preferredCoverTypes?: string | string[];
   size?: string | number | null;
 }): Promise<string | null> {
-  const types = preferredTypes(options.preferredCoverTypes, [...ARTIST_PROFILE_COVER_TYPES]);
+  const types = artistArtworkCoverTypes(options.preferredCoverTypes);
   const coverTypeForCache = types[0] || "Poster";
   let storedCanonicalUrl: string | null = null;
   let storedProviderFallbackUrl: string | null = null;
@@ -1815,7 +2063,7 @@ export async function resolveArtistArtwork(options: {
       options.size ?? configuredArtistPictureResolution(),
     );
     if (providerUrl) {
-      persistResolvedFallbackArtwork("ArtistMetadata", options.artistMbid, "Headshot", providerUrl);
+      persistResolvedFallbackArtwork("ArtistMetadata", options.artistMbid, coverTypeForCache, providerUrl);
       const cached = await cacheSource(providerUrl, "provider");
       if (cached) return cached;
     }
@@ -1834,7 +2082,6 @@ export async function resolveVideoArtwork(options: {
   size?: string | number | null;
 }): Promise<string | null> {
   const normalizedVideoId = textOrNull(options.videoId);
-  const revise = (url: string | null) => withMediaCoverLastWrite(url, normalizedVideoId, "Video", "Cover");
 
   let storedSource: string | null = null;
   let providerCandidates = options.providerCandidates || [];
@@ -1888,7 +2135,7 @@ export async function resolveVideoArtwork(options: {
       coverType: "Cover",
       sourceUrl: storedSource,
     });
-    if (cached) return revise(cached);
+    if (cached) return cached;
   }
 
   const providerUrl = await resolveProviderArtworkUrl(
@@ -1905,10 +2152,10 @@ export async function resolveVideoArtwork(options: {
       coverType: "Cover",
       sourceUrl: providerUrl,
     });
-    if (cached) return revise(cached);
+    if (cached) return cached;
   }
 
-  return revise(existingVideoMediaCoverUrl(normalizedVideoId));
+  return existingVideoMediaCoverUrl(normalizedVideoId);
 }
 
 // MediaCoverService class aligned 1:1 with Lidarr naming and structure

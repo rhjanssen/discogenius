@@ -356,7 +356,9 @@ export class DownloadProcessor {
                 title: resolved.title,
                 artist: resolved.artist,
                 cover: resolved.cover,
-                progress: state.progress ?? currentJob?.progress ?? 0,
+                progress: state.progress !== undefined
+                    ? state.progress
+                    : (currentJob?.progress ?? null),
                 currentFileNum: state.currentFileNum,
                 totalFiles: state.totalFiles,
                 currentTrack: state.currentTrack,
@@ -636,7 +638,7 @@ export class DownloadProcessor {
     }
 
     private persistDownloadState(commandId: number, state: {
-        progress?: number;
+        progress?: number | null;
         description?: string;
         currentFileNum?: number;
         totalFiles?: number;
@@ -747,7 +749,7 @@ export class DownloadProcessor {
 
     /** Unconditionally write download state to the database. */
     private writeDownloadState(commandId: number, state: {
-        progress?: number;
+        progress?: number | null;
         description?: string;
         currentFileNum?: number;
         totalFiles?: number;
@@ -837,7 +839,12 @@ export class DownloadProcessor {
             ?? currentDownloadState.currentFileNum;
         // Catalog fraction owns album %, with optional in-file boost for the
         // active catalog row. Provider queue % is only trusted when counts match.
-        let nextProgress = state.progress ?? currentDownloadState.progress;
+        // Explicit null means "unknown" — do not revive a prior fake percent.
+        let nextProgress: number | null | undefined = state.progress !== undefined
+            ? state.progress
+            : (typeof currentDownloadState.progress === "number" || currentDownloadState.progress === null
+                ? currentDownloadState.progress as number | null
+                : undefined);
         if (catalogProgress && catalogProgress.totalFiles > 0) {
             if (providerCountsMatchCatalog && typeof state.progress === "number") {
                 nextProgress = state.progress;
@@ -1686,6 +1693,7 @@ export class DownloadProcessor {
             return listRankedTrackOffers({
                 trackMbid: payload.canonicalTrackMbid || null,
                 recordingMbid: payload.canonicalRecordingMbid || null,
+                librarySlot: payload.slot || "stereo",
             });
         }
         const recordingRef = String(
@@ -1794,7 +1802,7 @@ export class DownloadProcessor {
                 title: payload.title,
                 artist: payload.artist,
                 cover: payload.cover,
-                progress: partial.progress ?? 0,
+                progress: partial.progress !== undefined ? partial.progress : null,
                 currentFileNum: partial.currentFileNum ?? 0,
                 totalFiles: partial.totalFiles ?? 0,
                 currentTrack: partial.currentTrack,
@@ -1837,6 +1845,7 @@ export class DownloadProcessor {
                 const ranked = listRankedTrackOffers({
                     trackMbid: offer.canonicalTrackMbid,
                     recordingMbid: offer.canonicalRecordingMbid,
+                    librarySlot: slot,
                 });
 
                 const trackIndex = tracks.findIndex((track) => {

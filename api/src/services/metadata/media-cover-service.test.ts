@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +14,10 @@ let dbModule: typeof import("../../database.js");
 let mediaCoverServiceModule: typeof import("./media-cover-service.js");
 let configModule: typeof import("../config/config.js");
 const originalFetch = globalThis.fetch;
+
+function sourceRevision(url: string): string {
+  return crypto.createHash("sha256").update(url).digest("hex").slice(0, 16);
+}
 
 before(async () => {
   dbModule = await import("../../database.js");
@@ -44,7 +49,10 @@ test("Servarr Metadata Server album artwork maps to the album MediaCover route",
     },
   });
 
-  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg?source=canonical`);
+  assert.equal(
+    artworkUrl,
+    `/media-cover/Albums/${albumMbid}/cover.jpg?source=canonical&rev=${sourceRevision(remoteUrl)}`,
+  );
 });
 
 test("Servarr Metadata Server selectors return raw URLs for durable storage", () => {
@@ -77,6 +85,80 @@ test("albumCoverLocalUrl emits local media-cover URL even without stored image U
   });
 
   assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg?source=canonical`);
+});
+
+test("response URL mapping performs no filesystem stat scans", () => {
+  const originalStatSync = fs.statSync;
+  let statCalls = 0;
+  (fs as any).statSync = (...args: Parameters<typeof fs.statSync>) => {
+    statCalls += 1;
+    return originalStatSync(...args);
+  };
+
+  try {
+    assert.equal(
+      mediaCoverServiceModule.albumCoverLocalUrl({
+        albumMbid: "stat-free-album",
+        images: { images: [] },
+      }),
+      "/media-cover/Albums/stat-free-album/cover.jpg?source=canonical",
+    );
+    assert.equal(
+      mediaCoverServiceModule.mapArtistArtworkToLocalUrl({
+        artistMbid: "stat-free-artist",
+        servarrMetadataData: { images: [] },
+      }),
+      "/media-cover/stat-free-artist/poster.jpg?source=canonical",
+    );
+    assert.equal(
+      mediaCoverServiceModule.videoCoverLocalUrl("stat-free-video"),
+      "/media-cover/Videos/stat-free-video/cover.jpg",
+    );
+    assert.equal(statCalls, 0);
+  } finally {
+    (fs as any).statSync = originalStatSync;
+  }
+});
+
+test("local artwork revisions are stable for one normalized source and change with the source", () => {
+  const albumMbid = "revisioned-album";
+  const firstSource = "https://example.test/artwork/first.jpg";
+  const secondSource = "https://example.test/artwork/second.jpg";
+  const map = (source: string) => mediaCoverServiceModule.mapAlbumArtworkToLocalUrl({
+    albumMbid,
+    servarrMetadataData: {
+      images: [{ coverType: "Cover", url: source }],
+    },
+  });
+
+  const first = map(firstSource);
+  assert.equal(first, map(firstSource));
+  assert.notEqual(first, map(secondSource));
+  assert.equal(
+    first,
+    `/media-cover/Albums/${albumMbid}/cover.jpg?source=canonical&rev=${sourceRevision(firstSource)}`,
+  );
+  assert.equal(
+    mediaCoverServiceModule.videoCoverLocalUrl("revisioned-video", firstSource),
+    `/media-cover/Videos/revisioned-video/cover.jpg?rev=${sourceRevision(firstSource)}`,
+  );
+});
+
+test("media-cover entity ids reject dot traversal segments", () => {
+  assert.equal(mediaCoverServiceModule.normalizeMediaCoverEntityId("."), null);
+  assert.equal(mediaCoverServiceModule.normalizeMediaCoverEntityId(".."), null);
+  assert.equal(
+    mediaCoverServiceModule.getMediaCoverFilePathFromUrl(
+      "/media-cover/Albums/%2e%2e/cover.jpg",
+    ),
+    null,
+  );
+  assert.equal(
+    mediaCoverServiceModule.getMediaCoverFilePathFromUrl(
+      "/media-cover/Videos/%2e%2e/cover.jpg",
+    ),
+    null,
+  );
 });
 
 test("provider artwork fallbacks only produce browser-renderable URLs", () => {
@@ -126,7 +208,10 @@ test("Servarr Metadata Server album artwork wins over cached provider fallback a
     },
   });
 
-  assert.equal(artworkUrl, `/media-cover/Albums/${albumMbid}/cover.jpg?source=canonical`);
+  assert.equal(
+    artworkUrl,
+    `/media-cover/Albums/${albumMbid}/cover.jpg?source=canonical&rev=${sourceRevision(servarrMetadataUrl)}`,
+  );
 });
 
 test("provider artwork ids resolve through the provider interface before caching", async () => {
@@ -401,7 +486,7 @@ test("provider video artwork ids resolve through the provider interface before c
 
   const artworkUrl = await mediaCoverServiceModule.resolveVideoArtwork({ videoId: recording.id });
 
-  assert.match(String(artworkUrl), new RegExp(`^/media-cover/Videos/${recording.id}/cover\\.jpg(?:\\?lastWrite=\\d+)?$`));
+  assert.equal(artworkUrl, `/media-cover/Videos/${recording.id}/cover.jpg`);
   assert.deepEqual(artworkRequests, [{
     entityType: "video",
     providerId: "provider-video-id",
@@ -413,9 +498,9 @@ test("provider video artwork ids resolve through the provider interface before c
   assert.equal(fs.existsSync(path.join(videoCache, "cover.jpg")), true);
   assert.equal(fs.existsSync(path.join(videoCache, "cover-250.jpg")), true);
   assert.equal(fs.existsSync(path.join(videoCache, "cover-500.jpg")), false);
-  assert.match(
-    String(mediaCoverServiceModule.videoCoverLocalUrl(recording.id)),
-    new RegExp(`^/media-cover/Videos/${recording.id}/cover\\.jpg\\?lastWrite=\\d+$`),
+  assert.equal(
+    mediaCoverServiceModule.videoCoverLocalUrl(recording.id),
+    `/media-cover/Videos/${recording.id}/cover.jpg`,
   );
 });
 
@@ -601,7 +686,7 @@ test("provider video artwork can resolve from provider id when no image id is st
 
   const artworkUrl = await mediaCoverServiceModule.resolveVideoArtwork({ videoId: recording.id });
 
-  assert.match(String(artworkUrl), new RegExp(`^/media-cover/Videos/${recording.id}/cover\\.jpg(?:\\?lastWrite=\\d+)?$`));
+  assert.equal(artworkUrl, `/media-cover/Videos/${recording.id}/cover.jpg`);
   assert.deepEqual(artworkRequests, [{
     entityType: "video",
     providerId: "provider-video-without-image-id",
@@ -682,6 +767,206 @@ test("provider-fulfilled canonical cache is stale once Servarr imagery exists", 
     false,
     "canonical preference must retry once Servarr/CAA imagery appears",
   );
+});
+
+test("canonical cache checks compare the selected source and isolate cover-type aliases", async () => {
+  const albumMbid = "changed-canonical-source-album";
+  const artistMbid = "cover-type-aware-artist";
+  const oldUrl = "https://example.test/artwork/old-cover.jpg";
+  const newUrl = "https://example.test/artwork/new-cover.jpg";
+  const providerFanart = "https://provider.example/fanart.jpg";
+  const bannerUrl = "https://example.test/artwork/banner.jpg";
+  const landscapeUrl = "https://example.test/artwork/landscape.jpg";
+  const albumFolder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  const artistFolder = path.join(tempDir, "media-cover", artistMbid);
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name, images) VALUES (?, ?, ?)")
+    .run(artistMbid, "Cover Type Artist", JSON.stringify([
+      { coverType: "Banner", url: bannerUrl },
+    ]));
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, images) VALUES (?, ?, ?, ?)")
+    .run(albumMbid, artistMbid, "Changed Cover", JSON.stringify([
+      { coverType: "Cover", url: newUrl },
+    ]));
+  fs.mkdirSync(albumFolder, { recursive: true });
+  fs.writeFileSync(path.join(albumFolder, "cover-500.jpg"), Buffer.alloc(32, 1));
+  fs.writeFileSync(
+    path.join(albumFolder, ".cover.source.json"),
+    JSON.stringify({ url: oldUrl, preference: "canonical", fulfilledBy: "canonical" }),
+  );
+  fs.mkdirSync(artistFolder, { recursive: true });
+  fs.writeFileSync(path.join(artistFolder, "fanart-500.jpg"), Buffer.alloc(32, 1));
+  fs.writeFileSync(
+    path.join(artistFolder, ".fanart.source.json"),
+    JSON.stringify({ url: providerFanart, preference: "canonical", fulfilledBy: "provider" }),
+  );
+
+  configModule.updateConfig("metadata", { artwork_preference: "canonical" });
+  assert.equal(
+    mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(albumMbid, "Album", "Cover"),
+    false,
+    "a canonical URL change must make the marker stale",
+  );
+  assert.equal(
+    mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(artistMbid, "Artist", "Fanart"),
+    true,
+    "a Banner must not masquerade as requested Fanart",
+  );
+
+  dbModule.db.prepare("UPDATE ArtistMetadata SET images = ? WHERE mbid = ?")
+    .run(JSON.stringify([{ coverType: "Landscape", url: landscapeUrl }]), artistMbid);
+  assert.equal(
+    mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(artistMbid, "Artist", "Fanart"),
+    false,
+    "Landscape is an intentional Fanart alias",
+  );
+
+  fs.writeFileSync(path.join(artistFolder, "poster-500.jpg"), Buffer.alloc(32, 2));
+  fs.writeFileSync(
+    path.join(artistFolder, ".poster.source.json"),
+    JSON.stringify({ url: providerFanart, preference: "canonical", fulfilledBy: "provider" }),
+  );
+  dbModule.db.prepare("UPDATE ArtistMetadata SET images = ? WHERE mbid = ?")
+    .run(JSON.stringify([{ coverType: "Headshot", url: newUrl }]), artistMbid);
+  assert.equal(
+    mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(artistMbid, "Artist", "Poster"),
+    false,
+    "Headshot is an intentional profile alias for Poster",
+  );
+});
+
+test("normalized canonical sources do not create a permanent stale-marker loop", () => {
+  const albumMbid = "normalized-canonical-marker-album";
+  const artistMbid = "normalized-canonical-marker-artist";
+  const rawUrl = "https://i.ytimg.com/vi/normalized-source/hq720.jpg?sqp=cropped";
+  const normalizedUrl = "https://i.ytimg.com/vi/normalized-source/hq720.jpg";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Normalized Marker Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, images) VALUES (?, ?, ?, ?)")
+    .run(
+      albumMbid,
+      artistMbid,
+      "Normalized Marker Album",
+      JSON.stringify([{ coverType: "Cover", url: rawUrl }]),
+    );
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, "cover-500.jpg"), Buffer.alloc(32, 1));
+  fs.writeFileSync(
+    path.join(folder, ".cover.source.json"),
+    JSON.stringify({ url: normalizedUrl, preference: "canonical", fulfilledBy: "canonical" }),
+  );
+
+  configModule.updateConfig("metadata", { artwork_preference: "canonical" });
+  assert.equal(
+    mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(albumMbid, "Album", "Cover"),
+    true,
+  );
+});
+
+test("provider source changes invalidate markers, replace fallback evidence, and revise local URLs", async () => {
+  const providerModule = await import("../providers/index.js");
+  const providerId = "provider-artwork-source-change";
+  const albumMbid = "provider-source-change-album";
+  const artistMbid = "provider-source-change-artist";
+  const oldUrl = "https://provider.example/artwork/old-provider-cover.jpg";
+  const newUrl = "https://provider.example/artwork/new-provider-cover.jpg";
+  const canonicalUrl = "https://example.test/artwork/provider-source-canonical.jpg";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  const image = jpeg.encode({
+    width: 600,
+    height: 600,
+    data: Buffer.alloc(600 * 600 * 4, 199),
+  }, 90).data;
+
+  providerModule.streamingProviderManager.registerStreamingProvider({
+    id: providerId,
+    name: "Provider Artwork Source Change",
+    capabilities: { artwork: true },
+    getArtworkUrl: (request: any) => request.imageId || null,
+  } as any);
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Provider Source Change Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, images) VALUES (?, ?, ?, ?)")
+    .run(
+      albumMbid,
+      artistMbid,
+      "Provider Source Change Album",
+      JSON.stringify([
+        { coverType: "Cover", url: canonicalUrl },
+        { coverType: "Cover", url: oldUrl, source: "provider-fallback" },
+      ]),
+    );
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      asset_id, match_status, match_confidence
+    ) VALUES (?, 'album', ?, ?, ?, ?, 'matched', 1)
+  `).run(providerId, "provider-source-change-offer", artistMbid, albumMbid, newUrl);
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, "cover-500.jpg"), Buffer.alloc(32, 1));
+  fs.writeFileSync(
+    path.join(folder, ".cover.source.json"),
+    JSON.stringify({ url: oldUrl, preference: "provider", fulfilledBy: "provider" }),
+  );
+
+  const priorFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(image, {
+    status: 200,
+    headers: { "content-type": "image/jpeg" },
+  })) as typeof fetch;
+  configModule.updateConfig("metadata", { artwork_preference: "provider" });
+  try {
+    const tidalAssetId = "11111111-2222-3333-4444-555555555555";
+    const tidalOrigin = "https://resources.tidal.com/images/11111111/2222/3333/4444/555555555555/origin.jpg";
+    assert.equal(
+      mediaCoverServiceModule.mapAlbumArtworkToLocalUrl({
+        albumMbid: "raw-tidal-revision-album",
+        providerCandidates: [{ provider: "tidal", imageId: tidalAssetId }],
+      }),
+      `/media-cover/Albums/raw-tidal-revision-album/cover.jpg?source=provider&rev=${sourceRevision(tidalOrigin)}`,
+      "renderable provider asset ids must participate in the revision identity",
+    );
+    assert.equal(
+      mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(albumMbid, "Album", "Cover"),
+      false,
+      "the live provider asset must invalidate the old provider marker",
+    );
+    const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(albumMbid);
+    assert.equal(
+      mediaCoverServiceModule.albumCoverLocalUrl({
+        albumMbid,
+        images: {
+          images: [
+            { coverType: "Cover", url: canonicalUrl },
+            { coverType: "Cover", url: oldUrl, source: "provider-fallback" } as any,
+          ],
+        },
+        providerCandidates: candidates,
+      }),
+      `/media-cover/Albums/${albumMbid}/cover.jpg?source=provider&rev=${sourceRevision(newUrl)}`,
+    );
+
+    await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid });
+    const stored = dbModule.db.prepare("SELECT images FROM Albums WHERE mbid = ?")
+      .get(albumMbid) as { images: string };
+    const storedImages = JSON.parse(stored.images);
+    assert.equal(
+      storedImages.some((entry: any) => entry.source === "provider-fallback" && entry.url === newUrl),
+      true,
+    );
+    assert.equal(
+      storedImages.some((entry: any) => entry.source === "provider-fallback" && entry.url === oldUrl),
+      false,
+    );
+    assert.equal(
+      mediaCoverServiceModule.isArtworkPreferenceCacheCurrent(albumMbid, "Album", "Cover"),
+      true,
+    );
+  } finally {
+    globalThis.fetch = priorFetch;
+    configModule.updateConfig("metadata", { artwork_preference: "canonical" });
+  }
 });
 
 test("oversized cached derivatives fall back to the smaller original", () => {
@@ -780,6 +1065,17 @@ test("artist profile selectors never fall back to Fanart or Banner", () => {
       ],
     }, ["Fanart"]),
     fanartUrl,
+  );
+
+  assert.equal(
+    mediaCoverServiceModule.getServarrMetadataArtistImageUrl({
+      Images: [
+        { CoverType: "Banner", Url: bannerUrl, Width: 1381, Height: 575 },
+        { CoverType: "Poster", Url: posterUrl, Width: 1000, Height: 1000 },
+      ],
+    }, ["Fanart", "Background", "Landscape"]),
+    null,
+    "missing Fanart must not fall back to an unrelated Banner or Poster",
   );
 });
 

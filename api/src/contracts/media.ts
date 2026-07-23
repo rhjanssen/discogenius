@@ -91,12 +91,16 @@ export interface TrackRemoteOfferContract {
   slot: string;
   provider: string;
   providerAlbumId: string;
+  /** Human-facing permalink for the provider album/playlist. */
+  providerUrl?: string | null;
   quality: string | null;
   /** Slot match conviction from ReleaseGroupSlots (verified / probable / …). */
   matchStatus?: string | null;
   selectedReleaseMbid?: string | null;
   /** Provider track id when known for this slot. */
   providerTrackId?: string | null;
+  /** Human-facing permalink for the provider track. */
+  providerTrackUrl?: string | null;
 }
 
 export interface AlbumCardContract {
@@ -124,6 +128,7 @@ export interface ReleaseAvailabilityProviderContract {
   provider: string;
   providerAlbumId: string | null;
   providerAlbumIds?: string[];
+  providerUrl?: string | null;
   quality: string | null;
   librarySlot: string | null;
   status: string | null;
@@ -199,6 +204,8 @@ export interface AlbumAssociatedVideoContract {
   provider?: string | null;
   quality?: string | null;
   provider_id?: string | null;
+  /** Human-facing permalink for the selected provider video offer. */
+  provider_url?: string | null;
   is_monitored: boolean;
   monitored_lock: boolean;
   downloaded: boolean;
@@ -328,10 +335,12 @@ function parseAlbumTrackContract(value: unknown, index: number): AlbumTrackContr
             slot: expectString(offerRecord.slot, `${offerLabel}.slot`),
             provider: expectString(offerRecord.provider, `${offerLabel}.provider`),
             providerAlbumId: expectString(offerRecord.providerAlbumId, `${offerLabel}.providerAlbumId`),
+            providerUrl: expectNullableString(offerRecord.providerUrl, `${offerLabel}.providerUrl`) ?? null,
             quality: expectNullableString(offerRecord.quality, `${offerLabel}.quality`) ?? null,
             matchStatus: expectOptionalString(offerRecord.matchStatus, `${offerLabel}.matchStatus`) ?? null,
             selectedReleaseMbid: expectOptionalString(offerRecord.selectedReleaseMbid, `${offerLabel}.selectedReleaseMbid`) ?? null,
             providerTrackId: expectOptionalString(offerRecord.providerTrackId, `${offerLabel}.providerTrackId`) ?? null,
+            providerTrackUrl: expectNullableString(offerRecord.providerTrackUrl, `${offerLabel}.providerTrackUrl`) ?? null,
           };
         }),
     artist_name: expectOptionalString(record.artist_name, `${label}.artist_name`),
@@ -381,6 +390,7 @@ function parseAlbumAssociatedVideoContract(value: unknown, index: number): Album
     provider: expectNullableString(record.provider, `${label}.provider`),
     quality: expectNullableString(record.quality, `${label}.quality`),
     provider_id: expectNullableString(record.provider_id, `${label}.provider_id`),
+    provider_url: expectNullableString(record.provider_url, `${label}.provider_url`),
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
     monitored_lock: expectOptionalBoolean(record.monitored_lock, `${label}.monitored_lock`) ?? false,
     downloaded: expectBoolean(record.downloaded, `${label}.downloaded`),
@@ -435,6 +445,7 @@ function parseReleaseAvailabilityProviderContract(value: unknown, indexLabel: st
     providerAlbumIds: record.providerAlbumIds === undefined
       ? undefined
       : expectArray(record.providerAlbumIds, `${indexLabel}.providerAlbumIds`, (item) => String(item)),
+    providerUrl: expectNullableString(record.providerUrl, `${indexLabel}.providerUrl`) ?? null,
     quality: expectNullableString(record.quality, `${indexLabel}.quality`) ?? null,
     librarySlot: expectNullableString(record.librarySlot, `${indexLabel}.librarySlot`) ?? null,
     status: expectNullableString(record.status, `${indexLabel}.status`) ?? null,

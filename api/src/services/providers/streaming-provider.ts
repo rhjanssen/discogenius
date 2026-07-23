@@ -52,6 +52,12 @@ export interface ProviderManifest {
     /** True when the provider can start/complete auth from Discogenius UI routes. */
     managedByApp: boolean;
     /**
+     * Whether persisted offers require a currently connected account for
+     * preview/download actions. Defaults to true for authenticated providers.
+     * Set false for adapters whose public media path works without credentials.
+     */
+    mediaAccessRequiresConnection?: boolean;
+    /**
      * When true, the provider remains listed in Auth/Settings as a roadmap
      * entry but cannot be connected (Auth shows "Soon").
      */
@@ -210,7 +216,8 @@ export interface ProviderDeviceLoginPollResult {
 }
 
 export interface ProviderDownloadProgress {
-  progress: number;
+  /** 0-100 when known. Null/omit when the downloader has no file-level progress. */
+  progress?: number | null;
   currentFileNum?: number;
   totalFiles?: number;
   currentTrack?: string;

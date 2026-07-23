@@ -73,15 +73,17 @@ test("video list and detail use canonical video recordings with provider offers"
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality, duration, availability
+      title, quality, duration, availability, match_status
     ) VALUES
       ('youtube-music', 'video', 'yt-video-01', 'artist-mbid', ?,
-       'Canonical Video', NULL, 215, 1),
+       'Canonical Video', NULL, 215, 1, NULL),
       ('apple-music', 'video', 'apple-video-4k', 'artist-mbid', ?,
-       'Canonical Video', 'MP4_2160P', 215, 1),
+       'Canonical Video', 'MP4_2160P', 215, 1, NULL),
       ('apple-music', 'video', 'unavailable-video', 'artist-mbid', ?,
-       'Canonical Video', '4K', 215, 0)
-  `).run(recording.id, recording.id, recording.id);
+       'Canonical Video', '4K', 215, 0, NULL),
+      ('deezer', 'video', 'rejected-video', 'artist-mbid', ?,
+       'Canonical Video', '8K', 215, 1, 'rejected')
+  `).run(recording.id, recording.id, recording.id, recording.id);
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
@@ -109,14 +111,17 @@ test("video list and detail use canonical video recordings with provider offers"
     provider: "apple-music",
     provider_id: "apple-video-4k",
     quality: "MP4_2160P",
+    url: null,
   }, {
     provider: "tidal",
     provider_id: "provider-video-1",
     quality: "FHD",
+    url: "https://tidal.com/browse/video/provider-video-1",
   }, {
     provider: "youtube-music",
     provider_id: "yt-video-01",
     quality: null,
+    url: null,
   }]);
   assert.equal(list.items[0]?.cover, `/media-cover/Videos/${recording.id}/cover.jpg`);
   assert.equal(list.items[0]?.cover_art_url, `/media-cover/Videos/${recording.id}/cover.jpg`);
@@ -136,17 +141,17 @@ test("video list and detail use canonical video recordings with provider offers"
     provider_id: "apple-video-4k",
     quality: "MP4_2160P",
     url: null,
-    available: true,
-    can_preview: true,
-    can_download: true,
+    available: false,
+    can_preview: false,
+    can_download: false,
   }, {
     provider: "tidal",
     provider_id: "provider-video-1",
     quality: "FHD",
     url: "https://tidal.com/browse/video/provider-video-1",
-    available: true,
-    can_preview: true,
-    can_download: true,
+    available: false,
+    can_preview: false,
+    can_download: false,
   }, {
     provider: "youtube-music",
     provider_id: "yt-video-01",
@@ -171,6 +176,7 @@ test("video list and detail use canonical video recordings with provider offers"
 
   const unavailableProvider = videoQueryModule.listVideos({ limit: 10, offset: 0, provider: "deezer" });
   assert.equal(unavailableProvider.total, 0);
+  assert.equal(videoQueryModule.getVideoDetail("rejected-video"), null);
 });
 
 test("video detail backfills null offer quality from TrackFiles", () => {
@@ -611,8 +617,11 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id, title, quality
-    ) VALUES ('tidal', 'video', 'assoc-video-1', 'artist-mbid', ?, 'Oblivion', 'FHD')
+      provider, entity_type, provider_id, artist_mbid, recording_id, title, quality, provider_url
+    ) VALUES (
+      'tidal', 'video', 'assoc-video-1', 'artist-mbid', ?, 'Oblivion', 'FHD',
+      'https://tidal.com/browse/video/assoc-video-1'
+    )
   `).run(video.id);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (
@@ -648,6 +657,7 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
   assert.equal(associated[0]?.track_number, 4);
   assert.equal(associated[0]?.volume_number, 1);
   assert.equal(associated[0]?.audio_recording_mbid, "rec-audio-assoc");
+  assert.equal(associated[0]?.provider_url, "https://tidal.com/browse/video/assoc-video-1");
   assert.equal(associated[0]?.is_monitored, true);
 });
 

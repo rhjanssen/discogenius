@@ -57,6 +57,7 @@ import type { TrackListItem } from "@/types/track-list";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
 import { useToast } from "@/hooks/useToast";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
+import { useHorizontalScrollRestore } from "@/hooks/useHorizontalScrollRestore";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { readArtistViewMode, writeArtistViewMode, type ArtistViewMode } from "@/utils/artistViewMode";
 import { WarningBadge } from "@/components/ui/WarningBadge";
@@ -560,6 +561,8 @@ const ArtistPage = () => {
     readArtistFilterPrefs(artistId)?.statusFilters ?? { ...defaultStatusFilters, onlyMonitored: true }
   ));
   const [filterInitialized, setFilterInitialized] = useState(() => Boolean(readArtistFilterPrefs(artistId)));
+  const videoCarouselRef = useHorizontalScrollRestore(`artist:${artistId || "unknown"}:videos`);
+  const albumCarouselRef = useHorizontalScrollRestore(`artist:${artistId || "unknown"}:albums`);
   const [topTracksExpanded, setTopTracksExpanded] = useState(false);
   const [artistInfoOpen, setArtistInfoOpen] = useState(false);
 
@@ -1133,12 +1136,18 @@ const ArtistPage = () => {
     const isDownloaded = Boolean(item.is_downloaded ?? item.downloaded);
     const imageUrl = mediaCoverProxySrc(item);
     const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
-    const subtitle = [artistName, year || ''].filter(Boolean).join(' · ');
+    const subtitle = year ? String(year) : '';
     const videoProvider = String(item.provider || "").trim() || null;
     const videoProviderId = String(item.provider_id || "").trim() || null;
     const videoQuality = String(item.quality || "").trim() || null;
     const videoOffers = (videoProvider || videoQuality)
-      ? [{ slot: "video" as const, quality: videoQuality, provider: videoProvider, providerAlbumId: videoProviderId }]
+      ? [{
+          slot: "video" as const,
+          quality: videoQuality,
+          provider: videoProvider,
+          providerAlbumId: videoProviderId,
+          providerUrl: item.url,
+        }]
       : [];
 
     // Library filter
@@ -1342,7 +1351,10 @@ const ArtistPage = () => {
             <Title2>{module.title}</Title2>
             {isFirst && renderMobileFilterView()}
           </div>
-          <div className={mergeClasses(viewMode === 'grid' ? styles.grid : styles.carousel, styles.videoGrid)}>
+          <div
+            ref={viewMode === "carousel" ? videoCarouselRef : undefined}
+            className={mergeClasses(viewMode === 'grid' ? styles.grid : styles.carousel, styles.videoGrid)}
+          >
             {rendered}
           </div>
         </div>
@@ -1361,7 +1373,10 @@ const ArtistPage = () => {
     const isFirst = claimFirstVisible();
 
     const renderGridOrCarousel = () => (
-      <div className={viewMode === 'grid' ? styles.grid : styles.carousel}>
+      <div
+        ref={viewMode === "carousel" ? albumCarouselRef : undefined}
+        className={viewMode === 'grid' ? styles.grid : styles.carousel}
+      >
         {rendered}
       </div>
     );

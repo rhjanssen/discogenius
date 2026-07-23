@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
     buildMetadataWriteArgs,
+    deriveVideoQuality,
     embedAudioCover,
     embedVideoThumbnail,
     getMetadataRewriteContainerArgs,
@@ -15,6 +16,13 @@ import {
     requiresBrowserCompatibleAudioStream,
     writeMetadata,
 } from "./audioUtils.js";
+
+test("deriveVideoQuality treats ultrawide near-4K masters as UHD", () => {
+    assert.equal(deriveVideoQuality({ width: 3832, height: 1592 }), "UHD");
+    assert.equal(deriveVideoQuality({ width: 1920, height: 1080 }), "FHD");
+    assert.equal(deriveVideoQuality({ width: 1280, height: 720 }), "HD");
+    assert.equal(deriveVideoQuality({ width: 640, height: 360 }), "SD");
+});
 
 test("requiresBrowserCompatibleAudioStream flags spatial tracks for browser-safe transcoding", () => {
     assert.equal(requiresBrowserCompatibleAudioStream({

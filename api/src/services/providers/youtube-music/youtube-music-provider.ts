@@ -151,6 +151,9 @@ export class YouTubeMusicProvider implements StreamingProvider {
   auth: {
     kind: "external",
     managedByApp: false,
+    // Public YouTube media remains downloadable through yt-dlp without browser
+    // credentials; auth adds account/restricted-media access.
+    mediaAccessRequiresConnection: false,
     setupIntro:
       "Follow the steps below, then paste the DevTools exports. Secret values stay masked and are stored only in this provider's config directory.",
     setupInstructions: [

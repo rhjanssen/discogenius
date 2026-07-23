@@ -220,7 +220,7 @@ test("Streamrip backend rejects empty success and completes only after a media f
     entityType: "track",
     providerId: "3103033041",
     downloadPath,
-  }, { onProgress: (update) => progress.push(update.progress) });
+  }, { onProgress: (update) => progress.push(update.progress ?? -1) });
   assert.equal(progress.at(-1), 100);
 
   const emptyPath = path.join(tempDir, "empty-job");

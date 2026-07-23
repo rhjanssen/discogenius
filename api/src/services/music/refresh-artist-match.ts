@@ -162,6 +162,11 @@ export function buildStoredProviderAlbumSelections(
           AND pi.release_group_mbid IS NOT NULL
           AND pi.match_status IN ('verified', 'probable', 'candidate')
           AND (
+            pi.availability IS NULL
+            OR LOWER(CAST(pi.availability AS TEXT))
+               NOT IN ('0', 'false', 'unavailable', 'no', '')
+          )
+          AND (
             pi.artist_mbid = ?
             OR rg.artist_mbid = ?
             OR scope.artist_mbid IS NOT NULL

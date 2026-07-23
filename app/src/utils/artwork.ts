@@ -5,7 +5,8 @@
  *
  * Cover identity model (Lidarr-like):
  * - API emits one stable path per entity + cover type: `/media-cover/.../cover.jpg`
- *   plus optional `?source=` (album/artist preference) and `?lastWrite=` (file mtime).
+ *   plus optional `?source=` and a stat-free `?rev=` derived from the selected
+ *   remote source URL.
  * - Cards may rewrite the filename to a height proxy (`cover-250.jpg` / `cover-500.jpg`)
  *   but must preserve the query string so list and detail share the same generation.
  * - Detail pages use the bare identity URL (origin for videos; route remaps albums).
@@ -55,9 +56,8 @@ function defaultProxyHeightForPath(pathname: string): 500 | 250 {
 
 /**
  * Rewrite a local `/media-cover/.../cover.jpg` URL to the height-named proxy
- * while preserving `?source=` / `?lastWrite=` so list and detail stay on the
- * same cover generation. Proxies preserve source aspect (no forced 3:2 crop).
- * Remote/data URLs pass through.
+ * while preserving its query string. Proxies preserve source aspect (no forced
+ * 3:2 crop). Remote/data URLs pass through.
  */
 export function toMediaCoverProxyUrl(
   url: string,

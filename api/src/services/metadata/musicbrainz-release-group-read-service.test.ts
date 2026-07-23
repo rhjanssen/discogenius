@@ -410,6 +410,14 @@ test("hybrid trackSources tip wins over same-ISRC LOSSLESS rematch on primary al
     "quality_optimized_composite_track_coverage",
     JSON.stringify(evidence),
   );
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id,
+      release_group_mbid, release_mbid, provider_url
+    ) VALUES
+      ('apple-music', 'album', '1422677780', NULL, ?, ?, 'https://music.apple.com/album/1422677780'),
+      ('apple-music', 'track', '1422677787', '1422677780', ?, ?, 'https://music.apple.com/song/1422677787')
+  `).run(releaseGroupMbid, releaseMbid, releaseGroupMbid, releaseMbid);
 
   const artist = { providerId: "apple-artist", name: "Amy Winehouse" };
   providersModule.streamingProviderManager.registerStreamingProvider({
@@ -463,10 +471,12 @@ test("hybrid trackSources tip wins over same-ISRC LOSSLESS rematch on primary al
     slot: "stereo",
     provider: "apple-music",
     providerAlbumId: "1422677780",
+    providerUrl: "https://music.apple.com/album/1422677780",
     quality: "HIRES_LOSSLESS",
     matchStatus: "verified",
     selectedReleaseMbid: releaseMbid,
     providerTrackId: "1422677787",
+    providerTrackUrl: "https://music.apple.com/song/1422677787",
   }]);
 });
 

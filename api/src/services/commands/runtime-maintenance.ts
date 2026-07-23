@@ -1,9 +1,12 @@
 import fs from "fs";
+import path from "path";
 import { db } from "../../database.js";
+import { Config } from "../config/config.js";
 import { invalidateAllDownloadState } from "../download/download-state.js";
 import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
-import { LibraryFilesService } from "../mediafiles/library-files.js";
+import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-files.js";
 import { normalizeComparablePath } from "../mediafiles/path-utils.js";
+import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 
 interface LibraryFileRow {
@@ -32,6 +35,10 @@ export interface RuntimeMaintenanceSummary {
   databaseOptimized: boolean;
   /** Finished commands rows pruned (completed > 1 day) */
   historyJobsPruned: number;
+  /** Orphaned /downloads job_* folders removed */
+  orphanDownloadFoldersRemoved: number;
+  /** Video files whose quality tag was corrected from stored dimensions */
+  videoQualitiesCorrected: number;
 }
 
 function toTimestamp(value: string | null | undefined): number {
@@ -197,6 +204,79 @@ function refreshDownloadState(summary: RuntimeMaintenanceSummary) {
   invalidateAllDownloadState();
 }
 
+/**
+ * Remove orphaned job_<id> folders under the downloads root that are not
+ * referenced by an active queued/started command. Failed and completed jobs
+ * leave leftovers when cleanup was skipped or partial — Lidarr-style
+ * housekeeping keeps the staging tree from growing forever.
+ */
+export function pruneOrphanDownloadFolders(): number {
+  const downloadRoot = path.resolve(Config.getDownloadPath());
+  if (!fs.existsSync(downloadRoot)) return 0;
+
+  const activeJobIds = new Set(
+    (db.prepare(`
+      SELECT id FROM commands
+      WHERE status IN ('queued', 'started')
+    `).all() as Array<{ id: number }>).map((row) => Number(row.id)),
+  );
+
+  let removed = 0;
+  const visit = (directory: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const fullPath = path.join(directory, entry.name);
+      const jobMatch = /^job_(\d+)$/u.exec(entry.name);
+      if (jobMatch) {
+        const jobId = Number(jobMatch[1]);
+        if (!Number.isFinite(jobId) || activeJobIds.has(jobId)) continue;
+        try {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+          removed += 1;
+          removeEmptyParents(path.dirname(fullPath), downloadRoot);
+        } catch {
+          // Ignore locked/in-use folders; next housekeeping pass retries.
+        }
+        continue;
+      }
+      visit(fullPath);
+    }
+  };
+  visit(downloadRoot);
+  return removed;
+}
+
+/** Re-tag on-disk videos whose quality drifted from stored width/height. */
+export function correctVideoQualitiesFromDimensions(): number {
+  const rows = db.prepare(`
+    SELECT id, quality, width, height
+    FROM TrackFiles
+    WHERE file_type = 'video'
+      AND width IS NOT NULL
+      AND height IS NOT NULL
+      AND width > 0
+      AND height > 0
+  `).all() as Array<{ id: number; quality: string | null; width: number; height: number }>;
+
+  const update = db.prepare("UPDATE TrackFiles SET quality = ? WHERE id = ?");
+  let corrected = 0;
+  for (const row of rows) {
+    const derived = deriveVideoQuality({ width: row.width, height: row.height });
+    if (!derived) continue;
+    const current = String(row.quality || "").trim().toUpperCase();
+    if (current === derived) continue;
+    update.run(derived, row.id);
+    corrected += 1;
+  }
+  return corrected;
+}
+
 export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
   const summary: RuntimeMaintenanceSummary = {
     duplicateLibraryFilesRemoved: 0,
@@ -206,10 +286,14 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     artistStatesRefreshed: 0,
     databaseOptimized: false,
     historyJobsPruned: 0,
+    orphanDownloadFoldersRemoved: 0,
+    videoQualitiesCorrected: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
   summary.duplicateTrackedAssetsRemoved = LibraryFilesService.pruneDuplicateTrackedAssets().removed;
+  summary.orphanDownloadFoldersRemoved = pruneOrphanDownloadFolders();
+  summary.videoQualitiesCorrected = correctVideoQualitiesFromDimensions();
 
   db.transaction(() => {
     dedupeLibraryFiles(summary);
@@ -234,12 +318,16 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
   if (
     summary.duplicateTrackedAssetsRemoved > 0 ||
     summary.staleTrackedAssetsRemoved > 0 ||
-    summary.duplicateLibraryFilesRemoved > 0
+    summary.duplicateLibraryFilesRemoved > 0 ||
+    summary.orphanDownloadFoldersRemoved > 0 ||
+    summary.videoQualitiesCorrected > 0
   ) {
     console.log(
       `[Maintenance] Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s), ` +
       `${summary.duplicateTrackedAssetsRemoved} duplicate tracked asset(s), ` +
-      `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), refreshed ${summary.albumStatesRefreshed} albums and ` +
+      `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), ` +
+      `${summary.orphanDownloadFoldersRemoved} orphan download folder(s), ` +
+      `corrected ${summary.videoQualitiesCorrected} video quality tag(s), refreshed ${summary.albumStatesRefreshed} albums and ` +
       `${summary.artistStatesRefreshed} artists.`,
     );
   } else {

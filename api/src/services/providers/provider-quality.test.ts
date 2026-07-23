@@ -28,15 +28,17 @@ test("classifyNeutralVideo maps legacy MP4_* and neutral tags", () => {
   assert.equal(neutralVideoTagFromHeight(2160), "UHD");
 });
 
-test("parseM3u8MaxHeight reads the tallest RESOLUTION line", () => {
+test("parseM3u8MaxHeight reads the longest RESOLUTION edge", () => {
   const master = [
     "#EXTM3U",
     '#EXT-X-STREAM-INF:BANDWIDTH=700000,RESOLUTION=640x360',
     "a.m3u8",
     '#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=1280x720',
     "b.m3u8",
+    '#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=3840x1600',
+    "c.m3u8",
   ].join("\n");
-  assert.equal(parseM3u8MaxHeight(master), 720);
+  assert.equal(parseM3u8MaxHeight(master), 3840);
   assert.equal(parseM3u8MaxHeight(""), null);
 });
 
@@ -113,7 +115,7 @@ test("TIDAL catalog video quality distrusts aspirational MP4_1080P / FHD", async
     '#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720',
     "c.m3u8",
   ].join("\n");
-  assert.equal(parseM3u8MaxHeight(master), 720);
+  assert.equal(parseM3u8MaxHeight(master), 1280);
   assert.equal(tidalVideoQualityTagFromProbe({ height: 720 }), "HD");
   assert.equal(tidalVideoQualityTagFromProbe({ height: 480 }), "SD");
   assert.equal(tidalVideoQualityTagFromProbe({ height: 1080 }), "FHD");

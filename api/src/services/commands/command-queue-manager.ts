@@ -515,7 +515,7 @@ ${buildExecutionOrderClause()}
         if (job) emitThrottledCommandUpdate({ id, type: job.name, status: job.status, progress } as CommandEventPayload);
     }
 
-    static updateState(id: number, options: { progress?: number; payloadPatch?: Partial<CommandBodyCommon> }) {
+    static updateState(id: number, options: { progress?: number | null; payloadPatch?: Partial<CommandBodyCommon> }) {
         const current = this.get(id);
         if (!current) return null;
         if (TERMINAL_COMMAND_STATUSES.has(current.status)) return current;

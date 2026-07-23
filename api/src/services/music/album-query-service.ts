@@ -140,6 +140,7 @@ function sanitizeAlbumSpatialFields(album: AlbumContract, includeSpatial: boolea
         quality,
         spatial_provider: null,
         spatial_provider_id: null,
+        spatial_provider_url: null,
         spatial_quality: null,
         spatial_match_status: null,
         spatial_release_mbid: null,
@@ -220,12 +221,14 @@ function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlb
                 : "COALESCE(stereo.quality, spatial.quality)"} AS selected_quality,
         stereo.selected_provider AS stereo_provider,
         stereo.selected_provider_id AS stereo_provider_id,
+        stereo_provider_item.provider_url AS stereo_provider_url,
         stereo.selected_release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
         stereo.cover AS stereo_cover,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
+        spatial_provider_item.provider_url AS spatial_provider_url,
         spatial.selected_release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
@@ -243,10 +246,22 @@ function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlb
         ON stereo_provider_item.provider = stereo.selected_provider
        AND stereo_provider_item.entity_type = 'album'
        AND stereo_provider_item.provider_id = stereo.selected_provider_id
+       AND (stereo_provider_item.match_status IS NULL OR LOWER(stereo_provider_item.match_status) <> 'rejected')
+       AND (
+         stereo_provider_item.availability IS NULL
+         OR LOWER(CAST(stereo_provider_item.availability AS TEXT))
+            NOT IN ('0', 'false', 'unavailable', 'no', '')
+       )
       LEFT JOIN ProviderItems spatial_provider_item
         ON spatial_provider_item.provider = spatial.selected_provider
        AND spatial_provider_item.entity_type = 'album'
        AND spatial_provider_item.provider_id = spatial.selected_provider_id
+       AND (spatial_provider_item.match_status IS NULL OR LOWER(spatial_provider_item.match_status) <> 'rejected')
+       AND (
+         spatial_provider_item.availability IS NULL
+         OR LOWER(CAST(spatial_provider_item.availability AS TEXT))
+            NOT IN ('0', 'false', 'unavailable', 'no', '')
+       )
       ${whereClause}
     `;
 }
@@ -300,11 +315,13 @@ function normalizeReleaseGroupListRow(
         track_count: downloadStats.totalTracks,
         stereo_provider: row.stereo_provider || null,
         stereo_provider_id: row.stereo_provider_id || null,
+        stereo_provider_url: row.stereo_provider_url || null,
         stereo_quality: row.stereo_quality || null,
         stereo_match_status: row.stereo_match_status || null,
         stereo_release_mbid: row.stereo_release_mbid || null,
         spatial_provider: includeSpatial ? row.spatial_provider || null : null,
         spatial_provider_id: includeSpatial ? row.spatial_provider_id || null : null,
+        spatial_provider_url: includeSpatial ? row.spatial_provider_url || null : null,
         spatial_quality: includeSpatial ? row.spatial_quality || null : null,
         spatial_match_status: includeSpatial ? row.spatial_match_status || null : null,
         spatial_release_mbid: includeSpatial ? row.spatial_release_mbid || null : null,

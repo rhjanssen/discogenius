@@ -459,7 +459,7 @@ test("download queue query resolves canonical release-group provider offers with
     assert.equal(live.items[0]?.quality, "HIRES_LOSSLESS");
     // The download queue resolves covers through the same local
     // media-cover route as the rest of the app (no per-request upstream proxy).
-    assert.equal(live.items[0]?.cover, "/media-cover/Albums/rg-gmtf/cover.jpg?source=canonical");
+    assert.ok(String(live.items[0]?.cover || "").startsWith("/media-cover/Albums/rg-gmtf/cover.jpg?source=canonical"));
 
     const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
         artistId: "artist-bastille",
@@ -602,7 +602,7 @@ test("download queue query resolves canonical track provider offers without Prov
     assert.equal(live.items[0]?.album_id, "rg-track");
     assert.equal(live.items[0]?.album_title, "Canonical Album");
     assert.equal(live.items[0]?.quality, "DOLBY_ATMOS");
-    assert.equal(live.items[0]?.cover, "/media-cover/Albums/rg-track/cover.jpg?source=canonical");
+    assert.ok(String(live.items[0]?.cover || "").startsWith("/media-cover/Albums/rg-track/cover.jpg?source=canonical"));
 
     const details = downloadQueueQueryModule.DownloadQueueQueryService.getQueueDetails({
         artistId: "artist-track",

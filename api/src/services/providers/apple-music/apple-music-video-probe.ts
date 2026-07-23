@@ -50,11 +50,9 @@ export async function resolveAppleVideoQualityTag(
   options: AppleMusicApiOptions = {},
   catalogHas4K?: boolean | null,
 ): Promise<string | null> {
-  const fromCatalog = appleVideoQualityTag(catalogHas4K);
-  if (fromCatalog) return fromCatalog;
-
   const probed = await probeAppleVideoQuality(videoId, options);
-  return probed?.qualityTag ?? null;
+  if (probed?.qualityTag) return probed.qualityTag;
+  return appleVideoQualityTag(catalogHas4K);
 }
 
 /** Probe max height / quality for an Apple music-video id via preview HLS. */
@@ -87,26 +85,26 @@ export async function appleVideoQualityFromAttributes(
   attrs: AppleVideoAttrs | null | undefined,
   options: AppleMusicApiOptions = {},
 ): Promise<string | null> {
-  const fromCatalog = appleVideoQualityTag(attrs?.has4K);
-  if (fromCatalog) return fromCatalog;
-
   const hlsUrl = previewHlsUrl(attrs);
-  if (!hlsUrl) return null;
-  try {
-    const doFetch = resolveFetch(options.fetchImpl);
-    const masterRes = await doFetch(hlsUrl);
-    if (!masterRes.ok) return null;
-    // Fixture FetchLike only exposes json(); live Response also has text().
-    const text = typeof (masterRes as { text?: () => Promise<string> }).text === "function"
-      ? await (masterRes as { text: () => Promise<string> }).text()
-      : JSON.stringify(await masterRes.json());
-    if (typeof text !== "string" || text.trim().startsWith("{")) {
-      // Fixture JSON payloads are not m3u8 — treat as unknown.
-      return null;
+  if (hlsUrl) {
+    try {
+      const doFetch = resolveFetch(options.fetchImpl);
+      const masterRes = await doFetch(hlsUrl);
+      if (masterRes.ok) {
+        // Fixture FetchLike only exposes json(); live Response also has text().
+        const text = typeof (masterRes as { text?: () => Promise<string> }).text === "function"
+          ? await (masterRes as { text: () => Promise<string> }).text()
+          : JSON.stringify(await masterRes.json());
+        if (typeof text === "string" && !text.trim().startsWith("{")) {
+          const probed = neutralVideoTagFromHeight(parseM3u8MaxHeight(text));
+          if (probed) return probed;
+        }
+      }
+    } catch (error) {
+      console.warn("[Apple Music] Preview HLS quality probe failed:", error);
     }
-    return neutralVideoTagFromHeight(parseM3u8MaxHeight(text));
-  } catch (error) {
-    console.warn("[Apple Music] Preview HLS quality probe failed:", error);
-    return null;
   }
+
+  // has4K is catalog marketing; only use it when the preview ladder is missing.
+  return appleVideoQualityTag(attrs?.has4K);
 }

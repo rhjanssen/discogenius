@@ -29,6 +29,7 @@ import {
     resolveArtistArtwork,
     resolveVideoArtwork,
     hasCachedMediaCover,
+    isMediaCoverSourceCacheCurrent,
     type ProviderArtworkCandidate,
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
@@ -60,9 +61,10 @@ import {
     normalizeMusicBrainzType,
     parseMusicBrainzSecondaryTypes,
 } from "../metadata/musicbrainz-release-group-filter.js";
-
-/** Fan playlist / mixtape coverage — never promoted to verified. */
-const PLAYLIST_TRACKLIST_COVERAGE_METHOD = "playlist-tracklist-coverage";
+import {
+    PLAYLIST_TRACKLIST_COVERAGE_METHOD,
+    playlistCoversCanonicalTracklist,
+} from "../providers/soundcloud/soundcloud-playlist-match.js";
 
 function isWidePlaylistSearchReleaseGroup(
     primaryType?: string | null,
@@ -153,14 +155,12 @@ export class RefreshArtistService {
             console.warn(`[RefreshArtistService] Failed to bulk-hydrate release groups for ${artistMbid}:`, error);
         }
 
-        // Cover art is network-bound — only fetch when config/media-cover lacks
-        // local bytes (not merely when cover_image_id is empty). Page visits
-        // should serve cache; refresh/match is the primary warm path.
-        const needingArtwork = releaseGroups
-            .filter((releaseGroup) => !hasCachedMediaCover(releaseGroup.mbid, "Album", "Cover"))
-            .map((releaseGroup) => releaseGroup.mbid);
+        // Always reconcile scoped covers after catalog hydration. The resolver
+        // is source-marker-aware and returns without network I/O when current;
+        // running it for every row also catches a changed canonical image URL.
+        const artworkReleaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
         const limit = pLimit(6);
-        await Promise.all(needingArtwork.map((releaseGroupMbid) => limit(async () => {
+        await Promise.all(artworkReleaseGroupMbids.map((releaseGroupMbid) => limit(async () => {
             try {
                 await resolveAlbumArtwork({ albumMbid: releaseGroupMbid });
             } catch (error) {
@@ -592,6 +592,46 @@ export class RefreshArtistService {
         };
     }
 
+    private static markSoundCloudPlaylistOfferUnavailable(
+        providerAlbumId: string,
+        reason: "missing" | "empty" | "coverage-changed",
+    ): void {
+        db.transaction(() => {
+            db.prepare(`
+                UPDATE ProviderItems
+                SET availability = 'unavailable',
+                    match_status = 'rejected',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE provider = 'soundcloud'
+                  AND entity_type = 'album'
+                  AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            `).run(providerAlbumId);
+            db.prepare(`
+                UPDATE ProviderItems
+                SET availability = 'unavailable',
+                    match_status = 'rejected',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE provider = 'soundcloud'
+                  AND entity_type = 'track'
+                  AND CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
+            `).run(providerAlbumId);
+            db.prepare(`
+                UPDATE ProviderItemMatches
+                SET status = 'rejected',
+                    method = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE provider = 'soundcloud'
+                  AND provider_item_type = 'album'
+                  AND CAST(provider_item_id AS TEXT) = CAST(? AS TEXT)
+            `).run(`${PLAYLIST_TRACKLIST_COVERAGE_METHOD}-${reason}`, providerAlbumId);
+        })();
+    }
+
+    private static isMissingSoundCloudResourceError(error: unknown): boolean {
+        const status = Number((error as { status?: unknown } | null)?.status);
+        return status === 404 || status === 410;
+    }
+
     /**
      * SoundCloud-only wide search for less-official release groups (mixtape/street,
      * dj-mix, demo, primary Other) that were not matched from the artist’s official
@@ -657,9 +697,18 @@ export class RefreshArtistService {
             WHERE release_mbid = ?
             ORDER BY medium_position, position
         `);
+        const loadStoredPlaylistOffers = db.prepare(`
+            SELECT CAST(provider_id AS TEXT) AS provider_id
+            FROM ProviderItems
+            WHERE provider = 'soundcloud'
+              AND entity_type = 'album'
+              AND release_group_mbid = ?
+              AND match_method = ?
+              AND match_status IN ('verified', 'probable', 'candidate')
+            ORDER BY updated_at DESC, provider_id ASC
+        `);
 
         for (const target of targets) {
-            if (alreadyMatchedRgMbids.has(target.mbid)) continue;
             if (!isWidePlaylistSearchReleaseGroup(target.primary_type, target.secondary_types)) {
                 continue;
             }
@@ -687,6 +736,111 @@ export class RefreshArtistService {
                 : [];
             if (preferredTracks.length === 0) continue;
 
+            const validatePlaylist = async (providerAlbum: ProviderAlbum): Promise<{
+                album: any | null;
+                match: ProviderReleaseGroupMatch | null;
+                invalidReason: "empty" | "coverage-changed" | null;
+            }> => {
+                const album = {
+                    ...providerAlbumToOfferRow(providerAlbum, artistMbid),
+                    provider: provider.id,
+                };
+                const providerAlbumId = String(album.provider_id);
+                const rawTracks = await provider.getAlbumTracks(providerAlbum.providerId);
+                if (rawTracks.length === 0) {
+                    return { album: null, match: null, invalidReason: "empty" };
+                }
+                if (!playlistCoversCanonicalTracklist(preferredTracks, rawTracks)) {
+                    return { album: null, match: null, invalidReason: "coverage-changed" };
+                }
+
+                album._provider_tracks = rawTracks.map((track: any) => slotTrack(track));
+                album._provider_raw_tracks = rawTracks;
+                album.num_tracks = rawTracks.length;
+
+                const targetMatches = matchProviderAlbumsToReleaseGroups(
+                    [{
+                        provider: provider.id,
+                        providerId: providerAlbumId,
+                        providerUrl: album.url ?? null,
+                        title: String(album.title || ""),
+                        version: album.version ?? null,
+                        releaseDate: album.release_date ?? null,
+                        type: album.type ?? null,
+                        quality: album.quality ?? null,
+                        qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
+                        explicit: album.explicit ?? null,
+                        upc: album.upc ?? null,
+                        trackCount: album.num_tracks ?? null,
+                        volumeCount: album.num_volumes ?? null,
+                    }],
+                    [releaseGroup],
+                );
+                const match = targetMatches.get(providerAlbumId);
+                if (!match || match.status === "unmatched" || match.releaseGroup?.mbid !== target.mbid) {
+                    return { album: null, match: null, invalidReason: null };
+                }
+
+                // Fan playlists are never verified identity — keep probable with
+                // an explicit coverage method so UI/slot logic treat them correctly.
+                match.status = "probable";
+                match.method = PLAYLIST_TRACKLIST_COVERAGE_METHOD;
+                match.confidence = Math.max(Number(match.confidence || 0), 0.85);
+                match.evidence = {
+                    ...match.evidence,
+                    trackCountMatched: false,
+                    providerTrackCount: album.num_tracks ?? null,
+                    targetTrackCount: preferredTracks.length,
+                };
+                return { album, match, invalidReason: null };
+            };
+            const acceptPlaylist = (album: any, match: ProviderReleaseGroupMatch): void => {
+                const providerAlbumId = String(album.provider_id);
+                albumsByProviderId.set(providerAlbumId, album);
+                matches.set(providerAlbumId, match);
+            };
+
+            // Revalidate the durable offer first. This both repairs old NULL
+            // permalinks and detects removed, emptied, or edited user sets even
+            // when SoundCloud search no longer returns the playlist.
+            let retainedStoredOffer = false;
+            const storedOffers = loadStoredPlaylistOffers.all(
+                target.mbid,
+                PLAYLIST_TRACKLIST_COVERAGE_METHOD,
+            ) as Array<{ provider_id: string }>;
+            for (const stored of storedOffers) {
+                try {
+                    const providerAlbum = await provider.getAlbum(stored.provider_id);
+                    const validated = await validatePlaylist(providerAlbum);
+                    if (validated.invalidReason) {
+                        this.markSoundCloudPlaylistOfferUnavailable(
+                            stored.provider_id,
+                            validated.invalidReason,
+                        );
+                        continue;
+                    }
+                    if (!validated.album || !validated.match) {
+                        continue;
+                    }
+                    acceptPlaylist(validated.album, validated.match);
+                    retainedStoredOffer = true;
+                } catch (error) {
+                    if (this.isMissingSoundCloudResourceError(error)) {
+                        this.markSoundCloudPlaylistOfferUnavailable(stored.provider_id, "missing");
+                        continue;
+                    }
+                    // A transient API/auth failure must not destroy a valid
+                    // durable match. Leave it untouched and allow a later refresh.
+                    console.warn(
+                        `[RefreshArtistService] Failed to revalidate SoundCloud playlist ${stored.provider_id}:`,
+                        error,
+                    );
+                }
+            }
+            if (retainedStoredOffer || alreadyMatchedRgMbids.has(target.mbid)) {
+                continue;
+            }
+
             try {
                 const providerAlbums = await provider.searchReleaseGroup!({
                     artistName: String(target.artist_name || ""),
@@ -702,66 +856,23 @@ export class RefreshArtistService {
                 if (providerAlbums.length === 0) continue;
 
                 for (const providerAlbum of providerAlbums) {
-                    const album = {
-                        ...providerAlbumToOfferRow(providerAlbum, artistMbid),
-                        provider: provider.id,
-                    };
-                    const providerAlbumId = String(album.provider_id);
+                    const providerAlbumId = String(providerAlbum.providerId);
                     if (albumsByProviderId.has(providerAlbumId)) continue;
 
-                    let rawTracks: any[] = [];
                     try {
-                        rawTracks = await provider.getAlbumTracks(providerAlbum.providerId);
+                        const validated = await validatePlaylist(providerAlbum);
+                        if (!validated.album || !validated.match) {
+                            continue;
+                        }
+                        acceptPlaylist(validated.album, validated.match);
+                        // One covering playlist per RG is enough for offer selection.
+                        break;
                     } catch (error) {
                         console.warn(
                             `[RefreshArtistService] Failed to hydrate SoundCloud playlist ${providerAlbumId}:`,
                             error,
                         );
-                        continue;
                     }
-                    album._provider_tracks = rawTracks.map((track: any) => slotTrack(track));
-                    album._provider_raw_tracks = rawTracks;
-                    album.num_tracks = rawTracks.length || album.num_tracks;
-
-                    const targetMatches = matchProviderAlbumsToReleaseGroups(
-                        [{
-                            provider: provider.id,
-                            providerId: providerAlbumId,
-                            providerUrl: album.url ?? null,
-                            title: String(album.title || ""),
-                            version: album.version ?? null,
-                            releaseDate: album.release_date ?? null,
-                            type: album.type ?? null,
-                            quality: album.quality ?? null,
-                            qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
-                            explicit: album.explicit ?? null,
-                            upc: album.upc ?? null,
-                            trackCount: album.num_tracks ?? null,
-                            volumeCount: album.num_volumes ?? null,
-                        }],
-                        [releaseGroup],
-                    );
-                    const match = targetMatches.get(providerAlbumId);
-                    if (!match || match.status === "unmatched" || match.releaseGroup?.mbid !== target.mbid) {
-                        continue;
-                    }
-
-                    // Fan playlists are never verified identity — keep probable with
-                    // an explicit coverage method so UI/slot logic treat them correctly.
-                    match.status = "probable";
-                    match.method = PLAYLIST_TRACKLIST_COVERAGE_METHOD;
-                    match.confidence = Math.max(Number(match.confidence || 0), 0.85);
-                    match.evidence = {
-                        ...match.evidence,
-                        trackCountMatched: false,
-                        providerTrackCount: album.num_tracks ?? null,
-                        targetTrackCount: preferredTracks.length,
-                    };
-
-                    albumsByProviderId.set(providerAlbumId, album);
-                    matches.set(providerAlbumId, match);
-                    // One covering playlist per RG is enough for offer selection.
-                    break;
                 }
             } catch (error) {
                 console.warn(
@@ -791,8 +902,8 @@ export class RefreshArtistService {
             INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, title, version, explicit, quality, type,
                 upc, copyright, duration, volume_count, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
-                match_status, match_confidence, match_method, match_evidence, cover, discovered_from_artist_mbid, updated_at
-            ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                match_status, match_confidence, match_method, match_evidence, cover, discovered_from_artist_mbid, provider_url, availability, updated_at
+            ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
                 version = COALESCE(excluded.version, ProviderItems.version),
@@ -814,6 +925,8 @@ export class RefreshArtistService {
                 match_evidence = COALESCE(excluded.match_evidence, ProviderItems.match_evidence),
                 cover = COALESCE(excluded.cover, ProviderItems.cover),
                 discovered_from_artist_mbid = COALESCE(excluded.discovered_from_artist_mbid, ProviderItems.discovered_from_artist_mbid),
+                provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
+                availability = excluded.availability,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -859,6 +972,11 @@ export class RefreshArtistService {
                     }) : null,
                     album.cover || null,
                     artistMbid,
+                    // Persist the provider's human permalink (e.g. a SoundCloud
+                    // set's soundcloud.com/<user>/sets/<slug>) so links/tags use
+                    // the real playlist. Stable numeric ids remain acquisition
+                    // and workspace identity.
+                    album.url || null,
                 );
 
                 // Candidate-only edges remain available to strict hybrid
@@ -1729,21 +1847,16 @@ export class RefreshArtistService {
     ): Promise<void> {
         if (artistMbid) {
             try {
-                if (
-                    !hasCachedMediaCover(artistMbid, "Artist", "Poster")
-                    && !hasCachedMediaCover(artistMbid, "Artist", "Headshot")
-                ) {
-                    await resolveArtistArtwork({
-                        artistMbid,
-                        preferredCoverTypes: ["Poster", "Headshot"],
-                    });
-                }
-                if (!hasCachedMediaCover(artistMbid, "Artist", "Fanart")) {
-                    await resolveArtistArtwork({
-                        artistMbid,
-                        preferredCoverTypes: ["Fanart"],
-                    });
-                }
+                // These calls are idempotent when source markers match and also
+                // refresh artwork when the selected catalog URL changes.
+                await resolveArtistArtwork({
+                    artistMbid,
+                    preferredCoverTypes: ["Poster", "Headshot"],
+                });
+                await resolveArtistArtwork({
+                    artistMbid,
+                    preferredCoverTypes: ["Fanart"],
+                });
             } catch (error) {
                 console.warn(
                     `[RefreshArtistService] Failed to pre-cache artist artwork for ${artistMbid}:`,
@@ -1765,14 +1878,8 @@ export class RefreshArtistService {
             WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
             ORDER BY rg.mbid ASC
         `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
-        const needingArtwork = releaseGroups.filter(
-            (releaseGroup) => !hasCachedMediaCover(releaseGroup.mbid, "Album", "Cover"),
-        );
-        if (needingArtwork.length === 0) {
-            return;
-        }
         const limit = pLimit(6);
-        await Promise.all(needingArtwork.map((releaseGroup) => limit(async () => {
+        await Promise.all(releaseGroups.map((releaseGroup) => limit(async () => {
             try {
                 await resolveAlbumArtwork({ albumMbid: releaseGroup.mbid });
             } catch (error) {
@@ -1795,7 +1902,9 @@ export class RefreshArtistService {
     private static async precacheArtistVideoArtwork(artistId: string): Promise<void> {
         const artistMbid = this.getArtistMusicBrainzId(artistId);
         const videoIds = db.prepare(`
-            SELECT DISTINCT recording.id AS id
+            SELECT DISTINCT
+              recording.id AS id,
+              recording.cover_image_url AS cover_image_url
             FROM Recordings recording
             JOIN ProviderItems offer
               ON offer.entity_type = 'video'
@@ -1804,9 +1913,23 @@ export class RefreshArtistService {
             WHERE recording.is_video = 1
               AND (recording.artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = ?)
                    OR recording.artist_mbid = ?)
-        `).all(artistMbid, artistMbid) as Array<{ id: number }>;
+        `).all(artistMbid, artistMbid) as Array<{
+            id: number;
+            cover_image_url?: string | null;
+        }>;
         const needingArtwork = videoIds.filter(
-            (video) => !hasCachedMediaCover(video.id, "Video", "Cover"),
+            (video) => (
+                !hasCachedMediaCover(video.id, "Video", "Cover")
+                || (
+                    Boolean(String(video.cover_image_url || "").trim())
+                    && !isMediaCoverSourceCacheCurrent(
+                        video.id,
+                        "Video",
+                        "Cover",
+                        video.cover_image_url,
+                    )
+                )
+            ),
         );
         if (needingArtwork.length === 0) {
             return;

@@ -39,6 +39,52 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+function seedSoundCloudMixtapeCatalog() {
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const releaseGroupMbid = "375227dd-11c1-4fec-afc0-f4c37a6de604";
+  const releaseMbid = "b8f50118-3d3c-4826-a4b3-cf6228a97515";
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Bastille");
+  dbModule.db.prepare(`
+    INSERT INTO Albums (
+      mbid, artist_mbid, title, primary_type, secondary_types, first_release_date
+    ) VALUES (?, ?, ?, 'EP', ?, '2012-02-17')
+  `).run(
+    releaseGroupMbid,
+    artistMbid,
+    "Other People's Heartache",
+    JSON.stringify(["Mixtape/Street"]),
+  );
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, 'Official', '2012-02-17', 1, 2)
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
+  const canonicalTracks = [
+    { id: "sc-track-mbid-1", recording: "sc-recording-mbid-1", title: "Adagio for Strings", duration: 239 },
+    { id: "sc-track-mbid-2", recording: "sc-recording-mbid-2", title: "Falling", duration: 225 },
+  ];
+  canonicalTracks.forEach((track, index) => {
+    dbModule.db.prepare("INSERT INTO Recordings (mbid, title, length_ms) VALUES (?, ?, ?)")
+      .run(track.recording, track.title, track.duration * 1000);
+    dbModule.db.prepare(`
+      INSERT INTO Tracks (
+        mbid, recording_mbid, release_mbid, title, length_ms,
+        medium_position, position, number
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+    `).run(
+      track.id,
+      track.recording,
+      releaseMbid,
+      track.title,
+      track.duration * 1000,
+      index + 1,
+      String(index + 1),
+    );
+  });
+  return { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks };
+}
+
 test("bulk provider tracklists are accepted only when the album is complete", () => {
   const complete = Array.from({ length: 24 }, (_, index) => ({ id: index + 1 }));
   const truncated = complete.slice(0, 20);
@@ -203,6 +249,264 @@ test("hybrid candidates retain discovery provenance without publishing direct av
   assert.equal(offer.discovered_from_artist_mbid, artistMbid);
   assert.equal(offer.match_status, "candidate");
   assert.equal(directMatchCount.count, 0);
+});
+
+test("stored SoundCloud playlist coverage is revalidated and its permalink is backfilled", async () => {
+  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const providerAlbumId = "220003151";
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, quality, artist_mbid,
+      release_group_mbid, release_mbid, match_status, match_confidence,
+      match_method, match_evidence
+    ) VALUES (
+      'soundcloud', 'album', ?, ?, 'SOUNDCLOUD_LOSSY', ?, ?, ?,
+      'probable', 0.85, 'playlist-tracklist-coverage', ?
+    )
+  `).run(
+    providerAlbumId,
+    "Other People's Heartache part 1",
+    artistMbid,
+    releaseGroupMbid,
+    releaseMbid,
+    JSON.stringify({ providerTrackCount: 2, targetTrackCount: 2 }),
+  );
+
+  const artist = { providerId: "sc-user", name: "Nafissa_" };
+  const album = {
+    providerId: providerAlbumId,
+    title: "Other People's Heartache part 1",
+    artist,
+    artists: [artist],
+    releaseDate: "2012-02-17",
+    trackCount: 2,
+    volumeCount: 1,
+    type: "PLAYLIST",
+    quality: "SOUNDCLOUD_LOSSY",
+    qualityTags: ["SOUNDCLOUD_LOSSY", "MP3"],
+    url: "https://soundcloud.com/rumourhasit_nm/sets/other-peoples-heartache-part-1",
+  };
+  const tracks = canonicalTracks.map((track, index) => ({
+    providerId: String(1000 + index),
+    title: track.title,
+    artist,
+    artists: [artist],
+    album,
+    duration: track.duration,
+    trackNumber: index + 1,
+    volumeNumber: 1,
+    quality: "SOUNDCLOUD_LOSSY",
+  }));
+  const provider = {
+    id: "soundcloud",
+    getAlbum: async () => album,
+    getAlbumTracks: async () => tracks,
+    searchReleaseGroup: async () => {
+      throw new Error("valid stored offer should avoid a new wide search");
+    },
+  };
+
+  const result = await (refreshServiceModule.RefreshArtistService as any)
+    .searchSoundCloudMixtapePlaylistOffers(provider, artistMbid, new Set());
+  assert.equal(result.albums.length, 1);
+  assert.equal(result.albums[0].provider_id, providerAlbumId);
+
+  await (refreshServiceModule.RefreshArtistService as any).storeProviderAlbumOffers(
+    "soundcloud",
+    artistMbid,
+    result.albums,
+    result.matches,
+  );
+  const stored = dbModule.db.prepare(`
+    SELECT provider_url, availability, match_status
+    FROM ProviderItems
+    WHERE provider = 'soundcloud' AND entity_type = 'album' AND provider_id = ?
+  `).get(providerAlbumId) as {
+    provider_url: string | null;
+    availability: string | null;
+    match_status: string;
+  };
+  assert.equal(stored.provider_url, album.url);
+  assert.equal(stored.availability, "available");
+  assert.equal(stored.match_status, "probable");
+});
+
+test("all durable SoundCloud playlist offers are revalidated after the first valid one", async () => {
+  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const validId = "110003151";
+  const staleId = "220003151";
+  const insertOffer = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, quality, artist_mbid,
+      release_group_mbid, release_mbid, match_status, match_confidence,
+      match_method, availability, updated_at
+    ) VALUES (
+      'soundcloud', 'album', ?, ?, 'SOUNDCLOUD_LOSSY', ?, ?, ?,
+      'probable', 0.85, 'playlist-tracklist-coverage', 'available', ?
+    )
+  `);
+  insertOffer.run(
+    validId,
+    "Other People's Heartache",
+    artistMbid,
+    releaseGroupMbid,
+    releaseMbid,
+    "2030-01-01 00:00:00",
+  );
+  insertOffer.run(
+    staleId,
+    "Other People's Heartache",
+    artistMbid,
+    releaseGroupMbid,
+    releaseMbid,
+    "2020-01-01 00:00:00",
+  );
+
+  const artist = { providerId: "sc-user", name: "Fan uploader" };
+  const makeAlbum = (providerId: string) => ({
+    providerId,
+    title: "Other People's Heartache",
+    artist,
+    artists: [artist],
+    releaseDate: "2012-02-17",
+    trackCount: 2,
+    volumeCount: 1,
+    type: "PLAYLIST",
+    quality: "SOUNDCLOUD_LOSSY",
+    qualityTags: ["SOUNDCLOUD_LOSSY", "MP3"],
+    url: `https://soundcloud.com/fan/sets/${providerId}`,
+  });
+  const validAlbum = makeAlbum(validId);
+  const validTracks = canonicalTracks.map((track, index) => ({
+    providerId: String(3000 + index),
+    title: track.title,
+    artist,
+    artists: [artist],
+    album: validAlbum,
+    duration: track.duration,
+    trackNumber: index + 1,
+    volumeNumber: 1,
+    quality: "SOUNDCLOUD_LOSSY",
+  }));
+  const checked: string[] = [];
+  const provider = {
+    id: "soundcloud",
+    getAlbum: async (id: string) => makeAlbum(String(id)),
+    getAlbumTracks: async (id: string) => {
+      checked.push(String(id));
+      return String(id) === validId ? validTracks : [];
+    },
+    searchReleaseGroup: async () => {
+      throw new Error("a retained stored offer should avoid a new wide search");
+    },
+  };
+
+  const result = await (refreshServiceModule.RefreshArtistService as any)
+    .searchSoundCloudMixtapePlaylistOffers(provider, artistMbid, new Set());
+  assert.deepEqual(checked, [validId, staleId]);
+  assert.deepEqual(result.albums.map((row: any) => row.provider_id), [validId]);
+  const stale = dbModule.db.prepare(`
+    SELECT availability, match_status
+    FROM ProviderItems
+    WHERE provider = 'soundcloud' AND entity_type = 'album' AND provider_id = ?
+  `).get(staleId);
+  assert.deepEqual(stale, { availability: "unavailable", match_status: "rejected" });
+});
+
+test("empty stored SoundCloud playlist is rejected and a covering replacement is selected", async () => {
+  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const staleId = "220003151";
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, quality, artist_mbid,
+      release_group_mbid, release_mbid, match_status, match_confidence,
+      match_method
+    ) VALUES (
+      'soundcloud', 'album', ?, ?, 'SOUNDCLOUD_LOSSY', ?, ?, ?,
+      'probable', 0.85, 'playlist-tracklist-coverage'
+    )
+  `).run(staleId, "Other People's Heartache", artistMbid, releaseGroupMbid, releaseMbid);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, title,
+      match_status, match_method, availability
+    ) VALUES (
+      'soundcloud', 'track', 'stale-child-track', ?, 'Stale Track',
+      'matched', 'playlist-tracklist-coverage', 'available'
+    )
+  `).run(staleId);
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItemMatches (
+      provider, provider_item_type, provider_item_id, provider_album_id,
+      musicbrainz_release_mbid, status, confidence, method
+    ) VALUES (
+      'soundcloud', 'album', ?, ?, ?, 'verified', 0.95, 'playlist-tracklist-coverage'
+    )
+  `).run(staleId, staleId, releaseMbid);
+
+  const artist = { providerId: "sc-user", name: "Fan uploader" };
+  const makeAlbum = (providerId: string) => ({
+    providerId,
+    title: "Other People's Heartache",
+    artist,
+    artists: [artist],
+    releaseDate: "2012-02-17",
+    trackCount: 2,
+    volumeCount: 1,
+    type: "PLAYLIST",
+    quality: "SOUNDCLOUD_LOSSY",
+    qualityTags: ["SOUNDCLOUD_LOSSY", "MP3"],
+    url: `https://soundcloud.com/fan/sets/${providerId}`,
+  });
+  const replacement = makeAlbum("330004252");
+  const replacementTracks = canonicalTracks.map((track, index) => ({
+    providerId: String(2000 + index),
+    title: track.title,
+    artist,
+    artists: [artist],
+    album: replacement,
+    duration: track.duration,
+    trackNumber: index + 1,
+    volumeNumber: 1,
+    quality: "SOUNDCLOUD_LOSSY",
+  }));
+  const provider = {
+    id: "soundcloud",
+    getAlbum: async (id: string) => makeAlbum(String(id)),
+    getAlbumTracks: async (id: string) => String(id) === staleId ? [] : replacementTracks,
+    searchReleaseGroup: async () => [replacement],
+  };
+
+  const result = await (refreshServiceModule.RefreshArtistService as any)
+    .searchSoundCloudMixtapePlaylistOffers(provider, artistMbid, new Set());
+  assert.equal(result.albums.length, 1);
+  assert.equal(result.albums[0].provider_id, replacement.providerId);
+
+  const stale = dbModule.db.prepare(`
+    SELECT availability, match_status
+    FROM ProviderItems
+    WHERE provider = 'soundcloud' AND entity_type = 'album' AND provider_id = ?
+  `).get(staleId) as { availability: string | null; match_status: string };
+  const staleEdge = dbModule.db.prepare(`
+    SELECT status
+    FROM ProviderItemMatches
+    WHERE provider = 'soundcloud' AND provider_item_type = 'album' AND provider_item_id = ?
+  `).get(staleId) as { status: string };
+  const staleChild = dbModule.db.prepare(`
+    SELECT availability, match_status
+    FROM ProviderItems
+    WHERE provider = 'soundcloud'
+      AND entity_type = 'track'
+      AND provider_id = 'stale-child-track'
+  `).get() as { availability: string | null; match_status: string };
+  assert.deepEqual(stale, { availability: "unavailable", match_status: "rejected" });
+  assert.deepEqual(staleChild, { availability: "unavailable", match_status: "rejected" });
+  assert.equal(staleEdge.status, "rejected");
+  assert.equal(
+    refreshMatchModule.buildStoredProviderAlbumSelections(artistMbid)
+      .some((candidate) => candidate.album.providerId === staleId),
+    false,
+  );
 });
 
 test("provider release-group matching passes spatial quality and release disambiguation", () => {

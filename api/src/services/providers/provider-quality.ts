@@ -108,21 +108,24 @@ export function neutralVideoTagFromHeight(height: number | null | undefined): Ne
 }
 
 /**
- * Parse an HLS master playlist and return the highest RESOLUTION height.
- * Shared by TIDAL stream probes and Apple Music preview masters.
+ * Parse an HLS master playlist and return the highest RESOLUTION edge length.
+ * Shared by TIDAL stream probes and Apple Music preview masters. Ultrawide
+ * masters often advertise 3840×1600-class frames where height alone looks FHD.
  */
 export function parseM3u8MaxHeight(masterPlaylist: string): number | null {
-  let maxHeight: number | null = null;
+  let maxEdge: number | null = null;
   for (const line of String(masterPlaylist || "").split(/\r?\n/)) {
     const match = /RESOLUTION\s*=\s*(\d+)\s*x\s*(\d+)/i.exec(line);
     if (!match) continue;
+    const width = Number(match[1]);
     const height = Number(match[2]);
-    if (!Number.isFinite(height) || height <= 0) continue;
-    if (maxHeight == null || height > maxHeight) {
-      maxHeight = height;
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) continue;
+    const edge = Math.max(width, height);
+    if (maxEdge == null || edge > maxEdge) {
+      maxEdge = edge;
     }
   }
-  return maxHeight;
+  return maxEdge;
 }
 
 /** Settings `video_quality` → max download/request height in pixels. */

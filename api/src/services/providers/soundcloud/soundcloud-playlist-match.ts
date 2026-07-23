@@ -43,6 +43,18 @@ export type CanonicalTrackForCoverage = {
   trackNumber?: number | null;
 };
 
+export type PlaylistTrackForCoverage = {
+  title?: string | null;
+  duration?: number | null;
+  trackNumber?: number | null;
+};
+
+export type PlaylistTrackAssignment = {
+  canonicalIndex: number;
+  playlistIndex: number;
+  score: number;
+};
+
 export type PlaylistCoverageResult = {
   covered: number;
   total: number;
@@ -178,24 +190,19 @@ function bestPlaylistTrackMatchScore(
 }
 
 /**
- * Coverage of a MusicBrainz tracklist by a SoundCloud playlist/set.
- * Playlist supersets are OK: every canonical track must match some playlist
- * track (title + duration); extras on the playlist are ignored.
- * Playlist order is ignored — fan sets rearrange freely.
+ * Assign SoundCloud playlist tracks to canonical tracks one-to-one using the
+ * same title/duration matcher that gates playlist coverage. Positions are
+ * intentionally excluded: fan playlists commonly reorder the release.
  */
-export function scorePlaylistTracklistCoverage(
+export function matchPlaylistTracksToCanonical(
   canonicalTracks: CanonicalTrackForCoverage[],
-  playlistTracks: Array<{ title?: string | null; duration?: number | null; trackNumber?: number | null }>,
-): PlaylistCoverageResult {
-  const total = canonicalTracks.length;
-  if (total === 0) {
-    return { covered: 0, total: 0, ratio: 0 };
-  }
-
+  playlistTracks: PlaylistTrackForCoverage[],
+): PlaylistTrackAssignment[] {
   const used = new Set<number>();
-  let covered = 0;
+  const assignments: PlaylistTrackAssignment[] = [];
 
-  for (const canonical of canonicalTracks) {
+  for (let canonicalIndex = 0; canonicalIndex < canonicalTracks.length; canonicalIndex += 1) {
+    const canonical = canonicalTracks[canonicalIndex]!;
     const target: MatchTargetTrack = {
       recordingMbid: null,
       isrcs: new Set(),
@@ -223,10 +230,32 @@ export function scorePlaylistTracklistCoverage(
 
     if (bestIndex >= 0 && bestScore >= TRACK_MATCH_THRESHOLD) {
       used.add(bestIndex);
-      covered += 1;
+      assignments.push({
+        canonicalIndex,
+        playlistIndex: bestIndex,
+        score: bestScore,
+      });
     }
   }
 
+  return assignments;
+}
+
+/**
+ * Coverage of a MusicBrainz tracklist by a SoundCloud playlist/set.
+ * Playlist supersets are OK: every canonical track must match some playlist
+ * track (title + duration); extras on the playlist are ignored.
+ * Playlist order is ignored — fan sets rearrange freely.
+ */
+export function scorePlaylistTracklistCoverage(
+  canonicalTracks: CanonicalTrackForCoverage[],
+  playlistTracks: PlaylistTrackForCoverage[],
+): PlaylistCoverageResult {
+  const total = canonicalTracks.length;
+  if (total === 0) {
+    return { covered: 0, total: 0, ratio: 0 };
+  }
+  const covered = matchPlaylistTracksToCanonical(canonicalTracks, playlistTracks).length;
   return {
     covered,
     total,

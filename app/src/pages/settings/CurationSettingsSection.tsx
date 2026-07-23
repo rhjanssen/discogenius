@@ -72,6 +72,14 @@ const secondaryReleaseTypeRows = [
     { key: "include_demo", title: "Demo" },
 ] as const;
 
+const musicVideoTypeRows = [
+    { key: "include_video_official", title: "Official music video" },
+    { key: "include_video_live", title: "Live" },
+    { key: "include_video_lyric", title: "Lyric video" },
+    { key: "include_video_visualizer", title: "Visualizer" },
+    { key: "include_video_official_audio", title: "Official audio" },
+] as const;
+
 const useStyles = makeStyles({
     section: {
         display: "flex",
@@ -214,8 +222,8 @@ export const CurationSettingsSection = ({
     return (
         <SettingsSection
             id="curation"
-            title="Curation"
-            description="Which release and video types to keep, and how to choose between versions."
+            title="Filters"
+            description="Which release and music-video types to monitor and keep, and how to choose between versions."
             className={styles.section}
         >
             <SettingsCard>
@@ -238,6 +246,20 @@ export const CurationSettingsSection = ({
                         rowKey: row.key,
                         title: row.title,
                         checked: curationConfig?.[row.key] === true,
+                        onChange: (checked) => void onUpdate({ [row.key]: checked }),
+                    }))}
+                </div>
+                <div className={styles.subsectionHeader}>
+                    <Text weight="semibold">Music video types</Text>
+                    <Text size={200} className={styles.mutedText}>
+                        Unchecked types are unmonitored by Curate Library and skipped by download automation.
+                    </Text>
+                </div>
+                <div className={styles.checkboxList}>
+                    {musicVideoTypeRows.map((row) => renderCheckboxRow({
+                        rowKey: row.key,
+                        title: row.title,
+                        checked: curationConfig?.[row.key] !== false,
                         onChange: (checked) => void onUpdate({ [row.key]: checked }),
                     }))}
                 </div>

@@ -20,7 +20,7 @@ export const appleMusicQualityMapping: ProviderQualityMapping = {
   provider: "apple-music",
 
   toNeutralAudio(raw: string | null | undefined): NeutralAudioQuality | null {
-    const normalized = String(raw ?? "").trim().toLowerCase();
+    const normalized = String(raw ?? "").trim().toLowerCase().replace(/_/gu, "-");
     switch (normalized) {
       case "lossy-stereo":
       case "lossy":

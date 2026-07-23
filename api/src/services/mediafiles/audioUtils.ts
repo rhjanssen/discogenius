@@ -341,9 +341,12 @@ export function deriveVideoQuality(metrics: AudioMetrics): string | null {
         return null;
     }
 
-    // Prefer height; fall back to width-derived estimate for odd anamorphic files.
+    // Prefer the longer edge so ultrawide 4K masters (e.g. 3832×1592) count as
+    // UHD instead of FHD. Fall back to a 16:9 height estimate when only width
+    // is known.
     const effectiveHeight = height > 0 ? height : Math.round(width * 9 / 16);
-    if (effectiveHeight >= 2160) return "UHD";
+    const longerEdge = Math.max(width, height, effectiveHeight);
+    if (longerEdge >= 2160) return "UHD";
     if (effectiveHeight >= 1080 || width >= 1900) return "FHD";
     if (effectiveHeight >= 720 || width >= 1200) return "HD";
     return "SD";

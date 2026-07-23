@@ -18,7 +18,12 @@ const useStyles = makeStyles({
         flexDirection: "column",
         // Tight header→card gap; panel-level column supplies section spacing.
         gap: tokens.spacingVerticalS,
-        scrollMarginTop: tokens.spacingVerticalXXXL,
+        // Narrow layouts stack the sticky section nav below the app bar. Clear
+        // both headers so a nav click does not hide the destination heading.
+        scrollMarginTop: "152px",
+        "@media (min-width: 1024px)": {
+            scrollMarginTop: "76px",
+        },
     },
     header: {
         display: "flex",

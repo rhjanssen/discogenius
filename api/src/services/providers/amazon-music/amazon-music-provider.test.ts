@@ -305,7 +305,7 @@ test("Amazon Music backend renames a single track and rejects empty success", as
     providerId: "B0TRACK123",
     downloadPath: root,
     slot: "stereo",
-  }, { onProgress: (value) => progress.push(value.progress) });
+  }, { onProgress: (value) => progress.push(value.progress ?? -1) });
   assert.equal(fs.existsSync(path.join(root, "B0TRACK123.opus")), true);
   assert.equal(progress.at(-1), 100);
 

@@ -80,7 +80,7 @@ export interface MediaCardProps {
     /** Download overlay status */
     downloadStatus?: 'pending' | 'queued' | 'downloading' | 'completed' | 'failed' | 'cancelled' | 'paused' | string;
     /** Download overlay progress */
-    downloadProgress?: number;
+    downloadProgress?: number | null;
     /** Download overlay error message */
     downloadError?: string;
     /** Poster selection control shown while the parent collection is in selection mode. */
@@ -345,7 +345,7 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                 {downloadStatus && downloadStatus !== 'completed' && (
                     <DownloadOverlay
                         status={downloadStatus}
-                        progress={downloadProgress}
+                        progress={downloadProgress ?? undefined}
                         error={downloadError}
                     />
                 )}

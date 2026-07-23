@@ -1,6 +1,5 @@
 import {
     Button,
-    Checkbox,
     Radio,
     RadioGroup,
     Select,
@@ -61,14 +60,6 @@ const VIDEO_QUALITY_OPTIONS: Array<{ value: QualityConfigContract["video_quality
     { value: "hd", label: "HD · 720p" },
     { value: "fhd", label: "Full HD · 1080p" },
     { value: "uhd", label: "Ultra HD · 2160p" },
-];
-
-const MUSIC_VIDEO_TYPE_ROWS: Array<{ key: keyof FilteringConfigContract; title: string }> = [
-    { key: "include_video_official", title: "Official music video" },
-    { key: "include_video_lyric", title: "Lyric video" },
-    { key: "include_video_live", title: "Live" },
-    { key: "include_video_visualizer", title: "Visualizer" },
-    { key: "include_video_official_audio", title: "Official audio" },
 ];
 
 const useStyles = makeStyles({
@@ -134,31 +125,6 @@ const useStyles = makeStyles({
             gap: tokens.spacingHorizontalS,
         },
     },
-    subsectionHeader: {
-        display: "flex",
-        flexDirection: "column",
-        gap: tokens.spacingVerticalXXS,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-        borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-        "&:first-child": { borderTop: "none" },
-    },
-    checkboxList: {
-        display: "grid",
-        gridTemplateColumns: "1fr",
-        paddingTop: tokens.spacingVerticalXXS,
-        paddingBottom: tokens.spacingVerticalXS,
-        [MEDIA.desktop]: { gridTemplateColumns: "1fr 1fr" },
-    },
-    checkboxRow: {
-        display: "flex",
-        alignItems: "center",
-        minHeight: "28px",
-        padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}`,
-    },
-    disabledBlock: {
-        opacity: 0.55,
-        pointerEvents: "none",
-    },
     mutedText: {
         color: tokens.colorNeutralForeground2,
     },
@@ -221,14 +187,6 @@ export const MusicVideosSettingsSection = ({
                     onChange: (checked) => void onUpdateCuration({ include_videos: checked }),
                 })}
 
-                <div className={styles.row}>
-                    <div className={styles.rowContent}>
-                        <Text weight="semibold">Maximum resolution</Text>
-                        <Text size={200} className={styles.mutedText}>
-                            The highest resolution to download when a video offers several.
-                        </Text>
-                    </div>
-                </div>
                 <RadioGroup
                     className={styles.qualityRadioGroup}
                     value={videoQuality || "uhd"}
@@ -271,30 +229,6 @@ export const MusicVideosSettingsSection = ({
                             <option value="inline">Inline with albums when possible</option>
                             <option value="inline_only">Album-linked only</option>
                         </Select>
-                    </div>
-                </div>
-            </SettingsCard>
-
-            <SettingsCard>
-                <div className={styles.subsectionHeader}>
-                    <Text weight="semibold">Music video types</Text>
-                    <Text size={200} className={styles.mutedText}>
-                        Unchecked types are unmonitored by Curate Library and skipped by download automation.
-                        Existing files stay on disk unless remove-unmonitored is on.
-                    </Text>
-                </div>
-                <div className={downloadEnabled ? undefined : styles.disabledBlock}>
-                    <div className={styles.checkboxList}>
-                        {MUSIC_VIDEO_TYPE_ROWS.map((rowConfig) => (
-                            <div key={rowConfig.key} className={styles.checkboxRow}>
-                                <Checkbox
-                                    checked={curationConfig?.[rowConfig.key] !== false}
-                                    onChange={(_, data) => void onUpdateCuration({ [rowConfig.key]: Boolean(data.checked) })}
-                                    label={rowConfig.title}
-                                    disabled={!downloadEnabled}
-                                />
-                            </div>
-                        ))}
                     </div>
                 </div>
             </SettingsCard>

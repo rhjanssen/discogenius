@@ -260,6 +260,67 @@ test("queueCatalogAlbumDownload uses album mode when everything is missing for a
   assert.equal(payload.trackOffers, undefined);
 });
 
+test("SoundCloud playlist coverage acquires the exact matched tracks, not the mutable set", () => {
+  const releaseGroupMbid = "rg-soundcloud-mixtape";
+  const releaseMbid = "rel-soundcloud-mixtape";
+  seedCatalogAlbum({
+    releaseGroupMbid,
+    releaseMbid,
+    tracks: [
+      { trackMbid: "t-sc-a", recordingMbid: "rec-sc-a", title: "A", position: 1 },
+      { trackMbid: "t-sc-b", recordingMbid: "rec-sc-b", title: "B", position: 2 },
+    ],
+  });
+  const evidence = JSON.stringify({
+    matchKind: "direct",
+    trackSources: [
+      {
+        canonicalTrackMbid: "t-sc-a",
+        canonicalRecordingMbid: "rec-sc-a",
+        providerTrackId: "1001",
+        providerAlbumId: "220003151",
+        title: "A",
+        trackNum: 1,
+        volumeNum: 1,
+      },
+      {
+        canonicalTrackMbid: "t-sc-b",
+        canonicalRecordingMbid: "rec-sc-b",
+        providerTrackId: "1002",
+        providerAlbumId: "220003151",
+        title: "B",
+        trackNum: 2,
+        volumeNum: 1,
+      },
+    ],
+  });
+
+  const result = acquisitionModule.queueCatalogAlbumDownload({
+    slot: "stereo",
+    selected_provider: "soundcloud",
+    selected_provider_id: "220003151",
+    selected_release_mbid: releaseMbid,
+    release_group_mbid: releaseGroupMbid,
+    match_method: "playlist-tracklist-coverage",
+    match_evidence: evidence,
+    title: "Other People's Heartache",
+    artist_name: "Bastille",
+    quality: "SOUNDCLOUD_LOSSY",
+  });
+
+  assert.equal(result.queued, true);
+  const payload = JSON.parse(
+    (dbModule.db.prepare("SELECT payload FROM commands WHERE id = ?")
+      .get(result.commandId) as { payload: string }).payload,
+  );
+  assert.equal(payload.acquisitionMode, "trackOffers");
+  assert.equal(payload.url, null);
+  assert.deepEqual(
+    payload.trackOffers.map((offer: { providerTrackId: string }) => offer.providerTrackId),
+    ["1001", "1002"],
+  );
+});
+
 test("queueCatalogAlbumDownload uses match_evidence trackSources when ProviderItems lack MBIDs for missing discs", () => {
   const releaseGroupMbid = "rg-gmtf-stereo";
   const releaseMbid = "rel-gmtf-3vol";

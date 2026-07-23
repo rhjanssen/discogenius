@@ -275,10 +275,10 @@ test("Votify backend reports progress and treats output files as the success bou
     providerId: SPOTIFY_FIXTURE_IDS.track,
     downloadPath: tempDir,
     slot: "stereo",
-  }, { onProgress: (event) => progress.push(event.progress) });
+  }, { onProgress: (event) => progress.push(event.progress ?? -1) });
   assert.equal(invocations[0]?.command, "votify-fixture");
   assert.equal(invocations[0]?.args.at(-1), `https://open.spotify.com/track/${SPOTIFY_FIXTURE_IDS.track}`);
-  assert.deepEqual(progress, [15, 95, 100]);
+  assert.deepEqual(progress, [-1, -1, 100]);
 });
 
 test("Votify backend rejects CLI partial failures, silent no-file success, and cancellation", async () => {

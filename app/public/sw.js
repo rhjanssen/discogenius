@@ -1,4 +1,4 @@
-const CACHE_VERSION = "v3";
+const CACHE_VERSION = "v4";
 const SHELL_CACHE = `discogenius-shell-${CACHE_VERSION}`;
 const ASSET_CACHE = `discogenius-assets-${CACHE_VERSION}`;
 const IMAGE_CACHE = `discogenius-images-${CACHE_VERSION}`;
@@ -49,6 +49,13 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/services/") || url.pathname === "/health") {
+    return;
+  }
+
+  // Local artwork has source-revisioned URLs and native HTTP validators. Let
+  // the browser cache handle those directly so a service-worker image entry
+  // cannot return yesterday's cover or palette for one extra navigation.
+  if (url.pathname.startsWith("/media-cover/")) {
     return;
   }
 

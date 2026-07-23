@@ -10,10 +10,12 @@ export interface TrackRemoteOffer {
   slot: string;
   provider: string;
   providerAlbumId: string;
+  providerUrl?: string | null;
   quality: string | null;
   matchStatus?: string | null;
   selectedReleaseMbid?: string | null;
   providerTrackId?: string | null;
+  providerTrackUrl?: string | null;
 }
 
 export interface TrackListItem {

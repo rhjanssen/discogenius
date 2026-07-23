@@ -3,18 +3,20 @@ import { expect, test } from '@playwright/test';
 const baseURL = process.env.BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || '3737'}`;
 
 const SETTINGS_TABS = [
-  'Providers',
+  'Media Management',
+  'Metadata',
   'Metadata Source',
   'Audio',
   'Music Videos',
-  'Curation',
+  'Filters',
   'Monitoring',
-  'Media Management',
-  'Metadata',
+  'Providers',
   'Appearance',
   'About',
 ] as const;
 
+// Single-scroll (VS Code-style) settings: every section is always rendered; the
+// nav scroll-spies. Clicking a tab (or the mobile menu item) scrolls to it.
 async function selectSettingsCategory(page: import('@playwright/test').Page, label: string) {
   const desktopTab = page.getByTestId('settings-category-tabs').getByRole('tab', { name: label, exact: true });
   if (await desktopTab.isVisible().catch(() => false)) {
@@ -39,8 +41,8 @@ test.describe('Settings page', () => {
     await expect(page.getByTestId('settings-layout')).toBeVisible();
     await expect(page.getByTestId('settings-sections')).toBeVisible();
 
-    // Default category: Providers
-    await expect(page.locator('#streaming-providers')).toBeVisible();
+    // Default focus: Media Management (first section).
+    await expect(page.locator('#media-management')).toBeVisible();
 
     // Desktop TabList or mobile category menu must expose all categories.
     const desktopTabs = page.getByTestId('settings-category-tabs');
@@ -53,11 +55,11 @@ test.describe('Settings page', () => {
     }
   });
 
-  test('category tabs switch focused settings panels', async ({ page }) => {
+  test('category tabs scroll to their settings sections', async ({ page }) => {
     await expect(page.locator('main')).toBeVisible();
 
     await selectSettingsCategory(page, 'Providers');
-    await expect(page.locator('#streaming-providers').getByText('Streaming Providers', { exact: true })).toBeVisible();
+    await expect(page.locator('#streaming-providers').getByText('Providers', { exact: true })).toBeVisible();
 
     await selectSettingsCategory(page, 'Metadata Source');
     await expect(page.locator('#metadata-source')).toBeVisible();
@@ -71,8 +73,8 @@ test.describe('Settings page', () => {
     await selectSettingsCategory(page, 'Music Videos');
     await expect(page.locator('#music-videos')).toBeVisible();
 
-    await selectSettingsCategory(page, 'Curation');
-    await expect(page.locator('#curation').getByText('Curation', { exact: true })).toBeVisible();
+    await selectSettingsCategory(page, 'Filters');
+    await expect(page.locator('#curation').getByText('Filters', { exact: true })).toBeVisible();
 
     await selectSettingsCategory(page, 'Monitoring');
     await expect(page.locator('#monitoring').getByText('Monitoring', { exact: true })).toBeVisible();

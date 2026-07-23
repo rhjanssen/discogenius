@@ -7,6 +7,51 @@ import type { ProviderImportSelection, StreamingProvider } from "../services/pro
 
 const router = Router();
 
+export type ProviderPreferenceRepair = {
+  providerPriority: string[];
+  defaultProviderId: string;
+};
+
+/**
+ * Keep the configured default aligned with the first connected provider after
+ * a disconnect. Inactive providers remain persisted, but only after the active
+ * group so a hidden Settings row can never retain first priority.
+ */
+export function buildProviderPreferenceAfterDisconnect(
+  priority: readonly string[],
+  disconnectedProviderId: string,
+  isConnected: (providerId: string) => boolean,
+): ProviderPreferenceRepair | null {
+  const order = [...new Set(priority.map((id) => String(id || "").trim()).filter(Boolean))];
+  const connected = order.filter((id) => id !== disconnectedProviderId && isConnected(id));
+  if (connected.length === 0) return null;
+
+  const connectedSet = new Set(connected);
+  return {
+    providerPriority: [
+      ...connected,
+      ...order.filter((id) => !connectedSet.has(id)),
+    ],
+    defaultProviderId: connected[0],
+  };
+}
+
+/**
+ * Use the same authoritative remote connection state that Settings renders.
+ * A locally present but expired credential must not become the hidden default;
+ * only probe failures fall back to the adapter's local credential check.
+ */
+export async function providerConnectedForPreference(
+  provider: StreamingProvider,
+): Promise<boolean> {
+  const locallyAuthenticated = provider.isAuthenticated ? provider.isAuthenticated() : false;
+  try {
+    return (await provider.getAuthStatus()).connected;
+  } catch {
+    return locallyAuthenticated;
+  }
+}
+
 export async function serializeProvider(provider: StreamingProvider, isDefault: boolean) {
   const locallyAuthenticated = provider.isAuthenticated ? provider.isAuthenticated() : false;
   let authenticated = locallyAuthenticated;
@@ -113,7 +158,30 @@ router.post("/:providerId/logout", async (req, res) => {
     }
 
     await provider.logout();
-    res.json({ success: true, provider: provider.id });
+    const connectedByProvider = new Map(await Promise.all(
+      streamingProviderManager.getAllStreamingProviders().map(async (candidate) => ([
+        candidate.id,
+        candidate.id !== provider.id && await providerConnectedForPreference(candidate),
+      ] as const)),
+    ));
+    const repairedPreference = buildProviderPreferenceAfterDisconnect(
+      streamingProviderManager.getProviderPriority(),
+      provider.id,
+      (providerId) => connectedByProvider.get(providerId) === true,
+    );
+    if (repairedPreference) {
+      updateConfig("streaming", {
+        ...Config.getStreamingConfig(),
+        provider_priority: repairedPreference.providerPriority,
+        default_provider: repairedPreference.defaultProviderId,
+      });
+    }
+
+    res.json({
+      success: true,
+      provider: provider.id,
+      ...(repairedPreference ?? {}),
+    });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

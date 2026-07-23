@@ -90,7 +90,53 @@ function seedAlbum(options: {
     `${options.mbid}-spatial`,
     options.spatialQuality,
   );
+
+  const insertOffer = db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, release_group_mbid,
+      library_slot, quality, provider_url
+    ) VALUES (?, 'album', ?, ?, ?, ?, ?)
+  `);
+  insertOffer.run(
+    options.stereoProvider,
+    `${options.mbid}-stereo`,
+    options.mbid,
+    "stereo",
+    options.stereoQuality,
+    `https://example.test/${options.stereoProvider}/albums/${options.mbid}-stereo`,
+  );
+  insertOffer.run(
+    options.spatialProvider,
+    `${options.mbid}-spatial`,
+    options.mbid,
+    "spatial",
+    options.spatialQuality,
+    `https://example.test/${options.spatialProvider}/albums/${options.mbid}-spatial`,
+  );
 }
+
+test("album list carries selected provider permalinks through the indexed detail path", async () => {
+  seedAlbum({
+    mbid: "linked-album",
+    title: "Linked Album",
+    stereoProvider: "soundcloud",
+    stereoQuality: "SOUNDCLOUD_LOSSY",
+    spatialProvider: "apple-music",
+    spatialQuality: "DOLBY_ATMOS",
+  });
+  const { AlbumLibraryIndexService } = await import("./album-library-index-service.js");
+  AlbumLibraryIndexService.rebuild();
+
+  const result = albumQueryModule.AlbumQueryService.listAlbums({
+    limit: 20,
+    offset: 0,
+  });
+
+  assert.equal(
+    result.items[0]?.stereo_provider_url,
+    "https://example.test/soundcloud/albums/linked-album-stereo",
+  );
+});
 
 test("provider and quality filters must be satisfied by the same selected slot", () => {
   seedAlbum({

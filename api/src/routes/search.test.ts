@@ -96,9 +96,9 @@ test("local artist search honors canonical artwork preference", async () => {
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.results.artists.length, 1);
-  assert.equal(
+  assert.match(
     res.body.results.artists[0].imageId,
-    "/media-cover/artist-mbid/poster.jpg?source=canonical",
+    /^\/media-cover\/artist-mbid\/poster\.jpg\?source=canonical&rev=[a-f0-9]{16}$/,
   );
 });
 

@@ -423,6 +423,7 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
     const coverUrl = albumCoverLocalUrl({
         albumMbid: row.mbid,
         images: imageContainerFromImagesColumn(row.images),
+        providerCandidates,
     });
 
     return {
@@ -445,12 +446,14 @@ function mapReleaseGroupCard(row: Record<string, any>, options: {
         selected_provider_id: row.selected_provider_id || null,
         stereo_provider: row.stereo_provider || null,
         stereo_provider_id: row.stereo_provider_id || null,
+        stereo_provider_url: row.stereo_provider_url || null,
         stereo_release_mbid: row.stereo_release_mbid || null,
         stereo_quality: row.stereo_quality || null,
         stereo_match_status: row.stereo_match_status || null,
         stereo_match_method: row.stereo_match_method || null,
         spatial_provider: options.includeSpatial ? row.spatial_provider || null : null,
         spatial_provider_id: options.includeSpatial ? row.spatial_provider_id || null : null,
+        spatial_provider_url: options.includeSpatial ? row.spatial_provider_url || null : null,
         spatial_release_mbid: options.includeSpatial ? row.spatial_release_mbid || null : null,
         spatial_quality: options.includeSpatial ? row.spatial_quality || null : null,
         spatial_match_status: options.includeSpatial ? row.spatial_match_status || null : null,
@@ -686,6 +689,7 @@ export class ArtistQueryService {
         COALESCE(stereo.quality, spatial.quality) AS selected_quality,
         stereo.selected_provider AS stereo_provider,
         stereo.selected_provider_id AS stereo_provider_id,
+        stereo_album_offer.provider_url AS stereo_provider_url,
         stereo.selected_release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
@@ -694,6 +698,7 @@ export class ArtistQueryService {
         stereo.monitored_lock AS stereo_monitor_lock,
         spatial.selected_provider AS spatial_provider,
         spatial.selected_provider_id AS spatial_provider_id,
+        spatial_album_offer.provider_url AS spatial_provider_url,
         spatial.selected_release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status,
@@ -714,6 +719,26 @@ export class ArtistQueryService {
       LEFT JOIN ReleaseGroupSlots spatial
         ON spatial.release_group_mbid = rg.mbid
        AND spatial.slot = 'spatial'
+      LEFT JOIN ProviderItems stereo_album_offer
+        ON stereo_album_offer.entity_type = 'album'
+       AND stereo_album_offer.provider = stereo.selected_provider
+       AND CAST(stereo_album_offer.provider_id AS TEXT) = CAST(stereo.selected_provider_id AS TEXT)
+       AND (stereo_album_offer.match_status IS NULL OR LOWER(stereo_album_offer.match_status) <> 'rejected')
+       AND (
+         stereo_album_offer.availability IS NULL
+         OR LOWER(CAST(stereo_album_offer.availability AS TEXT))
+            NOT IN ('0', 'false', 'unavailable', 'no', '')
+       )
+      LEFT JOIN ProviderItems spatial_album_offer
+        ON spatial_album_offer.entity_type = 'album'
+       AND spatial_album_offer.provider = spatial.selected_provider
+       AND CAST(spatial_album_offer.provider_id AS TEXT) = CAST(spatial.selected_provider_id AS TEXT)
+       AND (spatial_album_offer.match_status IS NULL OR LOWER(spatial_album_offer.match_status) <> 'rejected')
+       AND (
+         spatial_album_offer.availability IS NULL
+         OR LOWER(CAST(spatial_album_offer.availability AS TEXT))
+            NOT IN ('0', 'false', 'unavailable', 'no', '')
+       )
       LEFT JOIN ProviderItems album_offer
         ON album_offer.entity_type = 'album'
        AND album_offer.provider = COALESCE(stereo.selected_provider, spatial.selected_provider)
@@ -900,9 +925,36 @@ export class ArtistQueryService {
              provider_item.popularity,
              ROW_NUMBER() OVER (
                PARTITION BY candidates.recording_id
-               ORDER BY COALESCE(provider_item.match_confidence, 0) DESC,
-                        provider_item.updated_at DESC,
-                        provider_item.provider_id ASC
+               ORDER BY
+                 CASE
+                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%2160%'
+                     OR UPPER(COALESCE(provider_item.quality, '')) LIKE '%4K%'
+                     OR UPPER(COALESCE(provider_item.quality, '')) = 'UHD'
+                   THEN 5
+                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%1440%'
+                     OR UPPER(COALESCE(provider_item.quality, '')) LIKE '%QHD%'
+                   THEN 4
+                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%1080%'
+                     OR UPPER(COALESCE(provider_item.quality, '')) = 'FHD'
+                   THEN 3
+                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%720%'
+                     OR UPPER(COALESCE(provider_item.quality, '')) = 'HD'
+                   THEN 2
+                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%480%'
+                     OR UPPER(COALESCE(provider_item.quality, '')) = 'SD'
+                   THEN 1
+                   ELSE 0
+                 END DESC,
+                 CASE LOWER(COALESCE(provider_item.provider, ''))
+                   WHEN 'youtube-music' THEN 400
+                   WHEN 'youtube' THEN 400
+                   WHEN 'apple-music' THEN 200
+                   WHEN 'tidal' THEN 100
+                   ELSE 0
+                 END DESC,
+                 COALESCE(provider_item.match_confidence, 0) DESC,
+                 provider_item.updated_at DESC,
+                 provider_item.provider_id ASC
              ) AS rank
            FROM provider_video_candidate_ids candidates
            CROSS JOIN ProviderItems provider_item
@@ -961,6 +1013,8 @@ export class ArtistQueryService {
            COALESCE(recording.release_date, provider_item.release_date) AS release_date,
            provider_item.version,
            provider_item.explicit,
+           provider_item.provider AS provider,
+           CAST(provider_item.provider_id AS TEXT) AS provider_id,
            provider_item.quality AS quality,
            COALESCE(recording.cover_image_id, provider_item.asset_id) AS cover,
            recording.cover_image_url AS cover_art_url,
@@ -1006,6 +1060,7 @@ export class ArtistQueryService {
            COALESCE(stereo.quality, spatial.quality) AS selected_quality,
            stereo.selected_provider AS stereo_provider,
            stereo.selected_provider_id AS stereo_provider_id,
+           stereo_album_offer.provider_url AS stereo_provider_url,
            stereo.selected_release_mbid AS stereo_release_mbid,
            stereo.quality AS stereo_quality,
            stereo.match_status AS stereo_match_status,
@@ -1014,6 +1069,7 @@ export class ArtistQueryService {
            stereo.monitored_lock AS stereo_monitor_lock,
            spatial.selected_provider AS spatial_provider,
            spatial.selected_provider_id AS spatial_provider_id,
+           spatial_album_offer.provider_url AS spatial_provider_url,
            spatial.selected_release_mbid AS spatial_release_mbid,
            spatial.quality AS spatial_quality,
            spatial.match_status AS spatial_match_status,
@@ -1035,6 +1091,26 @@ export class ArtistQueryService {
          LEFT JOIN ReleaseGroupSlots spatial
            ON spatial.release_group_id = rg.id
           AND spatial.slot = 'spatial'
+         LEFT JOIN ProviderItems stereo_album_offer
+           ON stereo_album_offer.entity_type = 'album'
+          AND stereo_album_offer.provider = stereo.selected_provider
+          AND stereo_album_offer.provider_id = stereo.selected_provider_id
+          AND (stereo_album_offer.match_status IS NULL OR LOWER(stereo_album_offer.match_status) <> 'rejected')
+          AND (
+            stereo_album_offer.availability IS NULL
+            OR LOWER(CAST(stereo_album_offer.availability AS TEXT))
+               NOT IN ('0', 'false', 'unavailable', 'no', '')
+          )
+         LEFT JOIN ProviderItems spatial_album_offer
+           ON spatial_album_offer.entity_type = 'album'
+          AND spatial_album_offer.provider = spatial.selected_provider
+          AND spatial_album_offer.provider_id = spatial.selected_provider_id
+          AND (spatial_album_offer.match_status IS NULL OR LOWER(spatial_album_offer.match_status) <> 'rejected')
+          AND (
+            spatial_album_offer.availability IS NULL
+            OR LOWER(CAST(spatial_album_offer.availability AS TEXT))
+               NOT IN ('0', 'false', 'unavailable', 'no', '')
+          )
          -- Selected provider album offer supplies the artwork fallback
          -- (asset_id/cover) when the slot has no cached cover yet.
          LEFT JOIN ProviderItems album_offer
@@ -1392,7 +1468,7 @@ export class ArtistQueryService {
                     type: "VIDEO_LIST",
                     title: "Videos",
                     items: videos.map((video) => {
-                        const coverArtUrl = videoCoverLocalUrl(video.id);
+                        const coverArtUrl = videoCoverLocalUrl(video.id, video.cover_art_url);
                         return {
                             ...video,
                             cover: coverArtUrl,

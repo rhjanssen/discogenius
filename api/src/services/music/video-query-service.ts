@@ -47,6 +47,7 @@ type GroupedVideoOfferRow = {
   provider: string;
   provider_id: string;
   quality: string | null;
+  url: string | null;
 };
 
 export interface ListVideosQuery {
@@ -84,7 +85,7 @@ function mapVideoRow(
   preferredProvider?: string,
 ): VideoContract {
   // UI cover fields are always the local /media-cover URL — never raw provider UUIDs.
-  const coverArtUrl = videoCoverLocalUrl(row.id);
+  const coverArtUrl = videoCoverLocalUrl(row.id, row.cover_art_url);
   const normalizedPreferredProvider = String(preferredProvider || "").trim();
   const preferredOffer = groupedOffers.find((offer) => offer.provider === normalizedPreferredProvider)
     ?? groupedOffers[0];
@@ -103,11 +104,12 @@ function mapVideoRow(
       provider: offer.provider,
       provider_id: offer.provider_id,
       quality: offer.quality,
+      url: offer.url,
     })),
     cover: coverArtUrl,
     cover_id: coverArtUrl,
     cover_art_url: coverArtUrl,
-    url: row.url ?? null,
+    url: preferredOffer?.url || row.url || null,
     path: row.path ?? null,
     artist_id: String(row.artist_id),
     artist_name: row.artist_name ?? undefined,
@@ -229,6 +231,12 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
         SELECT candidate.rowid
         FROM ProviderItems candidate
         WHERE candidate.entity_type = 'video'
+          AND (candidate.match_status IS NULL OR LOWER(candidate.match_status) <> 'rejected')
+          AND (
+            candidate.availability IS NULL
+            OR LOWER(CAST(candidate.availability AS TEXT))
+               NOT IN ('0', 'false', 'unavailable', 'no', '')
+          )
           AND (
             candidate.recording_id = recording.id
             OR (recording.mbid IS NOT NULL AND candidate.recording_mbid = recording.mbid)
@@ -279,6 +287,8 @@ function buildCanonicalVideoWhere(input: ListVideosQuery): {
        AND provider_recording.mbid = provider_filter.recording_mbid
       WHERE provider_filter.entity_type = 'video'
         AND provider_filter.provider = ?
+        AND (provider_filter.match_status IS NULL
+             OR LOWER(provider_filter.match_status) <> 'rejected')
         AND (provider_filter.availability IS NULL
              OR LOWER(CAST(provider_filter.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
     )`);
@@ -373,22 +383,26 @@ function getGroupedVideoOfferRows(recordingIds: string[]): Map<string, GroupedVi
   const marks = recordingIds.map(() => "?").join(", ");
   const rows = db.prepare(`
     SELECT CAST(pi.recording_id AS TEXT) AS recording_id,
-           pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality
+           pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality,
+           pi.provider_url AS url
     FROM ProviderItems pi
     WHERE pi.entity_type = 'video'
       AND pi.recording_id IN (${marks})
+      AND (pi.match_status IS NULL OR LOWER(pi.match_status) <> 'rejected')
       AND (pi.availability IS NULL
            OR LOWER(CAST(pi.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
 
     UNION ALL
 
     SELECT CAST(recording.id AS TEXT) AS recording_id,
-           pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality
+           pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality,
+           pi.provider_url AS url
     FROM ProviderItems pi
     JOIN Recordings recording ON recording.mbid = pi.recording_mbid
     WHERE pi.entity_type = 'video'
       AND pi.recording_id IS NULL
       AND recording.id IN (${marks})
+      AND (pi.match_status IS NULL OR LOWER(pi.match_status) <> 'rejected')
       AND (pi.availability IS NULL
            OR LOWER(CAST(pi.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
   `).all(...recordingIds, ...recordingIds) as GroupedVideoOfferRow[];
@@ -500,6 +514,7 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       pi.provider AS provider,
       pi.quality AS quality,
       CAST(pi.provider_id AS TEXT) AS provider_id,
+      pi.provider_url AS provider_url,
       CASE WHEN EXISTS (
         SELECT 1 FROM TrackFiles lf
         WHERE lf.file_type = 'video'
@@ -578,6 +593,12 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
         SELECT candidate.rowid
         FROM ProviderItems candidate
         WHERE candidate.entity_type = 'video'
+          AND (candidate.match_status IS NULL OR LOWER(candidate.match_status) <> 'rejected')
+          AND (
+            candidate.availability IS NULL
+            OR LOWER(CAST(candidate.availability AS TEXT))
+               NOT IN ('0', 'false', 'unavailable', 'no', '')
+          )
           AND (
             candidate.recording_id = video.id
             OR (video.mbid IS NOT NULL AND candidate.recording_mbid = video.mbid)
@@ -609,6 +630,7 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
     provider: string | null;
     quality: string | null;
     provider_id: string | null;
+    provider_url: string | null;
     downloaded: number;
     track_mbid: string | null;
     track_title: string | null;
@@ -639,6 +661,7 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       pi.provider AS provider,
       pi.quality AS quality,
       CAST(pi.provider_id AS TEXT) AS provider_id,
+      pi.provider_url AS provider_url,
       CASE WHEN EXISTS (
         SELECT 1 FROM TrackFiles lf
         WHERE lf.file_type = 'video'
@@ -715,6 +738,12 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
         SELECT candidate.rowid
         FROM ProviderItems candidate
         WHERE candidate.entity_type = 'video'
+          AND (candidate.match_status IS NULL OR LOWER(candidate.match_status) <> 'rejected')
+          AND (
+            candidate.availability IS NULL
+            OR LOWER(CAST(candidate.availability AS TEXT))
+               NOT IN ('0', 'false', 'unavailable', 'no', '')
+          )
           AND (
             candidate.recording_id = video.id
             OR (video.mbid IS NOT NULL AND candidate.recording_mbid = video.mbid)
@@ -746,6 +775,7 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
     provider: string | null;
     quality: string | null;
     provider_id: string | null;
+    provider_url: string | null;
     downloaded: number;
     track_mbid: string | null;
     track_title: string | null;
@@ -781,6 +811,7 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       provider: row.provider ?? null,
       quality: row.quality ?? null,
       provider_id: row.provider_id ?? null,
+      provider_url: row.provider_url ?? null,
       explicit: row.explicit == null ? undefined : Boolean(row.explicit),
       is_monitored: Boolean(row.monitored),
       monitored_lock: Boolean(row.monitored_lock),
@@ -815,10 +846,10 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
     SELECT
       pi.provider,
       CAST(pi.provider_id AS TEXT) AS provider_id,
-      -- Prefer probed/catalog offer quality; fall back to an on-disk file for
-      -- that provider id so badges show SD/HD/FHD/UHD instead of a blank/name chip.
+      -- Prefer an on-disk probed quality for this provider offer when present.
+      -- Catalog has4K/UHD badges are aspirational until import confirms the
+      -- longer edge; stale offer UHD must not outrank a probed FHD/UHD file.
       COALESCE(
-        NULLIF(TRIM(pi.quality), ''),
         (
           SELECT NULLIF(TRIM(tf.quality), '')
           FROM TrackFiles tf
@@ -829,11 +860,13 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
             AND TRIM(tf.quality) != ''
           ORDER BY tf.modified_at DESC
           LIMIT 1
-        )
+        ),
+        NULLIF(TRIM(pi.quality), '')
       ) AS quality,
       pi.provider_url AS url
     FROM ProviderItems pi
     WHERE pi.entity_type = 'video'
+      AND (pi.match_status IS NULL OR LOWER(pi.match_status) <> 'rejected')
       -- availability is stored as text ('available') or NULL for live offers,
       -- never the integer 1 — testing it against 1 silently dropped every video
       -- offer and broke both preview and download (the TIDAL-only regression).
@@ -853,10 +886,16 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
   return rows.map((row) => {
     let canPreview = false;
     let canDownload = false;
+    let connected = false;
     try {
-      const capabilities = streamingProviderManager.getStreamingProvider(row.provider).capabilities;
-      canPreview = capabilities.videoPreviews;
-      canDownload = capabilities.videoDownloads;
+      const provider = streamingProviderManager.getStreamingProvider(row.provider);
+      const requiresConnection = provider.manifest?.auth.mediaAccessRequiresConnection
+        ?? provider.manifest?.auth.kind !== "none";
+      connected = !requiresConnection
+        || typeof provider.isAuthenticated !== "function"
+        || provider.isAuthenticated();
+      canPreview = connected && provider.capabilities.videoPreviews;
+      canDownload = connected && provider.capabilities.videoDownloads;
     } catch {
       // Preserve stale offer provenance for display, but never advertise
       // actions until that provider is registered again.
@@ -866,7 +905,7 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
       provider_id: row.provider_id,
       quality: row.quality ?? null,
       url: row.url ?? null,
-      available: true,
+      available: connected,
       can_preview: canPreview,
       can_download: canDownload,
     };
@@ -1072,8 +1111,17 @@ function resolveVideoRecordingId(videoId: string): string | null {
     return String(direct.id);
   }
 
-  const viaProvider = db.prepare(
-    "SELECT recording_id FROM ProviderItems WHERE entity_type = 'video' AND recording_id IS NOT NULL AND CAST(provider_id AS TEXT) = CAST(? AS TEXT) ORDER BY updated_at DESC LIMIT 1",
-  ).get(videoId) as { recording_id?: number | string | null } | undefined;
+  const viaProvider = db.prepare(`
+    SELECT recording_id
+    FROM ProviderItems
+    WHERE entity_type = 'video'
+      AND recording_id IS NOT NULL
+      AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+      AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
+      AND (availability IS NULL
+           OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get(videoId) as { recording_id?: number | string | null } | undefined;
   return viaProvider?.recording_id != null ? String(viaProvider.recording_id) : null;
 }

@@ -83,7 +83,8 @@ function mapArtist(resource: SoundCloudUserResource | undefined): ProviderArtist
     providerId,
     name,
     picture: artworkUrl(resource?.avatar_url),
-    url: resource?.permalink_url || (providerId ? `https://soundcloud.com/${providerId}` : undefined),
+    // Numeric SoundCloud ids are API identity, not valid public profile paths.
+    url: resource?.permalink_url || undefined,
     popularity: typeof resource?.followers_count === "number"
       ? Math.min(100, Math.max(0, Math.log10(resource.followers_count + 1) * 16))
       : null,
@@ -122,7 +123,9 @@ function mapAlbum(
     upc: resource.publisher_metadata?.upc_or_ean || null,
     quality: "SOUNDCLOUD_LOSSY",
     qualityTags: ["SOUNDCLOUD_LOSSY", "MP3"],
-    url: resource.permalink_url || (providerId ? `https://soundcloud.com/playlists/${providerId}` : undefined),
+    // Only persist a real human-facing permalink. Numeric playlist ids remain
+    // internal acquisition identity and do not form valid soundcloud.com URLs.
+    url: resource.permalink_url || undefined,
     raw: resource,
   };
 }
@@ -164,7 +167,7 @@ function mapTrack(
     duration: durationSeconds(resource.duration),
     trackNumber,
     volumeNumber: 1,
-    url: resource.permalink_url || (providerId ? `https://soundcloud.com/tracks/${providerId}` : undefined),
+    url: resource.permalink_url || undefined,
     isrc: resource.publisher_metadata?.isrc || null,
     releaseDate: calendarDay(resource.release_date || resource.display_date || resource.created_at) || album.releaseDate || null,
     popularity: null,

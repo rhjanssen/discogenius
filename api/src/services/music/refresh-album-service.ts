@@ -16,6 +16,10 @@ import {
     firstProviderEditorialText,
     listReleaseGroupAlbumOfferCandidates,
 } from "../providers/provider-editorial-text.js";
+import {
+    matchPlaylistTracksToCanonical,
+    PLAYLIST_TRACKLIST_COVERAGE_METHOD,
+} from "../providers/soundcloud/soundcloud-playlist-match.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -762,7 +766,9 @@ export class RefreshAlbumService {
                 COALESCE(rgs.release_group_mbid, pi.release_group_mbid) AS release_group_mbid,
                 COALESCE(rgs.artist_mbid, pi.artist_mbid) AS artist_mbid,
                 COALESCE(rgs.slot, pi.library_slot, 'stereo') AS library_slot,
-                COALESCE(rgs.quality, pi.quality) AS quality
+                COALESCE(rgs.quality, pi.quality) AS quality,
+                pi.match_method AS provider_match_method,
+                rgs.match_method AS slot_match_method
             FROM ProviderItems pi
             LEFT JOIN ReleaseGroupSlots rgs
               ON rgs.selected_provider = pi.provider
@@ -785,7 +791,18 @@ export class RefreshAlbumService {
             artist_mbid?: string | null;
             library_slot?: string | null;
             quality?: string | null;
+            provider_match_method?: string | null;
+            slot_match_method?: string | null;
         } | undefined;
+        type CanonicalTrackRow = {
+            track_id?: number | null;
+            track_mbid?: string | null;
+            recording_mbid?: string | null;
+            recording_id?: number | null;
+            title?: string | null;
+            length_ms?: number | null;
+            position?: number | null;
+        };
         const selectCanonicalTrackByPosition = db.prepare(`
             SELECT
                 t.id AS track_id,
@@ -817,14 +834,81 @@ export class RefreshAlbumService {
               AND r.is_video = 1
             LIMIT 1
         `);
+        const releaseMbid = String(selectedRelease?.release_mbid || "").trim();
+        const usesPlaylistCoverage = providerId === "soundcloud"
+            && (
+                selectedRelease?.provider_match_method === PLAYLIST_TRACKLIST_COVERAGE_METHOD
+                || selectedRelease?.slot_match_method === PLAYLIST_TRACKLIST_COVERAGE_METHOD
+            );
+        const playlistCanonicalByTrack = new Map<any, {
+            canonicalTrack: CanonicalTrackRow;
+            score: number;
+        }>();
+        if (usesPlaylistCoverage && releaseMbid) {
+            const canonicalTracks = db.prepare(`
+                SELECT
+                    t.id AS track_id,
+                    t.mbid AS track_mbid,
+                    t.recording_mbid,
+                    r.id AS recording_id,
+                    t.title,
+                    t.length_ms,
+                    t.position
+                FROM Tracks t
+                LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+                WHERE t.release_mbid = ?
+                  AND (r.is_video IS NULL OR r.is_video = 0)
+                ORDER BY t.medium_position, t.position, t.id
+            `).all(releaseMbid) as CanonicalTrackRow[];
+            const assignments = matchPlaylistTracksToCanonical(
+                canonicalTracks.map((track) => ({
+                    title: String(track.title || ""),
+                    durationSec: track.length_ms == null ? null : Number(track.length_ms) / 1000,
+                    trackNumber: track.position ?? null,
+                })),
+                tracks.map((track) => ({
+                    title: track?.title ?? null,
+                    duration: typeof track?.duration === "number" ? track.duration : null,
+                    trackNumber: track?.track_number ?? null,
+                })),
+            );
+            for (const assignment of assignments) {
+                const providerTrack = tracks[assignment.playlistIndex];
+                const canonicalTrack = canonicalTracks[assignment.canonicalIndex];
+                if (providerTrack && canonicalTrack) {
+                    playlistCanonicalByTrack.set(providerTrack, {
+                        canonicalTrack,
+                        score: assignment.score,
+                    });
+                }
+            }
+
+            // Treat a playlist refresh as a complete snapshot. Old children
+            // must not remain selectable if the set was reordered or edited;
+            // current tracks are restored to available by the upsert below.
+            db.prepare(`
+                UPDATE ProviderItems
+                SET availability = 'unavailable',
+                    match_status = 'rejected',
+                    match_confidence = NULL,
+                    track_mbid = NULL,
+                    recording_mbid = NULL,
+                    track_id = NULL,
+                    recording_id = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE provider = ?
+                  AND entity_type = 'track'
+                  AND CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
+            `).run(providerId, albumId);
+        }
         const upsertProviderTrackOffer = db.prepare(`
             INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, provider_album_id, title, version, explicit, quality,
                 isrc, duration, track_number, volume_number, release_date, artist_mbid, release_group_mbid, release_mbid,
                 track_mbid, recording_mbid, library_slot, track_id, recording_id,
                 match_status, match_confidence, match_method, match_evidence, provider_artist_name, cover,
-                copyright, popularity, replay_gain, peak, bpm, musical_key, updated_at
-            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                copyright, popularity, replay_gain, peak, bpm, musical_key, provider_url, availability, updated_at
+            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
                 title = excluded.title,
@@ -856,6 +940,8 @@ export class RefreshAlbumService {
                 peak = COALESCE(excluded.peak, ProviderItems.peak),
                 bpm = COALESCE(excluded.bpm, ProviderItems.bpm),
                 musical_key = COALESCE(excluded.musical_key, ProviderItems.musical_key),
+                provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
+                availability = excluded.availability,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -882,22 +968,21 @@ export class RefreshAlbumService {
             if (trackBatch.length >= 25 || track === tracks[tracks.length - 1]) {
                 db.transaction(() => {
                     for (const currentTrack of trackBatch) {
-                        const releaseMbid = String(selectedRelease?.release_mbid || "").trim();
                         const selectByPosition = currentTrack.is_video
                             ? selectCanonicalVideoTrackByPosition
                             : selectCanonicalTrackByPosition;
-                        const canonicalTrack = releaseMbid
-                            ? selectByPosition.get(
+                        const playlistAssignment = !currentTrack.is_video
+                            ? playlistCanonicalByTrack.get(currentTrack)
+                            : undefined;
+                        const canonicalTrack = usesPlaylistCoverage && !currentTrack.is_video
+                            ? playlistAssignment?.canonicalTrack ?? null
+                            : (releaseMbid
+                                ? selectByPosition.get(
                                 releaseMbid,
                                 Number(currentTrack.volume_number || 1),
                                 Number(currentTrack.track_number || 0),
-                            ) as {
-                                track_id?: number | null;
-                                track_mbid?: string | null;
-                                recording_mbid?: string | null;
-                                recording_id?: number | null;
-                            } | undefined
-                            : null;
+                            ) as CanonicalTrackRow | undefined
+                                : null);
                         const counterpartVideoId = textOrNull(currentTrack.counterpart_video_id);
                         // Provider-native disc/track numbers live on ProviderItems columns.
                         // match_evidence is for counterpart / album linkage only — never for
@@ -905,6 +990,9 @@ export class RefreshAlbumService {
                         const evidence: Record<string, unknown> = {
                             albumProviderId: albumId,
                         };
+                        if (playlistAssignment) {
+                            evidence.playlistTrackMatchScore = playlistAssignment.score;
+                        }
                         if (counterpartVideoId) {
                             evidence.counterpartVideoId = counterpartVideoId;
                             evidence.counterpartKind = counterpartVideoId === String(currentTrack.provider_id)
@@ -935,8 +1023,14 @@ export class RefreshAlbumService {
                             canonicalTrack?.track_id || null,
                             canonicalTrack?.recording_id || null,
                             canonicalTrack?.track_mbid ? "matched" : "pending",
-                            canonicalTrack?.track_mbid ? 0.9 : null,
-                            canonicalTrack?.track_mbid ? "selected-release-position" : "provider-album-tracklist",
+                            canonicalTrack?.track_mbid
+                                ? playlistAssignment?.score ?? 0.9
+                                : null,
+                            canonicalTrack?.track_mbid
+                                ? (playlistAssignment
+                                    ? PLAYLIST_TRACKLIST_COVERAGE_METHOD
+                                    : "selected-release-position")
+                                : "provider-album-tracklist",
                             JSON.stringify(evidence),
                             currentTrack.artist?.name || currentTrack.artist_name || null,
                             textOrNull(currentTrack.cover, currentTrack.image_id, currentTrack.imageId),
@@ -946,6 +1040,7 @@ export class RefreshAlbumService {
                             finiteNumberOrNull(currentTrack.peak),
                             finiteNumberOrNull(currentTrack.bpm),
                             textOrNull(currentTrack.musical_key),
+                            textOrNull(currentTrack.url),
                         );
                         this.storeCanonicalTrackSupplements(canonicalTrack?.recording_id || null, currentTrack);
 
@@ -1009,6 +1104,7 @@ export class RefreshAlbumService {
                                     null,
                                     finiteNumberOrNull(currentTrack.bpm),
                                     textOrNull(currentTrack.musical_key),
+                                    null,
                                 );
                             }
                             counterpartLinks.push({
@@ -1123,8 +1219,8 @@ export class RefreshAlbumService {
             INSERT INTO ProviderItems (
                 provider, entity_type, provider_id, title, version, explicit, quality, type,
                 upc, duration, volume_count, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
-                match_status, match_confidence, match_method, match_evidence, cover, updated_at
-            ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                match_status, match_confidence, match_method, match_evidence, cover, provider_url, availability, updated_at
+            ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', CURRENT_TIMESTAMP)
             ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
                 title = excluded.title,
                 version = COALESCE(excluded.version, ProviderItems.version),
@@ -1144,6 +1240,8 @@ export class RefreshAlbumService {
                 match_method = COALESCE(excluded.match_method, ProviderItems.match_method),
                 match_evidence = COALESCE(excluded.match_evidence, ProviderItems.match_evidence),
                 cover = COALESCE(excluded.cover, ProviderItems.cover),
+                provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
+                availability = excluded.availability,
                 updated_at = CURRENT_TIMESTAMP
         `).run(
             providerId,
@@ -1187,6 +1285,7 @@ export class RefreshAlbumService {
                     quality: album.quality || null,
                 })
                 : null,
+            textOrNull(album.url),
         );
 
         // Additive: also persist the provider album -> MB release match into the

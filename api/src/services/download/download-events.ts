@@ -155,8 +155,8 @@ export interface DownloadProgressData {
     artist?: string;
     cover?: string | null;
 
-    /** Overall progress percentage 0-100 */
-    progress: number;
+    /** Overall progress percentage 0-100 when known; null when indeterminate */
+    progress?: number | null;
 
     /** Download speed if available (e.g., "1.2 MB/s") */
     speed?: string;

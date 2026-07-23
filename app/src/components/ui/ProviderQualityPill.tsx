@@ -30,8 +30,12 @@ export interface ProviderQualityOffer {
     coverageSummary?: string | null;
     providerAlbumId?: string | null;
     providerAlbumIds?: string[];
+    /** Canonical/permalink URL persisted from the provider album/video offer. */
+    providerUrl?: string | null;
     /** Provider track/video id when the offer is track-scoped. */
     providerTrackId?: string | null;
+    /** Canonical/permalink URL persisted from a provider track offer. */
+    providerTrackUrl?: string | null;
     selectedReleaseMbid?: string | null;
     musicbrainzTrackId?: string | null;
     musicbrainzRecordingId?: string | null;
@@ -381,9 +385,10 @@ function buildQualityOfferTooltip(
         <div className={options.styles.tooltipBody}>
             {summaryLine ? <span>{summaryLine}</span> : null}
             {providerAlbumIds.map((id) => {
+                const storedUrl = providerAlbumIds.length === 1 ? offer.providerUrl : null;
                 const href = isVideo
-                    ? providerVideoUrl(offer.provider, id)
-                    : providerAlbumUrl(offer.provider, id);
+                    ? providerVideoUrl(offer.provider, id, storedUrl)
+                    : providerAlbumUrl(offer.provider, id, storedUrl);
                 return (
                     <span key={id}>
                         {albumIdLabel}:{" "}
@@ -405,7 +410,11 @@ function buildQualityOfferTooltip(
                 <span>
                     {trackIdLabel}:{" "}
                     {(() => {
-                        const href = providerTrackUrl(offer.provider, providerTrackId);
+                        const href = providerTrackUrl(
+                            offer.provider,
+                            providerTrackId,
+                            offer.providerTrackUrl,
+                        );
                         return href ? (
                             <Link
                                 href={href}
@@ -544,11 +553,13 @@ export const ProviderQualityRow: React.FC<ProviderQualityRowProps> = ({
             : providerName.charAt(0);
 
         const linkedOffer = group.offers.find((offer) => splitProviderAlbumIds(offer.providerAlbumId).length > 0);
-        const linkedId = splitProviderAlbumIds(linkedOffer?.providerAlbumId)[0];
+        const linkedIds = splitProviderAlbumIds(linkedOffer?.providerAlbumId);
+        const linkedId = linkedIds[0];
+        const storedUrl = linkedIds.length === 1 ? linkedOffer?.providerUrl : null;
         const providerHref = linkedId
             ? (linkedOffer?.slot === "video"
-                ? providerVideoUrl(group.provider, linkedId)
-                : providerAlbumUrl(group.provider, linkedId))
+                ? providerVideoUrl(group.provider, linkedId, storedUrl)
+                : providerAlbumUrl(group.provider, linkedId, storedUrl))
             : null;
         const pill = (
             <span
