@@ -6,9 +6,11 @@ import {
     buildVideoIdentity,
     durationMs,
     findRelatedAudioRecordingForVideo,
+    isLivePerformanceTitle,
     isPlaceholderVideoTitle,
     nullableText,
     preferredMergedVideoTitle,
+    videoAudioTitlesCompatible,
     videoVariantClass,
     type AudioRecordingCandidateRow,
     type AudioRecordingVideoMatch,
@@ -20,6 +22,7 @@ import {
     normalizeVideoVariant,
     parseVideoVariant,
     preferredVideoVariant,
+    VIDEO_AUDIO_STUDIO_DURATION_MATCH_MS,
     VIDEO_DURATION_MATCH_MS,
     type VideoVariant,
 } from "./video-variant.js";
@@ -153,7 +156,9 @@ function resolveProviderVideoAudioMatch(input: {
     const albumId = nullableText(input.video.album_id ?? input.video.albumId);
     if (albumId) {
         const albumCandidates = loadAudioRecordingCandidatesForProviderAlbum(input.provider, albumId);
-        const albumMatch = findRelatedAudioRecordingForVideo(input.video, albumCandidates);
+        const albumMatch = findRelatedAudioRecordingForVideo(input.video, albumCandidates, {
+            videoVariant: parseVideoVariant(nullableText(input.video.title)),
+        });
         if (albumMatch) {
             return {
                 ...albumMatch,
@@ -184,14 +189,54 @@ function findAudioRecordingByArtistTitleDuration(
     artistMbid: string,
     video: any,
 ): AudioRecordingVideoMatch | null {
+    const offerVariant = parseVideoVariant(nullableText(video.title));
+    const preferStudio = isMainVideoVariant(offerVariant);
     const candidates = db.prepare(`
-        SELECT id, mbid, title, length_ms, isrcs
-        FROM Recordings
-        WHERE artist_mbid = ?
-          AND (is_video IS NULL OR is_video = 0)
-          AND mbid IS NOT NULL
+        SELECT
+          rec.id,
+          rec.mbid,
+          rec.title,
+          rec.length_ms,
+          rec.isrcs,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM Tracks t
+            JOIN AlbumReleases ar
+              ON ar.id = t.album_release_id
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+            JOIN Albums a ON a.mbid = ar.release_group_mbid
+            WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
+              AND (
+                a.secondary_types IS NULL
+                OR TRIM(a.secondary_types) = ''
+                OR a.secondary_types = '[]'
+                OR LOWER(a.secondary_types) NOT LIKE '%"live"%'
+              )
+          ) THEN 1 ELSE 0 END AS has_non_live_album,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM Tracks t
+            JOIN AlbumReleases ar
+              ON ar.id = t.album_release_id
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+            JOIN Albums a ON a.mbid = ar.release_group_mbid
+            WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
+              AND LOWER(COALESCE(a.primary_type, '')) IN ('album', 'ep', 'single')
+              AND (
+                a.secondary_types IS NULL
+                OR TRIM(a.secondary_types) = ''
+                OR a.secondary_types = '[]'
+              )
+          ) THEN 1 ELSE 0 END AS has_studio_album
+        FROM Recordings rec
+        WHERE rec.artist_mbid = ?
+          AND (rec.is_video IS NULL OR rec.is_video = 0)
+          AND rec.mbid IS NOT NULL
     `).all(artistMbid) as AudioRecordingCandidateRow[];
-    const match = findRelatedAudioRecordingForVideo(video, candidates);
+    const match = findRelatedAudioRecordingForVideo(video, candidates, {
+        videoVariant: offerVariant,
+        preferStudioAudio: preferStudio,
+    });
     if (!match) return null;
     // Artist-wide is title+duration only — ISRC-only links are too eager when
     // providers omit album/song associations (official MVs often share ISRC
@@ -199,7 +244,10 @@ function findAudioRecordingByArtistTitleDuration(
     if (match.method === "provider-video-isrc-recording") return null;
     if (match.confidence < 0.84) return null;
     const durationDiffMs = match.evidence.durationDiffMs;
-    if (typeof durationDiffMs === "number" && durationDiffMs > VIDEO_DURATION_MATCH_MS) {
+    const maxDurationDiff = preferStudio && match.evidence.hasNonLiveAlbum
+        ? VIDEO_AUDIO_STUDIO_DURATION_MATCH_MS
+        : VIDEO_DURATION_MATCH_MS;
+    if (typeof durationDiffMs === "number" && durationDiffMs > maxDurationDiff) {
         return null;
     }
     return {
@@ -372,7 +420,7 @@ function ensureProviderVideoRecording(input: {
                 existingTitle,
                 existing.length_ms,
                 offerVariant,
-                coherentStoredVideoVariant(existingTitle, existing.video_variant),
+                coherentStoredVideoVariant(existingTitle, existing.video_variant, offerVariant),
                 releaseDate,
                 existing.release_date,
                 undefined,
@@ -546,17 +594,26 @@ function recordingVideoProvider(recordingId: number): string | null {
 }
 
 /**
- * Stored video_variant=live on a bare title is an inconsistent twin-promote
- * leftover. Matching should trust the title so unlabeled peers still attach.
+ * Stored video_variant=live on a bare title is often an inconsistent twin-promote
+ * leftover. Matching should trust the title when the *incoming* offer is also
+ * unlabeled/main so studio peers can still attach. Incoming live offers must
+ * keep the stored live class so Apple "(Live)" joins the MB live cut.
  */
 function coherentStoredVideoVariant(
     title: string,
     stored?: VideoVariant | string | null,
+    incomingVariant?: VideoVariant | string | null,
 ): VideoVariant {
     const fromTitle = parseVideoVariant(title);
     if (stored == null || !String(stored).trim()) return fromTitle;
     const fromStored = normalizeVideoVariant(stored);
-    if (fromStored === "live" && fromTitle !== "live") return fromTitle;
+    if (fromStored === "live" && fromTitle !== "live") {
+        const incoming = incomingVariant == null || !String(incomingVariant).trim()
+            ? null
+            : normalizeVideoVariant(incomingVariant);
+        if (incoming === "live") return fromStored;
+        return fromTitle;
+    }
     return fromStored;
 }
 
@@ -971,7 +1028,7 @@ function findMusicBrainzVideoRecordingIdByTitle(
             //
             // If a prior twin attach left video_variant=live on a bare MB title,
             // trust the title for matching so reverse unlabeled offers still join.
-            const rowVariant = coherentStoredVideoVariant(rowTitle, row.video_variant);
+            const rowVariant = coherentStoredVideoVariant(rowTitle, row.video_variant, wantedClass);
             const match = scoreVideoIdentityMatch({
                 titleA: title,
                 titleB: rowTitle,
@@ -1110,7 +1167,10 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
     return repaired;
 }
 
-/** Re-link video→audio Appears On after track matching has caught up. */
+/** Re-link video→audio Appears On after track matching has caught up.
+ *  Also replaces legacy artist-wide links that attached main OMVs to live
+ *  cuts / mismatched venues (iTunes Festival, Unit 24, live bootlegs).
+ */
 function repairProviderVideoAudioRelations(artistMbid: string): number {
     const rows = db.prepare(`
         SELECT
@@ -1121,16 +1181,14 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
             provider_item.duration,
             provider_item.recording_id,
             provider_item.recording_mbid,
-            COALESCE(provider_item.artist_mbid, recording.artist_mbid) AS artist_mbid
+            COALESCE(provider_item.artist_mbid, recording.artist_mbid) AS artist_mbid,
+            recording.title AS recording_title,
+            recording.video_variant AS video_variant
         FROM ProviderItems provider_item
         JOIN Recordings recording ON recording.id = provider_item.recording_id
         WHERE provider_item.entity_type = 'video'
           AND recording.artist_mbid = ?
-          AND NOT EXISTS (
-            SELECT 1 FROM RecordingRelations rr
-            WHERE rr.source_recording_id = provider_item.recording_id
-              AND rr.relation_type = 'provider_video_for'
-          )
+        ORDER BY provider_item.provider, provider_item.provider_id
     `).all(artistMbid) as Array<{
         provider: string;
         provider_id: string;
@@ -1140,14 +1198,113 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         recording_id: number;
         recording_mbid: string | null;
         artist_mbid: string | null;
+        recording_title: string | null;
+        video_variant: string | null;
     }>;
 
-    let linked = 0;
+    const existingRelations = db.prepare(`
+        SELECT
+            rr.source_recording_id AS video_id,
+            rr.target_recording_id AS audio_id,
+            rr.source AS relation_source,
+            audio.title AS audio_title,
+            audio.mbid AS mbid
+        FROM RecordingRelations rr
+        JOIN Recordings audio ON audio.id = rr.target_recording_id
+        WHERE rr.relation_type = 'provider_video_for'
+          AND rr.source_recording_id IN (
+            SELECT id FROM Recordings WHERE artist_mbid = ? AND is_video = 1
+          )
+    `).all(artistMbid) as Array<{
+        video_id: number;
+        audio_id: number;
+        relation_source: string | null;
+        audio_title: string | null;
+        mbid: string | null;
+    }>;
+    const relationsByVideo = new Map<number, typeof existingRelations>();
+    for (const row of existingRelations) {
+        const list = relationsByVideo.get(row.video_id) ?? [];
+        list.push(row);
+        relationsByVideo.set(row.video_id, list);
+    }
+
+    const deleteRelation = db.prepare(`
+        DELETE FROM RecordingRelations
+        WHERE source_recording_id = ?
+          AND target_recording_id = ?
+          AND relation_type = 'provider_video_for'
+    `);
+    const audioHasNonLiveAlbum = db.prepare(`
+        SELECT 1 AS hit
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        JOIN Albums a ON a.mbid = ar.release_group_mbid
+        WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
+          AND (
+            a.secondary_types IS NULL
+            OR TRIM(a.secondary_types) = ''
+            OR a.secondary_types = '[]'
+            OR LOWER(a.secondary_types) NOT LIKE '%"live"%'
+          )
+        LIMIT 1
+    `);
+    const audioHasStudioAlbum = db.prepare(`
+        SELECT 1 AS hit
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        JOIN Albums a ON a.mbid = ar.release_group_mbid
+        WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
+          AND LOWER(COALESCE(a.primary_type, '')) IN ('album', 'ep', 'single')
+          AND (
+            a.secondary_types IS NULL
+            OR TRIM(a.secondary_types) = ''
+            OR a.secondary_types = '[]'
+          )
+        LIMIT 1
+    `);
+
+    let changed = 0;
+    const seenVideos = new Set<number>();
     for (const row of rows) {
-        if (!nullableText(row.title)) continue;
+        if (seenVideos.has(row.recording_id)) continue;
+        seenVideos.add(row.recording_id);
+
+        const videoTitle = nullableText(row.title) || nullableText(row.recording_title);
+        if (!videoTitle) continue;
+        const videoVariant = parseVideoVariant(videoTitle);
+        const existing = relationsByVideo.get(row.recording_id) ?? [];
+
+        for (const relation of existing) {
+            const incompatibleTitle = !videoAudioTitlesCompatible(videoTitle, relation.audio_title);
+            const mainOntoLiveTitle = isMainVideoVariant(videoVariant)
+                && isLivePerformanceTitle(relation.audio_title);
+            const mainOntoLiveOnlyAlbum = isMainVideoVariant(videoVariant)
+                && !audioHasNonLiveAlbum.get(relation.audio_id, relation.mbid ?? null);
+            // Prefer Album/EP/Single studio membership over compilation-only links.
+            const mainOntoWeakStudio = isMainVideoVariant(videoVariant)
+                && !audioHasStudioAlbum.get(relation.audio_id, relation.mbid ?? null);
+            if (!incompatibleTitle && !mainOntoLiveTitle && !mainOntoLiveOnlyAlbum && !mainOntoWeakStudio) {
+                continue;
+            }
+            deleteRelation.run(row.recording_id, relation.audio_id);
+            changed += 1;
+        }
+
+        const stillHasRelation = Boolean(db.prepare(`
+            SELECT 1 AS hit FROM RecordingRelations
+            WHERE source_recording_id = ? AND relation_type = 'provider_video_for'
+            LIMIT 1
+        `).get(row.recording_id));
+        if (stillHasRelation) continue;
+
         const audioMatch = resolveProviderVideoAudioMatch({
             video: {
-                title: row.title,
+                title: videoTitle,
                 duration: row.duration,
                 album_id: row.provider_album_id,
                 artist_mbid: row.artist_mbid,
@@ -1161,11 +1318,12 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
             videoRecordingMbid: row.recording_mbid,
             audioMatch,
             provider: row.provider,
-            videoTitle: row.title,
+            videoTitle,
+            videoVariant,
         });
-        linked += 1;
+        changed += 1;
     }
-    return linked;
+    return changed;
 }
 
 function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string): number {
@@ -1364,36 +1522,48 @@ export class RefreshVideoService {
         }
 
         const artistMbid = getArtistMusicBrainzId(input.artistId) || nullableText(input.artistId);
-        const videos = input.counterparts.map((counterpart) => ({
-            provider: input.provider,
-            provider_id: counterpart.providerId,
-            album_id: counterpart.albumId || input.albumId,
-            title: counterpart.title,
-            duration: counterpart.duration ?? null,
-            release_date: counterpart.releaseDate ?? null,
-            image_id: counterpart.cover ?? null,
-            url: counterpart.url ?? null,
-            artist_mbid: artistMbid,
-            artist_name: counterpart.artistName ?? null,
-            release_group_mbid: input.releaseGroupMbid ?? null,
-            release_mbid: input.releaseMbid ?? null,
-            quality: counterpart.quality ?? null,
-            _explicitAudioMatch: counterpart.audioRecordingId
-                ? {
-                    id: Number(counterpart.audioRecordingId),
-                    mbid: nullableText(counterpart.audioRecordingMbid),
-                    confidence: 0.98,
-                    method: "yt-atv-omv-counterpart",
-                    evidence: {
-                        audioProviderTrackId: counterpart.audioProviderTrackId ?? null,
-                        counterpartKind: counterpart.providerId === counterpart.audioProviderTrackId
-                            ? "yt-self-omv"
-                            : "yt-atv-omv",
-                        albumProviderId: counterpart.albumId || input.albumId,
-                    },
-                } satisfies AudioRecordingVideoMatch
-                : null,
-        }));
+        const selectAudioTitle = db.prepare(`
+            SELECT title FROM Recordings WHERE id = ? LIMIT 1
+        `);
+        const videos = input.counterparts.map((counterpart) => {
+            let explicitAudioMatch: AudioRecordingVideoMatch | null = null;
+            if (counterpart.audioRecordingId) {
+                const audio = selectAudioTitle.get(counterpart.audioRecordingId) as { title?: string | null } | undefined;
+                // Enriched OMV titles (Oblivion Live…) must not keep a position-
+                // matched audio link to a different song/venue (Flaws Unit 24).
+                if (videoAudioTitlesCompatible(counterpart.title, audio?.title ?? null)) {
+                    explicitAudioMatch = {
+                        id: Number(counterpart.audioRecordingId),
+                        mbid: nullableText(counterpart.audioRecordingMbid),
+                        confidence: 0.98,
+                        method: "yt-atv-omv-counterpart",
+                        evidence: {
+                            audioProviderTrackId: counterpart.audioProviderTrackId ?? null,
+                            counterpartKind: counterpart.providerId === counterpart.audioProviderTrackId
+                                ? "yt-self-omv"
+                                : "yt-atv-omv",
+                            albumProviderId: counterpart.albumId || input.albumId,
+                        },
+                    };
+                }
+            }
+            return {
+                provider: input.provider,
+                provider_id: counterpart.providerId,
+                album_id: counterpart.albumId || input.albumId,
+                title: counterpart.title,
+                duration: counterpart.duration ?? null,
+                release_date: counterpart.releaseDate ?? null,
+                image_id: counterpart.cover ?? null,
+                url: counterpart.url ?? null,
+                artist_mbid: artistMbid,
+                artist_name: counterpart.artistName ?? null,
+                release_group_mbid: input.releaseGroupMbid ?? null,
+                release_mbid: input.releaseMbid ?? null,
+                quality: counterpart.quality ?? null,
+                _explicitAudioMatch: explicitAudioMatch,
+            };
+        });
 
         // Prefer the shared upsert path so recording creation / repair / dedupe
         // stay identical to artist-video refresh; inject explicit audio matches

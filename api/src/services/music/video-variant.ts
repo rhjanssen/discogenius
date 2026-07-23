@@ -14,6 +14,13 @@ export type VideoVariant = (typeof VIDEO_VARIANTS)[number];
 /** Soft duration gate for same-class and cross-class video merges (2s). */
 export const VIDEO_DURATION_MATCH_MS = 2_000;
 
+/**
+ * Wider gate when linking a main/official music video to studio album audio.
+ * OMVs routinely run several seconds longer than the stereo cut; the tight
+ * video↔video gate would otherwise prefer a same-duration live bootleg.
+ */
+export const VIDEO_AUDIO_STUDIO_DURATION_MATCH_MS = 20_000;
+
 const VARIANT_CLASS_RULES: Array<{ variant: VideoVariant; re: RegExp }> = [
   { variant: "audio", re: /\baudio\b/i },
   { variant: "lyric", re: /\blyrics?\b/i },

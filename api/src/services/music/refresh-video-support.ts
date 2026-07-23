@@ -6,6 +6,7 @@
 
 import { videoComparableTitle } from "../mediafiles/import-matching-utils.js";
 import {
+    VIDEO_AUDIO_STUDIO_DURATION_MATCH_MS,
     VIDEO_DURATION_MATCH_MS,
     catalogVideoDisplayTitle,
     cleanVideoGroupTitle,
@@ -31,6 +32,23 @@ export type AudioRecordingCandidateRow = {
     title?: string | null;
     length_ms?: number | null;
     isrcs?: string | null;
+    /** 1 when the recording appears on at least one non-Live release group. */
+    has_non_live_album?: number | boolean | null;
+    /**
+     * 1 when it appears on a primary Album/EP/Single with no Live secondary
+     * (prefer over compilation-only non-live membership).
+     */
+    has_studio_album?: number | boolean | null;
+};
+
+export type FindRelatedAudioOptions = {
+    /** Video cut class — main/official rejects live-titled / live-only audio. */
+    videoVariant?: VideoVariant | null;
+    /**
+     * When true (artist-wide main-video matching), prefer studio-album audio and
+     * allow a wider duration gate for those candidates.
+     */
+    preferStudioAudio?: boolean;
 };
 
 export function normalizeVideoText(value: unknown): string {
@@ -152,9 +170,75 @@ export function parseIsrcValues(value: unknown): string[] {
     return [...values];
 }
 
+/** Live / performance cut from title text (not album secondary types). */
+export function isLivePerformanceTitle(title: string | null | undefined): boolean {
+    return /\blive\b|\bperformance\b|\bmtv\s+unplugged\b/i.test(String(title || ""));
+}
+
+/**
+ * Normalize venue phrases from "live at/from …" (and Unit 24-style
+ * parentheticals) so Abbey Road never links to Unit 24 on base title alone.
+ */
+export function extractLiveVenueSignatures(title: string | null | undefined): string[] {
+    const text = String(title || "");
+    const out = new Set<string>();
+    for (const match of text.matchAll(/\blive\s+(?:at|from)\s+([^)\]]+)/gi)) {
+        const venue = normalizeVideoText(match[1]);
+        if (venue) out.add(venue);
+    }
+    for (const part of extractVideoParentheticals(text)) {
+        if (!/\blive\b|\bperformance\b|\bunit\s*\d+/i.test(part)) continue;
+        const cleaned = normalizeVideoText(
+            part.replace(/\bacoustic(?:\s+version)?\b/gi, " ").replace(/\bversion\b/gi, " "),
+        );
+        if (cleaned && cleaned !== "live") out.add(cleaned);
+    }
+    return [...out];
+}
+
+/**
+ * When both titles name a live venue, require overlap. One-sided venue is OK
+ * (providers often omit "at Abbey Road" on the twin).
+ */
+export function liveVenueSignaturesCompatible(
+    titleA: string | null | undefined,
+    titleB: string | null | undefined,
+): boolean {
+    const left = extractLiveVenueSignatures(titleA);
+    const right = extractLiveVenueSignatures(titleB);
+    if (left.length === 0 || right.length === 0) return true;
+    return left.some((a) => right.some((b) => a === b || a.includes(b) || b.includes(a)));
+}
+
+/** Core title must agree before an explicit album-position audio link sticks. */
+export function videoAudioTitlesCompatible(
+    videoTitle: string | null | undefined,
+    audioTitle: string | null | undefined,
+): boolean {
+    const videoComparable = videoComparableTitle(videoTitle);
+    const audioComparable = videoComparableTitle(audioTitle);
+    if (!videoComparable || !audioComparable) return false;
+    const titleOk = videoComparable === audioComparable
+        || videoComparable.includes(audioComparable)
+        || audioComparable.includes(videoComparable);
+    if (!titleOk) return false;
+    return liveVenueSignaturesCompatible(videoTitle, audioTitle);
+}
+
+function candidateHasNonLiveAlbum(row: AudioRecordingCandidateRow): boolean {
+    return Boolean(row.has_non_live_album) || Boolean(row.has_studio_album);
+}
+
+function candidateStudioRank(row: AudioRecordingCandidateRow): number {
+    if (Boolean(row.has_studio_album)) return 2;
+    if (Boolean(row.has_non_live_album)) return 1;
+    return 0;
+}
+
 export function findRelatedAudioRecordingForVideo(
     video: any,
     candidates: AudioRecordingCandidateRow[],
+    options: FindRelatedAudioOptions = {},
 ): AudioRecordingVideoMatch | null {
     const videoTitle = videoComparableTitle(video.title);
     if (!videoTitle || candidates.length === 0) {
@@ -163,10 +247,21 @@ export function findRelatedAudioRecordingForVideo(
 
     const videoDurationMs = durationMs(video.duration);
     const videoIsrcs = parseIsrcValues(video.isrc ?? video.isrcs);
-    const rows = candidates;
+    const videoVariant = options.videoVariant ?? parseVideoVariant(nullableText(video.title));
+    const preferStudio = Boolean(options.preferStudioAudio) && isMainVideoVariant(videoVariant);
+    const rawVideoTitle = String(video.title || "");
 
-    let best: AudioRecordingVideoMatch | null = null;
-    for (const row of rows) {
+    type Scored = AudioRecordingVideoMatch & { studioBoost: number; durationDiffMs: number };
+    let best: Scored | null = null;
+    for (const row of candidates) {
+        const rawAudioTitle = String(row.title || "");
+        if (preferStudio && isLivePerformanceTitle(rawAudioTitle)) {
+            continue;
+        }
+        if (!liveVenueSignaturesCompatible(rawVideoTitle, rawAudioTitle)) {
+            continue;
+        }
+
         const audioTitle = videoComparableTitle(row.title);
         if (!audioTitle) {
             continue;
@@ -183,49 +278,85 @@ export function findRelatedAudioRecordingForVideo(
         const audioDurationMs = Number(row.length_ms || 0) > 0 ? Number(row.length_ms) : null;
         const durationDiffMs = videoDurationMs != null && audioDurationMs != null
             ? Math.abs(videoDurationMs - audioDurationMs)
-            : null;
-        // Same 5s gate as catalog video grouping (VIDEO_DURATION_MATCH_MS) for
-        // title matches. ISRC is strong enough on its own (official MVs often
-        // run longer than the audio cut).
+            : Number.POSITIVE_INFINITY;
+        const hasStudioAlbum = candidateHasNonLiveAlbum(row);
+        const studioBoost = preferStudio ? candidateStudioRank(row) : 0;
+        // Tight gate for same-cut matches; main OMV→studio album may use the
+        // wider gate so a same-duration live bootleg does not win.
+        const durationGateMs = preferStudio && hasStudioAlbum
+            ? VIDEO_AUDIO_STUDIO_DURATION_MATCH_MS
+            : VIDEO_DURATION_MATCH_MS;
         const durationCompatible = durationsWithinMs(
             videoDurationMs,
             audioDurationMs,
-            VIDEO_DURATION_MATCH_MS,
+            durationGateMs,
         );
         if (!isrcOverlap && !durationCompatible) {
             continue;
         }
+        if (preferStudio && !hasStudioAlbum && !isrcOverlap) {
+            // Artist-wide main videos must not attach to live-only bootlegs
+            // just because duration agrees.
+            continue;
+        }
 
+        const tightDuration = durationsWithinMs(
+            videoDurationMs,
+            audioDurationMs,
+            VIDEO_DURATION_MATCH_MS,
+        );
         const confidence = isrcOverlap
             ? 0.95
-            : exactTitle && durationCompatible
+            : exactTitle && tightDuration
                 ? 0.84
-                : containedTitle && durationCompatible
-                    ? 0.72
-                    : 0.62;
-        if (!best || confidence > best.confidence) {
-            best = {
-                id: Number(row.id),
-                mbid: nullableText(row.mbid),
-                confidence,
-                method: isrcOverlap
-                    ? "provider-video-isrc-recording"
-                    : exactTitle
-                        ? "provider-video-title-recording"
-                        : "provider-video-contained-title-recording",
-                evidence: {
-                    videoTitle: video.title ?? null,
-                    normalizedVideoTitle: videoTitle,
-                    audioTitle: row.title ?? null,
-                    normalizedAudioTitle: audioTitle,
-                    isrcOverlap,
-                    durationDiffMs,
-                },
-            };
+                : exactTitle && durationCompatible && hasStudioAlbum && preferStudio
+                    // Studio OMV↔stereo often sits outside the tight 2s gate; keep
+                    // artist-wide acceptance (≥0.84) when the wider studio gate hits.
+                    ? 0.84
+                    : exactTitle && durationCompatible
+                        ? 0.8
+                        : containedTitle && durationCompatible
+                            ? 0.72
+                            : 0.62;
+        const candidate: Scored = {
+            id: Number(row.id),
+            mbid: nullableText(row.mbid),
+            confidence,
+            method: isrcOverlap
+                ? "provider-video-isrc-recording"
+                : exactTitle
+                    ? "provider-video-title-recording"
+                    : "provider-video-contained-title-recording",
+            evidence: {
+                videoTitle: video.title ?? null,
+                normalizedVideoTitle: videoTitle,
+                audioTitle: row.title ?? null,
+                normalizedAudioTitle: audioTitle,
+                isrcOverlap,
+                durationDiffMs: Number.isFinite(durationDiffMs) ? durationDiffMs : null,
+                hasNonLiveAlbum: hasStudioAlbum,
+                studioRank: studioBoost,
+            },
+            studioBoost,
+            durationDiffMs: Number.isFinite(durationDiffMs) ? durationDiffMs : Number.POSITIVE_INFINITY,
+        };
+        if (
+            !best
+            || candidate.studioBoost > best.studioBoost
+            || (candidate.studioBoost === best.studioBoost && candidate.confidence > best.confidence)
+            || (
+                candidate.studioBoost === best.studioBoost
+                && candidate.confidence === best.confidence
+                && candidate.durationDiffMs < best.durationDiffMs
+            )
+        ) {
+            best = candidate;
         }
     }
 
-    return best;
+    if (!best) return null;
+    const { studioBoost: _studioBoost, durationDiffMs: _durationDiffMs, ...match } = best;
+    return match;
 }
 
 /** Catalog video matching: variant class from title (see video-variant.ts). */

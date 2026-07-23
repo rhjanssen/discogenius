@@ -784,7 +784,11 @@ export class LibraryFilesService {
                   WHERE rgs.release_group_mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
                     AND rgs.slot = 'stereo'
                     AND rgs.monitored = 1
-                ) THEN 1 ELSE 0 END AS stereo_monitored
+                ) THEN 1 ELSE 0 END AS stereo_monitored,
+                CASE
+                  WHEN LOWER(COALESCE(album.secondary_types, '')) LIKE '%"live"%' THEN 1
+                  ELSE 0
+                END AS is_live_album
               FROM RecordingRelations rr
               JOIN Recordings audio ON audio.id = rr.target_recording_id
               LEFT JOIN TrackFiles tf
@@ -794,9 +798,11 @@ export class LibraryFilesService {
               LEFT JOIN Tracks t
                 ON (t.recording_mbid = audio.mbid OR t.recording_id = audio.id)
               LEFT JOIN AlbumReleases track_rg ON track_rg.mbid = t.release_mbid
+              LEFT JOIN Albums album
+                ON album.mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
               WHERE rr.source_recording_id = ?
                 AND rr.relation_type IN ('provider_video_for', 'music_video_for')
-              ORDER BY stereo_monitored DESC, track_count DESC, rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
+              ORDER BY stereo_monitored DESC, is_live_album ASC, track_count DESC, rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
               LIMIT 1
             `).get(videoRecordingId) as {
               audio_recording_id?: number;

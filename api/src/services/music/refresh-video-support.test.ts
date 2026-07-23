@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findRelatedAudioRecordingForVideo, preferredMergedVideoTitle } from "./refresh-video-support.js";
+import {
+  findRelatedAudioRecordingForVideo,
+  liveVenueSignaturesCompatible,
+  preferredMergedVideoTitle,
+  videoAudioTitlesCompatible,
+} from "./refresh-video-support.js";
 
 test("video→audio title match requires duration within 5s", () => {
   const candidates = [
@@ -63,5 +68,82 @@ test("preferredMergedVideoTitle keeps a shared live/venue parenthetical", () => 
   assert.equal(
     preferredMergedVideoTitle("Oblivion (Lyric Video)", "Oblivion (Official Music Video)"),
     "Oblivion (Lyric Video)",
+  );
+});
+
+test("main OMV prefers studio album audio over same-duration live bootleg", () => {
+  const match = findRelatedAudioRecordingForVideo(
+    { title: "Back to Black", duration: 247 },
+    [
+      { id: 1, mbid: "live-bootleg", title: "Back to Black", length_ms: 247_000, has_non_live_album: 0 },
+      { id: 2, mbid: "studio", title: "Back to Black", length_ms: 241_000, has_non_live_album: 1, has_studio_album: 1 },
+    ],
+    { videoVariant: "video", preferStudioAudio: true },
+  );
+  assert.equal(match?.id, 2, "studio album audio must win despite 6s duration delta");
+  assert.equal(match?.evidence.hasNonLiveAlbum, true);
+});
+
+test("main OMV prefers Album/EP/Single studio membership over compilation-only", () => {
+  const match = findRelatedAudioRecordingForVideo(
+    { title: "Back to Black", duration: 247 },
+    [
+      { id: 1, mbid: "compilation", title: "Back to Black", length_ms: 252_000, has_non_live_album: 1, has_studio_album: 0 },
+      { id: 2, mbid: "studio-album", title: "Back to Black", length_ms: 241_000, has_non_live_album: 1, has_studio_album: 1 },
+    ],
+    { videoVariant: "video", preferStudioAudio: true },
+  );
+  assert.equal(match?.id, 2);
+});
+
+test("main OMV rejects live-titled audio on artist-wide studio preference", () => {
+  const match = findRelatedAudioRecordingForVideo(
+    { title: "Bad Blood", duration: 228 },
+    [
+      { id: 1, mbid: "live-audio", title: "Bad Blood (live)", length_ms: 228_792, has_non_live_album: 1 },
+      { id: 2, mbid: "studio", title: "Bad Blood", length_ms: 212_613, has_non_live_album: 1 },
+    ],
+    { videoVariant: "video", preferStudioAudio: true },
+  );
+  assert.equal(match?.id, 2, "live-titled audio must lose to studio even when duration is closer");
+});
+
+test("Abbey Road live does not attach to Unit 24 venue audio", () => {
+  assert.equal(
+    liveVenueSignaturesCompatible(
+      "Flaws (live at Abbey Road)",
+      "Flaws (acoustic version // live from Unit 24)",
+    ),
+    false,
+  );
+  assert.equal(
+    videoAudioTitlesCompatible(
+      "Flaws (live at Abbey Road)",
+      "Flaws (acoustic version // live from Unit 24)",
+    ),
+    false,
+  );
+  const match = findRelatedAudioRecordingForVideo(
+    { title: "Flaws (live at Abbey Road)", duration: 259 },
+    [
+      {
+        id: 114,
+        mbid: "flaws-unit24",
+        title: "Flaws (live acoustic version)",
+        length_ms: 218_000,
+        has_non_live_album: 1,
+      },
+    ],
+  );
+  assert.equal(match, null);
+});
+
+test("Oblivion live title is incompatible with Flaws Unit 24 audio", () => {
+  assert.equal(
+    videoAudioTitlesCompatible(
+      "Oblivion (Live From Capitol Studios, USA / 2013)",
+      "Flaws (live acoustic version)",
+    ),
+    false,
   );
 });

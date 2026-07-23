@@ -1061,7 +1061,12 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
         OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
       WHERE ${videoOrRelatedAudio}
     )
-    ORDER BY wanted DESC,
+    ORDER BY
+      CASE
+        WHEN LOWER(COALESCE(a.secondary_types, '')) LIKE '%"live"%' THEN 1
+        ELSE 0
+      END ASC,
+      wanted DESC,
       COALESCE((
         SELECT COALESCE(
           NULLIF(ar.track_count, 0),
