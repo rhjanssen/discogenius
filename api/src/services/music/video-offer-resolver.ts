@@ -92,11 +92,12 @@ export function resolveVideoOfferForProvider(provider: string, recordingRef: str
  * Prefer higher video resolution first, then assumed video codec quality, then
  * the user's provider priority. Codec order is AV1 > VP9 > HEVC > h.264.
  *
- * ProviderItems do not store codec yet. Defaults come from live TrackFiles
- * (2026-07 Bastille/Bakermat library, height-only tiers):
- * - YouTube/YTM HD+ overwhelmingly AV1 (FHD 34/37, HD 3/3, UHD 8/8); SD sample
- *   too thin (2×av1 / 1×h264) so SD gets no assumed codec preference.
- * - Apple Music UHD mostly AV1; FHD/below mostly h.264 (not HEVC).
+ * ProviderItems do not store codec yet. Defaults from TrackFiles audit
+ * (2026-07 Bastille/Bakermat/Amy Winehouse), excluding YT-fallback-as-Apple
+ * rows (apple-music + AV1/VP9 video, or Opus audio — Apple delivers AAC):
+ * - YouTube/YTM HD+ overwhelmingly AV1; SD sample too thin → no assumption.
+ * - Apple Music QHD+/UHD → HEVC (ffprobe + gamdl: 1440p/4K require h.265);
+ *   FHD/below → h.264. (Rejected d0893da Apple UHD→AV1: those rows were YT.)
  * - TIDAL all sampled tiers h.264.
  */
 export function videoOfferQualityRank(quality: string | null | undefined): number {
@@ -152,8 +153,8 @@ export function videoOfferCodecRank(
         return 400;
     }
     if (providerId === "apple-music" || providerId === "apple") {
-        // UHD mostly AV1 on disk; FHD/below mostly h.264 (HEVC is rare).
-        return qualityRank >= 5 ? 400 : 100;
+        // QHD+/UHD → HEVC; FHD/below → h.264 (Apple does not ship AV1 MVs).
+        return qualityRank >= 4 ? 200 : 100;
     }
     if (providerId === "tidal") return 100;
     return 0;

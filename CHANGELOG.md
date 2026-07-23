@@ -5,9 +5,11 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Changed
-- Video offer codec defaults (provider×tier): **pending correction** — `d0893da`
-  Apple UHD→AV1 is rejected (Apple 4K is HEVC; AV1 “Apple” rows were YT
-  fallbacks). Do not treat that map as final for 2.6.6.
+- Video offer codec defaults (provider×tier, corrected after rejecting
+  `d0893da`): YouTube/YTM HD+ assumed AV1; YouTube SD unset (thin sample);
+  Apple Music QHD+/UHD assumed HEVC and FHD/below h.264; TIDAL h.264.
+  Re-audit excluded YT-fallback-as-Apple TrackFiles (AV1/VP9 or Opus audio on
+  apple-music rows); ffprobe confirmed real Apple 4K is HEVC.
 - SoundCloud matching prefers downloadable (progressive/plain-HLS) playlist
   coverage over DRM/SNIP shells: mixtape secondary search ranks by downloadable
   track count, then fewer DRM tracks in the covering set. DRM-only SoundCloud

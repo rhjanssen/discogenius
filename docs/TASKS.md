@@ -90,14 +90,13 @@ OPH (`375227dd-…`, EP + Mixtape/Street) ↔ `emmatad/sets/other-peoples-hearta
   YouTube assumed AV1@UHD / VP9 otherwise; Apple HEVC; TIDAL h.264.
 - shipped (2.6.5): **shallow** YouTube/YTM default flipped to AV1 at all
   resolutions. No full provider × quality-tier matrix audit in that tag.
-- live audit (2026-07-23, Bastille/Bakermat TrackFiles, height-only): YTM
-  FHD 34×av1 / 2×h264 / 1×vp9; HD 3×av1; UHD 8×av1; SD 2×av1 / 1×h264
-  (too thin); TIDAL all h.264; Apple UHD 9×av1 / 1×hevc; Apple FHD 15×h264
-  / 5×av1.
-- **rejected (`d0893da`)**: Apple UHD→AV1 was wrong — user confirmed Apple 4K
-  is HEVC/h.265; AV1 “Apple” TrackFiles were almost certainly YouTube fallback
-  downloads mislabeled. Do **not** ship 2.6.6 with `d0893da` as-is. Sibling
-  re-auditing (filter YT-fallback rows / live ffprobe) before release.
+- **rejected (`d0893da`)**: Apple UHD→AV1 from muddy TrackFiles (YT fallbacks
+  labeled apple-music).
+- corrected (2.6.6 pending): exclusion = apple-music rows with AV1/VP9 video
+  **or** Opus audio (Apple MVs are AAC). Clean sample: Apple UHD/QHD HEVC,
+  FHD/HD h.264; YTM HD+ AV1; TIDAL h.264. ffprobe Bastille Apple UHD
+  `1769245454` → hevc@3840×2160. Map: YTM HD+ AV1 / SD unset; Apple QHD+
+  HEVC else h.264; TIDAL h.264.
 
 ### Local-MB refresh concurrency redesign
 

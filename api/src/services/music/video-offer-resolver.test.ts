@@ -127,12 +127,20 @@ test("same-resolution ranking uses TrackFiles-backed provider×tier codec defaul
       { provider: "tidal", quality: "HD", provider_id: "t" },
     ) < 0,
   );
-  // Apple UHD assumed AV1 → beats TIDAL FHD on resolution first; at UHD beats h.264.
-  assert.equal(resolver.videoOfferCodecRank("apple-music", "UHD"), 400);
+  // Apple UHD/QHD assumed HEVC (not AV1) → beats TIDAL UHD h.264 at same res.
+  assert.equal(resolver.videoOfferCodecRank("apple-music", "UHD"), 200);
+  assert.equal(resolver.videoOfferCodecRank("apple-music", "QHD"), 200);
   assert.ok(
     resolver.compareVideoOffersByQualityThenProvider(
       { provider: "apple-music", quality: "UHD", provider_id: "a" },
       { provider: "tidal", quality: "UHD", provider_id: "t" },
+    ) < 0,
+  );
+  // YouTube UHD AV1 still beats Apple UHD HEVC at the same resolution.
+  assert.ok(
+    resolver.compareVideoOffersByQualityThenProvider(
+      { provider: "youtube-music", quality: "UHD", provider_id: "y" },
+      { provider: "apple-music", quality: "UHD", provider_id: "a" },
     ) < 0,
   );
 
