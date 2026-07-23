@@ -18,7 +18,17 @@ export interface DataGridColumn<T = any> {
     width: string;
     render: (item: T, index: number) => React.ReactNode;
     align?: "left" | "center" | "right";
+    /**
+     * Minimum width while interactively resizing (px). Defaults to 80.
+     * Do NOT reuse responsive hide breakpoints here — that made columns explode
+     * to 700–1100px on first drag.
+     */
     minWidth?: number;
+    /**
+     * Hide this column when the viewport is narrower than this many pixels.
+     * Separate from resize minWidth so hide breakpoints do not become resize floors.
+     */
+    hideBelowWidth?: number;
     className?: string;
     /** Media/thumbnail cells: no ellipsis clip, keep intrinsic artwork size. */
     media?: boolean;
@@ -331,7 +341,10 @@ function DataGridInner<T>(
     const visibleColumns = useMemo(
         () => disableResponsiveColumnHiding
             ? columns
-            : columns.filter((column) => !column.minWidth || viewportWidth >= column.minWidth),
+            : columns.filter((column) => {
+                const hideBelow = column.hideBelowWidth ?? column.minWidth;
+                return !hideBelow || viewportWidth >= hideBelow;
+            }),
         [columns, disableResponsiveColumnHiding, viewportWidth]
     );
 
@@ -438,11 +451,17 @@ function DataGridInner<T>(
 
         const headerCell = event.currentTarget.parentElement;
         const startX = event.clientX;
-        const startWidth = headerCell?.getBoundingClientRect().width ?? column.minWidth ?? 120;
-        const minWidth = Math.max(column.minWidth ?? 80, 56);
+        const startWidth = headerCell?.getBoundingClientRect().width ?? 120;
+        // Resize floor is only the explicit resize minWidth (or 80). Never treat
+        // hideBelowWidth / legacy large minWidth hide breakpoints as a floor.
+        const minWidth = Math.max(56, column.minWidth ?? 80);
+        const maxWidth = Math.max(minWidth, Math.round(window.innerWidth * 0.55));
 
         const handleMove = (moveEvent: PointerEvent) => {
-            const nextWidth = Math.max(minWidth, Math.round(startWidth + moveEvent.clientX - startX));
+            const nextWidth = Math.min(
+                maxWidth,
+                Math.max(minWidth, Math.round(startWidth + moveEvent.clientX - startX)),
+            );
             setColumnWidths((current) => ({ ...current, [column.key]: `${nextWidth}px` }));
         };
 
@@ -519,8 +538,11 @@ function DataGridInner<T>(
                                     : styles.cellLeft,
                             column.className
                         )}
-                        style={column.minWidth ? { ["--dg-min" as any]: `${column.minWidth}px` } : undefined}
+                        style={column.hideBelowWidth || column.minWidth
+                            ? { ["--dg-min" as any]: `${column.minWidth ?? 80}px` }
+                            : undefined}
                         data-dg-min={column.minWidth}
+                        data-dg-hide-below={column.hideBelowWidth}
                     >
                         {column.header}
                         {resizableColumns && !isMobile ? (

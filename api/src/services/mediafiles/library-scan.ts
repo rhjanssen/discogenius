@@ -9,6 +9,7 @@ import { ImportService } from "./import-service.js";
 import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
 import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
+import { matchAudioFileByMetadata } from "./library-scan-metadata-match.js";
 import { resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import {
     updateAlbumDownloadStatus,
@@ -762,7 +763,96 @@ export class DiskScanService {
                 if (existingPaths.has(resolved)) continue;
 
                 // New file on disk — attempt to match and index
-                const match = this.matchFileToMedia(filePath, artistId, key);
+                let match = this.matchFileToMedia(filePath, artistId, key);
+                let matchProvider: string | null = null;
+
+                // Stem/expected-path miss: rematch audio via tags + sibling album offers
+                // so Discogenius-organized files are not stuck in UnmappedFiles.
+                let unmappedReason: string | null = null;
+                let parsedForUnmapped: {
+                    detectedArtist: string;
+                    detectedAlbum: string | null;
+                    detectedTrack: string | null;
+                    metrics: ReturnType<typeof getUnmappedMediaMetrics>;
+                    relative: string;
+                    stats: fs.Stats;
+                    ext: string;
+                } | null = null;
+
+                if (!match && options?.trackUnmappedFiles !== false) {
+                    const ext = path.extname(resolved).toLowerCase();
+                    if (MEDIA_EXTENSIONS.has(ext)) {
+                        try {
+                            const stats = fs.statSync(resolved);
+                            const relative = path.relative(rootPath, resolved);
+                            const segments = relative.split(path.sep);
+                            let detectedArtist = segments.length >= 1 ? segments[0] : artist.name;
+                            let detectedAlbum = segments.length >= 2 ? segments[1] : null;
+                            let detectedTrack: string | null = null;
+                            let metrics = getUnmappedMediaMetrics(undefined, ext);
+                            let musicbrainzRecordingId: string | null = null;
+                            let isrc: string | string[] | null = null;
+
+                            try {
+                                const mm = await import("music-metadata");
+                                const metadata = await mm.parseFile(resolved, { duration: true, skipCovers: true });
+                                if (metadata.common.artist) detectedArtist = metadata.common.artist;
+                                if (metadata.common.album) detectedAlbum = metadata.common.album;
+                                if (metadata.common.title) detectedTrack = metadata.common.title;
+                                musicbrainzRecordingId = metadata.common.musicbrainz_recordingid || null;
+                                isrc = metadata.common.isrc || null;
+                                metrics = getUnmappedMediaMetrics(metadata.format, ext);
+                                if (!metrics.duration) {
+                                    const { probeMediaDuration } = await import("./audioUtils.js");
+                                    const durationFfprobe = await probeMediaDuration(resolved);
+                                    if (durationFfprobe) metrics.duration = Math.round(durationFfprobe);
+                                }
+                            } catch {
+                                // Fall back to folder guesses when tags are unreadable.
+                            }
+
+                            parsedForUnmapped = {
+                                detectedArtist,
+                                detectedAlbum,
+                                detectedTrack,
+                                metrics,
+                                relative,
+                                stats,
+                                ext,
+                            };
+
+                            const audioExtensions = new Set([".flac", ".m4a", ".mp3", ".aac", ".wav", ".ogg", ".opus", ".aif", ".aiff", ".wma", ".ape", ".mp2"]);
+                            if (audioExtensions.has(ext)) {
+                                const metadataMatch = matchAudioFileByMetadata(resolved, artistId, key, {
+                                    title: detectedTrack,
+                                    album: detectedAlbum,
+                                    artist: detectedArtist,
+                                    isrc,
+                                    musicbrainzRecordingId,
+                                    durationSeconds: metrics.duration || null,
+                                });
+                                if (metadataMatch?.duplicateOfExisting) {
+                                    unmappedReason = "Duplicate of an existing imported library file";
+                                } else if (metadataMatch) {
+                                    match = {
+                                        albumId: metadataMatch.albumId,
+                                        mediaId: metadataMatch.mediaId,
+                                        fileType: metadataMatch.fileType,
+                                        quality: metadataMatch.quality,
+                                    };
+                                    matchProvider = metadataMatch.provider;
+                                } else {
+                                    unmappedReason = "No matching provider item found";
+                                }
+                            } else {
+                                unmappedReason = "No matching provider item found";
+                            }
+                        } catch (e) {
+                            console.error(`[DiskScan] Failed to inspect unmatched file ${resolved}:`, e);
+                        }
+                    }
+                }
+
                 if (match) {
                     this.upsertLibraryFile({
                         artistId,
@@ -773,6 +863,7 @@ export class DiskScanService {
                         fileType: match.fileType,
                         quality: match.quality,
                         expectedPath: filePath,
+                        provider: matchProvider,
                     });
 
                     if (match.mediaId && (match.fileType === "track" || match.fileType === "video")) {
@@ -783,18 +874,24 @@ export class DiskScanService {
                                 SET monitored = 1,
                                     monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
                                     updated_at = CURRENT_TIMESTAMP
-                                WHERE id = (SELECT recording_id FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'video' AND provider_id = ?)
+                                WHERE id = (
+                                    SELECT recording_id FROM ProviderItems
+                                    WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                                    ORDER BY CASE WHEN ? IS NOT NULL AND provider = ? THEN 0 ELSE 1 END, updated_at DESC
+                                    LIMIT 1
+                                )
                                   AND (monitored_lock = 0 OR monitored_lock IS NULL)
-                            `).run(match.mediaId);
+                            `).run(match.mediaId, matchProvider, matchProvider);
                         }
 
                         if (match.albumId && match.fileType === "track") {
                             const providerItem = db.prepare(`
                                 SELECT release_group_mbid, library_slot
                                 FROM ProviderItems
-                                WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
+                                WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                                ORDER BY CASE WHEN ? IS NOT NULL AND provider = ? THEN 0 ELSE 1 END, updated_at DESC
                                 LIMIT 1
-                            `).get(match.albumId) as { release_group_mbid?: string; library_slot?: string } | undefined;
+                            `).get(match.albumId, matchProvider, matchProvider) as { release_group_mbid?: string; library_slot?: string } | undefined;
 
                             if (providerItem?.release_group_mbid) {
                                 db.prepare(`
@@ -817,42 +914,17 @@ export class DiskScanService {
 
                     // Cleanup any existing unmapped_file record for this path
                     db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
-                } else if (options?.trackUnmappedFiles !== false) {
-                    // No match found in Tidal database. Track this as an unmapped file.
+                } else if (options?.trackUnmappedFiles !== false && parsedForUnmapped && unmappedReason) {
                     try {
-                        const stats = fs.statSync(resolved);
-                        const ext = path.extname(resolved).toLowerCase();
-
-                        // Only track unrecognized media files (ignore images, text files, NFOs, etc.)
-                        if (!MEDIA_EXTENSIONS.has(ext)) continue;
-
-                        // Try to guess artist/album from folder structure
-                        const relative = path.relative(rootPath, resolved);
-                        const segments = relative.split(path.sep);
-                        let detectedArtist = segments.length >= 1 ? segments[0] : artist.name;
-                        let detectedAlbum = segments.length >= 2 ? segments[1] : null;
-                        let detectedTrack: string | null = null;
-                        let metrics = getUnmappedMediaMetrics(undefined, ext);
-
-                        try {
-                            const mm = await import("music-metadata");
-                            const metadata = await mm.parseFile(resolved, { duration: true, skipCovers: true });
-                            if (metadata.common.artist) detectedArtist = metadata.common.artist;
-                            if (metadata.common.album) detectedAlbum = metadata.common.album;
-                            if (metadata.common.title) detectedTrack = metadata.common.title;
-                            
-                            metrics = getUnmappedMediaMetrics(metadata.format, ext);
-                            
-                            if (!metrics.duration) {
-                                const { probeMediaDuration } = await import("./audioUtils.js");
-                                const durationFfprobe = await probeMediaDuration(resolved);
-                                if (durationFfprobe) metrics.duration = Math.round(durationFfprobe);
-                            }
-                        } catch (err) {
-                            // Ignore parsing errors and fall back to guessed metadata
-                        }
-
-                        // Explicit import discovery performs richer metadata extraction when needed.
+                        const {
+                            detectedArtist,
+                            detectedAlbum,
+                            detectedTrack,
+                            metrics,
+                            relative,
+                            stats,
+                            ext,
+                        } = parsedForUnmapped;
                         db.prepare(`
                             INSERT INTO UnmappedFiles (
                                 file_path, relative_path, library_root, filename, extension, file_size, duration,
@@ -873,6 +945,7 @@ export class DiskScanService {
                                 detected_album = COALESCE(excluded.detected_album, detected_album),
                                 detected_track = COALESCE(excluded.detected_track, detected_track),
                                 audio_quality = COALESCE(excluded.audio_quality, audio_quality),
+                                reason = excluded.reason,
                                 updated_at = CURRENT_TIMESTAMP
                         `).run(
                             resolved,
@@ -891,7 +964,7 @@ export class DiskScanService {
                             detectedAlbum,
                             detectedTrack,
                             metrics.audioQuality,
-                            "No matching provider item found"
+                            unmappedReason
                         );
                     } catch (e) {
                         console.error(`[DiskScan] Failed to track unmapped file ${resolved}:`, e);
@@ -1307,7 +1380,9 @@ export class DiskScanService {
                 ? (db.prepare(`
                     SELECT provider_album_id AS album_id
                     FROM ProviderItems
-                    WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = ?
+                    WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY updated_at DESC
+                    LIMIT 1
                   `).get(mediaId) as any)?.album_id?.toString() || null
                 : null;
             // A lyric sidecar lives in its album folder; when the track row carries no
@@ -1324,9 +1399,11 @@ export class DiskScanService {
             const mediaId = this.findMediaIdByStem(stem, artistId);
             if (mediaId) {
                 const media = db.prepare(`
-                    SELECT provider_album_id AS album_id, quality
+                    SELECT provider_album_id AS album_id, quality, provider
                     FROM ProviderItems
-                    WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = ?
+                    WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY updated_at DESC
+                    LIMIT 1
                 `).get(mediaId) as any;
                 return {
                     albumId: media?.album_id?.toString() || null,
@@ -1358,7 +1435,9 @@ export class DiskScanService {
                 const media = db.prepare(`
                     SELECT provider_album_id AS album_id, quality
                     FROM ProviderItems
-                    WHERE provider = 'tidal' AND entity_type = 'video' AND provider_id = ?
+                    WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY updated_at DESC
+                    LIMIT 1
                 `).get(mediaId) as any;
                 if (media) {
                     return {
@@ -1380,7 +1459,9 @@ export class DiskScanService {
                 const media = db.prepare(`
                     SELECT provider_album_id AS album_id
                     FROM ProviderItems
-                    WHERE provider = 'tidal' AND entity_type = 'video' AND provider_id = ?
+                    WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY updated_at DESC
+                    LIMIT 1
                 `).get(videoMediaId) as any;
                 return {
                     albumId: media?.album_id?.toString() || null,
@@ -1408,10 +1489,11 @@ export class DiskScanService {
                 SELECT pi.provider_id
                 FROM ProviderItems pi
                 JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
-                WHERE pi.provider = 'tidal'
-                  AND pi.entity_type IN ('track', 'video')
-                  AND pi.provider_id = ?
+                WHERE pi.entity_type IN ('track', 'video')
+                  AND CAST(pi.provider_id AS TEXT) = ?
                   AND a.id = ?
+                ORDER BY pi.updated_at DESC
+                LIMIT 1
             `).get(stem, artistId) as any;
             if (media) return String(media.provider_id);
         }
@@ -1423,10 +1505,11 @@ export class DiskScanService {
                 SELECT pi.provider_id
                 FROM ProviderItems pi
                 JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
-                WHERE pi.provider = 'tidal'
-                  AND pi.entity_type IN ('track', 'video')
-                  AND pi.provider_id = ?
+                WHERE pi.entity_type IN ('track', 'video')
+                  AND CAST(pi.provider_id AS TEXT) = ?
                   AND a.id = ?
+                ORDER BY pi.updated_at DESC
+                LIMIT 1
             `).get(idMatch[1], artistId) as any;
             if (media) return String(media.provider_id);
         }
@@ -1462,9 +1545,8 @@ export class DiskScanService {
               SELECT pi.provider_id AS id
               FROM ProviderItems pi
               JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
-              WHERE pi.provider = 'tidal'
-                AND pi.entity_type = 'video'
-                AND pi.provider_id = ?
+              WHERE pi.entity_type = 'video'
+                AND CAST(pi.provider_id AS TEXT) = ?
                 AND a.id = ?
               LIMIT 1
             `).get(embeddedMediaId, artistId) as { id: string } | undefined;
@@ -1478,8 +1560,7 @@ export class DiskScanService {
             FROM ProviderItems pi
             JOIN Recordings r ON r.id = pi.recording_id
             JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
-            WHERE pi.provider = 'tidal'
-              AND pi.entity_type = 'video'
+            WHERE pi.entity_type = 'video'
               AND a.id = ?
         `).all(artistId) as Array<{ id: string; title: string }>;
 
@@ -1498,8 +1579,7 @@ export class DiskScanService {
             SELECT DISTINCT pi.provider_id AS id, pi.title
             FROM ProviderItems pi
             JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
-            WHERE pi.provider = 'tidal'
-              AND pi.entity_type = 'album'
+            WHERE pi.entity_type = 'album'
               AND a.id = ?
         `).all(artistId) as Array<{ id: string; title: string }>;
 
@@ -1623,6 +1703,7 @@ export class DiskScanService {
         fileType: string;
         quality?: string | null;
         expectedPath?: string | null;
+        provider?: string | null;
     }) {
         LibraryFilesService.upsertLibraryFile({
             ...params,

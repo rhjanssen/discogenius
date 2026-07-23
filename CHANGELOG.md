@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Library scan rematches Discogenius-organized audio that lacks an embedded
+  provider id: tag title/duration (and MBID/ISRC when present) against sibling
+  album provider offers so missing album tracks become TrackFiles instead of
+  Unmapped Files. Rename leftovers that already have a TrackFile for the same
+  offer are classified as duplicates rather than “no matching provider item”.
+- Unmapped Files table: column resize no longer treats responsive hide
+  breakpoints (700–1100px) as resize floors, so Identified cannot explode to
+  most of the row; Properties auto-sizes to fit quality strings like
+  `24-BIT 44.1KHZ FLAC`.
 - Music-video album ranking prefers studio Album/EP/Single over compilations
   and live sets (larger compilations no longer beat a smaller studio album).
   Album associated-video strips only list videos whose preferred association

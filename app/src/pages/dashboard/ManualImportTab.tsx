@@ -283,8 +283,6 @@ const useStyles = makeStyles({
     qualityValue: {
         color: tokens.colorNeutralForeground1,
         minWidth: 0,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
     },
     reasonText: {
@@ -874,7 +872,8 @@ const ManualImportTab = () => {
                     {getSortLabel('filename', 'Filename / Path')}
                 </button>
             ),
-            width: 'minmax(140px, 1.2fr)',
+            width: 'minmax(140px, 1.15fr)',
+            minWidth: 120,
             wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
@@ -897,7 +896,9 @@ const ManualImportTab = () => {
                     {getSortLabel('detected_artist', 'Identified')}
                 </button>
             ),
-            width: 'minmax(120px, 0.9fr)',
+            width: 'minmax(140px, 1fr)',
+            minWidth: 120,
+            hideBelowWidth: 900,
             wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
@@ -916,7 +917,6 @@ const ManualImportTab = () => {
                     </div>
                 </div>
             ),
-            minWidth: 900,
         },
         {
             key: 'quality',
@@ -925,7 +925,10 @@ const ManualImportTab = () => {
                     {getSortLabel('audio_quality', 'Properties')}
                 </button>
             ),
-            width: 'minmax(100px, 0.55fr)',
+            // Fit common quality strings like "24-BIT 44.1KHZ FLAC" without truncation.
+            width: 'minmax(188px, max-content)',
+            minWidth: 168,
+            hideBelowWidth: 1100,
             wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
@@ -944,7 +947,6 @@ const ManualImportTab = () => {
                     </div>
                 </div>
             ),
-            minWidth: 1100,
         },
         {
             key: 'reason',
@@ -953,7 +955,9 @@ const ManualImportTab = () => {
                     {getSortLabel('reason', 'Reason')}
                 </button>
             ),
-            width: 'minmax(120px, 0.75fr)',
+            width: 'minmax(140px, 0.85fr)',
+            minWidth: 120,
+            hideBelowWidth: 700,
             wrap: true,
             className: styles.wrappingCell,
             render: (row) => (
@@ -961,12 +965,12 @@ const ManualImportTab = () => {
                     {getReasonText(row)}
                 </Text>
             ),
-            minWidth: 700,
         },
         {
             key: 'actions',
             header: 'Actions',
             width: '88px',
+            minWidth: 88,
             align: 'right',
             className: mergeClasses(styles.wrappingCell, styles.actionCell),
             render: (row) => renderActionButtons(row),
@@ -1099,7 +1103,7 @@ const ManualImportTab = () => {
                             items={sortedRows}
                             className={styles.tableGrid}
                             resizableColumns
-                            columnResizeStorageKey="discogenius-unmapped-files-column-widths-v2"
+                            columnResizeStorageKey="discogenius-unmapped-files-column-widths-v3"
                             getRowKey={(row) => row.id}
                             getRowClassName={(row) => row.ignored ? styles.rowIgnored : undefined}
                             selection={{
