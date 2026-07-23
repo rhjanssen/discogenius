@@ -362,7 +362,7 @@ test("buildAudioTagWriteMap expands release_type writeAliases for FLAC/Vorbis", 
       key: "release_type",
       label: "Release Type",
       ffmpegKey: "release_type",
-      targetValue: "album; ep; live",
+      targetValue: "album; live",
       writeAliases: [
         "RELEASETYPE",
         "MUSICBRAINZ_ALBUMTYPE",
@@ -371,13 +371,13 @@ test("buildAudioTagWriteMap expands release_type writeAliases for FLAC/Vorbis", 
   ];
 
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), {
-    RELEASETYPE: "album; ep; live",
+    RELEASETYPE: "album; live",
   });
 
   // Without extension (generic fallback), both writeAliases are emitted:
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags), {
-    release_type: "album; ep; live",
-    RELEASETYPE: "album; ep; live",
-    MUSICBRAINZ_ALBUMTYPE: "album; ep; live",
+    release_type: "album; live",
+    RELEASETYPE: "album; live",
+    MUSICBRAINZ_ALBUMTYPE: "album; live",
   });
 });

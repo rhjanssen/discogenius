@@ -2061,7 +2061,6 @@ export class AudioTagService {
 
       let releaseType: string | null = null;
       if (row.release_primary_type) {
-        const primary = row.release_primary_type.toLowerCase();
         let secondaryList: string[] = [];
         if (row.release_secondary_types) {
           try {
@@ -2072,17 +2071,14 @@ export class AudioTagService {
             // ignore
           }
         }
-        // If secondary release types exist (e.g. live, compilation, soundtrack, remix)
-        // and primary is not "album", prepend "album" so Plex and media scanners
-        // categorize the release properly (e.g. "album; ep; live" or "album; live").
-        const typeSet = new Set<string>();
-        if (secondaryList.length > 0 && primary !== "album") {
-          typeSet.add("album");
-        }
-        typeSet.add(primary);
-        for (const sec of secondaryList) {
-          typeSet.add(sec);
-        }
+        // When secondary release types exist (e.g. live, compilation, soundtrack, remix),
+        // use "album" as the primary type so Plex and media servers categorize the
+        // release properly into categories (e.g. "album; live" instead of "ep; live").
+        const primary = secondaryList.length > 0
+          ? "album"
+          : row.release_primary_type.toLowerCase();
+
+        const typeSet = new Set<string>([primary, ...secondaryList]);
         releaseType = Array.from(typeSet).join("; ");
       }
       if (releaseType) {
