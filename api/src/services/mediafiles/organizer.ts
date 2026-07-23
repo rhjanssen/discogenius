@@ -2430,12 +2430,13 @@ export class OrganizerService {
         // Saved sidecar artwork always uses the highest available resolution,
         // independent of metadata.album_cover_resolution (which only caps the
         // UI's cached display thumbnail — see media-cover-service.ts).
-        // A cover fetch must never fail an import whose audio is already tracked:
-        // downloadAlbumCover falls back to the DEFAULT provider, which for a
-        // non-default-provider album id (e.g. an Apple-only album) 404s with
-        // "Album [<id>] not found". Swallow it — the backfill retries later.
+        // Pass the import provider so a non-default-provider album (e.g. an
+        // Apple-only album while the default provider is TIDAL) resolves against
+        // the correct provider instead of 404ing on the default. A cover fetch
+        // must still never fail an import whose audio is already tracked — the
+        // scheduled library-metadata backfill retries a genuine miss later.
         try {
-          await downloadAlbumCover(albumIds[0], "origin", albumCoverPath);
+          await downloadAlbumCover(albumIds[0], "origin", albumCoverPath, { provider: streamingProviderId });
           if (fs.existsSync(albumCoverPath)) {
             this.upsertLibraryFile({
               artistId,

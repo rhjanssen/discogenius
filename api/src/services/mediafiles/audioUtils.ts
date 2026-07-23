@@ -1,5 +1,6 @@
 import * as mm from 'music-metadata';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'path';
 import axios from 'axios';
 import { type Readable } from 'stream';
@@ -13,7 +14,7 @@ const DEFAULT_FFMPEG_BINARY = IS_WINDOWS ? "ffmpeg.exe" : "ffmpeg";
 const DEFAULT_FFPROBE_BINARY = IS_WINDOWS ? "ffprobe.exe" : "ffprobe";
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".mkv", ".mov", ".avi", ".ts", ".webm"]);
 const VIDEO_THUMBNAIL_EMBED_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
-const AUDIO_COVER_EMBED_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".flac", ".mp3", ".ogg", ".oga", ".opus"]);
+export const AUDIO_COVER_EMBED_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".flac", ".mp3", ".ogg", ".oga", ".opus"]);
 const MUTAGEN_MP4_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".m4v"]);
 const SPATIAL_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
 const SPATIAL_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
@@ -628,6 +629,63 @@ export async function embedAudioCover(filePath: string, coverPath: string): Prom
     }
 
     return runMutagenBridge(['cover', filePath, coverPath], filePath);
+}
+
+/**
+ * Extract the bytes of the picture currently embedded in an audio file, or null
+ * when there is none / extraction fails. Copies the attached-picture stream
+ * verbatim (no re-encode) so the bytes match what a verbatim embed stored.
+ */
+async function readEmbeddedAudioCoverBytes(filePath: string): Promise<Buffer | null> {
+    if (!fs.existsSync(filePath)) {
+        return null;
+    }
+    if ((await getAttachedPictureVideoStreamIndexes(filePath)).length === 0) {
+        return null;
+    }
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'discogenius-cover-diff-'));
+    const outPath = path.join(tempDir, 'embedded.img');
+    try {
+        const ok = await new Promise<boolean>((resolve) => {
+            const child = spawn(resolveFfmpegBinary(), [
+                '-y', '-v', 'error', '-i', filePath,
+                '-an', '-map', '0:v:0', '-c', 'copy', '-frames:v', '1', '-f', 'image2', outPath,
+            ], { stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true });
+            child.on('error', () => resolve(false));
+            child.on('close', (code) => resolve(code === 0));
+        });
+        return ok && fs.existsSync(outPath) ? fs.readFileSync(outPath) : null;
+    } catch {
+        return null;
+    } finally {
+        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+}
+
+/**
+ * True when the file already carries an embedded cover byte-identical to
+ * coverPath, so the retag can skip a redundant re-embed (the cover analogue of
+ * the audio-tag diff: only rewrite when the content actually differs). Any
+ * probe/extract failure returns false so the caller embeds rather than assuming
+ * a match.
+ */
+export async function embeddedAudioCoverMatches(filePath: string, coverPath: string): Promise<boolean> {
+    const extension = path.extname(filePath).toLowerCase();
+    if (!AUDIO_COVER_EMBED_EXTENSIONS.has(extension) || !fs.existsSync(coverPath)) {
+        return false;
+    }
+    const current = await readEmbeddedAudioCoverBytes(filePath);
+    if (!current || current.length === 0) {
+        return false;
+    }
+    let target: Buffer;
+    try {
+        target = fs.readFileSync(coverPath);
+    } catch {
+        return false;
+    }
+    const hash = (buffer: Buffer): string => crypto.createHash('sha256').update(buffer).digest('hex');
+    return hash(current) === hash(target);
 }
 
 export async function embedVideoThumbnail(videoPath: string, thumbnailPath: string): Promise<boolean> {

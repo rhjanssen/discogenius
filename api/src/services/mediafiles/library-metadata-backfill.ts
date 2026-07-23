@@ -13,7 +13,7 @@ import {
     saveLyricsFile,
     saveVideoNfoFile,
 } from "./metadata-files.js";
-import { embedVideoThumbnail, hasEmbeddedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
+import { AUDIO_COVER_EMBED_EXTENSIONS, embedAudioCover, embeddedAudioCoverMatches, embedVideoThumbnail, hasEmbeddedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
 import { LibraryFilesService } from "./library-files.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
@@ -307,6 +307,7 @@ class LibraryMetadataBackfillService {
                                 String(album.id),
                                 "origin",
                                 coverPath,
+                                { provider: album.provider },
                             );
                             if (fs.existsSync(coverPath)) {
                                 this.upsertLibraryFile({
@@ -324,6 +325,28 @@ class LibraryMetadataBackfillService {
                                     librarySlot,
                                 });
                                 result.downloaded++;
+
+                                // A previously-missing cover.jpg means this album's
+                                // audio was likely imported before the cover fetch
+                                // succeeded (or via the pre-fix un-hinted resolve), so
+                                // its files can still carry stale/foreign embedded art.
+                                // Re-embed the freshly-written cover into any diverging
+                                // files in the folder — bounded to the missing-cover
+                                // case, diff-gated, and best effort so it never fails
+                                // the backfill.
+                                const qualityConfig = getConfigSection("quality") as { embed_cover?: boolean };
+                                if (qualityConfig?.embed_cover !== false) {
+                                    let coverFolderEntries: string[] = [];
+                                    try { coverFolderEntries = fs.readdirSync(albumDir); } catch { /* dir vanished */ }
+                                    for (const entry of coverFolderEntries) {
+                                        if (!AUDIO_COVER_EMBED_EXTENSIONS.has(path.extname(entry).toLowerCase())) continue;
+                                        const audioPath = path.join(albumDir, entry);
+                                        try {
+                                            if (await embeddedAudioCoverMatches(audioPath, coverPath)) continue;
+                                            await embedAudioCover(audioPath, coverPath);
+                                        } catch { /* best effort: never fail backfill on a cover re-embed */ }
+                                    }
+                                }
                             } else {
                                 result.failed++;
                             }

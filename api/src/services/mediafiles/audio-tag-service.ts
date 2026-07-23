@@ -4,7 +4,7 @@ import path from "node:path";
 import * as mm from "music-metadata";
 import { db } from "../../database.js";
 import { type MetadataConfig, type WriteAudioTagsPolicy, getConfigSection } from "../config/config.js";
-import { embedAudioCover, writeMetadata, removeAllTags } from "./audioUtils.js";
+import { embedAudioCover, embeddedAudioCoverMatches, writeMetadata, removeAllTags } from "./audioUtils.js";
 import {
   type AcoustIdLookupResult,
   type MusicBrainzRecording,
@@ -257,6 +257,13 @@ async function resolvePreferredEmbeddedCover(
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
+      // Prefer the album-folder cover.jpg the organizer already wrote: it is the
+      // same canonical (or provider-preferred, per artwork_preference) full-res
+      // image, resolved once per album. Reusing it keeps the embedded art and the
+      // sidecar byte-identical and avoids a redundant origin re-fetch. Only fetch
+      // when the sidecar is genuinely absent, so a hybrid import still overwrites
+      // a foreign source-edition cover with the destination album's art.
+      if (fs.existsSync(sidecarPath)) return sidecarPath;
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-embedded-cover-"));
       context.temporaryDirectories.push(tempDir);
       const tempCover = path.join(tempDir, "cover.jpg");
@@ -266,7 +273,10 @@ async function resolvePreferredEmbeddedCover(
       } catch (error) {
         console.warn(`[AudioCover] Failed to resolve preferred artwork for ${albumId}:`, error);
       }
-      return fs.existsSync(sidecarPath) ? sidecarPath : null;
+      // No canonical/provider cover and no sidecar: return null. The caller logs
+      // this so a file left carrying foreign download-embedded art is visible
+      // instead of silently kept, and the metadata backfill retries the cover.
+      return null;
     })();
     context.byAlbum.set(key, pending);
   }
@@ -2354,6 +2364,10 @@ export class AudioTagService {
       if (quality.embed_cover === false) return false;
       const coverPath = await resolvePreferredEmbeddedCover(row, config, mediaPath, embeddedCoverContext);
       if (!coverPath) return false;
+      // Only rewrite when the embedded art actually differs from the target
+      // (the cover analogue of the audio-tag diff), so an already-correct file
+      // is left untouched instead of needlessly re-muxed.
+      if (await embeddedAudioCoverMatches(mediaPath, coverPath)) return false;
       const embedded = await embedAudioCover(mediaPath, coverPath);
       if (!embedded) {
         result.errors.push({ id, error: "Embedded cover write failed" });
