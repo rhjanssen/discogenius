@@ -1207,6 +1207,7 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
             rr.source_recording_id AS video_id,
             rr.target_recording_id AS audio_id,
             rr.source AS relation_source,
+            rr.data AS relation_data,
             audio.title AS audio_title,
             audio.mbid AS mbid
         FROM RecordingRelations rr
@@ -1219,6 +1220,7 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         video_id: number;
         audio_id: number;
         relation_source: string | null;
+        relation_data: string | null;
         audio_title: string | null;
         mbid: string | null;
     }>;
@@ -1280,6 +1282,22 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         const existing = relationsByVideo.get(row.recording_id) ?? [];
 
         for (const relation of existing) {
+            let relationMethod = "";
+            try {
+                const parsed = JSON.parse(String(relation.relation_data || "{}"));
+                relationMethod = String(parsed?.method || "").trim();
+            } catch {
+                relationMethod = "";
+            }
+            // Explicit provider related-track / ATV↔OMV counterpart links are
+            // authoritative — do not drop them for missing studio-album rows
+            // (common before Tracks are hydrated, and in unit fixtures).
+            if (
+                relationMethod === "provider-video-related-track"
+                || relationMethod === "yt-atv-omv-counterpart"
+            ) {
+                continue;
+            }
             const incompatibleTitle = !videoAudioTitlesCompatible(videoTitle, relation.audio_title);
             const mainOntoLiveTitle = isMainVideoVariant(videoVariant)
                 && isLivePerformanceTitle(relation.audio_title);

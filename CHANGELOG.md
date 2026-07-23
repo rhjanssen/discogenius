@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.6] - 2026-07-23
+
+### Fixed
+- Horizontal carousel scroll restore on artist singles/videos and album
+  associated-video strips after Back navigation (browser-verified on Bastille).
+- Video→audio heal keeps explicit provider `related_track` and ATV↔OMV
+  counterpart links instead of dropping them when studio-album membership is
+  not yet hydrated.
+
 ### Changed
 - Video offer codec defaults (provider×tier, corrected after rejecting
   `d0893da`): YouTube/YTM HD+ assumed AV1; YouTube SD unset (thin sample);
@@ -21,6 +30,10 @@ All notable changes to this project are documented in this file.
   drops DRM/SNIP/phantom-HLS when `policy` + `media.transcodings` are present.
   Auth status notes that Go+ does not unlock major-label downloads for
   Discogenius.
+
+### Docs
+- Partial video-stream / Chromaprint grouping feasibility deferred
+  (`docs/VIDEO_CONTENT_MATCHING_FEASIBILITY.md`); reject refresh-time sampling.
 
 ## [2.6.5] - 2026-07-23
 

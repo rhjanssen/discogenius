@@ -230,8 +230,8 @@ function candidateHasNonLiveAlbum(row: AudioRecordingCandidateRow): boolean {
 }
 
 function candidateStudioRank(row: AudioRecordingCandidateRow): number {
-    if (Boolean(row.has_studio_album)) return 2;
-    if (Boolean(row.has_non_live_album)) return 1;
+    if (row.has_studio_album) return 2;
+    if (row.has_non_live_album) return 1;
     return 0;
 }
 
