@@ -170,9 +170,14 @@ export function parseIsrcValues(value: unknown): string[] {
     return [...values];
 }
 
-/** Live / performance cut from title text (not album secondary types). */
+/**
+ * Live / performance cut from title text (not album secondary types).
+ * Includes TV/session cues that omit the word "live" (Later…, Hootenanny,
+ * Porchester Hall, Mercury Prize) so main OMVs do not attach to those cuts.
+ */
 export function isLivePerformanceTitle(title: string | null | undefined): boolean {
-    return /\blive\b|\bperformance\b|\bmtv\s+unplugged\b/i.test(String(title || ""));
+    return /\blive\b|\bperformance\b|\bmtv\s+unplugged\b|\blater\b.{0,40}\bjools\b|\bjools\s+holland\b|\bhootenanny\b|\bporchester\b|\bmercury\s+prize\b|\bpete\s+mitchell\b/i
+        .test(String(title || ""));
 }
 
 /**

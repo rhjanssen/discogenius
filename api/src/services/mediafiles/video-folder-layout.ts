@@ -46,6 +46,7 @@ export function canVideoPlaceInline(videoRecordingId: string | number | null | u
     SELECT 1 AS ok
     FROM RecordingRelations rr
     JOIN Recordings audio ON audio.id = rr.target_recording_id
+    JOIN Recordings video ON video.id = rr.source_recording_id
     LEFT JOIN TrackFiles tf
       ON tf.recording_id = rr.target_recording_id
      AND tf.file_type = 'track'
@@ -55,8 +56,27 @@ export function canVideoPlaceInline(videoRecordingId: string | number | null | u
     LEFT JOIN AlbumReleases track_rg
       ON track_rg.id = t.album_release_id
       OR (t.release_mbid IS NOT NULL AND track_rg.mbid = t.release_mbid)
+    LEFT JOIN Albums album
+      ON album.mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
     WHERE CAST(rr.source_recording_id AS TEXT) = CAST(? AS TEXT)
       AND rr.relation_type = 'provider_video_for'
+      AND (
+        COALESCE(NULLIF(TRIM(video.video_variant), ''), 'video') NOT IN ('video', 'official')
+        OR (
+          LOWER(COALESCE(audio.title, '')) NOT LIKE '%live%'
+          AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%performance%'
+          AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%mtv unplugged%'
+          AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%jools holland%'
+          AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%hootenanny%'
+          AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%porchester%'
+          AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%mercury prize%'
+          AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%pete mitchell%'
+          AND NOT (
+            LOWER(COALESCE(audio.title, '')) LIKE '%later%'
+            AND LOWER(COALESCE(audio.title, '')) LIKE '%jools%'
+          )
+        )
+      )
       AND EXISTS (
         SELECT 1
         FROM ReleaseGroupSlots rgs
@@ -64,7 +84,15 @@ export function canVideoPlaceInline(videoRecordingId: string | number | null | u
           AND rgs.slot = 'stereo'
           AND rgs.monitored = 1
       )
-    ORDER BY rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
+    ORDER BY
+      CASE
+        WHEN LOWER(COALESCE(album.secondary_types, '')) LIKE '%"live"%' THEN 3
+        WHEN LOWER(COALESCE(album.secondary_types, '')) LIKE '%"compilation"%' THEN 2
+        WHEN LOWER(COALESCE(album.primary_type, '')) IN ('album', 'ep', 'single') THEN 0
+        ELSE 1
+      END ASC,
+      COALESCE(track_rg.track_count, 0) DESC,
+      rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
     LIMIT 1
   `).get(recordingId) as { ok?: number } | undefined;
 

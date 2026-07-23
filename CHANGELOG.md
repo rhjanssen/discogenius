@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Music-video album ranking prefers studio Album/EP/Single over compilations
+  and live sets (larger compilations no longer beat a smaller studio album).
+  Album associated-video strips only list videos whose preferred association
+  is that release group, so studio OMVs that also appear as DVD tracks on a
+  live compilation (e.g. Amy Winehouse “Back to Black” on *At the BBC*) stay
+  off the live album strip. Main OMVs no longer follow Later…/Hootenanny/
+  Porchester-style session audio for Appears On / inline placement.
 - Album page load no longer re-syncs MusicBrainz release groups or live-fetches
   provider tracklists / editorial text on every navigation. Detail GETs are
   DB-first (Lidarr/Jellyfin pattern); provider track offers come from

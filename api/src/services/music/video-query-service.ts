@@ -11,6 +11,7 @@ import { videoCoverLocalUrl, albumCoverLocalUrl, imageContainerFromImagesColumn 
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
 import { getConfigSection } from "../config/config.js";
 import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
+import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "./video-album-association.js";
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
 
@@ -830,7 +831,18 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
   for (const row of linkedViaRelation) upsert(row);
   for (const row of onAlbumVideoTracks) upsert(row);
 
-  return Array.from(byId.values()).sort((left, right) => {
+  // Album pages only show videos whose preferred association is this RG.
+  // Studio OMVs that also appear as DVD tracks on a Live/Compilation set stay
+  // on Appears On (ranked below studio) but do not clutter the live album strip.
+  const preferredForRg: AlbumAssociatedVideoContract[] = [];
+  for (const video of byId.values()) {
+    const preferred = getVideoAlbumRefs(String(video.id))[0];
+    if (preferred && String(preferred.id) === rgMbid) {
+      preferredForRg.push(video);
+    }
+  }
+
+  return preferredForRg.sort((left, right) => {
     const leftVol = left.volume_number ?? 0;
     const rightVol = right.volume_number ?? 0;
     if (leftVol !== rightVol) return leftVol - rightVol;
@@ -929,11 +941,29 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
  * audio relation instead.
  *
  * Track/disc position prefers the monitored/selected release when present,
- * then richer multi-disc editions, then earliest date. Wanted albums
- * (`ReleaseGroupSlots.monitored`) sort first, then largest track count
- * (prefer the full album over a single/EP that shares the audio cut).
+ * then richer multi-disc editions, then earliest date. Preferred album order:
+ * studio Album/EP/Single > other > compilation > live; then wanted/monitored;
+ * then largest track count (never let a larger compilation beat a studio album).
  */
 function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
+  // Main OMVs must not pull Appears On membership from live/TV-session audio
+  // via provider_video_for / music_video_for (Later…, Hootenanny, Porchester…).
+  // Live/lyric variants may still follow those links. Video-as-track membership
+  // on a live compilation remains (ranked below studio).
+  const liveAudioTitleSql = `
+    LOWER(COALESCE(audio.title, '')) LIKE '%live%'
+    OR LOWER(COALESCE(audio.title, '')) LIKE '%performance%'
+    OR LOWER(COALESCE(audio.title, '')) LIKE '%mtv unplugged%'
+    OR LOWER(COALESCE(audio.title, '')) LIKE '%jools holland%'
+    OR LOWER(COALESCE(audio.title, '')) LIKE '%hootenanny%'
+    OR LOWER(COALESCE(audio.title, '')) LIKE '%porchester%'
+    OR LOWER(COALESCE(audio.title, '')) LIKE '%mercury prize%'
+    OR LOWER(COALESCE(audio.title, '')) LIKE '%pete mitchell%'
+    OR (
+      LOWER(COALESCE(audio.title, '')) LIKE '%later%'
+      AND LOWER(COALESCE(audio.title, '')) LIKE '%jools%'
+    )
+  `;
   const videoOrRelatedAudio = `
     CAST(t.recording_id AS TEXT) = CAST(? AS TEXT)
     OR t.recording_mbid = (
@@ -943,9 +973,15 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
     OR t.recording_id IN (
       SELECT rr.target_recording_id
       FROM RecordingRelations rr
+      JOIN Recordings audio ON audio.id = rr.target_recording_id
+      JOIN Recordings video ON video.id = rr.source_recording_id
       WHERE CAST(rr.source_recording_id AS TEXT) = CAST(? AS TEXT)
         AND rr.relation_type IN ('provider_video_for', 'music_video_for')
         AND rr.target_recording_id IS NOT NULL
+        AND (
+          COALESCE(NULLIF(TRIM(video.video_variant), ''), 'video') NOT IN ('video', 'official')
+          OR NOT (${liveAudioTitleSql})
+        )
     )
   `;
   // Prefer a track row that belongs to the video recording itself; fall back to
@@ -1062,10 +1098,7 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       WHERE ${videoOrRelatedAudio}
     )
     ORDER BY
-      CASE
-        WHEN LOWER(COALESCE(a.secondary_types, '')) LIKE '%"live"%' THEN 1
-        ELSE 0
-      END ASC,
+      ${VIDEO_ALBUM_ASSOCIATION_KIND_SQL} ASC,
       wanted DESC,
       COALESCE((
         SELECT COALESCE(

@@ -485,6 +485,77 @@ test("video detail appears-on follows related audio recordings and prefers monit
   assert.equal(detail?.albums?.[1]?.track_number, 2);
 });
 
+test("video detail appears-on prefers studio album over larger monitored live compilation", () => {
+  const artist = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-studio-pref', 'Studio Pref Artist')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, mbid, name)
+    VALUES ('artist-studio-pref', 'artist-studio-pref', 'Studio Pref Artist')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types)
+    VALUES
+      ('rg-studio-pref', 'artist-studio-pref', 'Back to Black', 'Album', '[]'),
+      ('rg-live-comp', 'artist-studio-pref', 'At the BBC', 'Album', '["Compilation","Live"]')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
+    VALUES
+      ('rel-studio-pref', 'rg-studio-pref', 'artist-studio-pref', 'Back to Black', '2006-01-01', 11, 1),
+      ('rel-live-comp', 'rg-live-comp', 'artist-studio-pref', 'At the BBC', '2012-01-01', 52, 4)
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
+    ) VALUES
+      ('artist-studio-pref', 'rg-studio-pref', 'stereo', 0, 'rel-studio-pref'),
+      ('artist-studio-pref', 'rg-live-comp', 'stereo', 1, 'rel-live-comp')
+  `).run();
+
+  const audio = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status
+    ) VALUES ('rec-studio-pref-audio', ?, 'artist-studio-pref', 'Back to Black', 0, 'complete')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const video = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video, video_variant, metadata_status, monitored
+    ) VALUES ('rec-studio-pref-video', ?, 'artist-studio-pref', 'Back to Black', 1, 'video', 'complete', 1)
+    RETURNING id
+  `).get(artist.id) as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, recording_id,
+      medium_position, position, number, title
+    ) VALUES
+      ('track-studio-pref', 'rel-studio-pref', 'rec-studio-pref-audio', ?, 1, 5, '5', 'Back to Black'),
+      ('track-live-comp-video', 'rel-live-comp', 'rec-studio-pref-video', ?, 4, 8, '8', 'Back to Black')
+  `).run(audio.id, video.id);
+
+  dbModule.db.prepare(`
+    INSERT INTO RecordingRelations (
+      source_recording_id, target_recording_id, relation_type, source, confidence
+    ) VALUES (?, ?, 'provider_video_for', 'tidal', 0.84)
+  `).run(video.id, audio.id);
+
+  const detail = videoQueryModule.getVideoDetail(String(video.id));
+  assert.equal(detail?.albums?.length, 2);
+  assert.equal(detail?.albums?.[0]?.id, "rg-studio-pref", "studio album outranks larger monitored live compilation");
+  assert.equal(detail?.albums?.[1]?.id, "rg-live-comp");
+
+  const onStudio = videoQueryModule.getAlbumAssociatedVideos("rg-studio-pref");
+  assert.equal(onStudio.length, 1);
+  assert.equal(onStudio[0]?.id, String(video.id));
+
+  const onLiveComp = videoQueryModule.getAlbumAssociatedVideos("rg-live-comp");
+  assert.equal(onLiveComp.length, 0, "live compilation strip must not list studio OMV that prefers the studio album");
+});
+
 test("video detail appears-on prefers selected multi-disc release over earliest single", () => {
   const artist = dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)

@@ -108,6 +108,47 @@ test("main OMV rejects live-titled audio on artist-wide studio preference", () =
   assert.equal(match?.id, 2, "live-titled audio must lose to studio even when duration is closer");
 });
 
+test("main OMV rejects Later/Jools/Hootenanny session audio without the word live", () => {
+  const match = findRelatedAudioRecordingForVideo(
+    { title: "Stronger Than Me", duration: 232 },
+    [
+      {
+        id: 1,
+        mbid: "jools",
+        title: "Stronger Than Me (Later With Jools Holland / Nov 2003)",
+        length_ms: 231_000,
+        has_non_live_album: 1,
+        has_studio_album: 1,
+      },
+      {
+        id: 2,
+        mbid: "studio",
+        title: "Stronger Than Me",
+        length_ms: 230_000,
+        has_non_live_album: 1,
+        has_studio_album: 1,
+      },
+    ],
+    { videoVariant: "video", preferStudioAudio: true },
+  );
+  assert.equal(match?.id, 2);
+  assert.equal(
+    findRelatedAudioRecordingForVideo(
+      { title: "Teach Me Tonight", duration: 198 },
+      [{
+        id: 9,
+        mbid: "hoot",
+        title: "Teach Me Tonight (Hootenanny / Dec 2004)",
+        length_ms: 198_000,
+        has_non_live_album: 1,
+        has_studio_album: 1,
+      }],
+      { videoVariant: "video", preferStudioAudio: true },
+    ),
+    null,
+  );
+});
+
 test("Abbey Road live does not attach to Unit 24 venue audio", () => {
   assert.equal(
     liveVenueSignaturesCompatible(

@@ -786,11 +786,14 @@ export class LibraryFilesService {
                     AND rgs.monitored = 1
                 ) THEN 1 ELSE 0 END AS stereo_monitored,
                 CASE
-                  WHEN LOWER(COALESCE(album.secondary_types, '')) LIKE '%"live"%' THEN 1
-                  ELSE 0
-                END AS is_live_album
+                  WHEN LOWER(COALESCE(album.secondary_types, '')) LIKE '%"live"%' THEN 3
+                  WHEN LOWER(COALESCE(album.secondary_types, '')) LIKE '%"compilation"%' THEN 2
+                  WHEN LOWER(COALESCE(album.primary_type, '')) IN ('album', 'ep', 'single') THEN 0
+                  ELSE 1
+                END AS album_kind_rank
               FROM RecordingRelations rr
               JOIN Recordings audio ON audio.id = rr.target_recording_id
+              JOIN Recordings video ON video.id = rr.source_recording_id
               LEFT JOIN TrackFiles tf
                 ON tf.recording_id = rr.target_recording_id
                AND tf.file_type = 'track'
@@ -802,7 +805,24 @@ export class LibraryFilesService {
                 ON album.mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
               WHERE rr.source_recording_id = ?
                 AND rr.relation_type IN ('provider_video_for', 'music_video_for')
-              ORDER BY stereo_monitored DESC, is_live_album ASC, track_count DESC, rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
+                AND (
+                  COALESCE(NULLIF(TRIM(video.video_variant), ''), 'video') NOT IN ('video', 'official')
+                  OR (
+                    LOWER(COALESCE(audio.title, '')) NOT LIKE '%live%'
+                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%performance%'
+                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%mtv unplugged%'
+                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%jools holland%'
+                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%hootenanny%'
+                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%porchester%'
+                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%mercury prize%'
+                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%pete mitchell%'
+                    AND NOT (
+                      LOWER(COALESCE(audio.title, '')) LIKE '%later%'
+                      AND LOWER(COALESCE(audio.title, '')) LIKE '%jools%'
+                    )
+                  )
+                )
+              ORDER BY album_kind_rank ASC, stereo_monitored DESC, track_count DESC, rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
               LIMIT 1
             `).get(videoRecordingId) as {
               audio_recording_id?: number;
