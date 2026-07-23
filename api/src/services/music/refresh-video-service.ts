@@ -2,6 +2,7 @@ import { db } from "../../database.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { RefreshOptions } from "./scan-types.js";
 import { videoComparableTitle } from "../mediafiles/import-matching-utils.js";
+import { livePerformanceTitleSql } from "./live-performance-markers.js";
 import {
     buildVideoIdentity,
     durationMs,
@@ -82,8 +83,42 @@ function loadAudioRecordingCandidatesForProviderAlbum(
     provider: string,
     providerAlbumId: string,
 ): AudioRecordingCandidateRow[] {
+    const liveAlbumSql = livePerformanceTitleSql("a.title");
     return db.prepare(`
-        SELECT DISTINCT rec.id, rec.mbid, rec.title, rec.length_ms, rec.isrcs
+        SELECT DISTINCT
+          rec.id,
+          rec.mbid,
+          rec.title,
+          rec.length_ms,
+          rec.isrcs,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM Tracks t
+            JOIN AlbumReleases ar
+              ON ar.id = t.album_release_id
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+            JOIN Albums a ON a.mbid = ar.release_group_mbid
+            WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
+              AND (
+                a.secondary_types IS NULL
+                OR TRIM(a.secondary_types) = ''
+                OR a.secondary_types = '[]'
+                OR LOWER(a.secondary_types) NOT LIKE '%"live"%'
+              )
+          ) THEN 1 ELSE 0 END AS has_non_live_album,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM Tracks t
+            JOIN AlbumReleases ar
+              ON ar.id = t.album_release_id
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+            JOIN Albums a ON a.mbid = ar.release_group_mbid
+            WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
+              AND (
+                LOWER(COALESCE(a.secondary_types, '')) LIKE '%"live"%'
+                OR ${liveAlbumSql}
+              )
+          ) THEN 1 ELSE 0 END AS has_live_album
         FROM ProviderItems track
         JOIN Recordings rec
           ON CAST(rec.id AS TEXT) = CAST(track.recording_id AS TEXT)
@@ -191,6 +226,7 @@ function findAudioRecordingByArtistTitleDuration(
 ): AudioRecordingVideoMatch | null {
     const offerVariant = parseVideoVariant(nullableText(video.title));
     const preferStudio = isMainVideoVariant(offerVariant);
+    const liveAlbumSql = livePerformanceTitleSql("a.title");
     const candidates = db.prepare(`
         SELECT
           rec.id,
@@ -227,7 +263,20 @@ function findAudioRecordingByArtistTitleDuration(
                 OR TRIM(a.secondary_types) = ''
                 OR a.secondary_types = '[]'
               )
-          ) THEN 1 ELSE 0 END AS has_studio_album
+          ) THEN 1 ELSE 0 END AS has_studio_album,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM Tracks t
+            JOIN AlbumReleases ar
+              ON ar.id = t.album_release_id
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+            JOIN Albums a ON a.mbid = ar.release_group_mbid
+            WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
+              AND (
+                LOWER(COALESCE(a.secondary_types, '')) LIKE '%"live"%'
+                OR ${liveAlbumSql}
+              )
+          ) THEN 1 ELSE 0 END AS has_live_album
         FROM Recordings rec
         WHERE rec.artist_mbid = ?
           AND (rec.is_video IS NULL OR rec.is_video = 0)
@@ -1264,6 +1313,21 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
           )
         LIMIT 1
     `);
+    const liveAlbumTitleSql = livePerformanceTitleSql("a.title");
+    const audioHasLiveAlbum = db.prepare(`
+        SELECT 1 AS hit
+        FROM Tracks t
+        JOIN AlbumReleases ar
+          ON ar.id = t.album_release_id
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
+        JOIN Albums a ON a.mbid = ar.release_group_mbid
+        WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
+          AND (
+            LOWER(COALESCE(a.secondary_types, '')) LIKE '%"live"%'
+            OR ${liveAlbumTitleSql}
+          )
+        LIMIT 1
+    `);
 
     let changed = 0;
     const seenVideos = new Set<number>();
@@ -1294,14 +1358,32 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
                 continue;
             }
             const incompatibleTitle = !videoAudioTitlesCompatible(videoTitle, relation.audio_title);
-            const mainOntoLiveTitle = isMainVideoVariant(videoVariant)
-                && isLivePerformanceTitle(relation.audio_title);
+            const videoIsLive = isLivePerformanceTitle(videoTitle)
+                || normalizeVideoVariant(videoVariant) === "live"
+                || normalizeVideoVariant(row.video_variant) === "live";
+            const audioOnLiveAlbum = Boolean(
+                audioHasLiveAlbum.get(relation.audio_id, relation.mbid ?? null),
+            );
+            const audioOnNonLiveAlbum = Boolean(
+                audioHasNonLiveAlbum.get(relation.audio_id, relation.mbid ?? null),
+            );
+            const audioIsLiveSide = isLivePerformanceTitle(relation.audio_title)
+                || (audioOnLiveAlbum && !audioOnNonLiveAlbum);
+            // Live-marked video must not stick to studio-only audio.
+            const liveVideoOntoStudioAudio = videoIsLive && !audioIsLiveSide;
+            const mainOntoLiveTitle = isMainVideoVariant(videoVariant) && audioIsLiveSide;
             const mainOntoLiveOnlyAlbum = isMainVideoVariant(videoVariant)
-                && !audioHasNonLiveAlbum.get(relation.audio_id, relation.mbid ?? null);
+                && !audioOnNonLiveAlbum;
             // Prefer Album/EP/Single studio membership over compilation-only links.
             const mainOntoWeakStudio = isMainVideoVariant(videoVariant)
                 && !audioHasStudioAlbum.get(relation.audio_id, relation.mbid ?? null);
-            if (!incompatibleTitle && !mainOntoLiveTitle && !mainOntoLiveOnlyAlbum && !mainOntoWeakStudio) {
+            if (
+                !incompatibleTitle
+                && !liveVideoOntoStudioAudio
+                && !mainOntoLiveTitle
+                && !mainOntoLiveOnlyAlbum
+                && !mainOntoWeakStudio
+            ) {
                 continue;
             }
             deleteRelation.run(row.recording_id, relation.audio_id);

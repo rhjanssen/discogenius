@@ -6,6 +6,9 @@
 
 import { videoComparableTitle } from "../mediafiles/import-matching-utils.js";
 import {
+    isLivePerformanceTitle,
+} from "./live-performance-markers.js";
+import {
     VIDEO_AUDIO_STUDIO_DURATION_MATCH_MS,
     VIDEO_DURATION_MATCH_MS,
     catalogVideoDisplayTitle,
@@ -17,6 +20,8 @@ import {
     parseVideoVariant,
     type VideoVariant,
 } from "./video-variant.js";
+
+export { isLivePerformanceTitle } from "./live-performance-markers.js";
 
 export type AudioRecordingVideoMatch = {
     id: number;
@@ -39,6 +44,11 @@ export type AudioRecordingCandidateRow = {
      * (prefer over compilation-only non-live membership).
      */
     has_studio_album?: number | boolean | null;
+    /**
+     * 1 when it appears on a Live secondary RG or a live-marked album title
+     * (album/RG side of the live↔studio gate).
+     */
+    has_live_album?: number | boolean | null;
 };
 
 export type FindRelatedAudioOptions = {
@@ -171,16 +181,6 @@ export function parseIsrcValues(value: unknown): string[] {
 }
 
 /**
- * Live / performance cut from title text (not album secondary types).
- * Includes TV/session cues that omit the word "live" (Later…, Hootenanny,
- * Porchester Hall, Mercury Prize) so main OMVs do not attach to those cuts.
- */
-export function isLivePerformanceTitle(title: string | null | undefined): boolean {
-    return /\blive\b|\bperformance\b|\bmtv\s+unplugged\b|\blater\b.{0,40}\bjools\b|\bjools\s+holland\b|\bhootenanny\b|\bporchester\b|\bmercury\s+prize\b|\bpete\s+mitchell\b/i
-        .test(String(title || ""));
-}
-
-/**
  * Normalize venue phrases from "live at/from …" (and Unit 24-style
  * parentheticals) so Abbey Road never links to Unit 24 on base title alone.
  */
@@ -234,6 +234,17 @@ function candidateHasNonLiveAlbum(row: AudioRecordingCandidateRow): boolean {
     return Boolean(row.has_non_live_album) || Boolean(row.has_studio_album);
 }
 
+/**
+ * Audio side is live when the track title is marked, or the recording only
+ * appears on live-marked albums (covers session cuts without the word "live").
+ * Studio recordings that also appear on a live compilation stay non-live.
+ */
+function candidateAudioIsLive(row: AudioRecordingCandidateRow): boolean {
+    if (isLivePerformanceTitle(row.title)) return true;
+    if (Boolean(row.has_live_album) && !candidateHasNonLiveAlbum(row)) return true;
+    return false;
+}
+
 function candidateStudioRank(row: AudioRecordingCandidateRow): number {
     if (row.has_studio_album) return 2;
     if (row.has_non_live_album) return 1;
@@ -255,12 +266,19 @@ export function findRelatedAudioRecordingForVideo(
     const videoVariant = options.videoVariant ?? parseVideoVariant(nullableText(video.title));
     const preferStudio = Boolean(options.preferStudioAudio) && isMainVideoVariant(videoVariant);
     const rawVideoTitle = String(video.title || "");
+    const videoIsLive = isLivePerformanceTitle(rawVideoTitle)
+        || normalizeVideoVariant(videoVariant) === "live";
 
     type Scored = AudioRecordingVideoMatch & { studioBoost: number; durationDiffMs: number };
     let best: Scored | null = null;
     for (const row of candidates) {
         const rawAudioTitle = String(row.title || "");
-        if (preferStudio && isLivePerformanceTitle(rawAudioTitle)) {
+        const audioIsLive = candidateAudioIsLive(row);
+        // Live↔studio gate is independent of duration/ISRC closeness.
+        if (videoIsLive && !audioIsLive) {
+            continue;
+        }
+        if (preferStudio && audioIsLive) {
             continue;
         }
         if (!liveVenueSignaturesCompatible(rawVideoTitle, rawAudioTitle)) {

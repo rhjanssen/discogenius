@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   findRelatedAudioRecordingForVideo,
+  isLivePerformanceTitle,
   liveVenueSignaturesCompatible,
   preferredMergedVideoTitle,
   videoAudioTitlesCompatible,
@@ -9,8 +10,8 @@ import {
 
 test("video→audio title match requires duration within 5s", () => {
   const candidates = [
-    { id: 1, mbid: "audio-a", title: "Romeo & Juliet", length_ms: 465_000 },
-    { id: 2, mbid: "audio-b", title: "Romeo & Juliet", length_ms: 457_000 },
+    { id: 1, mbid: "audio-a", title: "Romeo & Juliet (Live At The Hammersmith Odeon)", length_ms: 465_000, has_live_album: 1 },
+    { id: 2, mbid: "audio-b", title: "Romeo & Juliet (Live At The Hammersmith Odeon)", length_ms: 457_000, has_live_album: 1 },
   ];
 
   const withinFive = findRelatedAudioRecordingForVideo(
@@ -18,11 +19,17 @@ test("video→audio title match requires duration within 5s", () => {
     candidates,
   );
   assert.equal(withinFive?.id, 2);
-  assert.equal(withinFive?.method, "provider-video-contained-title-recording");
+  assert.equal(withinFive?.method, "provider-video-title-recording");
 
   const eightSecondsOff = findRelatedAudioRecordingForVideo(
     { title: "Romeo & Juliet (Live At The Hammersmith Odeon)", duration: 457 },
-    [{ id: 1, mbid: "audio-a", title: "Romeo & Juliet", length_ms: 465_866 }],
+    [{
+      id: 1,
+      mbid: "audio-a",
+      title: "Romeo & Juliet (Live At The Hammersmith Odeon)",
+      length_ms: 465_866,
+      has_live_album: 1,
+    }],
   );
   assert.equal(eightSecondsOff, null, "8.8s duration delta must not link on title alone");
 });
@@ -108,17 +115,18 @@ test("main OMV rejects live-titled audio on artist-wide studio preference", () =
   assert.equal(match?.id, 2, "live-titled audio must lose to studio even when duration is closer");
 });
 
-test("main OMV rejects Later/Jools/Hootenanny session audio without the word live", () => {
+test("main OMV rejects live-album-only session audio without the word live", () => {
   const match = findRelatedAudioRecordingForVideo(
     { title: "Stronger Than Me", duration: 232 },
     [
       {
         id: 1,
-        mbid: "jools",
+        mbid: "session",
         title: "Stronger Than Me (Later With Jools Holland / Nov 2003)",
         length_ms: 231_000,
-        has_non_live_album: 1,
-        has_studio_album: 1,
+        has_live_album: 1,
+        has_non_live_album: 0,
+        has_studio_album: 0,
       },
       {
         id: 2,
@@ -140,10 +148,55 @@ test("main OMV rejects Later/Jools/Hootenanny session audio without the word liv
         mbid: "hoot",
         title: "Teach Me Tonight (Hootenanny / Dec 2004)",
         length_ms: 198_000,
+        has_live_album: 1,
+        has_non_live_album: 0,
+        has_studio_album: 0,
+      }],
+      { videoVariant: "video", preferStudioAudio: true },
+    ),
+    null,
+  );
+  assert.equal(
+    isLivePerformanceTitle("Stronger Than Me (Later With Jools Holland / Nov 2003)"),
+    false,
+    "show names are not title markers; live-album-only membership is the gate",
+  );
+});
+
+test("live-marked video does not match studio audio even when duration is close", () => {
+  const match = findRelatedAudioRecordingForVideo(
+    { title: "You Know I'm No Good (Live)", duration: 218 },
+    [
+      {
+        id: 1,
+        mbid: "studio",
+        title: "You Know I'm No Good",
+        length_ms: 216_000,
+        has_non_live_album: 1,
+        has_studio_album: 1,
+      },
+      {
+        id: 2,
+        mbid: "live-cut",
+        title: "You Know I'm No Good (Live)",
+        length_ms: 218_000,
+        has_live_album: 1,
+        has_non_live_album: 0,
+      },
+    ],
+  );
+  assert.equal(match?.id, 2);
+  assert.equal(
+    findRelatedAudioRecordingForVideo(
+      { title: "Pompeii (MTV Unplugged)", duration: 214 },
+      [{
+        id: 3,
+        mbid: "studio-pompeii",
+        title: "Pompeii",
+        length_ms: 214_000,
         has_non_live_album: 1,
         has_studio_album: 1,
       }],
-      { videoVariant: "video", preferStudioAudio: true },
     ),
     null,
   );

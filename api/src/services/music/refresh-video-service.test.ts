@@ -945,14 +945,14 @@ test("provider video album_id scopes title matching to that album's tracks", () 
     INSERT INTO Recordings (
       foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
     )
-    VALUES ('audio-on-album', 'audio-on-album', 'artist-mbid', 'Romeo & Juliet', 457000, 0, 'musicbrainz')
+    VALUES ('audio-on-album', 'audio-on-album', 'artist-mbid', 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457000, 0, 'musicbrainz')
     RETURNING id
   `).get() as { id: number };
   const offAlbum = dbModule.db.prepare(`
     INSERT INTO Recordings (
       foreign_recording_id, mbid, artist_mbid, title, length_ms, is_video, metadata_status
     )
-    VALUES ('audio-off-album', 'audio-off-album', 'artist-mbid', 'Romeo & Juliet', 457000, 0, 'musicbrainz')
+    VALUES ('audio-off-album', 'audio-off-album', 'artist-mbid', 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457000, 0, 'musicbrainz')
     RETURNING id
   `).get() as { id: number };
 
@@ -960,8 +960,8 @@ test("provider video album_id scopes title matching to that album's tracks", () 
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_id, title, duration
     ) VALUES
-      ('tidal', 'track', 'tidal-track-on', 'tidal-album-42', 'artist-mbid', ?, 'Romeo & Juliet', 457),
-      ('tidal', 'track', 'tidal-track-off', 'tidal-album-99', 'artist-mbid', ?, 'Romeo & Juliet', 457)
+      ('tidal', 'track', 'tidal-track-on', 'tidal-album-42', 'artist-mbid', ?, 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457),
+      ('tidal', 'track', 'tidal-track-off', 'tidal-album-99', 'artist-mbid', ?, 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457)
   `).run(onAlbum.id, offAlbum.id);
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{

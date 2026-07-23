@@ -177,10 +177,23 @@ Today we are **adapters in a folder**, not true plugins: shared
 
 ### Matching and curation
 
+- decided (2026-07-23): MV↔audio matching vs Lidarr/Jellyfin —
+  `docs/VIDEO_MATCHING_VS_LIDARR_JELLYFIN.md`. Architecture (MB
+  `music_video_for`, `provider_video_for`, duration/variant/ISRC) is sound.
+  **2.6.7:** centralized `live-performance-markers.ts` (`live` /
+  `performance` / `unplugged` + live-album-only membership); removed Bastille
+  TV-show deny phrases. Live↔studio gate applies even when duration is close.
+  Next: larger artist stress-test; fix failures structurally, not with more
+  show-name `LIKE`s.
 - deferred (post-2.6.6): partial video-stream / Chromaprint grouping evidence —
   research verdict in `docs/VIDEO_CONTENT_MATCHING_FEASIBILITY.md`. Reject
   refresh-time stream sampling; optional later import-only `fpcalc` on
   downloaded MVs (variant-gated). Do not block 2.6.6.
+- deferred (post-2.6.6): semi-official YouTube sources (VEVO / MTV / similar) —
+  verdict **DEFER WITH GUARDRAILS** in
+  `docs/YOUTUBE_SEMI_OFFICIAL_SOURCES.md`. Reject automatic MTV/network-channel
+  harvest; keep YTM artist catalog + MB free-streaming URLs. Optional later:
+  channel preference scoring only (VEVO/Topic/Official), never sole accept.
 - pending: hybrid / multi-provider album fills — decide whether incomplete
   single-provider coverage should warn (yellow) vs require full set-cover before
   marking an album complete; Lioness-style missing-track cases are the litmus.

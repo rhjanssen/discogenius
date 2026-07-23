@@ -5,6 +5,8 @@ import { getConfigSection } from "../config/config.js";
 import {
   allowsInlineVideoPlacement,
 } from "./video-folder-layout.js";
+import { mainVideoMayFollowAudioRelationSql } from "../music/live-performance-markers.js";
+import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "../music/video-album-association.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext, type library_root } from "../config/naming.js";
 import { getCurrentLibraryRootPath, resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import { normalizeComparablePath, normalizeResolvedPath } from "./path-utils.js";
@@ -775,6 +777,13 @@ export class LibraryFilesService {
         // with an unmonitored stereo RG, keep the separated video-library path even
         // when global layout is "inline" / "inline_only". Spatial folders stay Atmos audio only —
         // inline always targets the stereo music root (no stereo/spatial toggle).
+        const mayFollowAudio = mainVideoMayFollowAudioRelationSql({
+          videoVariantExpr: "video.video_variant",
+          trackTitleExpr: "audio.title",
+          albumTitleExpr: "album.title",
+          albumSecondaryExpr: "album.secondary_types",
+        });
+        const albumKindRankSql = VIDEO_ALBUM_ASSOCIATION_KIND_SQL.replace(/\ba\./g, "album.");
         const relatedAudio = videoRecordingId
           ? db.prepare(`
               SELECT
@@ -789,12 +798,7 @@ export class LibraryFilesService {
                     AND rgs.slot = 'stereo'
                     AND rgs.monitored = 1
                 ) THEN 1 ELSE 0 END AS stereo_monitored,
-                CASE
-                  WHEN LOWER(COALESCE(album.secondary_types, '')) LIKE '%"live"%' THEN 3
-                  WHEN LOWER(COALESCE(album.secondary_types, '')) LIKE '%"compilation"%' THEN 2
-                  WHEN LOWER(COALESCE(album.primary_type, '')) IN ('album', 'ep', 'single') THEN 0
-                  ELSE 1
-                END AS album_kind_rank
+                ${albumKindRankSql} AS album_kind_rank
               FROM RecordingRelations rr
               JOIN Recordings audio ON audio.id = rr.target_recording_id
               JOIN Recordings video ON video.id = rr.source_recording_id
@@ -809,23 +813,7 @@ export class LibraryFilesService {
                 ON album.mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
               WHERE rr.source_recording_id = ?
                 AND rr.relation_type IN ('provider_video_for', 'music_video_for')
-                AND (
-                  COALESCE(NULLIF(TRIM(video.video_variant), ''), 'video') NOT IN ('video', 'official')
-                  OR (
-                    LOWER(COALESCE(audio.title, '')) NOT LIKE '%live%'
-                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%performance%'
-                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%mtv unplugged%'
-                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%jools holland%'
-                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%hootenanny%'
-                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%porchester%'
-                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%mercury prize%'
-                    AND LOWER(COALESCE(audio.title, '')) NOT LIKE '%pete mitchell%'
-                    AND NOT (
-                      LOWER(COALESCE(audio.title, '')) LIKE '%later%'
-                      AND LOWER(COALESCE(audio.title, '')) LIKE '%jools%'
-                    )
-                  )
-                )
+                AND ${mayFollowAudio}
               ORDER BY album_kind_rank ASC, stereo_monitored DESC, track_count DESC, rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
               LIMIT 1
             `).get(videoRecordingId) as {

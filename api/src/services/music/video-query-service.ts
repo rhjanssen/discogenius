@@ -12,6 +12,7 @@ import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.
 import { getConfigSection } from "../config/config.js";
 import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
 import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "./video-album-association.js";
+import { mainVideoMayFollowAudioRelationSql } from "./live-performance-markers.js";
 
 type SortableVideoField = "name" | "popularity" | "scannedAt" | "releaseDate";
 
@@ -946,24 +947,16 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
  * then largest track count (never let a larger compilation beat a studio album).
  */
 function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
-  // Main OMVs must not pull Appears On membership from live/TV-session audio
-  // via provider_video_for / music_video_for (Later…, Hootenanny, Porchester…).
-  // Live/lyric variants may still follow those links. Video-as-track membership
-  // on a live compilation remains (ranked below studio).
-  const liveAudioTitleSql = `
-    LOWER(COALESCE(audio.title, '')) LIKE '%live%'
-    OR LOWER(COALESCE(audio.title, '')) LIKE '%performance%'
-    OR LOWER(COALESCE(audio.title, '')) LIKE '%mtv unplugged%'
-    OR LOWER(COALESCE(audio.title, '')) LIKE '%jools holland%'
-    OR LOWER(COALESCE(audio.title, '')) LIKE '%hootenanny%'
-    OR LOWER(COALESCE(audio.title, '')) LIKE '%porchester%'
-    OR LOWER(COALESCE(audio.title, '')) LIKE '%mercury prize%'
-    OR LOWER(COALESCE(audio.title, '')) LIKE '%pete mitchell%'
-    OR (
-      LOWER(COALESCE(audio.title, '')) LIKE '%later%'
-      AND LOWER(COALESCE(audio.title, '')) LIKE '%jools%'
-    )
-  `;
+  // Main OMVs must not pull Appears On membership from live-marked audio
+  // (title marker or live-album-only membership) via provider_video_for /
+  // music_video_for. Live/lyric variants may still follow those links.
+  // Video-as-track membership on a live compilation remains (ranked below studio).
+  const mayFollowRelatedAudio = mainVideoMayFollowAudioRelationSql({
+    videoVariantExpr: "video.video_variant",
+    trackTitleExpr: "audio.title",
+    recordingIdExpr: "audio.id",
+    recordingMbidExpr: "audio.mbid",
+  });
   const videoOrRelatedAudio = `
     CAST(t.recording_id AS TEXT) = CAST(? AS TEXT)
     OR t.recording_mbid = (
@@ -978,10 +971,7 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       WHERE CAST(rr.source_recording_id AS TEXT) = CAST(? AS TEXT)
         AND rr.relation_type IN ('provider_video_for', 'music_video_for')
         AND rr.target_recording_id IS NOT NULL
-        AND (
-          COALESCE(NULLIF(TRIM(video.video_variant), ''), 'video') NOT IN ('video', 'official')
-          OR NOT (${liveAudioTitleSql})
-        )
+        AND ${mayFollowRelatedAudio}
     )
   `;
   // Prefer a track row that belongs to the video recording itself; fall back to
