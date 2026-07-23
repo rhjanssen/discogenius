@@ -21,6 +21,10 @@ beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
+  db.prepare("DELETE FROM Tracks").run();
+  db.prepare("DELETE FROM ReleaseGroupSlots").run();
+  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -65,6 +69,124 @@ function seedOffer(params: {
     params.recordingId ?? null,
   );
 }
+
+/**
+ * Seed a minimal canonical catalog: a release group with one selected release
+ * and one track (recording + release-track MBIDs), so embedded-MBID linking has
+ * something to resolve against.
+ */
+function seedCatalogTrack(params: {
+  releaseGroupMbid: string;
+  releaseMbid: string;
+  trackMbid: string;
+  recordingMbid: string;
+  title: string;
+  slot?: string;
+}) {
+  const { db } = dbModule;
+  const slot = params.slot || "stereo";
+  db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title) VALUES (?, 'artist-mbid', ?)`)
+    .run(params.releaseGroupMbid, params.title);
+  db.prepare(`
+    INSERT OR IGNORE INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title)
+    VALUES (?, ?, 'artist-mbid', ?)
+  `).run(params.releaseMbid, params.releaseGroupMbid, params.title);
+  db.prepare(`INSERT OR IGNORE INTO Recordings (mbid, title) VALUES (?, ?)`)
+    .run(params.recordingMbid, params.title);
+  db.prepare(`
+    INSERT OR IGNORE INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, title)
+    VALUES (?, ?, ?, 1, 1, ?)
+  `).run(params.trackMbid, params.releaseMbid, params.recordingMbid, params.title);
+  db.prepare(`
+    INSERT OR IGNORE INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, selected_release_mbid)
+    VALUES ('artist-mbid', ?, ?, ?)
+  `).run(params.releaseGroupMbid, slot, params.releaseMbid);
+}
+
+test("catalog-direct link resolves from embedded release-track MBID with no provider offer", () => {
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-itunes",
+    releaseMbid: "rel-itunes",
+    trackMbid: "track-bad-blood",
+    recordingMbid: "rec-bad-blood",
+    title: "Bad Blood (live)",
+  });
+
+  const link = matchModule.resolveCatalogTrackFromEmbeddedMbids(
+    { musicbrainzTrackId: "track-bad-blood" },
+    "stereo",
+  );
+
+  assert.ok(link);
+  assert.equal(link!.trackMbid, "track-bad-blood");
+  assert.equal(link!.recordingMbid, "rec-bad-blood");
+  assert.equal(link!.releaseMbid, "rel-itunes");
+  assert.equal(link!.releaseGroupMbid, "rg-itunes");
+});
+
+test("metadata rematch links a provider-free file straight to the catalog via embedded MBIDs", () => {
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-itunes",
+    releaseMbid: "rel-itunes",
+    trackMbid: "track-pompeii",
+    recordingMbid: "rec-pompeii",
+    title: "Pompeii (live)",
+  });
+
+  const match = matchModule.matchAudioFileByMetadata(
+    "/library/stereo-music/Bastille/iTunes Festival - London 2013 (2013)/02 - Pompeii (live).m4a",
+    "artist-1",
+    "music",
+    {
+      title: "Pompeii (live)",
+      musicbrainzTrackId: "track-pompeii",
+      musicbrainzRecordingId: "rec-pompeii",
+      musicbrainzAlbumId: "rel-itunes",
+      durationSeconds: 210,
+    },
+  );
+
+  assert.ok(match);
+  // No provider offer exists, but the file still links to the catalog.
+  assert.equal(match!.mediaId, "");
+  assert.equal(match!.canonicalTrackMbid, "track-pompeii");
+  assert.equal(match!.canonicalRecordingMbid, "rec-pompeii");
+  assert.equal(match!.canonicalReleaseMbid, "rel-itunes");
+  assert.equal(match!.canonicalReleaseGroupMbid, "rg-itunes");
+  assert.equal(match!.duplicateOfExisting, false);
+});
+
+test("metadata rematch enriches a provider-offer match with canonical MBIDs", () => {
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-wild",
+    releaseMbid: "rel-wild",
+    trackMbid: "track-good-grief",
+    recordingMbid: "rec-good-grief",
+    title: "Good Grief",
+  });
+  seedOffer({ providerId: "5001", title: "Good Grief", albumId: "album-wild", duration: 206 });
+
+  const match = matchModule.matchAudioFileByMetadata(
+    "/library/stereo-music/Bastille/Wild World (2016)/01 - Good Grief.flac",
+    "artist-1",
+    "music",
+    {
+      title: "Good Grief",
+      musicbrainzTrackId: "track-good-grief",
+      musicbrainzRecordingId: "rec-good-grief",
+      musicbrainzAlbumId: "rel-wild",
+      durationSeconds: 206,
+    },
+  );
+
+  assert.ok(match);
+  assert.equal(match!.mediaId, "5001");
+  assert.equal(match!.canonicalTrackMbid, "track-good-grief");
+  assert.equal(match!.canonicalRecordingMbid, "rec-good-grief");
+});
 
 test("metadata rematch links missing album tracks via sibling folder offers", () => {
   const { db } = dbModule;

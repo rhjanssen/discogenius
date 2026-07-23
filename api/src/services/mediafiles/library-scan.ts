@@ -9,7 +9,7 @@ import { ImportService } from "./import-service.js";
 import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
 import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
-import { matchAudioFileByMetadata } from "./library-scan-metadata-match.js";
+import { matchAudioFileByMetadata, resolveCatalogTrackFromEmbeddedMbids } from "./library-scan-metadata-match.js";
 import { resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import {
     updateAlbumDownloadStatus,
@@ -389,6 +389,14 @@ export class DiskScanService {
         });
         result.filesUpdated += phaseD.relinked;
 
+        // Phase E: self-heal canonical catalog links from embedded MB tags.
+        // Rows that were imported but never got canonical_track/recording_mbid
+        // (e.g. a provider offer with null MBIDs) exist on disk yet never count
+        // as downloaded. Re-link them directly from the file's own MusicBrainz
+        // tags — no provider offer required.
+        const phaseE = await this.backfillCanonicalLinksFromTags(artistId);
+        result.filesUpdated += phaseE.healed;
+
         LibraryFilesService.pruneDuplicateTrackedAssets(artistId);
 
         if (result.orphansRemoved > 0 || result.filesIndexed > 0 || result.filesUpdated > 0) {
@@ -402,6 +410,90 @@ export class DiskScanService {
         }
 
         return result;
+    }
+
+    /**
+     * Self-heal canonical catalog links from a file's embedded MusicBrainz tags.
+     * Targets only rows that are already tracked but carry no canonical linkage
+     * (canonical_track_mbid AND canonical_recording_mbid are NULL) — such rows sit
+     * on disk yet never count as downloaded because the download-status join keys
+     * on canonical_track_mbid / canonical_recording_mbid. Because it is scoped to
+     * the broken rows only, this is a no-op (single indexed query, zero file
+     * reads) for a healthy library.
+     */
+    private static async backfillCanonicalLinksFromTags(artistId: string): Promise<{ healed: number }> {
+        const brokenRows = db.prepare(`
+            SELECT id, file_path, relative_path, library_root, library_slot
+            FROM TrackFiles
+            WHERE artist_id = ?
+              AND file_type = 'track'
+              AND canonical_track_mbid IS NULL
+              AND canonical_recording_mbid IS NULL
+        `).all(artistId) as Array<{
+            id: number;
+            file_path: string;
+            relative_path: string | null;
+            library_root: string;
+            library_slot: string | null;
+        }>;
+
+        if (brokenRows.length === 0) return { healed: 0 };
+
+        let healed = 0;
+        const touchedReleaseGroups = new Set<string>();
+
+        for (const row of brokenRows) {
+            const filePath = resolveStoredLibraryPath({
+                filePath: row.file_path,
+                libraryRoot: row.library_root,
+                relativePath: row.relative_path,
+            });
+            if (!fs.existsSync(filePath)) continue;
+
+            let musicbrainzRecordingId: string | null = null;
+            let musicbrainzTrackId: string | null = null;
+            let musicbrainzAlbumId: string | null = null;
+            try {
+                const mm = await import("music-metadata");
+                const metadata = await mm.parseFile(filePath, { duration: false, skipCovers: true });
+                musicbrainzRecordingId = metadata.common.musicbrainz_recordingid || null;
+                musicbrainzTrackId = metadata.common.musicbrainz_trackid || null;
+                musicbrainzAlbumId = metadata.common.musicbrainz_albumid || null;
+            } catch {
+                // Unreadable tags — leave the row untouched for the next pass.
+                continue;
+            }
+            if (!musicbrainzRecordingId && !musicbrainzTrackId) continue;
+
+            const link = resolveCatalogTrackFromEmbeddedMbids(
+                { musicbrainzRecordingId, musicbrainzTrackId, musicbrainzAlbumId },
+                row.library_slot || "stereo",
+            );
+            if (!link) continue;
+
+            db.prepare(`
+                UPDATE TrackFiles
+                SET canonical_track_mbid = COALESCE(canonical_track_mbid, ?),
+                    canonical_recording_mbid = COALESCE(canonical_recording_mbid, ?),
+                    canonical_release_mbid = COALESCE(canonical_release_mbid, ?),
+                    canonical_release_group_mbid = COALESCE(canonical_release_group_mbid, ?),
+                    verified_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `).run(link.trackMbid, link.recordingMbid, link.releaseMbid, link.releaseGroupMbid, row.id);
+            healed++;
+            if (link.releaseGroupMbid) touchedReleaseGroups.add(link.releaseGroupMbid);
+        }
+
+        for (const releaseGroupMbid of touchedReleaseGroups) {
+            updateAlbumDownloadStatus(releaseGroupMbid);
+        }
+
+        if (healed > 0) {
+            console.log(
+                `[DiskScan] Artist ${artistId}: self-healed canonical catalog links for ${healed} track file(s) from embedded MB tags`,
+            );
+        }
+        return { healed };
     }
 
     /**
@@ -765,6 +857,13 @@ export class DiskScanService {
                 // New file on disk — attempt to match and index
                 let match = this.matchFileToMedia(filePath, artistId, key);
                 let matchProvider: string | null = null;
+                let canonicalLink: {
+                    canonicalTrackMbid: string | null;
+                    canonicalRecordingMbid: string | null;
+                    canonicalReleaseMbid: string | null;
+                    canonicalReleaseGroupMbid: string | null;
+                    librarySlot: string | null;
+                } | null = null;
 
                 // Stem/expected-path miss: rematch audio via tags + sibling album offers
                 // so Discogenius-organized files are not stuck in UnmappedFiles.
@@ -791,6 +890,8 @@ export class DiskScanService {
                             let detectedTrack: string | null = null;
                             let metrics = getUnmappedMediaMetrics(undefined, ext);
                             let musicbrainzRecordingId: string | null = null;
+                            let musicbrainzTrackId: string | null = null;
+                            let musicbrainzAlbumId: string | null = null;
                             let isrc: string | string[] | null = null;
 
                             try {
@@ -800,6 +901,13 @@ export class DiskScanService {
                                 if (metadata.common.album) detectedAlbum = metadata.common.album;
                                 if (metadata.common.title) detectedTrack = metadata.common.title;
                                 musicbrainzRecordingId = metadata.common.musicbrainz_recordingid || null;
+                                // music-metadata maps the MUSICBRAINZ_RELEASETRACKID tag
+                                // (Discogenius' "MusicBrainz Release Track Id" = the track
+                                // MBID = Tracks.mbid = canonical_track_mbid) to
+                                // common.musicbrainz_trackid. This is the most precise
+                                // catalog key, so read it for catalog-direct linking.
+                                musicbrainzTrackId = metadata.common.musicbrainz_trackid || null;
+                                musicbrainzAlbumId = metadata.common.musicbrainz_albumid || null;
                                 isrc = metadata.common.isrc || null;
                                 metrics = getUnmappedMediaMetrics(metadata.format, ext);
                                 if (!metrics.duration) {
@@ -829,6 +937,8 @@ export class DiskScanService {
                                     artist: detectedArtist,
                                     isrc,
                                     musicbrainzRecordingId,
+                                    musicbrainzTrackId,
+                                    musicbrainzAlbumId,
                                     durationSeconds: metrics.duration || null,
                                 });
                                 if (metadataMatch?.duplicateOfExisting) {
@@ -841,6 +951,13 @@ export class DiskScanService {
                                         quality: metadataMatch.quality,
                                     };
                                     matchProvider = metadataMatch.provider;
+                                    canonicalLink = {
+                                        canonicalTrackMbid: metadataMatch.canonicalTrackMbid ?? null,
+                                        canonicalRecordingMbid: metadataMatch.canonicalRecordingMbid ?? null,
+                                        canonicalReleaseMbid: metadataMatch.canonicalReleaseMbid ?? null,
+                                        canonicalReleaseGroupMbid: metadataMatch.canonicalReleaseGroupMbid ?? null,
+                                        librarySlot: metadataMatch.librarySlot ?? null,
+                                    };
                                 } else {
                                     unmappedReason = "No matching provider item found";
                                 }
@@ -864,6 +981,11 @@ export class DiskScanService {
                         quality: match.quality,
                         expectedPath: filePath,
                         provider: matchProvider,
+                        canonicalTrackMbid: canonicalLink?.canonicalTrackMbid ?? null,
+                        canonicalRecordingMbid: canonicalLink?.canonicalRecordingMbid ?? null,
+                        canonicalReleaseMbid: canonicalLink?.canonicalReleaseMbid ?? null,
+                        canonicalReleaseGroupMbid: canonicalLink?.canonicalReleaseGroupMbid ?? null,
+                        librarySlot: canonicalLink?.librarySlot ?? null,
                     });
 
                     if (match.mediaId && (match.fileType === "track" || match.fileType === "video")) {
@@ -1704,6 +1826,11 @@ export class DiskScanService {
         quality?: string | null;
         expectedPath?: string | null;
         provider?: string | null;
+        canonicalTrackMbid?: string | null;
+        canonicalRecordingMbid?: string | null;
+        canonicalReleaseMbid?: string | null;
+        canonicalReleaseGroupMbid?: string | null;
+        librarySlot?: string | null;
     }) {
         LibraryFilesService.upsertLibraryFile({
             ...params,

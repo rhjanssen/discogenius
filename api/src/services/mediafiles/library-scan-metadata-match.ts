@@ -16,7 +16,116 @@ export type MetadataMatchResult = {
     /** True when another on-disk TrackFile already owns this provider offer. */
     duplicateOfExisting: boolean;
     existingFilePath: string | null;
+    /**
+     * Canonical catalog identity resolved directly from embedded MusicBrainz IDs.
+     * Populated when the file carries release-track / recording / release MBIDs so
+     * the TrackFile links to the catalog (and counts as downloaded) even when the
+     * provider offer's own MBIDs are missing — or no provider offer exists at all.
+     */
+    canonicalTrackMbid?: string | null;
+    canonicalRecordingMbid?: string | null;
+    canonicalReleaseMbid?: string | null;
+    canonicalReleaseGroupMbid?: string | null;
 };
+
+export type CatalogTrackLink = {
+    /** Tracks.mbid — the release-track MBID (= canonical_track_mbid). */
+    trackMbid: string;
+    /** Tracks.recording_mbid (= canonical_recording_mbid). */
+    recordingMbid: string;
+    /** The release the resolved track belongs to (= canonical_release_mbid). */
+    releaseMbid: string;
+    /** Owning release group (= canonical_release_group_mbid), when known. */
+    releaseGroupMbid: string | null;
+};
+
+function releaseGroupForRelease(releaseMbid: string): string | null {
+    const row = db.prepare(
+        "SELECT release_group_mbid FROM AlbumReleases WHERE mbid = ? LIMIT 1",
+    ).get(releaseMbid) as { release_group_mbid: string | null } | undefined;
+    return row?.release_group_mbid ? String(row.release_group_mbid) : null;
+}
+
+function selectedReleaseForGroup(releaseGroupMbid: string, preferredSlot: string): string | null {
+    const row = db.prepare(`
+        SELECT selected_release_mbid
+        FROM ReleaseGroupSlots
+        WHERE release_group_mbid = ?
+          AND selected_release_mbid IS NOT NULL
+        ORDER BY CASE WHEN slot = ? THEN 0 ELSE 1 END
+        LIMIT 1
+    `).get(releaseGroupMbid, preferredSlot) as { selected_release_mbid: string | null } | undefined;
+    return row?.selected_release_mbid ? String(row.selected_release_mbid) : null;
+}
+
+/**
+ * Resolve a file's catalog track purely from its embedded MusicBrainz IDs — the
+ * Lidarr-style path. The release-track MBID (Tracks.mbid) is globally unique and
+ * needs no provider offer; the recording MBID + release MBID pair is the
+ * fallback. When the resolved track sits on a non-selected release of the group,
+ * re-anchor to the selected release's track (same recording) so the linkage
+ * matches how download status is scoped (ReleaseGroupSlots.selected_release_mbid).
+ */
+export function resolveCatalogTrackFromEmbeddedMbids(
+    tags: ParsedAudioTags,
+    preferredSlot: string,
+): CatalogTrackLink | null {
+    const releaseTrackMbid = tags.musicbrainzTrackId?.trim() || null;
+    const recordingMbid = tags.musicbrainzRecordingId?.trim() || null;
+    const embeddedReleaseMbid = tags.musicbrainzAlbumId?.trim() || null;
+
+    type AnchorRow = { mbid: string; recording_mbid: string; release_mbid: string };
+    let anchor: AnchorRow | undefined;
+
+    if (releaseTrackMbid) {
+        anchor = db.prepare(
+            "SELECT mbid, recording_mbid, release_mbid FROM Tracks WHERE mbid = ? LIMIT 1",
+        ).get(releaseTrackMbid) as AnchorRow | undefined;
+    }
+    if (!anchor && recordingMbid && embeddedReleaseMbid) {
+        anchor = db.prepare(`
+            SELECT mbid, recording_mbid, release_mbid
+            FROM Tracks
+            WHERE release_mbid = ? AND recording_mbid = ?
+            ORDER BY medium_position, position
+            LIMIT 1
+        `).get(embeddedReleaseMbid, recordingMbid) as AnchorRow | undefined;
+    }
+    if (!anchor) return null;
+
+    const releaseGroupMbid = releaseGroupForRelease(anchor.release_mbid);
+
+    // Re-anchor onto the selected release when the embedded tags reference a
+    // different release of the same group, so canonical_track_mbid lines up with
+    // the release the download-status query counts against.
+    if (releaseGroupMbid && anchor.recording_mbid) {
+        const selectedRelease = selectedReleaseForGroup(releaseGroupMbid, preferredSlot);
+        if (selectedRelease && selectedRelease !== anchor.release_mbid) {
+            const onSelected = db.prepare(`
+                SELECT mbid, recording_mbid, release_mbid
+                FROM Tracks
+                WHERE release_mbid = ? AND recording_mbid = ?
+                ORDER BY medium_position, position
+                LIMIT 1
+            `).get(selectedRelease, anchor.recording_mbid) as AnchorRow | undefined;
+            if (onSelected) {
+                return {
+                    trackMbid: onSelected.mbid,
+                    recordingMbid: onSelected.recording_mbid,
+                    releaseMbid: onSelected.release_mbid,
+                    releaseGroupMbid,
+                };
+            }
+        }
+    }
+
+    return {
+        trackMbid: anchor.mbid,
+        recordingMbid: anchor.recording_mbid,
+        releaseMbid: anchor.release_mbid,
+        releaseGroupMbid,
+    };
+}
 
 export type ParsedAudioTags = {
     title?: string | null;
@@ -349,6 +458,64 @@ export function matchAudioFileByMetadata(
     const preferredAlbumIds = folderAlbumIds(filePath, artistId, tags);
     const isrc = firstIsrc(tags.isrc);
     const recordingMbid = tags.musicbrainzRecordingId?.trim() || null;
+    const releaseMbid = tags.musicbrainzAlbumId?.trim() || null;
+
+    // Authoritative catalog identity from the file's own embedded MB IDs. This is
+    // independent of whether a provider offer still exists, so it both fills the
+    // canonical linkage on any offer match below and enables a provider-free
+    // (Lidarr-style) match when no offer is found.
+    const catalogLink = resolveCatalogTrackFromEmbeddedMbids(tags, preferredSlot);
+    const canonical = catalogLink
+        ? {
+            canonicalTrackMbid: catalogLink.trackMbid,
+            canonicalRecordingMbid: catalogLink.recordingMbid,
+            canonicalReleaseMbid: catalogLink.releaseMbid,
+            canonicalReleaseGroupMbid: catalogLink.releaseGroupMbid,
+        }
+        : {};
+
+    // Fast-path: when both release MBID and recording MBID are embedded (i.e.
+    // Discogenius-tagged files), resolve directly against the catalog via
+    // TrackFiles rather than walking ProviderItems. This makes rescans O(1) for
+    // already-tagged content.
+    if (recordingMbid && releaseMbid) {
+        // TrackFiles has no album_id column (dropped in the schema-split
+        // migration) — the release-group MBID is the album key here.
+        const directHit = db.prepare(`
+            SELECT tf.provider, CAST(tf.provider_id AS TEXT) AS provider_id,
+                   tf.canonical_release_group_mbid AS album_id,
+                   tf.quality, tf.library_slot, tf.file_path
+            FROM TrackFiles tf
+            WHERE tf.artist_id = ?
+              AND tf.file_type = 'track'
+              AND tf.canonical_recording_mbid = ?
+              AND tf.canonical_release_mbid = ?
+              AND (tf.library_slot IS NULL OR tf.library_slot = ?)
+            ORDER BY tf.verified_at DESC, tf.id DESC
+            LIMIT 1
+        `).get(artistId, recordingMbid, releaseMbid, preferredSlot) as {
+            provider: string; provider_id: string; album_id: string | null;
+            quality: string | null; library_slot: string | null; file_path: string;
+        } | undefined;
+
+        if (directHit) {
+            const isDuplicate = Boolean(
+                directHit.file_path
+                && path.resolve(directHit.file_path) !== path.resolve(filePath),
+            );
+            return {
+                albumId: directHit.album_id,
+                mediaId: directHit.provider_id,
+                provider: directHit.provider,
+                fileType: "track",
+                quality: directHit.quality,
+                librarySlot: directHit.library_slot || preferredSlot,
+                duplicateOfExisting: isDuplicate,
+                existingFilePath: isDuplicate ? directHit.file_path : null,
+                ...canonical,
+            };
+        }
+    }
 
     let offers: ProviderOfferRow[] = [];
     if (recordingMbid) {
@@ -388,7 +555,26 @@ export function matchAudioFileByMetadata(
     }
 
     const best = pickBestOffer(offers, tags, preferredAlbumIds, preferredSlot);
-    if (!best) return null;
+    if (!best) {
+        // No provider offer, but the embedded MB IDs resolve to a catalog track:
+        // link the file directly (Lidarr-style). The TrackFile carries no
+        // provider identity, only canonical MBIDs, which is enough to count as
+        // downloaded and to render on the album page.
+        if (catalogLink) {
+            return {
+                albumId: catalogLink.releaseGroupMbid,
+                mediaId: "",
+                provider: "",
+                fileType: "track",
+                quality: null,
+                librarySlot: preferredSlot,
+                duplicateOfExisting: false,
+                existingFilePath: null,
+                ...canonical,
+            };
+        }
+        return null;
+    }
 
     const librarySlot = best.library_slot || preferredSlot;
     const existing = existingTrackFileForOffer(artistId, best.provider, String(best.provider_id), librarySlot);
@@ -407,5 +593,6 @@ export function matchAudioFileByMetadata(
         librarySlot,
         duplicateOfExisting,
         existingFilePath: duplicateOfExisting ? resolvedExisting : null,
+        ...canonical,
     };
 }
