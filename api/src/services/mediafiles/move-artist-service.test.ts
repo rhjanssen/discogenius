@@ -132,12 +132,10 @@ test("moveArtist changes the stored folder and produces an artist-scoped rename 
   const artist = dbModule.db.prepare("SELECT path FROM Artists WHERE id = ?").get("1") as { path: string };
   assert.equal(artist.path, "Artist One");
 
-  const trackedFile = dbModule.db.prepare(`
-    SELECT expected_path as expectedPath
-    FROM TrackFiles
-    WHERE provider = ? AND provider_entity_type = ? AND provider_id = ?
-  `).get("tidal", "track", "100") as { expectedPath: string };
-  assert.ok(trackedFile.expectedPath.includes(path.join("Artist One", "Album One", "01 - Track One.flac")));
+  // getRenameStatus is read-only (no expected_path writes); the plan lives on renameStatus.
+  const sample = result?.renameStatus.sample[0];
+  assert.ok(sample?.expected_path?.includes(path.join("Artist One", "Album One", "01 - Track One.flac")));
+  assert.equal(sample?.needs_rename, true);
 });
 
 test("moveArtist queues MoveArtist when moveFiles is requested", () => {

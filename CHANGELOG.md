@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.7] - 2026-07-23
+
 ### Fixed
 - Music-video ↔ audio live/studio matching: one shared
   `live-performance-markers` helper (TS + SQL) for `live` / `performance` /
@@ -34,6 +36,8 @@ All notable changes to this project are documented in this file.
   album provider offers so missing album tracks become TrackFiles instead of
   Unmapped Files. Rename leftovers that already have a TrackFile for the same
   offer are classified as duplicates rather than “no matching provider item”.
+  Same-folder unmapped duplicates prefer the sibling already owning the
+  recording over alternate editions.
 - Unmapped Files table: column resize no longer treats responsive hide
   breakpoints (700–1100px) as resize floors, so Identified cannot explode to
   most of the row; Properties auto-sizes to fit quality strings like
@@ -56,6 +60,11 @@ All notable changes to this project are documented in this file.
   and a 16:9 video-detail skeleton (replacing the centered spinner). Unused
   `artistSearch` card skeleton removed. Album full-page skeleton stays
   header+tracks only so it matches deferred release-availability paint.
+
+### Docs
+- Video matching vs Lidarr/Jellyfin notes and YouTube semi-official source
+  guidance (`docs/VIDEO_MATCHING_VS_LIDARR_JELLYFIN.md`,
+  `docs/YOUTUBE_SEMI_OFFICIAL_SOURCES.md`).
 
 ## [2.6.6] - 2026-07-23
 
