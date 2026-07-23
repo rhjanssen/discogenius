@@ -8,7 +8,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 - **Embedded Cover Art Proxy Sizing**: Audio file tag embedding now uses ~500px cover art proxies (`cover-500.jpg`, ~50 KiB) instead of embedding multi-megabyte master origin images (`cover.jpg`, ~5.9 MiB) into every individual track file. This saves ~80 MB per album in audio file binary bloat, speeds up tag reading, and matches Lidarr/Plex embedded image standards. Master origin covers (`cover.jpg`) remain 100% full-resolution for folder sidecars.
-- **Plex Release Type Tagging**: Formatted `release_type` (`MusicBrainz Album Type` / `RELEASETYPE`) tags so secondary release types (e.g. `live`, `compilation`, `soundtrack`, `remix`) include `album` when paired with secondary types (e.g. `album; ep; live` or `album; live`), ensuring Plex categorizes live releases under Live Albums while preserving MusicBrainz metadata. Written with both `RELEASETYPE` and `MUSICBRAINZ_ALBUMTYPE` fields for Vorbis/FLAC comments.
+- **Plex Release Type Tagging**: Formatted `release_type` (`MusicBrainz Album Type` / `RELEASETYPE`) tags so secondary release types (e.g. `live`, `compilation`, `soundtrack`, `remix`) set the primary type to `album` (e.g. `album; live`), ensuring Plex categorizes live releases under Live Albums while preserving MusicBrainz metadata. Written with both `RELEASETYPE` and `MUSICBRAINZ_ALBUMTYPE` fields for Vorbis/FLAC comments.
+- **Original Release Date & Media Format Tagging**: Added `original_date` (`ORIGINALDATE` / `TDOR` / `TXXX:Original Release Date` / `WM/OriginalReleaseTime`) and `media_format` (`MEDIA` / `TMED` / `WM/Media`) tagging across all audio formats.
+- **Genre Fallback Tagging**: Added fallback from `Albums.genres` to `ArtistMetadata.genres`, ensuring tracks inherit artist genres when album genres are not explicitly specified.
 
 ## [2.6.9] - 2026-07-23
 

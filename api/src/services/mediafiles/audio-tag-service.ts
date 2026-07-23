@@ -150,6 +150,8 @@ type RetagTrackRow = {
   album_num_volumes: number | null;
   album_upc: string | null;
   album_genres: string | null;
+  album_original_date: string | null;
+  media_format: string | null;
   album_label: string | null;
   album_review_text: string | null;
   media_credits: string | null;
@@ -998,7 +1000,9 @@ export class AudioTagService {
         COALESCE(canonical_release.date, ar.date, provider_album.release_date) AS album_release_date,
         canonical_release.media_count AS album_num_volumes,
         COALESCE(canonical_release.barcode, provider_album.upc) AS album_upc,
-        COALESCE(canonical_group.genres, alb.genres) AS album_genres,
+        COALESCE(canonical_group.genres, alb.genres, am.genres) AS album_genres,
+        COALESCE(canonical_group.first_release_date, alb.first_release_date) AS album_original_date,
+        'Digital Media' AS media_format,
         canonical_release.label AS album_label,
         COALESCE(
           canonical_group.review_text,
@@ -1095,6 +1099,7 @@ export class AudioTagService {
         )
       LEFT JOIN AlbumReleases ar ON ar.mbid = COALESCE(lf.canonical_release_mbid, provider_album.release_mbid, provider_track.release_mbid)
       LEFT JOIN Albums alb ON alb.mbid = COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid, provider_track.release_group_mbid)
+      LEFT JOIN ArtistMetadata am ON am.id = artist.artist_metadata_id OR (artist.artist_metadata_id IS NULL AND am.mbid = artist.mbid)
       WHERE ${whereClause}
         AND (provider_track.provider_id IS NOT NULL OR canonical_track.mbid IS NOT NULL OR provider_canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR provider_recording.mbid IS NOT NULL)
       ORDER BY lf.artist_id, COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid), COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id
@@ -1211,6 +1216,8 @@ export class AudioTagService {
       disc_number: "DISCNUMBER",
       disc_count: "DISCTOTAL",
       date: "DATE",
+      original_date: "ORIGINALDATE",
+      media_format: "MEDIA",
       genre: "GENRE",
       isrc: "ISRC",
       copyright: "COPYRIGHT",
@@ -1244,6 +1251,8 @@ export class AudioTagService {
       disc_number: "TXXX:Disc Number",
       disc_count: "TXXX:Disc Count",
       date: "date",
+      original_date: "TXXX:Original Release Date",
+      media_format: "TMED",
       genre: "genre",
       isrc: "isrc",
       copyright: "copyright",
@@ -1277,6 +1286,8 @@ export class AudioTagService {
       disc_number: "----:com.apple.iTunes:Disc Number",
       disc_count: "----:com.apple.iTunes:Disc Count",
       date: "date",
+      original_date: "----:com.apple.iTunes:Original Date",
+      media_format: "----:com.apple.iTunes:MEDIA",
       genre: "genre",
       isrc: "isrc",
       copyright: "copyright",
@@ -1313,6 +1324,8 @@ export class AudioTagService {
       disc_number: "WM/PartOfSet",
       disc_count: "WM/DiscCount",
       date: "WM/Year",
+      original_date: "WM/OriginalReleaseTime",
+      media_format: "WM/Media",
       genre: "WM/Genre",
       isrc: "WM/ISRC",
       copyright: "copyright",
@@ -1855,6 +1868,42 @@ export class AudioTagService {
           label: "Date",
           ffmpegKey: "date",
           targetValue: releaseDate,
+        });
+      }
+
+      const originalDate = String(row.album_original_date || "").trim();
+      if (originalDate) {
+        tags.push({
+          key: "original_date",
+          label: "Original Release Date",
+          ffmpegKey: "original_date",
+          targetValue: originalDate,
+          aliases: [
+            "originaldate",
+            "original_date",
+            "original year",
+            "originalreleaseyear",
+            "tdor",
+            "tory",
+            "original date",
+            "Original Release Date",
+          ],
+          writeAliases: [
+            "ORIGINALDATE",
+            "ORIGINALYEAR",
+          ],
+        });
+      }
+
+      const mediaFormat = String(row.media_format || "Digital Media").trim();
+      if (mediaFormat) {
+        tags.push({
+          key: "media_format",
+          label: "Media Format",
+          ffmpegKey: "media_format",
+          targetValue: mediaFormat,
+          aliases: ["media_format", "media", "tmed", "Media Format"],
+          writeAliases: ["MEDIA"],
         });
       }
 

@@ -381,3 +381,30 @@ test("buildAudioTagWriteMap expands release_type writeAliases for FLAC/Vorbis", 
     MUSICBRAINZ_ALBUMTYPE: "album; live",
   });
 });
+
+test("buildAudioTagWriteMap maps original_date and media_format across formats", () => {
+  const tags: ManagedTag[] = [
+    {
+      key: "original_date",
+      label: "Original Release Date",
+      ffmpegKey: "original_date",
+      targetValue: "2024-10-25",
+    },
+    {
+      key: "media_format",
+      label: "Media Format",
+      ffmpegKey: "media_format",
+      targetValue: "Digital Media",
+    },
+  ];
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), {
+    ORIGINALDATE: "2024-10-25",
+    MEDIA: "Digital Media",
+  });
+
+  assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), {
+    "TXXX:Original Release Date": "2024-10-25",
+    TMED: "Digital Media",
+  });
+});
