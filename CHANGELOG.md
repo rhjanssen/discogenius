@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.8] - 2026-07-23
+
+### Fixed
+- Apple Music decryption wrapper no longer strands first-time login at "Login
+  request sent to the decryption wrapper...". The supervisor script is now
+  provisioned into the shared `wrapper-rootfs/data` volume (a directory mount)
+  and the sidecar's compose entrypoint is a static bootstrap that waits for the
+  script and then execs it. This removes the Docker "bind-mount a not-yet-created
+  file" trap — where the host `wrapper-entrypoint.sh` didn't exist when the
+  sidecar started (`depends_on` only waits for Discogenius to *start*), so Docker
+  created an empty directory in its place and the wrapper never consumed the
+  login trigger. Fresh deploys now self-heal with no manual container recreate.
+  The stale pre-2.6.8 entrypoint artifact is cleaned up automatically.
+  **Action required:** update the `apple-music-wrapper` service block in your
+  compose to the new form (new `entrypoint`, and drop the
+  `wrapper-entrypoint.sh:/app/wrapper-entrypoint.sh` volume) — see
+  `docker-compose.example.yml`.
+
 ## [2.6.7] - 2026-07-23
 
 ### Fixed

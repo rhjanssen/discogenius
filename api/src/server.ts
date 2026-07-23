@@ -308,8 +308,9 @@ const server = app.listen(port, () => {
   });
 
   // Sync provider credentials into their downloader configs and provision the
-  // Apple wrapper sidecar's entrypoint script (compose mounts it from /config,
-  // so it must exist before the sidecar can start on a fresh install).
+  // Apple wrapper sidecar's supervisor script into the shared data dir. The
+  // sidecar's bootstrap entrypoint waits for that script, so a returning (or
+  // fresh) deploy self-heals even before the first login.
   import("./services/providers/index.js").then(({ streamingProviderManager }) =>
     streamingProviderManager.syncProviderCredentials(),
   ).catch((error) => {

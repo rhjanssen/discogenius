@@ -44,14 +44,24 @@ services:
   #   docker compose up -d --force-recreate apple-music-wrapper
   #
   # First-time Apple ID/2FA login is done from the Auth page; Discogenius
-  # provisions wrapper-entrypoint.sh under config/providers/apple-music/.
+  # provisions the supervisor script at boot into the shared data volume
+  # (config/providers/apple-music/wrapper-rootfs/data/wrapper-entrypoint.sh).
+  #
+  # The entrypoint is a static bootstrap that waits for that script to appear,
+  # then execs it. Do NOT bind-mount the script as a file: if the host file
+  # does not exist yet when this container starts (it is written by Discogenius,
+  # and depends_on only waits for Discogenius to start), Docker creates an empty
+  # directory in its place and the sidecar breaks until you recreate it. Mounting
+  # only the data *directory* and waiting for the script self-heals a fresh deploy.
   apple-music-wrapper:
     image: ghcr.io/itouakirai/wrapper:x86
     network_mode: "service:discogenius"
-    entrypoint: ["/bin/bash", "/app/wrapper-entrypoint.sh"]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - 'while [ ! -s /app/rootfs/data/wrapper-entrypoint.sh ]; do echo "[wrapper-boot] waiting for Discogenius to provision the supervisor script..."; sleep 2; done; exec /bin/bash /app/rootfs/data/wrapper-entrypoint.sh'
     depends_on:
       - discogenius
     volumes:
       - ./config/providers/apple-music/wrapper-rootfs/data:/app/rootfs/data
-      - ./config/providers/apple-music/wrapper-entrypoint.sh:/app/wrapper-entrypoint.sh
     restart: unless-stopped

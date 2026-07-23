@@ -256,21 +256,34 @@ export async function buildAppleMusicApiHeaders(token: AppleMusicAuthToken): Pro
  * no credentials in compose files). The wrapper container mounts
  * `wrapper-rootfs/data` from our config volume, so both containers see the
  * same directory: Discogenius writes `login_trigger.txt` (appleId:password)
- * and `2fa.txt`; the wrapper's supervisor entrypoint (provisioned below and
- * mounted by compose) consumes them, runs the login handshake, reports through
+ * and `2fa.txt`; the wrapper's supervisor entrypoint (provisioned below into
+ * that same data dir) consumes them, runs the login handshake, reports through
  * `login_status.json`, and restarts the decryption server. Credentials only
  * ever exist transiently in the trigger file, which the supervisor deletes as
  * soon as it reads it.
+ *
+ * The supervisor script lives INSIDE the shared data dir on purpose. Compose
+ * bind-mounts that directory, and a directory mount is immune to Docker's
+ * "bind-mount a not-yet-existent file" trap: if you mount a host *file* that
+ * does not exist when the sidecar starts, Docker silently creates an empty
+ * *directory* in its place, so `bash <script>` fails and the sidecar breaks
+ * permanently until it is recreated. `depends_on` only waits for Discogenius to
+ * start (not to finish booting and write the script), so that trap fired on
+ * every fresh deploy. The paired compose entrypoint is a tiny static bootstrap
+ * that waits for this script to appear in the data dir and then execs it, so a
+ * fresh deploy self-heals without a manual recreate.
  */
 
 const WRAPPER_ROOTFS_DATA_DIR = path.join(CONFIG_DIR, "providers", "apple-music", "wrapper-rootfs", "data");
-export const WRAPPER_ENTRYPOINT_FILE = path.join(APPLE_MUSIC_PROVIDER_DIR, "wrapper-entrypoint.sh");
+export const WRAPPER_ENTRYPOINT_FILE = path.join(WRAPPER_ROOTFS_DATA_DIR, "wrapper-entrypoint.sh");
+/** Pre-2.6.8 location: a bind-mounted file, which caused the phantom-dir trap. */
+const LEGACY_WRAPPER_ENTRYPOINT_FILE = path.join(APPLE_MUSIC_PROVIDER_DIR, "wrapper-entrypoint.sh");
 
 let loginStatus: "idle" | "logging_in" | "waiting_for_2fa" | "success" | "failed" = "idle";
 let loginMessage = "";
 
 // Bump the marker when the script changes so existing installs pick up fixes.
-const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v7";
+const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v8";
 const WRAPPER_ENTRYPOINT_SCRIPT = `#!/bin/bash
 # ${WRAPPER_ENTRYPOINT_VERSION} — managed by Discogenius, manual edits are overwritten.
 # Supervises the Apple Music decryption wrapper: serves decryption on ports
@@ -452,15 +465,49 @@ done
  */
 export function ensureWrapperEntrypointScript(): void {
   try {
-    ensureDir(APPLE_MUSIC_PROVIDER_DIR);
-    const current = fs.existsSync(WRAPPER_ENTRYPOINT_FILE)
+    // Written into the shared data dir (see the WRAPPER_ENTRYPOINT_FILE note):
+    // a directory mount the sidecar's bootstrap waits on, so it can never be
+    // clobbered by Docker's phantom-directory trap.
+    ensureDir(WRAPPER_ROOTFS_DATA_DIR);
+    const current = fs.existsSync(WRAPPER_ENTRYPOINT_FILE) && fs.statSync(WRAPPER_ENTRYPOINT_FILE).isFile()
       ? fs.readFileSync(WRAPPER_ENTRYPOINT_FILE, "utf-8")
       : "";
     if (!current.includes(WRAPPER_ENTRYPOINT_VERSION)) {
-      fs.writeFileSync(WRAPPER_ENTRYPOINT_FILE, WRAPPER_ENTRYPOINT_SCRIPT, { encoding: "utf-8", mode: 0o755 });
+      // Atomic write: the bootstrap greps for a non-empty file, so never let it
+      // observe a half-written script (matters on version-bump rewrites).
+      const tmpPath = `${WRAPPER_ENTRYPOINT_FILE}.tmp`;
+      fs.writeFileSync(tmpPath, WRAPPER_ENTRYPOINT_SCRIPT, { encoding: "utf-8", mode: 0o755 });
+      fs.renameSync(tmpPath, WRAPPER_ENTRYPOINT_FILE);
     }
+    cleanupLegacyWrapperEntrypoint();
   } catch (error) {
     console.error("[APPLE-MUSIC-AUTH] Failed to provision wrapper entrypoint script:", error);
+  }
+}
+
+/**
+ * Best-effort removal of the pre-2.6.8 entrypoint artifact. The old compose
+ * bind-mounted `providers/apple-music/wrapper-entrypoint.sh` as a file; on a
+ * fresh deploy Docker created an empty directory there instead, which is the
+ * exact thing that stranded logins at "Login request sent to the decryption
+ * wrapper...". We only ever drop an empty phantom dir or a stale managed file —
+ * never anything the operator might still be using.
+ */
+function cleanupLegacyWrapperEntrypoint(): void {
+  try {
+    if (!fs.existsSync(LEGACY_WRAPPER_ENTRYPOINT_FILE)) {
+      return;
+    }
+    const stat = fs.statSync(LEGACY_WRAPPER_ENTRYPOINT_FILE);
+    if (stat.isDirectory()) {
+      if (fs.readdirSync(LEGACY_WRAPPER_ENTRYPOINT_FILE).length === 0) {
+        fs.rmdirSync(LEGACY_WRAPPER_ENTRYPOINT_FILE);
+      }
+    } else {
+      fs.rmSync(LEGACY_WRAPPER_ENTRYPOINT_FILE, { force: true });
+    }
+  } catch {
+    // A leftover legacy artifact is harmless; the new data-dir script wins.
   }
 }
 
