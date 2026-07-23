@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Album page load no longer re-syncs MusicBrainz release groups or live-fetches
+  provider tracklists / editorial text on every navigation. Detail GETs are
+  DB-first (Lidarr/Jellyfin pattern); provider track offers come from
+  `ProviderItems` with live `getAlbumTracks` only as a fallback. Release
+  availability loads as a deferred secondary query so the header + tracklist
+  can paint without waiting on the switcher payload.
+
 ## [2.6.6] - 2026-07-23
 
 ### Fixed

@@ -30,10 +30,12 @@ export interface AlbumPageData {
 }
 
 export const albumPageQueryKey = (albumId: string | undefined) => ['albumPage', albumId] as const;
+export const albumReleaseAvailabilityQueryKey = (albumId: string | undefined) =>
+    ['albumPage', albumId, 'releaseAvailability'] as const;
 
 export function useAlbumPage(albumId: string | undefined) {
     useDebouncedQueryInvalidation({
-        queryKeys: [albumPageQueryKey(albumId)],
+        queryKeys: [albumPageQueryKey(albumId), albumReleaseAvailabilityQueryKey(albumId)],
         // Queue/activity changes are owned by the queue cache and its live SSE
         // projection. Refetching the complete album page for every unrelated
         // queued/started/completed job caused a request storm during initial
@@ -45,23 +47,20 @@ export function useAlbumPage(albumId: string | undefined) {
         debounceMs: 400,
     });
 
-    return useQuery({
+    // Header + tracks paint as soon as /page returns. Release availability
+    // (switcher) is a separate lean query — same deferred-section pattern as
+    // Jellyfin's post-paint rails and Lidarr's staged album→tracks fetch.
+    const pageQuery = useQuery({
         queryKey: albumPageQueryKey(albumId),
-        queryFn: async ({ signal }): Promise<AlbumPageData> => {
+        queryFn: async ({ signal }): Promise<Omit<AlbumPageData, 'releaseAvailability'>> => {
             if (!albumId) {
                 throw new Error('Album ID is required');
             }
 
-            const [response, releaseAvailability] = await Promise.all([
-                api.getAlbumPage(albumId, {
-                    signal,
-                    timeoutMs: 15_000,
-                }),
-                api.getAlbumReleaseAvailability(albumId, {
-                    signal,
-                    timeoutMs: 15_000,
-                }),
-            ]);
+            const response = await api.getAlbumPage(albumId, {
+                signal,
+                timeoutMs: 15_000,
+            });
 
             const artistImage = response.artistPicture ?? response.artistCoverImageUrl ?? null;
 
@@ -70,7 +69,6 @@ export function useAlbumPage(albumId: string | undefined) {
                 tracks: response.tracks,
                 otherVersions: response.otherVersions,
                 associatedVideos: response.associatedVideos ?? [],
-                releaseAvailability,
                 artistImage,
             };
         },
@@ -79,4 +77,41 @@ export function useAlbumPage(albumId: string | undefined) {
         staleTime: 30_000,
         retry: 1,
     });
+
+    const availabilityQuery = useQuery({
+        queryKey: albumReleaseAvailabilityQueryKey(albumId),
+        queryFn: async ({ signal }): Promise<ReleaseGroupAvailability> => {
+            if (!albumId) {
+                throw new Error('Album ID is required');
+            }
+            return api.getAlbumReleaseAvailability(albumId, {
+                signal,
+                timeoutMs: 15_000,
+            });
+        },
+        enabled: !!albumId && pageQuery.isSuccess,
+        refetchOnWindowFocus: false,
+        staleTime: 30_000,
+        retry: 1,
+    });
+
+    const data: AlbumPageData | undefined = pageQuery.data
+        ? {
+            ...pageQuery.data,
+            releaseAvailability: availabilityQuery.data ?? null,
+        }
+        : undefined;
+
+    return {
+        ...pageQuery,
+        data,
+        isFetching: pageQuery.isFetching || availabilityQuery.isFetching,
+        refetch: async () => {
+            const [page] = await Promise.all([
+                pageQuery.refetch(),
+                availabilityQuery.refetch(),
+            ]);
+            return page;
+        },
+    };
 }

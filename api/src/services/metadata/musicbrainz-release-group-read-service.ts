@@ -8,10 +8,6 @@ import { scoreTrackMatch as sharedScoreTrackMatch } from "../music/provider-trac
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderTrack } from "../providers/streaming-provider.js";
 import {
-    firstProviderEditorialText,
-    listReleaseGroupAlbumOfferCandidates,
-} from "../providers/provider-editorial-text.js";
-import {
     albumCoverLocalUrl,
     albumProviderArtworkCandidatesFromRow,
     providerArtworkIdFromCandidates,
@@ -349,40 +345,9 @@ async function resolveProviderAlbumReview(releaseGroup: any): Promise<{
         };
     }
 
+    // Page reads stay DB-only (Lidarr/Jellyfin). Live provider editorial fetches
+    // belong on refresh/curation — never on every album navigation.
     const overview = String(releaseGroup.overview || "").trim();
-    const candidates = [
-        ...listReleaseGroupAlbumOfferCandidates(String(releaseGroup.mbid)),
-        {
-            provider: String(releaseGroup.stereo_provider || releaseGroup.selected_provider || "").trim(),
-            providerId: String(releaseGroup.stereo_provider_id || releaseGroup.selected_provider_id || "").trim(),
-        },
-        {
-            provider: String(releaseGroup.spatial_provider || releaseGroup.selected_provider || "").trim(),
-            providerId: String(releaseGroup.spatial_provider_id || releaseGroup.selected_provider_id || "").trim(),
-        },
-    ];
-
-    const editorial = await firstProviderEditorialText({
-        kind: "albumReview",
-        candidates,
-    });
-    if (editorial) {
-        // Persist so NFO/tags/refresh consumers see the same text without another live call.
-        db.prepare(`
-            UPDATE Albums SET
-                review_text = ?,
-                review_source = ?,
-                review_last_updated = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE mbid = ?
-        `).run(editorial.text, editorial.source, new Date().toISOString(), String(releaseGroup.mbid));
-        return {
-            review: editorial.text,
-            source: editorial.source,
-            updatedAt: new Date().toISOString(),
-        };
-    }
-
     if (overview) {
         return {
             review: overview,
@@ -1012,6 +977,135 @@ function findBestProviderTrackMatch(
     return candidates[0] || null;
 }
 
+function loadProviderTracksFromDb(
+    selections: ProviderTrackSelection[],
+    storedProviderUrl: (provider: string, entityType: "album" | "track", providerId: string) => string | null,
+): AnnotatedProviderTrack[] {
+    const selectTracks = db.prepare(`
+        SELECT
+          CAST(provider_id AS TEXT) AS provider_id,
+          title,
+          version,
+          isrc,
+          duration,
+          track_number,
+          volume_number,
+          quality,
+          provider_url,
+          provider_artist_name,
+          CAST(provider_album_id AS TEXT) AS provider_album_id
+        FROM ProviderItems
+        WHERE provider = ?
+          AND entity_type = 'track'
+          AND CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
+          AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
+          AND (
+            availability IS NULL
+            OR LOWER(CAST(availability AS TEXT))
+               NOT IN ('0', 'false', 'unavailable', 'no', '')
+          )
+        ORDER BY
+          COALESCE(volume_number, 1) ASC,
+          COALESCE(track_number, 0) ASC,
+          provider_id ASC
+    `);
+
+    const out: AnnotatedProviderTrack[] = [];
+    for (const selection of selections) {
+        const rows = selectTracks.all(selection.providerId, selection.providerAlbumId) as Array<{
+            provider_id: string;
+            title: string | null;
+            version: string | null;
+            isrc: string | null;
+            duration: number | null;
+            track_number: number | null;
+            volume_number: number | null;
+            quality: string | null;
+            provider_url: string | null;
+            provider_artist_name: string | null;
+            provider_album_id: string | null;
+        }>;
+        if (rows.length === 0) {
+            continue;
+        }
+
+        const providerAlbumUrl = storedProviderUrl(
+            selection.providerId,
+            "album",
+            selection.providerAlbumId,
+        );
+        const artistName = String(rows[0]?.provider_artist_name || "").trim() || "Unknown Artist";
+        const artist = { providerId: "", name: artistName };
+
+        for (const row of rows) {
+            const providerTrackId = String(row.provider_id || "").trim();
+            if (!providerTrackId) continue;
+            const trackUrl = String(row.provider_url || "").trim()
+                || storedProviderUrl(selection.providerId, "track", providerTrackId)
+                || null;
+            out.push({
+                providerId: providerTrackId,
+                title: String(row.title || "").trim() || "Unknown Track",
+                version: row.version,
+                artist,
+                artists: [artist],
+                album: {
+                    providerId: selection.providerAlbumId,
+                    title: "",
+                    artist,
+                    url: providerAlbumUrl || undefined,
+                },
+                duration: Number(row.duration) || 0,
+                trackNumber: Number(row.track_number) || 0,
+                volumeNumber: row.volume_number == null ? undefined : Number(row.volume_number),
+                url: trackUrl || undefined,
+                isrc: row.isrc,
+                quality: row.quality,
+                __providerId: selection.providerId,
+                __providerAlbumId: selection.providerAlbumId,
+                __providerAlbumUrl: providerAlbumUrl,
+                __providerTrackUrl: trackUrl,
+                __slot: selection.slot,
+                __albumQuality: selection.quality,
+                __key: `${selection.providerId}:${selection.providerAlbumId}:${providerTrackId}`,
+            });
+        }
+    }
+    return out;
+}
+
+async function loadProviderTracksLive(
+    selections: ProviderTrackSelection[],
+    storedProviderUrl: (provider: string, entityType: "album" | "track", providerId: string) => string | null,
+): Promise<AnnotatedProviderTrack[]> {
+    const providerTracks = (await Promise.all(selections.map(async (selection) => {
+        const provider = streamingProviderManager.getStreamingProvider(selection.providerId);
+        const albumTracks = await provider.getAlbumTracks(selection.providerAlbumId);
+        const providerAlbumUrl = storedProviderUrl(
+            selection.providerId,
+            "album",
+            selection.providerAlbumId,
+        );
+        return albumTracks.map((track, index) => ({
+            ...track,
+            __providerId: selection.providerId,
+            __providerAlbumId: selection.providerAlbumId,
+            __providerAlbumUrl: providerAlbumUrl
+                || String(track.album?.url || "").trim()
+                || null,
+            __providerTrackUrl: storedProviderUrl(
+                selection.providerId,
+                "track",
+                String(track.providerId || ""),
+            ) || String(track.url || "").trim() || null,
+            __slot: selection.slot,
+            __albumQuality: selection.quality,
+            __key: `${selection.providerId}:${selection.providerAlbumId}:${track.providerId || index}`,
+        } satisfies AnnotatedProviderTrack));
+    }))).flat() as AnnotatedProviderTrack[];
+    return providerTracks;
+}
+
 async function attachProviderPreviewTracks(
     tracks: AlbumTrackContract[],
     releaseGroup: any,
@@ -1073,31 +1167,20 @@ async function attachProviderPreviewTracks(
             return String(row?.provider_url || "").trim() || null;
         };
 
-        const providerTracks = (await Promise.all(providerAlbumSelections.map(async (selection) => {
-            const provider = streamingProviderManager.getStreamingProvider(selection.providerId);
-            const albumTracks = await provider.getAlbumTracks(selection.providerAlbumId);
-            const providerAlbumUrl = storedProviderUrl(
-                selection.providerId,
-                "album",
-                selection.providerAlbumId,
-            );
-            return albumTracks.map((track, index) => ({
-                ...track,
-                __providerId: selection.providerId,
-                __providerAlbumId: selection.providerAlbumId,
-                __providerAlbumUrl: providerAlbumUrl
-                    || String(track.album?.url || "").trim()
-                    || null,
-                __providerTrackUrl: storedProviderUrl(
-                    selection.providerId,
-                    "track",
-                    String(track.providerId || ""),
-                ) || String(track.url || "").trim() || null,
-                __slot: selection.slot,
-                __albumQuality: selection.quality,
-                __key: `${selection.providerId}:${selection.providerAlbumId}:${track.providerId || index}`,
-            } satisfies AnnotatedProviderTrack));
-        }))).flat() as AnnotatedProviderTrack[];
+        // Prefer persisted ProviderItems (artist page already does this). Live
+        // getAlbumTracks is only a fallback for albums whose track offers were
+        // never written — page views must not N+1 provider APIs.
+        const dbTracks = loadProviderTracksFromDb(providerAlbumSelections, storedProviderUrl);
+        const coveredKeys = new Set(
+            dbTracks.map((track) => `${track.__providerId}:${track.__providerAlbumId}:${track.__slot}`),
+        );
+        const missingSelections = providerAlbumSelections.filter(
+            (selection) => !coveredKeys.has(`${selection.providerId}:${selection.providerAlbumId}:${selection.slot}`),
+        );
+        const liveTracks = missingSelections.length > 0
+            ? await loadProviderTracksLive(missingSelections, storedProviderUrl)
+            : [];
+        const providerTracks = [...dbTracks, ...liveTracks];
         const unusedProviderTracks = new Set(providerTracks.map((track) => track.__key));
 
         return tracks.map((track) => {
@@ -1256,13 +1339,20 @@ export class MusicBrainzReleaseGroupReadService {
             return null;
         }
 
-        // Always re-reconcile on album load. content_hash skips unchanged
-        // payloads, so this is cheap when fresh and backfills ISRCs / labels /
-        // curated columns when the catalog source gained data after first hydrate.
-        try {
-            await servarrMetadata.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
-        } catch (error) {
-            console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate MusicBrainz release group ${releaseGroupMbid}:`, error);
+        // Hydrate only when the release group has no local releases yet.
+        // Re-syncing on every album-page GET always paid a remote catalog round
+        // trip even when content_hash would skip the write (Lidarr/Jellyfin keep
+        // detail GETs DB-only; freshness is the refresh/scheduler path).
+        const releaseCount = db.prepare(
+            "SELECT COUNT(*) AS count FROM AlbumReleases WHERE release_group_mbid = ?",
+        ).get(releaseGroupMbid) as { count?: number } | undefined;
+
+        if (Number(releaseCount?.count || 0) === 0) {
+            try {
+                await servarrMetadata.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
+            } catch (error) {
+                console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate MusicBrainz release group ${releaseGroupMbid}:`, error);
+            }
         }
 
         return queryReleaseGroup(releaseGroupMbid);

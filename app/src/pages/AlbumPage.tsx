@@ -69,6 +69,7 @@ import TrackList from "@/components/TrackList";
 import { useCardStyles } from "@/components/cards/cardStyles";
 import {
   albumPageQueryKey,
+  albumReleaseAvailabilityQueryKey,
   useAlbumPage,
   type AlbumAssociatedVideo,
   type AlbumPageData,
@@ -938,18 +939,21 @@ const AlbumPage = () => {
     };
   }, [albumId, loading, location.key, location.state, tracks.length]);
 
-  const updateAlbumPageCache = useCallback((updater: (current: AlbumPageData) => AlbumPageData) => {
+  const updateAlbumPageCache = useCallback((updater: (current: Omit<AlbumPageData, "releaseAvailability">) => Omit<AlbumPageData, "releaseAvailability">) => {
     if (!albumId) {
       return;
     }
 
-    queryClient.setQueryData<AlbumPageData | undefined>(albumPageQueryKey(albumId), (current) => {
-      if (!current) {
-        return current;
-      }
+    queryClient.setQueryData<Omit<AlbumPageData, "releaseAvailability"> | undefined>(
+      albumPageQueryKey(albumId),
+      (current) => {
+        if (!current) {
+          return current;
+        }
 
-      return updater(current);
-    });
+        return updater(current);
+      },
+    );
   }, [albumId, queryClient]);
 
   const handleToggleMonitor = () => {
@@ -985,11 +989,14 @@ const AlbumPage = () => {
       providerAlbumId: string;
     }) => api.setAlbumSlotSelection(albumId!, slot, { releaseMbid, provider, providerAlbumId }),
     onSuccess: async (releaseAvailability) => {
-      updateAlbumPageCache((current) => ({
-        ...current,
+      queryClient.setQueryData(
+        albumReleaseAvailabilityQueryKey(albumId),
         releaseAvailability,
-      }));
-      await queryClient.invalidateQueries({ queryKey: albumPageQueryKey(albumId) });
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: albumPageQueryKey(albumId) }),
+        queryClient.invalidateQueries({ queryKey: albumReleaseAvailabilityQueryKey(albumId) }),
+      ]);
       dispatchLibraryUpdated();
       toast({
         title: "Release selection updated",

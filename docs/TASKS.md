@@ -257,6 +257,24 @@ artwork, shared quality columns, empty-state import button, client-only
 UltraBlur (no backend `/ultrablur`), Fluent Alpha layer surfaces on nav/cards,
 bounded artist retag preview/status (`scanLimit`).
 
+Album vs artist page load (2026-07-23 audit + partial fix):
+- Root causes vs artist: album `/page` was monolithic and re-synced the release
+  group (remote catalog) + live `getAlbumTracks` + live editorial on every GET;
+  artist is sectioned (identity→albums→tracks/videos) and DB-first with
+  conditional hydrate. Lidarr/Jellyfin also keep detail GETs local-only and
+  stage secondary fetches.
+- Measured (Bastille, live container before fix): artist identity ~35–55ms;
+  album `/page` ~0.3–2.4s (Bad Blood cold ~2.3s; health flagged slowRequests
+  >1.5s). Release-availability alone ~20–45ms.
+- Shipped (Unreleased / candidate 2.6.7): DB-first album page (skip sync when
+  AlbumReleases exist; ProviderItems for track offers; no live review on read);
+  deferred release-availability query so header+tracks paint without waiting.
+- pending: section album page like artist (`identity` / `tracks` /
+  `associatedVideos`) so header paints before tracklist + video SQL; slim
+  `getAlbumAssociatedVideos` (correlated track-label subqueries × N videos —
+  Bad Blood has 19). Estimated additional first-paint win: hundreds of ms on
+  video-heavy albums after the DB-first fix lands in the running container.
+
 Still open:
 
 - pending: catalog diff — reconcile removals; do not stamp `last_scanned` after
