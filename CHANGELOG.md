@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.11] - 2026-07-23
+
+### Fixed
+- **Catalog-direct file linking (Lidarr-style)**: A downloaded file now counts as *downloaded* whenever its embedded MusicBrainz IDs resolve to a catalog track — no live provider offer required. Library scan now reads the embedded release-track MBID (`musicbrainz_trackid` → `Tracks.mbid` → `canonical_track_mbid`), resolves it directly against the catalog (re-anchoring onto the slot-selected release so linkage matches how download status is scoped), and links the `TrackFiles` row's canonical MBIDs accordingly. This fixes imported albums where files were on disk but showed as not downloaded (e.g. *iTunes Festival: London 2013* — 5 imported, 1 counted).
+- **Self-heal existing mislinked files**: A folder rescan now back-fills canonical catalog MBIDs onto already-tracked rows that have none, reading each file's embedded MB tags. Previously such rows were skipped on rescan and stayed "not downloaded" until a re-download. Bounded to broken rows, so it is a no-op for a healthy library.
+- **Broken embedded-MBID fast path**: The scan's fast path selected `TrackFiles.album_id`, a column removed in the schema-split migration, so the query threw and Discogenius-tagged files were left unmapped. It now keys on `canonical_release_group_mbid`.
+- **Retag query threw on a missing column**: The artist-genre fallback join referenced `artist.artist_metadata_id`, which the `Artists` table does not have, so the entire tag-context query failed and retag silently applied no canonical tags after import. Join by `am.mbid = artist.mbid` instead, restoring genre/date/media-format/release-type tagging.
+- **Audio album tracklists exclude video tracks**: Video recordings are pruned from audio release-group tracklists (matching Lidarr), and folder rescans resolve album affinity from embedded tags and folder names so every audio file in an album folder links to its track.
+- **UI consistency**: Video imports respect the music-video monitoring setting, status columns and the green filled-checkmark icon are consistent across the album/track/video tabs, and the album list view no longer overlaps the cover with the title.
+
 ## [2.6.10] - 2026-07-23
 
 ### Fixed
