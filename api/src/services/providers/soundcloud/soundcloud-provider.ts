@@ -42,8 +42,12 @@ import {
 import { SoundCloudBackend } from "./soundcloud-backend.js";
 import { soundcloudQualityMapping } from "./soundcloud-quality.js";
 import {
+  classifySoundCloudTrackDownloadability,
+  filterDownloadableSoundCloudSearchTracks,
+} from "./soundcloud-downloadability.js";
+import {
   PLAYLIST_TRACKLIST_COVERAGE_METHOD,
-  playlistCoversCanonicalTracklist,
+  playlistCoversCanonicalTracklistDownloadable,
   rankSoundCloudPlaylistCandidates,
   scorePlaylistTracklistCoverage,
   shouldWideSearchSoundCloudPlaylists,
@@ -225,14 +229,15 @@ export class SoundCloudProvider implements StreamingProvider {
       setupIntro:
         "Experimental. SoundCloud uses a browser session oauth_token plus the public web client_id — "
         + "not official OAuth 2.1 with a registered app secret. "
-        + "Major-label tracks on free accounts are often SNIP or encrypted HLS only; "
-        + "treat pasted tokens as temporary and revoke the browser session when finished testing.",
+        + "Major-label tracks are often SNIP or encrypted HLS only — Go+ unlocks browser DRM playback, "
+        + "not Discogenius downloads. Treat pasted tokens as temporary and revoke the browser session when finished testing.",
       setupInstructions: [
         "Open https://soundcloud.com while signed in, then open DevTools → Network.",
         "Find a request to api-v2.soundcloud.com (or api-auth.soundcloud.com/connect/session).",
         "Copy the oauth / access_token value (Authorization: OAuth … or the session JSON access_token).",
         "Paste it into OAuth token. Leave Client id blank to use the built-in public web client id.",
         "Optional: export soundcloud.com cookies with \"Get cookies.txt LOCALLY\" for yt-dlp fallback when native progressive streams are unavailable.",
+        "Go+ does not unlock major-label encrypted HLS for Discogenius — matching prefers downloadable (progressive) fan sets.",
       ],
       credentialFields: [
         {
@@ -270,7 +275,7 @@ export class SoundCloudProvider implements StreamingProvider {
       enabled: true,
       setupNote:
         "Prefers native progressive MP3 when the account can resolve it; falls back to yt-dlp with the oauth header. "
-        + "Lossy only. Free accounts often get SNIP previews or encrypted HLS on major-label tracks; Go+ is closer to other streamers.",
+        + "Lossy only. Major-label tracks are often SNIP or encrypted HLS only — Go+ does not unlock those for Discogenius downloads.",
     }],
     catalog: { search: true, artistCatalog: true, releaseOffers: true, videos: false },
     imports: { supported: ["favorite-tracks", "playlist"] },
@@ -337,7 +342,9 @@ export class SoundCloudProvider implements StreamingProvider {
     return {
       artists: (artists.collection || []).map(mapArtist),
       albums: (albums.collection || []).map((album) => mapAlbum(album)),
-      tracks: (tracks.collection || []).map((track) => mapTrack(track)),
+      // Drop DRM/SNIP/phantom-HLS when search embeds policy + media.transcodings.
+      tracks: filterDownloadableSoundCloudSearchTracks(tracks.collection || [])
+        .map((track) => mapTrack(track)),
       videos: [],
     };
   }
@@ -433,13 +440,23 @@ export class SoundCloudProvider implements StreamingProvider {
       return ranked.slice(0, 10);
     }
 
-    const covering: Array<{ album: ProviderAlbum; extras: number; covered: number }> = [];
+    const covering: Array<{
+      album: ProviderAlbum;
+      extras: number;
+      covered: number;
+      downloadableCovered: number;
+      knownUndownloadableCovered: number;
+    }> = [];
     for (const candidate of ranked.slice(0, 8)) {
       // Skip explicit empty album shells — they cannot cover a tracklist.
       if (candidate.trackCount === 0) continue;
       try {
         const tracks = await this.getAlbumTracks(candidate.providerId);
-        if (!playlistCoversCanonicalTracklist(preferredTracks as CanonicalTrackForCoverage[], tracks)) {
+        // Title coverage alone is not enough — DRM/SNIP-only shells must not match.
+        if (!playlistCoversCanonicalTracklistDownloadable(
+          preferredTracks as CanonicalTrackForCoverage[],
+          tracks,
+        )) {
           continue;
         }
         const coverage = scorePlaylistTracklistCoverage(
@@ -447,6 +464,9 @@ export class SoundCloudProvider implements StreamingProvider {
           tracks,
         );
         const extras = Math.max(0, tracks.length - preferredTracks.length);
+        const downloadableCovered = coverage.downloadable?.downloadableCovered ?? 0;
+        const knownUndownloadableCovered =
+          coverage.downloadable?.knownUndownloadableCovered ?? 0;
         // Stamp coverage method on raw so the artist-match path can force probable.
         covering.push({
           album: {
@@ -458,19 +478,28 @@ export class SoundCloudProvider implements StreamingProvider {
               _discogeniusCoverageExtras: extras,
               _discogeniusCoverageRatio: coverage.ratio,
               _discogeniusCoverageCovered: coverage.covered,
+              _discogeniusDownloadableCovered: downloadableCovered,
+              _discogeniusDownloadableRatio: coverage.downloadable?.downloadableRatio ?? 0,
+              _discogeniusKnownUndownloadableCovered: knownUndownloadableCovered,
             },
           },
           extras,
           covered: coverage.covered,
+          downloadableCovered,
+          knownUndownloadableCovered,
         });
       } catch {
         // Skip playlists we cannot hydrate.
       }
     }
 
+    // Prefer maximizing downloadable coverage; then fewer DRM tracks in the
+    // covering set (emmatad over mixed rumourhasit); then tighter supersets.
     covering.sort((left, right) =>
-      right.covered - left.covered
+      right.downloadableCovered - left.downloadableCovered
+      || left.knownUndownloadableCovered - right.knownUndownloadableCovered
       || left.extras - right.extras
+      || right.covered - left.covered
       || String(left.album.providerId).localeCompare(String(right.album.providerId)));
     return covering.map((row) => row.album);
   }
@@ -489,16 +518,22 @@ export class SoundCloudProvider implements StreamingProvider {
     );
     const album = mapAlbum(resource);
     const tracks = resource.tracks || [];
-    // Full representation may include stub tracks (id only). Hydrate missing titles.
+    // Full representation may include stub tracks (id only) or title-only embeds
+    // without media. Hydrate when title or downloadability evidence is missing.
     const mapped: ProviderTrack[] = [];
     for (let index = 0; index < tracks.length; index += 1) {
       const track = tracks[index]!;
-      if (track.title) {
+      const needsHydrate = !track.title
+        || classifySoundCloudTrackDownloadability(track) === "unknown";
+      if (!needsHydrate) {
         mapped.push(mapTrack(track, album, index + 1));
         continue;
       }
       const trackId = soundcloudResourceId(track.id);
-      if (!trackId) continue;
+      if (!trackId) {
+        if (track.title) mapped.push(mapTrack(track, album, index + 1));
+        continue;
+      }
       try {
         const full = await soundcloudApiRequest<SoundCloudTrackResource>(
           `/tracks/${encodeURIComponent(trackId)}`,
@@ -663,6 +698,9 @@ export class SoundCloudProvider implements StreamingProvider {
     try {
       const me = await soundcloudGetMe(this.fetchOptions());
       const product = me.consumer_subscription?.product?.id || "free";
+      const tierNote = /high|go/i.test(product)
+        ? "Go+ unlocks browser DRM playback, not Discogenius major-label downloads."
+        : "Major-label tracks are often SNIP/DRM-only for Discogenius.";
       return {
         connected: true,
         tokenExpired: false,
@@ -673,7 +711,7 @@ export class SoundCloudProvider implements StreamingProvider {
         remoteCatalogAvailable: true,
         canAuthenticate: true,
         user: { username: me.username || me.full_name || undefined },
-        message: `Connected as ${me.username || me.full_name || me.id} (${product}).`,
+        message: `Connected as ${me.username || me.full_name || me.id} (${product}). ${tierNote}`,
       };
     } catch (error) {
       return {

@@ -72,6 +72,11 @@ OPH (`375227dd-…`, EP + Mixtape/Street) ↔ `emmatad/sets/other-peoples-hearta
 - shipped (2.6.5): skip DRM/SNIP tracks + complete partial albums with per-track
   `skipped` status and a job-level warning (no abort of the whole set; no
   yt-dlp fallthrough for encrypted formats).
+- ready (2.6.6): DRM-aware matching — prefer downloadable progressive/plain-HLS
+  fan sets; reject DRM/SNIP-only shells so they cannot alone fill slots / drive
+  monitoring; search-time track filter; Auth notes Go+ ≠ Discogenius download
+  unlock. Live OPH: emmatad + other progressive sets match; Bastille `26282908`
+  is DRM; mixed rumourhasit ranks below zero-DRM covers.
 - pending: richer permalink resolve; Auth / Settings / diagnostics polish;
   contract parity with other lossy providers.
 - defer: followed artists → MB monitoring, official-API download path /
@@ -89,8 +94,10 @@ OPH (`375227dd-…`, EP + Mixtape/Street) ↔ `emmatad/sets/other-peoples-hearta
   FHD 34×av1 / 2×h264 / 1×vp9; HD 3×av1; UHD 8×av1; SD 2×av1 / 1×h264
   (too thin); TIDAL all h.264; Apple UHD 9×av1 / 1×hevc; Apple FHD 15×h264
   / 5×av1.
-- pending ship (2.6.6): evidence-based `videoOfferCodecRank` — YTM HD+ AV1,
-  YTM SD no assumption (rank 0), Apple UHD AV1 / else h.264, TIDAL h.264.
+- **rejected (`d0893da`)**: Apple UHD→AV1 was wrong — user confirmed Apple 4K
+  is HEVC/h.265; AV1 “Apple” TrackFiles were almost certainly YouTube fallback
+  downloads mislabeled. Do **not** ship 2.6.6 with `d0893da` as-is. Sibling
+  re-auditing (filter YT-fallback rows / live ffprobe) before release.
 
 ### Local-MB refresh concurrency redesign
 

@@ -33,10 +33,29 @@ partial-failure status at least as well as the existing backend.
 
 ## SoundCloud DRM (decided 2026-07-23)
 
-Major-label / Go+ catalog often exposes only `cbc-encrypted-hls` /
-`ctr-encrypted-hls` (browser EME + Widevine/FairPlay CDM). Example: Bastille
-OPH set tracks such as SoundCloud `26282908` play in-browser but have no plain
-progressive/HLS for downloaders.
+Major-label catalog uses `cbc-encrypted-hls` / `ctr-encrypted-hls` (browser EME
++ Widevine/FairPlay CDM). Example: Bastille OPH track SoundCloud `26282908`.
+
+### Go+ vs free — download capability (live api-v2, 2026-07-23)
+
+Probed with Discogenius container credentials (`consumer-high-tier` Go+) vs
+client_id-only (no oauth).
+
+| Session | Major-label (`26282908`) | Fan/indie progressive (e.g. carolinalasso OPH rips) |
+| --- | --- | --- |
+| No oauth / free | `policy=SNIP`; only snipped preview hosts | Full progressive/HLS resolve + ffmpeg download |
+| Go+ (`consumer-high-tier`) | Catalog lists plain `hls` **and** encrypted; **plain HLS resolve 404s**; only encrypted resolve (`playback.media-streaming.soundcloud.cloud`) | Same progressive/HLS download (often HQ AAC progressive) |
+
+**Conclusion:** Go+ unlocks browser DRM playback, not Discogenius
+native/yt-dlp downloads of major-label tracks. Plain `hls` listed beside
+encrypted is often a **phantom** (404 on resolve) — do not treat it as
+downloadable at search time. Go+ can still improve non-major progressive
+quality where SoundCloud exposes real progressive/HLS.
+
+OPH evidence: `rumourhasit_nm` part 1 mixes fan progressive (carolinalasso)
+with official Bastille DRM (`26282908`); `emmatad` OPH is fan progressive
+throughout (downloadable). Official Bastille OPH shells are empty or
+encrypted-only for downloaders.
 
 ### Decrypt path — REJECT
 
@@ -67,9 +86,15 @@ progressive/HLS for downloaders.
 Keep rejecting DRM/SNIP as terminal for those tracks (do not fall through to
 yt-dlp for encrypted formats). **2.6.5:** skip DRM/SNIP tracks and complete
 partial albums with per-track `skipped` status plus a job-level warning.
-Go+ oauth may unlock
-non-DRM HQ progressive/HLS on entitled non-major tracks — that remains the only
-supported quality path.
+Do not special-case download logic on Go+ detection — resolve failure already
+classifies DRM. Surface session tier in Auth status; document that Go+ is not
+a Discogenius download unlock for major-label DRM.
+
+**2.6.6 candidate:** search-time filter using `policy` + `media.transcodings`
+(present on `/search/tracks` without resolving stream URLs): drop SNIP/BLOCK,
+encrypted-only, and plain-HLS-beside-encrypted phantoms; keep progressive.
+Playlist/album search only embeds media for ~5 tracks — filter whole offers
+only after hydrate, or when every classifiable embedded track is undownloadable.
 
 ## spotDL boundary
 

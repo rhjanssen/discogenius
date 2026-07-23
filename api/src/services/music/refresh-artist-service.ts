@@ -63,8 +63,13 @@ import {
 } from "../metadata/musicbrainz-release-group-filter.js";
 import {
     PLAYLIST_TRACKLIST_COVERAGE_METHOD,
-    playlistCoversCanonicalTracklist,
+    playlistCoversCanonicalTracklistDownloadable,
+    scorePlaylistTracklistCoverage,
 } from "../providers/soundcloud/soundcloud-playlist-match.js";
+import {
+    scoreSoundCloudDownloadableCoverage,
+    soundCloudOfferHasDownloadableMatch,
+} from "../providers/soundcloud/soundcloud-downloadability.js";
 
 function isWidePlaylistSearchReleaseGroup(
     primaryType?: string | null,
@@ -594,7 +599,7 @@ export class RefreshArtistService {
 
     private static markSoundCloudPlaylistOfferUnavailable(
         providerAlbumId: string,
-        reason: "missing" | "empty" | "coverage-changed",
+        reason: "missing" | "empty" | "coverage-changed" | "drm-only",
     ): void {
         db.transaction(() => {
             db.prepare(`
@@ -739,7 +744,7 @@ export class RefreshArtistService {
             const validatePlaylist = async (providerAlbum: ProviderAlbum): Promise<{
                 album: any | null;
                 match: ProviderReleaseGroupMatch | null;
-                invalidReason: "empty" | "coverage-changed" | null;
+                invalidReason: "empty" | "coverage-changed" | "drm-only" | null;
             }> => {
                 const album = {
                     ...providerAlbumToOfferRow(providerAlbum, artistMbid),
@@ -750,7 +755,16 @@ export class RefreshArtistService {
                 if (rawTracks.length === 0) {
                     return { album: null, match: null, invalidReason: "empty" };
                 }
-                if (!playlistCoversCanonicalTracklist(preferredTracks, rawTracks)) {
+                // Require downloadable coverage — DRM/SNIP-only shells are not matches.
+                if (!playlistCoversCanonicalTracklistDownloadable(preferredTracks, rawTracks)) {
+                    const titleCoverage = scorePlaylistTracklistCoverage(preferredTracks, rawTracks);
+                    const classifiable = (titleCoverage.downloadable?.downloadableCovered || 0)
+                        + (titleCoverage.downloadable?.knownUndownloadableCovered || 0);
+                    // Title covered but nothing downloadable → durable reject as drm-only.
+                    if (titleCoverage.covered > 0 && classifiable > 0
+                        && (titleCoverage.downloadable?.downloadableCovered || 0) === 0) {
+                        return { album: null, match: null, invalidReason: "drm-only" };
+                    }
                     return { album: null, match: null, invalidReason: "coverage-changed" };
                 }
 
@@ -786,11 +800,14 @@ export class RefreshArtistService {
                 match.status = "probable";
                 match.method = PLAYLIST_TRACKLIST_COVERAGE_METHOD;
                 match.confidence = Math.max(Number(match.confidence || 0), 0.85);
+                const coverage = scorePlaylistTracklistCoverage(preferredTracks, rawTracks);
                 match.evidence = {
                     ...match.evidence,
                     trackCountMatched: false,
                     providerTrackCount: album.num_tracks ?? null,
                     targetTrackCount: preferredTracks.length,
+                    downloadableTrackCount: coverage.downloadable?.downloadableCovered ?? null,
+                    downloadableRatio: coverage.downloadable?.downloadableRatio ?? null,
                 };
                 return { album, match, invalidReason: null };
             };
@@ -1594,25 +1611,53 @@ export class RefreshArtistService {
                 for (const album of albums) {
                     const providerAlbumId = String(album.provider_id);
                     const match = providerReleaseGroupMatches.get(providerAlbumId);
-                    if (match) {
-                        allMatchedSelections.push({
-                            provider: provider.id,
-                            album: {
-                                providerId: providerAlbumId,
-                                title: String(album.title || ""),
-                                version: album.version ?? null,
-                                releaseDate: album.release_date ?? null,
-                                quality: album.quality ?? null,
-                                qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
-                                explicit: album.explicit ?? null,
-                                trackCount: album.num_tracks ?? null,
-                                volumeCount: album.num_volumes ?? null,
-                                tracks: Array.isArray(album._provider_tracks) ? album._provider_tracks : undefined,
-                                raw: album,
-                            },
-                            match,
-                        });
+                    if (!match) {
+                        continue;
                     }
+                    // SoundCloud DRM/SNIP-only catalog shells must not fill slots or
+                    // drive monitoring — reject them and keep looking for fan sets.
+                    if (provider.id === "soundcloud"
+                        && match.method !== PLAYLIST_TRACKLIST_COVERAGE_METHOD) {
+                        const rawTracks = Array.isArray(album._provider_raw_tracks)
+                            ? album._provider_raw_tracks
+                            : [];
+                        if (rawTracks.length > 0) {
+                            const downloadable = scoreSoundCloudDownloadableCoverage(
+                                rawTracks.map((_: unknown, index: number) => ({ playlistIndex: index })),
+                                rawTracks,
+                                rawTracks.length,
+                            );
+                            if (!soundCloudOfferHasDownloadableMatch(downloadable)) {
+                                const classifiable = downloadable.downloadableCovered
+                                    + downloadable.knownUndownloadableCovered;
+                                if (classifiable > 0 && downloadable.downloadableCovered === 0) {
+                                    this.markSoundCloudPlaylistOfferUnavailable(
+                                        providerAlbumId,
+                                        "drm-only",
+                                    );
+                                    providerReleaseGroupMatches.delete(providerAlbumId);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    allMatchedSelections.push({
+                        provider: provider.id,
+                        album: {
+                            providerId: providerAlbumId,
+                            title: String(album.title || ""),
+                            version: album.version ?? null,
+                            releaseDate: album.release_date ?? null,
+                            quality: album.quality ?? null,
+                            qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
+                            explicit: album.explicit ?? null,
+                            trackCount: album.num_tracks ?? null,
+                            volumeCount: album.num_volumes ?? null,
+                            tracks: Array.isArray(album._provider_tracks) ? album._provider_tracks : undefined,
+                            raw: album,
+                        },
+                        match,
+                    });
                 }
 
                 // SoundCloud mixtapes / dj-mixes / demos often live only as fan or
@@ -1622,9 +1667,12 @@ export class RefreshArtistService {
                 // Title-only shells with no tracklist must not block this search —
                 // otherwise an empty official SC album stub prevents finding the
                 // fan set that actually covers the mixtape.
+                // DRM/SNIP-only SoundCloud catalog matches also must not block:
+                // they are not real Discogenius downloads and secondary fan sets
+                // (e.g. emmatad OPH) should still be searched.
                 const matchedRgMbids = new Set(
-                    Array.from(providerReleaseGroupMatches.values())
-                        .filter((match) => {
+                    Array.from(providerReleaseGroupMatches.entries())
+                        .filter(([providerAlbumId, match]) => {
                             if (!match.releaseGroup) return false;
                             if (!["verified", "probable", "candidate"].includes(match.status)) {
                                 return false;
@@ -1632,10 +1680,29 @@ export class RefreshArtistService {
                             if (match.method === PLAYLIST_TRACKLIST_COVERAGE_METHOD) {
                                 return true;
                             }
-                            return match.evidence?.trackCountMatched === true
+                            const hasShape = match.evidence?.trackCountMatched === true
                                 || Number(match.evidence?.providerTrackCount || 0) > 0;
+                            if (!hasShape) return false;
+                            if (provider.id !== "soundcloud") return true;
+                            // Official SoundCloud hit: only block secondary search when
+                            // the hydrated tracks are actually downloadable enough.
+                            const album = albums.find((row) =>
+                                String(row.provider_id) === String(providerAlbumId));
+                            const rawTracks = Array.isArray(album?._provider_raw_tracks)
+                                ? album._provider_raw_tracks
+                                : [];
+                            if (rawTracks.length === 0) {
+                                // Empty/stub shells never block mixtape fallback.
+                                return false;
+                            }
+                            const downloadable = scoreSoundCloudDownloadableCoverage(
+                                rawTracks.map((_: unknown, index: number) => ({ playlistIndex: index })),
+                                rawTracks,
+                                rawTracks.length,
+                            );
+                            return soundCloudOfferHasDownloadableMatch(downloadable);
                         })
-                        .map((match) => String(match.releaseGroup!.mbid)),
+                        .map(([, match]) => String(match.releaseGroup!.mbid)),
                 );
                 const widePlaylistOffers = await this.searchSoundCloudMixtapePlaylistOffers(
                     provider,

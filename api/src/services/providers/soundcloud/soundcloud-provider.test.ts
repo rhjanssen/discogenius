@@ -81,6 +81,44 @@ const album = {
 
 const track = album.tracks[0]!;
 
+const snipOnlyTrack = {
+  id: 194886499,
+  title: "SNIP Only",
+  duration: 180_000,
+  user,
+  policy: "SNIP",
+  media: {
+    transcodings: [{
+      url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:194886499/preview",
+      snipped: true,
+      format: { protocol: "progressive", mime_type: "audio/mpeg" },
+    }],
+  },
+};
+
+const progressiveMedia = {
+  transcodings: [{
+    url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:progressive/progressive",
+    snipped: false,
+    format: { protocol: "progressive", mime_type: "audio/mpeg" },
+  }],
+};
+
+const drmMedia = {
+  transcodings: [
+    {
+      url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:drm/hls",
+      snipped: false,
+      format: { protocol: "hls", mime_type: "audio/mpeg" },
+    },
+    {
+      url: "https://api-v2.soundcloud.com/media/soundcloud:tracks:drm/enc",
+      snipped: false,
+      format: { protocol: "ctr-encrypted-hls", mime_type: "audio/mp4" },
+    },
+  ],
+};
+
 /** OPH-like fan playlist: covers the 7 MB tracks plus extras (superset OK). */
 const ophPlaylist = {
   id: 1468083688,
@@ -94,16 +132,36 @@ const ophPlaylist = {
   release_date: null,
   user: { id: 999001, username: "emma tad", permalink_url: "https://soundcloud.com/emmatad" },
   tracks: [
-    { id: 1001, title: "Adagio for Strings", duration: 239_000, user },
-    { id: 1002, title: "What Would You Do?", duration: 203_000, user },
-    { id: 1003, title: "Requiem for Blue Jeans", duration: 237_000, user },
-    { id: 1004, title: "Of the Night", duration: 213_000, user },
-    { id: 1005, title: "Titanium", duration: 174_000, user },
-    { id: 1006, title: "Love Don't Live Here", duration: 362_000, user },
-    { id: 1007, title: "Falling", duration: 225_000, user },
-    { id: 1008, title: "Bonus Fan Cut", duration: 180_000, user },
-    { id: 1009, title: "Extra Interlude", duration: 90_000, user },
-    { id: 1010, title: "Outro Sketch", duration: 120_000, user },
+    { id: 1001, title: "Adagio for Strings", duration: 239_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 1002, title: "What Would You Do?", duration: 203_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 1003, title: "Requiem for Blue Jeans", duration: 237_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 1004, title: "Of the Night", duration: 213_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 1005, title: "Titanium", duration: 174_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 1006, title: "Love Don't Live Here", duration: 362_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 1007, title: "Falling", duration: 225_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 1008, title: "Bonus Fan Cut", duration: 180_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 1009, title: "Extra Interlude", duration: 90_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 1010, title: "Outro Sketch", duration: 120_000, user, policy: "ALLOW", media: progressiveMedia },
+  ],
+};
+
+/** Official-style DRM shell that title-covers OPH but is undownloadable. */
+const ophDrmOfficial = {
+  id: 2881942,
+  title: "Other People's Heartache",
+  permalink_url: "https://soundcloud.com/bastilleuk/sets/other-peoples-heartache",
+  track_count: 7,
+  is_album: true,
+  set_type: "ep",
+  user,
+  tracks: [
+    { id: 26282908, title: "Adagio for Strings", duration: 239_000, user, policy: "ALLOW", media: drmMedia },
+    { id: 26282909, title: "What Would You Do?", duration: 203_000, user, policy: "ALLOW", media: drmMedia },
+    { id: 26282910, title: "Requiem for Blue Jeans", duration: 237_000, user, policy: "ALLOW", media: drmMedia },
+    { id: 26282911, title: "Of the Night", duration: 213_000, user, policy: "ALLOW", media: drmMedia },
+    { id: 26282912, title: "Titanium", duration: 174_000, user, policy: "ALLOW", media: drmMedia },
+    { id: 26282913, title: "Love Don't Live Here", duration: 362_000, user, policy: "ALLOW", media: drmMedia },
+    { id: 26282914, title: "Falling", duration: 225_000, user, policy: "ALLOW", media: drmMedia },
   ],
 };
 
@@ -116,9 +174,29 @@ const ophIncompletePlaylist = {
   set_type: "",
   user: { id: 999002, username: "Nafissa_", permalink_url: "https://soundcloud.com/rumourhasit_nm" },
   tracks: [
-    { id: 2001, title: "Adagio for Strings", duration: 239_000, user },
-    { id: 2002, title: "What Would You Do?", duration: 203_000, user },
-    { id: 2003, title: "Unrelated Filler", duration: 200_000, user },
+    { id: 2001, title: "Adagio for Strings", duration: 239_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 2002, title: "What Would You Do?", duration: 203_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 2003, title: "Unrelated Filler", duration: 200_000, user, policy: "ALLOW", media: progressiveMedia },
+  ],
+};
+
+/** Mixed fan/official set: covers all 7 titles but one covering track is DRM. */
+const ophMixedDrmPlaylist = {
+  id: 220003999,
+  title: "Other People's Heartache part 1 mixed",
+  permalink_url: "https://soundcloud.com/rumourhasit_nm/sets/other-peoples-heartache-mixed",
+  track_count: 7,
+  is_album: false,
+  set_type: "",
+  user: { id: 999002, username: "Nafissa_", permalink_url: "https://soundcloud.com/rumourhasit_nm" },
+  tracks: [
+    { id: 3001, title: "Adagio for Strings", duration: 239_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 26282908, title: "What Would You Do?", duration: 203_000, user, policy: "ALLOW", media: drmMedia },
+    { id: 3003, title: "Requiem for Blue Jeans", duration: 237_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 3004, title: "Of the Night", duration: 213_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 3005, title: "Titanium", duration: 174_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 3006, title: "Love Don't Live Here", duration: 362_000, user, policy: "ALLOW", media: progressiveMedia },
+    { id: 3007, title: "Falling", duration: 225_000, user, policy: "ALLOW", media: progressiveMedia },
   ],
 };
 
@@ -146,12 +224,12 @@ function fixtureFetch(input: string) {
   } else if (url.pathname === "/search/playlists") {
     const q = (url.searchParams.get("q") || "").toLowerCase();
     if (q.includes("heartache") || q.includes("bastille")) {
-      payload = { collection: [ophPlaylist, ophIncompletePlaylist] };
+      payload = { collection: [ophDrmOfficial, ophPlaylist, ophIncompletePlaylist, ophMixedDrmPlaylist] };
     } else {
       payload = { collection: [] };
     }
   } else if (url.pathname === "/search/tracks") {
-    payload = { collection: [track] };
+    payload = { collection: [track, album.tracks[1], snipOnlyTrack] };
   } else if (url.pathname === "/users/1478437") {
     payload = user;
   } else if (url.pathname === "/users/1478437/albums") {
@@ -162,6 +240,10 @@ function fixtureFetch(input: string) {
     payload = ophPlaylist;
   } else if (url.pathname === "/playlists/220003151") {
     payload = ophIncompletePlaylist;
+  } else if (url.pathname === "/playlists/220003999") {
+    payload = ophMixedDrmPlaylist;
+  } else if (url.pathname === "/playlists/2881942") {
+    payload = ophDrmOfficial;
   } else if (url.pathname === "/tracks/194886453") {
     payload = track;
   } else if (url.pathname === "/tracks/194886454") {
@@ -536,6 +618,7 @@ test("SoundCloud provider auth status reports connected user from /me", async ()
   const status = await provider.getAuthStatus();
   assert.equal(status.connected, true);
   assert.equal(status.user?.username, "Robert Janssen");
+  assert.match(String(status.message || ""), /SNIP\/DRM|Go\+/i);
 });
 
 test("SoundCloud mixtape search matches covering fan playlists as supersets", async () => {
@@ -550,13 +633,51 @@ test("SoundCloud mixtape search matches covering fan playlists as supersets", as
     preferredTrackCount: 7,
     preferredTracks: ophCanonicalTracks,
   });
-  assert.equal(offers.length, 1);
+  // Progressive fan set ranks above mixed DRM covers; DRM-only official is out.
+  assert.ok(offers.length >= 1);
   assert.equal(offers[0]?.providerId, "1468083688");
   assert.equal(offers[0]?.type, "PLAYLIST");
   assert.equal(
     (offers[0]?.raw as { _discogeniusMatchMethod?: string } | undefined)?._discogeniusMatchMethod,
     "playlist-tracklist-coverage",
   );
+  assert.equal(
+    (offers[0]?.raw as { _discogeniusDownloadableCovered?: number } | undefined)
+      ?._discogeniusDownloadableCovered,
+    7,
+  );
+  assert.ok(!offers.some((album) => album.providerId === "2881942"));
+  const mixed = offers.find((album) => album.providerId === "220003999");
+  if (mixed) {
+    const topIdx = offers.findIndex((album) => album.providerId === "1468083688");
+    const mixedIdx = offers.findIndex((album) => album.providerId === "220003999");
+    assert.ok(topIdx >= 0 && mixedIdx > topIdx);
+  }
+});
+
+test("SoundCloud mixtape search rejects DRM-only official shells", async () => {
+  saveSoundCloudCredentials({ oauthToken: "2-326587-test-token" });
+  const provider = new SoundCloudProvider(fixtureFetch);
+  const offers = await provider.searchReleaseGroup({
+    artistName: "Bastille",
+    releaseGroupTitle: "Other People's Heartache",
+    slot: "stereo",
+    primaryType: "EP",
+    secondaryTypes: ["Mixtape/Street"],
+    preferredTrackCount: 7,
+    preferredTracks: ophCanonicalTracks,
+  });
+  assert.ok(!offers.some((album) => album.providerId === "2881942"));
+  assert.ok(offers.some((album) => album.providerId === "1468083688"));
+});
+
+test("SoundCloud track search filters DRM and SNIP results", async () => {
+  saveSoundCloudCredentials({ oauthToken: "2-326587-test-token" });
+  const provider = new SoundCloudProvider(fixtureFetch);
+  const results = await provider.search("bastille", { types: ["tracks"], limit: 10 });
+  assert.ok(results.tracks.some((row) => row.providerId === "194886453"));
+  assert.ok(!results.tracks.some((row) => row.providerId === "194886454"));
+  assert.ok(!results.tracks.some((row) => row.providerId === "194886499"));
 });
 
 test("SoundCloud official album search does not query fan playlists", async () => {

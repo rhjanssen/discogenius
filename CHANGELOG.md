@@ -5,10 +5,17 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Changed
-- Video offer codec defaults (provider×tier, TrackFiles audit): YouTube/YTM
-  HD+ assumed AV1; YouTube SD left with no assumed codec (sample too thin);
-  Apple Music UHD assumed AV1 and FHD/below h.264 (not HEVC); TIDAL remains
-  h.264. Replaces the 2.6.5 shallow YouTube→AV1-everywhere flip.
+- Video offer codec defaults (provider×tier): **pending correction** — `d0893da`
+  Apple UHD→AV1 is rejected (Apple 4K is HEVC; AV1 “Apple” rows were YT
+  fallbacks). Do not treat that map as final for 2.6.6.
+- SoundCloud matching prefers downloadable (progressive/plain-HLS) playlist
+  coverage over DRM/SNIP shells: mixtape secondary search ranks by downloadable
+  track count, then fewer DRM tracks in the covering set. DRM-only SoundCloud
+  catalog offers are rejected (`unavailable`) so they cannot alone fill a slot
+  or drive monitoring when `require_provider_availability` is on. Track search
+  drops DRM/SNIP/phantom-HLS when `policy` + `media.transcodings` are present.
+  Auth status notes that Go+ does not unlock major-label downloads for
+  Discogenius.
 
 ## [2.6.5] - 2026-07-23
 

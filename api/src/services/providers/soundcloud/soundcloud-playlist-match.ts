@@ -13,6 +13,11 @@ import {
   type MatchTargetTrack,
 } from "../../music/provider-track-matcher.js";
 import type { ProviderAlbum } from "../streaming-provider.js";
+import {
+  scoreSoundCloudDownloadableCoverage,
+  soundCloudOfferHasDownloadableMatch,
+  type SoundCloudDownloadableCoverage,
+} from "./soundcloud-downloadability.js";
 
 /**
  * Secondary MusicBrainz types that may only exist as user playlists/sets on
@@ -47,6 +52,9 @@ export type PlaylistTrackForCoverage = {
   title?: string | null;
   duration?: number | null;
   trackNumber?: number | null;
+  /** SoundCloud api-v2 track resource (or ProviderTrack carrying it in raw). */
+  raw?: unknown;
+  policy?: string | null;
 };
 
 export type PlaylistTrackAssignment = {
@@ -59,7 +67,31 @@ export type PlaylistCoverageResult = {
   covered: number;
   total: number;
   ratio: number;
+  downloadable?: SoundCloudDownloadableCoverage;
 };
+
+/**
+ * Title/duration coverage plus Discogenius downloadability. DRM/SNIP-only
+ * shells that cover titles still fail this gate so they cannot monitor.
+ */
+export function playlistCoversCanonicalTracklistDownloadable(
+  canonicalTracks: CanonicalTrackForCoverage[],
+  playlistTracks: PlaylistTrackForCoverage[],
+): boolean {
+  if (!playlistCoversCanonicalTracklist(canonicalTracks, playlistTracks)) {
+    return false;
+  }
+  const assignments = matchPlaylistTracksToCanonical(canonicalTracks, playlistTracks);
+  const downloadable = scoreSoundCloudDownloadableCoverage(
+    assignments,
+    playlistTracks,
+    canonicalTracks.length,
+  );
+  return soundCloudOfferHasDownloadableMatch(
+    downloadable,
+    PLAYLIST_TRACKLIST_COVERAGE_MIN_RATIO,
+  );
+}
 
 /** True for mixtape/street, dj-mix, demo, or primary type Other. */
 export function shouldWideSearchSoundCloudPlaylists(
@@ -255,11 +287,18 @@ export function scorePlaylistTracklistCoverage(
   if (total === 0) {
     return { covered: 0, total: 0, ratio: 0 };
   }
-  const covered = matchPlaylistTracksToCanonical(canonicalTracks, playlistTracks).length;
+  const assignments = matchPlaylistTracksToCanonical(canonicalTracks, playlistTracks);
+  const covered = assignments.length;
+  const downloadable = scoreSoundCloudDownloadableCoverage(
+    assignments,
+    playlistTracks,
+    total,
+  );
   return {
     covered,
     total,
     ratio: covered / total,
+    downloadable,
   };
 }
 

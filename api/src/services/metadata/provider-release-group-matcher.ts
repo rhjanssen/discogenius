@@ -71,6 +71,9 @@ export type ProviderReleaseGroupMatch = {
         targetTrackCount?: number | null;
         providerVolumeCount?: number | null;
         targetVolumeCount?: number | null;
+        /** SoundCloud: covering tracks Discogenius can download (progressive/plain HLS). */
+        downloadableTrackCount?: number | null;
+        downloadableRatio?: number | null;
         matchedReleaseMbid?: string | null;
         availableReleaseMbids?: string[];
         ambiguousWith?: string[];
