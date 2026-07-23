@@ -7,7 +7,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
     Button,
-    Spinner,
     Text,
     Title1,
     mergeClasses,
@@ -20,6 +19,8 @@ import {
     DialogContent,
     DialogActions,
 } from "@fluentui/react-components";
+import { useDelayedVisible } from "@/hooks/useDelayedVisible";
+import { VideoDetailSkeleton } from "@/components/ui/LoadingSkeletons";
 import {
   ArrowDownload24Regular,
   Eye24Regular,
@@ -294,12 +295,6 @@ const useStyles = makeStyles({
     },
     transparentButton: {
         ...detailActionGlassButtonStyles,
-    },
-    loadingState: {
-        minHeight: "320px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
     },
 });
 
@@ -595,10 +590,16 @@ const VideoPage = () => {
         };
     }, [isDownloaded, isPlaying, remoteStreamUrl, toast]);
 
+    // Shared delayed-loading policy: blank for sub-second cached hits; layout-
+    // matched skeleton for slower fetches (Fluent: skeleton when structure is known).
+    const showVideoSkeleton = useDelayedVisible(isVideoLoading);
     if (isVideoLoading) {
+        if (!showVideoSkeleton) {
+            return <div className={styles.stateShell} />;
+        }
         return (
-            <div className={mergeClasses(styles.stateShell, styles.loadingState)} role="status" aria-live="polite">
-                <Spinner label="Loading video…" labelPosition="below" />
+            <div className={styles.stateShell}>
+                <VideoDetailSkeleton className={styles.container} />
             </div>
         );
     }

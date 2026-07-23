@@ -18,6 +18,11 @@ All notable changes to this project are documented in this file.
   `ProviderItems` with live `getAlbumTracks` only as a fallback. Release
   availability loads as a deferred secondary query so the header + tracklist
   can paint without waiting on the switcher payload.
+- Loading skeletons re-aligned to live layouts: album/artist art sizes and
+  header title-block rhythm, media-card chrome, queue/activity row padding,
+  and a 16:9 video-detail skeleton (replacing the centered spinner). Unused
+  `artistSearch` card skeleton removed. Album full-page skeleton stays
+  header+tracks only so it matches deferred release-availability paint.
 
 ## [2.6.6] - 2026-07-23
 

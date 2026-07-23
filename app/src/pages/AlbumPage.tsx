@@ -1219,8 +1219,9 @@ const AlbumPage = () => {
 
   /** Open track info dialog */
   const showIngestSkeleton = Boolean(activity?.scanning) && tracks.length === 0;
-  // Shared delayed-loading policy: don't flash the page skeleton for
-  // sub-second cached loads; known-long ingest syncs stay immediate.
+  // Full-page skeleton only for /page (header + tracks). Release availability
+  // is a deferred secondary query (7da677f) — do not hold the page for it;
+  // Releases just appear when ready. Delayed gate skips flash on cache hits.
   const showPageSkeleton = useDelayedVisible(loading);
 
   if (loading && !showPageSkeleton && !showIngestSkeleton) {
@@ -1232,6 +1233,7 @@ const AlbumPage = () => {
       <DetailPageSkeleton
         artShape="rounded"
         content="tracks"
+        info="metadata"
         rows={8}
         className={styles.container}
         actionWidths={["104px", "82px", "110px", "88px", "72px"]}

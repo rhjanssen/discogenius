@@ -7,7 +7,6 @@ import {
 } from "@fluentui/react-components";
 
 type ThumbnailAspect = "square" | "video" | "videoWide";
-type CardGridSkeletonVariant = "media" | "artistSearch";
 type DetailSkeletonArtShape = "circle" | "rounded";
 type DetailSkeletonContent = "cards" | "tracks";
 type DetailSkeletonInfo = "metadata" | "bio";
@@ -17,7 +16,12 @@ interface CardGridSkeletonProps {
   thumbnailAspect?: ThumbnailAspect;
   minCardWidth?: number;
   className?: string;
-  variant?: CardGridSkeletonVariant;
+}
+
+interface VideoDetailSkeletonProps {
+  className?: string;
+  label?: string;
+  actionWidths?: string[];
 }
 
 interface TrackListSkeletonProps {
@@ -222,11 +226,13 @@ const useStyles = makeStyles({
     flexDirection: "column",
     minWidth: 0,
     width: "100%",
+    // Match useCardStyles `card` chrome (not a heavier custom glass mix).
     borderRadius: tokens.borderRadiusMedium,
     overflow: "hidden",
-    backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-    backdropFilter: "blur(14px)",
+    backgroundColor: tokens.colorNeutralBackgroundAlpha,
+    backdropFilter: "blur(10px)",
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
+    boxShadow: tokens.shadow8,
   },
   mediaCardPreview: {
     position: "relative",
@@ -273,34 +279,6 @@ const useStyles = makeStyles({
     height: "12px",
     width: "60%",
     borderRadius: tokens.borderRadiusSmall,
-  },
-  artistSearchCard: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: tokens.spacingVerticalS,
-    padding: tokens.spacingVerticalS,
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: `color-mix(in srgb, ${tokens.colorNeutralBackground1} 60%, transparent)`,
-    backdropFilter: "blur(14px)",
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    minHeight: "196px",
-  },
-  artistSearchAvatar: {
-    width: "96px",
-    height: "96px",
-    borderRadius: tokens.borderRadiusCircular,
-  },
-  artistSearchTitle: {
-    height: "14px",
-    width: "70%",
-    borderRadius: tokens.borderRadiusSmall,
-  },
-  artistSearchAction: {
-    width: "28px",
-    height: "28px",
-    borderRadius: tokens.borderRadiusCircular,
   },
   dataGrid: {
     display: "flex",
@@ -362,11 +340,13 @@ const useStyles = makeStyles({
     backdropFilter: "blur(20px)",
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
   },
+  // Mirrors dashboardStyles.downloadItem (Active queue rows).
   queueItem: {
     display: "flex",
     alignItems: "center",
-    gap: tokens.spacingHorizontalM,
-    padding: tokens.spacingHorizontalM,
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     ":last-child": {
       borderBottom: "none",
@@ -422,22 +402,23 @@ const useStyles = makeStyles({
     backdropFilter: "blur(20px)",
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
   },
+  // Mirrors dashboardStyles.activityItem (centered row, compact padding).
   activityItem: {
     display: "flex",
-    alignItems: "flex-start",
-    gap: tokens.spacingHorizontalM,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     ":last-child": {
       borderBottom: "none",
     },
   },
   activityLead: {
-    width: "32px",
-    minWidth: "32px",
+    width: "28px",
+    minWidth: "28px",
     display: "flex",
     justifyContent: "center",
-    paddingTop: tokens.spacingVerticalSNudge,
+    flexShrink: 0,
   },
   activityLeadIcon: {
     width: "16px",
@@ -465,8 +446,68 @@ const useStyles = makeStyles({
     width: "56px",
     height: "12px",
     borderRadius: tokens.borderRadiusSmall,
-    marginTop: tokens.spacingVerticalSNudge,
     flexShrink: 0,
+  },
+  // Video detail: 16:9 player + open info block (matches VideoPage).
+  videoDetailPage: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalL,
+    maxWidth: "1280px",
+    width: "100%",
+    margin: "0 auto",
+    paddingBottom: tokens.spacingVerticalXXL,
+  },
+  videoPlayer: {
+    position: "relative",
+    width: "100%",
+    aspectRatio: "16 / 9",
+    borderRadius: tokens.borderRadiusMedium,
+    overflow: "hidden",
+    backgroundColor: tokens.colorNeutralBackground3,
+    boxShadow: tokens.shadow16,
+    flexShrink: 0,
+  },
+  videoPlayerFill: {
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    borderRadius: tokens.borderRadiusNone,
+  },
+  videoInfo: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalM,
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalXXS}`,
+    "@media (min-width: 768px)": {
+      padding: `${tokens.spacingVerticalM} 0`,
+    },
+  },
+  videoTitleBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXS,
+    minWidth: 0,
+    "@media (min-width: 768px)": {
+      gap: tokens.spacingVerticalSNudge,
+    },
+  },
+  videoPersona: {
+    width: "120px",
+    height: "16px",
+    borderRadius: tokens.borderRadiusSmall,
+  },
+  videoTitle: {
+    height: "28px",
+    width: "min(420px, 78%)",
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  videoMetaRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
   },
   detailPage: {
     display: "flex",
@@ -511,28 +552,28 @@ const useStyles = makeStyles({
   detailArt: {
     flexShrink: 0,
   },
-  // Artist avatar sizing (matches ArtistPage `artistImage`: 120 / 160 / 200).
+  // Artist avatar sizing (matches ArtistPage `artistImage`: 160 / 180 / 200).
   detailArtCircle: {
     borderRadius: tokens.borderRadiusCircular,
-    width: "120px",
-    height: "120px",
+    width: "160px",
+    height: "160px",
     "@media (min-width: 480px)": {
-      width: "160px",
-      height: "160px",
+      width: "180px",
+      height: "180px",
     },
     "@media (min-width: 768px)": {
       width: "200px",
       height: "200px",
     },
   },
-  // Album cover sizing (matches AlbumPage `coverArt`: 168 / 200 / 220).
+  // Album cover sizing (matches AlbumPage `coverArt`: 200 / 220 / 220).
   detailArtRounded: {
     borderRadius: tokens.borderRadiusLarge,
-    width: "168px",
-    height: "168px",
+    width: "200px",
+    height: "200px",
     "@media (min-width: 480px)": {
-      width: "200px",
-      height: "200px",
+      width: "220px",
+      height: "220px",
     },
     "@media (min-width: 768px)": {
       width: "220px",
@@ -542,14 +583,27 @@ const useStyles = makeStyles({
   detailInfo: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalS,
+    // Match AlbumPage/ArtistPage info columns (section rhythm = M).
+    gap: tokens.spacingVerticalM,
     alignItems: "center",
     width: "100%",
     "@media (min-width: 768px)": {
       alignItems: "flex-start",
       justifyContent: "flex-end",
       flex: 1,
-      gap: tokens.spacingVerticalM,
+    },
+  },
+  // Title block is tighter than section rhythm (persona/byline ↔ title).
+  detailTitleBlock: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: tokens.spacingVerticalXS,
+    width: "100%",
+    minWidth: 0,
+    "@media (min-width: 768px)": {
+      alignItems: "flex-start",
+      gap: tokens.spacingVerticalSNudge,
     },
   },
   detailTitle: {
@@ -755,7 +809,6 @@ export function CardGridSkeleton({
   thumbnailAspect = "square",
   minCardWidth,
   className,
-  variant = "media",
 }: CardGridSkeletonProps) {
   const styles = useStyles();
   const previewClassName = getPreviewClassName(styles, thumbnailAspect);
@@ -772,25 +825,17 @@ export function CardGridSkeleton({
       aria-label="Loading cards"
     >
       {range(cards).map((card) => (
-        variant === "artistSearch" ? (
-          <div key={card} className={styles.artistSearchCard}>
-            <SkeletonItem className={styles.artistSearchAvatar} />
-            <SkeletonItem className={styles.artistSearchTitle} />
-            <SkeletonItem className={styles.artistSearchAction} />
+        <div key={card} className={styles.mediaCard}>
+          <div className={previewClassName}>
+            <SkeletonItem className={styles.mediaPreviewFill} />
           </div>
-        ) : (
-          <div key={card} className={styles.mediaCard}>
-            <div className={previewClassName}>
-              <SkeletonItem className={styles.mediaPreviewFill} />
+          <div className={styles.mediaCardContent}>
+            <div className={styles.mediaCardTitleRow}>
+              <SkeletonItem className={styles.mediaCardTitle} />
             </div>
-            <div className={styles.mediaCardContent}>
-              <div className={styles.mediaCardTitleRow}>
-                <SkeletonItem className={styles.mediaCardTitle} />
-              </div>
-              <SkeletonItem className={styles.mediaCardSubtitle} />
-            </div>
+            <SkeletonItem className={styles.mediaCardSubtitle} />
           </div>
-        )
+        </div>
       ))}
     </Skeleton>
   );
@@ -975,16 +1020,23 @@ export function DetailPageSkeleton({
               )}
             />
             <div className={styles.detailInfo}>
-              <SkeletonItem className={styles.detailTitle} />
               {info === "bio" ? (
-                <div className={styles.detailBioBlock}>
-                  <SkeletonItem className={styles.detailBioLine} style={{ width: "94%" }} />
-                  <SkeletonItem className={styles.detailBioLine} style={{ width: "88%" }} />
-                  <SkeletonItem className={styles.detailBioLine} style={{ width: "66%" }} />
-                </div>
+                <>
+                  <div className={styles.detailTitleBlock}>
+                    <SkeletonItem className={styles.detailTitle} />
+                  </div>
+                  <div className={styles.detailBioBlock}>
+                    <SkeletonItem className={styles.detailBioLine} style={{ width: "94%" }} />
+                    <SkeletonItem className={styles.detailBioLine} style={{ width: "88%" }} />
+                    <SkeletonItem className={styles.detailBioLine} style={{ width: "66%" }} />
+                  </div>
+                </>
               ) : (
                 <>
-                  <SkeletonItem className={styles.detailSubtitle} />
+                  <div className={styles.detailTitleBlock}>
+                    <SkeletonItem className={styles.detailSubtitle} />
+                    <SkeletonItem className={styles.detailTitle} />
+                  </div>
                   <div className={styles.detailMetadataRow}>
                     <SkeletonItem className={styles.detailMetadataPill} style={{ width: "64px" }} />
                     <SkeletonItem className={styles.detailMetadataPill} style={{ width: "46px" }} />
@@ -1006,6 +1058,10 @@ export function DetailPageSkeleton({
         </div>
       </Skeleton>
 
+      {/*
+        Header + primary content only. Album release-availability (and other
+        deferred rails) paint after /page — do not reserve a Releases block here.
+      */}
       <div className={styles.detailSection}>
         <Skeleton animation="wave">
           <SkeletonItem className={styles.detailSectionTitle} />
@@ -1016,6 +1072,50 @@ export function DetailPageSkeleton({
           <TrackListSkeleton rows={rows} showArtist showQuality />
         )}
       </div>
+    </div>
+  );
+}
+
+export function VideoDetailSkeleton({
+  className,
+  label = "Loading video…",
+  actionWidths = ["104px", "88px", "96px", "84px"],
+}: VideoDetailSkeletonProps) {
+  const styles = useStyles();
+
+  return (
+    <div
+      className={mergeClasses(styles.videoDetailPage, className)}
+      aria-busy="true"
+      role="status"
+      aria-live="polite"
+      aria-label={label}
+    >
+      <Skeleton animation="wave">
+        <div className={styles.videoPlayer}>
+          <SkeletonItem className={styles.videoPlayerFill} />
+        </div>
+        <div className={styles.videoInfo}>
+          <div className={styles.videoTitleBlock}>
+            <SkeletonItem className={styles.videoPersona} />
+            <SkeletonItem className={styles.videoTitle} />
+          </div>
+          <div className={styles.videoMetaRow}>
+            <SkeletonItem className={styles.detailMetadataPill} style={{ width: "54px" }} />
+            <SkeletonItem className={styles.detailMetadataPill} style={{ width: "72px" }} />
+            <SkeletonItem className={styles.detailMetadataPill} style={{ width: "48px" }} />
+          </div>
+          <div className={styles.detailActions}>
+            {actionWidths.map((width, index) => (
+              <SkeletonItem
+                key={`${width}-${index}`}
+                className={mergeClasses(styles.detailAction, index >= 3 ? styles.detailActionOptional : undefined)}
+                style={{ width }}
+              />
+            ))}
+          </div>
+        </div>
+      </Skeleton>
     </div>
   );
 }
