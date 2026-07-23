@@ -177,6 +177,10 @@ Today we are **adapters in a folder**, not true plugins: shared
 
 ### Matching and curation
 
+- deferred (post-2.6.6): partial video-stream / Chromaprint grouping evidence —
+  research verdict in `docs/VIDEO_CONTENT_MATCHING_FEASIBILITY.md`. Reject
+  refresh-time stream sampling; optional later import-only `fpcalc` on
+  downloaded MVs (variant-gated). Do not block 2.6.6.
 - pending: hybrid / multi-provider album fills — decide whether incomplete
   single-provider coverage should warn (yellow) vs require full set-cover before
   marking an album complete; Lioness-style missing-track cases are the litmus.

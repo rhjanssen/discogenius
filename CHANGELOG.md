@@ -10,6 +10,9 @@ All notable changes to this project are documented in this file.
   Apple Music QHD+/UHD assumed HEVC and FHD/below h.264; TIDAL h.264.
   Re-audit excluded YT-fallback-as-Apple TrackFiles (AV1/VP9 or Opus audio on
   apple-music rows); ffprobe confirmed real Apple 4K is HEVC.
+- Video associations prefer studio-audio MusicBrainz links and heal live
+  offer merges that previously left canonical videos without provider offers
+  (e.g. videos 2/7/9/20/2170).
 - SoundCloud matching prefers downloadable (progressive/plain-HLS) playlist
   coverage over DRM/SNIP shells: mixtape secondary search ranks by downloadable
   track count, then fewer DRM tracks in the covering set. DRM-only SoundCloud

@@ -19,6 +19,9 @@ agent/contributor rules live in [AGENTS.md](../AGENTS.md).
   - The shared contract every streaming provider adapter implements.
 - [PROVIDER_DOWNLOADER_DECISION.md](PROVIDER_DOWNLOADER_DECISION.md)
   - Per-provider download backend decisions and the spotDL provenance boundary.
+- [VIDEO_CONTENT_MATCHING_FEASIBILITY.md](VIDEO_CONTENT_MATCHING_FEASIBILITY.md)
+  - Partial video-stream / Chromaprint grouping feasibility (defer refresh
+    sampling; optional later import-only spike).
 - [EXTERNAL_DEPENDENCIES.md](EXTERNAL_DEPENDENCIES.md)
   - How external tools, sidecars, and catalog stacks are packaged.
 - [LIDARR_STRUCTURE_ALIGNMENT.md](LIDARR_STRUCTURE_ALIGNMENT.md)
