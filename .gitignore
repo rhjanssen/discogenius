@@ -55,3 +55,6 @@ pnpm-lock.yaml
 .playwright-mcp/
 .codex/
 .claude/
+
+# Local environment overrides (secrets, host-specific config). Use .env.example as the template.
+.env
