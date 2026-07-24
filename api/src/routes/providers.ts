@@ -154,7 +154,7 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
       const releaseFilter = requestedReleaseMbid
         ? "WHERE rel.mbid = ?"
         : "WHERE rel.release_group_mbid = ? OR rel.mbid = ?";
-      const param = requestedReleaseMbid || cleanMbid;
+      const params = requestedReleaseMbid ? [requestedReleaseMbid] : [cleanMbid, cleanMbid];
 
       // Select release with the largest track count if not explicitly pinned
       const localTracks = db.prepare(`
@@ -174,7 +174,7 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
           (SELECT COUNT(*) FROM Tracks t2 WHERE t2.release_mbid = rel.mbid) DESC,
           t.medium_position ASC,
           t.position ASC
-      `).all(param) as any[];
+      `).all(...params) as any[];
 
       if (localTracks.length > 0) {
         // Group tracks by the top release_mbid

@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-07-24
+
+### Added
+- **Lidarr-Style Release Version / Edition Selector**: Added release edition switching to `ManualImportModal` allowing selection between standard and multi-disc Deluxe editions.
+- **Multi-Disc / Multi-Volume Track Matching**: Added multi-volume track position support (`medium_position * 100 + position`) and volume labels (`[CD 2] 1. Good Grief`) so multi-disc files auto-map with 100% confidence.
+
+### Fixed
+- **Unmapped Candidate Cover Art**: Fixed candidate cover generation to emit valid 250px local proxy URLs (`/api/v1/media-cover/Albums/:mbid/cover-250.jpg`) with fallback SVG vinyl placeholders.
+- **SQLite Parameter Count Fix**: Fixed SQLite parameter binding error in `GET /provider/:providerId/albums/:albumId/tracks` when `requestedReleaseMbid` is omitted.
+- **Artist Parameter in Search Query**: Added support for optional `artist` query parameter (`req.query.artist`) in `api/src/routes/search.ts` and `api.search` to refine album lookup.
+
 ## [2.6.12] - 2026-07-24
 
 ### Fixed
