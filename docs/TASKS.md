@@ -93,40 +93,76 @@ actionable without re-deriving. See [[discogenius-roadmap]].
   (`EMBEDDED_COVER_HEIGHT`) instead of the multi-MB origin or the too-small 500px —
   so neither catalog nor provider preference embeds a 6 MB cover.
 
-### Provider-vs-catalog data leaks (MB-canonical model)
+### Provider metadata is match-time-only (MB-canonical model)
 
-We should present/tag/store catalog (MusicBrainz) data and only fall back to provider
-data when the catalog genuinely lacks it. Known leaks:
+**Principle (Lidarr-aligned):** provider metadata — artist, title, credits, artwork
+choice, etc. — is used **only at match time** (scoring an offer against the catalog).
+Everything user-facing and persisted — UI display, folder/file **organizing/naming**,
+and **file tagging** — must use catalog data (Servarr / local MusicBrainz) exclusively,
+with provider used only as an artwork *bytes* source per the preference toggle (below).
+This needs streamlining/cleanup, not just point fixes. Known leaks found:
 
-- pending: **Album-page track artists show the provider's artists.**
+- pending: **Album-page track artists show provider artists.**
   `musicbrainz-release-group-read-service.ts:~1284-1287` unconditionally overrides the
   canonical `artist_name`/`artist_credits` with the matched provider credits
-  (`credits.length > 0 ? credits : track.artist_credits`). Make it canonical-first
-  (only use provider credits when the canonical recording has none) — mirroring the
-  tag writer. (Seen on a SoundCloud album showing SoundCloud artists.)
-- pending: **Tag writer provider fallback for artists.** `getTrackArtistNames` is
-  canonical-first but falls back to `provider_recording.credits` when the canonical
-  recording has no credits — so provider (e.g. SoundCloud) artists can be written into
-  files. Decide/limit when that fallback is acceptable.
-- pending: **Broad provider-vs-catalog sweep.** Audit every `COALESCE(canonical…, provider…)`
-  and provider-override site (read services, tag builder, naming) to guarantee
-  canonical-first per the [[discogenius-goals]] MB-canonical model.
+  (`credits.length > 0 ? credits : track.artist_credits`). Should be catalog-only for
+  display. (Seen: a SoundCloud album showing SoundCloud artists.)
+- pending: **Tag writer artist provider fallback.** `getTrackArtistNames` /
+  `buildTrackRowsSql` use `COALESCE(canonical_recording.credits, provider_recording.credits)`,
+  so provider (e.g. SoundCloud) artists get written when the canonical recording lacks
+  credits. Per the principle, drop the provider fallback for tagging (fall back to the
+  canonical artist-credit / release artist, never the provider's).
+- pending: **Broad canonical-first sweep.** Audit every `COALESCE(canonical…, provider…)`
+  and provider-override site across read services, the tag builder, and the organizer
+  (naming uses `getCanonicalTrackPosition` first but falls back to ProviderItems title/
+  version/artist). Make catalog the sole source for display/organize/tag. See
+  [[discogenius-goals]], [[matching-facts]].
 
-### Artwork: sidecar source & hybrid picking
+### Artwork: one universal pipeline (Lidarr-style)
 
-- pending: **Sidecar `cover.jpg` should be the canonical full-res (Servarr/CAA) image,
-  not always the provider cover.** `downloadAlbumCover(..., "origin", { provider })`
-  resolves canonical first but falls back to the provider origin (and the organizer
-  always passes the provider), so the sidecar ends up as the multi-MB provider cover
-  even in canonical mode — while the UI proxy (`mapAlbumArtworkToLocalUrl`) correctly
-  shows canonical. Make the sidecar honor `artwork_preference`: canonical mode →
-  full-res CAA/Servarr; provider mode → provider. (Embed stays 1200px-capped either way.)
-- pending: **Hybrid artwork picking by album-title match.** A hybrid album got a
-  completely wrong sidecar cover because one track came from a single, so provider
-  artwork was pulled from that single's album. Pick the provider album whose title
-  best matches the hybrid release group (title similarity) rather than any contributing
-  offer. Embedded/UI were right; only provider sidecar picking is wrong — and it would
-  worsen under provider artwork preference.
+**Target model:** a single fetch-and-store method, exactly like Lidarr's
+`MediaCoverService`: resolve the source once (per `artwork_preference`), store the
+master locally, generate resized proxies from that master, and have **every** consumer
+— UI serving, sidecar `cover.jpg`, and embedded art — read the **stored** artwork.
+Today the sidecar, UI, and embed each resolve independently and can disagree; **that
+divergence is the bug.** Consolidate the ~7 scattered call sites (media-cover-service,
+metadata-files `downloadAlbumCover`, organizer sidecar, `resolvePreferredEmbeddedCover`,
+library-metadata-backfill, refresh-artist, library-scan) onto the one method.
+
+- pending: **Unify to store-once, reuse-everywhere.** One method fetches+stores; UI/
+  sidecar/embed all read the stored file. Sidecar = the stored **full-res master**;
+  embed = the stored **1200px** proxy; UI = the stored 250/500 proxies. Fixes the
+  current sidecar≠UI≠embed mismatch and the "sidecar is always the provider cover"
+  bug (the sidecar currently `downloadAlbumCover(..., "origin", { provider })` forces
+  the provider origin even in canonical mode, while the UI proxy correctly shows
+  canonical).
+- pending: **Both preference orderings in the one method.** Support canonical-first→
+  provider-fallback AND provider-first→canonical-fallback (`artwork_preference`),
+  applied uniformly to master + all proxies + embed + sidecar.
+- pending: **Per-provider high-res source (API digging).** Each provider's
+  `getArtworkUrl(request)` already takes a `size`; audit that a "max/origin" size
+  returns the true high-res master:
+  - TIDAL: `origin` (confirmed).
+  - Apple Music: `{w}x{h}` URL template (`renderAppleArtwork`/`resizeArtwork`) — request
+    the max advertised `artwork.width/height` (often 1500–3000); there is no "origin".
+  - Deezer: CDN `…/{size}x{size}-…jpg` — currently hardcoded `500x500`; raise for master.
+  - SoundCloud: `-large.` is rewritten to `-t500x500` — capped at 500; use `-original`
+    for the master.
+  - Spotify: `images[]` max is 640 (provider ceiling — no true high-res).
+  - YouTube Music: thumbnail sizing (`=w…-h…` / `maxresdefault`).
+  - Amazon Music: pick the largest image variant.
+  - Servarr/CAA (canonical): full-res from Cover Art Archive — mirror Lidarr's
+    `MediaCoverService.DownloadAlbumCover` (stores the source verbatim).
+- pending: **Hybrid artwork picking by album-title match.** A hybrid RG got the wrong
+  sidecar because artwork was pulled from a contributing single's provider album. Pick
+  the provider album whose title best matches the RG title (similarity), not any
+  contributing offer.
+- pending: **Embed overwrite guarantee.** Ensure the embed step always overwrites a
+  per-track cover that a single/other source may have baked in, so every track in an
+  album ends up with the album's chosen cover (the diff-gate must compare against the
+  *chosen* master, not merely "has any image").
+- done (kept): **1200px embed cap** (`EMBEDDED_COVER_HEIGHT`) — applies in both
+  preference modes so neither embeds a 6 MB cover.
 
 ### Repo & container hygiene
 
