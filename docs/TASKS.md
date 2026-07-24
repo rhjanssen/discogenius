@@ -16,163 +16,144 @@ Status: pending | in progress | decided | revisit
 - **Amazon Music / Spotify:** Auth shows **Soon** — no live validation until
   re-enabled.
 
-## Lidarr parity: scheduling, file tracking, tagging, packaging (2026-07-24)
+## Engineering principles (apply to every planned task below)
 
-Grounded in a `.ref_lidarr` comparison. Root-cause notes inline so each item is
-actionable without re-deriving. See [[discogenius-roadmap]].
+These tasks describe *symptoms*. Fix the *root* with one well-designed, universal
+implementation — never patchwork, bandaids, special-cases, or yet another fallback.
+Grounded in a `.ref_lidarr` comparison; see [[discogenius-roadmap]], [[lidarr-terminology]].
 
-### Scheduled tasks & automation parity
+- **Port from Lidarr 1:1 where possible.** Reference is `.ref_lidarr` (and
+  `.ref_jellyfin` for media-server / sidecar conventions). Match its structure, control
+  flow, and naming (`MediaCoverService`, `AudioTagService.WriteTags`,
+  `RescanFoldersCommand`, …). Prefer **deleting our divergent code** and adopting
+  Lidarr's shape over layering compatibility shims on top of it.
+- **One code path for all cases — no special-casing.** e.g. do NOT add hybrid-specific
+  artwork/embed logic; that bloats the code. Fix the single tagging + artwork pipeline
+  so it reliably embeds the correct tags and cover for *every* album (hybrid or not)
+  through the same path.
+- **No fallback-stacking / no provider leakage.** Provider metadata is match-time only.
+  Every `COALESCE(canonical, provider, …)` that reaches display/organize/tag is a bug —
+  the persisted/user-facing path uses catalog data with one clear catalog→catalog
+  fallback, never the provider.
+- **Store once, reuse everywhere.** Resolve/fetch once, persist, and have every consumer
+  read the stored artifact. Divergent independent resolutions (sidecar ≠ UI ≠ embed) are
+  exactly the bug class to eliminate.
+- **Delete, don't accumulate.** Favor removing bespoke logic for the Lidarr-shaped
+  approach over adding branches.
 
-- pending: **Auto tag-sync on metadata change** (highest value). Lidarr's
-  `WriteAudioTags=Sync` makes the scheduled `RefreshArtist → RefreshTrackService.SyncTags`
-  re-write tags for tracks whose metadata changed. Our retag is manual-only and is
-  never chained off the scheduled refresh, so fixes like `ep;live`→`album;live`
-  only land on a manual retag. Add an opt-in "sync tags on metadata change" mode.
-- pending: **Scheduled DB backup.** Lidarr `BackupCommand` runs on a schedule
-  (default ~weekly). We have none — Housekeeping only VACUUMs. Add a scheduled
-  SQLite backup (retention + restore path).
-- pending: **Unify the two "Rescan Folders" registry entries.** `root-scan`
-  (scheduled) and `rescan-folders` (manual) both call `queueRescanFoldersPass`
-  with identical default args. Lidarr uses ONE `RescanFoldersCommand`; scope comes
-  from params (folders/artistIds/filter) and `UpdateScheduledTask => ArtistIds.Empty()`
-  means a scoped/manual run does NOT reset the daily clock. Adopt: one command,
-  scope-by-param, and the schedule-reset gating.
-- pending: **`Matched` vs `Known` filter tuning.** Lidarr deep-rescans unmatched
-  files only when metadata changed, else scans new files only (`FilterFilesType`).
-  We always pass `fullProcessing:false`. Perf parity for large libraries.
-- pending: **Scheduled health check.** Lidarr `CheckHealth` runs every 6h and
-  surfaces in the UI; we only run a startup preflight (promoting it would also have
-  caught the E2E `/health` library-path issue — see [[e2e-playwright-preflight-blocker]]).
-- revisit: **New-release cadence.** Lidarr RSS ~15m vs our 24h monitoring cycle —
-  decide whether a lighter, more frequent "any new releases?" pass is worth it for
-  streaming providers.
-- revisit: confirm followed-artists-import scheduling vs Lidarr `ImportListSync`
-  (~5m); command/message cleanup cadence (Lidarr 5m vs our daily Housekeeping).
-- note: Rename is NOT scheduled in Lidarr either (import-time per config, or manual
-  `RenameFiles`) — we're aligned; do not add scheduled rename.
+Version buckets below are the proposed grouping — rebucket freely.
 
-### File scanning & tracking parity (bugs)
+## 2.6.12 (planned) — file-tracking correctness
 
-- pending: **Orphan removal doesn't invalidate the album status cache.**
+Contained, shippable bug fixes — each a proper fix, not a bandaid.
+
+- pending: **Orphan removal must invalidate the album/RG download-status cache.**
   `cleanOrphanedRecords` selects `NULL AS album_id`, so `updateAlbumDownloadStatus`
-  never fires; only `updateArtistDownloadStatusFromMedia(provider_id)` runs — and
-  canonical-linked (provider-free) rows have a null `provider_id`, so they get NO
-  invalidation at all. Effect: after files are deleted, the album keeps showing
-  "downloaded" until an incidental 30s cache expiry / later pass. Fix: resolve the
-  affected RG(s) from the deleted row's `canonical_release_group_mbid` (and/or
-  recompute) and invalidate album + RG status.
-- pending: **Scan lifecycle / progress reporting.** "Rescan Folders" reported
-  **completed** minutes before the emptied library was reflected. Lidarr reconciles
-  the file table synchronously inside the command and its progress messages reflect
-  file-table work; "Completed" means the DB is reconciled. Make our task completion
-  reflect actual reconciliation, and report file-table deltas (removed/added/updated),
-  not just the disk-walk progress. See [[lidarr-terminology]].
-- pending: **Files not matched on root scan + artist refresh** (user report). Verify
-  the 2.6.11 embedded-MBID linking + Phase E self-heal actually take effect on a real
-  rescan of a deployed library; confirm on deployment with logs.
-- pending: **Cross-album cover/lyric bleed.** The fuzzy matcher proposed another
-  album's cover/lyrics for the iTunes Festival album. Tighten `folderAlbumIds` /
-  `matchAudioFileByMetadata` album scoping so sidecars never migrate across albums.
+  never fires; canonical-linked (provider-free) rows also have a null `provider_id`, so
+  they get no invalidation at all — a deleted-then-still-"downloaded" album until an
+  incidental cache expiry. Resolve affected RG(s) from `canonical_release_group_mbid`
+  and invalidate album + RG status on removal.
+- pending: **Scan lifecycle reflects reconciliation.** "Rescan Folders" reported
+  completed minutes before the emptied library was reflected. Mirror Lidarr: reconcile
+  the file table synchronously inside the command; "Completed" means the DB is
+  reconciled; report file-table deltas (removed/added/updated), not just disk-walk
+  progress.
+- pending: **Confirm 2.6.11 linking works on the deployment.** Verify the embedded-MBID
+  linking + Phase E self-heal actually match/relink files on a real root scan + artist
+  refresh (user saw none matched); confirm with logs before layering more.
 
-### Tagging parity with Lidarr (keep Plex-compatible types)
+## 2.9.0 (planned) — Lidarr file-management, tagging & artwork parity
 
-- pending: **Genres still wrong on 2.6.11-downloaded files.** Files imported *after*
-  the retag-query fix still show the provider's single genre (e.g. Apple "Alternative")
-  instead of the MB list. The tag writer is correct (`album.genres → artist.genres`,
-  joined `" / "`), so the gap is upstream: confirm `Albums.genres` / `ArtistMetadata.genres`
-  are actually populated at import time (servarr refresh) before import-time tagging runs;
-  if not, the tagger has nothing to write. Likely ordering/population bug in the
-  download→import→tag path. **This is the "not on par" root for genres.**
-- pending: **Field-by-field tag audit vs Lidarr `AudioTagService.WriteTags`.**
-  Produce a mapping table and close gaps so we write an identical tag set — while
-  keeping our Plex-compatible `album; <secondary>` release types.
-- pending: **Embedded cover surfaced in retag preview.** Retag preview flags
-  release-type/year but not the cover. Cover *is* embedded on apply (now a 1200px
-  capped rendition); surface cover changes in the retag preview/diff like tag fields.
-- done (2.6.x, kept): **1200px embedded-cover cap.** Embed a ~1200px rendition
-  (`EMBEDDED_COVER_HEIGHT`) instead of the multi-MB origin or the too-small 500px —
-  so neither catalog nor provider preference embeds a 6 MB cover.
+The big "do it right" release. Port Lidarr's MediaFiles pipeline and delete our
+divergent paths. **Read the engineering principles above first.**
 
-### Provider metadata is match-time-only (MB-canonical model)
+### Artwork — one universal pipeline (port `MediaCoverService`)
 
-**Principle (Lidarr-aligned):** provider metadata — artist, title, credits, artwork
-choice, etc. — is used **only at match time** (scoring an offer against the catalog).
-Everything user-facing and persisted — UI display, folder/file **organizing/naming**,
-and **file tagging** — must use catalog data (Servarr / local MusicBrainz) exclusively,
-with provider used only as an artwork *bytes* source per the preference toggle (below).
-This needs streamlining/cleanup, not just point fixes. Known leaks found:
+Today the sidecar, UI, and embedded cover each resolve independently and can disagree —
+*that divergence is the bug.* Replace the ~7 scattered call sites (media-cover-service,
+`downloadAlbumCover`, organizer sidecar, `resolvePreferredEmbeddedCover`,
+library-metadata-backfill, refresh-artist, library-scan) with ONE fetch-and-store
+method, exactly like Lidarr.
 
-- pending: **Album-page track artists show provider artists.**
-  `musicbrainz-release-group-read-service.ts:~1284-1287` unconditionally overrides the
-  canonical `artist_name`/`artist_credits` with the matched provider credits
-  (`credits.length > 0 ? credits : track.artist_credits`). Should be catalog-only for
-  display. (Seen: a SoundCloud album showing SoundCloud artists.)
-- pending: **Tag writer artist provider fallback.** `getTrackArtistNames` /
-  `buildTrackRowsSql` use `COALESCE(canonical_recording.credits, provider_recording.credits)`,
-  so provider (e.g. SoundCloud) artists get written when the canonical recording lacks
-  credits. Per the principle, drop the provider fallback for tagging (fall back to the
-  canonical artist-credit / release artist, never the provider's).
-- pending: **Broad canonical-first sweep.** Audit every `COALESCE(canonical…, provider…)`
-  and provider-override site across read services, the tag builder, and the organizer
-  (naming uses `getCanonicalTrackPosition` first but falls back to ProviderItems title/
-  version/artist). Make catalog the sole source for display/organize/tag. See
-  [[discogenius-goals]], [[matching-facts]].
+- pending: **Store-once, reuse-everywhere.** One method resolves per `artwork_preference`,
+  stores the master, generates proxies from it. Sidecar = stored full-res master; embed
+  = stored 1200px proxy; UI = 250/500 proxies. No consumer re-resolves. Fixes the
+  sidecar≠UI≠embed mismatch and "sidecar is always the provider cover".
+- pending: **Both preference orderings in that one method** (canonical→provider and
+  provider→canonical), applied uniformly to master + proxies + sidecar + embed.
+- pending: **Per-provider high-res master (API digging).** Each provider already has
+  `getArtworkUrl({size})`; make a "max" size return the true master:
+  TIDAL `origin`; Apple `{w}x{h}` at max advertised (1500–3000, no "origin"); Deezer CDN
+  `{size}x{size}` (raise from hardcoded 500); SoundCloud `-original` (currently capped at
+  `-t500x500`); Spotify ceiling 640; YouTube `=w…-h…`/maxres; Amazon largest variant;
+  canonical CAA verbatim (mirror Lidarr `MediaCoverService.DownloadAlbumCover`).
+- pending: **Hybrid artwork = the RG-title-closest provider album**, chosen *inside the
+  one pipeline* (no hybrid-special-case). Because every track is (re)embedded from the
+  single stored master, a contributing single's baked-in cover is overwritten
+  automatically — no separate hybrid embed logic.
+- done (kept): 1200px embed cap (`EMBEDDED_COVER_HEIGHT`), both preference modes.
 
-### Artwork: one universal pipeline (Lidarr-style)
+### Provider metadata is match-time-only (catalog-first everywhere)
 
-**Target model:** a single fetch-and-store method, exactly like Lidarr's
-`MediaCoverService`: resolve the source once (per `artwork_preference`), store the
-master locally, generate resized proxies from that master, and have **every** consumer
-— UI serving, sidecar `cover.jpg`, and embedded art — read the **stored** artwork.
-Today the sidecar, UI, and embed each resolve independently and can disagree; **that
-divergence is the bug.** Consolidate the ~7 scattered call sites (media-cover-service,
-metadata-files `downloadAlbumCover`, organizer sidecar, `resolvePreferredEmbeddedCover`,
-library-metadata-backfill, refresh-artist, library-scan) onto the one method.
+Provider artist/title/credits are used only for match scoring. Display, organizing/
+naming, and tagging use catalog (Servarr / local-MB) exclusively. Remove the leaks:
 
-- pending: **Unify to store-once, reuse-everywhere.** One method fetches+stores; UI/
-  sidecar/embed all read the stored file. Sidecar = the stored **full-res master**;
-  embed = the stored **1200px** proxy; UI = the stored 250/500 proxies. Fixes the
-  current sidecar≠UI≠embed mismatch and the "sidecar is always the provider cover"
-  bug (the sidecar currently `downloadAlbumCover(..., "origin", { provider })` forces
-  the provider origin even in canonical mode, while the UI proxy correctly shows
-  canonical).
-- pending: **Both preference orderings in the one method.** Support canonical-first→
-  provider-fallback AND provider-first→canonical-fallback (`artwork_preference`),
-  applied uniformly to master + all proxies + embed + sidecar.
-- pending: **Per-provider high-res source (API digging).** Each provider's
-  `getArtworkUrl(request)` already takes a `size`; audit that a "max/origin" size
-  returns the true high-res master:
-  - TIDAL: `origin` (confirmed).
-  - Apple Music: `{w}x{h}` URL template (`renderAppleArtwork`/`resizeArtwork`) — request
-    the max advertised `artwork.width/height` (often 1500–3000); there is no "origin".
-  - Deezer: CDN `…/{size}x{size}-…jpg` — currently hardcoded `500x500`; raise for master.
-  - SoundCloud: `-large.` is rewritten to `-t500x500` — capped at 500; use `-original`
-    for the master.
-  - Spotify: `images[]` max is 640 (provider ceiling — no true high-res).
-  - YouTube Music: thumbnail sizing (`=w…-h…` / `maxresdefault`).
-  - Amazon Music: pick the largest image variant.
-  - Servarr/CAA (canonical): full-res from Cover Art Archive — mirror Lidarr's
-    `MediaCoverService.DownloadAlbumCover` (stores the source verbatim).
-- pending: **Hybrid artwork picking by album-title match.** A hybrid RG got the wrong
-  sidecar because artwork was pulled from a contributing single's provider album. Pick
-  the provider album whose title best matches the RG title (similarity), not any
-  contributing offer.
-- pending: **Embed overwrite guarantee.** Ensure the embed step always overwrites a
-  per-track cover that a single/other source may have baked in, so every track in an
-  album ends up with the album's chosen cover (the diff-gate must compare against the
-  *chosen* master, not merely "has any image").
-- done (kept): **1200px embed cap** (`EMBEDDED_COVER_HEIGHT`) — applies in both
-  preference modes so neither embeds a 6 MB cover.
+- pending: **Album-page track artists** — `read-service.ts:~1284-1287` unconditionally
+  overrides canonical `artist_credits` with provider credits; make it catalog-only.
+- pending: **Tag writer artist fallback** — drop `COALESCE(canonical…, provider_recording.credits)`
+  in `getTrackArtistNames` / `buildTrackRowsSql`; fall back to the canonical
+  artist-credit / release artist, never the provider.
+- pending: **Organizer naming** — stop falling back to ProviderItems title/version.
+- pending: **Broad sweep** — audit every `COALESCE(canonical, provider)` / override in
+  read services, tag builder, organizer. See [[discogenius-goals]], [[matching-facts]].
+
+### Tagging — port `AudioTagService.WriteTags` (keep Plex release types)
+
+- pending: **Field-by-field parity** with Lidarr `WriteTags`; write an identical tag
+  set, keeping our Plex `album; <secondary>` release types. Reliable genres/label/date/
+  media sourced from catalog.
+- pending: **Genres reliably populated at import.** Files imported on 2.6.11 still show
+  the provider's single genre; the writer is correct, so confirm `Albums.genres` /
+  `ArtistMetadata.genres` are populated by the refresh *before* import-time tagging runs
+  (fix the download→refresh→import→tag ordering — do NOT patch the tagger).
+- pending: **Auto tag-sync on metadata change** — port `WriteAudioTags=Sync`
+  (`RefreshTrackService.SyncTags`): the scheduled refresh re-tags tracks whose curated MB
+  columns changed. Consolidates the "Metadata tagging → WriteAudioTagsType.Sync" pending
+  under Post-2.4.0 below.
+- pending: **Retag preview surfaces the cover diff** like tag fields.
+- pending: **Cross-album cover/lyric bleed** — tighten `folderAlbumIds` /
+  `matchAudioFileByMetadata` scoping so sidecars never migrate across albums.
+
+### Scheduling & automation parity
+
+- pending: **Unify the two "Rescan Folders" registry entries** into one command; scope
+  by params (folders/artistIds/filter); adopt `UpdateScheduledTask => ArtistIds.Empty()`
+  so scoped/manual runs don't reset the daily clock (port `RescanFoldersCommand`).
+- pending: **`Matched` vs `Known` filter tuning** — deep-rescan unmatched only when
+  metadata changed, else new files only (port `FilterFilesType`).
+- pending: **Scheduled DB backup** (port `BackupCommand`; retention + restore path).
+- pending: **Scheduled health check** (port `CheckHealth`, ~6h, surfaced in UI) — would
+  also catch the E2E `/health` library-path issue ([[e2e-playwright-preflight-blocker]]).
+- note: Rename stays import-time/manual (Lidarr doesn't schedule it) — do NOT add
+  scheduled rename.
+- revisit: followed-artists-import vs `ImportListSync` cadence; message-cleanup cadence.
 
 ### Repo & container hygiene
 
-- pending: **Broad legacy cleanup pass.** Extend today's stray-DB/dead-dir removal
-  into a systematic sweep: orphaned files, dead directories, redundant/legacy code,
-  unused exports/config. Pairs with "Repo-wide structure audit" below.
-- pending: **Docker image efficiency.** Study how `.ref_lidarr` and `.ref_jellyfin`
-  build/package their containers (base image, multi-stage builds, layer caching,
-  runtime-only deps, final image size) and adopt wins for a smaller, more efficient
-  Discogenius image.
+- pending: **Broad legacy cleanup pass** — orphaned files, dead dirs, redundant/legacy
+  code, unused exports (extends today's stray-DB/dead-dir removal). Pairs with
+  "Repo-wide structure audit" below.
+- pending: **Docker image efficiency** — study `.ref_lidarr` / `.ref_jellyfin` container
+  packaging (base image, multi-stage builds, layer caching, runtime-only deps, image
+  size) and adopt wins for a smaller image.
+
+## 3.0.0 (planned) — monitoring / catalog architecture
+
+- revisit: **New-release detection cadence.** Lidarr checks new releases frequently via
+  RSS (~15m) separately from the 24h metadata refresh; we fold detection into the 24h
+  cycle. Decide the streaming-native equivalent (a light, frequent "any new releases?"
+  pass) as part of the catalog/monitoring architecture. Relates to "Catalog source
+  modes" and "Configurable library types" below.
 
 ## 2.6.0 (shipped 2026-07-22)
 
