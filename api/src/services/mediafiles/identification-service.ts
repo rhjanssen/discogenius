@@ -152,7 +152,7 @@ export class IdentificationService {
         }, penalties);
 
         const localDuration = Number(file.duration || 0);
-        const remoteDuration = Number(track.duration || 0);
+        const remoteDuration = Number(track.duration ?? (track.length_ms ? Number(track.length_ms) / 1000 : 0));
         if (localDuration > 0 && remoteDuration > 0) {
             const durationDifference = Math.max(0, Math.abs(localDuration - remoteDuration) - 10);
             this.addPenalty({
@@ -163,7 +163,7 @@ export class IdentificationService {
         }
 
         const localTrackNumber = this.extractTrackNumber(file);
-        const remoteTrackNumber = Number(track.trackNumber ?? track.track_number ?? 0);
+        const remoteTrackNumber = Number(track.trackNumber ?? track.track_number ?? track.position ?? 0);
         if (localTrackNumber !== null && remoteTrackNumber > 0) {
             this.addPenalty({
                 value: this.isTrackNumberMatch(localTrackNumber, remoteTrackNumber, totalTrackNumber) ? 0 : 1,
@@ -201,7 +201,7 @@ export class IdentificationService {
         return { orderedFiles, distances, matrix };
     }
 
-    private static solveAssignments(files: IdentifiableFile[], tracks: any[]): AlbumIdentificationResult {
+    public static solveAssignments(files: IdentifiableFile[], tracks: any[]): AlbumIdentificationResult {
         if (files.length === 0 || tracks.length === 0) {
             return {
                 mappedTracks: {},
@@ -215,58 +215,39 @@ export class IdentificationService {
         }
 
         const { orderedFiles, distances, matrix } = this.buildDistanceMatrix(files, tracks);
-        const numRows = matrix.length;
-        const numCols = tracks.length;
-
-        let inputMatrix = matrix;
-        let transposed = false;
-        if (numRows > numCols) {
-            transposed = true;
-            const nextMatrix: number[][] = [];
-            for (let colIndex = 0; colIndex < numCols; colIndex++) {
-                const newRow: number[] = [];
-                for (let rowIndex = 0; rowIndex < numRows; rowIndex++) {
-                    newRow.push(matrix[rowIndex][colIndex]);
-                }
-                nextMatrix.push(newRow);
-            }
-            inputMatrix = nextMatrix;
-        }
-
-        const indices = munkres(inputMatrix);
+        const assignments = munkres(matrix) as Array<[number, number]>;
         const mappedTracks: Record<number, string> = {};
         const acceptedDistances: number[] = [];
 
-        indices.forEach((pair: number[]) => {
-            const rowIndex = transposed ? pair[1] : pair[0];
-            const colIndex = transposed ? pair[0] : pair[1];
-
-            if (rowIndex >= numRows || colIndex >= numCols) {
-                return;
+        for (const [fileIndex, trackIndex] of assignments) {
+            const file = orderedFiles[fileIndex];
+            const track = tracks[trackIndex];
+            const distanceResult = distances[fileIndex]?.[trackIndex];
+            if (!file || !track || !distanceResult) {
+                continue;
             }
 
-            const file = orderedFiles[rowIndex];
-            const track = tracks[colIndex];
-            const distance = distances[rowIndex][colIndex];
-
-            if (distance.normalizedDistance <= this.MAX_ACCEPTABLE_DISTANCE) {
-                mappedTracks[file.id] = (track.providerId ?? track.provider_id ?? track.id).toString();
-                acceptedDistances.push(distance.normalizedDistance);
+            if (distanceResult.normalizedDistance <= this.MAX_ACCEPTABLE_DISTANCE || distanceResult.titleSimilarity >= 0.75) {
+                const providerId = String(track.id || track.providerId || track.provider_id || track.mbid || "");
+                if (providerId) {
+                    mappedTracks[file.id] = providerId;
+                    acceptedDistances.push(distanceResult.normalizedDistance);
+                }
             }
-        });
+        }
 
-        const matchedCount = acceptedDistances.length;
-        const averageDistance = matchedCount > 0
-            ? acceptedDistances.reduce((sum, distance) => sum + distance, 0) / matchedCount
+        const matchedCount = Object.keys(mappedTracks).length;
+        const coverage = matchedCount / Math.max(files.length, 1);
+        const averageDistance = acceptedDistances.length > 0
+            ? acceptedDistances.reduce((sum, distance) => sum + distance, 0) / acceptedDistances.length
             : 1;
-        const worstDistance = matchedCount > 0 ? Math.max(...acceptedDistances) : 1;
-        const coverage = files.length > 0 ? matchedCount / files.length : 0;
-        const distanceQuality = matchedCount > 0
-            ? Math.max(0, Math.min(1, 1 - Math.max(averageDistance, worstDistance)))
-            : 0;
-        const closeMatchConfidence = distanceQuality;
-        const confidence = matchedCount > 0
-            ? Math.max(0, Math.min(1, coverage * distanceQuality))
+
+        const confidence = coverage >= 0.8
+            ? Math.max(0, 1 - averageDistance)
+            : Math.max(0, (1 - averageDistance) * coverage);
+
+        const closeMatchConfidence = coverage >= 0.5
+            ? Math.max(0, 1 - averageDistance)
             : 0;
 
         return {
@@ -280,9 +261,46 @@ export class IdentificationService {
         };
     }
 
-    public static async identifyUnmappedFiles(files: IdentifiableFile[], tidalAlbumId: string): Promise<AlbumIdentificationResult> {
-        const tracks = (await streamingProviderManager.getDefaultStreamingProvider().getAlbumTracks(tidalAlbumId))
-            .map((track) => (track.raw && typeof track.raw === "object" ? track.raw : track)) as any[];
+    public static async identifyUnmappedFiles(files: IdentifiableFile[], albumId: string): Promise<AlbumIdentificationResult> {
+        const { db } = await import("../../database.js");
+        const cleanMbid = albumId.replace(/^mbid-/, "");
+        const isMbid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanMbid);
+
+        let tracks: any[] = [];
+        if (isMbid) {
+            tracks = db.prepare(`
+                SELECT
+                    t.mbid AS id,
+                    t.mbid AS providerId,
+                    t.title,
+                    t.position AS trackNumber,
+                    t.position AS track_number,
+                    t.position AS position,
+                    t.medium_position AS volumeNumber,
+                    t.medium_position AS volume_number,
+                    t.medium_position AS medium_position,
+                    COALESCE(r.length_ms, t.length_ms, 0) AS length_ms,
+                    COALESCE(r.length_ms, t.length_ms, 0) / 1000.0 AS duration
+                FROM Tracks t
+                JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
+                LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+                WHERE rel.release_group_mbid = ? OR rel.mbid = ?
+                ORDER BY
+                    (SELECT COUNT(*) FROM Tracks t2 WHERE t2.release_mbid = rel.mbid) DESC,
+                    t.medium_position ASC,
+                    t.position ASC
+            `).all(cleanMbid, cleanMbid) as any[];
+        }
+
+        if (tracks.length === 0) {
+            try {
+                tracks = (await streamingProviderManager.getDefaultStreamingProvider().getAlbumTracks(albumId))
+                    .map((track) => (track.raw && typeof track.raw === "object" ? track.raw : track)) as any[];
+            } catch {
+                tracks = [];
+            }
+        }
+
         return this.solveAssignments(files, tracks);
     }
 

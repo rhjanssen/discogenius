@@ -199,9 +199,31 @@ export class UnmappedFilesService {
         }
 
         const files = this.repository.findByIds(fileIds);
-        const identification = await IdentificationService.identifyUnmappedFiles(files, tidalAlbumId);
-        const providerAlbum = await streamingProviderManager.getDefaultStreamingProvider().getAlbum(tidalAlbumId);
-        const album = (providerAlbum?.raw || providerAlbum) as any;
+        const identification = await IdentificationService.identifyUnmappedFiles(files, rawTidalAlbumId);
+        const cleanMbid = rawTidalAlbumId.replace(/^mbid-/, "");
+        const dbAlbum = db.prepare(`
+            SELECT
+                rg.mbid AS id,
+                rg.mbid AS mbid,
+                rg.title AS title,
+                a.name AS artist_name,
+                a.mbid AS artist_mbid
+            FROM ReleaseGroups rg
+            JOIN Artists a ON a.mbid = rg.artist_mbid
+            WHERE rg.mbid = ? OR EXISTS (SELECT 1 FROM AlbumReleases rel WHERE rel.release_group_mbid = rg.mbid AND rel.mbid = ?)
+            LIMIT 1
+        `).get(cleanMbid, cleanMbid) as any;
+
+        const album = dbAlbum
+            ? {
+                id: dbAlbum.id,
+                providerId: dbAlbum.id,
+                title: dbAlbum.title,
+                artist: { id: dbAlbum.artist_mbid, name: dbAlbum.artist_name },
+                cover: albumCoverLocalUrl({ albumMbid: dbAlbum.id }),
+            }
+            : null;
+
         const evaluatedMatch = album
             ? this.evaluateAlbumCandidate(files, {
                 ...identification,
