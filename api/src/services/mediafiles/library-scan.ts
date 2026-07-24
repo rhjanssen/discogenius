@@ -603,7 +603,10 @@ export class DiskScanService {
      */
     private static cleanOrphanedRecords(artistId: string): { removed: number; flagsReset: number } {
         const rows = db.prepare(`
-      SELECT id, file_path, relative_path, library_root, provider_id AS media_id, NULL AS album_id, file_type
+      SELECT id, file_path, relative_path, library_root,
+             provider_id AS media_id,
+             canonical_release_group_mbid,
+             file_type
       FROM TrackFiles
       WHERE artist_id = ?
     `).all(artistId) as Array<{
@@ -612,13 +615,19 @@ export class DiskScanService {
             relative_path: string | null;
             library_root: string;
             media_id: number | null;
-            album_id: number | null;
+            canonical_release_group_mbid: string | null;
             file_type: string;
         }>;
 
         let removed = 0;
         let flagsReset = 0;
-        const affectedAlbumIds = new Set<string>();
+        // Release groups touched by removals — invalidates album + RG + artist
+        // download-status caches. Canonical linking always writes
+        // canonical_release_group_mbid alongside the track/recording mbid (they
+        // are resolved and stored as a set), so the RG mbid is present on every
+        // canonically-linked row, including provider-free ones with a null
+        // provider_id. Provider-only rows are covered by provider_id below.
+        const affectedReleaseGroupMbids = new Set<string>();
         const affectedMediaIds = new Set<string>();
 
         for (const row of rows) {
@@ -634,7 +643,7 @@ export class DiskScanService {
             LibraryFilesService.emitFileDeleted({
                 libraryFileId: row.id,
                 artistId,
-                albumId: row.album_id,
+                albumId: null,
                 mediaId: row.media_id,
                 fileType: row.file_type,
                 filePath: resolvedPath,
@@ -644,16 +653,19 @@ export class DiskScanService {
             });
             removed++;
 
-            if (row.album_id) {
-                affectedAlbumIds.add(String(row.album_id));
+            if (row.canonical_release_group_mbid) {
+                affectedReleaseGroupMbids.add(String(row.canonical_release_group_mbid));
             }
             if (row.media_id) {
                 affectedMediaIds.add(String(row.media_id));
             }
         }
 
-        for (const albumId of affectedAlbumIds) {
-            updateAlbumDownloadStatus(albumId);
+        // updateAlbumDownloadStatus(rgMbid) invalidates the album, RG-scoped, and
+        // owning-artist caches — the fix for deleted albums lingering as
+        // "downloaded" until an incidental cache expiry.
+        for (const releaseGroupMbid of affectedReleaseGroupMbids) {
+            updateAlbumDownloadStatus(releaseGroupMbid);
             flagsReset += 1;
         }
 

@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.12] - 2026-07-24
+
+### Fixed
+- **Deleted files now clear "downloaded" status immediately**: When a folder scan removes a `TrackFiles` record because the file is gone from disk, it now invalidates the album, release-group, and artist download-status caches. The orphan cleanup previously selected `NULL AS album_id`, so `updateAlbumDownloadStatus` never fired; canonical-linked (provider-free) rows also had a null `provider_id` and got no invalidation at all, leaving an emptied album showing as "downloaded" until an incidental cache expiry. Cleanup now resolves the affected release group from `canonical_release_group_mbid` (present on every canonically-linked row) and invalidates album + RG + artist status off it; provider-only rows continue to invalidate via `provider_id`.
+- **Rescan reports what it reconciled**: "Rescan Folders" now completes with a file-table delta summary (`N removed, N added, N updated`, or "up to date, no file changes") for both per-artist and library-wide scans, instead of leaving a generic "updating artist statistics" line. Reconciliation already ran synchronously inside the command, so "Completed" already meant the DB was reconciled — this makes that legible.
+
 ## [2.6.11] - 2026-07-23
 
 ### Fixed

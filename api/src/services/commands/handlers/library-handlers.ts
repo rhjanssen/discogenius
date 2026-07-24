@@ -8,7 +8,25 @@ import { VideoTagService } from "../../mediafiles/video-tag-service.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
+import type { ScanResult } from "../../mediafiles/library-scan.js";
 import type { CommandHandler } from "./handler-context.js";
+
+/**
+ * Report what the scan actually reconciled in the file table, so "Completed"
+ * carries the removed/added/updated deltas (Lidarr-style) rather than a generic
+ * "scanning finished" line. When nothing changed, say so explicitly instead of
+ * leaving a stale in-progress message.
+ */
+function formatReconcileSummary(prefix: string, result: ScanResult): string {
+    const changed = result.orphansRemoved + result.filesIndexed + result.filesUpdated;
+    if (changed === 0) {
+        return `${prefix} - up to date, no file changes`;
+    }
+    return (
+        `${prefix} - ${result.orphansRemoved} removed, ` +
+        `${result.filesIndexed} added, ${result.filesUpdated} updated`
+    );
+}
 
 export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, ctx) => {
     const artistId = job.payload.artistId;
@@ -19,7 +37,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
         const baseLabel = ctx.formatWorkflowCommandLabel(job, "Rescan folders");
 
         // Step 1: Disk scan — reconcile track_files with disk reality
-        await DiskScanService.scan({
+        const scanResult = await DiskScanService.scan({
             artistIds: [artistId],
             trackUnmappedFiles: job.payload.trackUnmappedFiles ?? true,
             onProgress: (event) => {
@@ -46,6 +64,11 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
         });
         ArtistStatisticsService.refresh([artistId]);
 
+        ctx.updateCommandDescription(job, {
+            progress: 100,
+            description: formatReconcileSummary(baseLabel, scanResult),
+        });
+
         // Step 3: Emit completion so artist curation cascades when requested
         appEvents.emit(AppEvent.ARTIST_SCANNED, {
             artistId,
@@ -64,7 +87,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             progress: 5,
             description: "Scanning library root folders",
         });
-        await DiskScanService.scan({
+        const scanResult = await DiskScanService.scan({
             addNewArtists: addNewArtists,
             monitorNewArtists: job.payload.monitorArtist ?? getConfigSection("monitoring").monitor_new_artists,
             fullProcessing: job.payload.fullProcessing ?? false,
@@ -82,6 +105,11 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             description: "Scanning library root folders - updating artist statistics",
         });
         ArtistStatisticsService.refresh();
+
+        ctx.updateCommandDescription(job, {
+            progress: 100,
+            description: formatReconcileSummary("Scanning library root folders", scanResult),
+        });
     }
 };
 

@@ -47,20 +47,27 @@ Version buckets below are the proposed grouping — rebucket freely.
 
 Contained, shippable bug fixes — each a proper fix, not a bandaid.
 
-- pending: **Orphan removal must invalidate the album/RG download-status cache.**
-  `cleanOrphanedRecords` selects `NULL AS album_id`, so `updateAlbumDownloadStatus`
-  never fires; canonical-linked (provider-free) rows also have a null `provider_id`, so
-  they get no invalidation at all — a deleted-then-still-"downloaded" album until an
-  incidental cache expiry. Resolve affected RG(s) from `canonical_release_group_mbid`
-  and invalidate album + RG status on removal.
-- pending: **Scan lifecycle reflects reconciliation.** "Rescan Folders" reported
-  completed minutes before the emptied library was reflected. Mirror Lidarr: reconcile
-  the file table synchronously inside the command; "Completed" means the DB is
-  reconciled; report file-table deltas (removed/added/updated), not just disk-walk
-  progress.
-- pending: **Confirm 2.6.11 linking works on the deployment.** Verify the embedded-MBID
-  linking + Phase E self-heal actually match/relink files on a real root scan + artist
-  refresh (user saw none matched); confirm with logs before layering more.
+- done: **Orphan removal must invalidate the album/RG download-status cache.**
+  `cleanOrphanedRecords` selected `NULL AS album_id`, so `updateAlbumDownloadStatus`
+  never fired; canonical-linked (provider-free) rows also have a null `provider_id`, so
+  they got no invalidation at all — a deleted-then-still-"downloaded" album until an
+  incidental cache expiry. Now selects `canonical_release_group_mbid` (written on every
+  canonically-linked row alongside the track/recording mbid) and drives
+  `updateAlbumDownloadStatus` off it, invalidating album + RG + artist status on removal;
+  provider-only rows invalidate via `provider_id`. Covered by
+  `library-scan-orphan-cleanup.test.ts`.
+- done: **Scan lifecycle reflects reconciliation.** "Rescan Folders" reported completed
+  before the emptied library was reflected. The handler already awaits the scan
+  synchronously (reconcile runs inline inside the command), so "Completed" already means
+  the DB is reconciled — the real lag was the stale download-status cache (above). Fixed
+  the reporting: the completion description now surfaces file-table deltas
+  (`N removed, N added, N updated`, or "up to date, no file changes") for both the
+  per-artist and library-wide paths, instead of leaving a generic in-progress line.
+- pending (needs Robert / live deploy): **Confirm 2.6.11 linking works on the
+  deployment.** Verify the embedded-MBID linking + Phase E self-heal actually match/relink
+  files on a real root scan + artist refresh (user saw none matched); confirm with logs
+  before layering more. Cannot be verified from the repo — run a root scan on the deployed
+  instance and check `[DiskScan] Artist …: N files updated` / Phase E heal counts.
 
 ## 2.9.0 (planned) — Lidarr file-management, tagging & artwork parity
 
