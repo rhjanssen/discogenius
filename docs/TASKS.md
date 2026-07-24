@@ -74,6 +74,63 @@ Contained, shippable bug fixes — each a proper fix, not a bandaid.
 The big "do it right" release. Port Lidarr's MediaFiles pipeline and delete our
 divergent paths. **Read the engineering principles above first.**
 
+### File tracking & download status — materialize the link, drop the cache
+
+Lidarr has **no download-status cache**. It stores the link as an integer FK on the
+track (`Track.TrackFileId`; `HasFile => TrackFileId > 0`) and computes status live as a
+trivial indexed join. `MediaFileTableCleanupService.Clean` deletes the missing
+`TrackFile` row *and* zeroes the orphaned tracks' `TrackFileId`. Our cache
+(`albumStatsCache` / `artistStatsCache` / `mediaDownloadCache` in `download-state.ts`)
+exists only because we compute status via multi-table canonical/provider joins instead
+of a materialized FK. We already have the materialized FKs on `TrackFiles`
+(`track_id`, `recording_id`, `release_group_id`, `album_release_id`) — we just don't
+compute status off them.
+
+- pending: **Compute download status off the materialized catalog FKs and delete the
+  cache.** Port Lidarr's model: status = a live indexed join/count over
+  `TrackFiles.track_id` / `recording_id` (add the covering indexes), not the cached
+  canonical-mbid joins. Then remove `albumStatsCache` / `artistStatsCache` /
+  `mediaDownloadCache` and every `invalidate*DownloadStatus` call. **Guard the perf
+  regression** the cache was papering over ([[discogenius-perf-facts]],
+  [[sluggishness-root-cause]]): the whole point is that the FK join is cheap enough that
+  no cache is needed — verify with the read-profiler before deleting the cache, not after.
+- pending: **Cleanup zeroes the link, Lidarr-style.** Once status is FK-based, orphan
+  removal just deletes the `TrackFiles` row (the FK is on the file row, so no separate
+  "zero the track" step is needed) — the 2.6.12 cache-invalidation logic in
+  `cleanOrphanedRecords` is then deletable dead weight. Remove it with the cache.
+- confirmed (already satisfied): **We already store ≥ Lidarr's file-table data.**
+  `TrackFiles` carries all five canonical MBIDs (artist / release-group / release / track
+  / recording) **and** the four integer catalog FKs, plus size/duration/bitrate/quality/
+  `original_filename` (= Lidarr `SceneName`) / `release_group`. No new columns needed for
+  "store all MBIDs". (One minor gap vs Lidarr: an explicit `DateAdded`/`created_at` on
+  every file row — confirm ours is always populated at import.)
+
+### Sidecar / extra files — port `ExtraService` (fixes rename-preview clutter)
+
+Lidarr keeps **only audio/video** in `TrackFile`; lyrics (`.lrc`), metadata (`.nfo`) and
+images live in separate tables and are **moved as a side effect** of the audio file's
+rename (`ExtraService.MoveFilesAfterRename`), never listed as their own rename decisions.
+We already have the tables (`ExtraFiles` / `LyricFiles` / `MetadataFiles`, each with a
+`track_file_id` FK) and write to them — but the rename plan UNIONs all four tables, so the
+preview is cluttered with cover/lyric/nfo rows.
+
+- pending: **Preview shows media files only; extras follow on apply.** Filter
+  `RenameTrackFileService` preview + status to `file_type IN ('track','video')`. This is
+  safe **only once** the id-based apply co-moves extras — see next item — otherwise
+  applying selected (media-only) ids leaves lrc/jpg behind. (A first attempt at the
+  preview filter alone was reverted for exactly this reason.)
+- pending: **Id-based apply co-moves extras (`ExtraService.MoveFilesAfterRename`).**
+  `POST /rename/apply` with `ids` (selected preview rows) → `executeRenameFiles(ids)` must
+  expand each media id to its associated extras: track-scoped via `track_file_id`, and
+  album/artist-scoped sidecars (cover.jpg/folder.jpg/artist.nfo — no `track_file_id`) via
+  folder scope. The by-query path already reconciles sidecars; unify both onto one
+  extras-co-move helper. Decodes the synthetic id offsets (+10M/+20M/+30M) across tables.
+- pending: **Stop storing sidecars as `TrackFiles` rows.** `file_type` still allows
+  `cover`/`lyrics`/`bio`/etc. on `TrackFiles`; migrate any such rows into the Extras
+  tables so `TrackFiles` is audio/video-only (Lidarr's invariant) and the whole class of
+  "extra leaks into the rename/status path" disappears.
+- consolidates: the "Cross-album cover/lyric bleed" item under Tagging below.
+
 ### Artwork — one universal pipeline (port `MediaCoverService`)
 
 Today the sidecar, UI, and embedded cover each resolve independently and can disagree —
