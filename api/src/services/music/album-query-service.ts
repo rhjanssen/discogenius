@@ -1,5 +1,5 @@
 import { db } from "../../database.js";
-import { getReleaseGroupDownloadStatsMap } from "../download/download-state.js";
+import { getReleaseGroupDownloadStatsMap, getAlbumLocalQualitiesMap } from "../download/download-state.js";
 import {
     MusicBrainzReleaseGroupReadService,
     normalizeMusicBrainzReleaseGroupAlbum,
@@ -298,6 +298,7 @@ function normalizeReleaseGroupListRow(
     row: any,
     downloadStats: { downloadedPercent: number; isDownloaded: boolean; totalTracks: number; downloadedTracks: number },
     albumArtists?: CanonicalAlbumArtist[],
+    localQualityData?: { majorityQuality: string | null; localQualities: string[] },
 ): AlbumContract {
     const album = normalizeMusicBrainzReleaseGroupAlbum(row, null, undefined, albumArtists);
     const monitored = Boolean(row.wanted);
@@ -306,6 +307,8 @@ function normalizeReleaseGroupListRow(
     return {
         ...album,
         quality: row.selected_quality || null,
+        local_quality: localQualityData?.majorityQuality || (downloadStats.isDownloaded ? row.selected_quality : null) || null,
+        local_qualities: localQualityData?.localQualities || [],
         is_monitored: monitored,
         monitored_lock: Boolean(row.monitored_lock),
         downloaded: downloadStats.downloadedPercent,
@@ -481,6 +484,7 @@ export class AlbumQueryService {
         );
 
         const albumArtists = MusicBrainzArtistCreditService.getAlbumArtistsMap(releaseGroupMbids);
+        const localQualitiesMap = getAlbumLocalQualitiesMap(releaseGroupMbids);
 
         const countQuery = `
           SELECT COUNT(*) AS count
@@ -509,6 +513,7 @@ export class AlbumQueryService {
                         downloadedTracks: stats?.downloadedTracks ?? 0,
                     },
                     releaseGroupMbid ? albumArtists.get(releaseGroupMbid) : undefined,
+                    releaseGroupMbid ? localQualitiesMap.get(releaseGroupMbid) : undefined,
                 );
             }),
             total: count,
@@ -602,6 +607,7 @@ export class AlbumQueryService {
         );
 
         const albumArtists = MusicBrainzArtistCreditService.getAlbumArtistsMap(releaseGroupMbids);
+        const localQualitiesMap = getAlbumLocalQualitiesMap(releaseGroupMbids);
         const count = Number((db.prepare(`
           SELECT COUNT(*) AS count
           ${fromClause}
@@ -621,6 +627,7 @@ export class AlbumQueryService {
                         downloadedTracks: stats?.downloadedTracks ?? 0,
                     },
                     releaseGroupMbid ? albumArtists.get(releaseGroupMbid) : undefined,
+                    releaseGroupMbid ? localQualitiesMap.get(releaseGroupMbid) : undefined,
                 );
             }),
             total: count,

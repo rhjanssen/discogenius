@@ -163,7 +163,7 @@ export class IdentificationService {
         }
 
         const localTrackNumber = this.extractTrackNumber(file);
-        const remoteTrackNumber = Number(track.track_number || 0);
+        const remoteTrackNumber = Number(track.trackNumber ?? track.track_number ?? 0);
         if (localTrackNumber !== null && remoteTrackNumber > 0) {
             this.addPenalty({
                 value: this.isTrackNumberMatch(localTrackNumber, remoteTrackNumber, totalTrackNumber) ? 0 : 1,
@@ -250,7 +250,7 @@ export class IdentificationService {
             const distance = distances[rowIndex][colIndex];
 
             if (distance.normalizedDistance <= this.MAX_ACCEPTABLE_DISTANCE) {
-                mappedTracks[file.id] = (track.provider_id ?? track.id ?? track.providerId).toString();
+                mappedTracks[file.id] = (track.providerId ?? track.provider_id ?? track.id).toString();
                 acceptedDistances.push(distance.normalizedDistance);
             }
         });

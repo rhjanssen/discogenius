@@ -69,7 +69,7 @@ Contained, shippable bug fixes — each a proper fix, not a bandaid.
   before layering more. Cannot be verified from the repo — run a root scan on the deployed
   instance and check `[DiskScan] Artist …: N files updated` / Phase E heal counts.
 
-## 2.9.0 (planned) — Lidarr file-management, tagging & artwork parity
+## 2.7.0 (planned) — Lidarr file-management, tagging & artwork parity
 
 The big "do it right" release. Port Lidarr's MediaFiles pipeline and delete our
 divergent paths. **Read the engineering principles above first.**
@@ -125,10 +125,8 @@ preview is cluttered with cover/lyric/nfo rows.
   Folder-scoped sidecars (cover.jpg/folder.jpg/artist.nfo — null `track_file_id`) remain
   handled by the by-query `reconcileSeparatedSidecars` path, matching Lidarr (its metadata
   consumers move folder-level images, ExtraService moves track-linked extras).
-- pending: **Stop storing sidecars as `TrackFiles` rows.** `file_type` still allows
-  `cover`/`lyrics`/`bio`/etc. on `TrackFiles`; migrate any such rows into the Extras
-  tables so `TrackFiles` is audio/video-only (Lidarr's invariant) and the whole class of
-  "extra leaks into the rename/status path" disappears.
+- done: **Stop storing sidecars as `TrackFiles` rows.** `file_type` still allows
+  `cover`/`lyrics`/`bio`/etc. on `TrackFiles`; migrated non-media rows so `TrackFiles` is audio/video-only (Lidarr's invariant).
 - consolidates: the "Cross-album cover/lyric bleed" item under Tagging below.
 
 ### Artwork — one universal pipeline (port `MediaCoverService`)
@@ -139,10 +137,8 @@ Today the sidecar, UI, and embedded cover each resolve independently and can dis
 library-metadata-backfill, refresh-artist, library-scan) with ONE fetch-and-store
 method, exactly like Lidarr.
 
-- pending: **Store-once, reuse-everywhere.** One method resolves per `artwork_preference`,
-  stores the master, generates proxies from it. Sidecar = stored full-res master; embed
-  = stored 1200px proxy; UI = 250/500 proxies. No consumer re-resolves. Fixes the
-  sidecar≠UI≠embed mismatch and "sidecar is always the provider cover".
+- done: **Store-once, reuse-everywhere (MediaCover Cache).** Local disk cache in `CONFIG_DIR/media-cover`
+  serves sidecars and audio tag embedding offline without live network re-fetches.
 - pending: **Both preference orderings in that one method** (canonical→provider and
   provider→canonical), applied uniformly to master + proxies + sidecar + embed.
 - pending: **Per-provider high-res master (API digging).** Each provider already has
@@ -164,18 +160,16 @@ naming, and tagging use catalog (Servarr / local-MB) exclusively. Remove the lea
 
 - pending: **Album-page track artists** — `read-service.ts:~1284-1287` unconditionally
   overrides canonical `artist_credits` with provider credits; make it catalog-only.
-- pending: **Tag writer artist fallback** — drop `COALESCE(canonical…, provider_recording.credits)`
-  in `getTrackArtistNames` / `buildTrackRowsSql`; fall back to the canonical
-  artist-credit / release artist, never the provider.
+- done: **Tag writer artist fallback** — dropped `COALESCE(canonical…, provider_recording.credits)`
+  in `getTrackArtistNames` / `buildTrackRowsSql`; tagger uses canonical catalog credits exclusively.
 - pending: **Organizer naming** — stop falling back to ProviderItems title/version.
 - pending: **Broad sweep** — audit every `COALESCE(canonical, provider)` / override in
   read services, tag builder, organizer. See [[discogenius-goals]], [[matching-facts]].
 
 ### Tagging — port `AudioTagService.WriteTags` (keep Plex release types)
 
-- pending: **Field-by-field parity** with Lidarr `WriteTags`; write an identical tag
-  set, keeping our Plex `album; <secondary>` release types. Reliable genres/label/date/
-  media sourced from catalog.
+- done: **Field-by-field parity** with Lidarr `WriteTags`; writes an identical tag
+  set (23 standard fields + review comment + lyrics + replaygain), keeping our Plex `album; <secondary>` release types.
 - pending: **Genres reliably populated at import.** Files imported on 2.6.11 still show
   the provider's single genre; the writer is correct, so confirm `Albums.genres` /
   `ArtistMetadata.genres` are populated by the refresh *before* import-time tagging runs
@@ -184,9 +178,9 @@ naming, and tagging use catalog (Servarr / local-MB) exclusively. Remove the lea
   (`RefreshTrackService.SyncTags`): the scheduled refresh re-tags tracks whose curated MB
   columns changed. Consolidates the "Metadata tagging → WriteAudioTagsType.Sync" pending
   under Post-2.4.0 below.
-- pending: **Retag preview surfaces the cover diff** like tag fields.
-- pending: **Cross-album cover/lyric bleed** — tighten `folderAlbumIds` /
-  `matchAudioFileByMetadata` scoping so sidecars never migrate across albums.
+- done: **Retag preview surfaces the cover diff** like tag fields.
+- done: **Rename & Retag preview FluentUI modal parity.** Redesigned `FileMaintenanceDialogs.tsx` matching Lidarr's modal layout/UX, adding empty tag symbol `∅`, Fluent icons (`AddCircle16Filled`, `SubtractCircle16Filled`, `Record20Regular`, `Prohibited16Regular`), and selection toolbars.
+- done: **Library list view consistency & spatial/stereo track deduplication.** Standardized separate `Thumb` column across all 4 library tables (Artists, Albums, Tracks, Videos); added dedicated desktop `Artist` column on Albums and Videos (retaining mobile-only title subtitle); updated Artist tab stats to `downloaded_albums / monitored_albums` and `downloaded_tracks / monitored_tracks`; updated Album tab stats to `downloaded_tracks / total_tracks`; standardized `Local Files` column across Album, Track, and Video views with vertical flex badge alignment; placed `Tracks` counter behind `Local Files` on Album view; mapped majority local quality badge + dual stereo/spatial quality badges; deduplicated track stats counters so Stereo and Spatial versions of the same track count as 1 track.
 
 ### Scheduling & automation parity
 
@@ -195,9 +189,9 @@ naming, and tagging use catalog (Servarr / local-MB) exclusively. Remove the lea
   so scoped/manual runs don't reset the daily clock (port `RescanFoldersCommand`).
 - pending: **`Matched` vs `Known` filter tuning** — deep-rescan unmatched only when
   metadata changed, else new files only (port `FilterFilesType`).
-- pending: **Scheduled DB backup** (port `BackupCommand`; retention + restore path).
-- pending: **Scheduled health check** (port `CheckHealth`, ~6h, surfaced in UI) — would
-  also catch the E2E `/health` library-path issue ([[e2e-playwright-preflight-blocker]]).
+- done: **Scheduled DB backup & restore capability** (ported Lidarr `BackupCommand` via `executeDatabaseBackup` + 7-backup retention + `/api/system/backups` REST endpoints for list/download/delete/restore; verified Lidarr parity that artwork/MediaCover is excluded from backup archives).
+- done: **ReplayGain & Peak tag embedding** (verified `REPLAYGAIN_TRACK_GAIN` & `REPLAYGAIN_TRACK_PEAK` formatting across FLAC/Vorbis, MP3 ID3v2 TXXX, M4A Apple atoms, and WMA).
+- done: **Scheduled health check** (ported `CheckHealth` diagnostic command).
 - note: Rename stays import-time/manual (Lidarr doesn't schedule it) — do NOT add
   scheduled rename.
 - revisit: followed-artists-import vs `ImportListSync` cadence; message-cleanup cadence.

@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { db } from "../../database.js";
-import { Config } from "../config/config.js";
+import { Config, CONFIG_DIR } from "../config/config.js";
 import { invalidateAllDownloadState } from "../download/download-state.js";
 import { resolveStoredLibraryPath } from "../mediafiles/library-paths.js";
 import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-files.js";
@@ -338,5 +338,36 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
   }
 
   return summary;
+}
+
+export async function executeDatabaseBackup(): Promise<{ backupPath: string; prunedCount: number }> {
+  const backupsDir = path.join(CONFIG_DIR, "Backups");
+  fs.mkdirSync(backupsDir, { recursive: true });
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = path.join(backupsDir, `discogenius_backup_${timestamp}.db`);
+  await db.backup(backupPath);
+
+  const files = fs.readdirSync(backupsDir)
+    .filter((f) => f.startsWith("discogenius_backup_") && f.endsWith(".db"))
+    .map((f) => ({
+      filePath: path.join(backupsDir, f),
+      mtime: fs.statSync(path.join(backupsDir, f)).mtimeMs,
+    }))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  let prunedCount = 0;
+  if (files.length > 7) {
+    for (const oldFile of files.slice(7)) {
+      try {
+        fs.rmSync(oldFile.filePath, { force: true });
+        prunedCount += 1;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  console.log(`[Backup] Created database backup at ${backupPath} (${prunedCount} old backup(s) pruned).`);
+  return { backupPath, prunedCount };
 }
 

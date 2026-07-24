@@ -560,6 +560,8 @@ export class Config {
    * Get resolved music library path
    */
   static getMusicPath(): string {
+    const envOverride = process.env.MUSIC_PATH?.trim();
+    if (envOverride) return Config.resolvePath(envOverride, 'library/stereo-music');
     const pathConfig = getConfigSection("path");
     const configuredPath = pathConfig.music_path || '/library/stereo-music';
     return Config.resolvePath(configuredPath, 'library/stereo-music');
@@ -569,6 +571,8 @@ export class Config {
    * Get resolved spatial library path
    */
   static getSpatialPath(): string {
+    const envOverride = process.env.SPATIAL_PATH?.trim();
+    if (envOverride) return Config.resolvePath(envOverride, 'library/spatial-music');
     const pathConfig = getConfigSection("path");
     const configuredPath = pathConfig.spatial_path || '/library/spatial-music';
     return Config.resolvePath(configuredPath, 'library/spatial-music');
@@ -578,6 +582,8 @@ export class Config {
    * Get resolved video library path
    */
   static getVideoPath(): string {
+    const envOverride = process.env.VIDEO_PATH?.trim();
+    if (envOverride) return Config.resolvePath(envOverride, 'library/music-videos');
     const pathConfig = getConfigSection("path");
     const configuredPath = pathConfig.video_path || '/library/music-videos';
     return Config.resolvePath(configuredPath, 'library/music-videos');

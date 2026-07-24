@@ -591,9 +591,16 @@ export class ArtistQueryService {
         // as artists are scanned/curated (see the *-handlers refresh calls); the
         // ArtistStatistics table persists, so the list endpoint stays fast.
         // Missing rows surface as 0 until the owning artist's next worker refresh.
-        const artistStatisticsById = includeCounts
+        let artistStatisticsById = includeCounts
             ? ArtistStatisticsService.getStatisticsMap(artistIds)
             : new Map();
+        if (includeCounts && artistIds.length > 0) {
+            const missingIds = artistIds.filter((id) => !artistStatisticsById.has(id));
+            if (missingIds.length > 0) {
+                ArtistStatisticsService.refresh(missingIds);
+                artistStatisticsById = ArtistStatisticsService.getStatisticsMap(artistIds);
+            }
+        }
         const artistDownloadStats = includeDownloadStats
             ? getArtistDownloadStatsMap(artistIds)
             : null;
@@ -607,8 +614,11 @@ export class ArtistQueryService {
                     ? {
                         album_count: Number(statistics?.album_count || 0),
                         monitored_album_count: Number(statistics?.monitored_album_count || 0),
+                        downloaded_album_count: Number(statistics?.downloaded_album_count || 0),
                         track_count: Number(statistics?.track_count || 0),
                         monitored_track_count: Number(statistics?.monitored_track_count || 0),
+                        track_file_count: Number(statistics?.track_file_count || 0),
+                        video_count: Number(statistics?.video_count || 0),
                     }
                     : {};
 

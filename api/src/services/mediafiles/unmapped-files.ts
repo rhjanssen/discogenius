@@ -110,9 +110,34 @@ export class UnmappedFilesService {
 
     async identifyAgainstAlbum(
         fileIds: number[],
-        tidalAlbumId: string,
+        rawTidalAlbumId: string,
         mode: ImportDecisionMode = "ExistingFiles"
     ) {
+        let tidalAlbumId = rawTidalAlbumId;
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tidalAlbumId.replace(/^mbid-/, ""))) {
+            const cleanMbid = tidalAlbumId.replace(/^mbid-/, "");
+            const slot = db.prepare(`
+                SELECT selected_provider_id FROM ReleaseGroupSlots
+                WHERE release_group_mbid = ? AND selected_provider_id IS NOT NULL AND selected_provider_id != ''
+                ORDER BY CASE slot WHEN 'stereo' THEN 0 ELSE 1 END
+                LIMIT 1
+            `).get(cleanMbid) as { selected_provider_id: string } | undefined;
+
+            if (slot?.selected_provider_id) {
+                tidalAlbumId = slot.selected_provider_id;
+            } else {
+                const item = db.prepare(`
+                    SELECT provider_id FROM ProviderItems
+                    WHERE entity_type = 'album' AND (release_group_mbid = ? OR provider_id = ?)
+                    LIMIT 1
+                `).get(cleanMbid, cleanMbid) as { provider_id: string } | undefined;
+
+                if (item?.provider_id) {
+                    tidalAlbumId = item.provider_id;
+                }
+            }
+        }
+
         const files = this.repository.findByIds(fileIds);
         const identification = await IdentificationService.identifyUnmappedFiles(files, tidalAlbumId);
         const providerAlbum = await streamingProviderManager.getDefaultStreamingProvider().getAlbum(tidalAlbumId);

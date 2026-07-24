@@ -15,6 +15,11 @@ import {
   DialogContent,
   DialogActions,
   Checkbox,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItemRadio,
   makeStyles,
   tokens,
   Overflow,
@@ -30,6 +35,7 @@ import {
   LockOpen24Regular,
   Grid24Regular,
   AppsListDetail24Regular,
+  TextBulletListLtr24Regular,
   Play24Regular,
   Info24Regular,
   Tag24Regular,
@@ -43,6 +49,7 @@ import {
   LockOpen24Filled,
   Grid24Filled,
   AppsListDetail24Filled,
+  TextBulletListLtr24Filled,
   Play24Filled,
   Info24Filled,
   Tag24Filled,
@@ -119,6 +126,7 @@ const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
 const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
 const Grid24 = bundleIcon(Grid24Filled, Grid24Regular);
 const AppsListDetail24 = bundleIcon(AppsListDetail24Filled, AppsListDetail24Regular);
+const TextBulletListLtr24 = bundleIcon(TextBulletListLtr24Filled, TextBulletListLtr24Regular);
 const Play24 = bundleIcon(Play24Filled, Play24Regular);
 const Info24 = bundleIcon(Info24Filled, Info24Regular);
 const Tag24 = bundleIcon(Tag24Filled, Tag24Regular);
@@ -551,6 +559,45 @@ const ArtistPage = () => {
   useEffect(() => {
     writeArtistViewMode(viewMode);
   }, [viewMode]);
+
+  // With three layouts (carousel / grid / list) a cycling toggle is ambiguous,
+  // so the view control is a menu that shows the options directly — matching the
+  // Sort/Filter menus. The trigger shows the current layout's glyph.
+  const viewModeOptions = useMemo(() => ([
+    { key: "carousel" as const, label: "Carousel", icon: <AppsListDetail24 /> },
+    { key: "grid" as const, label: "Grid", icon: <Grid24 /> },
+    { key: "list" as const, label: "List", icon: <TextBulletListLtr24 /> },
+  ]), []);
+  const renderViewModeMenu = useCallback((className?: string) => {
+    const current = viewModeOptions.find((option) => option.key === viewMode) ?? viewModeOptions[0];
+    return (
+      <Menu>
+        <MenuTrigger disableButtonEnhancement>
+          <Button
+            appearance="subtle"
+            icon={current.icon}
+            className={className}
+            title="Change layout"
+            aria-label={`Layout: ${current.label}`}
+          >
+            View
+          </Button>
+        </MenuTrigger>
+        <MenuPopover>
+          <MenuList
+            checkedValues={{ view: [viewMode] }}
+            onCheckedValueChange={(_, data) => setViewMode(data.checkedItems[0] as ArtistViewMode)}
+          >
+            {viewModeOptions.map((option) => (
+              <MenuItemRadio key={option.key} name="view" value={option.key} icon={option.icon}>
+                {option.label}
+              </MenuItemRadio>
+            ))}
+          </MenuList>
+        </MenuPopover>
+      </Menu>
+    );
+  }, [viewMode, viewModeOptions]);
 
   useEffect(() => {
     setTopTracksExpanded(false);
@@ -1271,15 +1318,7 @@ const ArtistPage = () => {
         showLockFilter={true}
         className={mergeClasses(styles.actionButton, styles.transparentButton)}
       />
-      <Button
-        appearance="subtle"
-        icon={viewMode === 'grid' ? <AppsListDetail24 /> : viewMode === 'list' ? <Grid24 /> : <Grid24 />}
-        onClick={() => setViewMode(prev => prev === 'carousel' ? 'grid' : prev === 'grid' ? 'list' : 'carousel')}
-        title={`Switch to ${viewMode === 'carousel' ? 'grid' : viewMode === 'grid' ? 'list' : 'carousel'} view`}
-        className={mergeClasses(styles.actionButton, styles.transparentButton)}
-      >
-        View
-      </Button>
+      {renderViewModeMenu(mergeClasses(styles.actionButton, styles.transparentButton))}
     </div>
   );
 
@@ -1929,19 +1968,7 @@ const ArtistPage = () => {
                       className={mergeClasses(styles.actionButton, styles.transparentButton)}
                     />
 
-                    <AppTooltip
-                      content={viewMode === 'grid' ? "Switch to carousel view" : "Switch to grid view"}
-                      relationship="label"
-                    >
-                      <Button
-                        appearance="subtle"
-                        icon={viewMode === 'grid' ? <AppsListDetail24 /> : <Grid24 />}
-                        onClick={() => setViewMode(prev => prev === 'grid' ? 'carousel' : 'grid')}
-                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                      >
-                        View
-                      </Button>
-                    </AppTooltip>
+                    {renderViewModeMenu(mergeClasses(styles.actionButton, styles.transparentButton))}
                   </div>
                 </div>
               </Overflow>

@@ -484,6 +484,7 @@ export function initDatabase() {
     // open only. No ADD COLUMN / repair / FTS rebuild on this path.
     // Safe IF NOT EXISTS indexes may still be added for query performance.
     ensureRuntimePerformanceIndexes();
+    ensureRuntimeStatisticsColumns();
     runStartupIntegrityCheck();
     console.log(`✅ Opened existing schema ${BASE_SCHEMA_VERSION} database`);
   }
@@ -509,6 +510,35 @@ function ensureRuntimePerformanceIndexes(): void {
       db.exec(sql);
     } catch (error) {
       console.warn(`[SQLite] Skipping runtime index: ${sql} (${error instanceof Error ? error.message : error})`);
+    }
+  }
+}
+
+/**
+ * Additive ArtistStatistics columns that shipped without a schema-version bump.
+ * Older schema-39 databases were created before these columns joined the
+ * baseline CREATE TABLE, so the open-existing path never gets them and every
+ * artist-list query fails with "no such column". ADD COLUMN is idempotent here
+ * because we probe the live table_info first and only add what is missing.
+ */
+function ensureRuntimeStatisticsColumns(): void {
+  const existing = new Set(
+    (db.prepare("PRAGMA table_info(ArtistStatistics)").all() as Array<{ name: string }>)
+      .map((column) => column.name),
+  );
+  const additiveColumns: Array<{ name: string; ddl: string }> = [
+    { name: "downloaded_album_count", ddl: "downloaded_album_count INTEGER NOT NULL DEFAULT 0" },
+    { name: "video_count", ddl: "video_count INTEGER NOT NULL DEFAULT 0" },
+  ];
+  for (const column of additiveColumns) {
+    if (existing.has(column.name)) {
+      continue;
+    }
+    try {
+      db.exec(`ALTER TABLE ArtistStatistics ADD COLUMN ${column.ddl}`);
+      console.log(`[SQLite] Added missing ArtistStatistics.${column.name} column`);
+    } catch (error) {
+      console.warn(`[SQLite] Could not add ArtistStatistics.${column.name}: ${error instanceof Error ? error.message : error}`);
     }
   }
 }
@@ -559,9 +589,11 @@ function createBaselineSchemaV38(): void {
       artist_mbid TEXT,
       album_count INTEGER NOT NULL DEFAULT 0,
       monitored_album_count INTEGER NOT NULL DEFAULT 0,
+      downloaded_album_count INTEGER NOT NULL DEFAULT 0,
       track_count INTEGER NOT NULL DEFAULT 0,
       monitored_track_count INTEGER NOT NULL DEFAULT 0,
       track_file_count INTEGER NOT NULL DEFAULT 0,
+      video_count INTEGER NOT NULL DEFAULT 0,
       size_on_disk INTEGER NOT NULL DEFAULT 0,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )

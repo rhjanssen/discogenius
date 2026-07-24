@@ -22,6 +22,7 @@ import {
   ChevronDownRegular,
   Grid24Regular,
   AppsListDetail24Regular,
+  TextBulletListLtr24Regular,
   ArrowSortUp24Regular,
   ArrowSortDown24Regular,
   CheckmarkCircle24Filled,
@@ -31,6 +32,7 @@ import {
   ChevronDownFilled,
   Grid24Filled,
   AppsListDetail24Filled,
+  TextBulletListLtr24Filled,
   ArrowSortUp24Filled,
   ArrowSortDown24Filled,
   bundleIcon,
@@ -45,6 +47,7 @@ import type { StreamingProviderStatus } from "@/services/api";
 const ChevronDown = bundleIcon(ChevronDownFilled, ChevronDownRegular);
 const Grid24 = bundleIcon(Grid24Filled, Grid24Regular);
 const AppsListDetail24 = bundleIcon(AppsListDetail24Filled, AppsListDetail24Regular);
+const TextBulletListLtr24 = bundleIcon(TextBulletListLtr24Filled, TextBulletListLtr24Regular);
 const ArrowSortUp24 = bundleIcon(ArrowSortUp24Filled, ArrowSortUp24Regular);
 const ArrowSortDown24 = bundleIcon(ArrowSortDown24Filled, ArrowSortDown24Regular);
 const ArrowImport24 = bundleIcon(ArrowImport24Filled, ArrowImport24Regular);
@@ -319,20 +322,32 @@ function LibraryControlActions(props: LibraryToolbarProps & { className?: string
         className={className}
         hideLabelOnMobile
       />
-      {canToggleView ? (
-        <Button
-          appearance="subtle"
-          icon={viewMode === "grid" ? <Grid24 /> : <AppsListDetail24 />}
-          onClick={() => onViewModeChange(viewMode === "grid" ? "list" : "grid")}
-          className={className}
-          title={viewMode === "grid" ? "Switch to list view" : "Switch to grid view"}
-          aria-label={viewMode === "grid" ? "Switch to list view" : "Switch to grid view"}
-        >
-          <span className={mobileHiddenLabelClassName}>
-            {viewMode === "grid" ? "Grid" : "List"}
-          </span>
-        </Button>
-      ) : null}
+      {canToggleView ? (() => {
+        // Show the view the button switches TO (not the current one), so the
+        // label/icon tell the user where they are going. The artist tab's
+        // detailed row view is a "Table" (Lidarr's term) rather than a compact
+        // "List", and uses the bullet-list glyph to distinguish it.
+        const switchingToList = viewMode === "grid";
+        const isArtists = selectedTab === "artists";
+        const targetLabel = switchingToList ? (isArtists ? "Table" : "List") : "Grid";
+        const targetIcon = switchingToList
+          ? (isArtists ? <TextBulletListLtr24 /> : <AppsListDetail24 />)
+          : <Grid24 />;
+        return (
+          <Button
+            appearance="subtle"
+            icon={targetIcon}
+            onClick={() => onViewModeChange(switchingToList ? "list" : "grid")}
+            className={className}
+            title={`Switch to ${targetLabel.toLowerCase()} view`}
+            aria-label={`Switch to ${targetLabel.toLowerCase()} view`}
+          >
+            <span className={mobileHiddenLabelClassName}>
+              {targetLabel}
+            </span>
+          </Button>
+        );
+      })() : null}
     </div>
   );
 }

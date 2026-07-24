@@ -864,6 +864,9 @@ export class OrganizerService {
 
     let deletedCount = 0;
 
+    // Ensure TrackFiles contains strictly audio and video media files (Lidarr invariant).
+    db.prepare("DELETE FROM TrackFiles WHERE file_type NOT IN ('track', 'video')").run();
+
     // Cover/nfo/image sidecars live in MetadataFiles (with a file_type column);
     // lyrics live in LyricFiles (no file_type — the table itself is the type).
     const metadataSelectors: Array<string> = [];

@@ -61,4 +61,82 @@ router.post("/unmatched-artists/:provider/:providerId/ignore", (req, res) => {
   }
 });
 
+// Backup & Restore endpoints (matching Lidarr system backup/restore semantics)
+router.get("/backups", (_req, res) => {
+  try {
+    const fsModule = require("fs");
+    const pathModule = require("path");
+    const { CONFIG_DIR } = require("../services/config/config.js");
+    const backupsDir = pathModule.join(CONFIG_DIR, "Backups");
+    if (!fsModule.existsSync(backupsDir)) {
+      return res.json([]);
+    }
+    const files = fsModule.readdirSync(backupsDir)
+      .filter((f: string) => f.startsWith("discogenius_backup_") && f.endsWith(".db"))
+      .map((f: string) => {
+        const filePath = pathModule.join(backupsDir, f);
+        const stat = fsModule.statSync(filePath);
+        return {
+          name: f,
+          size: stat.size,
+          time: stat.mtime.toISOString(),
+        };
+      })
+      .sort((a: any, b: any) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+    res.json(files);
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.post("/backups", async (_req, res) => {
+  try {
+    const pathModule = require("path");
+    const { executeDatabaseBackup } = require("../services/commands/runtime-maintenance.js");
+    const result = await executeDatabaseBackup();
+    res.json({
+      success: true,
+      fileName: pathModule.basename(result.backupPath),
+      backupPath: result.backupPath,
+      prunedCount: result.prunedCount,
+    });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.get("/backups/:fileName/download", (req, res) => {
+  try {
+    const fsModule = require("fs");
+    const pathModule = require("path");
+    const { CONFIG_DIR } = require("../services/config/config.js");
+    const fileName = pathModule.basename(String(req.params.fileName));
+    const filePath = pathModule.join(CONFIG_DIR, "Backups", fileName);
+    if (!fsModule.existsSync(filePath)) {
+      return res.status(404).json({ detail: "Backup file not found" });
+    }
+    res.download(filePath, fileName);
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.delete("/backups/:fileName", (req, res) => {
+  try {
+    const fsModule = require("fs");
+    const pathModule = require("path");
+    const { CONFIG_DIR } = require("../services/config/config.js");
+    const fileName = pathModule.basename(String(req.params.fileName));
+    const filePath = pathModule.join(CONFIG_DIR, "Backups", fileName);
+    if (!fsModule.existsSync(filePath)) {
+      return res.status(404).json({ detail: "Backup file not found" });
+    }
+    fsModule.rmSync(filePath, { force: true });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
 export default router;

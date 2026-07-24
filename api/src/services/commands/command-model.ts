@@ -8,6 +8,7 @@ import type {
     ApplyCurationCommand,
     BulkRefreshArtistCommand,
     CheckHealthCommand,
+    BackupDatabaseCommand,
     CheckUpgradesCommand,
     CleanupTempFilesCommand,
     CompactDatabaseCommand,
@@ -66,6 +67,7 @@ export interface CommandBodyMap {
     [CommandNames.RescanAllRoots]: RescanAllRootsCommand;
     [CommandNames.CheckHealth]: CheckHealthCommand;
     [CommandNames.CompactDatabase]: CompactDatabaseCommand;
+    [CommandNames.BackupDatabase]: BackupDatabaseCommand;
     [CommandNames.CleanupTempFiles]: CleanupTempFilesCommand;
     [CommandNames.UpdateLibraryMetadata]: UpdateLibraryMetadataCommand;
     [CommandNames.ImportProviderArtists]: ImportProviderArtistsCommand;

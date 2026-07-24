@@ -393,6 +393,17 @@ export function hasCachedMediaCover(
 }
 
 /**
+ * Return the absolute filesystem path to the cached original/derivative cover file in media-cover/ if it exists.
+ */
+export function getCachedMediaCoverFilePath(
+  entityId: string | number | null | undefined,
+  coverEntity: MediaCoverEntity,
+  coverType: string = "cover",
+): string | null {
+  return existingMediaCover(entityId, coverEntity, coverType)?.path ?? null;
+}
+
+/**
  * True when local bytes exist and their source marker matches the source that
  * the catalog/provider currently advertises. This is intended for refresh
  * workers; UI response mapping must remain filesystem-free.

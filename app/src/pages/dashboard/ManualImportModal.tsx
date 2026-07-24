@@ -227,9 +227,20 @@ const isVideoCandidate = (file: UnmappedFile | null) => {
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const cleanSearchString = (str?: string | null) => {
+    if (!str) return '';
+    return str
+        .replace(/[\(\[\{].*?[\)\]\}]/g, ' ')
+        .replace(/[_.\-\/\\]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
 const buildInitialSearchQuery = (file: UnmappedFile, isVideoImport: boolean) => {
     if (!isVideoImport) {
-        return [file.detected_artist, file.detected_album].filter(Boolean).join(' ').trim();
+        const cleanArtist = cleanSearchString(file.detected_artist);
+        const cleanAlbum = cleanSearchString(file.detected_album);
+        return [cleanArtist, cleanAlbum].filter(Boolean).join(' ').trim();
     }
 
     const baseName = file.filename.replace(/\.[^/.]+$/, '');
@@ -237,7 +248,7 @@ const buildInitialSearchQuery = (file: UnmappedFile, isVideoImport: boolean) => 
         ? baseName.replace(new RegExp(`^${escapeRegExp(file.detected_artist)}\\s*-\\s*`, 'i'), '').trim()
         : baseName;
     const title = file.detected_track || strippedTitle;
-    return [file.detected_artist, title].filter(Boolean).join(' ').trim();
+    return [cleanSearchString(file.detected_artist), cleanSearchString(title)].filter(Boolean).join(' ').trim();
 };
 
 const getResultId = (result: any) => String(result.id || '');
@@ -330,6 +341,9 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                     : response?.results?.albums || [];
                 setSearchResults(nextResults);
                 setHasSearched(true);
+                if (nextResults.length > 0) {
+                    void handleSelectMatch(nextResults[0]);
+                }
             })
             .catch(() => {
                 setHasSearched(true);
@@ -624,9 +638,10 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                                                     <option value="">-- Don&apos;t Map --</option>
                                                                     {albumTracks.map((track) => {
                                                                         const providerId = String(track.providerId || track.id || track.provider_id || '');
+                                                                        const trackNum = track.trackNumber ?? track.track_number ?? 0;
                                                                         return (
                                                                             <option key={providerId} value={providerId}>
-                                                                                {track.trackNumber || track.track_number}. {track.title} {track.version ? `(${track.version})` : ''}
+                                                                                {trackNum ? `${trackNum}. ` : ''}{track.title}{track.version ? ` (${track.version})` : ''}
                                                                             </option>
                                                                         );
                                                                     })}

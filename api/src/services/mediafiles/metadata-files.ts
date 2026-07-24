@@ -457,25 +457,20 @@ async function downloadProviderArtwork(
         return false;
     }
 
-    // Library sidecars want full-resolution origin bytes. MediaCover only keeps
-    // UI 500/250 derivatives — prefer the remote URL recorded in the source marker.
+    // Prefer local MediaCover cache if present (MediaCover origin file).
+    const localFilePath = getMediaCoverFilePathFromUrl(url);
+    if (localFilePath && fs.existsSync(localFilePath)) {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.copyFileSync(localFilePath, outputPath);
+        console.log(`✅ [METADATA] ${label} copied from MediaCover cache: ${outputPath}`);
+        return true;
+    }
+
     let fetchSource = String(url);
     if (options.preferRemoteOrigin) {
         const originRemote = getCachedMediaCoverSourceUrlFromLocalUrl(url);
         if (originRemote) {
             fetchSource = originRemote;
-        } else if (fetchSource.startsWith("/media-cover/")) {
-            // No marker yet and only a UI alias — do not copy a 500px derivative.
-            console.log(`ℹ️ [METADATA] No origin source for ${label}; skipping MediaCover derivative copy.`);
-            return false;
-        }
-    } else {
-        const localFilePath = getMediaCoverFilePathFromUrl(url);
-        if (localFilePath) {
-            fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-            fs.copyFileSync(localFilePath, outputPath);
-            console.log(`✅ [METADATA] ${label} copied from MediaCover cache: ${outputPath}`);
-            return true;
         }
     }
 

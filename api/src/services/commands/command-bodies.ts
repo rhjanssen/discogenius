@@ -300,6 +300,8 @@ export type CheckHealthCommand = CommandBodyCommon;
 
 export type CompactDatabaseCommand = CommandBodyCommon;
 
+export type BackupDatabaseCommand = CommandBodyCommon;
+
 export type CleanupTempFilesCommand = CommandBodyCommon;
 
 export type UpdateLibraryMetadataCommand = CommandBodyCommon;

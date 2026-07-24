@@ -12,6 +12,7 @@ import {
   Search24Regular,
   Tag24Regular,
   Rename24Regular,
+  Video24Regular,
   ArrowSync24Filled,
   ArrowDownload24Filled,
   Eye24Filled,
@@ -20,6 +21,7 @@ import {
   Search24Filled,
   Tag24Filled,
   Rename24Filled,
+  Video24Filled,
   bundleIcon,
 } from "@fluentui/react-icons";
 import { useMemo, type MouseEvent, type ReactElement, type ReactNode } from "react";
@@ -38,6 +40,30 @@ const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDow
 const Search24 = bundleIcon(Search24Filled, Search24Regular);
 const Tag24 = bundleIcon(Tag24Filled, Tag24Regular);
 const Rename24 = bundleIcon(Rename24Filled, Rename24Regular);
+const Video24 = bundleIcon(Video24Filled, Video24Regular);
+
+/** MusicBrainz artist "type" (Person, Group, …) is stored as a JSON array on
+ * artist_types. Show the primary type in the list, Lidarr-style. */
+function formatArtistType(artistTypes: unknown): string | null {
+  let value: unknown = artistTypes;
+  if (typeof artistTypes === "string") {
+    const trimmed = artistTypes.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith("[")) {
+      try {
+        value = JSON.parse(trimmed);
+      } catch {
+        value = trimmed;
+      }
+    } else {
+      value = trimmed;
+    }
+  }
+  const first = Array.isArray(value) ? value[0] : value;
+  const label = String(first ?? "").trim();
+  if (!label || label.toLowerCase() === "artist") return null;
+  return label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
+}
 
 export function formatArtistLastScanned(date: string | null): string | null {
   if (!date) return null;
@@ -165,6 +191,8 @@ type UseLibraryArtistColumnsOptions = {
   onCurate: (event: MouseEvent, artist: any) => void;
   onDownload: (event: MouseEvent, artist: any) => void;
   onToggleMonitored: (artistId: string, monitored: boolean) => void;
+  /** Show the music-video counter column (gated on the music-videos setting). */
+  showVideos?: boolean;
 };
 
 /** Column definitions for the artists DataGrid list view. */
@@ -173,10 +201,12 @@ export function useLibraryArtistColumns({
   onCurate,
   onDownload,
   onToggleMonitored,
+  showVideos = false,
 }: UseLibraryArtistColumnsOptions): DataGridColumn[] {
   const dgCell = useDataGridCellStyles();
 
-  return useMemo<DataGridColumn[]>(() => [
+  return useMemo<DataGridColumn[]>(() => {
+    const columns: DataGridColumn[] = [
     {
       key: "thumb",
       header: "",
@@ -196,12 +226,12 @@ export function useLibraryArtistColumns({
     {
       key: "name",
       header: "Name",
-      // minmax(0, 1fr) so the name column can shrink on narrow viewports;
-      // Albums/Scanned stack under the name below 768px (Fluent list pattern).
       width: "minmax(0, 1fr)",
       wrap: true,
       render: (artist: any) => {
-        const albumLabel = `${artist.monitored_album_count ?? "--"} / ${artist.album_count ?? "--"} albums`;
+        const monitoredAlbums = artist.monitored_album_count ?? 0;
+        const totalAlbums = artist.album_count ?? 0;
+        const albumLabel = `${monitoredAlbums} / ${totalAlbums} albums`;
         const scannedLabel = artist.last_scanned
           ? formatArtistLastScanned(artist.last_scanned)
           : "Not scanned";
@@ -218,38 +248,91 @@ export function useLibraryArtistColumns({
       },
     },
     {
+      key: "type",
+      header: "Type",
+      width: "90px",
+      align: "left",
+      minWidth: 1024,
+      className: dgCell.hideOnTablet,
+      render: (artist: any) => {
+        const type = formatArtistType(artist.artist_types);
+        return type
+          ? <Text size={200}>{type}</Text>
+          : <Text size={200} className={dgCell.statSecondary}>—</Text>;
+      },
+    },
+    {
       key: "albums",
       header: "Albums",
-      width: "70px",
+      width: "90px",
       align: "center",
       minWidth: 768,
       className: dgCell.hideOnMobile,
-      render: (artist: any) => (
-        <>
-          <span className={dgCell.statPrimary}>{artist.monitored_album_count ?? "--"}</span>
-          <span className={dgCell.statSecondary}> / {artist.album_count ?? "--"}</span>
-        </>
-      ),
+      render: (artist: any) => {
+        const downloaded = artist.downloaded_album_count ?? 0;
+        const monitored = artist.monitored_album_count ?? 0;
+        return (
+          <>
+            <span className={dgCell.statPrimary}>{downloaded}</span>
+            <span className={dgCell.statSecondary}> / {monitored}</span>
+          </>
+        );
+      },
     },
     {
       key: "tracks",
       header: "Tracks",
-      width: "70px",
+      width: "140px",
       align: "center",
       minWidth: 768,
       className: dgCell.hideOnMobile,
-      render: (artist: any) => (
-        <>
-          <span className={dgCell.statPrimary}>{artist.monitored_track_count ?? "--"}</span>
-          <span className={dgCell.statSecondary}> / {artist.track_count ?? "--"}</span>
-        </>
-      ),
+      render: (artist: any) => {
+        const downloaded = Number(artist.track_file_count ?? 0);
+        const total = Number(artist.monitored_track_count ?? artist.track_count ?? 0);
+        const percent = total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : 0;
+        const complete = total > 0 && downloaded >= total;
+        return (
+          <div
+            className={mergeClasses(dgCell.progressTrack, complete ? dgCell.progressTrackComplete : undefined)}
+            role="progressbar"
+            aria-valuenow={downloaded}
+            aria-valuemin={0}
+            aria-valuemax={total}
+            title={`${downloaded} of ${total} tracks downloaded`}
+          >
+            <div
+              className={mergeClasses(dgCell.progressFill, complete ? dgCell.progressFillComplete : undefined)}
+              style={{ width: `${percent}%` }}
+            />
+            <span className={dgCell.progressLabel}>{downloaded} / {total}</span>
+          </div>
+        );
+      },
+    },
+    {
+      key: "videos",
+      header: "Videos",
+      width: "80px",
+      align: "center",
+      minWidth: 768,
+      className: dgCell.hideOnMobile,
+      render: (artist: any) => {
+        const videos = Number(artist.video_count ?? 0);
+        return videos > 0
+          ? (
+            <span className={dgCell.badgeContainer} style={{ justifyContent: "center" }}>
+              <Video24 style={{ fontSize: "16px", opacity: 0.6 }} />
+              <span className={dgCell.statPrimary}>{videos}</span>
+            </span>
+          )
+          : <span className={dgCell.statSecondary}>—</span>;
+      },
     },
     {
       key: "scanned",
       header: "Scanned",
-      width: "132px",
-      align: "center",
+      width: "120px",
+      align: "right",
       minWidth: 768,
       className: dgCell.hideOnMobile,
       render: (artist: any) => artist.last_scanned
@@ -295,5 +378,8 @@ export function useLibraryArtistColumns({
         />
       ),
     },
-  ], [dgCell, onScan, onCurate, onDownload, onToggleMonitored]);
+    ];
+
+    return showVideos ? columns : columns.filter((column) => column.key !== "videos");
+  }, [dgCell, onScan, onCurate, onDownload, onToggleMonitored, showVideos]);
 }

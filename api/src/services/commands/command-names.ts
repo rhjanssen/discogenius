@@ -31,6 +31,7 @@ export const CommandNames = {
     RescanAllRoots: 'RescanAllRoots',
     CheckHealth: 'CheckHealth',
     CompactDatabase: 'CompactDatabase',
+    BackupDatabase: 'BackupDatabase',
     CleanupTempFiles: 'CleanupTempFiles',
     UpdateLibraryMetadata: 'UpdateLibraryMetadata',
     ImportProviderArtists: 'ImportProviderArtists',

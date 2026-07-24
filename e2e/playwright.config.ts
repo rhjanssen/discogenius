@@ -27,21 +27,6 @@ if (shouldManageServer) {
   for (const dir of [runtimeConfigDir, runtimeDownloadDir, runtimeMusicDir, runtimeSpatialDir, runtimeVideoDir]) {
     fs.mkdirSync(dir, { recursive: true });
   }
-
-  fs.writeFileSync(
-    path.join(runtimeConfigDir, 'config.toml'),
-    [
-      '[app]',
-      'admin_password = ""',
-      '',
-      '[path]',
-      `music_path = ${JSON.stringify(runtimeMusicDir)}`,
-      `spatial_path = ${JSON.stringify(runtimeSpatialDir)}`,
-      `video_path = ${JSON.stringify(runtimeVideoDir)}`,
-      '',
-    ].join('\n'),
-    'utf-8',
-  );
 }
 
 export default defineConfig({
@@ -69,6 +54,9 @@ export default defineConfig({
       DISCOGENIUS_CONFIG_DIR: runtimeConfigDir,
       DB_PATH: path.join(runtimeConfigDir, 'discogenius.e2e.db'),
       DOWNLOAD_PATH: runtimeDownloadDir,
+      MUSIC_PATH: runtimeMusicDir,
+      SPATIAL_PATH: runtimeSpatialDir,
+      VIDEO_PATH: runtimeVideoDir,
       TIDAL_DL_NG_CONFIG: path.join(runtimeConfigDir, 'tidal_dl_ng-dev'),
       DISCOGENIUS_DISABLE_DOWNLOADS: '1',
       DISCOGENIUS_DISABLE_MONITORING: '1',

@@ -954,7 +954,16 @@ export class DiskScanService {
                                     durationSeconds: metrics.duration || null,
                                 });
                                 if (metadataMatch?.duplicateOfExisting) {
-                                    unmappedReason = "Duplicate of an existing imported library file";
+                                    const isSelfTrackFile = Boolean(
+                                        metadataMatch.existingFilePath === resolved ||
+                                        db.prepare("SELECT 1 FROM TrackFiles WHERE file_path = ? LIMIT 1").get(resolved)
+                                    );
+                                    if (isSelfTrackFile) {
+                                        db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved);
+                                        unmappedReason = null;
+                                    } else {
+                                        unmappedReason = "Duplicate of an existing imported library file";
+                                    }
                                 } else if (metadataMatch) {
                                     match = {
                                         albumId: metadataMatch.albumId,

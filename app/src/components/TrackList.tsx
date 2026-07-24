@@ -876,7 +876,7 @@ const TrackList = <T extends TrackListItem>({
       trackColumns.push({
         key: "availableQuality",
         // Remote provider offers (what can be downloaded / previewed).
-        header: "Available",
+        header: "Provider",
         width: "max-content",
         // On mobile, pills move under the title so this column can hide and
         // titles keep the horizontal room (Fluent compact list pattern).
@@ -899,7 +899,7 @@ const TrackList = <T extends TrackListItem>({
       trackColumns.push({
         key: "localQuality",
         // On-disk library file quality (what is already imported).
-        header: "Library",
+        header: "Local Files",
         width: "max-content",
         minWidth: 768,
         render: (track) => {

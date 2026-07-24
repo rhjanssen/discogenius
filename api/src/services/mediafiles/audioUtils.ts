@@ -632,60 +632,219 @@ export async function embedAudioCover(filePath: string, coverPath: string): Prom
 }
 
 /**
- * Extract the bytes of the picture currently embedded in an audio file, or null
- * when there is none / extraction fails. Copies the attached-picture stream
- * verbatim (no re-encode) so the bytes match what a verbatim embed stored.
+ * Read the raw bytes of the cover art stored in an MP4/M4A container's `covr`
+ * atom (moov→udta→meta→ilst→covr→data), straight from the box tree. This mirrors
+ * how TagLib reads Atmos/spatial MP4 files: the picture lives in a container-level
+ * atom, so the exotic EC-3/AC-4 audio codec is irrelevant (and is exactly why
+ * music-metadata, which parses the audio stream, misses these covers). Returns
+ * null when there is no covr atom or the file cannot be parsed.
  */
-async function readEmbeddedAudioCoverBytes(filePath: string): Promise<Buffer | null> {
-    if (!fs.existsSync(filePath)) {
-        return null;
-    }
-    if ((await getAttachedPictureVideoStreamIndexes(filePath)).length === 0) {
-        return null;
-    }
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'discogenius-cover-diff-'));
-    const outPath = path.join(tempDir, 'embedded.img');
+function readMp4CoverAtomBytes(filePath: string): Buffer | null {
+    let fd: number | null = null;
     try {
-        const ok = await new Promise<boolean>((resolve) => {
-            const child = spawn(resolveFfmpegBinary(), [
-                '-y', '-v', 'error', '-i', filePath,
-                '-an', '-map', '0:v:0', '-c', 'copy', '-frames:v', '1', '-f', 'image2', outPath,
-            ], { stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true });
-            child.on('error', () => resolve(false));
-            child.on('close', (code) => resolve(code === 0));
-        });
-        return ok && fs.existsSync(outPath) ? fs.readFileSync(outPath) : null;
+        fd = fs.openSync(filePath, 'r');
+        const stat = fs.fstatSync(fd);
+        const header = Buffer.alloc(16);
+
+        const readAtomHeader = (position: number, rangeEnd: number): { size: number; type: string; headerSize: number } | null => {
+            if (position + 8 > rangeEnd) return null;
+            const read = fs.readSync(fd!, header, 0, 16, position);
+            if (read < 8) return null;
+            let size = header.readUInt32BE(0);
+            const type = header.toString('latin1', 4, 8);
+            let headerSize = 8;
+            if (size === 1) {
+                if (read < 16) return null;
+                size = Number(header.readBigUInt64BE(8));
+                headerSize = 16;
+            } else if (size === 0) {
+                size = rangeEnd - position;
+            }
+            if (!Number.isFinite(size) || size < headerSize || position + size > rangeEnd) return null;
+            return { size, type, headerSize };
+        };
+
+        // Descend only the atoms on the path to covr; never blindly read a `data`
+        // atom unless its parent is `covr` (every ilst tag entry has its own data).
+        const NAVIGABLE = new Set(['moov', 'udta', 'meta', 'ilst']);
+        let cover: Buffer | null = null;
+
+        const walk = (start: number, end: number, insideCovr: boolean): void => {
+            let position = start;
+            while (position + 8 <= end && !cover) {
+                const atom = readAtomHeader(position, end);
+                if (!atom) break;
+                const payloadStart = position + atom.headerSize + (atom.type === 'meta' ? 4 : 0);
+                const payloadEnd = position + atom.size;
+                if (atom.type === 'data' && insideCovr) {
+                    // `data` atom: 4 bytes version+type, 4 bytes locale, then payload.
+                    const dataStart = position + atom.headerSize + 8;
+                    const length = payloadEnd - dataStart;
+                    if (length > 0 && length <= 32 * 1024 * 1024) {
+                        const buffer = Buffer.alloc(length);
+                        fs.readSync(fd!, buffer, 0, length, dataStart);
+                        cover = buffer;
+                    }
+                } else if (atom.type === 'covr') {
+                    walk(payloadStart, payloadEnd, true);
+                } else if (NAVIGABLE.has(atom.type)) {
+                    walk(payloadStart, payloadEnd, false);
+                }
+                position += atom.size;
+            }
+        };
+
+        walk(0, stat.size, false);
+        return cover;
     } catch {
         return null;
     } finally {
-        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best effort */ }
+        if (fd !== null) {
+            try { fs.closeSync(fd); } catch { /* ignore */ }
+        }
     }
 }
 
 /**
- * True when the file already carries an embedded cover byte-identical to
- * coverPath, so the retag can skip a redundant re-embed (the cover analogue of
- * the audio-tag diff: only rewrite when the content actually differs). Any
- * probe/extract failure returns false so the caller embeds rather than assuming
- * a match.
+ * Bytes of the picture currently embedded in an audio file, or null when there
+ * is none. No subprocess: MP4/M4A covers come from the container's covr atom
+ * (codec-independent), everything else from music-metadata's single parse.
+ *
+ * `preread` lets a caller that already parsed the file hand over the picture it
+ * found so we don't re-read: pass the Buffer when present, `null` when the parse
+ * found none (skips a redundant re-parse), or omit it entirely for a
+ * self-contained read (the apply/backfill paths).
  */
-export async function embeddedAudioCoverMatches(filePath: string, coverPath: string): Promise<boolean> {
+async function readEmbeddedAudioCoverBytes(filePath: string, preread?: Buffer | Uint8Array | null): Promise<Buffer | null> {
+    if (!fs.existsSync(filePath)) {
+        return null;
+    }
+    if (preread && preread.length > 0) {
+        return Buffer.isBuffer(preread) ? preread : Buffer.from(preread);
+    }
+
+    const extension = path.extname(filePath).toLowerCase();
+    if (MUTAGEN_MP4_EXTENSIONS.has(extension)) {
+        const covr = readMp4CoverAtomBytes(filePath);
+        if (covr && covr.length > 0) {
+            return covr;
+        }
+    }
+
+    // No caller-supplied picture (preread === undefined) → parse once ourselves.
+    // A caller that passed `null` already told us its parse found no picture, so
+    // for non-MP4 files there is nothing more to read.
+    if (preread === undefined) {
+        try {
+            const metadata = await mm.parseFile(filePath, { skipCovers: false, duration: false });
+            const picture = metadata.common?.picture?.[0]?.data;
+            if (picture && picture.length > 0) {
+                return Buffer.isBuffer(picture) ? picture : Buffer.from(picture);
+            }
+        } catch {
+            // Unreadable audio stream (e.g. some Atmos MP4s) → treat as no cover;
+            // the covr-atom path above already handled MP4 containers.
+        }
+    }
+    return null;
+}
+
+export type CoverImageInfo = {
+    /** Pixel width, when readable from the JPEG/PNG header. */
+    width: number | null;
+    /** Pixel height, when readable from the JPEG/PNG header. */
+    height: number | null;
+    /** Encoded byte size. */
+    bytes: number;
+};
+
+export type EmbeddedCoverComparison = {
+    /** True when the embedded cover is byte-identical to coverPath. */
+    matches: boolean;
+    /** The cover currently embedded in the file, or null when there is none. */
+    current: CoverImageInfo | null;
+    /** The target cover at coverPath, or null when it is unreadable/unsupported. */
+    target: CoverImageInfo | null;
+};
+
+/** Read pixel dimensions straight from a JPEG or PNG header buffer (no decode,
+ * no ffprobe round-trip). Returns null when the format is unrecognised. */
+export function readImageDimensionsFromBuffer(buffer: Buffer): { width: number; height: number } | null {
+    if (buffer.length < 24) return null;
+
+    // PNG: 8-byte signature, then IHDR (width @ 16, height @ 20), big-endian.
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+        return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+    }
+
+    // JPEG: walk marker segments to the Start-Of-Frame that carries dimensions.
+    if (buffer[0] === 0xff && buffer[1] === 0xd8) {
+        let offset = 2;
+        while (offset + 9 < buffer.length) {
+            if (buffer[offset] !== 0xff) { offset += 1; continue; }
+            const marker = buffer[offset + 1];
+            // SOF0-SOF15 carry frame dimensions; C4/C8/CC are not frame headers.
+            if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+                return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+            }
+            if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+                offset += 2;
+                continue;
+            }
+            const segmentLength = buffer.readUInt16BE(offset + 2);
+            if (segmentLength < 2) return null;
+            offset += 2 + segmentLength;
+        }
+    }
+
+    return null;
+}
+
+function describeCoverBuffer(buffer: Buffer): CoverImageInfo {
+    const dimensions = readImageDimensionsFromBuffer(buffer);
+    return {
+        width: dimensions?.width ?? null,
+        height: dimensions?.height ?? null,
+        bytes: buffer.length,
+    };
+}
+
+/**
+ * Single source of truth for the retag cover comparison: reads the currently
+ * embedded cover (covr atom for MP4, music-metadata otherwise — no subprocess),
+ * compares it byte-for-byte with coverPath, and returns pixel size + byte size
+ * for both so the preview can show a real diff. The apply path consumes only
+ * `.matches`; the preview also surfaces `.current` / `.target`.
+ *
+ * `currentCover` lets a caller that already parsed the file pass the embedded
+ * picture it found (Buffer, or `null` when its parse found none) to avoid a
+ * re-read; omit it for a self-contained comparison.
+ */
+export async function compareEmbeddedAudioCover(
+    filePath: string,
+    coverPath: string,
+    currentCover?: Buffer | Uint8Array | null,
+): Promise<EmbeddedCoverComparison> {
     const extension = path.extname(filePath).toLowerCase();
     if (!AUDIO_COVER_EMBED_EXTENSIONS.has(extension) || !fs.existsSync(coverPath)) {
-        return false;
+        return { matches: false, current: null, target: null };
     }
-    const current = await readEmbeddedAudioCoverBytes(filePath);
-    if (!current || current.length === 0) {
-        return false;
-    }
-    let target: Buffer;
+
+    const currentBytes = await readEmbeddedAudioCoverBytes(filePath, currentCover);
+    let targetBytes: Buffer | null = null;
     try {
-        target = fs.readFileSync(coverPath);
+        targetBytes = fs.readFileSync(coverPath);
     } catch {
-        return false;
+        targetBytes = null;
     }
+
+    const current = currentBytes && currentBytes.length > 0 ? describeCoverBuffer(currentBytes) : null;
+    const target = targetBytes && targetBytes.length > 0 ? describeCoverBuffer(targetBytes) : null;
+
     const hash = (buffer: Buffer): string => crypto.createHash('sha256').update(buffer).digest('hex');
-    return hash(current) === hash(target);
+    const matches = Boolean(currentBytes && targetBytes && hash(currentBytes) === hash(targetBytes));
+
+    return { matches, current, target };
 }
 
 export async function embedVideoThumbnail(videoPath: string, thumbnailPath: string): Promise<boolean> {

@@ -1,5 +1,7 @@
 import { Router } from "express";
+import { db } from "../database.js";
 import { Config, updateConfig } from "../services/config/config.js";
+import { looksLikeMusicBrainzMbid } from "../services/metadata/provider-track-resolver.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import { getProviderDiagnostics } from "../services/providers/provider-diagnostics.js";
 import { providerSupportsAppAuthentication } from "../services/providers/provider-auth-support.js";
@@ -142,8 +144,33 @@ router.get("/:providerId/diagnostics", async (req, res) => {
 
 router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
   try {
+    let albumId = req.params.albumId;
+    if (looksLikeMusicBrainzMbid(albumId) || albumId.startsWith("mbid-")) {
+      const cleanMbid = albumId.replace(/^mbid-/, "");
+      const slot = db.prepare(`
+        SELECT selected_provider_id FROM ReleaseGroupSlots
+        WHERE release_group_mbid = ? AND selected_provider_id IS NOT NULL AND selected_provider_id != ''
+        ORDER BY CASE slot WHEN 'stereo' THEN 0 ELSE 1 END
+        LIMIT 1
+      `).get(cleanMbid) as { selected_provider_id: string } | undefined;
+
+      if (slot?.selected_provider_id) {
+        albumId = slot.selected_provider_id;
+      } else {
+        const item = db.prepare(`
+          SELECT provider_id FROM ProviderItems
+          WHERE entity_type = 'album' AND (release_group_mbid = ? OR provider_id = ?)
+          LIMIT 1
+        `).get(cleanMbid, cleanMbid) as { provider_id: string } | undefined;
+
+        if (item?.provider_id) {
+          albumId = item.provider_id;
+        }
+      }
+    }
+
     const provider = streamingProviderManager.getStreamingProvider(req.params.providerId);
-    const tracks = await provider.getAlbumTracks(req.params.albumId);
+    const tracks = await provider.getAlbumTracks(albumId);
     res.json(tracks);
   } catch (error: any) {
     res.status(500).json({ detail: error.message });

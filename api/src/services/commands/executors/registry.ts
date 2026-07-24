@@ -49,6 +49,7 @@ export const commandExecutors: Record<string, IExecuteCommand<any>> = {
     [CommandNames.RescanAllRoots]: new MaintenanceCommand(),
     [CommandNames.CheckHealth]: new MaintenanceCommand(),
     [CommandNames.CompactDatabase]: new MaintenanceCommand(),
+    [CommandNames.BackupDatabase]: new MaintenanceCommand(),
     [CommandNames.CleanupTempFiles]: new MaintenanceCommand(),
     [CommandNames.UpdateLibraryMetadata]: new MaintenanceCommand(),
     [CommandNames.ConfigPrune]: new MaintenanceCommand(),

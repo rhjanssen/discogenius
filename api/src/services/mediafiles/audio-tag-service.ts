@@ -2,9 +2,10 @@ import fs from "fs";
 import os from "node:os";
 import path from "node:path";
 import * as mm from "music-metadata";
+import pLimit from "p-limit";
 import { db } from "../../database.js";
 import { type MetadataConfig, type WriteAudioTagsPolicy, getConfigSection } from "../config/config.js";
-import { embedAudioCover, embeddedAudioCoverMatches, writeMetadata, removeAllTags } from "./audioUtils.js";
+import { embedAudioCover, compareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadata, removeAllTags } from "./audioUtils.js";
 import {
   type AcoustIdLookupResult,
   type MusicBrainzRecording,
@@ -235,7 +236,39 @@ export type RetagScopeOptions = {
 type RetagEvaluationOptions = {
   includeExternalMetadata?: boolean;
   lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
+  /** Shared across a batch so an album's cover is resolved/rendered only once. */
+  embeddedCoverContext?: EmbeddedCoverContext;
 };
+
+/**
+ * Skip embedding when the cover already matches, OR when the target would be a
+ * downgrade — never replace a larger embedded cover with a smaller one (e.g. a
+ * 3000px original with a 500px cached proxy). Only a genuine upgrade or a
+ * missing/unreadable cover is worth a rewrite.
+ */
+function shouldSkipCoverEmbed(comparison: EmbeddedCoverComparison): boolean {
+  if (comparison.matches) {
+    return true;
+  }
+  const { current, target } = comparison;
+  if (current?.width && current?.height && target?.width && target?.height) {
+    return current.width * current.height >= target.width * target.height;
+  }
+  return false;
+}
+
+/** "1200×1200 · 312 KB" — resolution (dot) size, à la Lidarr's cover diff. */
+function formatCoverInfo(info: CoverImageInfo | null): string {
+  if (!info) return "None";
+  const dimensions = info.width && info.height ? `${info.width}×${info.height}` : "Image";
+  return `${dimensions} · ${formatCoverBytes(info.bytes)}`;
+}
+
+function formatCoverBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
 
 type EmbeddedCoverContext = {
   byAlbum: Map<string, Promise<string | null>>;
@@ -248,6 +281,10 @@ type EmbeddedCoverContext = {
 // cover) is intentionally NOT embedded verbatim. Must be one of the sizes
 // downloadAlbumCover renders (160/250/320/500/640/1200/1280); 1200 ≈ Lidarr's.
 const EMBEDDED_COVER_HEIGHT = 1200;
+
+// How many files the retag preview/status reads at once. Disk/parse bound, so a
+// modest fan-out (matching the artwork/refresh services) is the sweet spot.
+const RETAG_EVALUATION_CONCURRENCY = 8;
 
 async function resolvePreferredEmbeddedCover(
   row: RetagTrackRow,
@@ -271,6 +308,14 @@ async function resolvePreferredEmbeddedCover(
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
+      // 1. Prefer existing local folder sidecar if present.
+      if (fs.existsSync(sidecarPath)) return sidecarPath;
+
+      // 2. Prefer cached MediaCover artwork file if present.
+      const { getCachedMediaCoverFilePath } = await import("../metadata/media-cover-service.js");
+      const cachedMediaCover = getCachedMediaCoverFilePath(row.album_mb_release_group_id || row.album_mbid || albumId, "Album", "cover");
+      if (cachedMediaCover && fs.existsSync(cachedMediaCover)) return cachedMediaCover;
+
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-embedded-cover-"));
       context.temporaryDirectories.push(tempDir);
       const tempCover = path.join(tempDir, "cover.jpg");
@@ -1036,8 +1081,8 @@ export class AudioTagService {
         COALESCE(lf.canonical_release_mbid, canonical_track.release_mbid, provider_canonical_track.release_mbid, provider_track.release_mbid, provider_album.release_mbid) AS canonical_release_mbid,
         COALESCE(lf.canonical_track_mbid, canonical_track.mbid, provider_canonical_track.mbid, provider_track.track_mbid) AS canonical_track_mbid,
         COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, provider_canonical_track.recording_mbid, provider_track.recording_mbid, provider_recording.mbid) AS canonical_recording_mbid,
-        COALESCE(canonical_recording.artist_credit, provider_recording.artist_credit) AS recording_artist_credit,
-        COALESCE(canonical_recording.credits, provider_recording.credits) AS recording_data
+        canonical_recording.artist_credit AS recording_artist_credit,
+        canonical_recording.credits AS recording_data
       FROM TrackFiles lf
       JOIN Artists artist ON artist.id = lf.artist_id
       LEFT JOIN Tracks canonical_track ON canonical_track.mbid = lf.canonical_track_mbid
@@ -2290,7 +2335,7 @@ export class AudioTagService {
     }
 
     try {
-      const metadata = await mm.parseFile(resolvedPath, { skipCovers: true, duration: false });
+      const metadata = await mm.parseFile(resolvedPath, { skipCovers: false, duration: false });
       const lookup = buildNativeLookup(metadata);
       mergeMp4KeyedNativeLookup(metadata, lookup, resolvedPath);
       const changes = desiredTags.reduce<RetagDifference[]>((result, tag) => {
@@ -2312,6 +2357,35 @@ export class AudioTagService {
             oldValue: currentValue,
             newValue: null,
           });
+        }
+      }
+
+      if (quality.embed_cover) {
+        // Compare the embedded cover exactly as the apply does, reusing the
+        // picture from the single metadata parse above (covr-atom fallback for
+        // MP4 inside compareEmbeddedAudioCover). This keeps the preview honest —
+        // files whose art music-metadata can't read (Atmos M4A) are no longer
+        // flagged for embedding forever — with no subprocess. A local cover
+        // context is created only when the batch did not supply a shared one.
+        const ownsContext = !options.embeddedCoverContext;
+        const coverContext = options.embeddedCoverContext
+          ?? { byAlbum: new Map(), temporaryDirectories: [] };
+        const preferredCover = await resolvePreferredEmbeddedCover(row, config, resolvedPath, coverContext);
+        if (preferredCover) {
+          const currentPicture = metadata.common?.picture?.[0]?.data ?? null;
+          const comparison = await compareEmbeddedAudioCover(resolvedPath, preferredCover, currentPicture);
+          if (!shouldSkipCoverEmbed(comparison)) {
+            changes.push({
+              field: "Cover Art",
+              oldValue: formatCoverInfo(comparison.current),
+              newValue: formatCoverInfo(comparison.target),
+            });
+          }
+        }
+        if (ownsContext) {
+          for (const tempDir of coverContext.temporaryDirectories) {
+            try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+          }
         }
       }
 
@@ -2347,13 +2421,27 @@ export class AudioTagService {
     config: MetadataConfig,
     options: RetagEvaluationOptions = {},
   ): Promise<RetagPreviewItem[]> {
-    const results: RetagPreviewItem[] = [];
+    // One cover context for the whole batch so an album's embedded-cover
+    // rendition is resolved/downloaded once, not per track.
+    const embeddedCoverContext: EmbeddedCoverContext = options.embeddedCoverContext
+      ?? { byAlbum: new Map(), temporaryDirectories: [] };
+    const scopedOptions: RetagEvaluationOptions = { ...options, embeddedCoverContext };
 
-    for (const row of rows) {
-      results.push(await this.evaluateRow(row, config, options));
+    // Read files concurrently (Lidarr-style) instead of one-at-a-time — the
+    // per-file disk read/parse is the dominant cost of a preview, so a bounded
+    // fan-out cuts wall-clock roughly linearly. Promise.all preserves row order.
+    const limit = pLimit(RETAG_EVALUATION_CONCURRENCY);
+    try {
+      return await Promise.all(
+        rows.map((row) => limit(() => this.evaluateRow(row, config, scopedOptions))),
+      );
+    } finally {
+      if (!options.embeddedCoverContext) {
+        for (const tempDir of embeddedCoverContext.temporaryDirectories) {
+          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
+      }
     }
-
-    return results;
   }
 
   static async preview(options: RetagScopeOptions = {}): Promise<RetagPreviewItem[]> {
@@ -2440,7 +2528,7 @@ export class AudioTagService {
       // Only rewrite when the embedded art actually differs from the target
       // (the cover analogue of the audio-tag diff), so an already-correct file
       // is left untouched instead of needlessly re-muxed.
-      if (await embeddedAudioCoverMatches(mediaPath, coverPath)) return false;
+      if (shouldSkipCoverEmbed(await compareEmbeddedAudioCover(mediaPath, coverPath))) return false;
       const embedded = await embedAudioCover(mediaPath, coverPath);
       if (!embedded) {
         result.errors.push({ id, error: "Embedded cover write failed" });

@@ -20,6 +20,14 @@ export interface ArtistContract {
   is_monitored: boolean;
   last_scanned: string | null;
   album_count?: number;
+  monitored_album_count?: number;
+  downloaded_album_count?: number;
+  track_count?: number;
+  monitored_track_count?: number;
+  track_file_count?: number;
+  video_count?: number;
+  /** MusicBrainz artist type(s) as a JSON array string, e.g. ["Person"]. */
+  artist_types?: string | null;
   popularity?: number;
   bio?: string | null;
   biography?: string | null;
@@ -197,6 +205,13 @@ function parseArtistContract(value: unknown, index: number): ArtistContract {
     is_monitored: expectBoolean(record.is_monitored, `${label}.is_monitored`),
     last_scanned: expectNullableString(record.last_scanned, `${label}.last_scanned`) ?? null,
     album_count: expectOptionalNumber(record.album_count, `${label}.album_count`),
+    monitored_album_count: expectOptionalNumber(record.monitored_album_count, `${label}.monitored_album_count`),
+    downloaded_album_count: expectOptionalNumber(record.downloaded_album_count, `${label}.downloaded_album_count`),
+    track_count: expectOptionalNumber(record.track_count, `${label}.track_count`),
+    monitored_track_count: expectOptionalNumber(record.monitored_track_count, `${label}.monitored_track_count`),
+    track_file_count: expectOptionalNumber(record.track_file_count, `${label}.track_file_count`),
+    video_count: expectOptionalNumber(record.video_count, `${label}.video_count`),
+    artist_types: expectNullableString(record.artist_types, `${label}.artist_types`),
     popularity: expectOptionalNumber(record.popularity, `${label}.popularity`),
     bio: expectNullableString(record.bio, `${label}.bio`),
     biography: expectNullableString(record.biography, `${label}.biography`),

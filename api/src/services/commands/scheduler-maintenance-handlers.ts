@@ -3,9 +3,9 @@ import { db } from "../../database.js";
 import { collectHealthDiagnosticsSnapshot, type HealthDiagnosticsSnapshot } from "./health.js";
 import { DiskScanService } from "../mediafiles/library-scan.js";
 import { OrganizerService } from "../mediafiles/organizer.js";
-import {CommandModel} from "./command-model.js";
-import {CommandNames} from "./command-names.js";
-import {CommandQueueManager} from "./command-queue-manager.js";
+import { CommandModel } from "./command-model.js";
+import { CommandNames } from "./command-names.js";
+import { CommandQueueManager } from "./command-queue-manager.js";
 import { ArtistTopTrackService } from "../music/artist-top-track-service.js";
 import { AlbumLibraryIndexService } from "../music/album-library-index-service.js";
 import { TrackLibraryIndexService } from "../music/track-library-index-service.js";
@@ -53,7 +53,6 @@ export async function runLowCouplingMaintenanceJob(
                 progress: 10,
                 description: 'Queueing metadata refresh for all monitored artists',
             });
-            // Queue a single RefreshMetadata job that iterates all artists inline (no staleness skip)
             const { queueMetadataRefreshPass } = await import('./scheduler.js');
             queueMetadataRefreshPass({ trigger: job.trigger ?? CommandTrigger.Manual });
             context.updateCommandDescription({
@@ -102,6 +101,18 @@ export async function runLowCouplingMaintenanceJob(
             context.updateCommandDescription({
                 progress: 100,
                 description: 'Database compacted and analyzed',
+            });
+            return;
+        }
+        case CommandNames.BackupDatabase: {
+            context.updateCommandDescription({ progress: 10, description: 'Creating database backup' });
+            const pathModule = await import('path');
+            const { executeDatabaseBackup } = await import('./runtime-maintenance.js');
+            const { backupPath, prunedCount } = await executeDatabaseBackup();
+            const fileName = pathModule.default.basename(backupPath);
+            context.updateCommandDescription({
+                progress: 100,
+                description: `Created database backup ${fileName}` + (prunedCount > 0 ? ` (${prunedCount} old backup(s) pruned)` : ''),
             });
             return;
         }

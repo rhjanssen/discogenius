@@ -498,6 +498,8 @@ export class DownloadedTracksImportService {
                         cancellationCheckpoint(`before resolving album identity ${albumId}`);
                         try {
                             await MetadataIdentityService.resolveAlbum(albumId, { provider });
+                            const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
+                            await RefreshAlbumService.refreshMetadata(albumId, { provider: provider || undefined });
                         } catch (err) {
                             console.warn(`[ImportDownload] Metadata identity resolution failed for album ${albumId}:`, err);
                         }

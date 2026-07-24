@@ -13,7 +13,7 @@ import {
     saveLyricsFile,
     saveVideoNfoFile,
 } from "./metadata-files.js";
-import { AUDIO_COVER_EMBED_EXTENSIONS, embedAudioCover, embeddedAudioCoverMatches, embedVideoThumbnail, hasEmbeddedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
+import { AUDIO_COVER_EMBED_EXTENSIONS, embedAudioCover, compareEmbeddedAudioCover, embedVideoThumbnail, hasEmbeddedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
 import { LibraryFilesService } from "./library-files.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
@@ -342,7 +342,7 @@ class LibraryMetadataBackfillService {
                                         if (!AUDIO_COVER_EMBED_EXTENSIONS.has(path.extname(entry).toLowerCase())) continue;
                                         const audioPath = path.join(albumDir, entry);
                                         try {
-                                            if (await embeddedAudioCoverMatches(audioPath, coverPath)) continue;
+                                            if ((await compareEmbeddedAudioCover(audioPath, coverPath)).matches) continue;
                                             await embedAudioCover(audioPath, coverPath);
                                         } catch { /* best effort: never fail backfill on a cover re-embed */ }
                                     }

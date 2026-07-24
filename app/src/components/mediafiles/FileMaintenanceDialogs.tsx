@@ -15,13 +15,21 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
+  AddCircle16Filled,
+  SubtractCircle16Filled,
   ArrowRight16Regular,
   ArrowSortDownLines24Regular,
   Dismiss24Regular,
   ArrowRight16Filled,
   ArrowSortDownLines24Filled,
   Dismiss24Filled,
-  bundleIcon
+  Prohibited16Regular,
+  Warning16Filled,
+  ErrorCircle16Filled,
+  Record20Regular,
+  Video16Regular,
+  Tag16Regular,
+  bundleIcon,
 } from "@fluentui/react-icons";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 
@@ -57,12 +65,14 @@ export interface RetagPreviewItem {
 
 const useStyles = makeStyles({
   dialog: {
-    maxWidth: "760px",
+    maxWidth: "840px",
+    width: "100%",
   },
   summary: {
     display: "flex",
-    gap: tokens.spacingHorizontalXS,
+    gap: tokens.spacingHorizontalS,
     flexWrap: "wrap",
+    alignItems: "center",
     marginBottom: tokens.spacingVerticalM,
   },
   selectionToolbar: {
@@ -73,59 +83,148 @@ const useStyles = makeStyles({
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     borderRadius: tokens.borderRadiusMedium,
     backgroundColor: tokens.colorNeutralBackground3,
+    marginBottom: tokens.spacingVerticalS,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   list: {
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalS,
-    maxHeight: "52vh",
+    maxHeight: "56vh",
     overflow: "auto",
+    paddingRight: tokens.spacingHorizontalXXS,
   },
   row: {
     display: "grid",
     gridTemplateColumns: "auto minmax(0, 1fr)",
-    gap: tokens.spacingHorizontalS,
+    gap: tokens.spacingHorizontalM,
     alignItems: "start",
-    padding: tokens.spacingVerticalS,
+    padding: tokens.spacingVerticalM,
     borderRadius: tokens.borderRadiusMedium,
     backgroundColor: tokens.colorNeutralBackgroundAlpha2,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    transition: "background-color 0.15s ease",
+    "&:hover": {
+      backgroundColor: tokens.colorNeutralBackgroundAlpha,
+    },
   },
   item: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
+    gap: tokens.spacingVerticalS,
     minWidth: 0,
   },
-  filename: {
+  headerLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground1,
+  },
+  fileTypeBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
+    fontSize: tokens.fontSizeBase100,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+    fontWeight: tokens.fontWeightBold,
+    padding: "2px 8px",
+    borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: tokens.colorNeutralBackground4,
+    color: tokens.colorNeutralForeground2,
+  },
+  pathLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    fontSize: tokens.fontSizeBase200,
+    fontFamily: tokens.fontFamilyMonospace,
+  },
+  oldPath: {
+    color: tokens.colorPaletteRedForeground2,
+    overflowWrap: "anywhere",
+  },
+  newPath: {
+    color: tokens.colorPaletteGreenForeground2,
     fontWeight: tokens.fontWeightSemibold,
     overflowWrap: "anywhere",
   },
   oldValue: {
     color: tokens.colorNeutralForeground3,
     overflowWrap: "anywhere",
+    fontSize: tokens.fontSizeBase200,
   },
   newValue: {
     color: tokens.colorPaletteGreenForeground2,
+    fontWeight: tokens.fontWeightSemibold,
     overflowWrap: "anywhere",
+    fontSize: tokens.fontSizeBase200,
   },
-  change: {
+  emptyValue: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    color: tokens.colorNeutralForeground4,
+    fontStyle: "italic",
+    fontSize: tokens.fontSizeBase100,
+    padding: "1px 6px",
+    borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: tokens.colorNeutralBackgroundAlpha,
+    border: `1px dashed ${tokens.colorNeutralStroke2}`,
+  },
+  tagChangeRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(90px, auto) minmax(0, 1fr) auto minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(130px, 180px) minmax(0, 1fr) auto minmax(0, 1fr)",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: tokens.colorNeutralBackground3,
+    border: `1px solid ${tokens.colorNeutralStroke3}`,
   },
-  field: {
+  tagFieldLabel: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXXS,
     fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground1,
   },
-  warning: {
+  warningBanner: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
     color: tokens.colorPaletteRedForeground2,
-    overflowWrap: "anywhere",
+    fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase200,
+  },
+  conflictBanner: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+    color: tokens.colorPaletteYellowForeground2,
+    fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase200,
   },
   intro: {
     color: tokens.colorNeutralForeground3,
+    marginBottom: tokens.spacingVerticalS,
   },
 });
+
+function TagValueDisplay({ value, isNew = false }: { value: string | null; isNew?: boolean }) {
+  const styles = useStyles();
+  if (!value || value.trim() === "" || value === "0") {
+    return (
+      <span className={styles.emptyValue}>
+        <Prohibited16Regular style={{ fontSize: 13, flexShrink: 0 }} />
+        <span>∅ (empty)</span>
+      </span>
+    );
+  }
+  return <span className={isNew ? styles.newValue : styles.oldValue}>{value}</span>;
+}
 
 function usePreviewSelection<T extends { id: number }>(
   open: boolean,
@@ -185,7 +284,7 @@ export function RenamePreviewDialog({
   open,
   items,
   applying,
-  title = "Preview Rename",
+  title = "Organize & Rename Preview",
   applyLabel = "Rename selected files",
   onOpenChange,
   onApply,
@@ -221,54 +320,86 @@ export function RenamePreviewDialog({
             <div className={styles.summary}>
               <Badge appearance="outline" color="brand">{items.length} changes</Badge>
               <Badge appearance="filled" color="informative">{selection.selectedIds.size} selected</Badge>
-              <Badge appearance="outline" color="warning">{items.filter((item) => item.conflict).length} conflicts</Badge>
-              <Badge appearance="outline" color="informative">{items.filter((item) => item.drop_duplicate).length} duplicates</Badge>
-              <Badge appearance="outline" color="informative">{items.filter((item) => item.missing).length} missing</Badge>
+              {items.some((item) => item.conflict) && (
+                <Badge appearance="outline" color="danger">
+                  {items.filter((item) => item.conflict).length} conflicts
+                </Badge>
+              )}
+              {items.some((item) => item.drop_duplicate) && (
+                <Badge appearance="outline" color="warning">
+                  {items.filter((item) => item.drop_duplicate).length} duplicates
+                </Badge>
+              )}
+              {items.some((item) => item.missing) && (
+                <Badge appearance="outline" color="important">
+                  {items.filter((item) => item.missing).length} missing
+                </Badge>
+              )}
             </div>
             {items.length > 0 ? (
-              <div className={styles.list}>
+              <>
                 <div className={styles.selectionToolbar}>
                   <Checkbox
                     label="Select all actionable files"
                     checked={selection.allSelected ? true : selection.someSelected ? "mixed" : false}
                     onChange={(_, data) => selection.toggleAll(data.checked === true)}
                   />
-                  <Text size={200}>{selection.selectedIds.size} of {selection.selectableIds.length}</Text>
+                  <Text size={200}>{selection.selectedIds.size} of {selection.selectableIds.length} actionable files</Text>
                 </div>
-                {items.map((item) => (
-                  <div key={item.id} className={styles.row}>
-                    <Checkbox
-                      aria-label={`Rename ${item.file_path}`}
-                      checked={selection.selectedIds.has(item.id)}
-                      disabled={!selectableRename(item)}
-                      onChange={(event, data) => selection.toggle(
-                        item.id,
-                        data.checked === true,
-                        Boolean((event.nativeEvent as MouseEvent).shiftKey),
-                      )}
-                    />
-                    <div className={styles.item}>
-                      <span className={styles.filename}>{item.file_type}</span>
-                      <span className={styles.oldValue}>- {item.file_path}</span>
-                      {item.missing ? (
-                        <span className={styles.warning}>Missing on disk</span>
-                      ) : item.conflict ? (
-                        <span className={styles.warning}>
-                          {item.conflict_message
-                            || `Conflict: another file already uses or targets ${item.expected_path ?? "this path"}. Apply skips this row.`}
-                        </span>
-                      ) : item.drop_duplicate ? (
-                        <span className={styles.warning}>
-                          {item.conflict_message
-                            || `Duplicate — Apply keeps ${item.expected_path ?? "the destination"} and removes this file.`}
-                        </span>
-                      ) : (
-                        <span className={styles.newValue}>+ {item.expected_path ?? "target path unavailable"}</span>
-                      )}
+                <div className={styles.list}>
+                  {items.map((item) => (
+                    <div key={item.id} className={styles.row}>
+                      <Checkbox
+                        aria-label={`Rename ${item.file_path}`}
+                        checked={selection.selectedIds.has(item.id)}
+                        disabled={!selectableRename(item)}
+                        onChange={(event, data) => selection.toggle(
+                          item.id,
+                          data.checked === true,
+                          Boolean((event.nativeEvent as MouseEvent).shiftKey),
+                        )}
+                      />
+                      <div className={styles.item}>
+                        <div className={styles.headerLine}>
+                          <span className={styles.fileTypeBadge}>
+                            {item.file_type === "video" ? <Video16Regular /> : <Record20Regular />}
+                            {item.file_type}
+                          </span>
+                        </div>
+                        <div className={styles.pathLine}>
+                          <SubtractCircle16Filled style={{ color: tokens.colorPaletteRedForeground2, flexShrink: 0 }} />
+                          <span className={styles.oldPath}>{item.file_path}</span>
+                        </div>
+                        {item.missing ? (
+                          <div className={styles.warningBanner}>
+                            <Warning16Filled />
+                            <span>Missing on disk</span>
+                          </div>
+                        ) : item.conflict ? (
+                          <div className={styles.warningBanner}>
+                            <ErrorCircle16Filled />
+                            <span>
+                              {item.conflict_message || `Conflict: target path ${item.expected_path ?? "already exists"}. Row skipped.`}
+                            </span>
+                          </div>
+                        ) : item.drop_duplicate ? (
+                          <div className={styles.conflictBanner}>
+                            <Warning16Filled />
+                            <span>
+                              {item.conflict_message || `Duplicate file — Apply keeps target and removes this file.`}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className={styles.pathLine}>
+                            <AddCircle16Filled style={{ color: tokens.colorPaletteGreenForeground2, flexShrink: 0 }} />
+                            <span className={styles.newPath}>{item.expected_path ?? "target path unavailable"}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </>
             ) : (
               <Text>No files need renaming.</Text>
             )}
@@ -327,25 +458,29 @@ export function RetagPreviewDialog({
             {title}
           </DialogTitle>
           <DialogContent>
-            <div className={styles.list}>
-              <Text size={200} className={styles.intro}>
-                MusicBrainz identifiers are written alongside these changes. Compatible spatial files may be skipped when embedded tag rewriting is unsafe.
-              </Text>
-              {items.length > 0 ? (
-                <>
-                  <div className={styles.summary}>
-                    <Badge appearance="outline" color="brand">{items.length} changes</Badge>
-                    <Badge appearance="filled" color="informative">{selection.selectedIds.size} selected</Badge>
-                    <Badge appearance="outline" color="warning">{items.filter((item) => item.missing || item.error).length} unavailable</Badge>
-                  </div>
-                  <div className={styles.selectionToolbar}>
-                    <Checkbox
-                      label="Select all actionable files"
-                      checked={selection.allSelected ? true : selection.someSelected ? "mixed" : false}
-                      onChange={(_, data) => selection.toggleAll(data.checked === true)}
-                    />
-                    <Text size={200}>{selection.selectedIds.size} of {selection.selectableIds.length}</Text>
-                  </div>
+            <Text size={200} className={styles.intro}>
+              MusicBrainz identifiers are written alongside these changes. Compatible spatial files may be skipped when embedded tag rewriting is unsafe.
+            </Text>
+            {items.length > 0 ? (
+              <>
+                <div className={styles.summary}>
+                  <Badge appearance="outline" color="brand">{items.length} files</Badge>
+                  <Badge appearance="filled" color="informative">{selection.selectedIds.size} selected</Badge>
+                  {items.some((item) => item.missing || item.error) && (
+                    <Badge appearance="outline" color="warning">
+                      {items.filter((item) => item.missing || item.error).length} unavailable
+                    </Badge>
+                  )}
+                </div>
+                <div className={styles.selectionToolbar}>
+                  <Checkbox
+                    label="Select all actionable files"
+                    checked={selection.allSelected ? true : selection.someSelected ? "mixed" : false}
+                    onChange={(_, data) => selection.toggleAll(data.checked === true)}
+                  />
+                  <Text size={200}>{selection.selectedIds.size} of {selection.selectableIds.length} actionable files</Text>
+                </div>
+                <div className={styles.list}>
                   {items.map((item) => (
                     <div key={item.id} className={styles.row}>
                       <Checkbox
@@ -359,27 +494,39 @@ export function RetagPreviewDialog({
                         )}
                       />
                       <div className={styles.item}>
-                        <span className={styles.filename}>{item.path}</span>
+                        <div className={styles.headerLine}>
+                          <Record20Regular />
+                          <span>{item.path}</span>
+                        </div>
                         {item.missing ? (
-                          <span className={styles.warning}>Missing on disk</span>
+                          <div className={styles.warningBanner}>
+                            <Warning16Filled />
+                            <span>Missing on disk</span>
+                          </div>
                         ) : item.error ? (
-                          <span className={styles.warning}>{item.error}</span>
+                          <div className={styles.warningBanner}>
+                            <ErrorCircle16Filled />
+                            <span>{item.error}</span>
+                          </div>
                         ) : item.changes.map((change) => (
-                          <div className={styles.change} key={change.field}>
-                            <span className={styles.field}>{change.field}</span>
-                            <span className={styles.oldValue}>{change.oldValue || "∅"}</span>
-                            <ArrowRight16 />
-                            <span className={styles.newValue}>{change.newValue || "∅"}</span>
+                          <div className={styles.tagChangeRow} key={change.field}>
+                            <span className={styles.tagFieldLabel}>
+                              <Tag16Regular />
+                              {change.field}
+                            </span>
+                            <TagValueDisplay value={change.oldValue} isNew={false} />
+                            <ArrowRight16 style={{ flexShrink: 0, color: tokens.colorNeutralForeground4 }} />
+                            <TagValueDisplay value={change.newValue} isNew={true} />
                           </div>
                         ))}
                       </div>
                     </div>
                   ))}
-                </>
-              ) : (
-                <Text>No files need retagging.</Text>
-              )}
-            </div>
+                </div>
+              </>
+            ) : (
+              <Text>No files need retagging.</Text>
+            )}
           </DialogContent>
           <DialogActions>
             <Button appearance="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
