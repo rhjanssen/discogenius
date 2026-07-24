@@ -22,7 +22,6 @@ import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
 import { cleanProviderText, downloadAlbumCover } from "./metadata-files.js";
-import { getMediaCoverFilePathFromUrl } from "../metadata/media-cover-service.js";
 import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
 import { classifyLyricsForSidecar } from "../extras/lyrics/lyric-sidecar.js";
 
@@ -243,6 +242,13 @@ type EmbeddedCoverContext = {
   temporaryDirectories: string[];
 };
 
+// Height (px) of the artwork embedded into audio files. Sized to land in Lidarr's
+// embedded-cover ballpark (a few hundred KB, well under 1 MB) while the full-res
+// origin is kept as the folder sidecar. The provider origin (e.g. a 3000px Apple
+// cover) is intentionally NOT embedded verbatim. Must be one of the sizes
+// downloadAlbumCover renders (160/250/320/500/640/1200/1280); 1200 ≈ Lidarr's.
+const EMBEDDED_COVER_HEIGHT = 1200;
+
 async function resolvePreferredEmbeddedCover(
   row: RetagTrackRow,
   config: MetadataConfig,
@@ -253,30 +259,31 @@ async function resolvePreferredEmbeddedCover(
   const albumId = String(row.album_mb_release_group_id || row.album_mbid || row.album_provider_id || "").trim();
   if (!albumId) return fs.existsSync(sidecarPath) ? sidecarPath : null;
 
-  // Prefer the selected/canonical release-group id so hybrid imports (tracks
-  // sourced from another provider album) overwrite foreign embedded art with
-  // the destination album cover rather than keeping the source edition art.
+  // Match Lidarr's embedded-cover SIZE without needing its source. Lidarr embeds
+  // its Cover Art Archive master verbatim (no compression), which is naturally a
+  // few hundred KB. Our folder sidecar can be a multi-MB provider origin (e.g. a
+  // 3000px Apple cover), which is impractical to embed into every track. So embed
+  // a capped rendition of the album cover (respecting artwork_preference) that
+  // lands in Lidarr's ballpark (well under 1 MB) while the full-res origin stays
+  // as the folder sidecar. Bigger than the earlier 500px proxy, far smaller than
+  // the 6 MB origin.
   const key = `${String(row.file_provider || "").trim()}:canonical:${albumId}`;
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
-      // Embedded tags should use a 500px proxy (~50 KiB) instead of embedding the
-      // multi-megabyte master origin cover into every track file (saving ~80 MB per
-      // album and matching Lidarr/Plex embedded art defaults).
-      const cached500Path = getMediaCoverFilePathFromUrl(`/media-cover/Albums/${albumId}/cover-500.jpg`);
-      if (cached500Path && fs.existsSync(cached500Path)) {
-        return cached500Path;
-      }
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-embedded-cover-"));
       context.temporaryDirectories.push(tempDir);
-      const tempCover = path.join(tempDir, "cover-500.jpg");
+      const tempCover = path.join(tempDir, "cover.jpg");
       try {
-        await downloadAlbumCover(albumId, 500, tempCover, { provider: row.file_provider });
+        // Prefer the selected/canonical release-group id so hybrid imports (tracks
+        // sourced from another provider album) overwrite foreign embedded art with
+        // the destination album cover rather than keeping the source edition art.
+        await downloadAlbumCover(albumId, EMBEDDED_COVER_HEIGHT, tempCover, { provider: row.file_provider });
         if (fs.existsSync(tempCover)) return tempCover;
       } catch (error) {
-        console.warn(`[AudioCover] Failed to resolve preferred 500px artwork for ${albumId}:`, error);
+        console.warn(`[AudioCover] Failed to resolve embedded artwork for ${albumId}:`, error);
       }
-      // Fallback: if 500px proxy resolution fails, use the sidecar file if present
+      // Fallback: the folder sidecar if the capped render failed (rare).
       if (fs.existsSync(sidecarPath)) return sidecarPath;
       return null;
     })();
