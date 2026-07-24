@@ -66,6 +66,54 @@ export class UnmappedFilesService {
         };
     }
 
+    async getCandidateGuesses(files: UnmappedFile[]): Promise<Record<number, {
+        title: string;
+        artistName: string;
+        cover: string | null;
+        score?: number;
+    }>> {
+        const groups = new Map<string, UnmappedFile[]>();
+        for (const file of files) {
+            const dir = getRelativeDirectory(file);
+            const key = `${file.library_root}:${dir}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(file);
+        }
+
+        const result: Record<number, { title: string; artistName: string; cover: string | null; score?: number }> = {};
+
+        for (const [, groupFiles] of groups) {
+            try {
+                const topMatch = await this.findBestAlbumCandidate(groupFiles);
+                const albumOrRecording = (topMatch?.item || (topMatch as any)?.album || (topMatch as any)?.recording) as any;
+                if (albumOrRecording) {
+                    const candidateInfo = {
+                        title: String(albumOrRecording.title || albumOrRecording.name || groupFiles[0].detected_album || groupFiles[0].filename),
+                        artistName: String(albumOrRecording.artistName || albumOrRecording.artist?.name || albumOrRecording.artists?.[0]?.name || groupFiles[0].detected_artist || 'Unknown Artist'),
+                        cover: albumOrRecording.cover || albumOrRecording.imageId || albumOrRecording.picture || null,
+                        score: topMatch?.score,
+                    };
+                    for (const f of groupFiles) {
+                        result[f.id] = candidateInfo;
+                    }
+                } else if (groupFiles[0].detected_artist || groupFiles[0].detected_album) {
+                    const fallbackInfo = {
+                        title: String(groupFiles[0].detected_album || groupFiles[0].detected_track || groupFiles[0].filename),
+                        artistName: String(groupFiles[0].detected_artist || 'Unknown Artist'),
+                        cover: null,
+                    };
+                    for (const f of groupFiles) {
+                        result[f.id] = fallbackInfo;
+                    }
+                }
+            } catch (err) {
+                console.warn("[UnmappedFiles] Candidate guess failed:", err);
+            }
+        }
+
+        return result;
+    }
+
     getFile(id: number): UnmappedFile | undefined {
         return this.repository.findById(id);
     }

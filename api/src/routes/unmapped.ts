@@ -40,14 +40,16 @@ function queueUnmappedImport(items: Array<{ id: number; providerId: string }>): 
  * GET /api/unmapped
  * Returns all unmapped local files.
  */
-router.get("/", (req, res) => {
+router.get("/", async (req, res) => {
     try {
         const limit = req.query.limit ? Number.parseInt(String(req.query.limit), 10) || 100 : undefined;
         const offset = req.query.offset ? Number.parseInt(String(req.query.offset), 10) || 0 : undefined;
         const result = unmappedFilesService.listFiles(limit, offset);
+        const candidates = await unmappedFilesService.getCandidateGuesses(result.items);
 
         res.json({
             ...result,
+            candidates,
             limit: limit ?? null,
             offset: offset ?? 0,
             hasMore: limit !== undefined ? (offset ?? 0) + result.items.length < result.total : false,

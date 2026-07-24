@@ -79,7 +79,7 @@ export type UnmappedFile = {
     created_at?: string;
 };
 
-type SortKey = 'filename' | 'detected_artist' | 'detected_album' | 'detected_track' | 'audio_quality' | 'codec' | 'file_size' | 'duration' | 'reason' | 'created_at';
+type SortKey = 'filename' | 'detected_artist' | 'detected_album' | 'detected_track' | 'audio_quality' | 'codec' | 'file_size' | 'duration' | 'reason' | 'candidate' | 'created_at';
 type DecisionState = 'ready' | 'blocked' | 'ignored';
 type DisplayRowKind = 'file' | 'group';
 
@@ -102,6 +102,7 @@ type DisplayRow = {
     fileKindLabel: string;
     rejectionReasons: string[];
     decisionState: DecisionState;
+    candidate?: { title: string; artistName: string; cover: string | null; score?: number };
     sortValues: Record<SortKey, string | number>;
 };
 
@@ -297,6 +298,42 @@ const useStyles = makeStyles({
     reasonTextMuted: {
         color: tokens.colorNeutralForeground3,
     },
+    candidateRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: tokens.spacingHorizontalS,
+        minWidth: 0,
+    },
+    candidateArt: {
+        width: '40px',
+        height: '40px',
+        borderRadius: tokens.borderRadiusMedium,
+        objectFit: 'cover',
+        backgroundColor: tokens.colorNeutralBackground3,
+        flexShrink: 0,
+    },
+    candidateMeta: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: tokens.spacingVerticalXXS,
+        minWidth: 0,
+        overflow: 'hidden',
+    },
+    candidateTitle: {
+        color: tokens.colorNeutralForeground1,
+        fontWeight: tokens.fontWeightSemibold,
+        fontSize: tokens.fontSizeBase300,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    },
+    candidateSubtitle: {
+        color: tokens.colorNeutralForeground3,
+        fontSize: tokens.fontSizeBase200,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    },
     actionGroup: {
         display: 'flex',
         alignItems: 'center',
@@ -490,7 +527,7 @@ function buildPrimaryQualityLabel(files: UnmappedFile[]) {
     return normalizedQualityText || 'Unknown quality';
 }
 
-function createDisplayRow(files: UnmappedFile[], kind: DisplayRowKind): DisplayRow {
+function createDisplayRow(files: UnmappedFile[], kind: DisplayRowKind, candidatesMap?: Record<number, any>): DisplayRow {
     const orderedFiles = [...files].sort((left, right) => left.filename.localeCompare(right.filename));
     const anchorFile = orderedFiles[0];
     const { fileName, directory } = splitFilePath(anchorFile.file_path);
@@ -512,6 +549,7 @@ function createDisplayRow(files: UnmappedFile[], kind: DisplayRowKind): DisplayR
     const trackLabel = kind === 'group'
         ? `${orderedFiles.length} tracks in folder review`
         : (anchorFile.detected_track || 'Unknown track');
+    const candidate = candidatesMap?.[anchorFile.id];
 
     return {
         id: kind === 'group'
@@ -534,6 +572,7 @@ function createDisplayRow(files: UnmappedFile[], kind: DisplayRowKind): DisplayR
         fileKindLabel: countLabel,
         rejectionReasons,
         decisionState,
+        candidate,
         sortValues: {
             filename: title.toLowerCase(),
             detected_artist: artistLabel.toLowerCase(),
@@ -544,12 +583,13 @@ function createDisplayRow(files: UnmappedFile[], kind: DisplayRowKind): DisplayR
             file_size: totalSize,
             duration: totalDuration || 0,
             reason: rejectionReasons.join(' ').toLowerCase(),
+            candidate: (candidate?.title || '').toLowerCase(),
             created_at: Math.max(...orderedFiles.map((file) => Date.parse(file.created_at || '') || 0), 0),
         },
     };
 }
 
-function buildDisplayRows(files: UnmappedFile[]): DisplayRow[] {
+function buildDisplayRows(files: UnmappedFile[], candidatesMap?: Record<number, any>): DisplayRow[] {
     const buckets = new Map<string, UnmappedFile[]>();
 
     for (const file of files) {
@@ -618,15 +658,19 @@ const ManualImportTab = () => {
     const [sortKey, setSortKey] = useState<SortKey>('created_at');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-    const { data: files, isLoading } = useQuery<UnmappedFile[]>({
+    const { data: unmappedData, isLoading } = useQuery<{ files: UnmappedFile[]; candidates: Record<number, any> }>({
         queryKey: ['unmapped-files'],
         queryFn: async () => {
             const allFiles: UnmappedFile[] = [];
+            let candidatesMap: Record<number, any> = {};
             let offset = 0;
 
             while (true) {
                 const response: any = await api.getUnmappedFiles({ limit: UNMAPPED_PAGE_SIZE, offset });
                 const pageItems: UnmappedFile[] = Array.isArray(response) ? response : (response?.items || []);
+                if (response?.candidates) {
+                    candidatesMap = { ...candidatesMap, ...response.candidates };
+                }
                 allFiles.push(...pageItems);
 
                 if (Array.isArray(response) || !response?.hasMore || pageItems.length === 0) {
@@ -636,7 +680,7 @@ const ManualImportTab = () => {
                 offset += pageItems.length;
             }
 
-            return allFiles;
+            return { files: allFiles, candidates: candidatesMap };
         },
     });
 
@@ -651,10 +695,10 @@ const ManualImportTab = () => {
         }
     }, [lastEvent, queryClient]);
 
-    const fileList = Array.isArray(files) ? files : [];
+    const fileList = Array.isArray(unmappedData?.files) ? unmappedData.files : [];
     const visibleFiles = showIgnored ? fileList : fileList.filter((file) => !file.ignored);
 
-    const displayRows = useMemo(() => buildDisplayRows(visibleFiles), [visibleFiles]);
+    const displayRows = useMemo(() => buildDisplayRows(visibleFiles, unmappedData?.candidates), [visibleFiles, unmappedData?.candidates]);
 
     const sortedRows = useMemo(() => {
         const nextRows = [...displayRows];
@@ -949,22 +993,45 @@ const ManualImportTab = () => {
             ),
         },
         {
-            key: 'reason',
+            key: 'candidate',
             header: (
-                <button type="button" className={styles.sortableHeaderButton} onClick={() => toggleSort('reason')}>
-                    {getSortLabel('reason', 'Reason')}
+                <button type="button" className={styles.sortableHeaderButton} onClick={() => toggleSort('candidate')}>
+                    {getSortLabel('candidate', '#1 Candidate Guess')}
                 </button>
             ),
-            width: 'minmax(140px, 0.85fr)',
-            minWidth: 120,
+            width: 'minmax(180px, 1.2fr)',
+            minWidth: 160,
             hideBelowWidth: 700,
             wrap: true,
             className: styles.wrappingCell,
-            render: (row) => (
-                <Text className={mergeClasses(styles.reasonText, row.decisionState !== 'blocked' ? styles.reasonTextMuted : undefined)}>
-                    {getReasonText(row)}
-                </Text>
-            ),
+            render: (row) => {
+                const candidate = row.candidate;
+                const title = candidate?.title || (row.albumLabel !== 'Unknown album' ? row.albumLabel : null);
+                const artist = candidate?.artistName || (row.artistLabel !== 'Unknown artist' ? row.artistLabel : null);
+
+                if (!title && !artist) {
+                    return <Text className={styles.reasonTextMuted}>No candidate match</Text>;
+                }
+
+                const coverSrc = candidate?.cover
+                    ? (candidate.cover.startsWith('http') || candidate.cover.startsWith('/') ? candidate.cover : `/api/v1/media-cover/${candidate.cover}/poster.jpg`)
+                    : '/assets/images/default-album.png';
+
+                return (
+                    <div className={styles.candidateRow}>
+                        <img
+                            src={coverSrc}
+                            alt=""
+                            className={styles.candidateArt}
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/assets/images/default-album.png'; }}
+                        />
+                        <div className={styles.candidateMeta}>
+                            <Text className={styles.candidateTitle} title={title || 'Catalog Guess'}>{title || 'Catalog Guess'}</Text>
+                            {artist ? <Text className={styles.candidateSubtitle} title={artist}>{artist}</Text> : null}
+                        </div>
+                    </div>
+                );
+            },
         },
         {
             key: 'actions',
