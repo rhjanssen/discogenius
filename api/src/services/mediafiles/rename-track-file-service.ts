@@ -18,6 +18,7 @@ import {
   buildRenameFilters,
   buildRenameStatusSummary,
   decodeSyntheticId,
+  encodeSyntheticId,
   isSameScopeSidecarOccupant,
   isScopedSidecar,
   tableIdColumn,
@@ -40,11 +41,25 @@ function moveFileCrossDevice(sourcePath: string, destPath: string) {
   }
 }
 
+// Files the rename *preview* lists. Extras (cover/nfo/lyrics/thumbnails) are not
+// shown as their own rename decisions — Lidarr's preview lists only track files and
+// moves extras as a side effect (ExtraService.MoveFilesAfterRename). The apply path
+// still renames extras, so this only changes what the user reviews.
+const MEDIA_RENAME_FILE_TYPES = ["track", "video"] as const;
+
 export class RenameTrackFileService {
-  private static getRenameRows(options: RenameScopeOptions = {}, includePaging = true): RenameLibraryFileRow[] {
+  private static getRenameRows(
+    options: RenameScopeOptions = {},
+    includePaging = true,
+    mediaOnly = false,
+  ): RenameLibraryFileRow[] {
     const limit = options.limit ?? 200;
     const offset = options.offset ?? 0;
     const { where, params } = buildRenameFilters(options);
+    if (mediaOnly) {
+      where.push(`lf.file_type IN (${MEDIA_RENAME_FILE_TYPES.map(() => "?").join(",")})`);
+      params.push(...MEDIA_RENAME_FILE_TYPES);
+    }
 
     const sql = `
       SELECT id, artist_id, album_id, media_id,
@@ -100,8 +115,12 @@ export class RenameTrackFileService {
     return db.prepare(sql).all(...params) as RenameLibraryFileRow[];
   }
 
-  private static getRenameCandidateCount(options: RenameScopeOptions = {}): number {
+  private static getRenameCandidateCount(options: RenameScopeOptions = {}, mediaOnly = false): number {
     const { where, params } = buildRenameFilters(options);
+    if (mediaOnly) {
+      where.push(`lf.file_type IN (${MEDIA_RENAME_FILE_TYPES.map(() => "?").join(",")})`);
+      params.push(...MEDIA_RENAME_FILE_TYPES);
+    }
     const sql = `
       SELECT COUNT(*) AS count
       FROM (
@@ -285,14 +304,47 @@ export class RenameTrackFileService {
   }
 
   static getRenamePreviews(options: RenameScopeOptions): RenamePreviewItem[] {
-    return this.evaluateRenameRows(this.getRenameRows(options, true), { persist: false });
+    // Preview lists media files only; their extras co-move silently on apply.
+    return this.evaluateRenameRows(this.getRenameRows(options, true, true), { persist: false });
   }
 
   static getRenameStatus(options: RenameScopeOptions = {}, sampleLimit = 10): RenameStatusSummary {
-    const total = this.getRenameCandidateCount(options);
+    const total = this.getRenameCandidateCount(options, true);
     const scanLimit = Math.max(1, Math.min(1000, options.limit ?? 25));
-    const results = this.evaluateRenameRows(this.getRenameRows({ ...options, limit: scanLimit, offset: 0 }, true), { persist: false });
+    const results = this.evaluateRenameRows(this.getRenameRows({ ...options, limit: scanLimit, offset: 0 }, true, true), { persist: false });
     return buildRenameStatusSummary(total, results, sampleLimit);
+  }
+
+  /**
+   * Lidarr's ExtraService.MoveFilesAfterRename: track-scoped extras (lyrics, per-track
+   * metadata/images) follow their audio file. Given the media TrackFiles ids being
+   * renamed, add the synthetic ids of every extra linked via track_file_id so an
+   * id-based apply co-moves them — the media-only preview never listed them, so without
+   * this they would be orphaned with stale names. Folder-scoped sidecars (cover.jpg /
+   * folder.jpg / artist.nfo — null track_file_id) are handled by the by-query sidecar
+   * reconciliation instead. Idempotent: extras already in `ids` are de-duplicated.
+   */
+  private static expandWithLinkedExtras(ids: number[]): number[] {
+    const trackFileIds = ids
+      .map((id) => decodeSyntheticId(id))
+      .filter((decoded) => decoded.tableName === "TrackFiles")
+      .map((decoded) => decoded.id);
+    if (trackFileIds.length === 0) {
+      return ids;
+    }
+
+    const placeholders = trackFileIds.map(() => "?").join(",");
+    const expanded = new Set<number>(ids);
+    const extraTables: Array<Exclude<RenameTableName, "TrackFiles">> = ["MetadataFiles", "ExtraFiles", "LyricFiles"];
+    for (const table of extraTables) {
+      const linked = db.prepare(
+        `SELECT id FROM ${table} WHERE track_file_id IN (${placeholders})`,
+      ).all(...trackFileIds) as Array<{ id: number }>;
+      for (const row of linked) {
+        expanded.add(encodeSyntheticId(row.id, table));
+      }
+    }
+    return [...expanded];
   }
 
   static executeRenameFilesByQuery(options: RenameScopeOptions = {}): RenameApplyResult {
@@ -312,8 +364,11 @@ export class RenameTrackFileService {
       return result;
     }
 
+    // Co-move track-linked extras so a media-only selection never orphans lyrics/nfo.
+    const effectiveIds = this.expandWithLinkedExtras(ids);
+
     const rows: RenameLibraryFileRow[] = [];
-    for (const syntheticId of ids) {
+    for (const syntheticId of effectiveIds) {
       const decoded = decodeSyntheticId(syntheticId);
       if (decoded.tableName === "TrackFiles") {
         const row = db.prepare(`
@@ -377,7 +432,7 @@ export class RenameTrackFileService {
     const historyEvents: Array<Parameters<typeof recordHistoryEvent>[0]> = [];
     const fileEvents: RenameFileEvent[] = [];
 
-    for (const id of ids) {
+    for (const id of effectiveIds) {
       try {
         const row = rowMap.get(id);
         if (!row) {

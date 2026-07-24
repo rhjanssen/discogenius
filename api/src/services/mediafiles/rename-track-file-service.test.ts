@@ -869,3 +869,51 @@ test("relocateRelatedInlineVideosForImportedAudio ignores unrelated imported aud
   assert.equal(result.renamed, 0);
   assert.equal(fs.existsSync(fixture.separatedVideoPath), true);
 });
+
+test("rename preview lists media files only; id-based apply co-moves the linked lyric", () => {
+  seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
+  const musicRoot = configModule.Config.getMusicPath();
+  const importDir = path.join(musicRoot, "Artist One", "Imports");
+  fs.mkdirSync(importDir, { recursive: true });
+  const audioPath = path.join(importDir, "track-one.flac");
+  const lyricPath = path.join(importDir, "track-one.lrc");
+  fs.writeFileSync(audioPath, "audio-bytes");
+  fs.writeFileSync(lyricPath, "[00:01.00] la la la");
+
+  const audioId = upsertCanonicalAudioFile({
+    filePath: audioPath,
+    libraryRoot: musicRoot,
+    librarySlot: "stereo",
+  });
+
+  // Lidarr's ExtraFile.TrackFileId link: this .lrc belongs to the audio file above.
+  dbModule.db.prepare(`
+    INSERT INTO LyricFiles (
+      artist_id, track_file_id, relative_path, file_path, library_root, extension, library_slot,
+      canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid, needs_rename
+    ) VALUES ('1', ?, ?, ?, ?, 'lrc', 'stereo',
+      'artist-mbid-1', 'release-group-mbid-1', 'release-mbid-1',
+      'track-mbid-1', 'recording-mbid-1', 0)
+  `).run(audioId, path.relative(musicRoot, lyricPath), lyricPath, musicRoot);
+
+  // Preview shows the media file only — the lyric is not its own rename decision.
+  const previews = renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews({ artistId: "1" });
+  assert.equal(previews.length, 1);
+  assert.equal(previews[0].file_type, "track");
+
+  // Applying by the media id alone must still move the linked lyric alongside it.
+  const result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([audioId]);
+  assert.equal(result.renamed >= 1, true);
+
+  const expectedAudio = path.join(musicRoot, "Artist One", "Album One", "01 - Track One.flac");
+  const expectedLyric = path.join(musicRoot, "Artist One", "Album One", "01 - Track One.lrc");
+  assert.equal(fs.existsSync(expectedAudio), true, "audio moved to expected path");
+  assert.equal(fs.existsSync(expectedLyric), true, "linked lyric co-moved to expected path");
+  assert.equal(fs.existsSync(lyricPath), false, "lyric no longer at old path");
+
+  const lyricRow = dbModule.db.prepare(
+    "SELECT file_path FROM LyricFiles WHERE track_file_id = ?",
+  ).get(audioId) as { file_path: string };
+  assert.equal(path.resolve(lyricRow.file_path), path.resolve(expectedLyric));
+});

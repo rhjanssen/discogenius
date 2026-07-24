@@ -114,17 +114,17 @@ We already have the tables (`ExtraFiles` / `LyricFiles` / `MetadataFiles`, each 
 `track_file_id` FK) and write to them — but the rename plan UNIONs all four tables, so the
 preview is cluttered with cover/lyric/nfo rows.
 
-- pending: **Preview shows media files only; extras follow on apply.** Filter
-  `RenameTrackFileService` preview + status to `file_type IN ('track','video')`. This is
-  safe **only once** the id-based apply co-moves extras — see next item — otherwise
-  applying selected (media-only) ids leaves lrc/jpg behind. (A first attempt at the
-  preview filter alone was reverted for exactly this reason.)
-- pending: **Id-based apply co-moves extras (`ExtraService.MoveFilesAfterRename`).**
-  `POST /rename/apply` with `ids` (selected preview rows) → `executeRenameFiles(ids)` must
-  expand each media id to its associated extras: track-scoped via `track_file_id`, and
-  album/artist-scoped sidecars (cover.jpg/folder.jpg/artist.nfo — no `track_file_id`) via
-  folder scope. The by-query path already reconciles sidecars; unify both onto one
-  extras-co-move helper. Decodes the synthetic id offsets (+10M/+20M/+30M) across tables.
+- done: **Preview shows media files only; extras follow on apply.**
+  `RenameTrackFileService` preview + status now filter to `file_type IN ('track','video')`
+  (`mediaOnly`); the apply path stays full so extras still rename. Landed together with the
+  co-move below so selected media-only ids never orphan lrc/jpg.
+- done: **Id-based apply co-moves track-linked extras (`ExtraService.MoveFilesAfterRename`).**
+  `executeRenameFiles(ids)` expands each media `TrackFiles` id to its extras linked via
+  `track_file_id` (`expandWithLinkedExtras`, across MetadataFiles/ExtraFiles/LyricFiles,
+  idempotent) so an id-based apply co-moves them. Covered by a rename-service test.
+  Folder-scoped sidecars (cover.jpg/folder.jpg/artist.nfo — null `track_file_id`) remain
+  handled by the by-query `reconcileSeparatedSidecars` path, matching Lidarr (its metadata
+  consumers move folder-level images, ExtraService moves track-linked extras).
 - pending: **Stop storing sidecars as `TrackFiles` rows.** `file_type` still allows
   `cover`/`lyrics`/`bio`/etc. on `TrackFiles`; migrate any such rows into the Extras
   tables so `TrackFiles` is audio/video-only (Lidarr's invariant) and the whole class of

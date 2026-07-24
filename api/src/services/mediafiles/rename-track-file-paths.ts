@@ -58,17 +58,29 @@ export type DecodedSyntheticId = {
   tableName: RenameTableName;
 };
 
+// Sidecar tables share one id space with TrackFiles in the rename plan by adding
+// a per-table offset, so a single id list can address rows across all four tables.
+export const SYNTHETIC_ID_OFFSET: Record<Exclude<RenameTableName, "TrackFiles">, number> = {
+  MetadataFiles: 10000000,
+  ExtraFiles: 20000000,
+  LyricFiles: 30000000,
+};
+
 export function decodeSyntheticId(syntheticId: number): DecodedSyntheticId {
-  if (syntheticId >= 30000000) {
-    return { id: syntheticId - 30000000, tableName: "LyricFiles" };
+  if (syntheticId >= SYNTHETIC_ID_OFFSET.LyricFiles) {
+    return { id: syntheticId - SYNTHETIC_ID_OFFSET.LyricFiles, tableName: "LyricFiles" };
   }
-  if (syntheticId >= 20000000) {
-    return { id: syntheticId - 20000000, tableName: "ExtraFiles" };
+  if (syntheticId >= SYNTHETIC_ID_OFFSET.ExtraFiles) {
+    return { id: syntheticId - SYNTHETIC_ID_OFFSET.ExtraFiles, tableName: "ExtraFiles" };
   }
-  if (syntheticId >= 10000000) {
-    return { id: syntheticId - 10000000, tableName: "MetadataFiles" };
+  if (syntheticId >= SYNTHETIC_ID_OFFSET.MetadataFiles) {
+    return { id: syntheticId - SYNTHETIC_ID_OFFSET.MetadataFiles, tableName: "MetadataFiles" };
   }
   return { id: syntheticId, tableName: "TrackFiles" };
+}
+
+export function encodeSyntheticId(id: number, tableName: RenameTableName): number {
+  return tableName === "TrackFiles" ? id : id + SYNTHETIC_ID_OFFSET[tableName];
 }
 
 /** Primary-key column name differs for TrackFiles vs sidecar tables. */
