@@ -591,7 +591,7 @@ function createDisplayRow(files: UnmappedFile[], kind: DisplayRowKind, candidate
     };
 }
 
-function buildDisplayRows(files: UnmappedFile[], candidatesMap?: Record<number, any>): DisplayRow[] {
+function buildDisplayRows(files: UnmappedFile[]): DisplayRow[] {
     const buckets = new Map<string, UnmappedFile[]>();
 
     for (const file of files) {
@@ -701,7 +701,7 @@ const ManualImportTab = () => {
     const fileList = Array.isArray(unmappedData?.files) ? unmappedData.files : [];
     const visibleFiles = showIgnored ? fileList : fileList.filter((file) => !file.ignored);
 
-    const displayRows = useMemo(() => buildDisplayRows(visibleFiles, unmappedData?.candidates), [visibleFiles, unmappedData?.candidates]);
+    const displayRows = useMemo(() => buildDisplayRows(visibleFiles), [visibleFiles]);
 
     const sortedRows = useMemo(() => {
         const nextRows = [...displayRows];

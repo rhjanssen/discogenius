@@ -231,8 +231,8 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\
 const cleanSearchString = (str?: string | null) => {
     if (!str) return '';
     return str
-        .replace(/[\(\[\{].*?[\)\]\}]/g, ' ')
-        .replace(/[_.\-\/\\]+/g, ' ')
+        .replace(/[(|[{].*?[)|\]}]/g, ' ')
+        .replace(/[_./\\-]+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
 };
