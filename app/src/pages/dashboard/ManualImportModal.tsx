@@ -404,7 +404,10 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
 
         setIsSearching(true);
         const searchTypes = isVideoImport ? ['videos'] : ['albums'];
-        api.search(nextQuery, searchTypes, 10)
+        const searchOptions = !isVideoImport && initialFile?.detected_artist
+            ? { artist: cleanSearchString(initialFile.detected_artist) }
+            : undefined;
+        api.search(nextQuery, searchTypes, 10, undefined, searchOptions)
             .then((response: any) => {
                 const nextResults = isVideoImport
                     ? response?.results?.videos || []
@@ -429,7 +432,10 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
 
         try {
             const searchTypes = isVideoImport ? ['videos'] : ['artists', 'albums', 'tracks'];
-            const response = await api.search(queryToSearch, searchTypes, 20) as any;
+            const searchOptions = !isVideoImport && initialFile?.detected_artist
+                ? { artist: cleanSearchString(initialFile.detected_artist) }
+                : undefined;
+            const response = await api.search(queryToSearch, searchTypes, 20, undefined, searchOptions) as any;
             setSearchResults(isVideoImport ? response?.results?.videos || [] : response?.results?.albums || []);
         } catch (error: any) {
             toast({ title: 'Search failed', description: error.message, variant: 'destructive' });

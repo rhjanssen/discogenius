@@ -202,17 +202,31 @@ router.get("/", async (req, res) => {
             }
 
             if (requestedTypeSet.has("albums")) {
-                // Two-phase like the tracks branch: bare title match first,
-                // slot/artist enrichment only for the survivors.
-                const ftsQuery = toFtsPrefixQuery(query);
-                let matchedAlbumMbids = ftsQuery
-                    ? (db.prepare(`
-                        SELECT entity_id AS mbid
-                        FROM CatalogSearch
-                        WHERE CatalogSearch MATCH ? AND entity_type = 'album'
+                const artistParam = String(req.query.artist ?? "").trim();
+                let matchedAlbumMbids: string[] = [];
+
+                if (artistParam) {
+                    const artistMbids = db.prepare(`
+                        SELECT rg.mbid
+                        FROM Albums rg
+                        JOIN Artists a ON a.mbid = rg.artist_mbid
+                        WHERE a.name LIKE ? AND (rg.title LIKE ? OR ? = '')
                         LIMIT ?
-                    `).all(ftsQuery, limit) as Array<{ mbid: string }>).map((row) => row.mbid)
-                    : [];
+                    `).all(`%${artistParam}%`, `%${query}%`, query, limit) as Array<{ mbid: string }>;
+                    matchedAlbumMbids = artistMbids.map((r) => r.mbid);
+                }
+
+                if (matchedAlbumMbids.length === 0) {
+                    const ftsQuery = toFtsPrefixQuery(query);
+                    matchedAlbumMbids = ftsQuery
+                        ? (db.prepare(`
+                            SELECT entity_id AS mbid
+                            FROM CatalogSearch
+                            WHERE CatalogSearch MATCH ? AND entity_type = 'album'
+                            LIMIT ?
+                        `).all(ftsQuery, limit) as Array<{ mbid: string }>).map((row) => row.mbid)
+                        : [];
+                }
 
                 if (matchedAlbumMbids.length === 0 && query.trim().length > 0) {
                     const tokens = query.trim().split(/\s+/).filter(Boolean);

@@ -670,13 +670,16 @@ class ApiClient {
     types: string[] = ['artists', 'albums', 'tracks', 'videos'],
     limit: number = 10,
     signal?: AbortSignal,
-    options?: { remote?: boolean; local?: boolean },
+    options?: { remote?: boolean; local?: boolean; artist?: string },
   ): Promise<SearchResponseContract> {
     const params = new URLSearchParams({
       query,
       type: types.join(','),
       limit: limit.toString(),
     });
+    if (options?.artist) {
+      params.set('artist', options.artist);
+    }
     if (options?.remote) {
       params.set('remote', '1');
     }

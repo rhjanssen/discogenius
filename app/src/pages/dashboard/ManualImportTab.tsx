@@ -43,6 +43,7 @@ import { useSelectableCollection } from '@/hooks/useSelectableCollection';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
 import { isSpatialAudioQuality } from '@/utils/spatialAudio';
+import { mediaCoverProxySrc, renderableArtworkUrl } from '@/utils/artwork';
 import ManualImportModal from './ManualImportModal';
 
 const Delete24 = bundleIcon(Delete24Filled, Delete24Regular);
@@ -1015,7 +1016,7 @@ const ManualImportTab = () => {
                 }
 
                 const coverSrc = candidate?.cover
-                    ? (candidate.cover.startsWith('http') || candidate.cover.startsWith('/') ? candidate.cover : `/api/v1/media-cover/${candidate.cover}/poster.jpg`)
+                    ? (mediaCoverProxySrc({ cover_art_url: candidate.cover }, 250) || renderableArtworkUrl(candidate.cover) || '/assets/images/default-album.png')
                     : '/assets/images/default-album.png';
 
                 return (
