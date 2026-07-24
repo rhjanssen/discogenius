@@ -407,16 +407,13 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         const searchOptions = !isVideoImport && initialFile?.detected_artist
             ? { artist: cleanSearchString(initialFile.detected_artist) }
             : undefined;
-        api.search(nextQuery, searchTypes, 10, undefined, searchOptions)
+                api.search(nextQuery, searchTypes, 10, undefined, searchOptions)
             .then((response: any) => {
                 const nextResults = isVideoImport
                     ? response?.results?.videos || []
                     : response?.results?.albums || [];
                 setSearchResults(nextResults);
                 setHasSearched(true);
-                if (nextResults.length > 0) {
-                    void handleSelectMatch(nextResults[0]);
-                }
             })
             .catch(() => {
                 setHasSearched(true);
@@ -697,12 +694,12 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                                      <option value="">-- Don&apos;t Map --</option>
                                                                      {albumTracks.map((track) => {
                                                                          const providerId = String(track.providerId || track.id || track.provider_id || '');
-                                                                         const trackNum = track.trackNumber ?? track.track_number ?? 0;
-                                                                         const volNum = track.volumeNumber ?? track.volume_number ?? 1;
-                                                                         const volPrefix = volNum > 1 ? `[CD ${volNum}] ` : '';
+                                                                         const trackNum = track.trackNumber ?? track.track_number ?? track.position ?? 0;
+                                                                         const volNum = track.volumeNumber ?? track.volume_number ?? track.medium_position ?? 1;
+                                                                         const posPrefix = volNum > 1 ? `${volNum}-${trackNum}. ` : trackNum ? `${trackNum}. ` : '';
                                                                          return (
                                                                              <option key={providerId} value={providerId}>
-                                                                                 {volPrefix}{trackNum ? `${trackNum}. ` : ''}{track.title}{track.version ? ` (${track.version})` : ''}
+                                                                                 {posPrefix}{track.title}{track.version ? ` (${track.version})` : ''}
                                                                              </option>
                                                                          );
                                                                      })}

@@ -23,6 +23,7 @@ import {
   Eye24Regular,
   EyeOff24Regular,
   Search24Regular,
+  Record24Regular,
   DocumentSearch24Filled,
   Eye24Filled,
   EyeOff24Filled,
@@ -1016,13 +1017,13 @@ const ManualImportTab = () => {
                 }
 
                 const coverSrc = candidate?.cover
-                    ? (mediaCoverProxySrc({ cover_art_url: candidate.cover }, 250) || renderableArtworkUrl(candidate.cover) || '/assets/images/default-album.png')
-                    : '/assets/images/default-album.png';
+                    ? (mediaCoverProxySrc({ cover_art_url: candidate.cover }, 250) || renderableArtworkUrl(candidate.cover))
+                    : null;
 
                 return (
                     <div
                         className={styles.candidateRow}
-                        style={{ cursor: 'pointer' }}
+                        style={{ cursor: 'pointer', paddingLeft: tokens.spacingHorizontalL }}
                         title="Click to open manual import for this candidate"
                         onClick={(e) => {
                             e.stopPropagation();
@@ -1030,12 +1031,18 @@ const ManualImportTab = () => {
                             setManualImportFile(row.anchorFile);
                         }}
                     >
-                        <img
-                            src={coverSrc}
-                            alt=""
-                            className={styles.candidateArt}
-                            onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/assets/images/default-album.png'; }}
-                        />
+                        {coverSrc ? (
+                            <img
+                                src={coverSrc}
+                                alt=""
+                                className={styles.candidateArt}
+                                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                            />
+                        ) : (
+                            <div className={styles.candidateArt} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <Record24Regular style={{ color: tokens.colorNeutralForeground4 }} />
+                            </div>
+                        )}
                         <div className={styles.candidateMeta}>
                             <Text className={styles.candidateTitle} title={title || 'Catalog Guess'}>{title || 'Catalog Guess'}</Text>
                             {artist ? <Text className={styles.candidateSubtitle} title={artist}>{artist}</Text> : null}

@@ -63,6 +63,9 @@ export class ManualImportService {
             fileType: "video" | "track";
             fullPathTemplate: string;
             artistFolder: string;
+            canonicalTrackMbid: string | null;
+            canonicalReleaseGroupMbid: string | null;
+            canonicalArtistMbid: string | null;
         }
 
         const collected: CollectedItem[] = [];
@@ -78,44 +81,133 @@ export class ManualImportService {
                 const extension = String(file.extension || path.extname(file.file_path)).replace(/^\./, "").toLowerCase();
                 const isVideo = file.library_root === "videos" || ["mp4", "mkv", "m4v", "mov", "webm", "ts"].includes(extension);
 
-                // Fetch track/video metadata from the active streaming provider.
+                // Fetch track/video metadata from local catalog DB or active streaming provider.
                 let trackData: any;
-                if (isVideo) {
-                    try {
-                        trackData = await provider.getVideo?.(item.providerId);
-                    } catch (videoError: any) {
-                        console.error(`[Bulk Import] Could not resolve video ${item.providerId} for file ${file.filename}`, videoError);
-                        continue;
-                    }
-                } else {
-                    try {
-                        trackData = await provider.getTrack(item.providerId);
-                    } catch (e: any) {
-                        console.warn(`[Bulk Import] getTrack(${item.providerId}) failed: ${e.message}. Trying getAlbumTracks...`);
-                        try {
-                            const tracks = await provider.getAlbumTracks(item.providerId);
+                const cleanMbid = item.providerId.replace(/^mbid-/, "");
+                const isMbid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanMbid);
 
-                            let bestTrack = tracks.length > 0 ? tracks[0] : null;
+                if (!isVideo && isMbid) {
+                    // 1. Try single track match in catalog DB
+                    const dbTrack = db.prepare(`
+                        SELECT
+                            t.mbid AS id,
+                            t.mbid AS providerId,
+                            t.title,
+                            t.position AS trackNumber,
+                            t.medium_position AS volumeNumber,
+                            COALESCE(r.length_ms, t.length_ms, 0) AS duration,
+                            rel.release_group_mbid,
+                            rel.mbid AS albumMbid,
+                            rg.title AS albumTitle,
+                            a.mbid AS artistMbid,
+                            a.name AS artistName
+                        FROM Tracks t
+                        JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
+                        JOIN ReleaseGroups rg ON rg.mbid = rel.release_group_mbid
+                        JOIN Artists a ON a.mbid = rg.artist_mbid
+                        LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+                        WHERE t.mbid = ?
+                    `).get(cleanMbid) as any;
+
+                    if (dbTrack) {
+                        trackData = {
+                            id: dbTrack.id,
+                            providerId: dbTrack.providerId,
+                            title: dbTrack.title,
+                            duration: dbTrack.duration,
+                            trackNumber: dbTrack.trackNumber,
+                            volumeNumber: dbTrack.volumeNumber,
+                            artist: { id: dbTrack.artistMbid, providerId: dbTrack.artistMbid, name: dbTrack.artistName },
+                            album: { id: dbTrack.release_group_mbid, providerId: dbTrack.release_group_mbid, title: dbTrack.albumTitle },
+                        };
+                    } else {
+                        // 2. Try release group or release MBID match
+                        const dbTracks = db.prepare(`
+                            SELECT
+                                t.mbid AS id,
+                                t.mbid AS providerId,
+                                t.title,
+                                t.position AS trackNumber,
+                                t.medium_position AS volumeNumber,
+                                COALESCE(r.length_ms, t.length_ms, 0) AS duration,
+                                rel.release_group_mbid,
+                                rel.mbid AS albumMbid,
+                                rg.title AS albumTitle,
+                                a.mbid AS artistMbid,
+                                a.name AS artistName
+                            FROM Tracks t
+                            JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
+                            JOIN ReleaseGroups rg ON rg.mbid = rel.release_group_mbid
+                            JOIN Artists a ON a.mbid = rg.artist_mbid
+                            LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+                            WHERE rel.release_group_mbid = ? OR rel.mbid = ?
+                            ORDER BY t.medium_position ASC, t.position ASC
+                        `).all(cleanMbid, cleanMbid) as any[];
+
+                        if (dbTracks.length > 0) {
+                            let best = dbTracks[0];
                             const lowerFilename = file.filename.toLowerCase();
-                            for (const t of tracks) {
+                            for (const t of dbTracks) {
                                 if (lowerFilename.includes(t.title.toLowerCase()) ||
                                     lowerFilename.includes(` ${t.trackNumber} `) ||
                                     lowerFilename.startsWith(`${t.trackNumber} -`) ||
                                     lowerFilename.startsWith(`0${t.trackNumber}`)) {
-                                    bestTrack = t;
+                                    best = t;
                                     break;
                                 }
                             }
+                            trackData = {
+                                id: best.id,
+                                providerId: best.providerId,
+                                title: best.title,
+                                duration: best.duration,
+                                trackNumber: best.trackNumber,
+                                volumeNumber: best.volumeNumber,
+                                artist: { id: best.artistMbid, providerId: best.artistMbid, name: best.artistName },
+                                album: { id: best.release_group_mbid, providerId: best.release_group_mbid, title: best.albumTitle },
+                            };
+                        }
+                    }
+                }
 
-                            if (bestTrack) {
-                                trackData = await provider.getTrack(bestTrack.providerId);
-                                console.log(`[Bulk Import] Resolved album ${item.providerId} to track ${bestTrack.providerId} for file ${file.filename}`);
-                            } else {
-                                throw new Error("No tracks found in album");
-                            }
-                        } catch (e2: any) {
-                            console.error(`[Bulk Import] Could not resolve album ${item.providerId} for file ${file.filename}`, e2);
+                if (!trackData) {
+                    if (isVideo) {
+                        try {
+                            trackData = await provider.getVideo?.(item.providerId);
+                        } catch (videoError: any) {
+                            console.error(`[Bulk Import] Could not resolve video ${item.providerId} for file ${file.filename}`, videoError);
                             continue;
+                        }
+                    } else {
+                        try {
+                            trackData = await provider.getTrack(item.providerId);
+                        } catch (e: any) {
+                            console.warn(`[Bulk Import] getTrack(${item.providerId}) failed: ${e.message}. Trying getAlbumTracks...`);
+                            try {
+                                const tracks = await provider.getAlbumTracks(item.providerId);
+
+                                let bestTrack = tracks.length > 0 ? tracks[0] : null;
+                                const lowerFilename = file.filename.toLowerCase();
+                                for (const t of tracks) {
+                                    if (lowerFilename.includes(t.title.toLowerCase()) ||
+                                        lowerFilename.includes(` ${t.trackNumber} `) ||
+                                        lowerFilename.startsWith(`${t.trackNumber} -`) ||
+                                        lowerFilename.startsWith(`0${t.trackNumber}`)) {
+                                        bestTrack = t;
+                                        break;
+                                    }
+                                }
+
+                                if (bestTrack) {
+                                    trackData = await provider.getTrack(bestTrack.providerId);
+                                    console.log(`[Bulk Import] Resolved album ${item.providerId} to track ${bestTrack.providerId} for file ${file.filename}`);
+                                } else {
+                                    throw new Error("No tracks found in album");
+                                }
+                            } catch (e2: any) {
+                                console.error(`[Bulk Import] Could not resolve album ${item.providerId} for file ${file.filename}`, e2);
+                                continue;
+                            }
                         }
                     }
                 }
@@ -279,6 +371,9 @@ export class ManualImportService {
                     fileType: isVideo ? "video" : "track",
                     fullPathTemplate,
                     artistFolder,
+                    canonicalTrackMbid: canonicalIdentity?.canonicalTrackMbid || (trackData.id ? String(trackData.id).replace(/^mbid-/, "") : null),
+                    canonicalReleaseGroupMbid: canonicalIdentity?.canonicalReleaseGroupMbid || albumRow?.mb_release_group_id || (trackData.album?.id ? String(trackData.album.id).replace(/^mbid-/, "") : null),
+                    canonicalArtistMbid: canonicalIdentity?.canonicalArtistMbid || artistRow?.mbid || (trackData.artist?.id ? String(trackData.artist.id).replace(/^mbid-/, "") : null),
                 });
             } catch (outerError: any) {
                 console.error(`[Bulk Import] Failed collecting metadata for file ${item.id} → TIDAL ${item.providerId}:`, outerError);
@@ -407,6 +502,7 @@ export class ManualImportService {
                     db.prepare(`
                         UPDATE TrackFiles SET
                             artist_id=?,
+                            canonical_track_mbid=?, canonical_release_group_mbid=?, canonical_artist_mbid=?,
                             provider=?, provider_entity_type=?, provider_id=?, library_slot=?,
                             file_path=?, relative_path=?,
                             library_root=?, filename=?, extension=?, file_size=?, duration=?,
@@ -417,6 +513,7 @@ export class ManualImportService {
                         WHERE id = ?
                     `).run(
                         c.artistId,
+                        c.canonicalTrackMbid, c.canonicalReleaseGroupMbid, c.canonicalArtistMbid,
                         provider.id, c.fileType, c.providerId, c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo",
                         c.file.file_path, c.relativePath,
                         c.libraryRootKey, c.file.filename, c.extension, c.stats.size,
@@ -438,6 +535,7 @@ export class ManualImportService {
                     db.prepare(`
                         INSERT INTO TrackFiles (
                             artist_id,
+                            canonical_track_mbid, canonical_release_group_mbid, canonical_artist_mbid,
                             provider, provider_entity_type, provider_id, library_slot,
                             file_path, relative_path, library_root,
                             filename, extension, file_size, duration,
@@ -447,6 +545,7 @@ export class ManualImportService {
                             modified_at, verified_at
                         ) VALUES (
                             @artistId,
+                            @canonicalTrackMbid, @canonicalReleaseGroupMbid, @canonicalArtistMbid,
                             @provider, @providerEntityType, @providerIdValue, @librarySlot,
                             @filePath, @relativePath, @libraryRoot,
                             @filename, @extension, @fileSize, @duration,
@@ -456,6 +555,9 @@ export class ManualImportService {
                             @modifiedAt, CURRENT_TIMESTAMP
                         )
                         ON CONFLICT(file_path) DO UPDATE SET
+                            canonical_track_mbid = COALESCE(excluded.canonical_track_mbid, canonical_track_mbid),
+                            canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, canonical_release_group_mbid),
+                            canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, canonical_artist_mbid),
                             provider = COALESCE(excluded.provider, provider),
                             provider_entity_type = COALESCE(excluded.provider_entity_type, provider_entity_type),
                             provider_id = COALESCE(excluded.provider_id, provider_id),
@@ -465,6 +567,9 @@ export class ManualImportService {
                             verified_at = CURRENT_TIMESTAMP
                     `).run({
                         artistId: c.artistId, albumId: c.albumId, mediaId: c.providerId,
+                        canonicalTrackMbid: c.canonicalTrackMbid,
+                        canonicalReleaseGroupMbid: c.canonicalReleaseGroupMbid,
+                        canonicalArtistMbid: c.canonicalArtistMbid,
                         provider: provider.id, providerEntityType: c.fileType, providerIdValue: c.providerId,
                         librarySlot: c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo",
                         filePath: c.file.file_path, relativePath: c.relativePath,
