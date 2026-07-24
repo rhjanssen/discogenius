@@ -205,7 +205,7 @@ router.get("/", async (req, res) => {
                 // Two-phase like the tracks branch: bare title match first,
                 // slot/artist enrichment only for the survivors.
                 const ftsQuery = toFtsPrefixQuery(query);
-                const matchedAlbumMbids = ftsQuery
+                let matchedAlbumMbids = ftsQuery
                     ? (db.prepare(`
                         SELECT entity_id AS mbid
                         FROM CatalogSearch
@@ -213,6 +213,20 @@ router.get("/", async (req, res) => {
                         LIMIT ?
                     `).all(ftsQuery, limit) as Array<{ mbid: string }>).map((row) => row.mbid)
                     : [];
+
+                if (matchedAlbumMbids.length === 0 && query.trim().length > 0) {
+                    const tokens = query.trim().split(/\s+/).filter(Boolean);
+                    const likeConditions = tokens.map(() => "(rg.title LIKE ? OR a.name LIKE ?)").join(" AND ");
+                    const params = tokens.flatMap((t) => [`%${t}%`, `%${t}%`]);
+                    const fallbackMbids = db.prepare(`
+                        SELECT rg.mbid
+                        FROM Albums rg
+                        LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
+                        WHERE ${likeConditions}
+                        LIMIT ?
+                    `).all(...params, limit) as Array<{ mbid: string }>;
+                    matchedAlbumMbids = fallbackMbids.map((r) => r.mbid);
+                }
                 const albumMarks = matchedAlbumMbids.map(() => "?").join(", ");
                 const localReleaseGroups = matchedAlbumMbids.length === 0 ? [] : db
                     .prepare(

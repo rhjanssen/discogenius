@@ -752,8 +752,9 @@ class ApiClient {
     return this.request(`/v1/album/${albumId}/monitor`, { method: 'POST' });
   }
 
-  async getProviderAlbumTracks(providerId: string, albumId: string) {
-    const tracks = await this.request(`/provider/${providerId}/albums/${albumId}/tracks`) as any[];
+  async getProviderAlbumTracks(providerId: string, albumId: string, releaseMbid?: string) {
+    const query = releaseMbid ? `?releaseMbid=${encodeURIComponent(releaseMbid)}` : '';
+    const tracks = await this.request(`/provider/${providerId}/albums/${albumId}/tracks${query}`) as any[];
     return Array.isArray(tracks)
       ? tracks.map((track) => ({
         ...track,

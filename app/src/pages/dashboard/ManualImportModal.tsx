@@ -198,6 +198,7 @@ interface Props {
     isOpen: boolean;
     onClose: () => void;
     initialFile: UnmappedFile | null;
+    initialMatch?: any;
     allFiles: UnmappedFile[];
 }
 
@@ -238,9 +239,12 @@ const cleanSearchString = (str?: string | null) => {
 
 const buildInitialSearchQuery = (file: UnmappedFile, isVideoImport: boolean) => {
     if (!isVideoImport) {
-        const cleanArtist = cleanSearchString(file.detected_artist);
         const cleanAlbum = cleanSearchString(file.detected_album);
-        return [cleanArtist, cleanAlbum].filter(Boolean).join(' ').trim();
+        if (cleanAlbum) {
+            return cleanAlbum;
+        }
+        const cleanArtist = cleanSearchString(file.detected_artist);
+        return cleanArtist || cleanSearchString(file.filename);
     }
 
     const baseName = file.filename.replace(/\.[^/.]+$/, '');
@@ -264,7 +268,7 @@ const getResultImage = (result: any, preferVideoProxy = false) =>
     ?? renderableArtworkUrl(result.image_id)
     ?? null;
 
-const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allFiles }) => {
+const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, initialMatch, allFiles }) => {
     const styles = useStyles();
     const { toast } = useToast();
     const queryClient = useQueryClient();
@@ -296,10 +300,69 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
     const [hasSearched, setHasSearched] = useState(false);
     const [selectedMatch, setSelectedMatch] = useState<any | null>(null);
     const [albumTracks, setAlbumTracks] = useState<any[]>([]);
+    const [releaseVersions, setReleaseVersions] = useState<any[]>([]);
+    const [selectedReleaseMbid, setSelectedReleaseMbid] = useState<string>('');
     const [isLoadingTracks, setIsLoadingTracks] = useState(false);
     const [selectedFiles, setSelectedFiles] = useState<Record<number, boolean>>({});
     const [mappedTracks, setMappedTracks] = useState<Record<number, string>>({});
     const [decisionRejections, setDecisionRejections] = useState<string[]>([]);
+
+    const handleSelectMatch = async (result: any, releaseMbidOverride?: string) => {
+        setSelectedMatch(result);
+
+        if (isVideoImport) {
+            if (!initialFile) return;
+            setMappedTracks({ [initialFile.id]: getResultId(result) });
+            setDecisionRejections([]);
+            return;
+        }
+
+        setIsLoadingTracks(true);
+
+        try {
+            const providerId = getResultProvider(result);
+            const albumId = getResultId(result);
+
+            if (!isVideoImport && albumId) {
+                try {
+                    const versions = await api.request(`/v1/album/${albumId}/versions`) as any[];
+                    if (Array.isArray(versions)) {
+                        setReleaseVersions(versions);
+                    }
+                } catch {
+                    // Ignore versions load failure
+                }
+            }
+
+            const activeReleaseMbid = releaseMbidOverride ?? selectedReleaseMbid;
+            const tracks = await api.getProviderAlbumTracks(providerId, albumId, activeReleaseMbid) as any[];
+            setAlbumTracks(tracks);
+
+            if (targetFiles.length === 0 || tracks.length === 0) {
+                setMappedTracks({});
+                return;
+            }
+
+            const response = await api.identifyUnmappedFiles(
+                targetFiles.map((file) => file.id),
+                albumId
+            ) as any;
+
+            setMappedTracks(response?.success && response.mappedTracks ? response.mappedTracks : {});
+            setDecisionRejections(Array.isArray(response?.rejections) ? response.rejections : []);
+        } catch (error: any) {
+            toast({ title: 'Failed to fetch or map tracks', description: error.message, variant: 'destructive' });
+        } finally {
+            setIsLoadingTracks(false);
+        }
+    };
+
+    const handleSelectReleaseVersion = (releaseMbid: string) => {
+        setSelectedReleaseMbid(releaseMbid);
+        if (selectedMatch) {
+            void handleSelectMatch(selectedMatch, releaseMbid);
+        }
+    };
 
     useEffect(() => {
         if (!isOpen || !initialFile) {
@@ -323,10 +386,17 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
         setSearchResults([]);
         setSelectedMatch(null);
         setAlbumTracks([]);
+        setReleaseVersions([]);
+        setSelectedReleaseMbid('');
         setHasSearched(false);
         setMappedTracks({});
         setDecisionRejections([]);
         setSelectedFiles(initialSelected);
+
+        if (initialMatch) {
+            void handleSelectMatch(initialMatch);
+            return;
+        }
 
         if (!nextQuery) {
             return;
@@ -349,7 +419,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                 setHasSearched(true);
             })
             .finally(() => setIsSearching(false));
-    }, [initialFile, isOpen, isVideoImport, targetFiles]);
+    }, [initialFile, initialMatch, isOpen, isVideoImport, targetFiles]);
 
     const handleSearch = async (queryToSearch: string = searchQuery) => {
         if (!queryToSearch.trim()) return;
@@ -365,41 +435,6 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
             toast({ title: 'Search failed', description: error.message, variant: 'destructive' });
         } finally {
             setIsSearching(false);
-        }
-    };
-
-    const handleSelectMatch = async (result: any) => {
-        setSelectedMatch(result);
-
-        if (isVideoImport) {
-            if (!initialFile) return;
-            setMappedTracks({ [initialFile.id]: getResultId(result) });
-            setDecisionRejections([]);
-            return;
-        }
-
-        setIsLoadingTracks(true);
-
-        try {
-            const tracks = await api.getProviderAlbumTracks(getResultProvider(result), getResultId(result)) as any[];
-            setAlbumTracks(tracks);
-
-            if (targetFiles.length === 0 || tracks.length === 0) {
-                setMappedTracks({});
-                return;
-            }
-
-            const response = await api.identifyUnmappedFiles(
-                targetFiles.map((file) => file.id),
-                getResultId(result)
-            ) as any;
-
-            setMappedTracks(response?.success && response.mappedTracks ? response.mappedTracks : {});
-            setDecisionRejections(Array.isArray(response?.rejections) ? response.rejections : []);
-        } catch (error: any) {
-            toast({ title: 'Failed to fetch or map tracks', description: error.message, variant: 'destructive' });
-        } finally {
-            setIsLoadingTracks(false);
         }
     };
 
@@ -569,91 +604,111 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, allF
                                     </div>
                                 ) : null}
 
-                                {isVideoImport ? (
-                                    localFile ? (
-                                        <div className={styles.localFilePanel}>
-                                            <Text weight="semibold">Local file</Text>
-                                            <Text className={styles.filename}>{localFile.filename}</Text>
-                                            <div className={styles.localFileMeta}>
-                                                <Badge appearance="filled">{formatBytes(localFile.file_size ?? 0)}</Badge>
-                                                {formatDuration(localFile.duration) ? <Badge appearance="outline">{formatDuration(localFile.duration)}</Badge> : null}
-                                                {selectedFiles[localFile.id] ? <Badge appearance="tint">Selected</Badge> : null}
-                                            </div>
-                                            <Text className={styles.secondaryText}>{localFile.file_path}</Text>
-                                        </div>
-                                    ) : null
-                                ) : isLoadingTracks ? (
-                                    <div className={styles.emptyState}>
-                                        <Spinner size="large" />
-                                        <Text>Loading tracks for mapping...</Text>
-                                    </div>
-                                ) : (
-                                    <div className={styles.tableContainer}>
-                                        <Table className={styles.mappingTable}>
-                                            <TableHeader>
-                                                <TableRow>
-                                                    <TableHeaderCell style={{ width: '40px' }}>
-                                                        <Checkbox
-                                                            checked={allSelected ? true : someSelected ? 'mixed' : false}
-                                                            onChange={(_, data) => {
-                                                                const nextSelected: Record<number, boolean> = {};
-                                                                targetFiles.forEach((file) => {
-                                                                    nextSelected[file.id] = !!data.checked;
-                                                                });
-                                                                setSelectedFiles(nextSelected);
-                                                            }}
-                                                        />
-                                                    </TableHeaderCell>
-                                                    <TableHeaderCell style={{ width: '50%' }}>Local File</TableHeaderCell>
-                                                    <TableHeaderCell>Provider Track Assignment</TableHeaderCell>
-                                                </TableRow>
-                                            </TableHeader>
-                                            <TableBody>
-                                                {targetFiles.map((file) => {
-                                                    const isChecked = !!selectedFiles[file.id];
-                                                    const mappedId = mappedTracks[file.id];
+                                 {releaseVersions.length > 1 && !isVideoImport ? (
+                                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', margin: '8px 0' }}>
+                                         <Text weight="semibold" size={200}>Release Version:</Text>
+                                         <Select
+                                             value={selectedReleaseMbid}
+                                             onChange={(_, data) => handleSelectReleaseVersion(data.value)}
+                                             style={{ minWidth: '280px' }}
+                                         >
+                                             <option value="">Default (Best Match / Complete Edition)</option>
+                                             {releaseVersions.map((v) => (
+                                                 <option key={v.mbid} value={v.mbid}>
+                                                     {v.title || 'Release'} {v.version_label ? `(${v.version_label})` : v.track_count ? `(${v.track_count} tracks)` : ''}
+                                                 </option>
+                                             ))}
+                                         </Select>
+                                     </div>
+                                 ) : null}
 
-                                                    return (
-                                                        <TableRow key={file.id} style={{ opacity: isChecked ? 1 : 0.6 }}>
-                                                            <TableCell>
-                                                                <Checkbox
-                                                                    checked={isChecked}
-                                                                    onChange={(_, data) => setSelectedFiles({ ...selectedFiles, [file.id]: !!data.checked })}
-                                                                />
-                                                            </TableCell>
-                                                            <TableCell>
-                                                                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                                    <span className={styles.filename} title={file.filename}>{file.filename}</span>
-                                                                    <Text size={100} className={styles.secondaryText}>
-                                                                        {formatBytes(file.file_size ?? 0)}
-                                                                    </Text>
-                                                                </div>
-                                                            </TableCell>
-                                                            <TableCell>
-                                                                <Select
-                                                                    value={mappedId || ''}
-                                                                    onChange={(_, data) => setMappedTracks({ ...mappedTracks, [file.id]: data.value })}
-                                                                    className={styles.mappingSelect}
-                                                                >
-                                                                    <option value="">-- Don&apos;t Map --</option>
-                                                                    {albumTracks.map((track) => {
-                                                                        const providerId = String(track.providerId || track.id || track.provider_id || '');
-                                                                        const trackNum = track.trackNumber ?? track.track_number ?? 0;
-                                                                        return (
-                                                                            <option key={providerId} value={providerId}>
-                                                                                {trackNum ? `${trackNum}. ` : ''}{track.title}{track.version ? ` (${track.version})` : ''}
-                                                                            </option>
-                                                                        );
-                                                                    })}
-                                                                </Select>
-                                                            </TableCell>
-                                                        </TableRow>
-                                                    );
-                                                })}
-                                            </TableBody>
-                                        </Table>
-                                    </div>
-                                )}
+                                 {isVideoImport ? (
+                                     localFile ? (
+                                         <div className={styles.localFilePanel}>
+                                             <Text weight="semibold">Local file</Text>
+                                             <Text className={styles.filename}>{localFile.filename}</Text>
+                                             <div className={styles.localFileMeta}>
+                                                 <Badge appearance="filled">{formatBytes(localFile.file_size ?? 0)}</Badge>
+                                                 {formatDuration(localFile.duration) ? <Badge appearance="outline">{formatDuration(localFile.duration)}</Badge> : null}
+                                                 {selectedFiles[localFile.id] ? <Badge appearance="tint">Selected</Badge> : null}
+                                             </div>
+                                             <Text className={styles.secondaryText}>{localFile.file_path}</Text>
+                                         </div>
+                                     ) : null
+                                 ) : isLoadingTracks ? (
+                                     <div className={styles.emptyState}>
+                                         <Spinner size="large" />
+                                         <Text>Loading tracks for mapping...</Text>
+                                     </div>
+                                 ) : (
+                                     <div className={styles.tableContainer}>
+                                         <Table className={styles.mappingTable}>
+                                             <TableHeader>
+                                                 <TableRow>
+                                                     <TableHeaderCell style={{ width: '40px' }}>
+                                                         <Checkbox
+                                                             checked={allSelected ? true : someSelected ? 'mixed' : false}
+                                                             onChange={(_, data) => {
+                                                                 const nextSelected: Record<number, boolean> = {};
+                                                                 targetFiles.forEach((file) => {
+                                                                     nextSelected[file.id] = !!data.checked;
+                                                                 });
+                                                                 setSelectedFiles(nextSelected);
+                                                             }}
+                                                         />
+                                                     </TableHeaderCell>
+                                                     <TableHeaderCell style={{ width: '50%' }}>Local File</TableHeaderCell>
+                                                     <TableHeaderCell>Provider Track Assignment</TableHeaderCell>
+                                                 </TableRow>
+                                             </TableHeader>
+                                             <TableBody>
+                                                 {targetFiles.map((file) => {
+                                                     const isChecked = !!selectedFiles[file.id];
+                                                     const mappedId = mappedTracks[file.id];
+
+                                                     return (
+                                                         <TableRow key={file.id} style={{ opacity: isChecked ? 1 : 0.6 }}>
+                                                             <TableCell>
+                                                                 <Checkbox
+                                                                     checked={isChecked}
+                                                                     onChange={(_, data) => setSelectedFiles({ ...selectedFiles, [file.id]: !!data.checked })}
+                                                                 />
+                                                             </TableCell>
+                                                             <TableCell>
+                                                                 <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                                     <span className={styles.filename} title={file.filename}>{file.filename}</span>
+                                                                     <Text size={100} className={styles.secondaryText}>
+                                                                         {formatBytes(file.file_size ?? 0)}
+                                                                     </Text>
+                                                                 </div>
+                                                             </TableCell>
+                                                             <TableCell>
+                                                                 <Select
+                                                                     value={mappedId || ''}
+                                                                     onChange={(_, data) => setMappedTracks({ ...mappedTracks, [file.id]: data.value })}
+                                                                     className={styles.mappingSelect}
+                                                                 >
+                                                                     <option value="">-- Don&apos;t Map --</option>
+                                                                     {albumTracks.map((track) => {
+                                                                         const providerId = String(track.providerId || track.id || track.provider_id || '');
+                                                                         const trackNum = track.trackNumber ?? track.track_number ?? 0;
+                                                                         const volNum = track.volumeNumber ?? track.volume_number ?? 1;
+                                                                         const volPrefix = volNum > 1 ? `[CD ${volNum}] ` : '';
+                                                                         return (
+                                                                             <option key={providerId} value={providerId}>
+                                                                                 {volPrefix}{trackNum ? `${trackNum}. ` : ''}{track.title}{track.version ? ` (${track.version})` : ''}
+                                                                             </option>
+                                                                         );
+                                                                     })}
+                                                                 </Select>
+                                                             </TableCell>
+                                                         </TableRow>
+                                                     );
+                                                 })}
+                                             </TableBody>
+                                         </Table>
+                                     </div>
+                                 )}
                             </>
                         )}
                     </DialogContent>

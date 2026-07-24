@@ -9,6 +9,8 @@ import type { LocalFile, LocalGroup, ProviderMatch } from "./import-types.js";
 import { ImportService } from "./import-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 
+import { albumCoverLocalUrl, videoCoverLocalUrl } from "../metadata/media-cover-service.js";
+
 const unmappedFileRepository = new UnmappedFileRepository(db);
 
 function getRelativeDirectory(file: Pick<UnmappedFile, "relative_path">): string {
@@ -87,10 +89,18 @@ export class UnmappedFilesService {
                 const topMatch = await this.findBestAlbumCandidate(groupFiles);
                 const albumOrRecording = (topMatch?.item || (topMatch as any)?.album || (topMatch as any)?.recording) as any;
                 if (albumOrRecording) {
+                    const mbid = albumOrRecording.mbid || albumOrRecording.id || albumOrRecording.providerId;
+                    const isVideo = topMatch?.itemType === "video" || groupFiles[0]?.library_root === "videos";
+                    const coverUrl = isVideo
+                        ? (mbid ? videoCoverLocalUrl(String(mbid)) : null)
+                        : (mbid ? albumCoverLocalUrl({ albumMbid: String(mbid) }) : null);
+
                     const candidateInfo = {
+                        id: String(mbid || ''),
+                        providerId: String(albumOrRecording.providerId || mbid || ''),
                         title: String(albumOrRecording.title || albumOrRecording.name || groupFiles[0].detected_album || groupFiles[0].filename),
-                        artistName: String(albumOrRecording.artistName || albumOrRecording.artist?.name || albumOrRecording.artists?.[0]?.name || groupFiles[0].detected_artist || 'Unknown Artist'),
-                        cover: albumOrRecording.cover || albumOrRecording.imageId || albumOrRecording.picture || null,
+                        artistName: String(albumOrRecording.artistName || albumOrRecording.artist_name || albumOrRecording.artist?.name || albumOrRecording.artists?.[0]?.name || groupFiles[0].detected_artist || 'Unknown Artist'),
+                        cover: coverUrl || albumOrRecording.cover || albumOrRecording.imageId || albumOrRecording.picture || null,
                         score: topMatch?.score,
                     };
                     for (const f of groupFiles) {
@@ -98,6 +108,8 @@ export class UnmappedFilesService {
                     }
                 } else if (groupFiles[0].detected_artist || groupFiles[0].detected_album) {
                     const fallbackInfo = {
+                        id: '',
+                        providerId: '',
                         title: String(groupFiles[0].detected_album || groupFiles[0].detected_track || groupFiles[0].filename),
                         artistName: String(groupFiles[0].detected_artist || 'Unknown Artist'),
                         cover: null,

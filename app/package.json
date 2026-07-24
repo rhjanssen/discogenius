@@ -1,7 +1,7 @@
 {
   "name": "discogenius-web",
   "private": true,
-  "version": "2.6.12",
+  "version": "2.7.0",
   "type": "module",
   "license": "MIT",
   "scripts": {

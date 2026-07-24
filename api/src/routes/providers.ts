@@ -145,8 +145,61 @@ router.get("/:providerId/diagnostics", async (req, res) => {
 router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
   try {
     let albumId = req.params.albumId;
+    const requestedReleaseMbid = typeof req.query.releaseMbid === "string" ? req.query.releaseMbid.trim() : "";
+
     if (looksLikeMusicBrainzMbid(albumId) || albumId.startsWith("mbid-")) {
       const cleanMbid = albumId.replace(/^mbid-/, "");
+
+      // If a specific release MBID or release group MBID is in our database, query canonical tracks first
+      const releaseFilter = requestedReleaseMbid
+        ? "WHERE rel.mbid = ?"
+        : "WHERE rel.release_group_mbid = ? OR rel.mbid = ?";
+      const param = requestedReleaseMbid || cleanMbid;
+
+      // Select release with the largest track count if not explicitly pinned
+      const localTracks = db.prepare(`
+        SELECT
+          t.mbid AS id,
+          t.mbid AS providerId,
+          t.title,
+          t.position,
+          t.medium_position,
+          COALESCE(r.length_ms, t.length_ms, 0) AS length_ms,
+          t.release_mbid
+        FROM Tracks t
+        JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
+        LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+        ${releaseFilter}
+        ORDER BY
+          (SELECT COUNT(*) FROM Tracks t2 WHERE t2.release_mbid = rel.mbid) DESC,
+          t.medium_position ASC,
+          t.position ASC
+      `).all(param) as any[];
+
+      if (localTracks.length > 0) {
+        // Group tracks by the top release_mbid
+        const targetReleaseMbid = requestedReleaseMbid || localTracks[0].release_mbid;
+        const filteredTracks = localTracks
+          .filter((t) => !targetReleaseMbid || t.release_mbid === targetReleaseMbid)
+          .map((t) => ({
+            id: String(t.id),
+            providerId: String(t.providerId || t.id),
+            title: String(t.title),
+            trackNumber: Number(t.medium_position || 1) > 1
+              ? (Number(t.medium_position) * 100 + Number(t.position))
+              : Number(t.position || 0),
+            rawTrackNumber: Number(t.position || 0),
+            volumeNumber: Number(t.medium_position || 1),
+            duration: Math.round(Number(t.length_ms || 0) / 1000),
+            releaseMbid: String(t.release_mbid),
+          }));
+
+        if (filteredTracks.length > 0) {
+          return res.json(filteredTracks);
+        }
+      }
+
+      // Try resolving provider ID fallback
       const slot = db.prepare(`
         SELECT selected_provider_id FROM ReleaseGroupSlots
         WHERE release_group_mbid = ? AND selected_provider_id IS NOT NULL AND selected_provider_id != ''

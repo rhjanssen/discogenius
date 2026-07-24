@@ -655,6 +655,7 @@ const ManualImportTab = () => {
     const queryClient = useQueryClient();
     const [showIgnored, setShowIgnored] = useState(false);
     const [manualImportFile, setManualImportFile] = useState<UnmappedFile | null>(null);
+    const [manualImportCandidate, setManualImportCandidate] = useState<any | null>(null);
     const [sortKey, setSortKey] = useState<SortKey>('created_at');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
@@ -1018,7 +1019,16 @@ const ManualImportTab = () => {
                     : '/assets/images/default-album.png';
 
                 return (
-                    <div className={styles.candidateRow}>
+                    <div
+                        className={styles.candidateRow}
+                        style={{ cursor: 'pointer' }}
+                        title="Click to open manual import for this candidate"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setManualImportCandidate(candidate || null);
+                            setManualImportFile(row.anchorFile);
+                        }}
+                    >
                         <img
                             src={coverSrc}
                             alt=""
@@ -1184,8 +1194,12 @@ const ManualImportTab = () => {
 
             <ManualImportModal
                 isOpen={!!manualImportFile}
-                onClose={() => setManualImportFile(null)}
+                onClose={() => {
+                    setManualImportFile(null);
+                    setManualImportCandidate(null);
+                }}
                 initialFile={manualImportFile}
+                initialMatch={manualImportCandidate}
                 allFiles={fileList}
             />
 
