@@ -7,8 +7,11 @@ services:
         BUILDKIT_INLINE_CACHE: 1
     image: discogenius:latest
     container_name: discogenius
+    # Optional overrides file. Everything below has a built-in default, so a
+    # fresh clone runs without a .env; copy .env.example to .env only to override.
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - PUID=568
       - PGID=568
