@@ -67,10 +67,15 @@ export const handleImportUnmappedFiles: CommandHandler<"ImportUnmappedFiles"> = 
         description: `Importing ${items.length} mapped file${items.length === 1 ? "" : "s"}`,
     });
 
-    await new UnmappedFilesService().bulkMap(items);
+    const summary = await new UnmappedFilesService().bulkMap(items);
 
-    ctx.updateCommandDescription(job, {
-        progress: 100,
-        description: `Imported ${items.length} mapped file${items.length === 1 ? "" : "s"}`,
-    });
+    // Report what actually happened, not a blanket success — a silent no-op
+    // (nothing resolved, all duplicates) must be visible in the activity log.
+    const parts: string[] = [];
+    if (summary.imported > 0) parts.push(`Imported ${summary.imported} file${summary.imported === 1 ? "" : "s"}`);
+    if (summary.duplicates > 0) parts.push(`${summary.duplicates} already in library`);
+    if (summary.skipped > 0) parts.push(`${summary.skipped} could not be matched`);
+    const description = parts.length > 0 ? parts.join(" · ") : "No files were imported";
+
+    ctx.updateCommandDescription(job, { progress: 100, description });
 };

@@ -591,7 +591,7 @@ function createDisplayRow(files: UnmappedFile[], kind: DisplayRowKind, candidate
     };
 }
 
-function buildDisplayRows(files: UnmappedFile[]): DisplayRow[] {
+function buildDisplayRows(files: UnmappedFile[], candidatesMap?: Record<number, any>): DisplayRow[] {
     const buckets = new Map<string, UnmappedFile[]>();
 
     for (const file of files) {
@@ -637,14 +637,14 @@ function buildDisplayRows(files: UnmappedFile[]): DisplayRow[] {
             }
 
             remainingFiles.forEach((file) => consumedIds.add(file.id));
-            rows.push(createDisplayRow(remainingFiles, 'group'));
+            rows.push(createDisplayRow(remainingFiles, 'group', candidatesMap));
         }
 
         for (const file of orderedBucket) {
             if (consumedIds.has(file.id)) {
                 continue;
             }
-            rows.push(createDisplayRow([file], 'file'));
+            rows.push(createDisplayRow([file], 'file', candidatesMap));
         }
     }
 
@@ -701,7 +701,10 @@ const ManualImportTab = () => {
     const fileList = Array.isArray(unmappedData?.files) ? unmappedData.files : [];
     const visibleFiles = showIgnored ? fileList : fileList.filter((file) => !file.ignored);
 
-    const displayRows = useMemo(() => buildDisplayRows(visibleFiles), [visibleFiles]);
+    const displayRows = useMemo(
+        () => buildDisplayRows(visibleFiles, unmappedData?.candidates),
+        [visibleFiles, unmappedData?.candidates],
+    );
 
     const sortedRows = useMemo(() => {
         const nextRows = [...displayRows];

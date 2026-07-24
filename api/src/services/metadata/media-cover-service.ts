@@ -559,6 +559,28 @@ function prepareResizedMediaCovers(
   return derivatives;
 }
 
+/**
+ * Return a JPEG buffer of `sourcePath` scaled so its height is at most
+ * `maxHeight`, or null when the source is already within the cap (embed it
+ * as-is) or cannot be decoded. Pure-JS (no native deps); used to cap embedded
+ * cover art at a sane size without a network round trip.
+ */
+export function renderCappedCoverBuffer(sourcePath: string, maxHeight: number): Buffer | null {
+  try {
+    const buffer = fs.readFileSync(sourcePath);
+    const extension = path.extname(sourcePath) || ".jpg";
+    const decoded = decodeImage(buffer, extension);
+    if (!decoded || decoded.height <= maxHeight) {
+      return null;
+    }
+    const [derivative] = prepareResizedMediaCovers(buffer, extension, [maxHeight]);
+    return derivative ? derivative.buffer : null;
+  } catch (error) {
+    console.warn("[MediaCoverService] Failed to render capped cover:", (error as Error).message);
+    return null;
+  }
+}
+
 export function getCoverArtArchiveReleaseGroupUrl(releaseGroupMbid: string | null | undefined): string | null {
   const mbid = String(releaseGroupMbid || "").trim();
   return mbid ? `https://coverartarchive.org/release-group/${mbid}/front` : null;

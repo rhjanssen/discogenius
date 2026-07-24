@@ -261,7 +261,7 @@ const getResultProvider = (result: any) => String(result.provider || result.prov
 const getResultTitle = (result: any) => result.name || result.title || 'Unknown Release';
 
 const getResultSubtitle = (result: any) =>
-    result.subtitle || result.artist_name || result.artist?.name || result.artists?.[0]?.name || 'Unknown Artist';
+    result.subtitle || result.artist_name || result.artistName || result.artist?.name || result.artists?.[0]?.name || 'Unknown Artist';
 
 const getResultImage = (result: any, preferVideoProxy = false) =>
     (preferVideoProxy ? mediaCoverProxySrc(result) : mediaCoverSrc(result))

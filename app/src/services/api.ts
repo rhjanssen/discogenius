@@ -657,10 +657,10 @@ class ApiClient {
   }
 
   // Identification endpoints
-  async identifyUnmappedFiles(fileIds: number[], tidalAlbumId: string) {
+  async identifyUnmappedFiles(fileIds: number[], releaseGroupMbid: string) {
     return this.request('/unmapped/identify', {
       method: 'POST',
-      body: JSON.stringify({ fileIds, tidalAlbumId }),
+      body: JSON.stringify({ fileIds, releaseGroupMbid }),
     });
   }
 

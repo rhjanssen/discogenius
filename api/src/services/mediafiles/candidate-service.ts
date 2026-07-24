@@ -1,0 +1,131 @@
+import { db } from "../../database.js";
+
+/**
+ * A catalog-only candidate release group discovered for a group of local files.
+ *
+ * Mirrors the shape Lidarr's identification pipeline consumes from
+ * CandidateService.GetDbCandidatesFromTags — a candidate album (release group)
+ * resolved purely from the local database, never a streaming provider. The
+ * fields intentionally match what IdentificationService.getAlbumScore reads
+ * (title/name, artist_name/artist.name, num_tracks) so these candidates can be
+ * scored by the existing Munkres pipeline unchanged.
+ */
+export interface CatalogAlbumCandidate {
+    id: string;
+    mbid: string;
+    title: string;
+    artist_name: string;
+    artist: { id: string | null; name: string };
+    num_tracks: number;
+}
+
+// Same tokeniser search.ts uses for the CatalogSearch FTS table so album-title
+// discovery here behaves identically to the global search box.
+function toFtsPrefixQuery(value: string): string | null {
+    const tokens = value.normalize("NFKC").match(/[\p{L}\p{N}]+/gu) || [];
+    if (tokens.length === 0) return null;
+    return tokens
+        .slice(0, 8)
+        .map((token) => `"${token.replace(/"/g, '""')}"*`)
+        .join(" AND ");
+}
+
+/**
+ * Catalog-only candidate discovery (Lidarr: CandidateService).
+ *
+ * Given the artist/album tags detected for a folder group of local files, this
+ * returns candidate release groups drawn exclusively from the local catalog
+ * (Albums = release groups, Artists, AlbumReleases, CatalogSearch FTS). It never
+ * calls a streaming provider — the streaming provider is only ever used to
+ * *download* audio, not to identify local files, exactly like Lidarr identifies
+ * against its own MusicBrainz-synced database.
+ */
+export class CatalogCandidateService {
+    static getReleaseGroupCandidates(opts: {
+        artist?: string | null;
+        album?: string | null;
+        limit?: number;
+    }): CatalogAlbumCandidate[] {
+        const artist = (opts.artist || "").trim();
+        const album = (opts.album || "").trim();
+        const limit = opts.limit ?? 8;
+
+        if (!artist && !album) return [];
+
+        let mbids: string[] = [];
+
+        // Tier 1 — artist + album title (Lidarr GetDbCandidates: artist tag → album candidates).
+        if (artist && album) {
+            mbids = (db.prepare(`
+                SELECT al.mbid
+                FROM Albums al
+                JOIN Artists a ON a.mbid = al.artist_mbid
+                WHERE a.name LIKE ? AND al.title LIKE ?
+                LIMIT ?
+            `).all(`%${artist}%`, `%${album}%`, limit) as Array<{ mbid: string }>).map((r) => r.mbid);
+        }
+
+        // Tier 2 — album-title FTS (handles punctuation/ordering the LIKE misses).
+        if (mbids.length === 0 && album) {
+            const fts = toFtsPrefixQuery(album);
+            if (fts) {
+                mbids = (db.prepare(`
+                    SELECT entity_id AS mbid
+                    FROM CatalogSearch
+                    WHERE CatalogSearch MATCH ? AND entity_type = 'album'
+                    LIMIT ?
+                `).all(fts, limit) as Array<{ mbid: string }>).map((r) => r.mbid);
+            }
+        }
+
+        // Tier 3 — token AND LIKE across title + artist name (last-resort fuzzy).
+        if (mbids.length === 0) {
+            const tokens = [artist, album].filter(Boolean).join(" ").split(/\s+/).filter(Boolean);
+            if (tokens.length > 0) {
+                const conditions = tokens.map(() => "(al.title LIKE ? OR a.name LIKE ?)").join(" AND ");
+                const params = tokens.flatMap((t) => [`%${t}%`, `%${t}%`]);
+                mbids = (db.prepare(`
+                    SELECT al.mbid
+                    FROM Albums al
+                    LEFT JOIN Artists a ON a.mbid = al.artist_mbid
+                    WHERE ${conditions}
+                    LIMIT ?
+                `).all(...params, limit) as Array<{ mbid: string }>).map((r) => r.mbid);
+            }
+        }
+
+        if (mbids.length === 0) return [];
+
+        const marks = mbids.map(() => "?").join(", ");
+        const rows = db.prepare(`
+            SELECT
+                al.mbid AS id,
+                al.title AS title,
+                a.name AS artist_name,
+                a.mbid AS artist_mbid,
+                (
+                    SELECT MAX(rel.track_count)
+                    FROM AlbumReleases rel
+                    WHERE rel.release_group_mbid = al.mbid
+                ) AS num_tracks
+            FROM Albums al
+            LEFT JOIN Artists a ON a.mbid = al.artist_mbid
+            WHERE al.mbid IN (${marks})
+        `).all(...mbids) as Array<{
+            id: string;
+            title: string;
+            artist_name: string | null;
+            artist_mbid: string | null;
+            num_tracks: number | null;
+        }>;
+
+        return rows.map((row) => ({
+            id: row.id,
+            mbid: row.id,
+            title: row.title,
+            artist_name: row.artist_name || "",
+            artist: { id: row.artist_mbid, name: row.artist_name || "" },
+            num_tracks: Number(row.num_tracks || 0),
+        }));
+    }
+}

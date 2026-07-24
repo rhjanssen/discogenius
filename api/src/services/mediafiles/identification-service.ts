@@ -1,6 +1,5 @@
 import levenshtein from "fast-levenshtein";
 import munkres from "munkres-js";
-import { streamingProviderManager } from "../providers/index.js";
 import type { ImportDecisionMode } from "../import-decision/types.js";
 
 export interface IdentifiableFile {
@@ -183,6 +182,27 @@ export class IdentificationService {
         };
     }
 
+    // Release-wide absolute track number (Lidarr: DistanceCalculator.GetTotalTrackNumber)
+    // = per-medium position + count of tracks on all lower-numbered mediums, so
+    // disc-2 track-1 scores against "15" (on a 14-track disc 1), not "1".
+    private static computeAbsoluteTrackNumbers(tracks: any[]): number[] {
+        const mediumSizes = new Map<number, number>();
+        for (const track of tracks) {
+            const medium = Number(track.medium_position ?? track.volumeNumber ?? track.volume_number ?? 1) || 1;
+            mediumSizes.set(medium, (mediumSizes.get(medium) || 0) + 1);
+        }
+
+        return tracks.map((track) => {
+            const medium = Number(track.medium_position ?? track.volumeNumber ?? track.volume_number ?? 1) || 1;
+            const position = Number(track.position ?? track.trackNumber ?? track.track_number ?? 0) || 0;
+            let lowerMediumOffset = 0;
+            for (const [otherMedium, count] of mediumSizes) {
+                if (otherMedium < medium) lowerMediumOffset += count;
+            }
+            return position + lowerMediumOffset;
+        });
+    }
+
     private static buildDistanceMatrix(files: IdentifiableFile[], tracks: any[]) {
         const orderedFiles = [...files].sort((left, right) => {
             const leftTrack = this.extractTrackNumber(left) ?? Number.MAX_SAFE_INTEGER;
@@ -191,10 +211,10 @@ export class IdentificationService {
             return left.filename.localeCompare(right.filename);
         });
 
-        const distances = orderedFiles.map((file) => tracks.map((track, trackIndex) => {
-            const totalTrackNumber = trackIndex + 1;
-            return this.calculateTrackDistance(file, track, totalTrackNumber);
-        }));
+        const absoluteTrackNumbers = this.computeAbsoluteTrackNumbers(tracks);
+        const distances = orderedFiles.map((file) => tracks.map((track, trackIndex) =>
+            this.calculateTrackDistance(file, track, absoluteTrackNumbers[trackIndex])
+        ));
 
         const matrix = distances.map((row) => row.map((distance) => distance.normalizedDistance));
 
@@ -279,6 +299,7 @@ export class IdentificationService {
                     t.medium_position AS volumeNumber,
                     t.medium_position AS volume_number,
                     t.medium_position AS medium_position,
+                    t.release_mbid AS release_mbid,
                     COALESCE(r.length_ms, t.length_ms, 0) AS length_ms,
                     COALESCE(r.length_ms, t.length_ms, 0) / 1000.0 AS duration
                 FROM Tracks t
@@ -290,17 +311,19 @@ export class IdentificationService {
                     t.medium_position ASC,
                     t.position ASC
             `).all(cleanMbid, cleanMbid) as any[];
-        }
 
-        if (tracks.length === 0) {
-            try {
-                tracks = (await streamingProviderManager.getDefaultStreamingProvider().getAlbumTracks(albumId))
-                    .map((track) => (track.raw && typeof track.raw === "object" ? track.raw : track)) as any[];
-            } catch {
-                tracks = [];
+            // Score against a single edition (Lidarr: GetBestRelease picks one
+            // AlbumRelease). The query orders the largest release first; restrict
+            // to that release's tracklist so multi-edition release groups don't
+            // blend two tracklists into one Munkres matrix.
+            const targetReleaseMbid = tracks[0]?.release_mbid;
+            if (targetReleaseMbid) {
+                tracks = tracks.filter((track) => track.release_mbid === targetReleaseMbid);
             }
         }
 
+        // Catalog-only: if the release group is not in the local catalog we
+        // cannot identify against it — we never fall back to a streaming provider.
         return this.solveAssignments(files, tracks);
     }
 

@@ -167,7 +167,11 @@ export class DownloadMissingService {
         };
 
         const slotParams: any[] = [];
-        let slotArtistWhere = "monitored_artist.monitored = 1";
+        // Slot-level monitoring is the download authority: an album whose
+        // ReleaseGroupSlots.monitored = 1 should download even when its canonical
+        // owner is an unmonitored credited artist (e.g. a feature credit). Only
+        // scope to a specific owner when an artistId is explicitly requested.
+        let slotArtistWhere = "1 = 1";
         if (artistId) {
             slotArtistWhere = "monitored_artist.id = ?";
             slotParams.push(artistId);
@@ -197,7 +201,7 @@ export class DownloadMissingService {
                 monitored_artist.name as artist_name
             FROM ReleaseGroupSlots rgs
             JOIN Albums rg ON rg.id = rgs.release_group_id
-            JOIN Artists monitored_artist ON monitored_artist.mbid = rgs.artist_mbid
+            LEFT JOIN Artists monitored_artist ON monitored_artist.mbid = rgs.artist_mbid
             LEFT JOIN ProviderItems pi
               ON pi.provider = rgs.selected_provider
              AND pi.provider_id = rgs.selected_provider_id

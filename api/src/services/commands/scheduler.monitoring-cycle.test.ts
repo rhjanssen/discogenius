@@ -88,7 +88,7 @@ test("monitoring cycle is independent from the daily root scan and stamps after 
     assert.equal(taskStateModule.hasActiveMonitoringCycleWorkflow(), false);
 });
 
-test("scheduled monitoring cycle with no due artists stops without no-op rescan or download passes", () => {
+test("scheduled monitoring cycle with no due artists still runs the terminal download pass", () => {
     const refreshJobId = taskSchedulerModule.queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
     assert.ok(refreshJobId > 0);
 
@@ -98,12 +98,31 @@ test("scheduled monitoring cycle with no due artists stops without no-op rescan 
     queueModule.CommandQueueManager.complete(refreshJobId);
     taskSchedulerModule.queueNextMonitoringPass(refreshJob);
 
+    // No metadata refresh is due, but the cycle must STILL run its terminal
+    // DownloadMissing pass — monitored albums can become downloadable without any
+    // artist being due (mirrors Lidarr always rescanning after the refresh loop).
+    // The independent daily RescanFolders task is not queued here.
     const pendingRootScans = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
         [queueModule.CommandNames.RescanFolders],
         10,
     );
     assert.equal(pendingRootScans.length, 0);
-    assert.equal(pendingDownloadMissing().length, 0);
+
+    const pendingDownloads = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.DownloadMissing],
+        10,
+    );
+    assert.equal(pendingDownloads.length, 1);
+    assert.equal((pendingDownloads[0].payload as Record<string, unknown>).monitoringCycle, "full-cycle");
+    assert.equal(taskStateModule.hasActiveMonitoringCycleWorkflow(), true);
+
+    // The cycle is only stamped complete once the terminal download pass finishes.
+    const midSnapshot = taskSchedulerModule.getScheduledTaskSnapshots().find((task) => task.key === "monitoring-cycle");
+    assert.ok(midSnapshot);
+    assert.equal(midSnapshot.lastQueuedAt, null);
+
+    queueModule.CommandQueueManager.complete(pendingDownloads[0].id);
+    taskSchedulerModule.queueNextMonitoringPass(pendingDownloads[0]);
 
     const finalSnapshot = taskSchedulerModule.getScheduledTaskSnapshots().find((task) => task.key === "monitoring-cycle");
     assert.ok(finalSnapshot);

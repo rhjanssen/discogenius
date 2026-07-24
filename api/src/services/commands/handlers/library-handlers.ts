@@ -188,6 +188,26 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
     });
 };
 
+// Throttled per-file retag progress reporter: "Retag Files - writing file x/y"
+// with a 5..95% ramp. Caps DB/SSE writes to ~50 updates regardless of file count.
+function makeRetagProgress(
+    ctx: Parameters<CommandHandler<"RetagFiles">>[1],
+    // Shared by RetagFiles and RetagArtist handlers; the job command name differs.
+    job: Parameters<CommandHandler<"RetagFiles" | "RetagArtist">>[0],
+    label: string,
+) {
+    let lastReported = 0;
+    return (completed: number, total: number) => {
+        const step = Math.max(1, Math.floor(total / 50));
+        if (completed !== total && completed - lastReported < step) return;
+        lastReported = completed;
+        ctx.updateCommandDescription(job, {
+            progress: 5 + Math.floor((completed / Math.max(total, 1)) * 90),
+            description: `${label} - writing file ${completed}/${total}`,
+        });
+    };
+}
+
 export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
         progress: 5,
@@ -200,7 +220,7 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
     let missing = 0;
     const errors: Array<{ id: number; error: string }> = [];
     for (const artistId of artistIds) {
-        const result = await AudioTagService.applyByQuery({ artistId });
+        const result = await AudioTagService.applyByQuery({ artistId, onProgress: makeRetagProgress(ctx, job, 'Retag Artist') });
         ArtistStatisticsService.refresh([artistId]);
         retagged += result.retagged;
         missing += result.missing;
@@ -251,7 +271,7 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
         // lyrics are handled by the metadata backfill, not one network request
         // per file while a RetagFiles command owns the worker.
         const audioResult = audioIds.length > 0
-            ? await AudioTagService.apply(audioIds, { includeExternalLyrics: false })
+            ? await AudioTagService.apply(audioIds, { includeExternalLyrics: false, onProgress: makeRetagProgress(ctx, job, 'Retag Files') })
             : emptyResult;
         const videoResult = { ...emptyResult, errors: [] as Array<{ id: number; error: string }> };
         for (let index = 0; index < videoIds.length; index++) {
@@ -276,10 +296,11 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
         };
     } else {
         result = Array.isArray(job.payload.mediaIds) && job.payload.mediaIds.length > 0
-            ? await AudioTagService.applyForMediaIds(job.payload.mediaIds)
+            ? await AudioTagService.applyForMediaIds(job.payload.mediaIds, { onProgress: makeRetagProgress(ctx, job, 'Retag Files') })
             : await AudioTagService.applyByQuery({
                 artistId: job.payload.artistId,
                 albumId: job.payload.albumId,
+                onProgress: makeRetagProgress(ctx, job, 'Retag Files'),
             });
     }
     ArtistStatisticsService.refresh(job.payload.artistId ? [job.payload.artistId] : undefined);

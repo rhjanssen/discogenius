@@ -137,9 +137,15 @@ router.post("/identify", async (req, res) => {
         }
 
         const fileIds = getRequiredIntegerArray(body, "fileIds");
-        const tidalAlbumId = getRequiredIdentifier(body, "tidalAlbumId");
+        // The identity of a release group is a MusicBrainz release-group MBID.
+        // `tidalAlbumId` is retained only as a backwards-compatible alias for
+        // older clients; identification is catalog-only and never provider-keyed.
+        const releaseGroupMbid = getRequiredIdentifier(
+            { value: body.releaseGroupMbid ?? body.albumId ?? body.tidalAlbumId },
+            "value",
+        );
 
-        const result = await unmappedFilesService.identifyAgainstAlbum(fileIds, tidalAlbumId);
+        const result = await unmappedFilesService.identifyAgainstAlbum(fileIds, releaseGroupMbid);
         res.json({ success: true, ...result });
     } catch (error: any) {
         if (isRequestValidationError(error)) {

@@ -980,7 +980,7 @@ export class DiskScanService {
                                         librarySlot: metadataMatch.librarySlot ?? null,
                                     };
                                 } else {
-                                    unmappedReason = "No matching provider item found";
+                                    unmappedReason = "No matching release found in catalog";
                                 }
                             } else {
                                 unmappedReason = "No matching provider item found";

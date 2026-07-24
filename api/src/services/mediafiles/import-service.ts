@@ -261,8 +261,8 @@ export class ImportService {
      * This bypasses the fuzzy matching and strictly maps the given files to the given provider tracks,
      * registering them in the system and cleaning them from the unmapped_files table.
      */
-    async bulkImportUnmapped(items: { id: number, providerId: string }[]): Promise<void> {
-        await manualImportService.bulkImportUnmapped(items);
+    async bulkImportUnmapped(items: { id: number, providerId: string }[]) {
+        return manualImportService.bulkImportUnmapped(items);
     }
 
 

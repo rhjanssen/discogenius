@@ -22,7 +22,7 @@ import { resolveStoredLibraryPath } from "./library-paths.js";
 import { MoveArtistService } from "./move-artist-service.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
-import { cleanProviderText, downloadAlbumCover } from "./metadata-files.js";
+import { cleanProviderText } from "./metadata-files.js";
 import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
 import { classifyLyricsForSidecar } from "../extras/lyrics/lyric-sidecar.js";
 
@@ -162,6 +162,7 @@ type RetagTrackRow = {
   media_explicit: number | null;
   album_mbid: string | null;
   album_mb_release_group_id: string | null;
+  canonical_release_group_mbid: string | null;
   album_provider_id: string | null;
   artist_mbid: string | null;
   release_status: string | null;
@@ -218,12 +219,15 @@ type RetagApplyOptions = {
    */
   includeExternalLyrics?: boolean;
   lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
+  /** Reports per-file progress (completed, total) so a command can show "x/y files". */
+  onProgress?: (completed: number, total: number) => void;
 };
 
 export type RetagMediaIdOptions = {
   provider?: string | null;
   includeExternalLyrics?: boolean;
   lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
+  onProgress?: (completed: number, total: number) => void;
 };
 
 export type RetagScopeOptions = {
@@ -231,6 +235,7 @@ export type RetagScopeOptions = {
   albumId?: string;
   limit?: number;
   offset?: number;
+  onProgress?: (completed: number, total: number) => void;
 };
 
 type RetagEvaluationOptions = {
@@ -241,20 +246,15 @@ type RetagEvaluationOptions = {
 };
 
 /**
- * Skip embedding when the cover already matches, OR when the target would be a
- * downgrade — never replace a larger embedded cover with a smaller one (e.g. a
- * 3000px original with a 500px cached proxy). Only a genuine upgrade or a
- * missing/unreadable cover is worth a rewrite.
+ * Skip embedding only when the currently-embedded cover already IS the album's
+ * cover (byte-identical to the resolved target). Otherwise overrule it — Lidarr
+ * policy: replace a wrong embedded cover whether it is larger OR smaller (in both
+ * filesize and resolution) than the album's canonical cover. There is no
+ * "downgrade" guard: a larger-but-wrong cover (e.g. a 3000px image from a hybrid
+ * track) must still be overruled with the correct capped album cover.
  */
 function shouldSkipCoverEmbed(comparison: EmbeddedCoverComparison): boolean {
-  if (comparison.matches) {
-    return true;
-  }
-  const { current, target } = comparison;
-  if (current?.width && current?.height && target?.width && target?.height) {
-    return current.width * current.height >= target.width * target.height;
-  }
-  return false;
+  return comparison.matches;
 }
 
 /** "1200×1200 · 312 KB" — resolution (dot) size, à la Lidarr's cover diff. */
@@ -288,49 +288,39 @@ const RETAG_EVALUATION_CONCURRENCY = 8;
 
 async function resolvePreferredEmbeddedCover(
   row: RetagTrackRow,
-  config: MetadataConfig,
-  resolvedMediaPath: string,
+  _config: MetadataConfig,
+  _resolvedMediaPath: string,
   context: EmbeddedCoverContext,
 ): Promise<string | null> {
-  const sidecarPath = path.join(path.dirname(resolvedMediaPath), config.album_cover_name || "cover.jpg");
-  const albumId = String(row.album_mb_release_group_id || row.album_mbid || row.album_provider_id || "").trim();
-  if (!albumId) return fs.existsSync(sidecarPath) ? sidecarPath : null;
+  // Single source of truth: the cover already in the mediacover cache for this
+  // file's OWN canonical release group — the exact image the UI shows. No
+  // provider fallback, no hybrid-matched-track release group, no folder-sidecar
+  // preference, and no on-the-fly download at tag-write time. Refresh + provider
+  // matching are the phases that acquire artwork; if it was never cached, we
+  // simply do not embed (mirrors Lidarr, which embeds from the album's stored
+  // MediaCover and does not fetch during a tag write).
+  const albumMbid = String(row.canonical_release_group_mbid || row.album_mbid || "").trim();
+  if (!albumMbid) return null;
 
-  // Match Lidarr's embedded-cover SIZE without needing its source. Lidarr embeds
-  // its Cover Art Archive master verbatim (no compression), which is naturally a
-  // few hundred KB. Our folder sidecar can be a multi-MB provider origin (e.g. a
-  // 3000px Apple cover), which is impractical to embed into every track. So embed
-  // a capped rendition of the album cover (respecting artwork_preference) that
-  // lands in Lidarr's ballpark (well under 1 MB) while the full-res origin stays
-  // as the folder sidecar. Bigger than the earlier 500px proxy, far smaller than
-  // the 6 MB origin.
-  const key = `${String(row.file_provider || "").trim()}:canonical:${albumId}`;
+  const key = `canonical:${albumMbid}`;
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
-      // 1. Prefer existing local folder sidecar if present.
-      if (fs.existsSync(sidecarPath)) return sidecarPath;
+      const { getCachedMediaCoverFilePath, renderCappedCoverBuffer } = await import("../metadata/media-cover-service.js");
+      const cover = getCachedMediaCoverFilePath(albumMbid, "Album", "cover");
+      if (!cover || !fs.existsSync(cover)) return null;
 
-      // 2. Prefer cached MediaCover artwork file if present.
-      const { getCachedMediaCoverFilePath } = await import("../metadata/media-cover-service.js");
-      const cachedMediaCover = getCachedMediaCoverFilePath(row.album_mb_release_group_id || row.album_mbid || albumId, "Album", "cover");
-      if (cachedMediaCover && fs.existsSync(cachedMediaCover)) return cachedMediaCover;
+      // Cap the embedded rendition at EMBEDDED_COVER_HEIGHT: scale down on the fly
+      // (from the local cached file, no network) only when it exceeds the cap;
+      // otherwise embed the cached cover as-is.
+      const capped = renderCappedCoverBuffer(cover, EMBEDDED_COVER_HEIGHT);
+      if (!capped) return cover;
 
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-embedded-cover-"));
       context.temporaryDirectories.push(tempDir);
       const tempCover = path.join(tempDir, "cover.jpg");
-      try {
-        // Prefer the selected/canonical release-group id so hybrid imports (tracks
-        // sourced from another provider album) overwrite foreign embedded art with
-        // the destination album cover rather than keeping the source edition art.
-        await downloadAlbumCover(albumId, EMBEDDED_COVER_HEIGHT, tempCover, { provider: row.file_provider });
-        if (fs.existsSync(tempCover)) return tempCover;
-      } catch (error) {
-        console.warn(`[AudioCover] Failed to resolve embedded artwork for ${albumId}:`, error);
-      }
-      // Fallback: the folder sidecar if the capped render failed (rare).
-      if (fs.existsSync(sidecarPath)) return sidecarPath;
-      return null;
+      fs.writeFileSync(tempCover, capped);
+      return tempCover;
     })();
     context.byAlbum.set(key, pending);
   }
@@ -1072,6 +1062,10 @@ export class AudioTagService {
         provider_track.explicit AS media_explicit,
         COALESCE(lf.canonical_release_mbid, canonical_track.release_mbid, provider_canonical_track.release_mbid, provider_track.release_mbid, provider_album.release_mbid) AS album_mbid,
         COALESCE(lf.canonical_release_group_mbid, provider_track.release_group_mbid, provider_album.release_group_mbid) AS album_mb_release_group_id,
+        -- The file's OWN canonical release group (no hybrid provider-track fallback):
+        -- the album identity the UI resolves the cover by. Used for cover embedding
+        -- so a hybrid-matched track can never pull a foreign album's art.
+        lf.canonical_release_group_mbid AS canonical_release_group_mbid,
         provider_album.provider_id AS album_provider_id,
         COALESCE(lf.canonical_artist_mbid, canonical_recording.artist_mbid, provider_recording.artist_mbid, provider_track.artist_mbid, provider_album.artist_mbid, artist.mbid) AS artist_mbid,
         COALESCE(canonical_release.status, ar.status) AS release_status,
@@ -2536,7 +2530,11 @@ export class AudioTagService {
       return embedded;
     };
 
+    let processedCount = 0;
     for (const id of ids) {
+      processedCount++;
+      options.onProgress?.(processedCount, ids.length);
+
       const row = rowsById.get(id);
       if (!row) {
         result.skipped++;
@@ -2667,6 +2665,7 @@ export class AudioTagService {
     return this.apply(libraryFileIds.map((row) => row.id), {
       includeExternalLyrics: options.includeExternalLyrics ?? false,
       lyricsByProviderMedia: options.lyricsByProviderMedia,
+      onProgress: options.onProgress,
     });
   }
 
@@ -2681,7 +2680,7 @@ export class AudioTagService {
       .filter((item) => !item.missing && item.changes.length > 0)
       .map((item) => item.id);
 
-    return this.apply(ids);
+    return this.apply(ids, { onProgress: options.onProgress });
   }
 
   /**

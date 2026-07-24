@@ -21,8 +21,15 @@ export function shouldTagManuallyImportedFiles(config: MetadataConfig): boolean 
     return config.write_audio_tags_policy === "all_files";
 }
 
+export interface ManualImportSummary {
+    requested: number;
+    imported: number;
+    duplicates: number;
+    skipped: number;
+}
+
 export class ManualImportService {
-    async bulkImportUnmapped(items: { id: number, providerId: string }[]): Promise<void> {
+    async bulkImportUnmapped(items: { id: number, providerId: string }[]): Promise<ManualImportSummary> {
         const { db } = await import("../../database.js");
         const { streamingProviderManager } = await import("../providers/index.js");
         const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
@@ -103,7 +110,7 @@ export class ManualImportService {
                             a.name AS artistName
                         FROM Tracks t
                         JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
-                        JOIN ReleaseGroups rg ON rg.mbid = rel.release_group_mbid
+                        JOIN Albums rg ON rg.mbid = rel.release_group_mbid
                         JOIN Artists a ON a.mbid = rg.artist_mbid
                         LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
                         WHERE t.mbid = ?
@@ -137,7 +144,7 @@ export class ManualImportService {
                                 a.name AS artistName
                             FROM Tracks t
                             JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
-                            JOIN ReleaseGroups rg ON rg.mbid = rel.release_group_mbid
+                            JOIN Albums rg ON rg.mbid = rel.release_group_mbid
                             JOIN Artists a ON a.mbid = rg.artist_mbid
                             LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
                             WHERE rel.release_group_mbid = ? OR rel.mbid = ?
@@ -237,9 +244,12 @@ export class ManualImportService {
                     ? db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any
                     : null;
 
-                // Refresh provider album metadata when the imported item belongs to an album.
+                // Refresh provider album metadata when the imported item belongs to
+                // a *provider* album. Catalog (MBID) imports already have their
+                // metadata locally, so we never make a provider round-trip for them.
                 const albumId = (trackData.album?.providerId || trackData.album?.id || trackData.album_id)?.toString() || null;
-                if (albumId) {
+                const albumIsMbid = !!albumId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(albumId.replace(/^mbid-/, ""));
+                if (albumId && !albumIsMbid) {
                     try { await RefreshAlbumService.refreshMetadata(albumId); } catch {
                         console.warn(`[Bulk Import] Could not refresh album metadata for album ${albumId}`);
                     }
@@ -380,7 +390,11 @@ export class ManualImportService {
             }
         }
 
-        if (collected.length === 0) return;
+        if (collected.length === 0) {
+            return { requested: items.length, imported: 0, duplicates: 0, skipped: items.length };
+        }
+
+        let duplicateCount = 0;
 
         // ── Phase 2: Single-transaction DB commit ───────────────────────
         // All reads for control-flow decisions and all writes happen in one transaction.
@@ -495,6 +509,7 @@ export class ManualImportService {
                         UPDATE UnmappedFiles SET reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
                     `).run("Duplicate of an existing imported library file", c.id);
                     console.warn(`[Bulk Import] Skipping duplicate: ${c.file.file_path} for media ${c.providerId}`);
+                    duplicateCount++;
                     continue;
                 }
 
@@ -649,6 +664,14 @@ export class ManualImportService {
                 }
             }
         }
+
+        const imported = statusUpdates.length;
+        return {
+            requested: items.length,
+            imported,
+            duplicates: duplicateCount,
+            skipped: Math.max(0, items.length - imported - duplicateCount),
+        };
     }
 }
 

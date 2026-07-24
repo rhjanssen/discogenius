@@ -7,7 +7,7 @@ import { ImportDecisionEngine } from "../import-decision/engine.js";
 import type { ImportDecisionMode } from "../import-decision/types.js";
 import type { LocalFile, LocalGroup, ProviderMatch } from "./import-types.js";
 import { ImportService } from "./import-service.js";
-import { streamingProviderManager } from "../providers/index.js";
+import { CatalogCandidateService } from "./candidate-service.js";
 
 import { albumCoverLocalUrl, videoCoverLocalUrl } from "../metadata/media-cover-service.js";
 
@@ -37,22 +37,6 @@ function mostCommonNonEmpty(values: Array<string | null | undefined>): string | 
     }
 
     return bestValue;
-}
-
-function isAudioCandidate(filePath: string): boolean {
-    return [
-        ".flac",
-        ".alac",
-        ".wav",
-        ".aiff",
-        ".aif",
-        ".mp3",
-        ".m4a",
-        ".aac",
-        ".ogg",
-        ".opus",
-        ".wma",
-    ].includes(path.extname(filePath).toLowerCase());
 }
 
 export class UnmappedFilesService {
@@ -164,53 +148,35 @@ export class UnmappedFilesService {
         return files.length;
     }
 
-    async bulkMap(items: Array<{ id: number; providerId: string }>): Promise<void> {
-        await this.importService.bulkImportUnmapped(items);
+    async bulkMap(items: Array<{ id: number; providerId: string }>) {
+        return this.importService.bulkImportUnmapped(items);
     }
 
+    /**
+     * Identify a group of local files against a specific release group, purely
+     * from the local catalog (Lidarr: IdentificationService with an Album
+     * override). `rawReleaseGroupMbid` is a MusicBrainz release-group MBID — no
+     * translation to a streaming-provider id happens anywhere in this path.
+     */
     async identifyAgainstAlbum(
         fileIds: number[],
-        rawTidalAlbumId: string,
+        rawReleaseGroupMbid: string,
         mode: ImportDecisionMode = "ExistingFiles"
     ) {
-        let tidalAlbumId = rawTidalAlbumId;
-        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tidalAlbumId.replace(/^mbid-/, ""))) {
-            const cleanMbid = tidalAlbumId.replace(/^mbid-/, "");
-            const slot = db.prepare(`
-                SELECT selected_provider_id FROM ReleaseGroupSlots
-                WHERE release_group_mbid = ? AND selected_provider_id IS NOT NULL AND selected_provider_id != ''
-                ORDER BY CASE slot WHEN 'stereo' THEN 0 ELSE 1 END
-                LIMIT 1
-            `).get(cleanMbid) as { selected_provider_id: string } | undefined;
-
-            if (slot?.selected_provider_id) {
-                tidalAlbumId = slot.selected_provider_id;
-            } else {
-                const item = db.prepare(`
-                    SELECT provider_id FROM ProviderItems
-                    WHERE entity_type = 'album' AND (release_group_mbid = ? OR provider_id = ?)
-                    LIMIT 1
-                `).get(cleanMbid, cleanMbid) as { provider_id: string } | undefined;
-
-                if (item?.provider_id) {
-                    tidalAlbumId = item.provider_id;
-                }
-            }
-        }
-
+        const cleanMbid = rawReleaseGroupMbid.replace(/^mbid-/, "");
         const files = this.repository.findByIds(fileIds);
-        const identification = await IdentificationService.identifyUnmappedFiles(files, rawTidalAlbumId);
-        const cleanMbid = rawTidalAlbumId.replace(/^mbid-/, "");
+        const identification = await IdentificationService.identifyUnmappedFiles(files, cleanMbid);
+
         const dbAlbum = db.prepare(`
             SELECT
-                rg.mbid AS id,
-                rg.mbid AS mbid,
-                rg.title AS title,
+                al.mbid AS id,
+                al.mbid AS mbid,
+                al.title AS title,
                 a.name AS artist_name,
                 a.mbid AS artist_mbid
-            FROM ReleaseGroups rg
-            JOIN Artists a ON a.mbid = rg.artist_mbid
-            WHERE rg.mbid = ? OR EXISTS (SELECT 1 FROM AlbumReleases rel WHERE rel.release_group_mbid = rg.mbid AND rel.mbid = ?)
+            FROM Albums al
+            JOIN Artists a ON a.mbid = al.artist_mbid
+            WHERE al.mbid = ? OR EXISTS (SELECT 1 FROM AlbumReleases rel WHERE rel.release_group_mbid = al.mbid AND rel.mbid = ?)
             LIMIT 1
         `).get(cleanMbid, cleanMbid) as any;
 
@@ -240,6 +206,7 @@ export class UnmappedFilesService {
 
         return {
             ...identification,
+            album,
             autoImportReady: evaluatedMatch?.autoImportReady ?? false,
             rejections: evaluatedMatch?.rejections ?? [],
             conflictPath: evaluatedMatch?.conflictPath ?? null,
@@ -254,10 +221,25 @@ export class UnmappedFilesService {
         if (files.some((file) => file.library_root === "videos")) {
             return this.findBestVideoCandidate(files, mode);
         }
-        const group = this.buildLocalGroup(files);
-        const context = files[0]?.library_root === "spatial" ? "spatial" : "music";
-        const matches = await this.importService.findMatchesForGroup(group, context, mode);
-        return matches[0] ?? null;
+
+        // Catalog-only discovery (Lidarr: CandidateService → IdentificationService).
+        // We match local files against the local catalog release groups by their
+        // detected artist/album tags and score each with the same Munkres pipeline
+        // used everywhere else. The streaming provider is never consulted to
+        // identify files — only to download them.
+        const artist = mostCommonNonEmpty(files.map((file) => file.detected_artist));
+        const album = mostCommonNonEmpty(files.map((file) => file.detected_album));
+        const candidates = CatalogCandidateService.getReleaseGroupCandidates({ artist, album });
+        if (candidates.length === 0) return null;
+
+        const best = await IdentificationService.findBestAlbumMatch(files, candidates, mode);
+        if (!best) return null;
+
+        return this.evaluateAlbumCandidate(files, best, {
+            matchType: "fuzzy",
+            directCandidateCount: candidates.length,
+            mode,
+        });
     }
 
     private async findBestVideoCandidate(
@@ -356,98 +338,6 @@ export class UnmappedFilesService {
         });
 
         return evaluatedMatch;
-    }
-
-    private async findFingerprintAlbumCandidate(
-        files: UnmappedFile[],
-        preferredArtist: string | null,
-        mode: ImportDecisionMode = "ExistingFiles",
-    ): Promise<ProviderMatch | null> {
-        const { generateFingerprint, lookupAcoustId, lookupMusicBrainzRecording } = await import("./fingerprint.js");
-        const candidateAlbums = new Map<string, any>();
-        const seenQueries = new Set<string>();
-        const seenRecordingIds = new Set<string>();
-
-        for (const file of files.slice(0, 3)) {
-            if (!isAudioCandidate(file.file_path)) {
-                continue;
-            }
-
-            let fingerprintResult: { duration: number; fingerprint: string } | null = null;
-            try {
-                fingerprintResult = await generateFingerprint(file.file_path);
-            } catch {
-                continue;
-            }
-
-            const recordingIds = await lookupAcoustId(fingerprintResult.fingerprint, fingerprintResult.duration);
-            for (const recordingId of recordingIds.slice(0, 4)) {
-                if (seenRecordingIds.has(recordingId)) {
-                    continue;
-                }
-                seenRecordingIds.add(recordingId);
-
-                const recording = await lookupMusicBrainzRecording(recordingId);
-                if (!recording?.title) {
-                    continue;
-                }
-
-                const primaryArtist = recording.artists[0] || preferredArtist || "";
-                const query = [primaryArtist, recording.title].filter(Boolean).join(" ").trim();
-                if (!query || seenQueries.has(query)) {
-                    continue;
-                }
-                seenQueries.add(query);
-
-                let trackResults: any[] = [];
-                try {
-                    const searchResults = await streamingProviderManager.getDefaultStreamingProvider().search(query, {
-                        types: ["tracks"],
-                        limit: 10,
-                    });
-                    trackResults = (searchResults.tracks || []).map((track) => track.raw || track);
-                } catch {
-                    continue;
-                }
-
-                for (const track of trackResults) {
-                    const albumId = track?.album_id?.toString?.()
-                        ?? track?.album?.id?.toString?.()
-                        ?? track?.album?.providerId?.toString?.();
-                    if (!albumId || candidateAlbums.has(albumId)) {
-                        continue;
-                    }
-
-                    try {
-                        const providerAlbum = await streamingProviderManager.getDefaultStreamingProvider().getAlbum(albumId);
-                        if (providerAlbum) {
-                            candidateAlbums.set(albumId, providerAlbum.raw || providerAlbum);
-                        }
-                    } catch {
-                        // Ignore individual album hydration failures.
-                    }
-                }
-            }
-        }
-
-        if (candidateAlbums.size === 0) {
-            return null;
-        }
-
-        const bestMatch = await IdentificationService.findBestAlbumMatch(
-            files,
-            Array.from(candidateAlbums.values()),
-            "ExistingFiles"
-        );
-        if (!bestMatch) {
-            return null;
-        }
-
-        return this.evaluateAlbumCandidate(files, bestMatch, {
-            matchType: "fingerprint",
-            strongFingerprintCandidateCount: 1,
-            mode,
-        });
     }
 
     async autoImportFolderGroup(anchorFile: UnmappedFile): Promise<number> {

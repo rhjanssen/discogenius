@@ -116,6 +116,13 @@ export class RefreshArtistService {
                     `[RefreshArtistService] Synced ${credited.releaseGroups} credited MusicBrainz release group(s) ` +
                     `and ${credited.artists} credited artist(s) for ${artistMbid}`,
                 );
+                // Scan in each first-degree credited artist one level deep so they
+                // get a picture, their MusicBrainz discography, and provider
+                // matching. Recursion is naturally bounded: credited artists are
+                // created monitored=0, so their own refresh runs with
+                // includeCreditedReleaseGroups=false and does not pull a second
+                // degree of credits. Enqueue is deduped by artistId (queue refId).
+                await this.queueCreditedArtistRefreshes(credited.artistMbids);
             }
             const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force: true });
             if (syncedVideos > 0) {
@@ -138,6 +145,46 @@ export class RefreshArtistService {
         }
 
         return artistMbid;
+    }
+
+    /**
+     * Scan in first-degree credited artists one level deep. For each newly
+     * created credited artist (skeleton row, never scanned, not monitored),
+     * enqueue a metadata refresh so it gets a picture, its MusicBrainz
+     * discography, and provider matching. Monitored/already-scanned artists are
+     * skipped — the normal cycle owns those. Recursion is bounded: credited
+     * artists are monitored=0, so their own refresh runs with
+     * includeCreditedReleaseGroups=false and never pulls a second degree.
+     */
+    private static async queueCreditedArtistRefreshes(artistMbids: string[]): Promise<void> {
+        const uniqueMbids = Array.from(new Set((artistMbids || []).filter(Boolean)));
+        if (uniqueMbids.length === 0) return;
+
+        const placeholders = uniqueMbids.map(() => "?").join(", ");
+        const rows = db.prepare(`
+            SELECT id, mbid, name, monitored, last_scanned
+            FROM Artists
+            WHERE mbid IN (${placeholders})
+        `).all(...uniqueMbids) as Array<{
+            id: string; mbid: string; name: string | null; monitored: number; last_scanned: string | null;
+        }>;
+
+        const pending = rows.filter((row) => !row.last_scanned && !row.monitored);
+        if (pending.length === 0) return;
+
+        try {
+            const { queueArtistWorkflow } = await import("./artist-workflow.js");
+            for (const row of pending) {
+                queueArtistWorkflow({
+                    artistId: String(row.id),
+                    artistName: row.name || row.mbid,
+                    workflow: "metadata-refresh",
+                });
+            }
+            console.log(`[RefreshArtistService] Queued metadata refresh for ${pending.length} first-degree credited artist(s)`);
+        } catch (error) {
+            console.warn("[RefreshArtistService] Failed to queue credited-artist refreshes:", error);
+        }
     }
 
     private static async hydrateScopedReleaseGroups(artistMbid: string): Promise<void> {

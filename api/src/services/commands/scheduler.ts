@@ -335,10 +335,11 @@ export function queueNextMonitoringPass(job: Pick<CommandModel, "name" | "payloa
 
     switch (job.name) {
         case CommandNames.RefreshMetadata:
-            if (expectedArtists === 0) {
-                markMonitoringCycleCompleted();
-                return;
-            }
+            // Even when 0 artists are due for a metadata refresh, the cycle must
+            // still run its terminal DownloadMissing pass — monitored albums can
+            // become downloadable (provider match, new release) without any
+            // artist being due. Mirrors Lidarr always RescanArtists-ing after the
+            // refresh loop. Fall through to the deferral/terminal logic below.
             // Per-artist matching and curation are event-driven. Root-folder
             // inventory is an independent daily RescanFolders task.
             break;
