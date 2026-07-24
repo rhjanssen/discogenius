@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.7.1] - 2026-07-24
+
+### Fixed
+- **Manual import is now catalog-only and actually works**: the previous "catalog" path queried a non-existent `ReleaseGroups` table (the real release-group table is `Albums`), so every catalog query threw and silently fell back to streaming-provider search — producing wrong-album candidates keyed by numeric provider ids, broken cover art, empty track dropdowns, dead auto-mapping, and imports that reported success while doing nothing. Identification, candidate discovery and import now run purely off the local catalog (MusicBrainz), a new `candidate-service.ts` mirrors Lidarr's `CandidateService`, and the import returns a truthful imported/duplicate/skipped summary.
+- **Manual import UI**: candidate covers render again (candidate map was fetched but never passed to the rows); the #1-guess opens the mapping modal pre-populated, and cross-medium (multi-disc) track numbering matches Lidarr's absolute-track-number scoring.
+- **Embedded cover art matches the UI**: the tag writer now embeds the album's canonical cover from the media-cover cache (the same image the UI shows) instead of a hybrid-matched track's provider-edition cover. Embeds are capped at 1200px, a wrong-but-larger embedded cover is now overruled (no downgrade guard), and no artwork is downloaded at tag-write time.
+- **Monitoring cycle downloads monitored albums**: the cycle no longer stops when no artist is due for a metadata refresh — it still runs the terminal download pass. Monitored albums owned by unmonitored *credited* artists (features/remixes) are now downloadable (slot-level monitoring is the authority).
+- **Credited artists are scanned in one level deep**: refreshing a monitored artist now enqueues a metadata refresh for its first-degree credited artists so they get a picture, their MusicBrainz discography, and provider matching (bounded — credited artists do not recurse into a second degree).
+
+### Added
+- **Retag progress counter**: RetagFiles / RetagArtist now report `writing file x/y`.
+
 ## [Unreleased]
 
 ## [2.7.0] - 2026-07-24
