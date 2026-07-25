@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.7.4] - 2026-07-25
+
+### Fixed
+- **Missing `cover.jpg` sidecars now regenerate on a scan**: the backfill was silently skipping albums — it resolved each album's *expected* folder (from the naming template) and bailed when that path didn't exist on disk, and even when it ran it re-fetched the cover from the streaming provider (which can fail silently). It now writes into the album's *actual* on-disk folder and sources the image from the same canonical cover already in the mediacover cache that the UI and tag embedder use (falling back to a provider fetch only when nothing is cached). Verified live: a scan regenerates `cover.jpg` at 500×500, matching the embedded/UI cover.
+
+### Changed
+- **One shared numbered-tracklist formatter**: the "1" / "2-1" (disc-track) display is now defined once (`utils/trackPosition`, mirroring Lidarr's medium-aware numbering) and reused by the download queue and the manual-import track dropdown, with consistent album-wide multi-volume detection.
+
 ## [2.7.3] - 2026-07-25
 
 ### Performance
