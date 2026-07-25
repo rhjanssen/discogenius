@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.7.3] - 2026-07-25
+
+### Performance
+- **Rename preview ~2× faster**: the preview's cost was a per-row N+1 in `computeExpectedPath` (query 48ms, per-row path computation 2.3s). It now uses a per-call read cache so the shared artist row + album metadata resolve once per batch instead of once per row (Lidarr's "load once, reuse"), and skips the release-group re-lookup when a row already carries its own. Bastille rename preview ~2.3s → ~1.3s; identical output. (Retag preview is still disk-read bound — a separate follow-up.)
+
+### Fixed
+- **Manual-import multi-disc track label**: the assignment dropdown showed `2-201` (the encoded `medium×100+position`) for disc 2 track 1 — it now shows the raw per-disc number, `2-1`.
+
 ## [2.7.2] - 2026-07-25
 
 ### Fixed
