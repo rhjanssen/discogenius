@@ -117,9 +117,15 @@ export async function runLowCouplingMaintenanceJob(
             return;
         }
         case CommandNames.CleanupTempFiles: {
+            context.updateCommandDescription({ progress: 10, description: 'Cleaning temporary files' });
+            const { pruneOrphanDownloadFolders, pruneStaleTempDirectories } = await import('./runtime-maintenance.js');
+            const orphanFolders = pruneOrphanDownloadFolders();
+            const tempDirs = pruneStaleTempDirectories();
             context.updateCommandDescription({
                 progress: 100,
-                description: 'Temporary files cleaned',
+                description: orphanFolders > 0 || tempDirs > 0
+                    ? `Cleaned ${orphanFolders} orphan download folder(s) and ${tempDirs} temp dir(s)`
+                    : 'No temporary files to clean',
             });
             return;
         }

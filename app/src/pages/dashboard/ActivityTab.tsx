@@ -118,7 +118,7 @@ function formatActivityDescription(job: ActivityJob, source: ActivitySource): st
     }
 
     if (source === "queued" && Number.isFinite(Number(job.queuePosition))) {
-        parts.push(`Queue #${Number(job.queuePosition)}`);
+        parts.push(`#${Number(job.queuePosition)} in queue`);
     }
 
     const reason = humanizeActivityReason(payload?.reason);
@@ -127,10 +127,11 @@ function formatActivityDescription(job: ActivityJob, source: ActivitySource): st
     }
 
     if (payload?.originalJobId) {
-        parts.push(`Retry of #${String(payload.originalJobId)}`);
+        parts.push(`retry of #${String(payload.originalJobId)}`);
     }
 
-    return parts.join(" | ");
+    // Lighter separator than the old " | " pipes so dense pending rows read cleaner.
+    return parts.join(" · ");
 }
 
 function buildSectionEntries(jobs: ActivityJob[], source: ActivitySource, activityFilter: string): ActivityEntry[] {

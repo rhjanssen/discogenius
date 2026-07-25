@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { db } from "../../database.js";
 import { Config, CONFIG_DIR } from "../config/config.js";
@@ -37,6 +38,8 @@ export interface RuntimeMaintenanceSummary {
   historyJobsPruned: number;
   /** Orphaned /downloads job_* folders removed */
   orphanDownloadFoldersRemoved: number;
+  /** Aged discogenius-* scratch dirs removed from the OS temp folder */
+  staleTempDirsRemoved: number;
   /** Video files whose quality tag was corrected from stored dimensions */
   videoQualitiesCorrected: number;
 }
@@ -252,6 +255,38 @@ export function pruneOrphanDownloadFolders(): number {
   return removed;
 }
 
+/**
+ * Remove aged Discogenius scratch directories under the OS temp folder. Retag
+ * cover renders and other transient work create `discogenius-*` temp dirs and
+ * normally clean up after themselves, but a crash mid-run can leak them —
+ * Lidarr-style temp housekeeping keeps the temp tree from growing forever.
+ */
+export function pruneStaleTempDirectories(maxAgeMs = 6 * 60 * 60 * 1000): number {
+  const tempRoot = os.tmpdir();
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(tempRoot, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
+  const now = Date.now();
+  let removed = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith("discogenius-")) continue;
+    const fullPath = path.join(tempRoot, entry.name);
+    try {
+      const stats = fs.statSync(fullPath);
+      if (now - stats.mtimeMs < maxAgeMs) continue;
+      fs.rmSync(fullPath, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      // Ignore locked/in-use temp dirs; the next pass retries.
+    }
+  }
+  return removed;
+}
+
 /** Re-tag on-disk videos whose quality drifted from stored width/height. */
 export function correctVideoQualitiesFromDimensions(): number {
   const rows = db.prepare(`
@@ -287,12 +322,14 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     databaseOptimized: false,
     historyJobsPruned: 0,
     orphanDownloadFoldersRemoved: 0,
+    staleTempDirsRemoved: 0,
     videoQualitiesCorrected: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
   summary.duplicateTrackedAssetsRemoved = LibraryFilesService.pruneDuplicateTrackedAssets().removed;
   summary.orphanDownloadFoldersRemoved = pruneOrphanDownloadFolders();
+  summary.staleTempDirsRemoved = pruneStaleTempDirectories();
   summary.videoQualitiesCorrected = correctVideoQualitiesFromDimensions();
 
   db.transaction(() => {
@@ -320,6 +357,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     summary.staleTrackedAssetsRemoved > 0 ||
     summary.duplicateLibraryFilesRemoved > 0 ||
     summary.orphanDownloadFoldersRemoved > 0 ||
+    summary.staleTempDirsRemoved > 0 ||
     summary.videoQualitiesCorrected > 0
   ) {
     console.log(
@@ -327,6 +365,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
       `${summary.duplicateTrackedAssetsRemoved} duplicate tracked asset(s), ` +
       `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), ` +
       `${summary.orphanDownloadFoldersRemoved} orphan download folder(s), ` +
+      `${summary.staleTempDirsRemoved} temp dir(s), ` +
       `corrected ${summary.videoQualitiesCorrected} video quality tag(s), refreshed ${summary.albumStatesRefreshed} albums and ` +
       `${summary.artistStatesRefreshed} artists.`,
     );
