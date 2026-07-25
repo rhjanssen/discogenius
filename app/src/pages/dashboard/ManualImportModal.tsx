@@ -36,6 +36,7 @@ import { useToast } from '@/hooks/useToast';
 import { api } from '@/services/api';
 import { dispatchActivityRefresh } from '@/utils/appEvents';
 import { mediaCoverProxySrc, mediaCoverSrc, renderableArtworkUrl } from '@/utils/artwork';
+import { formatTrackPositionPrefix, isMultiVolumeTrackList } from '@/utils/trackPosition';
 import { type UnmappedFile } from './ManualImportTab';
 
 const ArrowImport24 = bundleIcon(ArrowImport24Filled, ArrowImport24Regular);
@@ -476,6 +477,12 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         importMutation.mutate({ items: payloadItems });
     };
 
+    const albumIsMultiVolume = useMemo(
+        () => isMultiVolumeTrackList(
+            albumTracks.map((track: any) => ({ volumeNumber: track.volumeNumber ?? track.volume_number ?? track.medium_position })),
+        ),
+        [albumTracks],
+    );
     const allSelected = targetFiles.length > 0 && targetFiles.every((file) => selectedFiles[file.id]);
     const someSelected = targetFiles.some((file) => selectedFiles[file.id]);
     const canImport = targetFiles.some((file) => selectedFiles[file.id] && mappedTracks[file.id]) && !importMutation.isPending;
@@ -694,13 +701,13 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                                      <option value="">-- Don&apos;t Map --</option>
                                                                      {albumTracks.map((track) => {
                                                                          const providerId = String(track.providerId || track.id || track.provider_id || '');
-                                                                         const trackNum = track.trackNumber ?? track.track_number ?? track.position ?? 0;
                                                                          const volNum = track.volumeNumber ?? track.volume_number ?? track.medium_position ?? 1;
-                                                                         // The V-T label uses the raw per-disc number: `trackNumber` is the encoded
-// medium*100+position (e.g. 201) used for sorting, so disc 2 track 1 must read
-// "2-1", not "2-201".
-const rawNum = track.rawTrackNumber ?? track.position ?? trackNum;
-const posPrefix = volNum > 1 ? `${volNum}-${rawNum}. ` : trackNum ? `${trackNum}. ` : '';
+                                                                         // Raw per-disc number for display: the endpoint's `trackNumber` is the
+                                                                         // encoded medium*100+position (e.g. 201) used for sorting, so disc 2
+                                                                         // track 1 must read "2-1", not "2-201". Shared formatter with album-wide
+                                                                         // multi-volume detection — the same definition the download queue uses.
+                                                                         const rawNum = track.rawTrackNumber ?? track.position ?? track.track_number ?? track.trackNumber ?? '';
+                                                                         const posPrefix = formatTrackPositionPrefix(rawNum, volNum, { multiVolume: albumIsMultiVolume });
                                                                          return (
                                                                              <option key={providerId} value={providerId}>
                                                                                  {posPrefix}{track.title}{track.version ? ` (${track.version})` : ''}

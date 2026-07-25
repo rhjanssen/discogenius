@@ -14,6 +14,7 @@ import {
     saveVideoNfoFile,
 } from "./metadata-files.js";
 import { AUDIO_COVER_EMBED_EXTENSIONS, embedAudioCover, compareEmbeddedAudioCover, embedVideoThumbnail, hasEmbeddedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
+import { resolveStoredLibraryPath } from "./library-paths.js";
 import { LibraryFilesService } from "./library-files.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
@@ -266,19 +267,32 @@ class LibraryMetadataBackfillService {
             if (!album.id) {
                 continue;
             }
-            const libraryRoots = (db.prepare(`
-      SELECT DISTINCT lf.library_root
+            // Fetch a representative ON-DISK track per library root so sidecars are
+            // written into the album's ACTUAL folder. Using only the expected folder
+            // (from the naming template) silently skipped every album whose files sit
+            // at a path that differs from the current template (e.g. not yet renamed),
+            // which is why cover.jpg / .nfo never regenerated for those albums.
+            const libraryRootRows = (db.prepare(`
+      SELECT lf.library_root, MIN(lf.file_path) AS file_path, MIN(lf.relative_path) AS relative_path
       FROM TrackFiles lf
       WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
         AND lf.library_root IS NOT NULL
         AND lf.canonical_release_group_mbid = ?
+      GROUP BY lf.library_root
       ORDER BY lf.library_root ASC
-    `).all(artistId, canonicalReleaseGroupMbid) as Array<{ library_root: string | null }>)
-                .map((row) => String(row.library_root || "").trim())
-                .filter(Boolean);
+    `).all(artistId, canonicalReleaseGroupMbid) as Array<{ library_root: string | null; file_path: string | null; relative_path: string | null }>)
+                .filter((row) => String(row.library_root || "").trim());
 
-            for (const libraryRoot of libraryRoots) {
+            for (const libraryRootRow of libraryRootRows) {
+                const libraryRoot = String(libraryRootRow.library_root || "").trim();
+                const actualAlbumDir = libraryRootRow.file_path
+                    ? path.dirname(resolveStoredLibraryPath({
+                        filePath: libraryRootRow.file_path,
+                        libraryRoot: libraryRootRow.library_root,
+                        relativePath: libraryRootRow.relative_path,
+                    }))
+                    : null;
                 const expectedAlbumNfoPath = LibraryFilesService.computeExpectedPath({
                     id: -1,
                     artist_id: artistId as unknown as number,
@@ -290,9 +304,12 @@ class LibraryMetadataBackfillService {
                     file_type: "nfo",
                     extension: "nfo",
                 }).expectedPath;
-                const albumDir = expectedAlbumNfoPath
-                    ? path.dirname(expectedAlbumNfoPath)
-                    : this.resolveAlbumDir(libraryRoot, artistFolder, album, naming);
+                // Prefer the real on-disk folder; fall back to the expected path.
+                const albumDir = (actualAlbumDir && fs.existsSync(actualAlbumDir))
+                    ? actualAlbumDir
+                    : (expectedAlbumNfoPath
+                        ? path.dirname(expectedAlbumNfoPath)
+                        : this.resolveAlbumDir(libraryRoot, artistFolder, album, naming));
                 if (!albumDir || !fs.existsSync(albumDir)) continue;
 
                 if (metadataConfig.save_album_cover) {
@@ -300,15 +317,29 @@ class LibraryMetadataBackfillService {
                     const coverPath = path.join(albumDir, coverName);
                     if (!fs.existsSync(coverPath)) {
                         try {
-                            // Saved sidecar artwork always uses the highest available
-                            // resolution, independent of metadata.album_cover_resolution
-                            // (which only caps the UI's cached display thumbnail).
-                            await downloadAlbumCover(
-                                String(album.id),
-                                "origin",
-                                coverPath,
-                                { provider: album.provider },
+                            // Write the folder cover from the SAME canonical cover the
+                            // UI and the tag embedder use (already warmed into the
+                            // mediacover cache for this release group), so the sidecar
+                            // is consistent and does not depend on a live provider
+                            // re-fetch that can silently fail. Only when nothing is
+                            // cached do we acquire the origin (scan/refresh is the
+                            // art-acquisition phase).
+                            const { getCachedMediaCoverFilePath } = await import("../metadata/media-cover-service.js");
+                            const cachedCover = getCachedMediaCoverFilePath(
+                                canonicalReleaseGroupMbid || String(album.id),
+                                "Album",
+                                "cover",
                             );
+                            if (cachedCover && fs.existsSync(cachedCover)) {
+                                fs.copyFileSync(cachedCover, coverPath);
+                            } else {
+                                await downloadAlbumCover(
+                                    String(album.id),
+                                    "origin",
+                                    coverPath,
+                                    { provider: album.provider },
+                                );
+                            }
                             if (fs.existsSync(coverPath)) {
                                 this.upsertLibraryFile({
                                     artistId,

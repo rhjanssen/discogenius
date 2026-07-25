@@ -41,6 +41,7 @@ import {
   bundleIcon
 } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
+import { formatTrackPosition, isMultiVolumeTrackList } from "@/utils/trackPosition";
 import { useDelayedVisible } from "@/hooks/useDelayedVisible";
 import { useQueue } from "@/hooks/useQueue";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
@@ -99,24 +100,16 @@ function matchesProviderTrackId(trackProviderId?: string | null, currentProvider
 }
 
 /** Show V-T for every disc when the album has more than one volume. */
+// Thin wrapper over the shared tracklist formatter (utils/trackPosition) so the
+// queue and the manual-import dropdown share one definition of "1" vs "2-1".
 function formatQueueTrackNumber(
     trackNum: number | string | null | undefined,
     volumeNum: number | null | undefined,
     tracks?: Array<{ volumeNum?: number | null }>,
     fallbackIndex?: number,
 ): string {
-    const track = trackNum != null && String(trackNum).trim() !== ""
-        ? String(trackNum)
-        : (fallbackIndex != null ? String(fallbackIndex) : "");
-    const volumes = (tracks || [])
-        .map((row) => Number(row.volumeNum || 0))
-        .filter((value) => Number.isFinite(value) && value > 0);
-    const multiVolume = volumes.length > 0 && (new Set(volumes).size > 1 || volumes.some((value) => value > 1));
-    const volume = Number(volumeNum || 0);
-    if (multiVolume && volume > 0 && track) {
-        return `${volume}-${track}`;
-    }
-    return track;
+    const multiVolume = isMultiVolumeTrackList((tracks || []).map((row) => ({ volumeNumber: row.volumeNum })));
+    return formatTrackPosition(trackNum, volumeNum, { multiVolume, fallbackIndex });
 }
 
 function findProgressTrackState(
