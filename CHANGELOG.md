@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.7.2] - 2026-07-25
+
+### Fixed
+- **Temporary-file cleanup actually cleans now**: the `Cleanup Temporary Files` task was a no-op that only reported success. It now removes orphaned `/downloads/job_*` folders and aged `discogenius-*` scratch directories from the OS temp folder, and the same temp housekeeping runs on the recurring Housekeeping pass (Lidarr-style).
+
+### Changed
+- **Activity log copy**: pending items read `… · #N in queue` with a lighter `·` separator instead of the verbose `… | Queue #N` pipes.
+
 ## [2.7.1] - 2026-07-24
 
 ### Fixed
