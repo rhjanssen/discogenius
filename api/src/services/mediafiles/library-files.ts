@@ -517,6 +517,21 @@ function resolveExpectedLibraryRootKey(row: LibraryFileRow): library_root | null
   return null;
 }
 
+/**
+ * Per-call read cache for computeExpectedPath so a batch of rows (e.g. a rename
+ * preview) resolves the shared artist row + album metadata once instead of once
+ * per row. Pure reads only; create a fresh cache per batch (never share one
+ * across a mutation).
+ */
+export interface ExpectedPathCache {
+  artists: Map<string, { name?: string; mbid?: string | null; path?: string | null } | undefined>;
+  albums: Map<string, ReturnType<typeof getCanonicalAlbumMetadata>>;
+}
+
+export function createExpectedPathCache(): ExpectedPathCache {
+  return { artists: new Map(), albums: new Map() };
+}
+
 export class LibraryFilesService {
   private static buildFileEventPayload(input: LibraryFileEventInput) {
     return {
@@ -736,7 +751,7 @@ export class LibraryFilesService {
     return { updated };
   }
 
-  static computeExpectedPath(row: LibraryFileRow): { expectedPath: string | null; reason?: string } {
+  static computeExpectedPath(row: LibraryFileRow, cache?: ExpectedPathCache): { expectedPath: string | null; reason?: string } {
     const pathConfig = getConfigSection("path");
     const videoFolderLayout = pathConfig?.video_folder_layout || "separated";
     const canonicalIdentity = getCanonicalIdentityForLibraryFile(row);
@@ -860,7 +875,7 @@ export class LibraryFilesService {
           );
 
           let audioExpectedPath: string | null = audioTrack
-            ? LibraryFilesService.computeExpectedPath(audioTrack).expectedPath
+            ? LibraryFilesService.computeExpectedPath(audioTrack, cache).expectedPath
             : null;
           // Catalog stereo-root fallback when the stereo file is not on disk yet.
           audioExpectedPath ||= resolveCanonicalInlineAudioExpectedPath(row.artist_id, inlineVideoTitle);
@@ -917,7 +932,19 @@ export class LibraryFilesService {
     const naming = getNamingConfig();
     const metadataConfig = getConfigSection("metadata");
 
-    const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(row.artist_id) as any;
+    // A per-artist rename hits this for all 200 preview rows with the same
+    // artist_id. Cache it (and album metadata below) per preview call — Lidarr's
+    // "load once, reuse" pattern — so computeExpectedPath is not an N+1 storm.
+    const artist = ((): any => {
+      if (cache) {
+        const artistKey = String(row.artist_id);
+        if (cache.artists.has(artistKey)) return cache.artists.get(artistKey);
+        const resolved = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(row.artist_id) as { name?: string; mbid?: string | null; path?: string | null } | undefined;
+        cache.artists.set(artistKey, resolved);
+        return resolved;
+      }
+      return db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(row.artist_id);
+    })();
     const artistName = (artist?.name as string | undefined) || "Unknown Artist";
     const artistMbId = artist?.mbid ? String(artist.mbid) : null;
     const artistFolder = resolveArtistFolderFromRecord({
@@ -1052,7 +1079,12 @@ export class LibraryFilesService {
     // Canonical-first album naming context. Audio files always carry a canonical
     // release-group identity (the gap-fill guarantees it); we resolve naming from
     // Albums/AlbumReleases via getCanonicalAlbumMetadata rather than ProviderAlbums.
-    const trackedIdentity = row.media_id
+    // Only look up the associated audio track's release group when THIS row does
+    // not already carry its own — i.e. for sidecars (nfo/cover/lyrics) that key
+    // off a shared media_id. A track row already has canonical_release_group_mbid,
+    // so the query would just re-fetch its own RG (the fallback below uses the
+    // same value). Skipping it removes one query per track row from the preview.
+    const trackedIdentity = (row.media_id && !row.canonical_release_group_mbid)
       ? db.prepare(`
           SELECT canonical_release_group_mbid, canonical_release_mbid
           FROM TrackFiles
@@ -1067,10 +1099,20 @@ export class LibraryFilesService {
         } | undefined
       : undefined;
     const releaseGroupMbid = trackedIdentity?.canonical_release_group_mbid || canonicalIdentity.canonicalReleaseGroupMbid;
-    const canonicalAlbum = getCanonicalAlbumMetadata({
+    const canonicalReleaseMbid = trackedIdentity?.canonical_release_mbid || canonicalIdentity.canonicalReleaseMbid;
+    const resolveCanonicalAlbum = () => getCanonicalAlbumMetadata({
       canonicalReleaseGroupMbid: releaseGroupMbid,
-      canonicalReleaseMbid: trackedIdentity?.canonical_release_mbid || canonicalIdentity.canonicalReleaseMbid,
+      canonicalReleaseMbid,
     });
+    const canonicalAlbum = ((): ReturnType<typeof getCanonicalAlbumMetadata> => {
+      if (!cache) return resolveCanonicalAlbum();
+      // Many tracks share one album, so key by rg + release mbid and resolve once.
+      const albumKey = `${releaseGroupMbid ?? ""}::${canonicalReleaseMbid ?? ""}`;
+      if (cache.albums.has(albumKey)) return cache.albums.get(albumKey) ?? null;
+      const resolved = resolveCanonicalAlbum();
+      cache.albums.set(albumKey, resolved);
+      return resolved;
+    })();
     if (!canonicalAlbum) return { expectedPath: null, reason: "album_not_found" };
 
     const releaseYear = getReleaseYear(canonicalAlbum.releaseDate);

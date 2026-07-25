@@ -696,7 +696,11 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                                          const providerId = String(track.providerId || track.id || track.provider_id || '');
                                                                          const trackNum = track.trackNumber ?? track.track_number ?? track.position ?? 0;
                                                                          const volNum = track.volumeNumber ?? track.volume_number ?? track.medium_position ?? 1;
-                                                                         const posPrefix = volNum > 1 ? `${volNum}-${trackNum}. ` : trackNum ? `${trackNum}. ` : '';
+                                                                         // The V-T label uses the raw per-disc number: `trackNumber` is the encoded
+// medium*100+position (e.g. 201) used for sorting, so disc 2 track 1 must read
+// "2-1", not "2-201".
+const rawNum = track.rawTrackNumber ?? track.position ?? trackNum;
+const posPrefix = volNum > 1 ? `${volNum}-${rawNum}. ` : trackNum ? `${trackNum}. ` : '';
                                                                          return (
                                                                              <option key={providerId} value={providerId}>
                                                                                  {posPrefix}{track.title}{track.version ? ` (${track.version})` : ''}

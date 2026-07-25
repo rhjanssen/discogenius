@@ -6,6 +6,7 @@ import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-eve
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import {
   LibraryFilesService,
+  createExpectedPathCache,
   removeEmptyParents,
   type RenameApplyResult,
   type RenamePreviewItem,
@@ -198,6 +199,9 @@ export class RenameTrackFileService {
       return stmt;
     };
 
+    // One read cache for the whole row batch so the shared artist row + album
+    // metadata are resolved once, not once per row (Lidarr "load once, reuse").
+    const pathCache = createExpectedPathCache();
     const results: RenamePreviewItem[] = rows.map((row) => {
       const resolvedFilePath = resolveStoredLibraryPath({
         filePath: row.file_path,
@@ -207,7 +211,7 @@ export class RenameTrackFileService {
       // Preview is DB/path computation only (Lidarr). Disk existence is checked on Apply.
       const missing = false;
 
-      const { expectedPath, reason } = LibraryFilesService.computeExpectedPath(row);
+      const { expectedPath, reason } = LibraryFilesService.computeExpectedPath(row, pathCache);
       const needsRename = Boolean(expectedPath && normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath));
 
       let conflict = false;
