@@ -50,6 +50,7 @@ import { readIntEnv } from "./utils/env.js";
 import { ArtistTopTrackService } from "./services/music/artist-top-track-service.js";
 import { AlbumLibraryIndexService } from "./services/music/album-library-index-service.js";
 import { TrackLibraryIndexService } from "./services/music/track-library-index-service.js";
+import { ReleaseGroupSlotService } from "./services/music/release-group-slot-service.js";
 import { CommandTrigger } from "./services/commands/command-trigger.js";
 
 function initializeAuthEnvironment() {
@@ -360,6 +361,7 @@ const server = app.listen(port, () => {
         ) {
           queueUpdateLibraryMetadata({ trigger: CommandTrigger.Scheduled });
         }
+        ReleaseGroupSlotService.queueStaleSlotsForRegeneration({ trigger: CommandTrigger.Scheduled });
       } catch (error) {
         console.error("Failed to start command executor:", error);
       }

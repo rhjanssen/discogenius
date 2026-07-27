@@ -19,6 +19,10 @@ import {
     upsertProviderReleaseMatch,
     aggregateExplicitFlags,
 } from "./provider-matches.js";
+import { CommandQueueManager } from "../commands/command-queue-manager.js";
+import { CommandNames } from "../commands/command-names.js";
+import { CommandTrigger } from "../commands/command-trigger.js";
+import { buildMatchArtistProvidersCommand } from "./artist-workflow.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
 
@@ -1258,5 +1262,41 @@ export class ReleaseGroupSlotService {
         })();
 
         return counts;
+    }
+
+    static queueStaleSlotsForRegeneration(options: { trigger?: number } = {}): number {
+        const staleArtists = db.prepare(`
+            SELECT DISTINCT COALESCE(NULLIF(s.artist_mbid, ''), rg.artist_mbid) AS artist_mbid, a.id, a.name
+            FROM ReleaseGroupSlots s
+            LEFT JOIN Albums rg ON rg.mbid = s.release_group_mbid
+            JOIN ArtistMetadata a ON a.mbid = COALESCE(NULLIF(s.artist_mbid, ''), rg.artist_mbid)
+            WHERE s.plan_status = 'stale'
+        `).all() as Array<{ artist_mbid: string; id: number; name: string }>;
+
+        if (staleArtists.length === 0) {
+            return 0;
+        }
+
+        console.log(`[ReleaseGroupSlotService] Queueing slot regeneration for ${staleArtists.length} artist(s) with stale legacy selections`);
+
+        for (const artist of staleArtists) {
+            CommandQueueManager.push(
+                CommandNames.MatchArtistProviders,
+                buildMatchArtistProvidersCommand({
+                    artistId: String(artist.id),
+                    artistName: artist.name,
+                    artistMbid: artist.artist_mbid,
+                    shouldHydrateCatalog: false,
+                    metadataChanged: false,
+                    isNewArtist: false,
+                    workflow: "metadata-refresh",
+                }),
+                String(artist.id),
+                0,
+                options.trigger ?? CommandTrigger.Scheduled,
+            );
+        }
+
+        return staleArtists.length;
     }
 }

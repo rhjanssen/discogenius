@@ -45,6 +45,12 @@ export interface RuntimeMaintenanceSummary {
   videoQualitiesCorrected: number;
   /** Direct provider-match edges whose owning provider offer no longer exists */
   orphanProviderItemMatchesRemoved: number;
+  /** Orphaned ReleaseGroupSlotTargets removed */
+  orphanReleaseGroupSlotTargetsRemoved: number;
+  /** Orphaned ReleaseGroupSlotSources removed */
+  orphanReleaseGroupSlotSourcesRemoved: number;
+  /** Orphaned ReleaseGroupSlotTrackAssignments removed */
+  orphanReleaseGroupSlotTrackAssignmentsRemoved: number;
 }
 
 function toTimestamp(value: string | null | undefined): number {
@@ -328,6 +334,9 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     staleTempDirsRemoved: 0,
     videoQualitiesCorrected: 0,
     orphanProviderItemMatchesRemoved: 0,
+    orphanReleaseGroupSlotTargetsRemoved: 0,
+    orphanReleaseGroupSlotSourcesRemoved: 0,
+    orphanReleaseGroupSlotTrackAssignmentsRemoved: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
@@ -338,7 +347,11 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   db.transaction(() => {
     dedupeLibraryFiles(summary);
-    summary.orphanProviderItemMatchesRemoved = pruneRelationalOrphans().providerItemMatchesRemoved;
+    const orphanSummary = pruneRelationalOrphans();
+    summary.orphanProviderItemMatchesRemoved = orphanSummary.providerItemMatchesRemoved;
+    summary.orphanReleaseGroupSlotTargetsRemoved = orphanSummary.releaseGroupSlotTargetsRemoved;
+    summary.orphanReleaseGroupSlotSourcesRemoved = orphanSummary.releaseGroupSlotSourcesRemoved;
+    summary.orphanReleaseGroupSlotTrackAssignmentsRemoved = orphanSummary.releaseGroupSlotTrackAssignmentsRemoved;
   })();
 
   refreshDownloadState(summary);

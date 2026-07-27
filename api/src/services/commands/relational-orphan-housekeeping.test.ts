@@ -23,6 +23,10 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM MetadataFiles").run();
   dbModule.db.prepare("DELETE FROM LyricFiles").run();
   dbModule.db.prepare("DELETE FROM ExtraFiles").run();
+  dbModule.db.prepare("DELETE FROM ReleaseGroupSlotTrackAssignments").run();
+  dbModule.db.prepare("DELETE FROM ReleaseGroupSlotSources").run();
+  dbModule.db.prepare("DELETE FROM ReleaseGroupSlotTargets").run();
+  dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
 });
 
 after(() => {
@@ -83,3 +87,54 @@ test("prunes stale direct provider matches while preserving composites and folde
     assert.equal(row.track_file_id, null);
   }
 });
+
+test("prunes orphaned relational slot targets, sources, and assignments", () => {
+  // Insert parent artist and album for foreign keys
+  dbModule.db.prepare(`INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES ('art-1', 'Artist')`).run();
+  dbModule.db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title) VALUES ('rg-1', 'art-1', 'Album')`).run();
+  dbModule.db.prepare(`INSERT OR IGNORE INTO Tracks (id, release_mbid, mbid, title) VALUES (101, 'rel-1', 'trk-1', 'Track 1')`).run();
+
+  // Insert valid slot (id: 1)
+  const slotId = Number(dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot) VALUES ('art-1', 'rg-1', 'stereo')
+  `).run().lastInsertRowid);
+
+  // We temporarily disable FK checks to insert orphans
+  dbModule.db.pragma("foreign_keys = OFF");
+
+  // Insert valid target (slot_id: slotId) and orphan target (slot_id: 9999)
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlotTargets (id, slot_id, target_track_id, target_track_mbid, status)
+    VALUES (1, ?, 101, 'trk-1', 'unmatched'), (2, 9999, 101, 'trk-1', 'unmatched')
+  `).run(slotId);
+
+  // Insert valid source (slot_id: slotId) and orphan source (slot_id: 9999)
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlotSources (id, slot_id, provider, provider_album_id)
+    VALUES (1, ?, 'spotify', 'sp-1'), (2, 9999, 'spotify', 'sp-2')
+  `).run(slotId);
+
+  // Insert valid assignment and orphan assignment (pointing to non-existent slot/target/source)
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlotTrackAssignments (id, slot_id, target_id, slot_source_id, target_track_id, target_track_mbid, provider, provider_track_id, provider_album_id, match_score, match_method)
+    VALUES (1, ?, 1, 1, 101, 'trk-1', 'spotify', 'sp-t-1', 'sp-1', 100, 'exact'),
+           (2, 9999, 1, 1, 101, 'trk-1', 'spotify', 'sp-t-2', 'sp-1', 100, 'exact')
+  `).run(slotId);
+
+  dbModule.db.pragma("foreign_keys = ON");
+
+  const summary = pruneRelationalOrphans();
+
+  assert.equal(summary.releaseGroupSlotTrackAssignmentsRemoved, 1);
+  assert.equal(summary.releaseGroupSlotTargetsRemoved, 1);
+  assert.equal(summary.releaseGroupSlotSourcesRemoved, 1);
+
+  const targetsCount = (dbModule.db.prepare("SELECT COUNT(*) as count FROM ReleaseGroupSlotTargets").get() as { count: number }).count;
+  const sourcesCount = (dbModule.db.prepare("SELECT COUNT(*) as count FROM ReleaseGroupSlotSources").get() as { count: number }).count;
+  const assignmentsCount = (dbModule.db.prepare("SELECT COUNT(*) as count FROM ReleaseGroupSlotTrackAssignments").get() as { count: number }).count;
+
+  assert.equal(targetsCount, 1);
+  assert.equal(sourcesCount, 1);
+  assert.equal(assignmentsCount, 1);
+});
+

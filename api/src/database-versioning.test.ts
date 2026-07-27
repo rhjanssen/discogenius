@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 39;
+const CURRENT_SCHEMA_VERSION = 40;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -40,6 +40,7 @@ test("fresh database initializes the current development baseline", () => {
     "AlbumArtists", "ArtistReleaseGroups", "ArtistReleaseGroupCuration",
     "Tracks", "Recordings", "ProviderItems", "ProviderItemMatches",
     "RecordingRelations", "ReleaseGroupSlots",
+    "ReleaseGroupSlotTargets", "ReleaseGroupSlotSources", "ReleaseGroupSlotTrackAssignments",
     "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles", "UnmappedFiles",
     "commands", "scheduled_tasks", "quality_profiles",
     "history_events", "MediaCoverProxyCache",
@@ -60,7 +61,7 @@ test("fresh database initializes the current development baseline", () => {
   }
 });
 
-test("re-initializing an existing schema-39 database opens it without a wipe", () => {
+test("re-initializing an existing schema-40 database opens it without a wipe", () => {
   // Seed a row so we can prove the open-only path never drops/recreates tables.
   dbModule.db
     .prepare("INSERT INTO config (key, value, description) VALUES (?, ?, ?)")
@@ -76,7 +77,7 @@ test("re-initializing an existing schema-39 database opens it without a wipe", (
     .get("baseline.open_only_probe") as { value?: string } | undefined;
   assert.equal(probe?.value, "kept", "Re-init must not wipe existing data");
 
-  for (const tableName of ["TrackSearch", "CatalogSearch", "ProviderItemMatches", "RecordingRelations", "metadata_identity_status"]) {
+  for (const tableName of ["TrackSearch", "CatalogSearch", "ProviderItemMatches", "RecordingRelations", "metadata_identity_status", "ReleaseGroupSlotTargets"]) {
     const row = dbModule.db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
       .get(tableName) as { name: string } | undefined;
@@ -107,7 +108,10 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
     ["ArtistReleaseGroups", ["artist_metadata_id", "release_group_id", "artist_mbid", "release_group_mbid"]],
     ["ArtistReleaseGroupCuration", ["source_artist_metadata_id", "release_group_id", "redundant_to_release_group_id", "source_artist_mbid", "release_group_mbid"]],
     ["Tracks", ["id", "album_release_id", "recording_id", "release_mbid", "recording_mbid"]],
-    ["ReleaseGroupSlots", ["id", "artist_metadata_id", "release_group_id", "selected_album_release_id", "artist_mbid", "release_group_mbid", "selected_release_mbid"]],
+    ["ReleaseGroupSlots", ["id", "artist_metadata_id", "release_group_id", "selected_album_release_id", "artist_mbid", "release_group_mbid", "selected_release_mbid", "plan_status", "plan_matcher_version"]],
+    ["ReleaseGroupSlotTargets", ["id", "slot_id", "target_track_id", "target_recording_id", "target_track_mbid", "target_recording_mbid", "recording_equivalence_key", "is_wanted", "is_attainable", "status", "wanted_reason", "created_at", "updated_at"]],
+    ["ReleaseGroupSlotSources", ["id", "slot_id", "provider", "provider_album_id", "quality", "role", "release_relation", "explicit", "sort_order", "matcher_version", "created_at", "updated_at"]],
+    ["ReleaseGroupSlotTrackAssignments", ["id", "slot_id", "target_id", "slot_source_id", "target_track_id", "target_recording_id", "target_track_mbid", "target_recording_mbid", "provider", "provider_track_id", "provider_album_id", "status", "match_score", "match_method", "matcher_version", "match_evidence", "created_at", "updated_at"]],
     ["TrackFiles", ["release_group_id", "album_release_id", "track_id", "recording_id", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id", "codec", "video_codec", "width", "height"]],
     ["MetadataFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
     ["LyricFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
