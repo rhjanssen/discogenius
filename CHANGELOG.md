@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.7.5] - 2026-07-27
+
+### Changed
+- **Conservative Lidarr naming alignment**: Removed non-standard `FullTitle` (`{Album FullTitle}`, `{Track FullTitle}`, `{Video FullTitle}`) and `Version` (`{Album Version}`, `{Track Version}`, `{Video Version}`) naming tokens from configuration presets, naming templates, and UI components. Naming paths now conservatively use `{Album Title}` and `{Track Title}` without appending release version labels.
+- **Universal artwork identity (A1)**: Standardized media cover ownership on `release_group_mbid`. During hybrid album downloads or library reconciliation, contributing singles and supplemental sources no longer overwrite the canonical release group artwork unless an image is explicitly selected as a manual override (`isManualOverrideImage`). Enforces strict preference ordering: explicit manual override → configured preferred source → eligible fallback source → no artwork.
+- **UI display cleanup**: Removed version string concatenation from track list items, download queue action notifications, and manual import assignment dropdowns.
+
 ## [2.7.4] - 2026-07-25
 
 ### Fixed
