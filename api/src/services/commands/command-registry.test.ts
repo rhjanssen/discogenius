@@ -19,6 +19,8 @@ const {
   resolveRefreshArtistMaxConcurrent,
 } = await import("./command-registry.js");
 const { updateConfig } = await import("../config/config.js");
+const { NON_DOWNLOAD_COMMAND_NAMES } = await import("./command-names.js");
+const { commandExecutors } = await import("./executors/registry.js");
 
 test("command registry exposes canonical command and task metadata", () => {
   const healthCheck = getCommandDefinition("CheckHealth");
@@ -26,10 +28,19 @@ test("command registry exposes canonical command and task metadata", () => {
   assert.equal(healthCheck.isTypeExclusive, true);
   assert.equal(healthCheck.requiresDiskAccess, false);
 
+  const databaseBackup = getCommandDefinition("BackupDatabase");
+  assert.equal(databaseBackup.name, "Backup Database");
+  assert.equal(databaseBackup.requiresDiskAccess, true);
+  assert.equal(databaseBackup.isTypeExclusive, true);
+  assert.ok(commandExecutors.BackupDatabase);
+  assert.ok(NON_DOWNLOAD_COMMAND_NAMES.includes("BackupDatabase"));
+
   const monitoringCycle = findSystemTaskDefinitionByCommandName("MonitoringCycle");
   assert.ok(monitoringCycle);
   assert.equal(monitoringCycle?.id, "monitoring-cycle");
   assert.equal(monitoringCycle?.kind, "scheduled");
+  assert.equal(findSystemTaskDefinitionByCommandName("CheckHealth")?.kind, "scheduled");
+  assert.equal(findSystemTaskDefinitionByCommandName("BackupDatabase")?.kind, "scheduled");
 
   assert.ok(PENDING_ACTIVITY_COMMAND_NAMES.includes("RefreshArtist"));
   assert.ok(getCommandTypesForQueueCategory("downloads").includes("ImportDownload"));

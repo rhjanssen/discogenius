@@ -676,6 +676,167 @@ test("CurationService queues spatial slot when only the stereo selected release 
   assert.equal(payload.providerId, "tidal-atmos-album");
   assert.equal(payload.slot, "spatial");
   assert.equal(payload.releaseGroupMbid, "rg-mbid-1");
+
+  // The same scoped query must not reconsider the still-missing spatial slot
+  // once spatial downloads are disabled.
+  db.prepare("DELETE FROM commands").run();
+  writeTestConfig({
+    filtering: {
+      include_spatial: false,
+      include_videos: false,
+    },
+  });
+  const disabledSpatial = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
+  assert.deepEqual(disabledSpatial, { albums: 0, tracks: 0, videos: 0 });
+});
+
+test("DownloadMissing treats canonical-only imported track files as complete", async () => {
+  const { db } = dbModule;
+
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)")
+    .run("artist-1", "Bastille", "artist-mbid-1");
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid-1", "Bastille");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
+    .run("rg-canonical-import", "artist-mbid-1", "Wild World");
+  db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, track_count, media_count
+    ) VALUES (?, ?, ?, ?, 2, 1)
+  `).run("release-canonical-import", "rg-canonical-import", "artist-mbid-1", "Wild World");
+  db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("recording-canonical-1", "artist-mbid-1", "Good Grief");
+  db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run("recording-canonical-2", "artist-mbid-1", "The Currents");
+  db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, title, medium_position, position
+    ) VALUES (?, ?, ?, ?, 1, ?)
+  `).run("track-canonical-1", "release-canonical-import", "recording-canonical-1", "Good Grief", 1);
+  db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, title, medium_position, position
+    ) VALUES (?, ?, ?, ?, 1, ?)
+  `).run("track-canonical-2", "release-canonical-import", "recording-canonical-2", "The Currents", 2);
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, 'stereo', 1, 'tidal', ?, ?, 'LOSSLESS', 'verified')
+  `).run(
+    "artist-mbid-1",
+    "rg-canonical-import",
+    "tidal-canonical-import",
+    "release-canonical-import",
+  );
+
+  const insertFile = db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+      canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+      library_slot, file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (?, ?, ?, ?, ?, ?, 'stereo', ?, ?, 'C:/Music', ?, 'flac', 'track')
+  `);
+  insertFile.run(
+    "artist-1", "artist-mbid-1", "rg-canonical-import", "release-canonical-import",
+    "track-canonical-1", null,
+    "C:/Music/Bastille/Wild World/01 - Good Grief.flac",
+    "Bastille/Wild World/01 - Good Grief.flac",
+    "01 - Good Grief.flac",
+  );
+  insertFile.run(
+    "artist-1", "artist-mbid-1", "rg-canonical-import", "release-canonical-import",
+    null, "recording-canonical-2",
+    "C:/Music/Bastille/Wild World/02 - The Currents.flac",
+    "Bastille/Wild World/02 - The Currents.flac",
+    "02 - The Currents.flac",
+  );
+  // Simulate canonical-only imports made before the integer catalog links were
+  // materialized. The canonical MBIDs remain durable completion evidence.
+  db.prepare(`
+    UPDATE TrackFiles
+    SET track_id = NULL, recording_id = NULL
+    WHERE canonical_release_group_mbid = 'rg-canonical-import'
+  `).run();
+
+  const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
+
+  assert.deepEqual(queued, { albums: 0, tracks: 0, videos: 0 });
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS count FROM commands").get() as { count: number }).count,
+    0,
+  );
+});
+
+test("DownloadMissing ignores an embedded canonical video when audio tracks are complete and videos are disabled", async () => {
+  const { db } = dbModule;
+  writeTestConfig({ filtering: { include_videos: false } });
+
+  db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)")
+    .run("artist-1", "Bastille", "artist-mbid-1");
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("artist-mbid-1", "Bastille");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
+    .run("rg-mixed-media", "artist-mbid-1", "Give Me the Future");
+  db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_mbid, artist_mbid, title, track_count, media_count
+    ) VALUES (?, ?, ?, ?, 2, 1)
+  `).run("release-mixed-media", "rg-mixed-media", "artist-mbid-1", "Give Me the Future");
+  db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title, is_video) VALUES (?, ?, ?, 0)")
+    .run("mixed-audio-recording", "artist-mbid-1", "Shut Off the Lights");
+  db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title, is_video, monitored) VALUES (?, ?, ?, 1, 1)")
+    .run("mixed-video-recording", "artist-mbid-1", "Shut Off the Lights (Music Video)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, title, medium_position, position
+    ) VALUES (?, ?, ?, ?, 1, ?)
+  `);
+  insertTrack.run(
+    "mixed-audio-track",
+    "release-mixed-media",
+    "mixed-audio-recording",
+    "Shut Off the Lights",
+    1,
+  );
+  insertTrack.run(
+    "mixed-video-track",
+    "release-mixed-media",
+    "mixed-video-recording",
+    "Shut Off the Lights (Music Video)",
+    2,
+  );
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (?, ?, 'stereo', 1, 'tidal', ?, ?, 'LOSSLESS', 'verified')
+  `).run("artist-mbid-1", "rg-mixed-media", "tidal-mixed-media", "release-mixed-media");
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+      canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+      library_slot, file_path, relative_path, library_root, filename, extension, file_type
+    ) VALUES (?, ?, ?, ?, ?, ?, 'stereo', ?, ?, 'C:/Music', ?, 'flac', 'track')
+  `).run(
+    "artist-1",
+    "artist-mbid-1",
+    "rg-mixed-media",
+    "release-mixed-media",
+    "mixed-audio-track",
+    "mixed-audio-recording",
+    "C:/Music/Bastille/Give Me the Future/01 - Shut Off the Lights.flac",
+    "Bastille/Give Me the Future/01 - Shut Off the Lights.flac",
+    "01 - Shut Off the Lights.flac",
+  );
+
+  const queued = await downloadMissingServiceModule.DownloadMissingService.queueMonitoredItems("artist-1");
+
+  assert.deepEqual(queued, { albums: 0, tracks: 0, videos: 0 });
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS count FROM commands").get() as { count: number }).count,
+    0,
+  );
 });
 
 test("DownloadMissingService queues quality-aware composite plans as canonical tracks", async () => {

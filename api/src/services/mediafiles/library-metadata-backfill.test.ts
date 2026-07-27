@@ -118,6 +118,9 @@ before(async () => {
 });
 
 beforeEach(() => {
+    for (const folder of ["music", "spatial", "videos", "media-cover"]) {
+        fs.rmSync(path.join(tempDir, folder), { recursive: true, force: true });
+    }
     for (const table of [
         "LyricFiles",
         "MetadataFiles",
@@ -489,6 +492,77 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
     assert.equal(fs.readFileSync(lyricPath, "utf8"), "plain lyrics without timestamps");
 
     assert.equal(path.relative(musicRoot, artistPicPath).startsWith("The Example Artist"), true);
+});
+
+test("canonical albums without any provider match still regenerate album.nfo", async () => {
+    seedCanonicalLibraryFiles();
+    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
+    dbModule.db.prepare("DELETE FROM ProviderItems").run();
+
+    const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
+    const track = dbModule.db.prepare(`
+        SELECT file_path FROM TrackFiles WHERE file_type = 'track' LIMIT 1
+    `).get() as { file_path: string };
+    const nfoPath = path.join(path.dirname(track.file_path), "album.nfo");
+    assert.equal(result.failed, 0);
+    assert.equal(fs.existsSync(nfoPath), true);
+    const nfo = fs.readFileSync(nfoPath, "utf8");
+    assert.match(nfo, /<title>Canonical Album<\/title>/);
+    assert.match(nfo, /<musicbrainzreleasegroupid>release-group-mbid-200<\/musicbrainzreleasegroupid>/);
+    assert.doesNotMatch(nfo, /tidalAlbum/);
+});
+
+test("a stale tracked lyric row does not block adjacent-sidecar recovery", async () => {
+    seedCanonicalLibraryFiles();
+    configModule.updateConfig("metadata", {
+        save_album_cover: false,
+        save_artist_picture: false,
+        save_video_thumbnail: false,
+        save_lyrics: true,
+        save_nfo: false,
+    });
+    const track = dbModule.db.prepare(`
+        SELECT id, file_path, library_root, library_slot,
+               canonical_artist_mbid, canonical_release_group_mbid,
+               canonical_release_mbid, canonical_track_mbid,
+               canonical_recording_mbid, provider, provider_id
+        FROM TrackFiles
+        WHERE file_type = 'track'
+        LIMIT 1
+    `).get() as any;
+    const stalePath = path.join(path.dirname(track.file_path), "deleted-old-name.lrc");
+    libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+        artistId: "100",
+        albumId: "200",
+        mediaId: String(track.provider_id),
+        trackFileId: track.id,
+        filePath: stalePath,
+        libraryRoot: track.library_root,
+        fileType: "lyrics",
+        expectedPath: stalePath,
+        librarySlot: track.library_slot,
+        provider: track.provider,
+        providerEntityType: "track",
+        providerId: String(track.provider_id),
+        canonicalArtistMbid: track.canonical_artist_mbid,
+        canonicalReleaseGroupMbid: track.canonical_release_group_mbid,
+        canonicalReleaseMbid: track.canonical_release_mbid,
+        canonicalTrackMbid: track.canonical_track_mbid,
+        canonicalRecordingMbid: track.canonical_recording_mbid,
+        removeFromUnmapped: false,
+    });
+    const recoveredPath = track.file_path.replace(/\.flac$/i, ".lrc");
+    fs.writeFileSync(recoveredPath, "[00:01.00]Recovered lyric");
+
+    await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");
+    const rows = dbModule.db.prepare(`
+        SELECT file_path
+        FROM LyricFiles
+        WHERE canonical_recording_mbid = ?
+        ORDER BY id
+    `).all("recording-mbid-300") as Array<{ file_path: string }>;
+    assert.deepEqual(rows, [{ file_path: recoveredPath }]);
+    assert.equal(fs.existsSync(stalePath), false);
 });
 
 

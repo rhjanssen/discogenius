@@ -32,6 +32,7 @@ import { formatDurationSeconds } from "@/utils/format";
 import { orderedQualityTags } from "@/utils/qualityTags";
 import { localFileQualityTooltip } from "@/utils/localQualityTooltip";
 import { mediaCoverSrc } from "@/utils/artwork";
+import { formatTrackPositionFrom, isMultiVolumeTrackList } from "@/utils/trackPosition";
 import type { TrackListItem } from "@/types/track-list";
 
 const CheckmarkCircle16 = bundleIcon(CheckmarkCircle16Filled, CheckmarkCircle16Regular);
@@ -345,7 +346,7 @@ const getAlbumTitle = (track: TrackListItem, fallback?: string | null) =>
 const getAlbumArtworkUrl = (track: TrackListItem) =>
   track.cover_url ?? track.album_cover ?? track.album?.cover_id ?? null;
 const getDisplayTitle = (track: TrackListItem) =>
-  track.version ? `${track.title} (${track.version})` : track.title;
+  track.title;
 const getQualityTags = (track: TrackListItem): string[] => orderedQualityTags(track);
 const getRemoteProviderQualityOffers = (track: TrackListItem): ProviderQualityOffer[] => {
   const remote = track.remoteOffers || [];
@@ -439,14 +440,6 @@ const hasPlayableTrackSource = (track: TrackListItem, audioFile: unknown) => Boo
   || canResolveProviderTrack(track),
 );
 
-const getDisplayNumber = (track: TrackListItem, index: number, numbering: TrackNumbering) => {
-  if (numbering === "index") {
-    return index + 1;
-  }
-
-  return track.track_number || index + 1;
-};
-
 const shouldShowAlbum = (
   track: TrackListItem,
   showAlbum: boolean,
@@ -500,7 +493,7 @@ const TrackList = <T extends TrackListItem>({
   const [loadingTrackFileIds, setLoadingTrackFileIds] = useState<Set<string>>(new Set());
 
   const hasMultipleVolumes = useMemo(
-    () => tracks.some((track) => (track.volume_number || 1) !== (tracks[0]?.volume_number || 1)),
+    () => isMultiVolumeTrackList(tracks),
     [tracks]
   );
   const getTrackFiles = useCallback((track: T): TrackFiles => {
@@ -804,7 +797,12 @@ const TrackList = <T extends TrackListItem>({
                   : undefined}
               >
                 <span className={styles.numberText} data-track-number>
-                  {getDisplayNumber(track, index, numbering)}
+                  {numbering === "index"
+                    ? index + 1
+                    : formatTrackPositionFrom(track, {
+                      multiVolume: hasMultipleVolumes,
+                      fallbackIndex: index + 1,
+                    })}
                 </span>
                 {canPlay ? (
                   <span
@@ -1005,6 +1003,7 @@ const TrackList = <T extends TrackListItem>({
     getTrackAudioFile,
     getTrackFiles,
     handleAlbumClick,
+    hasMultipleVolumes,
     isTrackDownloading,
     numbering,
     onDownloadTrack,

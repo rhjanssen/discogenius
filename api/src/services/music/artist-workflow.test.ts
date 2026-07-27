@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildRefreshArtistCommand, queueArtistIntake } from "./artist-workflow.js";
+import {
+  ARTIST_WORKFLOW_PRIORITY,
+  buildRefreshArtistCommand,
+  nextArtistWorkflowPriority,
+  queueArtistIntake,
+} from "./artist-workflow.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 
 test("metadata refresh commands do not expose recursive credited artist expansion", () => {
@@ -55,4 +60,19 @@ test("monitoring intake hydrates provider offers and marks post-curate download 
   assert.equal(payload.hydrateAlbumTracks, true);
   assert.equal(payload.monitorAlbums, true);
   assert.equal(payload.forceDownloadQueue, true);
+});
+
+test("workflow handoffs run depth-first while credited artists stay in a lower tier", () => {
+  const refreshPriority = ARTIST_WORKFLOW_PRIORITY.MONITORED_BATCH_BASE;
+  const matchPriority = nextArtistWorkflowPriority(refreshPriority);
+  const rescanPriority = nextArtistWorkflowPriority(matchPriority);
+  const curatePriority = nextArtistWorkflowPriority(rescanPriority);
+  const downloadPriority = nextArtistWorkflowPriority(curatePriority);
+
+  assert.deepEqual(
+    [refreshPriority, matchPriority, rescanPriority, curatePriority, downloadPriority],
+    [-1, 0, 1, 2, 3],
+  );
+  assert.ok(ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE < refreshPriority);
+  assert.ok(nextArtistWorkflowPriority(ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE) < refreshPriority);
 });

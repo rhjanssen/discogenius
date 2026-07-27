@@ -44,7 +44,7 @@ export function useTrackQueueActions() {
     setDownloadingTracks((previous) => new Set(previous).add(track.id));
 
     try {
-      const fullTitle = track.version ? `${track.title} (${track.version})` : track.title;
+      const trackTitle = track.title;
       const providerTrackId = String(track.preview_provider_track_id || "").trim();
       const looksLikeMusicBrainzMbid = (value: string | null | undefined) => (
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim())
@@ -63,7 +63,7 @@ export function useTrackQueueActions() {
 
       await addToQueue(null, "track", providerTrackId || undefined, {
         successTitle: "Track added to queue",
-        successDescription: `${fullTitle} will be downloaded shortly`,
+        successDescription: `${trackTitle} will be downloaded shortly`,
         payload: {
           provider: track.preview_provider ?? "tidal",
           ...(providerTrackId ? { providerId: providerTrackId } : {}),
@@ -73,13 +73,13 @@ export function useTrackQueueActions() {
           albumId: track.album_id ?? null,
           albumTitle: track.album_title ?? null,
           artistId: track.artist_id ?? null,
-          title: fullTitle,
+          title: trackTitle,
           artist: track.artist_name ?? "Unknown",
           cover: track.album_cover ?? track.cover_url ?? null,
           quality: track.quality ?? null,
           description: track.album_title
-            ? `${fullTitle} on ${track.album_title}`
-            : fullTitle,
+            ? `${trackTitle} on ${track.album_title}`
+            : trackTitle,
         },
       });
     } catch (error) {

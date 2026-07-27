@@ -27,6 +27,7 @@ const { youtubeMusicQualityMapping } = await import("./youtube-music-quality.js"
 const {
   YouTubeMusicProvider,
   parseYouTubeMusicUrl,
+  youtubeMusicArtworkUrl,
 } = await import("./youtube-music-provider.js");
 const {
   YtDlpBackend,
@@ -45,6 +46,33 @@ const ALBUM_ID = "MPREb_badblood_test";
 const TRACK_ID = "F90Cw4l-8NY";
 const SECOND_TRACK_ID = "4JjXAZlaelA";
 const VIDEO_ID = "VgXOPeobPcI";
+
+test("YouTube Music origin artwork requests uncapped Google and max-res video sources", async () => {
+  const googleSource = "https://lh3.googleusercontent.com/music-cover=w544-h544-l90-rj";
+  assert.equal(
+    youtubeMusicArtworkUrl(googleSource, "origin"),
+    "https://lh3.googleusercontent.com/music-cover=s0",
+  );
+  assert.equal(
+    youtubeMusicArtworkUrl(
+      "https://i.ytimg.com/vi/VgXOPeobPcI/hq720.jpg?sqp=crop",
+      "origin",
+    ),
+    "https://i.ytimg.com/vi/VgXOPeobPcI/maxresdefault.jpg",
+  );
+
+  const provider = new YouTubeMusicProvider({
+    catalog: {} as any,
+  });
+  assert.equal(
+    await provider.getArtworkUrl({
+      entityType: "album",
+      imageId: googleSource,
+      size: "origin",
+    }),
+    "https://lh3.googleusercontent.com/music-cover=s0",
+  );
+});
 
 const artistFixture = {
   channelId: ARTIST_ID,

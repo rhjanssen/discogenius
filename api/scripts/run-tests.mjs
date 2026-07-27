@@ -49,9 +49,7 @@ function runOnce(files, { capture = false } = {}) {
     ["--test", "--test-concurrency=1", ...runnerArgs, ...files],
     {
       cwd: root,
-      // Capture stdout so we can identify which file(s) hit the clone flake and
-      // re-run just those; stderr still streams live for progress/log output.
-      stdio: capture ? ["inherit", "pipe", "inherit"] : "inherit",
+      stdio: capture ? ["inherit", "pipe", "pipe"] : "inherit",
       shell: process.platform === "win32",
       encoding: capture ? "utf8" : undefined,
       maxBuffer: 256 * 1024 * 1024,
@@ -72,20 +70,21 @@ function parseFailedFiles(stdout) {
 
 let result = runOnce(testFiles, { capture: true });
 if (result.stdout) process.stdout.write(result.stdout);
+if (result.stderr) process.stderr.write(result.stderr);
 
 // Node's test runner intermittently fails a whole file with "Unable to
-// deserialize cloned data" — a child-process result-serialization flake in the
-// runner itself, not a test assertion. It reproduces under full-suite load, so a
-// whole-suite retry hits it again; re-running only the affected file(s) in
-// isolation clears it. Real assertion failures do not match this signature and
-// fail immediately without a retry.
-if ((result.status ?? 1) !== 0 && String(result.stdout || "").includes(CLONE_FLAKE_SIGNATURE)) {
-  const failedFiles = parseFailedFiles(result.stdout);
+// deserialize cloned data" — a child-process result-serialization flake, not a
+// test assertion. Detect it across both output streams because Node has emitted
+// the signature on either one. Real assertion failures do not match and fail
+// immediately; retrying those would hide a flaky or genuinely broken test.
+const combinedOutput = `${String(result.stdout || "")}\n${String(result.stderr || "")}`;
+if ((result.status ?? 1) !== 0 && combinedOutput.includes(CLONE_FLAKE_SIGNATURE)) {
+  const failedFiles = parseFailedFiles(combinedOutput);
   if (failedFiles.length > 0) {
     console.warn(`[api tests] Test-runner clone flake detected; re-running ${failedFiles.length} affected file(s) in isolation: ${failedFiles.join(", ")}`);
     result = runOnce(failedFiles, { capture: false });
   } else {
-    console.warn("[api tests] Test-runner clone flake detected; retrying whole suite once.");
+    console.warn("[api tests] Test-runner clone flake detected without a parseable file; retrying the whole suite once.");
     result = runOnce(testFiles, { capture: false });
   }
 }

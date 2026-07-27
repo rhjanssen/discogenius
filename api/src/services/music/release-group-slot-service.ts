@@ -2,7 +2,12 @@ import { db } from "../../database.js";
 import { getConfigSection } from "../config/config.js";
 import type { ProviderReleaseGroupMatch } from "../metadata/provider-release-group-matcher.js";
 import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-audio.js";
-import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from "./provider-track-matcher.js";
+import {
+    assignRankedTrackMatches,
+    scoreTrackMatch as sharedScoreTrackMatch,
+    TRACK_MATCH_THRESHOLD,
+    type TrackMatchOptions,
+} from "./provider-track-matcher.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 import {
@@ -268,7 +273,11 @@ type ProviderAlbumCandidateWithTracks = {
 // Adapter to the shared matcher. The slot path stores provider tracks in
 // snake_case (built from provider rows that way in refresh-artist-service), so
 // we map into the normalized shape here rather than changing the stored type.
-function scoreTrackMatch(target: TargetTrack, pt: ProviderTrackDetail): number {
+function scoreTrackMatch(
+    target: TargetTrack,
+    pt: ProviderTrackDetail,
+    options: TrackMatchOptions = {},
+): number {
     return sharedScoreTrackMatch(
         {
             recordingMbid: target.recordingMbid,
@@ -287,6 +296,7 @@ function scoreTrackMatch(target: TargetTrack, pt: ProviderTrackDetail): number {
             volumeNumber: pt.volume_number,
             durationSec: pt.duration == null ? null : Number(pt.duration),
         },
+        options,
     );
 }
 
@@ -294,12 +304,6 @@ function scoreTrackMatch(target: TargetTrack, pt: ProviderTrackDetail): number {
 function hasCatalogIsrcIdentity(target: TargetTrack, providerTrack: ProviderTrackDetail): boolean {
     const providerIsrc = normalizeIsrc(providerTrack.isrc);
     return Boolean(providerIsrc && target.isrcs.has(providerIsrc));
-}
-
-function isTrackCovered(target: TargetTrack, providerTracks: Array<ProviderTrackDetail>): boolean {
-    return providerTracks.some(pt => {
-        return scoreTrackMatch(target, pt) >= TRACK_MATCH_THRESHOLD;
-    });
 }
 
 function sortCandidatesForSlot(slot: ReleaseGroupLibrarySlot, candidates: ProviderAlbumCandidateWithTracks[]): void {
@@ -446,16 +450,40 @@ function buildCoveragePlanForProvider(
     for (const candidate of providerCandidates) {
         candidate.tracks.forEach((providerTrack, trackIndex) => {
             const providerTrackId = String(providerTrack.providerId || providerTrack.provider_id || "").trim();
+            // ProviderItems uses (provider, entity_type, provider_id) as its
+            // identity, so the same provider track offered on two albums is
+            // still one downloadable source. Prefixing album id here would let
+            // a composite plan spend that one source twice.
             const key = providerTrackId
-                ? `${candidate.album.providerId}:${providerTrackId}`
+                ? providerTrackId
                 : `${candidate.album.providerId}:${providerTrack.volume_number || 1}:${providerTrack.track_number || trackIndex + 1}:${providerTrack.title || ""}`;
-            if (!sourcesByKey.has(key)) {
-                sourcesByKey.set(key, {
-                    key,
-                    candidate,
-                    providerTrack,
-                    quality: qualityScore(slot, candidate.provider, candidate.album.quality),
-                });
+            const source = {
+                key,
+                candidate,
+                providerTrack,
+                quality: qualityScore(slot, candidate.provider, candidate.album.quality),
+            };
+            const existing = sourcesByKey.get(key);
+            const explicitDelta = preferExplicit
+                ? Number(Boolean(candidate.album.explicit)) - Number(Boolean(existing?.candidate.album.explicit))
+                : Number(Boolean(existing?.candidate.album.explicit)) - Number(Boolean(candidate.album.explicit));
+            if (
+                !existing
+                || source.quality > existing.quality
+                || (source.quality === existing.quality && explicitDelta > 0)
+                || (
+                    source.quality === existing.quality
+                    && explicitDelta === 0
+                    && (
+                        candidate.score > existing.candidate.score
+                        || (
+                            candidate.score === existing.candidate.score
+                            && candidate.album.providerId.localeCompare(existing.candidate.album.providerId) < 0
+                        )
+                    )
+                )
+            ) {
+                sourcesByKey.set(key, source);
             }
         });
     }
@@ -470,6 +498,14 @@ function buildCoveragePlanForProvider(
         && Boolean(providerCandidates[0].match.releaseGroup?.mbid)
         && providerCandidates[0].match.releaseGroup!.mbid !== target.releaseGroupMbid;
     const requireIsrc = providerCandidates.length > 1 || crossRgOnly;
+    const allowSameReleaseSupersetPositionMismatch = providerCandidates.length === 1
+        && providerCandidates[0]!.tracks.length > target.tracks.length
+        && providerCandidates[0]!.match.confidence >= 0.9
+        && (
+            providerCandidates[0]!.match.status === "verified"
+            || providerCandidates[0]!.match.status === "probable"
+        )
+        && compatibleReleaseMbids(providerCandidates[0]!.match).includes(target.releaseMbid);
     const normalizedTitle = (value: string | null | undefined) => String(value || "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
@@ -485,7 +521,9 @@ function buildCoveragePlanForProvider(
         .map((source) => {
             const matchScore = requireIsrc
                 ? (hasCatalogIsrcIdentity(targetTrack, source.providerTrack) ? 1 : 0)
-                : scoreTrackMatch(targetTrack, source.providerTrack);
+                : scoreTrackMatch(targetTrack, source.providerTrack, {
+                    allowSameReleaseSupersetPositionMismatch,
+                });
             return { source, targetIndex, matchScore };
         })
         .filter((edge) => {
@@ -511,38 +549,18 @@ function buildCoveragePlanForProvider(
             || left.source.key.localeCompare(right.source.key)
         ));
 
-    const sourceOwner = new Map<string, number>();
-    const assignedSource = new Map<number, typeof sources[number]>();
-    const assignedScore = new Map<number, number>();
-    const tryAssign = (targetIndex: number, visitedSources: Set<string>): boolean => {
-        for (const edge of edges[targetIndex]) {
-            if (visitedSources.has(edge.source.key)) continue;
-            visitedSources.add(edge.source.key);
-            const previousTarget = sourceOwner.get(edge.source.key);
-            if (previousTarget == null || tryAssign(previousTarget, visitedSources)) {
-                sourceOwner.set(edge.source.key, targetIndex);
-                assignedSource.set(targetIndex, edge.source);
-                assignedScore.set(targetIndex, edge.matchScore);
-                return true;
-            }
-        }
-        return false;
-    };
-
-    const targetOrder = edges
-        .map((targetEdges, targetIndex) => ({ targetIndex, choices: targetEdges.length }))
-        .filter((entry) => entry.choices > 0)
-        .sort((left, right) => left.choices - right.choices || left.targetIndex - right.targetIndex);
-    for (const { targetIndex } of targetOrder) {
-        tryAssign(targetIndex, new Set());
-    }
-
-    const assignments = Array.from(assignedSource.entries())
-        .map(([targetIndex, source]) => ({
+    const assignedEdges = assignRankedTrackMatches(edges.map((targetEdges) =>
+        targetEdges.map((edge) => ({
+            sourceKey: edge.source.key,
+            source: edge.source,
+            matchScore: edge.matchScore,
+        }))));
+    const assignments = Array.from(assignedEdges.entries())
+        .map(([targetIndex, edge]) => ({
             targetIndex,
-            candidate: source.candidate,
-            providerTrack: source.providerTrack,
-            matchScore: assignedScore.get(targetIndex) || 0,
+            candidate: edge.source.candidate,
+            providerTrack: edge.source.providerTrack,
+            matchScore: edge.matchScore,
         }))
         .sort((left, right) => left.targetIndex - right.targetIndex);
     if (assignments.length === 0) {

@@ -165,9 +165,7 @@ export function mapMbArtistToLidarr(artist: MbArtist): LidarrArtist {
 export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): LidarrTrack {
   const recording = track.recording;
   const lengthMs = track.length ?? recording?.length ?? 0;
-  const trackTitle = track.title ?? "";
-  const recTitle = recording?.title ?? "";
-  const bestTitle = recTitle.length > trackTitle.length ? recTitle : trackTitle;
+  const bestTitle = track.title || recording?.title || "";
 
   return {
     Id: String(track.id ?? ""),

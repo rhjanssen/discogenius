@@ -80,7 +80,7 @@ test("maps Apple artist into ProviderArtist with rendered artwork", async () => 
   assert.equal(artist.providerId, "1419227");
   assert.equal(artist.name, "Bastille");
   assert.ok(artist.picture && !artist.picture.includes("{w}"), "artwork template should be rendered");
-  assert.match(artist.picture!, /750x750/);
+  assert.match(artist.picture!, /3000x3000/);
 });
 
 test("maps Apple album with UPC, explicit flag and neutral-classifiable quality tags", async () => {
@@ -132,6 +132,32 @@ test("Apple getArtworkUrl returns editorial video URL for albumVideoCover", asyn
       providerId: "1440904699",
     });
     assert.equal(fromAlbum, "https://mzstatic.com/editorialvideo/motion-detail-square.m3u8");
+  } finally {
+    (appleMusicStreamingProvider as any).apiOptions = originalApiOptions;
+  }
+});
+
+test("Apple getArtworkUrl uses advertised origin dimensions", async () => {
+  const { appleMusicStreamingProvider } = await import("./apple-music-provider.js");
+  const originalApiOptions = (appleMusicStreamingProvider as any).apiOptions.bind(appleMusicStreamingProvider);
+  (appleMusicStreamingProvider as any).apiOptions = () => opts();
+  try {
+    assert.match(
+      String(await appleMusicStreamingProvider.getArtworkUrl({
+        entityType: "artist",
+        providerId: "1419227",
+        size: "origin",
+      })),
+      /3000x3000/,
+    );
+    assert.match(
+      String(await appleMusicStreamingProvider.getArtworkUrl({
+        entityType: "album",
+        providerId: "1440904699",
+        size: "origin",
+      })),
+      /1500x1500/,
+    );
   } finally {
     (appleMusicStreamingProvider as any).apiOptions = originalApiOptions;
   }

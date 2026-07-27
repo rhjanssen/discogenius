@@ -3,6 +3,8 @@ import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
+import { getEnabledDownloadLibrarySlots } from "../download/download-library-slots.js";
+import { buildTrackFileCompletionExistsPredicate } from "../download/track-file-completion.js";
 import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
@@ -62,7 +64,8 @@ export class DownloadMissingService {
         console.log(`[Queue] Queueing monitored items${artistId ? ` for artist ${artistId}` : ' app-wide'}...`);
 
         const filteringConfig = getConfigSection("filtering");
-        const allowVideos = filteringConfig?.include_videos !== false;
+        const enabledLibrarySlots = getEnabledDownloadLibrarySlots();
+        const allowVideos = enabledLibrarySlots.video;
         // Optional limit remains for tests / callers that want a soft cap; the
         // DownloadMissing command itself queues without chunking (worker
         // concurrency is the active-slot limit, like qBittorrent).
@@ -166,7 +169,8 @@ export class DownloadMissingService {
             return true;
         };
 
-        const slotParams: any[] = [];
+        const audioSlotPlaceholders = enabledLibrarySlots.audio.map(() => "?").join(", ");
+        const slotParams: any[] = [...enabledLibrarySlots.audio];
         // Slot-level monitoring is the download authority: an album whose
         // ReleaseGroupSlots.monitored = 1 should download even when its canonical
         // owner is an unmonitored credited artist (e.g. a feature credit). Only
@@ -207,26 +211,32 @@ export class DownloadMissingService {
              AND pi.provider_id = rgs.selected_provider_id
              AND pi.entity_type = 'album'
             WHERE rgs.monitored = 1
+              AND rgs.slot IN (${audioSlotPlaceholders})
               AND rgs.selected_provider IS NOT NULL
               AND rgs.selected_provider_id IS NOT NULL
               AND rgs.selected_release_mbid IS NOT NULL
               AND ${slotArtistWhere}
               AND (
-                rgs.selected_album_release_id NOT IN (
-                  SELECT selected_track.album_release_id
+                NOT EXISTS (
+                  SELECT 1
                   FROM Tracks selected_track
-                  WHERE selected_track.album_release_id IS NOT NULL
+                  LEFT JOIN Recordings selected_recording
+                    ON selected_recording.mbid = selected_track.recording_mbid
+                  WHERE selected_track.release_mbid = rgs.selected_release_mbid
+                    AND (selected_recording.is_video IS NULL OR selected_recording.is_video = 0)
                 )
-                OR rgs.selected_album_release_id IN (
-                  SELECT missing_track.album_release_id
+                OR rgs.selected_release_mbid IN (
+                  SELECT missing_track.release_mbid
                   FROM Tracks missing_track
-                  WHERE missing_track.id NOT IN (
-                      SELECT downloaded_file.track_id
-                      FROM TrackFiles downloaded_file
-                      WHERE downloaded_file.file_type = 'track'
-                        AND downloaded_file.library_slot = COALESCE(rgs.slot, 'stereo')
-                        AND downloaded_file.track_id IS NOT NULL
-                    )
+                  LEFT JOIN Recordings missing_recording
+                    ON missing_recording.mbid = missing_track.recording_mbid
+                  WHERE missing_track.release_mbid = rgs.selected_release_mbid
+                    AND (missing_recording.is_video IS NULL OR missing_recording.is_video = 0)
+                    AND NOT ${buildTrackFileCompletionExistsPredicate(
+                      "missing_track",
+                      "rgs.slot",
+                      "download_missing_file",
+                    )}
                 )
               )
             ORDER BY rg.first_release_date DESC, rg.title ASC, rgs.slot ASC

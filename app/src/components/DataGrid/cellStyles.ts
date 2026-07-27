@@ -91,51 +91,6 @@ export const useDataGridCellStyles = makeStyles({
     statSecondary: {
         opacity: 0.5,
     },
-    /* Progress bar (Lidarr-style track completion) — value rendered inside.
-     * The whole track is the accent colour: the filled (left) portion is solid,
-     * the remaining (right) portion is the badge-style translucent fill, so the
-     * bar reads like our provider/quality chips. Green replaces the accent when
-     * the set is fully downloaded. */
-    progressTrack: {
-        position: "relative",
-        width: "100%",
-        minWidth: "56px",
-        maxWidth: "120px",
-        height: "18px",
-        borderRadius: tokens.borderRadiusSmall,
-        overflow: "hidden",
-        // Remaining (unfilled) portion — translucent accent, badge glass feel.
-        backgroundColor: `color-mix(in srgb, ${tokens.colorBrandBackground} 20%, transparent)`,
-    },
-    progressTrackComplete: {
-        backgroundColor: `color-mix(in srgb, ${tokens.colorPaletteGreenBackground3} 20%, transparent)`,
-    },
-    /* Filled (downloaded) portion — solid accent. */
-    progressFill: {
-        position: "absolute",
-        top: 0,
-        left: 0,
-        bottom: 0,
-        backgroundColor: tokens.colorBrandBackground,
-        transition: `width ${tokens.durationSlow} ${tokens.curveEasyEase}`,
-    },
-    progressFillComplete: {
-        backgroundColor: tokens.colorPaletteGreenBackground3,
-    },
-    progressLabel: {
-        position: "relative",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        paddingInline: tokens.spacingHorizontalXXS,
-        fontSize: tokens.fontSizeBase100,
-        fontWeight: tokens.fontWeightSemibold,
-        fontVariantNumeric: "tabular-nums",
-        color: tokens.colorNeutralForeground1,
-        whiteSpace: "nowrap",
-        textShadow: "0 1px 2px rgba(0,0,0,0.35)",
-    },
     /* Action button cluster — flex end */
     actions: {
         display: "flex",

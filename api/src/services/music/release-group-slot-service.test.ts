@@ -431,6 +431,127 @@ test("lossless audio beats a preferred lossy provider", () => {
   }
 });
 
+test("same-release TIDAL superset beats a complete lossy YouTube Music offer", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-mbid-reality-superset";
+  const releaseMbid = "release-mbid-reality-remixes";
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    releaseMbid,
+    releaseGroupMbid,
+    "artist-mbid-1",
+    "Reality (Remixes)",
+    "Official",
+    "2016-01-01",
+    3,
+    1,
+  );
+
+  const canonicalTracks = [
+    ["Dave Winnel remix", 245],
+    ["Jack Wins remix", 278],
+    ["Deluxe mix", 304],
+  ] as const;
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title) VALUES (?, ?)");
+  const insertTrack = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  canonicalTracks.forEach(([version, duration], index) => {
+    const recordingMbid = `rec-reality-superset-${index + 1}`;
+    const title = `Reality (${version})`;
+    insertRecording.run(recordingMbid, title);
+    insertTrack.run(
+      `track-reality-superset-${index + 1}`,
+      releaseMbid,
+      recordingMbid,
+      title,
+      index + 1,
+      1,
+      duration * 1000,
+    );
+  });
+
+  const sameReleaseMatch = (providerId: string, providerTrackCount: number): ProviderReleaseGroupMatch => ({
+    ...buildMatch(releaseGroupMbid, providerId),
+    releaseMbid,
+    confidence: 0.99,
+    evidence: {
+      ...buildMatch(releaseGroupMbid, providerId).evidence,
+      trackCountMatched: providerTrackCount === canonicalTracks.length,
+      providerTrackCount,
+      targetTrackCount: canonicalTracks.length,
+      availableReleaseMbids: [releaseMbid],
+    },
+  });
+
+  const tidalTracks = [
+    { providerId: "tidal-reality-1", mbid: null, isrc: null, title: "Reality", track_number: 1, volume_number: 1, duration: 180 },
+    { providerId: "tidal-reality-2", mbid: null, isrc: null, title: "Reality", track_number: 2, volume_number: 1, duration: 200 },
+    { providerId: "tidal-reality-3", mbid: null, isrc: null, title: "Reality", track_number: 3, volume_number: 1, duration: 220 },
+    ...canonicalTracks.map(([, duration], index) => ({
+      providerId: `tidal-reality-${index + 4}`,
+      mbid: null,
+      isrc: null,
+      title: "Reality",
+      track_number: index + 4,
+      volume_number: 1,
+      duration,
+    })),
+  ];
+  const youtubeTracks = canonicalTracks.map(([version, duration], index) => ({
+    providerId: `youtube-reality-${index + 1}`,
+    mbid: null,
+    isrc: null,
+    title: `Reality (${version})`,
+    track_number: index + 1,
+    volume_number: 1,
+    duration,
+  }));
+
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    {
+      provider: "tidal",
+      album: {
+        providerId: "52412070",
+        title: "Reality",
+        quality: "LOSSLESS",
+        trackCount: tidalTracks.length,
+        volumeCount: 1,
+        tracks: tidalTracks,
+      },
+      match: sameReleaseMatch("52412070", tidalTracks.length),
+    },
+    {
+      provider: "youtube-music",
+      album: {
+        providerId: "MPREb_NRYJmyFdU35",
+        title: "Reality (Remixes)",
+        quality: "YOUTUBE_LOSSY",
+        trackCount: youtubeTracks.length,
+        volumeCount: 1,
+        tracks: youtubeTracks,
+      },
+      match: sameReleaseMatch("MPREb_NRYJmyFdU35", youtubeTracks.length),
+    },
+  ], {});
+
+  const stereo = selections.find((selection) => selection.slot === "stereo");
+  assert.ok(stereo);
+  assert.equal(stereo.provider, "tidal");
+  assert.equal(stereo.album.providerId, "52412070");
+  const trackSources = (stereo.match.evidence as unknown as {
+    trackSources: Array<{ providerTrackId: string }>;
+  }).trackSources;
+  assert.deepEqual(
+    trackSources.map((source) => source.providerTrackId),
+    ["tidal-reality-4", "tidal-reality-5", "tidal-reality-6"],
+  );
+});
+
 test("provider slot selection links an Atmos-only release to both stereo and spatial slots", () => {
   const { db } = dbModule;
   const releaseGroupMbid = "rg-mbid-atmos-only";
@@ -1645,7 +1766,7 @@ test("hybrid coverage cannot reuse one logical provider track through duplicate 
   db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)")
     .run("one-to-one-rec-1", "First Song", JSON.stringify(["ONETOONE01"]));
   db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)")
-    .run("one-to-one-rec-2", "Second Song", JSON.stringify(["ONETOONE02"]));
+    .run("one-to-one-rec-2", "Second Song", JSON.stringify(["ONETOONE01"]));
   const insertTrack = db.prepare(`
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
     VALUES (?, ?, ?, ?, ?, 1)
@@ -1653,11 +1774,10 @@ test("hybrid coverage cannot reuse one logical provider track through duplicate 
   insertTrack.run("one-to-one-track-1", releaseMbid, "one-to-one-rec-1", "First Song", 1);
   insertTrack.run("one-to-one-track-2", releaseMbid, "one-to-one-rec-2", "Second Song", 2);
 
-  const match = { ...buildMatch(releaseGroupMbid, "duplicate-provider-album"), releaseMbid };
-  const duplicateCandidate = {
+  const duplicateCandidate = (providerAlbumId: string) => ({
     provider: "tidal",
     album: {
-      providerId: "duplicate-provider-album",
+      providerId: providerAlbumId,
       title: "Two Track EP",
       quality: "LOSSLESS",
       trackCount: 1,
@@ -1672,17 +1792,21 @@ test("hybrid coverage cannot reuse one logical provider track through duplicate 
         duration: 180,
       }],
     },
-    match,
-  };
-  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([duplicateCandidate, { ...duplicateCandidate }]);
+    match: { ...buildMatch(releaseGroupMbid, providerAlbumId), releaseMbid },
+  });
+  const selections = slotServiceModule.selectReleaseGroupSlotAlbums([
+    duplicateCandidate("duplicate-provider-album-a"),
+    duplicateCandidate("duplicate-provider-album-b"),
+  ]);
 
   assert.equal(selections.length, 1);
   assert.equal(selections[0]?.match.method, "strict_partial_track_coverage");
   const evidence = selections[0]?.match.evidence as any;
   assert.equal(evidence.coverage.coveredTracks, 1);
   assert.equal(evidence.coverage.targetTracks, 2);
-  assert.deepEqual(evidence.providerAlbumIds, ["duplicate-provider-album"]);
+  assert.equal(evidence.providerAlbumIds.length, 1);
   assert.equal(evidence.trackSources.length, 1);
+  assert.equal(evidence.trackSources[0]?.providerTrackId, "only-provider-track");
 });
 
 test("title-only matching does not confuse repeated vocal and instrumental recordings", () => {

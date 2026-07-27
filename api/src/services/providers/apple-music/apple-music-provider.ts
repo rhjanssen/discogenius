@@ -44,6 +44,7 @@ import {
   getAppleVideo,
   getAppleVideoPreviewUrl,
   renderAppleArtwork,
+  renderAppleArtworkOrigin,
   searchApple,
   extractAppleEditorialNotes,
 } from "./apple-music-catalog.js";
@@ -55,6 +56,25 @@ import {
   getAppleMusicDownloaderCapabilitySnapshot,
   resolveAppleMusicProviderStorefront,
 } from "./apple-music-backend.js";
+
+function resolveAppleCatalogArtwork(
+  entity: { raw?: unknown },
+  fallbackUrl: string | null | undefined,
+  requestedSize: string | number | null | undefined,
+): string | null {
+  const artwork = (entity.raw as {
+    attributes?: { artwork?: { url?: string; width?: number; height?: number } };
+  } | null | undefined)?.attributes?.artwork;
+  if (String(requestedSize || "").toLowerCase() === "origin") {
+    return renderAppleArtworkOrigin(artwork) || fallbackUrl || null;
+  }
+  const numericSize = typeof requestedSize === "number"
+    ? requestedSize
+    : Number(requestedSize);
+  return Number.isFinite(numericSize) && numericSize > 0
+    ? renderAppleArtwork(artwork, numericSize) || fallbackUrl || null
+    : fallbackUrl || null;
+}
 
 export function appleMusicOfferSupportsSlot(
   album: Pick<ProviderAlbum, "quality" | "qualityTags">,
@@ -264,7 +284,6 @@ export class AppleMusicProvider implements StreamingProvider {
   }
 
   async getArtworkUrl(request: ProviderArtworkRequest): Promise<string | null> {
-    const size = typeof request.size === "number" ? request.size : Number(request.size) || 640;
     if (request.entityType === "albumVideoCover") {
       const imageId = String(request.imageId || "").trim();
       if (/^https?:\/\//i.test(imageId)) {
@@ -278,15 +297,15 @@ export class AppleMusicProvider implements StreamingProvider {
     }
     if (request.entityType === "album" && request.providerId != null) {
       const album = await getAppleAlbum(String(request.providerId), this.apiOptions());
-      return album.cover ? this.resizeArtwork(album.cover, size) : null;
+      return resolveAppleCatalogArtwork(album, album.cover, request.size);
     }
     if (request.entityType === "artist" && request.providerId != null) {
       const artist = await getAppleArtist(String(request.providerId), this.apiOptions());
-      return artist.picture ? this.resizeArtwork(artist.picture, size) : null;
+      return resolveAppleCatalogArtwork(artist, artist.picture, request.size);
     }
     if (request.entityType === "video" && request.providerId != null) {
       const video = await getAppleVideo(String(request.providerId), this.apiOptions());
-      return video.cover ? this.resizeArtwork(video.cover, size) : null;
+      return resolveAppleCatalogArtwork(video, video.cover, request.size);
     }
     return null;
   }
@@ -505,14 +524,6 @@ export class AppleMusicProvider implements StreamingProvider {
     syncTokenToDownloader(loadStoredAppleMusicToken());
   }
 
-  private resizeArtwork(coverUrl: string, size: number): string {
-    // Catalog mappers already render the template; if a raw template slips
-    // through, render it. Otherwise return as-is.
-    if (coverUrl.includes("{w}")) {
-      return renderAppleArtwork({ url: coverUrl }, size) ?? coverUrl;
-    }
-    return coverUrl;
-  }
 }
 
 export const appleMusicStreamingProvider = new AppleMusicProvider();

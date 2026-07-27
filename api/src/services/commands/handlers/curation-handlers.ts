@@ -3,6 +3,7 @@ import { UpgraderService } from "../../mediafiles/upgrader.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { queueDownloadMissingPass } from "../scheduler.js";
+import { nextArtistWorkflowPriority } from "../../music/artist-workflow.js";
 import type { CommandHandler } from "./handler-context.js";
 
 export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, ctx) => {
@@ -86,6 +87,7 @@ export const handleCurateArtist: CommandHandler<"CurateArtist"> = async (job, ct
         queueDownloadMissingPass({
             artistIds: [String(job.payload.artistId)],
             trigger: job.trigger,
+            priority: nextArtistWorkflowPriority(job.priority),
         });
         ctx.updateCommandDescription(job, {
             progress: 100,

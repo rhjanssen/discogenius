@@ -3,7 +3,7 @@ import path from "path";
 import { execFileSync, execSync } from "child_process";
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
-import { downloadAlbumCover, downloadAlbumVideoCover, downloadArtistPicture, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveVideoNfoFile } from "./metadata-files.js";
+import { downloadAlbumVideoCover, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveVideoNfoFile } from "./metadata-files.js";
 import { streamingProviderManager } from "../providers/index.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "../config/naming.js";
 import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
@@ -18,7 +18,7 @@ import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
 import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
-import { albumCoverLocalUrl } from "../metadata/media-cover-service.js";
+import { albumCoverLocalUrl, syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
 import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
 import {
   findAdjacentLyricSidecar,
@@ -1106,8 +1106,8 @@ export class OrganizerService {
   }
 
   /**
-   * Always fetch a video thumbnail when Settings → Save video thumbnails is on
-   * (and/or Embed is on). Resolves cover from DB hints, then provider getVideo.
+   * Reconcile a static video thumbnail from the canonical recording's cached
+   * MediaCover origin. Refresh/match owns provider access and network I/O.
    */
   private static async ensureVideoThumbnailSidecar(params: {
     artistId: string;
@@ -1119,7 +1119,6 @@ export class OrganizerService {
     providerId: string;
     quality?: string | null;
     namingTemplate?: string | null;
-    coverHint?: string | null;
     libraryFileId?: number | null;
   }): Promise<void> {
     const metadataConfig = Config.getMetadataConfig();
@@ -1147,78 +1146,18 @@ export class OrganizerService {
       return;
     }
 
-    let coverId = String(params.coverHint || "").trim() || null;
-    if (!coverId) {
-      const stored = db.prepare(`
-        SELECT
-          COALESCE(
-            NULLIF(TRIM(r.cover_image_id), ''),
-            NULLIF(TRIM(video_item.asset_id), ''),
-            NULLIF(TRIM(video_item.cover), ''),
-            NULLIF(TRIM(track_item.asset_id), ''),
-            NULLIF(TRIM(track_item.cover), '')
-          ) AS cover
-        FROM (
-          SELECT ? AS provider, CAST(? AS TEXT) AS provider_id
-        ) key
-        LEFT JOIN ProviderItems video_item
-          ON video_item.provider = key.provider
-         AND video_item.entity_type = 'video'
-         AND CAST(video_item.provider_id AS TEXT) = key.provider_id
-        LEFT JOIN ProviderItems track_item
-          ON track_item.provider = key.provider
-         AND track_item.entity_type = 'track'
-         AND CAST(track_item.provider_id AS TEXT) = key.provider_id
-        LEFT JOIN Recordings r
-          ON r.id = COALESCE(video_item.recording_id, track_item.recording_id)
-        LIMIT 1
-      `).get(params.provider, params.providerId) as { cover?: string | null } | undefined;
-      coverId = String(stored?.cover || "").trim() || null;
-    }
-
-    if (!coverId) {
-      try {
-        const fetched = await this.fetchProviderVideo(params.providerId, params.provider);
-        coverId = String(fetched?.cover || fetched?.image_id || fetched?.imageId || "").trim() || null;
-        if (coverId) {
-          db.prepare(`
-            UPDATE Recordings SET cover_image_id = COALESCE(?, cover_image_id), updated_at = CURRENT_TIMESTAMP
-            WHERE id = (
-              SELECT recording_id FROM ProviderItems
-              WHERE provider = ?
-                AND entity_type IN ('video', 'track')
-                AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                AND recording_id IS NOT NULL
-              ORDER BY CASE entity_type WHEN 'video' THEN 0 ELSE 1 END
-              LIMIT 1
-            )
-          `).run(coverId, params.provider, params.providerId);
-          db.prepare(`
-            UPDATE ProviderItems
-            SET
-              asset_id = COALESCE(asset_id, ?),
-              cover = COALESCE(cover, ?),
-              updated_at = CURRENT_TIMESTAMP
-            WHERE provider = ?
-              AND entity_type IN ('video', 'track')
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-          `).run(coverId, coverId, params.provider, params.providerId);
-        }
-      } catch (error) {
-        console.warn(`[Organizer] Failed to resolve video thumbnail source for ${params.provider}:${params.providerId}:`, error);
-      }
-    }
-
-    if (coverId && !fs.existsSync(coverPath)) {
-      const videoThumbnailResolution = metadataConfig.video_thumbnail_resolution || "origin";
-      try {
-        await downloadVideoThumbnail(coverId, videoThumbnailResolution as any, coverPath, {
+    try {
+      await downloadVideoThumbnail(
+        "",
+        (metadataConfig.video_thumbnail_resolution || "origin") as any,
+        coverPath,
+        {
           provider: params.provider,
           providerId: params.providerId,
-        });
-      } catch (error) {
-        console.warn(`[Organizer] Failed to download video thumbnail for ${params.provider}:${params.providerId}:`, error);
-      }
+        },
+      );
+    } catch (error) {
+      console.warn(`[Organizer] Failed to sync cached video thumbnail for ${params.provider}:${params.providerId}:`, error);
     }
 
     if (persistentCoverPath && fs.existsSync(persistentCoverPath)) {
@@ -2182,7 +2121,6 @@ export class OrganizerService {
           albumId: libraryAlbumId,
           albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
           albumMbId: canonicalAlbum?.albumMbid || album.mbid || null,
-          albumVersion: canonicalAlbum ? null : album.version || null,
           albumDisambiguation: canonicalAlbum?.disambiguation || null,
           albumGenre: firstGenre(canonicalAlbum?.genres),
           releaseYear: getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
@@ -2191,7 +2129,6 @@ export class OrganizerService {
           trackMbId: canonicalIdentity.canonicalTrackMbid || trackRow.mbid || null,
           trackArtistName: resolvedTrackArtistName,
           trackArtistMbId,
-          trackVersion: canonicalPosition ? null : trackRow.version || null,
           explicit: trackRow.explicit === 1,
           trackNumber,
           volumeNumber,
@@ -2397,15 +2334,16 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture) {
-        // Saved sidecar artwork always uses the highest available resolution,
-        // independent of metadata.artist_picture_resolution (which only caps
-        // the UI's cached display thumbnail — see media-cover-service.ts).
-        // Artwork is a backfillable sidecar: its fetch must NEVER fail an import
-        // whose audio is already organized + tracked. The default provider may
-        // not even carry this album (e.g. an Apple-only id), and the scheduled
-        // library-metadata backfill retries missing artwork later.
+        // Materialize only the cached full-resolution master. Network artwork
+        // acquisition is centralized in refresh/match workflows, so a cache miss
+        // is harmless here and can be reconciled by a later metadata backfill.
         try {
-          await downloadArtistPicture(artistId, "origin", artistPicPath);
+          syncCachedMediaCoverToFile({
+            entityId: artistMbId || artistId,
+            coverEntity: "Artist",
+            coverTypes: ["poster", "headshot"],
+            outputPath: artistPicPath,
+          });
           if (fs.existsSync(artistPicPath)) {
             this.upsertLibraryFile({
               artistId,
@@ -2420,7 +2358,7 @@ export class OrganizerService {
             });
           }
         } catch (error) {
-          console.warn(`[Organizer] Failed to fetch artist picture for ${artistId}; import already complete:`, error);
+          console.warn(`[Organizer] Failed to materialize cached artist picture for ${artistId}; import already complete:`, error);
         }
       }
 
@@ -2435,16 +2373,15 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_album_cover) {
-        // Saved sidecar artwork always uses the highest available resolution,
-        // independent of metadata.album_cover_resolution (which only caps the
-        // UI's cached display thumbnail — see media-cover-service.ts).
-        // Pass the import provider so a non-default-provider album (e.g. an
-        // Apple-only album while the default provider is TIDAL) resolves against
-        // the correct provider instead of 404ing on the default. A cover fetch
-        // must still never fail an import whose audio is already tracked — the
-        // scheduled library-metadata backfill retries a genuine miss later.
+        // Materialize only the canonical album's cached full-resolution master.
+        // This path neither chooses a provider nor performs network I/O.
         try {
-          await downloadAlbumCover(albumIds[0], "origin", albumCoverPath, { provider: streamingProviderId });
+          syncCachedMediaCoverToFile({
+            entityId: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid,
+            coverEntity: "Album",
+            coverTypes: "cover",
+            outputPath: albumCoverPath,
+          });
           if (fs.existsSync(albumCoverPath)) {
             this.upsertLibraryFile({
               artistId,
@@ -2459,7 +2396,7 @@ export class OrganizerService {
             });
           }
         } catch (error) {
-          console.warn(`[Organizer] Failed to fetch album cover for ${albumIds[0]}; import already complete:`, error);
+          console.warn(`[Organizer] Failed to materialize cached album cover for ${albumIds[0]}; import already complete:`, error);
         }
       }
 
@@ -2533,7 +2470,13 @@ export class OrganizerService {
         }
 
         try {
-          await saveAlbumNfoFile(albumIds[0], albumNfoPath);
+          await saveAlbumNfoFile(jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid || albumIds[0], albumNfoPath, {
+            releaseGroupMbid: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid,
+            releaseMbid: jobReleaseMbid || canonicalContext?.releaseMbid,
+            librarySlot: canonicalContext?.slot || (isSpatial ? "spatial" : "stereo"),
+            provider: streamingProviderId,
+            providerAlbumId: albumIds[0],
+          });
           this.upsertLibraryFile({
             artistId,
             albumId: albumIds[0],
@@ -2787,7 +2730,6 @@ export class OrganizerService {
         albumId: libraryAlbumId,
         albumType: canonicalAlbum?.albumType || album.type || album.mb_primary || null,
         albumMbId: canonicalAlbum?.albumMbid || trackIdentity.canonicalReleaseMbid || album.mbid || null,
-        albumVersion: canonicalAlbum ? null : album.version || null,
         albumDisambiguation: canonicalAlbum?.disambiguation || null,
         albumGenre: firstGenre(canonicalAlbum?.genres),
         releaseYear: getReleaseYear(canonicalAlbum?.releaseDate || album.release_date),
@@ -2798,7 +2740,6 @@ export class OrganizerService {
         trackArtistMbId,
         trackNumber,
         volumeNumber,
-        trackVersion: canonicalPosition ? null : trackRow.version || null,
         explicit: trackRow.explicit === 1,
         provider: streamingProviderId || trackIdentity.provider || getDefaultStreamingSource(),
         quality: derivedQuality,
@@ -2945,15 +2886,16 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture) {
-        // Saved sidecar artwork always uses the highest available resolution,
-        // independent of metadata.artist_picture_resolution (which only caps
-        // the UI's cached display thumbnail — see media-cover-service.ts).
-        // Artwork is a backfillable sidecar: its fetch must NEVER fail an import
-        // whose audio is already organized + tracked. The default provider may
-        // not even carry this album (e.g. an Apple-only id), and the scheduled
-        // library-metadata backfill retries missing artwork later.
+        // Materialize only the cached full-resolution master. Network artwork
+        // acquisition is centralized in refresh/match workflows, so a cache miss
+        // is harmless here and can be reconciled by a later metadata backfill.
         try {
-          await downloadArtistPicture(artistId, "origin", artistPicPath);
+          syncCachedMediaCoverToFile({
+            entityId: artistMbId || artistId,
+            coverEntity: "Artist",
+            coverTypes: ["poster", "headshot"],
+            outputPath: artistPicPath,
+          });
           if (fs.existsSync(artistPicPath)) {
             this.upsertLibraryFile({
               artistId,
@@ -2968,7 +2910,7 @@ export class OrganizerService {
             });
           }
         } catch (error) {
-          console.warn(`[Organizer] Failed to fetch artist picture for ${artistId}; import already complete:`, error);
+          console.warn(`[Organizer] Failed to materialize cached artist picture for ${artistId}; import already complete:`, error);
         }
       }
 
@@ -2987,10 +2929,14 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_album_cover) {
-        // Saved sidecar artwork always uses the highest available resolution,
-        // independent of metadata.album_cover_resolution (which only caps the
-        // UI's cached display thumbnail — see media-cover-service.ts).
-        await downloadAlbumCover(libraryAlbumId, "origin", albumCoverPath, { provider: streamingProviderId });
+        // Materialize only the canonical album's cached full-resolution master.
+        // This path neither chooses a provider nor performs network I/O.
+        syncCachedMediaCoverToFile({
+          entityId: trackIdentity.canonicalReleaseGroupMbid,
+          coverEntity: "Album",
+          coverTypes: "cover",
+          outputPath: albumCoverPath,
+        });
         if (fs.existsSync(albumCoverPath)) {
           this.upsertLibraryFile({
             artistId,
@@ -3074,7 +3020,13 @@ export class OrganizerService {
         }
 
         try {
-          await saveAlbumNfoFile(libraryAlbumId, albumNfoPath);
+          await saveAlbumNfoFile(trackIdentity.canonicalReleaseGroupMbid || libraryAlbumId, albumNfoPath, {
+            releaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid,
+            releaseMbid: trackIdentity.canonicalReleaseMbid,
+            librarySlot: trackIdentity.librarySlot,
+            provider: streamingProviderId,
+            providerAlbumId: albumId,
+          });
           this.upsertLibraryFile({
             artistId,
             albumId: libraryAlbumId,
@@ -3413,7 +3365,6 @@ export class OrganizerService {
         providerId,
         quality: derivedVideoQuality,
         namingTemplate: videoNamingTemplate,
-        coverHint: video.cover || fetchedVideoData?.cover || fetchedVideoData?.image_id || null,
         libraryFileId,
       });
 

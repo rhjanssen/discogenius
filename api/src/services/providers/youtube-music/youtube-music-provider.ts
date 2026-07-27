@@ -73,6 +73,31 @@ function commandAvailable(command: string): boolean {
   return Boolean(resolveCommandPath(command));
 }
 
+export function youtubeMusicArtworkUrl(
+  url: string | null | undefined,
+  size: string | number | null = "origin",
+): string | null {
+  const value = String(url || "").trim();
+  if (!value) return null;
+  const requested = String(size || "").toLowerCase();
+  const video = value.match(/^https?:\/\/i\.ytimg\.com\/vi\/([^/?#]+)\//i);
+  if (video) {
+    return requested === "origin"
+      ? `https://i.ytimg.com/vi/${video[1]}/maxresdefault.jpg`
+      : value.replace(/[?#].*$/, "");
+  }
+  if (/(?:googleusercontent\.com|ggpht\.com)\//i.test(value)) {
+    const rendition = requested === "origin"
+      ? "s0"
+      : `s${Math.max(1, Number(size) || 0) || 0}`;
+    if (/=[^/?#]+(?:[?#].*)?$/u.test(value)) {
+      return value.replace(/=[^/?#]+(?:[?#].*)?$/u, `=${rendition}`);
+    }
+    return `${value.replace(/[?#].*$/, "")}=${rendition}`;
+  }
+  return value;
+}
+
 export async function getYouTubeMusicCapabilitySnapshot(): Promise<YouTubeMusicCapabilitySnapshot> {
   const pythonBinary = getYtMusicPythonBinary();
   const bridgeScript = getYtMusicBridgeScript();
@@ -295,14 +320,24 @@ export class YouTubeMusicProvider implements StreamingProvider {
   }
 
   async getArtworkUrl(request: ProviderArtworkRequest): Promise<string | null> {
-    if (request.entityType === "artist" && request.providerId != null) {
-      return (await this.getArtist(request.providerId)).picture || null;
+    const direct = String(request.imageId || "").trim() || null;
+    if (request.entityType === "artist") {
+      const source = direct || (request.providerId != null
+        ? (await this.getArtist(request.providerId)).picture
+        : null);
+      return youtubeMusicArtworkUrl(source, request.size || "origin");
     }
-    if (request.entityType === "album" && request.providerId != null) {
-      return (await this.getAlbum(request.providerId)).cover || null;
+    if (request.entityType === "album") {
+      const source = direct || (request.providerId != null
+        ? (await this.getAlbum(request.providerId)).cover
+        : null);
+      return youtubeMusicArtworkUrl(source, request.size || "origin");
     }
-    if (request.entityType === "video" && request.providerId != null) {
-      return (await this.getVideo(request.providerId)).cover || null;
+    if (request.entityType === "video") {
+      const source = direct || (request.providerId != null
+        ? (await this.getVideo(request.providerId)).cover
+        : null);
+      return youtubeMusicArtworkUrl(source, request.size || "origin");
     }
     return null;
   }

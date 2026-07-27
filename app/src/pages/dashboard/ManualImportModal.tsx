@@ -478,9 +478,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
     };
 
     const albumIsMultiVolume = useMemo(
-        () => isMultiVolumeTrackList(
-            albumTracks.map((track: any) => ({ volumeNumber: track.volumeNumber ?? track.volume_number ?? track.medium_position })),
-        ),
+        () => isMultiVolumeTrackList(albumTracks),
         [albumTracks],
     );
     const allSelected = targetFiles.length > 0 && targetFiles.every((file) => selectedFiles[file.id]);
@@ -710,7 +708,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                                          const posPrefix = formatTrackPositionPrefix(rawNum, volNum, { multiVolume: albumIsMultiVolume });
                                                                          return (
                                                                              <option key={providerId} value={providerId}>
-                                                                                 {posPrefix}{track.title}{track.version ? ` (${track.version})` : ''}
+                                                                                 {posPrefix}{track.title}
                                                                              </option>
                                                                          );
                                                                      })}

@@ -10,7 +10,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.STREAMRIP_BIN = "rip-test";
 
-const { DeezerProvider } = await import("./deezer-provider.js");
+const { DeezerProvider, deezerArtworkUrl } = await import("./deezer-provider.js");
 const {
   clearDeezerCredentials,
   getDeezerCredentialsPath,
@@ -129,6 +129,19 @@ test("Deezer exposes public preview, artwork and URL round trips", async () => {
     providerId: "3103033041",
   });
   assert.equal(provider.getMediaUrl("album", "658386461"), "https://www.deezer.com/album/658386461");
+});
+
+test("Deezer origin artwork uses the largest advertised CDN tier", async () => {
+  const provider = new DeezerProvider(fixtureFetch);
+  const source = "https://e-cdns-images.dzcdn.net/images/cover/hash/250x250-000000-80-0-0.jpg";
+  assert.equal(
+    deezerArtworkUrl(source, "origin"),
+    "https://e-cdns-images.dzcdn.net/images/cover/hash/1000x1000-000000-80-0-0.jpg",
+  );
+  assert.equal(
+    await provider.getArtworkUrl({ entityType: "album", imageId: source, size: "origin" }),
+    "https://e-cdns-images.dzcdn.net/images/cover/hash/1000x1000-000000-80-0-0.jpg",
+  );
 });
 
 test("Deezer manifest distinguishes public catalog access from ARL download auth", async () => {

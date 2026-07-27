@@ -80,6 +80,7 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             skipMetadataBackfill: job.payload.skipMetadataBackfill ?? false,
             forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
             trigger: job.trigger ?? CommandTrigger.Unspecified,
+            priority: job.priority,
         });
     } else {
         // Library-wide scan (RescanFolders with addNewArtists)

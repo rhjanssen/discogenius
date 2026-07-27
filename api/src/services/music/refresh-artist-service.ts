@@ -173,15 +173,20 @@ export class RefreshArtistService {
         if (pending.length === 0) return;
 
         try {
-            const { queueArtistWorkflow } = await import("./artist-workflow.js");
+            const { ARTIST_WORKFLOW_PRIORITY, queueArtistWorkflow } = await import("./artist-workflow.js");
             for (const row of pending) {
                 queueArtistWorkflow({
                     artistId: String(row.id),
                     artistName: row.name || row.mbid,
                     workflow: "metadata-refresh",
+                    // Lower priority than monitored-artist work (default 0; the queue
+                    // runs highest priority first). When 500+ artists are imported,
+                    // the monitored set is scanned/matched/curated/downloaded first,
+                    // then this first-degree credited backfill drains behind it.
+                    priority: ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE,
                 });
             }
-            console.log(`[RefreshArtistService] Queued metadata refresh for ${pending.length} first-degree credited artist(s)`);
+            console.log(`[RefreshArtistService] Queued metadata refresh (low priority) for ${pending.length} first-degree credited artist(s)`);
         } catch (error) {
             console.warn("[RefreshArtistService] Failed to queue credited-artist refreshes:", error);
         }
@@ -995,10 +1000,6 @@ export class RefreshArtistService {
         `);
 
         const selectCanonicalOwner = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?");
-        const coverCacheJobs: Array<{
-            releaseGroupMbid: string;
-            providerCandidate: ProviderArtworkCandidate;
-        }> = [];
 
         // Chunk the per-album upserts so a prolific artist's provider catalog
         // doesn't hold the write lock for the whole batch and starve peers.
@@ -1058,35 +1059,10 @@ export class RefreshArtistService {
                         evidence: JSON.stringify(match.evidence),
                     });
                 }
-
-                if (matchedReleaseGroup?.mbid && match && match.status !== "unmatched") {
-                    coverCacheJobs.push({
-                        releaseGroupMbid: matchedReleaseGroup.mbid,
-                        providerCandidate: {
-                            provider: providerId,
-                            entityId: providerAlbumId,
-                            imageId: album.cover || null,
-                        },
-                    });
-                }
         });
-
-        for (let i = 0; i < coverCacheJobs.length; i += 5) {
-            const chunk = coverCacheJobs.slice(i, i + 5);
-            await Promise.all(chunk.map(async (job) => {
-                try {
-                    await resolveAlbumArtwork({
-                        albumMbid: job.releaseGroupMbid,
-                        providerCandidates: [job.providerCandidate],
-                    });
-                } catch (error) {
-                    console.warn(
-                        `[RefreshArtistService] Failed to cache provider artwork for ${job.releaseGroupMbid}:`,
-                        error,
-                    );
-                }
-            }));
-        }
+        // Acquire artwork after slot selection in precacheArtistMediaCovers().
+        // Provisional matches can point several provider albums at one canonical
+        // release group; warming them here raced unrelated covers into one cache.
     }
 
     static syncProviderSelectionsFromStoredOffers(artistMbid: string | null): { stereo: number; spatial: number } {
@@ -1325,8 +1301,25 @@ export class RefreshArtistService {
         // inline match so their single-job behaviour is unchanged.
         if (options.deferProviderMatching !== true) {
             await this.matchArtistProviders(artistId, artistMbid, options, shouldHydrateCatalog);
+            this.markArtistRefreshComplete(artistId);
         }
 
+        console.log(`[RefreshArtistService] refreshArtist complete for ${artistId}`);
+        return {
+            artistMbid,
+            shouldHydrateCatalog,
+            metadataChanged: beforeFingerprint !== artistCatalogFingerprint(artistMbid),
+            isNewArtist,
+        };
+    }
+
+    /**
+     * Commit the durable refresh watermark only after the provider-matching
+     * phase succeeds. Deferred command workflows call this from
+     * MatchArtistProviders; direct callers call it immediately after their
+     * inline match.
+     */
+    static markArtistRefreshComplete(artistId: string): void {
         db.prepare(`
             UPDATE Artists
             SET
@@ -1337,13 +1330,6 @@ export class RefreshArtistService {
                 END
             WHERE id = ?
         `).run(artistId);
-        console.log(`[RefreshArtistService] refreshArtist complete for ${artistId}`);
-        return {
-            artistMbid,
-            shouldHydrateCatalog,
-            metadataChanged: beforeFingerprint !== artistCatalogFingerprint(artistMbid),
-            isNewArtist,
-        };
     }
 
     /**
@@ -1356,7 +1342,8 @@ export class RefreshArtistService {
      * import-list/availability work separate from metadata refresh). Behaviour-
      * preserving: same order, same writes, same logs. When the catalog was not
      * (re)hydrated this just rebuilds slot selections from stored offers; when no
-     * providers are connected it is a no-op (the caller still stamps last_scanned).
+     * providers are connected it is a no-op (a successful refresh still stamps
+     * last_scanned after this method returns).
      */
     static async matchArtistProviders(
         artistId: string,
@@ -2007,11 +1994,8 @@ export class RefreshArtistService {
 
     /**
      * Warm video thumbnails during refresh (parallel, off the request thread)
-     * so the artist page never has to fetch them on load — the same shape as
-     * resolveAlbumArtwork for album covers. Only cold-loading an artist straight
-     * from search results should ever resolve a thumbnail on the fly.
-     * resolveVideoArtwork caches full-aspect origin plus 500/250 height proxies
-     * (aspect preserved); library sidecars still fetch remote origin separately.
+     * so UI delivery and library sidecar/embed work remain local-only.
+     * resolveVideoArtwork caches a full-aspect origin plus the 250px card proxy.
      */
     private static async precacheArtistVideoArtwork(artistId: string): Promise<void> {
         const artistMbid = this.getArtistMusicBrainzId(artistId);

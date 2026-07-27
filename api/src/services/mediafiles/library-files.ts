@@ -1,18 +1,34 @@
 import fs from "fs";
 import path from "path";
 import { db, batchDelete, batchRun } from "../../database.js";
-import { getConfigSection } from "../config/config.js";
+import {
+  Config,
+  getConfigSection,
+  readConfig,
+  type DiscoGeniusConfig,
+} from "../config/config.js";
 import {
   allowsInlineVideoPlacement,
 } from "./video-folder-layout.js";
 import { mainVideoMayFollowAudioRelationSql } from "../music/live-performance-markers.js";
 import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "../music/video-album-association.js";
 import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext, type library_root } from "../config/naming.js";
-import { getCurrentLibraryRootPath, resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
+import {
+  getCurrentLibraryRootPath,
+  resolveLibraryRootKey,
+  resolveLibraryRootPath,
+  resolveStoredLibraryPath,
+  type CurrentLibraryRoots,
+} from "./library-paths.js";
 import { normalizeComparablePath, normalizeResolvedPath } from "./path-utils.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { emitFileAdded, emitFileDeleted, emitFileUpgraded } from "../commands/app-events.js";
-import { resolveLibraryFileIdentity, type library_slot } from "./library-file-identity.js";
+import {
+  resolveLibraryFileIdentities,
+  resolveLibraryFileIdentity,
+  type LibraryFileIdentity,
+  type library_slot,
+} from "./library-file-identity.js";
 import { getCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
@@ -130,9 +146,9 @@ export function normalizeInlineVideoTitle(value: string | null | undefined): str
 
 type LibraryFileRow = {
   id: number;
-  artist_id: number;
-  album_id: number | null;
-  media_id: number | null;
+  artist_id: string | number;
+  album_id: string | number | null;
+  media_id: string | number | null;
   canonical_artist_mbid?: string | null;
   canonical_release_group_mbid?: string | null;
   canonical_release_mbid?: string | null;
@@ -186,8 +202,35 @@ type CanonicalTrackLookupRow = {
   recording_artist_mbid: string | null;
 };
 
-function getCanonicalIdentityForLibraryFile(row: LibraryFileRow): ReturnType<typeof resolveLibraryFileIdentity> {
-  return resolveLibraryFileIdentity({
+function expectedPathIdentityCacheKey(row: LibraryFileRow): string {
+  return JSON.stringify([
+    row.artist_id,
+    row.album_id,
+    row.media_id,
+    row.file_type,
+    row.quality,
+    row.library_root,
+    row.library_slot,
+    row.provider,
+    row.provider_entity_type,
+    row.provider_id,
+    row.canonical_artist_mbid,
+    row.canonical_release_group_mbid,
+    row.canonical_release_mbid,
+    row.canonical_track_mbid,
+    row.canonical_recording_mbid,
+  ]);
+}
+
+function getCanonicalIdentityForLibraryFile(
+  row: LibraryFileRow,
+  cache?: ExpectedPathCache,
+): LibraryFileIdentity {
+  const cacheKey = cache ? expectedPathIdentityCacheKey(row) : "";
+  const cached = cache?.identities.get(cacheKey);
+  if (cached) return cached;
+
+  const resolved = resolveLibraryFileIdentity({
     artistId: row.artist_id,
     albumId: row.album_id,
     mediaId: row.media_id,
@@ -204,6 +247,8 @@ function getCanonicalIdentityForLibraryFile(row: LibraryFileRow): ReturnType<typ
     canonicalTrackMbid: row.canonical_track_mbid,
     canonicalRecordingMbid: row.canonical_recording_mbid,
   });
+  if (cache) cache.identities.set(cacheKey, resolved);
+  return resolved;
 }
 
 function getCanonicalVideoMetadataByMbid(recordingMbid: string | null | undefined): CanonicalVideoLookupRow | null {
@@ -404,7 +449,11 @@ type RebaseLibraryFileRow = {
  * Callers must already have confirmed `provider_video_for` → audio recording →
  * stereo RG slot monitored; this helper only resolves the filename stem.
  */
-function resolveCanonicalInlineAudioExpectedPath(artistId: number, videoTitle: string): string | null {
+function resolveCanonicalInlineAudioExpectedPath(
+  artistId: string | number,
+  videoTitle: string,
+  cache?: ExpectedPathCache,
+): string | null {
   if (!videoTitle) return null;
 
   const artist = db.prepare("SELECT name, mbid, path FROM Artists WHERE id = ?").get(artistId) as any;
@@ -455,7 +504,7 @@ function resolveCanonicalInlineAudioExpectedPath(artistId: number, videoTitle: s
   const track = tracks.find((candidate) => normalizeInlineVideoTitle(candidate.title) === videoTitle);
   if (!track?.album_title) return null;
 
-  const naming = getNamingConfig();
+  const naming = cache?.configSnapshot.naming ?? getNamingConfig();
   const artistName = String(artist.name || "Unknown Artist");
   const artistFolder = resolveArtistFolderFromRecord({
     name: artistName,
@@ -474,11 +523,22 @@ function resolveCanonicalInlineAudioExpectedPath(artistId: number, videoTitle: s
     trackNumber: Number(track.position || track.number || 0),
     volumeNumber: Number(track.medium_position || 1),
   });
-  return path.join(getCurrentLibraryRootPath("music"), artistFolder, `${renderedTrackPath}.flac`);
+  return path.join(
+    cache?.libraryRoots.music ?? getCurrentLibraryRootPath("music"),
+    artistFolder,
+    `${renderedTrackPath}.flac`,
+  );
 }
 
-function resolveExpectedLibraryRootKey(row: LibraryFileRow): library_root | null {
-  const resolved = resolveLibraryRootKey(row.library_root, row.file_path);
+function resolveExpectedLibraryRootKey(
+  row: LibraryFileRow,
+  cache?: ExpectedPathCache,
+): library_root | null {
+  const resolved = resolveLibraryRootKey(
+    row.library_root,
+    row.file_path,
+    cache?.libraryRoots,
+  );
   if (resolved) {
     return resolved;
   }
@@ -524,12 +584,192 @@ function resolveExpectedLibraryRootKey(row: LibraryFileRow): library_root | null
  * across a mutation).
  */
 export interface ExpectedPathCache {
+  /** One immutable settings view for the whole batch; workers see changes on the next batch. */
+  configSnapshot: Readonly<DiscoGeniusConfig>;
+  /** Resolved roots derived from configSnapshot (and any process env overrides). */
+  libraryRoots: CurrentLibraryRoots;
   artists: Map<string, { name?: string; mbid?: string | null; path?: string | null } | undefined>;
   albums: Map<string, ReturnType<typeof getCanonicalAlbumMetadata>>;
+  /** Fully resolved file identity, including selected-release hybrid remaps. */
+  identities: Map<string, LibraryFileIdentity>;
+  /** Resolved artist folder by artist_id (constant across an artist's rows). */
+  artistFolders: Map<string, string>;
+  /** Rendered album-dir (relative), keyed by every album-level naming input. */
+  albumDirs: Map<string, string>;
+  /** Canonical track metadata by track mbid — bulk-loaded once per batch (Lidarr GetTracksByReleases). */
+  trackMeta: Map<string, CanonicalTrackLookupRow | null>;
+  /** ArtistMetadata (name/mbid) by mbid — bulk-loaded once per batch. */
+  artistMeta: Map<string, { name?: string; mbid?: string | null } | null>;
+  /** Rename batches collect candidate paths, then resolve all occupants in one indexed query. */
+  trackCollisionMode: "database" | "collect" | "loaded";
+  pendingTrackPaths: Map<string, string>;
+  trackPathOwners: Map<string, Set<number>>;
 }
 
-export function createExpectedPathCache(): ExpectedPathCache {
-  return { artists: new Map(), albums: new Map() };
+export function createExpectedPathCache(
+  options: { deferTrackCollisionLookup?: boolean } = {},
+): ExpectedPathCache {
+  const configSnapshot = readConfig();
+  const libraryRoots: CurrentLibraryRoots = {
+    music: Config.getMusicPath(configSnapshot.path),
+    spatial: Config.getSpatialPath(configSnapshot.path),
+    videos: Config.getVideoPath(configSnapshot.path),
+  };
+  return {
+    configSnapshot,
+    libraryRoots,
+    artists: new Map(),
+    albums: new Map(),
+    identities: new Map(),
+    artistFolders: new Map(),
+    albumDirs: new Map(),
+    trackMeta: new Map(),
+    artistMeta: new Map(),
+    trackCollisionMode: options.deferTrackCollisionLookup ? "collect" : "database",
+    pendingTrackPaths: new Map(),
+    trackPathOwners: new Map(),
+  };
+}
+
+/**
+ * Bulk-load canonical track metadata (and the tracks' recording artist metadata)
+ * for a whole rename/backfill batch in bounded query chunks, instead of one query
+ * per row inside computeExpectedPath. This is the Discogenius equivalent of
+ * Lidarr loading all of an artist/album's tracks once before computing paths in
+ * memory. Chunked to stay under SQLite's bound-parameter ceiling.
+ */
+export function preloadCanonicalTrackMeta(trackMbids: Array<string | null | undefined>, cache: ExpectedPathCache): void {
+  const mbids = Array.from(new Set(trackMbids.map((m) => String(m || "").trim()).filter(Boolean)))
+    .filter((m) => !cache.trackMeta.has(m));
+  const artistMbids = new Set<string>();
+  for (let i = 0; i < mbids.length; i += 400) {
+    const chunk = mbids.slice(i, i + 400);
+    const marks = chunk.map(() => "?").join(",");
+    const rows = db.prepare(`
+      SELECT t.mbid, t.title, t.position, t.medium_position, t.recording_mbid,
+             r.title AS recording_title, r.artist_mbid AS recording_artist_mbid
+      FROM Tracks t
+      LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+      WHERE t.mbid IN (${marks})
+    `).all(...chunk) as CanonicalTrackLookupRow[];
+    const byMbid = new Map(rows.map((row) => [String(row.mbid), row]));
+    for (const mbid of chunk) {
+      const row = byMbid.get(mbid) ?? null;
+      cache.trackMeta.set(mbid, row);
+      const artistMbid = String(row?.recording_artist_mbid || "").trim();
+      if (artistMbid) artistMbids.add(artistMbid);
+    }
+  }
+
+  const artistList = Array.from(artistMbids).filter((m) => !cache.artistMeta.has(m));
+  for (let i = 0; i < artistList.length; i += 400) {
+    const chunk = artistList.slice(i, i + 400);
+    const marks = chunk.map(() => "?").join(",");
+    const rows = db.prepare(`SELECT name, mbid FROM ArtistMetadata WHERE mbid IN (${marks})`)
+      .all(...chunk) as Array<{ name?: string; mbid?: string | null }>;
+    const byMbid = new Map(rows.map((row) => [String(row.mbid), row]));
+    for (const mbid of chunk) cache.artistMeta.set(mbid, byMbid.get(mbid) ?? null);
+  }
+}
+
+/**
+ * Resolve the canonical identity once for every row before rendering paths.
+ * Hybrid provider albums can remap a source track onto a different track on the
+ * selected MusicBrainz release, so preloading raw TrackFiles MBIDs is not enough.
+ */
+export function preloadExpectedPathIdentities(rows: LibraryFileRow[], cache: ExpectedPathCache): void {
+  const unresolvedRows: LibraryFileRow[] = [];
+  for (const row of rows) {
+    if (!cache.identities.has(expectedPathIdentityCacheKey(row))) {
+      unresolvedRows.push(row);
+    }
+  }
+  const resolved = resolveLibraryFileIdentities(unresolvedRows.map((row) => ({
+    artistId: row.artist_id,
+    albumId: row.album_id,
+    mediaId: row.media_id,
+    fileType: row.file_type,
+    quality: row.quality,
+    libraryRoot: row.library_root,
+    librarySlot: row.library_slot,
+    provider: row.provider,
+    providerEntityType: row.provider_entity_type,
+    providerId: row.provider_id,
+    canonicalArtistMbid: row.canonical_artist_mbid,
+    canonicalReleaseGroupMbid: row.canonical_release_group_mbid,
+    canonicalReleaseMbid: row.canonical_release_mbid,
+    canonicalTrackMbid: row.canonical_track_mbid,
+    canonicalRecordingMbid: row.canonical_recording_mbid,
+  })));
+  for (let index = 0; index < unresolvedRows.length; index += 1) {
+    cache.identities.set(
+      expectedPathIdentityCacheKey(unresolvedRows[index]!),
+      resolved[index]!,
+    );
+  }
+  const resolvedTrackMbids = rows.map(
+    (row) => cache.identities.get(expectedPathIdentityCacheKey(row))?.canonicalTrackMbid ?? null,
+  );
+  preloadCanonicalTrackMeta(resolvedTrackMbids, cache);
+}
+
+/**
+ * Finish a deferred collision pass with bounded indexed lookups. The first path
+ * render collects unsuffixed candidate paths; only rows with an actual occupant
+ * need to be rendered again with spatial/stereo disambiguation enabled.
+ */
+export function preloadExpectedTrackPathOccupants(cache: ExpectedPathCache): void {
+  if (cache.trackCollisionMode !== "collect") return;
+
+  const paths = Array.from(cache.pendingTrackPaths.values());
+  for (let i = 0; i < paths.length; i += 400) {
+    const chunk = paths.slice(i, i + 400);
+    const marks = chunk.map(() => "?").join(",");
+    const rows = db.prepare(`
+      SELECT id, file_path
+      FROM TrackFiles
+      WHERE file_type = 'track'
+        AND file_path IN (${marks})
+    `).all(...chunk) as Array<{ id: number; file_path: string }>;
+    for (const row of rows) {
+      const key = normalizeResolvedPath(row.file_path);
+      const owners = cache.trackPathOwners.get(key) ?? new Set<number>();
+      owners.add(Number(row.id));
+      cache.trackPathOwners.set(key, owners);
+    }
+  }
+  cache.trackCollisionMode = "loaded";
+}
+
+export function hasExpectedTrackPathConflict(
+  cache: ExpectedPathCache,
+  expectedPath: string | null | undefined,
+  rowId: number,
+): boolean {
+  if (cache.trackCollisionMode !== "loaded" || !expectedPath) return false;
+  const owners = cache.trackPathOwners.get(normalizeResolvedPath(expectedPath));
+  return Boolean(owners && Array.from(owners).some((ownerId) => ownerId !== rowId));
+}
+
+function mustDisambiguateTrackPath(
+  expectedPath: string,
+  rowId: number,
+  cache?: ExpectedPathCache,
+): boolean {
+  if (!cache || cache.trackCollisionMode === "database") {
+    return Boolean(db.prepare(`
+      SELECT id FROM TrackFiles
+      WHERE file_type = 'track' AND file_path = ? AND id != ?
+      LIMIT 1
+    `).get(expectedPath, rowId));
+  }
+
+  const key = normalizeResolvedPath(expectedPath);
+  if (cache.trackCollisionMode === "collect") {
+    cache.pendingTrackPaths.set(key, expectedPath);
+    return false;
+  }
+  return hasExpectedTrackPathConflict(cache, expectedPath, rowId);
 }
 
 export class LibraryFilesService {
@@ -752,10 +992,16 @@ export class LibraryFilesService {
   }
 
   static computeExpectedPath(row: LibraryFileRow, cache?: ExpectedPathCache): { expectedPath: string | null; reason?: string } {
-    const pathConfig = getConfigSection("path");
+    const pathConfig = cache?.configSnapshot.path ?? getConfigSection("path");
     const videoFolderLayout = pathConfig?.video_folder_layout || "separated";
-    const canonicalIdentity = getCanonicalIdentityForLibraryFile(row);
-    const canonicalVideo = getCanonicalVideoMetadataForRow(row, canonicalIdentity.canonicalRecordingMbid);
+    const canonicalIdentity = getCanonicalIdentityForLibraryFile(row, cache);
+    // Audio track rows never resolve a video path, but the canonical-video lookup
+    // runs 1-2 DB queries per row that always return null for them. Skip it for
+    // plain tracks — the dominant case in a rename/backfill batch — and only pay
+    // it for the video/sidecar file types that actually consume canonicalVideo.
+    const canonicalVideo = row.file_type === "track"
+      ? null
+      : getCanonicalVideoMetadataForRow(row, canonicalIdentity.canonicalRecordingMbid);
 
     if (allowsInlineVideoPlacement(videoFolderLayout) && row.media_id && (row.file_type === "video" || row.file_type === "video_thumbnail" || row.file_type === "nfo")) {
       if (canonicalVideo) {
@@ -878,7 +1124,7 @@ export class LibraryFilesService {
             ? LibraryFilesService.computeExpectedPath(audioTrack, cache).expectedPath
             : null;
           // Catalog stereo-root fallback when the stereo file is not on disk yet.
-          audioExpectedPath ||= resolveCanonicalInlineAudioExpectedPath(row.artist_id, inlineVideoTitle);
+          audioExpectedPath ||= resolveCanonicalInlineAudioExpectedPath(row.artist_id, inlineVideoTitle, cache);
 
           if (audioExpectedPath) {
             const audioExpectedDir = path.dirname(audioExpectedPath);
@@ -904,7 +1150,7 @@ export class LibraryFilesService {
                 `).get(row.media_id) as LibraryFileRow | undefined
               : undefined;
             const trackedVideoExpected = trackedVideo
-              ? LibraryFilesService.computeExpectedPath(trackedVideo).expectedPath
+              ? LibraryFilesService.computeExpectedPath(trackedVideo, cache).expectedPath
               : null;
             if (trackedVideoExpected) {
               return { expectedPath: path.join(path.dirname(trackedVideoExpected), `${path.parse(trackedVideoExpected).name}.${ext}`) };
@@ -924,13 +1170,14 @@ export class LibraryFilesService {
       }
     }
 
-    const libraryRootKey = resolveExpectedLibraryRootKey(row);
+    const libraryRootKey = resolveExpectedLibraryRootKey(row, cache);
     if (!libraryRootKey) return { expectedPath: null, reason: `unsupported_library_root:${row.library_root}` };
 
-    const libraryRootPath = getCurrentLibraryRootPath(libraryRootKey);
+    const libraryRootPath = cache?.libraryRoots[libraryRootKey]
+      ?? getCurrentLibraryRootPath(libraryRootKey);
 
-    const naming = getNamingConfig();
-    const metadataConfig = getConfigSection("metadata");
+    const naming = cache?.configSnapshot.naming ?? getNamingConfig();
+    const metadataConfig = cache?.configSnapshot.metadata ?? getConfigSection("metadata");
 
     // A per-artist rename hits this for all 200 preview rows with the same
     // artist_id. Cache it (and album metadata below) per preview call — Lidarr's
@@ -947,11 +1194,17 @@ export class LibraryFilesService {
     })();
     const artistName = (artist?.name as string | undefined) || "Unknown Artist";
     const artistMbId = artist?.mbid ? String(artist.mbid) : null;
-    const artistFolder = resolveArtistFolderFromRecord({
-      name: artistName,
-      mbid: artistMbId,
-      path: artist?.path || null,
-    });
+    const artistFolder = ((): string => {
+      if (cache) {
+        const key = String(row.artist_id);
+        const hit = cache.artistFolders.get(key);
+        if (hit !== undefined) return hit;
+        const resolved = resolveArtistFolderFromRecord({ name: artistName, mbid: artistMbId, path: artist?.path || null });
+        cache.artistFolders.set(key, resolved);
+        return resolved;
+      }
+      return resolveArtistFolderFromRecord({ name: artistName, mbid: artistMbId, path: artist?.path || null });
+    })();
 
     const resolvedProvider = String(row.provider || "").trim()
       || (row.provider_id || row.media_id
@@ -1122,7 +1375,6 @@ export class LibraryFilesService {
       albumTitle: canonicalAlbum.title || "Unknown Album",
       albumType: canonicalAlbum.albumType || null,
       albumMbId: canonicalAlbum.albumMbid || releaseGroupMbid || null,
-      albumVersion: null,
       releaseYear,
       explicit: false,
     };
@@ -1150,7 +1402,37 @@ export class LibraryFilesService {
     };
 
     const trackTemplateForAlbum = pickTrackTemplate(Number(canonicalAlbum.volumeCount || 1));
-    const albumDirRelative = deriveAlbumDirRelativeFromTemplate(trackTemplateForAlbum);
+    // The album directory is identical for every track on the album, but it is
+    // rendered from the naming template (regex-heavy). Cache the rendered relative
+    // dir by release group so a 12-track album renders it once, not 12 times —
+    // this (plus the artist-folder cache above) is the bulk of the rename cost.
+    const albumDirRelative = ((): string => {
+      if (cache && releaseGroupMbid) {
+        // A batch can span artists, providers, and stereo/spatial editions.
+        // Preserve uncached rendering semantics even when custom album folders
+        // consume provider or artist tokens by keying every album-level input.
+        const key = JSON.stringify([
+          releaseGroupMbid,
+          canonicalReleaseMbid ?? null,
+          resolvedProvider || null,
+          artistName,
+          String(row.artist_id),
+          artistMbId,
+          canonicalAlbum.title || "Unknown Album",
+          canonicalAlbum.albumType || null,
+          canonicalAlbum.albumMbid || releaseGroupMbid,
+          releaseYear,
+          Number(canonicalAlbum.volumeCount || 1),
+          trackTemplateForAlbum,
+        ]);
+        const hit = cache.albumDirs.get(key);
+        if (hit !== undefined) return hit;
+        const resolved = deriveAlbumDirRelativeFromTemplate(trackTemplateForAlbum);
+        cache.albumDirs.set(key, resolved);
+        return resolved;
+      }
+      return deriveAlbumDirRelativeFromTemplate(trackTemplateForAlbum);
+    })();
     const albumDir = path.join(libraryRootPath, artistFolder, albumDirRelative);
 
     if (row.file_type === "cover") {
@@ -1170,21 +1452,36 @@ export class LibraryFilesService {
 
     if (row.file_type === "track") {
       if (!row.media_id && !canonicalIdentity.canonicalTrackMbid) return { expectedPath: null, reason: "missing_media_id" };
-      const canonicalTrack = getCanonicalTrackMetadata(canonicalIdentity.canonicalTrackMbid);
+      const trackMbidKey = String(canonicalIdentity.canonicalTrackMbid || "").trim();
+      const canonicalTrack = (cache && trackMbidKey && cache.trackMeta.has(trackMbidKey))
+        ? cache.trackMeta.get(trackMbidKey)!
+        : getCanonicalTrackMetadata(canonicalIdentity.canonicalTrackMbid);
       if (!canonicalTrack) return { expectedPath: null, reason: "track_not_found" };
 
-      const trackArtist = canonicalTrack.recording_artist_mbid
-        ? (db.prepare("SELECT name, mbid FROM ArtistMetadata WHERE mbid = ?").get(canonicalTrack.recording_artist_mbid) as any)
+      const artistMbidKey = String(canonicalTrack.recording_artist_mbid || "").trim();
+      const trackArtist = artistMbidKey
+        ? ((cache && cache.artistMeta.has(artistMbidKey))
+            ? cache.artistMeta.get(artistMbidKey)
+            : (db.prepare("SELECT name, mbid FROM ArtistMetadata WHERE mbid = ?").get(canonicalTrack.recording_artist_mbid) as any))
         : null;
 
       const ext = row.extension || path.extname(row.file_path).replace(".", "");
-      const canonicalPosition = getCanonicalTrackPosition(canonicalIdentity.canonicalTrackMbid);
+      // canonicalTrack already carries title/position/medium_position (same columns
+      // getCanonicalTrackPosition would re-query), so derive the position in memory
+      // and skip a per-track query.
+      const canonicalPosition = (canonicalTrack && Number(canonicalTrack.position || 0))
+        ? {
+            trackMbid: canonicalTrack.mbid,
+            title: canonicalTrack.title,
+            trackNumber: Number(canonicalTrack.position),
+            volumeNumber: Number(canonicalTrack.medium_position || 1),
+          }
+        : null;
       const trackContext: NamingContext = {
         ...albumContext,
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
         trackId: String(row.media_id ?? canonicalTrack?.mbid ?? ""),
         trackMbId: canonicalTrack?.mbid || null,
-        trackVersion: null,
         explicit: false,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
@@ -1205,13 +1502,9 @@ export class LibraryFilesService {
       const relativeTrackPath = renderAudioRelativePathForLibrary({
         relativePath: renderedTrackPath,
         quality: row.quality,
-        musicRoot: getCurrentLibraryRootPath("music"),
-        spatialRoot: getCurrentLibraryRootPath("spatial"),
-        mustDisambiguate: Boolean(db.prepare(`
-          SELECT id FROM TrackFiles
-          WHERE file_type = 'track' AND file_path = ? AND id != ?
-          LIMIT 1
-        `).get(baseExpectedPath, row.id)),
+        musicRoot: cache?.libraryRoots.music ?? getCurrentLibraryRootPath("music"),
+        spatialRoot: cache?.libraryRoots.spatial ?? getCurrentLibraryRootPath("spatial"),
+        mustDisambiguate: mustDisambiguateTrackPath(baseExpectedPath, row.id, cache),
       });
       const fileName = `${relativeTrackPath}.${ext}`;
 
@@ -1280,7 +1573,7 @@ export class LibraryFilesService {
 
       // Lidarr-style: lyrics follow their linked audio file's stem.
       if (trackFile) {
-        const audioExpected = LibraryFilesService.computeExpectedPath(trackFile).expectedPath
+        const audioExpected = LibraryFilesService.computeExpectedPath(trackFile, cache).expectedPath
           || resolveStoredLibraryPath({
             filePath: trackFile.file_path,
             libraryRoot: trackFile.library_root,
@@ -1311,7 +1604,6 @@ export class LibraryFilesService {
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
         trackId: String(row.media_id ?? canonicalTrack?.mbid ?? ""),
         trackMbId: canonicalTrack?.mbid || null,
-        trackVersion: null,
         explicit: false,
         trackArtistName: (trackArtist?.name as string | undefined) || artistName,
         trackArtistMbId: trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId,
@@ -1330,8 +1622,8 @@ export class LibraryFilesService {
       const relativeTrackPath = renderAudioRelativePathForLibrary({
         relativePath: renderRelativePath(trackTemplate, trackContext),
         quality: row.quality,
-        musicRoot: getCurrentLibraryRootPath("music"),
-        spatialRoot: getCurrentLibraryRootPath("spatial"),
+        musicRoot: cache?.libraryRoots.music ?? getCurrentLibraryRootPath("music"),
+        spatialRoot: cache?.libraryRoots.spatial ?? getCurrentLibraryRootPath("spatial"),
       });
       const trackPath = path.join(libraryRootPath, artistFolder, `${relativeTrackPath}.${ext}`);
       const lyricExtension = String(row.extension || "lrc").toLowerCase() === "txt" ? ".txt" : ".lrc";

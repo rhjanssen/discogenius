@@ -20,8 +20,17 @@ import {
     matchPlaylistTracksToCanonical,
     PLAYLIST_TRACKLIST_COVERAGE_METHOD,
 } from "../providers/soundcloud/soundcloud-playlist-match.js";
+import {
+    assignRankedTrackMatches,
+    scoreTrackMatch,
+    TRACK_MATCH_THRESHOLD,
+    type MatchProviderTrack,
+    type MatchTargetTrack,
+} from "./provider-track-matcher.js";
+import { normalizeIsrc } from "../mediafiles/import-matching-utils.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAME_RELEASE_SUPERSET_TRACKLIST_METHOD = "same-release-superset-track-coverage";
 
 function isMusicBrainzMbid(value: string | number | null | undefined): boolean {
     return MUSICBRAINZ_MBID_RE.test(String(value || "").trim());
@@ -768,7 +777,9 @@ export class RefreshAlbumService {
                 COALESCE(rgs.slot, pi.library_slot, 'stereo') AS library_slot,
                 COALESCE(rgs.quality, pi.quality) AS quality,
                 pi.match_method AS provider_match_method,
-                rgs.match_method AS slot_match_method
+                rgs.match_method AS slot_match_method,
+                COALESCE(rgs.match_status, pi.match_status) AS match_status,
+                COALESCE(rgs.match_confidence, pi.match_confidence) AS match_confidence
             FROM ProviderItems pi
             LEFT JOIN ReleaseGroupSlots rgs
               ON rgs.selected_provider = pi.provider
@@ -780,7 +791,7 @@ export class RefreshAlbumService {
              )
             WHERE pi.entity_type = 'album'
               AND pi.provider = ?
-              AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+              AND pi.provider_id = ?
             ORDER BY
               CASE WHEN rgs.selected_release_mbid IS NOT NULL THEN 0 ELSE 1 END,
               CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
@@ -793,6 +804,8 @@ export class RefreshAlbumService {
             quality?: string | null;
             provider_match_method?: string | null;
             slot_match_method?: string | null;
+            match_status?: string | null;
+            match_confidence?: number | null;
         } | undefined;
         type CanonicalTrackRow = {
             track_id?: number | null;
@@ -802,6 +815,8 @@ export class RefreshAlbumService {
             title?: string | null;
             length_ms?: number | null;
             position?: number | null;
+            medium_position?: number | null;
+            isrcs?: string | null;
         };
         const selectCanonicalTrackByPosition = db.prepare(`
             SELECT
@@ -840,26 +855,36 @@ export class RefreshAlbumService {
                 selectedRelease?.provider_match_method === PLAYLIST_TRACKLIST_COVERAGE_METHOD
                 || selectedRelease?.slot_match_method === PLAYLIST_TRACKLIST_COVERAGE_METHOD
             );
-        const playlistCanonicalByTrack = new Map<any, {
+        const canonicalTracks = releaseMbid ? db.prepare(`
+            SELECT
+                t.id AS track_id,
+                t.mbid AS track_mbid,
+                t.recording_mbid,
+                r.id AS recording_id,
+                r.isrcs,
+                t.title,
+                t.length_ms,
+                t.position,
+                t.medium_position
+            FROM Tracks t
+            LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
+            WHERE t.release_mbid = ?
+              AND (r.is_video IS NULL OR r.is_video = 0)
+            ORDER BY t.medium_position, t.position, t.id
+        `).all(releaseMbid) as CanonicalTrackRow[] : [];
+        const audioProviderTracks = tracks.filter((track) => !track?.is_video);
+        const matchStatus = String(selectedRelease?.match_status || "").toLowerCase();
+        const usesSameReleaseSupersetCoverage = !usesPlaylistCoverage
+            && canonicalTracks.length > 0
+            && audioProviderTracks.length > canonicalTracks.length
+            && (matchStatus === "verified" || matchStatus === "probable")
+            && Number(selectedRelease?.match_confidence || 0) >= 0.9;
+        const canonicalByTrack = new Map<any, {
             canonicalTrack: CanonicalTrackRow;
             score: number;
+            method: string;
         }>();
         if (usesPlaylistCoverage && releaseMbid) {
-            const canonicalTracks = db.prepare(`
-                SELECT
-                    t.id AS track_id,
-                    t.mbid AS track_mbid,
-                    t.recording_mbid,
-                    r.id AS recording_id,
-                    t.title,
-                    t.length_ms,
-                    t.position
-                FROM Tracks t
-                LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-                WHERE t.release_mbid = ?
-                  AND (r.is_video IS NULL OR r.is_video = 0)
-                ORDER BY t.medium_position, t.position, t.id
-            `).all(releaseMbid) as CanonicalTrackRow[];
             const assignments = matchPlaylistTracksToCanonical(
                 canonicalTracks.map((track) => ({
                     title: String(track.title || ""),
@@ -876,16 +901,77 @@ export class RefreshAlbumService {
                 const providerTrack = tracks[assignment.playlistIndex];
                 const canonicalTrack = canonicalTracks[assignment.canonicalIndex];
                 if (providerTrack && canonicalTrack) {
-                    playlistCanonicalByTrack.set(providerTrack, {
+                    canonicalByTrack.set(providerTrack, {
                         canonicalTrack,
                         score: assignment.score,
+                        method: PLAYLIST_TRACKLIST_COVERAGE_METHOD,
                     });
                 }
             }
+        } else if (usesSameReleaseSupersetCoverage) {
+            const parseCanonicalIsrcs = (value: string | null | undefined): Set<string> => {
+                if (!value) return new Set();
+                try {
+                    const parsed = JSON.parse(value);
+                    return new Set(
+                        (Array.isArray(parsed) ? parsed : [])
+                            .map((isrc) => normalizeIsrc(isrc))
+                            .filter(Boolean),
+                    );
+                } catch {
+                    return new Set();
+                }
+            };
+            const canonicalTargets: MatchTargetTrack[] = canonicalTracks.map((track) => ({
+                recordingMbid: String(track.recording_mbid || "").trim() || null,
+                isrcs: parseCanonicalIsrcs(track.isrcs),
+                title: String(track.title || ""),
+                trackNumber: Number(track.position || 0),
+                volumeNumber: Number(track.medium_position || 1),
+                durationSec: track.length_ms == null ? null : Number(track.length_ms) / 1000,
+            }));
+            const providerSources = audioProviderTracks.map((track, index) => ({
+                key: String(track?.provider_id || "").trim() || `provider-track-index:${index}`,
+                track,
+                normalized: {
+                    mbid: String(track?.recording_mbid || "").trim() || null,
+                    isrc: String(track?.isrc || "").trim() || null,
+                    title: String(track?.title || ""),
+                    version: String(track?.version || "").trim() || null,
+                    trackNumber: Number(track?.track_number || 0) || null,
+                    volumeNumber: Number(track?.volume_number || 0) || null,
+                    durationSec: Number(track?.duration || 0) || null,
+                } satisfies MatchProviderTrack,
+            }));
+            const edges = canonicalTargets.map((target) => providerSources
+                .map((source) => ({
+                    sourceKey: source.key,
+                    source,
+                    matchScore: scoreTrackMatch(target, source.normalized, {
+                        allowSameReleaseSupersetPositionMismatch: true,
+                    }),
+                }))
+                .filter((edge) => edge.matchScore >= TRACK_MATCH_THRESHOLD)
+                .sort((left, right) =>
+                    right.matchScore - left.matchScore
+                    || left.sourceKey.localeCompare(right.sourceKey)));
+            const assignments = assignRankedTrackMatches(edges);
+            for (const [canonicalIndex, assignment] of assignments) {
+                const canonicalTrack = canonicalTracks[canonicalIndex];
+                if (canonicalTrack) {
+                    canonicalByTrack.set(assignment.source.track, {
+                        canonicalTrack,
+                        score: assignment.matchScore,
+                        method: SAME_RELEASE_SUPERSET_TRACKLIST_METHOD,
+                    });
+                }
+            }
+        }
 
-            // Treat a playlist refresh as a complete snapshot. Old children
-            // must not remain selectable if the set was reordered or edited;
-            // current tracks are restored to available by the upsert below.
+        if (usesPlaylistCoverage || usesSameReleaseSupersetCoverage) {
+            // Treat verified tracklist coverage refreshes as complete snapshots.
+            // Old children must not remain selectable if the provider reordered
+            // or edited the set; current tracks are restored by the upsert below.
             db.prepare(`
                 UPDATE ProviderItems
                 SET availability = 'unavailable',
@@ -898,7 +984,7 @@ export class RefreshAlbumService {
                     updated_at = CURRENT_TIMESTAMP
                 WHERE provider = ?
                   AND entity_type = 'track'
-                  AND CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
+                  AND provider_album_id = ?
             `).run(providerId, albumId);
         }
         const upsertProviderTrackOffer = db.prepare(`
@@ -971,11 +1057,15 @@ export class RefreshAlbumService {
                         const selectByPosition = currentTrack.is_video
                             ? selectCanonicalVideoTrackByPosition
                             : selectCanonicalTrackByPosition;
-                        const playlistAssignment = !currentTrack.is_video
-                            ? playlistCanonicalByTrack.get(currentTrack)
+                        const tracklistAssignment = !currentTrack.is_video
+                            ? canonicalByTrack.get(currentTrack)
                             : undefined;
-                        const canonicalTrack = usesPlaylistCoverage && !currentTrack.is_video
-                            ? playlistAssignment?.canonicalTrack ?? null
+                        const usesTracklistAssignment = (
+                            usesPlaylistCoverage
+                            || usesSameReleaseSupersetCoverage
+                        ) && !currentTrack.is_video;
+                        const canonicalTrack = usesTracklistAssignment
+                            ? tracklistAssignment?.canonicalTrack ?? null
                             : (releaseMbid
                                 ? selectByPosition.get(
                                 releaseMbid,
@@ -990,8 +1080,12 @@ export class RefreshAlbumService {
                         const evidence: Record<string, unknown> = {
                             albumProviderId: albumId,
                         };
-                        if (playlistAssignment) {
-                            evidence.playlistTrackMatchScore = playlistAssignment.score;
+                        if (tracklistAssignment) {
+                            if (tracklistAssignment.method === PLAYLIST_TRACKLIST_COVERAGE_METHOD) {
+                                evidence.playlistTrackMatchScore = tracklistAssignment.score;
+                            } else {
+                                evidence.tracklistMatchScore = tracklistAssignment.score;
+                            }
                         }
                         if (counterpartVideoId) {
                             evidence.counterpartVideoId = counterpartVideoId;
@@ -1024,11 +1118,11 @@ export class RefreshAlbumService {
                             canonicalTrack?.recording_id || null,
                             canonicalTrack?.track_mbid ? "matched" : "pending",
                             canonicalTrack?.track_mbid
-                                ? playlistAssignment?.score ?? 0.9
+                                ? tracklistAssignment?.score ?? 0.9
                                 : null,
                             canonicalTrack?.track_mbid
-                                ? (playlistAssignment
-                                    ? PLAYLIST_TRACKLIST_COVERAGE_METHOD
+                                ? (tracklistAssignment
+                                    ? tracklistAssignment.method
                                     : "selected-release-position")
                                 : "provider-album-tracklist",
                             JSON.stringify(evidence),

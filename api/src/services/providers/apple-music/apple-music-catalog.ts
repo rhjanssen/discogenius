@@ -44,6 +44,21 @@ export function renderAppleArtwork(
     .replace(/\{f\}/g, "jpg");
 }
 
+/** Render Apple's advertised source dimensions, with a large safe fallback. */
+export function renderAppleArtworkOrigin(
+  artwork: AppleArtwork | undefined | null,
+  fallbackWidth = 3000,
+  fallbackHeight = fallbackWidth,
+): string | null {
+  const width = Number(artwork?.width);
+  const height = Number(artwork?.height);
+  return renderAppleArtwork(
+    artwork,
+    Number.isFinite(width) && width > 0 ? width : fallbackWidth,
+    Number.isFinite(height) && height > 0 ? height : fallbackHeight,
+  );
+}
+
 /**
  * Prefer square editorial motion art when Apple returns `extend=editorialVideo`.
  * Values are usually HLS (.m3u8) URLs suitable for ffmpeg remux to MP4.
@@ -113,7 +128,7 @@ export function mapAppleArtist(resource: AppleResource): ProviderArtist {
   return {
     providerId: resource.id,
     name: attrs.name || "Unknown Artist",
-    picture: renderAppleArtwork(attrs.artwork, 750),
+    picture: renderAppleArtworkOrigin(attrs.artwork),
     url: attrs.url,
     raw: resource,
   };
@@ -147,7 +162,7 @@ export function mapAppleAlbum(resource: AppleResource): ProviderAlbum {
     providerId: resource.id,
     title: attrs.name || "Unknown Album",
     artist,
-    cover: renderAppleArtwork(attrs.artwork, 1200),
+    cover: renderAppleArtworkOrigin(attrs.artwork),
     videoCover: extractAppleEditorialVideoUrl(resource.attributes as Record<string, unknown>),
     releaseDate: attrs.releaseDate || null,
     trackCount: attrs.trackCount ?? null,
@@ -208,8 +223,8 @@ export function mapAppleTrack(resource: AppleResource): ProviderTrack {
     // Music-video rows in album tracklists need artwork for sidecar thumbnails.
     // Use landscape dimensions — square 1080x1080mv crops title text on posters.
     cover: resource.type === "music-videos"
-      ? renderAppleArtwork(attrs.artwork, 1920, 1080)
-      : renderAppleArtwork(attrs.artwork, 1200),
+      ? renderAppleArtworkOrigin(attrs.artwork, 1920, 1080)
+      : renderAppleArtworkOrigin(attrs.artwork),
     quality: bestAppleAudioQuality(traits),
     qualityTags: traits,
     // Apple bundles music videos into album tracklists (type "music-videos"
@@ -244,7 +259,7 @@ export function mapAppleVideo(resource: AppleResource): ProviderVideo {
     artist,
     duration: attrs.durationInMillis != null ? Math.round(attrs.durationInMillis / 1000) : null,
     releaseDate: attrs.releaseDate || null,
-    cover: renderAppleArtwork(attrs.artwork, 1920, 1080),
+    cover: renderAppleArtworkOrigin(attrs.artwork, 1920, 1080),
     explicit: attrs.contentRating ? attrs.contentRating === "explicit" : null,
     url: attrs.url,
     isrc: attrs.isrc || null,

@@ -265,7 +265,13 @@ export interface ImportDownloadCommand extends CommandBodyCommon {
   trackOffers?: DownloadTrackOffer[];
 }
 
-export type ConfigPruneCommand = CommandBodyCommon;
+export interface ConfigPruneCommand extends CommandBodyCommon {
+  /**
+   * Preference changes first refresh every canonical MediaCover cache entry,
+   * then run the same sidecar/embed reconciliation as an ordinary config prune.
+   */
+  refreshArtworkPreference?: boolean;
+}
 
 export interface MoveArtistCommand extends CommandBodyCommon {
   artistId: string;

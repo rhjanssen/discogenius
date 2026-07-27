@@ -43,13 +43,25 @@ let activeMonitoringDownloadPassStmt: any | null = null;
 const SCHEDULED_TASK_TICK_MS = readIntEnv("DISCOGENIUS_TASK_SCHEDULER_TICK_MS", 30 * 1000, 1_000);
 const HOUSEKEEPING_INTERVAL_MS = readIntEnv("DISCOGENIUS_HOUSEKEEPING_INTERVAL_MS", 24 * 60 * 60 * 1000, 60_000);
 const MONITORING_DUE_CHECK_INTERVAL_MINUTES = readIntEnv("DISCOGENIUS_MONITORING_DUE_CHECK_INTERVAL_MINUTES", 24 * 60, 1);
+const HEALTH_CHECK_INTERVAL_MINUTES = 360;
+const DATABASE_BACKUP_INTERVAL_MINUTES = 10_080;
 
-export type ScheduledTaskKey = "monitoring-cycle" | "root-scan" | "housekeeping";
+export type ScheduledTaskKey =
+    | "monitoring-cycle"
+    | "root-scan"
+    | "housekeeping"
+    | "health-check"
+    | "backup-database";
 
 interface ScheduledTaskDefinition {
     key: ScheduledTaskKey;
     name: string;
-    taskName: typeof CommandNames.RefreshMetadata | typeof CommandNames.RescanFolders | typeof CommandNames.Housekeeping;
+    taskName:
+        | typeof CommandNames.RefreshMetadata
+        | typeof CommandNames.RescanFolders
+        | typeof CommandNames.Housekeeping
+        | typeof CommandNames.CheckHealth
+        | typeof CommandNames.BackupDatabase;
     intervalMinutes: number;
     enabled: boolean;
 }
@@ -295,6 +307,7 @@ export function queueCurationPass(options: {
 
 export function queueDownloadMissingPass(options: {
     trigger?: number;
+    priority?: number;
     monitoringCycle?: MonitoringPassWorkflow;
     artistIds?: string[];
 } = {}) {
@@ -309,7 +322,7 @@ export function queueDownloadMissingPass(options: {
             monitoringCycle,
         },
         refId,
-        0,
+        options.priority ?? 0,
         options.trigger ?? CommandTrigger.Manual,
     );
 }
@@ -436,6 +449,20 @@ function getScheduledTaskDefinitions(): ScheduledTaskDefinition[] {
             name: "Housekeeping",
             taskName: CommandNames.Housekeeping,
             intervalMinutes: Math.max(1, Math.round(HOUSEKEEPING_INTERVAL_MS / 60_000)),
+            enabled: true,
+        },
+        {
+            key: "health-check",
+            name: "Check Health",
+            taskName: CommandNames.CheckHealth,
+            intervalMinutes: HEALTH_CHECK_INTERVAL_MINUTES,
+            enabled: true,
+        },
+        {
+            key: "backup-database",
+            name: "Backup Database",
+            taskName: CommandNames.BackupDatabase,
+            intervalMinutes: DATABASE_BACKUP_INTERVAL_MINUTES,
             enabled: true,
         },
     ];
@@ -578,7 +605,7 @@ export function getScheduledTaskSnapshots(): ScheduledTaskSnapshot[] {
     });
 }
 
-function queueDueScheduledTasks() {
+export function pollScheduledTasks() {
     if (!trySyncScheduledTasks()) {
         return;
     }
@@ -644,6 +671,22 @@ function queueDueScheduledTasks() {
                 markScheduledTaskQueued(definition.key);
                 console.log("📁 Scheduled root-folder rescan queued");
             }
+            continue;
+        }
+
+        if (definition.key === "health-check" || definition.key === "backup-database") {
+            if (hasActiveTask(definition.taskName)) {
+                continue;
+            }
+            const commandId = definition.key === "health-check"
+                ? queueCheckHealth({ trigger: CommandTrigger.Scheduled })
+                : queueBackupDatabase({ trigger: CommandTrigger.Scheduled });
+            if (commandId !== -1) {
+                markScheduledTaskQueued(definition.key);
+                console.log(definition.key === "health-check"
+                    ? "🩺 Scheduled health check queued"
+                    : "💾 Scheduled database backup queued");
+            }
         }
     }
 }
@@ -662,7 +705,7 @@ export function startMonitoring() {
 
     const tick = () => {
         try {
-            queueDueScheduledTasks();
+            pollScheduledTasks();
         } catch (error) {
             console.error("[Monitoring] Scheduler tick failed:", error);
         }
@@ -834,6 +877,16 @@ export function queueCheckHealth(options: { trigger?: number } = {}) {
     );
 }
 
+export function queueBackupDatabase(options: { trigger?: number } = {}) {
+    return CommandQueueManager.push(
+        CommandNames.BackupDatabase,
+        {},
+        "backup-database",
+        0,
+        options.trigger ?? CommandTrigger.Manual,
+    );
+}
+
 export function queueCompactDatabase(options: { trigger?: number } = {}) {
     return CommandQueueManager.push(
         CommandNames.CompactDatabase,
@@ -863,12 +916,19 @@ export function queueUpdateLibraryMetadata(options: { trigger?: number } = {}) {
         options.trigger ?? CommandTrigger.Manual,
     );
 }
-export function queueConfigPrune(options: { trigger?: number } = {}) {
+export function queueConfigPrune(options: {
+    trigger?: number;
+    priority?: number;
+    refId?: string;
+    refreshArtworkPreference?: boolean;
+} = {}) {
     return CommandQueueManager.push(
         CommandNames.ConfigPrune,
-        {},
-        'config-prune',
-        0,
+        options.refreshArtworkPreference
+            ? { refreshArtworkPreference: true }
+            : {},
+        options.refId ?? 'config-prune',
+        options.priority ?? 0,
         options.trigger ?? CommandTrigger.Manual,
     );
 }

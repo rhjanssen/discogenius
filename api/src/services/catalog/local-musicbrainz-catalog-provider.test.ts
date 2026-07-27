@@ -8,6 +8,7 @@ import {
   mapMbArtistToLidarr,
   mapMbReleaseGroupToLidarrDetail,
   mapMbReleaseToLidarr,
+  mapMbTrackToLidarr,
   mapMbRecordingToCatalog,
   flattenArtistCredit,
   type MbArtist,
@@ -292,4 +293,30 @@ test("provider exposes a stable id/name and is constructible without options", (
   const provider = new LocalMusicBrainzCatalogProvider();
   assert.equal(provider.id, "musicbrainz-local");
   assert.ok(provider.name.includes("MusicBrainz"));
+});
+
+test("mapMbTrackToLidarr prefers release-track title over longer recording title", () => {
+  const track = {
+    id: "track-1",
+    title: "Track Title",
+    recording: {
+      id: "rec-1",
+      title: "Much Longer And More Informative Recording Title (Remastered Version)",
+    },
+  };
+  const mapped = mapMbTrackToLidarr(track, 1);
+  assert.equal(mapped.TrackName, "Track Title", "Release-track title must win when present");
+});
+
+test("mapMbTrackToLidarr falls back to recording title when track title is missing or empty", () => {
+  const track = {
+    id: "track-2",
+    title: "",
+    recording: {
+      id: "rec-2",
+      title: "Recording Title Fallback",
+    },
+  };
+  const mapped = mapMbTrackToLidarr(track, 1);
+  assert.equal(mapped.TrackName, "Recording Title Fallback", "Must fall back to recording title when track title is empty");
 });

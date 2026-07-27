@@ -1176,6 +1176,41 @@ test("album provider artwork candidates prefer stereo slot then spatial then oth
   assert.equal(spatialOnly[0]?.imageId, "spatial-cover");
 });
 
+test("Bad Blood composite artwork ranks the title-close member ahead of the first stored ID", () => {
+  const { db } = dbModule;
+  const albumMbid = "bf37b1a0-d94f-4230-b2c7-09b17f9f8a68";
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Bastille");
+  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
+    .run(albumMbid, artistMbid, "Bad Blood");
+  const insert = db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      title, asset_id, match_confidence
+    ) VALUES ('apple-music', 'album', ?, ?, ?, ?, ?, 1)
+  `);
+  insert.run("1705033078", artistMbid, albumMbid, "Pompeii MMXXIII", "pompeii-cover");
+  insert.run(
+    "1710633308",
+    artistMbid,
+    albumMbid,
+    "Bad Blood X (10th Anniversary Edition)",
+    "bad-blood-cover",
+  );
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id
+    ) VALUES (?, ?, 'stereo', 1, 'apple-music', ?)
+  `).run(artistMbid, albumMbid, "1705033078;1710633308");
+
+  const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(albumMbid);
+  assert.equal(candidates[0]?.entityId, "1710633308");
+  assert.equal(candidates[0]?.imageId, "bad-blood-cover");
+  assert.equal(candidates[1]?.entityId, "1705033078");
+});
+
 test("stale provider cache still serves existing derivatives while upgrade is pending", () => {
   const albumMbid = "stale-but-serve-album";
   const providerUrl = "https://resources.tidal.com/images/aaaaaaaa/bbbb/cccc/dddd/eeeeeeeeeeee/750x750.jpg";
@@ -1313,6 +1348,96 @@ test("ensureCachedMediaCover keeps prior files when a successful fetch cannot be
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("unsupported WebP masters are retained even when proxies cannot be decoded", async () => {
+  const albumMbid = "webp-master-retention-album";
+  const sourceUrl = "https://example.test/master.webp";
+  const bytes = Buffer.from("RIFF0000WEBPVP8 unsupported-fixture", "utf8");
+  globalThis.fetch = (async () => new Response(bytes, {
+    status: 200,
+    headers: { "content-type": "image/webp" },
+  })) as typeof fetch;
+  try {
+    const localUrl = await mediaCoverServiceModule.ensureCachedMediaCover({
+      entityId: albumMbid,
+      coverEntity: "Album",
+      coverType: "Cover",
+      sourceUrl,
+      fulfilledBy: "canonical",
+    });
+    assert.equal(localUrl, `/media-cover/Albums/${albumMbid}/cover.webp`);
+    const master = path.join(tempDir, "media-cover", "Albums", albumMbid, "cover.webp");
+    assert.deepEqual(fs.readFileSync(master), bytes);
+    assert.equal(fs.existsSync(path.join(path.dirname(master), "cover-500.jpg")), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cached sidecar sync replaces equal-length wrong artwork using SHA-256", () => {
+  const albumMbid = "equal-size-sidecar-album";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  const sidecar = path.join(tempDir, "library", albumMbid, "cover.jpg");
+  fs.mkdirSync(folder, { recursive: true });
+  fs.mkdirSync(path.dirname(sidecar), { recursive: true });
+  fs.writeFileSync(path.join(folder, "cover.jpg"), Buffer.from([1, 2, 3, 4]));
+  fs.writeFileSync(sidecar, Buffer.from([4, 3, 2, 1]));
+
+  assert.equal(
+    mediaCoverServiceModule.syncCachedMediaCoverToFile({
+      entityId: albumMbid,
+      coverEntity: "Album",
+      coverTypes: "cover",
+      outputPath: sidecar,
+    }),
+    "written",
+  );
+  assert.deepEqual(fs.readFileSync(sidecar), Buffer.from([1, 2, 3, 4]));
+  assert.equal(
+    mediaCoverServiceModule.syncCachedMediaCoverToFile({
+      entityId: albumMbid,
+      coverEntity: "Album",
+      coverTypes: "cover",
+      outputPath: sidecar,
+    }),
+    "unchanged",
+  );
+});
+
+test("cached sidecar sync preserves the prior file when atomic replacement fails", () => {
+  const albumMbid = "failed-atomic-sidecar-album";
+  const folder = path.join(tempDir, "media-cover", "Albums", albumMbid);
+  const sidecarFolder = path.join(tempDir, "library", albumMbid);
+  const sidecar = path.join(sidecarFolder, "cover.jpg");
+  fs.mkdirSync(folder, { recursive: true });
+  fs.mkdirSync(sidecarFolder, { recursive: true });
+  fs.writeFileSync(path.join(folder, "cover.jpg"), Buffer.from([1, 2, 3, 4]));
+  fs.writeFileSync(sidecar, Buffer.from([4, 3, 2, 1]));
+
+  const originalRenameSync = fs.renameSync;
+  fs.renameSync = (() => {
+    throw new Error("simulated atomic replacement failure");
+  }) as typeof fs.renameSync;
+  try {
+    assert.throws(
+      () => mediaCoverServiceModule.syncCachedMediaCoverToFile({
+        entityId: albumMbid,
+        coverEntity: "Album",
+        coverTypes: "cover",
+        outputPath: sidecar,
+      }),
+      /simulated atomic replacement failure/,
+    );
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+
+  assert.deepEqual(fs.readFileSync(sidecar), Buffer.from([4, 3, 2, 1]));
+  assert.deepEqual(
+    fs.readdirSync(sidecarFolder).filter((name) => name.endsWith(".tmp")),
+    [],
+  );
 });
 
 test("normalizeArtworkUrl upgrades cropped YouTube, square Apple, and TIDAL 3:2 video thumbs", () => {

@@ -11,7 +11,16 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
 const { db } = dbModule;
+const configModule = await import("../config/config.js");
 const downloadState = await import("./download-state.js");
+const { buildTrackFileCompletionExistsPredicate } = await import("./track-file-completion.js");
+
+function writeFilteringConfig(includeSpatial: boolean, includeVideos: boolean) {
+  const config = configModule.readConfig();
+  config.filtering.include_spatial = includeSpatial;
+  config.filtering.include_videos = includeVideos;
+  configModule.writeConfig(config);
+}
 
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();
@@ -23,6 +32,7 @@ function resetRows() {
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();
+  writeFilteringConfig(false, false);
   downloadState.invalidateAllDownloadState();
 }
 
@@ -160,6 +170,7 @@ test("downloaded media state resolves canonical and provider identifiers without
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
 });
 test("artist and release-group download stats use canonical slots, recordings, and TrackFiles", () => {
+  writeFilteringConfig(false, true);
   seedCanonicalArtistGraph();
   insertTrackFile("track-1", "recording-1", "provider-track-1", "track-one.flac");
   insertVideoFile("video-recording-1", "provider-video-1", "track-one-video.mp4");
@@ -188,4 +199,161 @@ test("artist and release-group download stats use canonical slots, recordings, a
   assert.equal(completeArtist.downloadedItems, 2);
   assert.equal(completeArtist.isDownloaded, true);
   assert.equal(downloadState.countDownloadedManagedArtists(), 1);
+});
+
+test("canonical MBIDs complete tracks when imported files have no integer catalog links", () => {
+  seedCanonicalArtistGraph();
+  insertTrackFile("track-1", "recording-1", "provider-track-1", "track-one.flac");
+  insertTrackFile("track-2", "recording-2", "provider-track-2", "track-two.flac");
+
+  // First file is identified by release-specific track MBID only.
+  db.prepare(`
+    UPDATE TrackFiles
+    SET canonical_recording_mbid = NULL
+    WHERE provider_id = 'provider-track-1'
+  `).run();
+  db.prepare(`
+    UPDATE TrackFiles
+    SET track_id = NULL, recording_id = NULL
+    WHERE provider_id = 'provider-track-1'
+  `).run();
+
+  // Second file has no track identity and therefore uses recording fallback.
+  db.prepare(`
+    UPDATE TrackFiles
+    SET canonical_track_mbid = NULL
+    WHERE provider_id = 'provider-track-2'
+  `).run();
+  db.prepare(`
+    UPDATE TrackFiles
+    SET track_id = NULL, recording_id = NULL
+    WHERE provider_id = 'provider-track-2'
+  `).run();
+
+  const album = downloadState.getReleaseGroupDownloadStatsMap(["release-group-1"])
+    .get("release-group-1");
+  assert.deepEqual(
+    {
+      totalTracks: album?.totalTracks,
+      downloadedTracks: album?.downloadedTracks,
+      isDownloaded: album?.isDownloaded,
+    },
+    { totalTracks: 2, downloadedTracks: 2, isDownloaded: true },
+  );
+  assert.equal(downloadState.countDownloadedTracks(), 2);
+  assert.equal(downloadState.countDownloadedAlbums(), 1);
+});
+
+test("download completion follows enabled audio slots and keeps stereo/spatial track identities separate", () => {
+  seedCanonicalArtistGraph();
+  db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored,
+      selected_provider, selected_provider_id, selected_release_mbid, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("artist-mbid", "release-group-1", "spatial", 1, "tidal", "provider-atmos-1", "release-1", "DOLBY_ATMOS");
+  insertTrackFile("track-1", "recording-1", "provider-track-1", "track-one.flac");
+  insertTrackFile("track-2", "recording-2", "provider-track-2", "track-two.flac");
+
+  writeFilteringConfig(false, false);
+  const stereoOnly = downloadState.getReleaseGroupDownloadStatsMap(["release-group-1"]).get("release-group-1");
+  assert.deepEqual(
+    {
+      totalTracks: stereoOnly?.totalTracks,
+      downloadedTracks: stereoOnly?.downloadedTracks,
+      isDownloaded: stereoOnly?.isDownloaded,
+    },
+    { totalTracks: 2, downloadedTracks: 2, isDownloaded: true },
+  );
+  assert.equal(downloadState.getArtistDownloadStats("artist-local").totalItems, 1);
+  assert.equal(downloadState.getArtistDownloadStats("artist-local").downloadedItems, 1);
+  assert.equal(downloadState.countDownloadedTracks(), 2);
+  assert.equal(downloadState.countDownloadedAlbums(), 1);
+
+  writeFilteringConfig(true, false);
+  const stereoAndSpatial = downloadState.getReleaseGroupDownloadStatsMap(["release-group-1"]).get("release-group-1");
+  assert.deepEqual(
+    {
+      totalTracks: stereoAndSpatial?.totalTracks,
+      downloadedTracks: stereoAndSpatial?.downloadedTracks,
+      isDownloaded: stereoAndSpatial?.isDownloaded,
+    },
+    { totalTracks: 4, downloadedTracks: 2, isDownloaded: false },
+  );
+  assert.equal(downloadState.getArtistDownloadStats("artist-local").totalItems, 2);
+  assert.equal(downloadState.getArtistDownloadStats("artist-local").downloadedItems, 1);
+  assert.equal(downloadState.countDownloadedTracks(), 2);
+  assert.equal(downloadState.countDownloadedAlbums(), 1);
+});
+
+test("disabled video monitoring does not make an otherwise complete artist incomplete", () => {
+  seedCanonicalArtistGraph();
+  insertTrackFile("track-1", "recording-1", "provider-track-1", "track-one.flac");
+  insertTrackFile("track-2", "recording-2", "provider-track-2", "track-two.flac");
+
+  writeFilteringConfig(false, false);
+  const stats = downloadState.getArtistDownloadStats("artist-local");
+  assert.deepEqual(
+    {
+      totalItems: stats.totalItems,
+      downloadedItems: stats.downloadedItems,
+      isDownloaded: stats.isDownloaded,
+    },
+    { totalItems: 1, downloadedItems: 1, isDownloaded: true },
+  );
+});
+
+test("audio completion ignores video recordings embedded in the selected release", () => {
+  seedCanonicalArtistGraph();
+  db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, title, medium_position, position
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run("video-track-1", "release-1", "video-recording-1", "Track One (Music Video)", 1, 3);
+  insertTrackFile("track-1", "recording-1", "provider-track-1", "track-one.flac");
+  insertTrackFile("track-2", "recording-2", "provider-track-2", "track-two.flac");
+
+  writeFilteringConfig(false, false);
+  const stats = downloadState.getReleaseGroupDownloadStatsMap(["release-group-1"]).get("release-group-1");
+  assert.deepEqual(
+    {
+      totalTracks: stats?.totalTracks,
+      downloadedTracks: stats?.downloadedTracks,
+      isDownloaded: stats?.isDownloaded,
+    },
+    { totalTracks: 2, downloadedTracks: 2, isDownloaded: true },
+  );
+  assert.equal(downloadState.countDownloadedTracks(), 2);
+  assert.equal(downloadState.countDownloadedAlbums(), 1);
+
+  // A malformed/legacy audio-file row linked to a canonical video must not
+  // inflate any audio completion counter either.
+  insertTrackFile("video-track-1", "video-recording-1", "legacy-video-as-track", "legacy-video.flac");
+  const afterLegacyRow = downloadState.getReleaseGroupDownloadStatsMap(["release-group-1"]).get("release-group-1");
+  assert.equal(afterLegacyRow?.totalTracks, 2);
+  assert.equal(afterLegacyRow?.downloadedTracks, 2);
+  assert.equal(downloadState.countDownloadedTracks(), 2);
+  assert.equal(downloadState.countDownloadedAlbums(), 1);
+});
+
+test("completion lookups force one indexed TrackFiles probe per canonical identity", () => {
+  const plan = db.prepare(`
+    EXPLAIN QUERY PLAN
+    SELECT track.id
+    FROM Tracks track
+    JOIN ReleaseGroupSlots slot
+      ON slot.selected_release_mbid = track.release_mbid
+    WHERE ${buildTrackFileCompletionExistsPredicate("track", "slot.slot", "plan_file")}
+  `).all() as Array<{ detail: string }>;
+  const details = plan.map((row) => row.detail).join("\n");
+
+  for (const indexName of [
+    "idx_track_files_track_id",
+    "idx_track_files_canonical_track_type",
+    "idx_track_files_recording_id",
+    "idx_track_files_canonical_recording_type",
+  ]) {
+    assert.match(details, new RegExp(`USING INDEX ${indexName}`));
+  }
+  assert.doesNotMatch(details, /SCAN plan_file_/);
 });

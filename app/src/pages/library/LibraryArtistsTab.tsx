@@ -26,6 +26,7 @@ import {
 } from "@fluentui/react-icons";
 import { useMemo, type MouseEvent, type ReactElement, type ReactNode } from "react";
 import { EmptyState } from "@/components/ui/ContentState";
+import { CompletionProgressPill } from "@/components/ui/CompletionProgressPill";
 import { NotScannedBadge } from "@/components/ui/StatusBadges";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
 import { LibrarySelectionBar } from "@/components/library/LibrarySelectionBar";
@@ -289,23 +290,12 @@ export function useLibraryArtistColumns({
       render: (artist: any) => {
         const downloaded = Number(artist.track_file_count ?? 0);
         const total = Number(artist.monitored_track_count ?? artist.track_count ?? 0);
-        const percent = total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : 0;
-        const complete = total > 0 && downloaded >= total;
         return (
-          <div
-            className={mergeClasses(dgCell.progressTrack, complete ? dgCell.progressTrackComplete : undefined)}
-            role="progressbar"
-            aria-valuenow={downloaded}
-            aria-valuemin={0}
-            aria-valuemax={total}
+          <CompletionProgressPill
+            value={downloaded}
+            total={total}
             title={`${downloaded} of ${total} tracks downloaded`}
-          >
-            <div
-              className={mergeClasses(dgCell.progressFill, complete ? dgCell.progressFillComplete : undefined)}
-              style={{ width: `${percent}%` }}
-            />
-            <span className={dgCell.progressLabel}>{downloaded} / {total}</span>
-          </div>
+          />
         );
       },
     },

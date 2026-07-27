@@ -6,13 +6,14 @@ import type { CommandHandler } from "./handler-context.js";
 /**
  * Shared handler for the low-coupling maintenance commands (BulkRefreshArtist,
  * DownloadMissingForce, RescanAllRoots, CheckHealth, CompactDatabase,
- * CleanupTempFiles, UpdateLibraryMetadata, ConfigPrune). Each delegates to the
+ * BackupDatabase, CleanupTempFiles, UpdateLibraryMetadata, ConfigPrune). Each delegates to the
  * maintenance dispatcher, which fans out by command name internally.
  */
 export const handleLowCouplingMaintenance: CommandHandler = async (job, ctx) => {
     const command = job as CommandModel;
     await runLowCouplingMaintenanceJob(command, {
         updateCommandDescription: (options) => ctx.updateCommandDescription(command, options),
+        yieldToEventLoop: () => ctx.yieldToEventLoop(),
     });
 };
 
@@ -27,6 +28,7 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s)`,
         `pruned ${summary.historyJobsPruned} old job(s)`,
         `${summary.orphanDownloadFoldersRemoved} orphan download folder(s)`,
+        `${summary.orphanProviderItemMatchesRemoved} orphan provider match(es)`,
         `corrected ${summary.videoQualitiesCorrected} video quality tag(s)`,
         `and optimized the database`,
     ];

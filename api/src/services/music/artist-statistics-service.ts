@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
 import { getReleaseGroupDownloadStatsMap } from "../download/download-state.js";
+import { getEnabledDownloadLibrarySlots } from "../download/download-library-slots.js";
 
 export interface ArtistStatisticsRow {
   artist_id: string;
@@ -87,6 +88,7 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
   const scopedMetadataIds = Array.from(new Set(
     scopedArtists.map((artist) => artist.artistMetadataId).filter((id): id is number => id != null),
   ));
+  const enabledAudioSlots = getEnabledDownloadLibrarySlots().audio;
 
   // release-group scope + monitored flag, one row per (artist_mbid, release group)
   const scopeRows = scopedMbids.length === 0 ? [] : db.prepare(`
@@ -99,7 +101,7 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
       SELECT release_group_mbid,
              MAX(CASE WHEN monitored = 1 OR monitored_lock = 1 THEN 1 ELSE 0 END) AS monitored
       FROM ReleaseGroupSlots
-      WHERE slot IN ('stereo', 'spatial')
+      WHERE slot IN (${enabledAudioSlots.map(() => "?").join(", ")})
       GROUP BY release_group_mbid
     )
     SELECT scope.artist_mbid,
@@ -107,7 +109,7 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
            COALESCE(slot_state.monitored, 0) AS monitored
     FROM scope
     LEFT JOIN slot_state ON slot_state.release_group_mbid = scope.release_group_mbid
-  `).all(...scopedMbids, ...scopedMbids) as Array<{
+  `).all(...scopedMbids, ...scopedMbids, ...enabledAudioSlots) as Array<{
     artist_mbid: string;
     release_group_mbid: string;
     monitored: number;

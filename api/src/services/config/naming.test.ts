@@ -5,14 +5,12 @@ import { cleanPathSegment, previewNamingConfig, renderFileStem, renderRelativePa
 
 test("existing Discogenius naming tokens continue to render", () => {
   const rendered = renderFileStem(
-    "{artistName} - {albumFullTitle} ({releaseYear}) - {track:00} - {trackFullTitle}",
+    "{artistName} - {albumTitle} ({releaseYear}) - {track:00} - {trackTitle}",
     {
       artistName: "Daft Punk",
       albumTitle: "Discovery",
-      albumVersion: null,
       releaseYear: "2001",
       trackTitle: "One More Time",
-      trackVersion: null,
       trackNumber: 1,
     }
   );
@@ -32,7 +30,7 @@ test("normalized filename variants resolve correctly", () => {
       "{Album MbId}",
       "{Release Year}",
       "{Track Title}",
-      "{Track FullTitle}",
+      "{Track CleanTitle}",
       "{Track MbId}",
       "{Track ArtistName}",
       "{Track ArtistMbId}",
@@ -333,8 +331,8 @@ test("renderRelativePath returns \"Unknown\" when all segments collapse", () => 
 test("factory default naming templates render Plex/Jellyfin-friendly previews", () => {
   const config = {
     artist_folder: "{Artist Name} {mbid-{Artist MbId}}",
-    album_track_path_single: "{Album FullTitle} ({Release Year})/{track:00} - {Track FullTitle}",
-    album_track_path_multi: "{Album FullTitle} ({Release Year})/{medium:0}{track:00} - {Track FullTitle}",
+    album_track_path_single: "{Album Title} ({Release Year})/{track:00} - {Track Title}",
+    album_track_path_multi: "{Album Title} ({Release Year})/{medium:0}{track:00} - {Track Title}",
     video_file: "{Video Title}{Video Type} {{Provider Name}-{Provider VideoId}}",
   };
 
@@ -352,8 +350,8 @@ test("factory default naming templates render Plex/Jellyfin-friendly previews", 
     },
     {
       artistFolder: "Bastille {mbid-7808accb-6395-4b25-858c-678bbb73896b}",
-      standardTrack: "Bad Blood (The Extended Cut) (2013)/01 - Pompeii (Live From MTV Unplugged).flac",
-      multiDiscTrack: "Bad Blood (The Extended Cut) (2013)/203 - Pompeii (Live From MTV Unplugged).flac",
+      standardTrack: "Bad Blood (2013)/01 - Pompeii.flac",
+      multiDiscTrack: "Bad Blood (2013)/203 - Pompeii.flac",
       video: "Pompeii (Live At The O2)-video {TIDAL-26065587}.mp4",
     },
   );

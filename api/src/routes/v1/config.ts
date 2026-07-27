@@ -28,7 +28,11 @@ import fs from "fs";
 const { Client: PgClient } = pg;
 import type { PublicAppConfigContract } from "../../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../../services/config/naming.js";
-import { queueCurationPass } from "../../services/commands/scheduler.js";
+import {
+  queueConfigPrune,
+  queueCurationPass,
+  queueMetadataRefreshPass,
+} from "../../services/commands/scheduler.js";
 
 const router = Router();
 
@@ -235,18 +239,38 @@ router.post("/metadata", async (req, res) => {
     updateConfig("metadata", updates);
     await syncDownloadBackends();
 
-    if (updates.artwork_preference && updates.artwork_preference !== previousPreference) {
-      import("../../services/metadata/media-cover-service.js").then(({ refreshAllMediaCoversOnPreferenceChange }) => {
-        refreshAllMediaCoversOnPreferenceChange();
+    const artworkPreferenceChanged = Boolean(
+      updates.artwork_preference
+      && updates.artwork_preference !== previousPreference,
+    );
+    let artworkRefreshCommandId: number | null = null;
+    if (artworkPreferenceChanged) {
+      // A preference flip can revisit hundreds of catalog entities and perform
+      // provider I/O. Run the normal durable refresh/match workflow so canonical
+      // artwork is considered first and provider-preferred artwork can replace it
+      // during matching, instead of doing untracked network work in this route.
+      artworkRefreshCommandId = queueMetadataRefreshPass({
+        trigger: CommandTrigger.Manual,
       });
     }
 
-    // Queue a config prune job to clean up orphaned metadata sidecars
-    import("../../services/commands/command-queue-manager.js").then(({ CommandNames, CommandQueueManager }) => {
-      CommandQueueManager.push(CommandNames.ConfigPrune, {}, 'system', 0, 1);
+    // RefreshMetadata fans out monitored artists at -1 and each subsequent
+    // workflow phase gets a higher priority. Keep an artwork reconciliation
+    // below both monitored (-1) and credited (-10) workflows so cache
+    // acquisition finishes before sidecars and embedded covers are updated.
+    queueConfigPrune({
+      trigger: CommandTrigger.Manual,
+      priority: artworkPreferenceChanged ? -100 : 0,
+      refId: artworkPreferenceChanged
+        ? `artwork-preference-backfill:${artworkRefreshCommandId}`
+        : "config-prune",
+      refreshArtworkPreference: artworkPreferenceChanged,
     });
 
-    res.json({ success: true });
+    res.json({
+      success: true,
+      ...(artworkRefreshCommandId != null ? { artworkRefreshCommandId } : {}),
+    });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });

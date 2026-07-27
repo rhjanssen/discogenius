@@ -88,6 +88,76 @@ test("monitoring cycle is independent from the daily root scan and stamps after 
     assert.equal(taskStateModule.hasActiveMonitoringCycleWorkflow(), false);
 });
 
+test("health checks and database backups have recurring schedules and poll only once while active", () => {
+    const initialSnapshots = taskSchedulerModule.getScheduledTaskSnapshots();
+    const health = initialSnapshots.find((task) => task.key === "health-check");
+    const backup = initialSnapshots.find((task) => task.key === "backup-database");
+    assert.equal(health?.intervalMinutes, 360);
+    assert.equal(backup?.intervalMinutes, 10_080);
+    assert.equal(health?.taskName, queueModule.CommandNames.CheckHealth);
+    assert.equal(backup?.taskName, queueModule.CommandNames.BackupDatabase);
+
+    // Keep unrelated tasks out of this poll and make only the two maintenance
+    // tasks overdue.
+    dbModule.db.prepare("UPDATE scheduled_tasks SET last_queued_at = CURRENT_TIMESTAMP").run();
+    dbModule.db.prepare(`
+        UPDATE scheduled_tasks
+        SET last_queued_at = '2000-01-01 00:00:00'
+        WHERE task_key IN ('health-check', 'backup-database')
+    `).run();
+
+    taskSchedulerModule.pollScheduledTasks();
+
+    const healthJobs = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.CheckHealth],
+        10,
+    );
+    const backupJobs = queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.BackupDatabase],
+        10,
+    );
+    assert.equal(healthJobs.length, 1);
+    assert.equal(backupJobs.length, 1);
+    assert.equal(healthJobs[0]?.trigger, 2);
+    assert.equal(backupJobs[0]?.trigger, 2);
+
+    const activeSnapshots = taskSchedulerModule.getScheduledTaskSnapshots();
+    assert.equal(activeSnapshots.find((task) => task.key === "health-check")?.active, true);
+    assert.equal(activeSnapshots.find((task) => task.key === "backup-database")?.active, true);
+    assert.notEqual(activeSnapshots.find((task) => task.key === "health-check")?.lastQueuedAt, null);
+    assert.notEqual(activeSnapshots.find((task) => task.key === "backup-database")?.lastQueuedAt, null);
+
+    taskSchedulerModule.pollScheduledTasks();
+    assert.equal(queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.CheckHealth],
+        10,
+    ).length, 1);
+    assert.equal(queueModule.CommandQueueManager.getTopPendingJobsByTypes(
+        [queueModule.CommandNames.BackupDatabase],
+        10,
+    ).length, 1);
+});
+
+test("config-prune callers can defer a distinct artwork reconciliation behind refresh workflows", () => {
+    const commandId = taskSchedulerModule.queueConfigPrune({
+        trigger: 1,
+        priority: -100,
+        refId: "artwork-preference-backfill:42",
+        refreshArtworkPreference: true,
+    });
+
+    const command = queueModule.CommandQueueManager.get(commandId);
+    assert.ok(command);
+    assert.equal(command.name, queueModule.CommandNames.ConfigPrune);
+    assert.equal(command.ref_id, "artwork-preference-backfill:42");
+    assert.equal(command.priority, -100);
+    assert.equal(command.trigger, 1);
+    assert.equal(
+        (command.payload as Record<string, unknown>).refreshArtworkPreference,
+        true,
+    );
+});
+
 test("scheduled monitoring cycle with no due artists still runs the terminal download pass", () => {
     const refreshJobId = taskSchedulerModule.queueMonitoringCyclePass({ trigger: 2, includeRootScan: true });
     assert.ok(refreshJobId > 0);

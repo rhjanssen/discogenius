@@ -377,6 +377,140 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
   ]);
 });
 
+test("same-release provider superset maps exact-duration version tracks and clears stale positional links", async () => {
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const releaseGroupMbid = "81111111-1111-4111-8111-111111111111";
+  const releaseMbid = "82222222-2222-4222-8222-222222222222";
+  const versions = [
+    ["Dave Winnel remix", 245],
+    ["Jack Wins remix", 278],
+    ["Deluxe mix", 304],
+  ] as const;
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Lost Frequencies");
+  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Lost Frequencies", artistMbid);
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
+    .run(releaseGroupMbid, artistMbid, "Reality");
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status)
+    VALUES (?, ?, ?, 'Reality (Remixes)', 'Official')
+  `).run(releaseMbid, releaseGroupMbid, artistMbid);
+
+  const insertRecording = dbModule.db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, title)
+    VALUES (?, ?, ?)
+  `);
+  const insertTrack = dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
+    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+  `);
+  const canonical = versions.map(([version, duration], index) => {
+    const recordingMbid = `83333333-3333-4333-8333-33333333333${index}`;
+    const trackMbid = `84444444-4444-4444-8444-44444444444${index}`;
+    const title = `Reality (${version})`;
+    insertRecording.run(recordingMbid, artistMbid, title);
+    insertTrack.run(trackMbid, releaseMbid, recordingMbid, index + 1, String(index + 1), title, duration * 1000);
+    return { recordingMbid, trackMbid };
+  });
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, artist_mbid, release_group_mbid,
+      release_mbid, library_slot, match_status, match_confidence, match_method, availability
+    ) VALUES ('tidal', 'album', '52412070', 'Reality', ?, ?, ?, 'stereo',
+              'probable', 0.99, 'release-availability', 'available')
+  `).run(artistMbid, releaseGroupMbid, releaseMbid);
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, monitored, selected_provider,
+      selected_provider_id, selected_release_mbid, match_status, match_confidence, match_method
+    ) VALUES (?, ?, 'stereo', 1, 'tidal', '52412070', ?,
+              'probable', 0.99, 'release-availability')
+  `).run(artistMbid, releaseGroupMbid, releaseMbid);
+
+  // These stale rows reproduce the former position-only materialization: the
+  // unrelated first block was incorrectly linked to the canonical remix tracks.
+  const insertStale = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, provider_album_id, title, track_mbid,
+      recording_mbid, match_status, match_method, availability
+    ) VALUES ('tidal', 'track', ?, '52412070', 'Reality', ?, ?,
+              'matched', 'selected-release-position', 'available')
+  `);
+  canonical.forEach((identity, index) => {
+    insertStale.run(`tidal-reality-${index + 1}`, identity.trackMbid, identity.recordingMbid);
+  });
+
+  await refreshServiceModule.RefreshAlbumService.storeProviderTrackOffers(
+    "tidal",
+    "52412070",
+    [
+      { provider_id: "tidal-reality-1", title: "Reality", duration: 180, track_number: 1, volume_number: 1 },
+      { provider_id: "tidal-reality-2", title: "Reality", duration: 200, track_number: 2, volume_number: 1 },
+      { provider_id: "tidal-reality-3", title: "Reality", duration: 220, track_number: 3, volume_number: 1 },
+      ...versions.map(([, duration], index) => ({
+        provider_id: `tidal-reality-${index + 4}`,
+        title: "Reality",
+        duration,
+        track_number: index + 4,
+        volume_number: 1,
+      })),
+    ],
+    null,
+  );
+
+  const offers = dbModule.db.prepare(`
+    SELECT provider_id, track_mbid, recording_mbid, match_status, match_method, availability
+    FROM ProviderItems
+    WHERE provider = 'tidal'
+      AND entity_type = 'track'
+      AND provider_album_id = '52412070'
+    ORDER BY provider_id
+  `).all() as Array<Record<string, string | null>>;
+
+  assert.deepEqual(offers.slice(0, 3), [
+    {
+      provider_id: "tidal-reality-1",
+      track_mbid: null,
+      recording_mbid: null,
+      match_status: "pending",
+      match_method: "provider-album-tracklist",
+      availability: "available",
+    },
+    {
+      provider_id: "tidal-reality-2",
+      track_mbid: null,
+      recording_mbid: null,
+      match_status: "pending",
+      match_method: "provider-album-tracklist",
+      availability: "available",
+    },
+    {
+      provider_id: "tidal-reality-3",
+      track_mbid: null,
+      recording_mbid: null,
+      match_status: "pending",
+      match_method: "provider-album-tracklist",
+      availability: "available",
+    },
+  ]);
+  assert.deepEqual(
+    offers.slice(3).map((offer) => ({
+      provider_id: offer.provider_id,
+      track_mbid: offer.track_mbid,
+      match_status: offer.match_status,
+      match_method: offer.match_method,
+    })),
+    canonical.map((identity, index) => ({
+      provider_id: `tidal-reality-${index + 4}`,
+      track_mbid: identity.trackMbid,
+      match_status: "matched",
+      match_method: "same-release-superset-track-coverage",
+    })),
+  );
+});
+
 test("album refresh level does not borrow tracks from a colliding provider ID", () => {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "55555555-5555-4555-8555-555555555555";

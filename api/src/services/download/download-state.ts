@@ -1,6 +1,8 @@
 import { db } from "../../database.js";
 import { buildArtistCompletionPredicate } from "../music/managed-artists.js";
 import { forwardCacheInvalidate } from "../commands/worker/command-worker-protocol.js";
+import { getEnabledDownloadLibrarySlots } from "./download-library-slots.js";
+import { buildTrackFileCompletionExistsPredicate } from "./track-file-completion.js";
 
 export type DownloadableFileType = "track" | "video";
 
@@ -127,69 +129,7 @@ export function isMediaDownloaded(mediaId: string | number, fileType: Downloadab
 }
 
 export function getAlbumDownloadStatsMap(albumIds: Array<string | number>): Map<string, AlbumDownloadStats> {
-  const ids = uniqueIds(albumIds);
-  const result = new Map<string, AlbumDownloadStats>();
-  if (ids.length === 0) return result;
-
-  const canonicalValues = ids.map(() => "(?)").join(", ");
-  const canonicalRows = db.prepare(`
-    WITH target_release_groups(release_group_mbid) AS (
-      VALUES ${canonicalValues}
-    ),
-    selected_releases AS (
-      SELECT
-        rgs.release_group_mbid,
-        rgs.slot,
-        rgs.selected_release_mbid AS release_mbid
-      FROM target_release_groups trg
-      JOIN ReleaseGroupSlots rgs
-        ON rgs.release_group_mbid = trg.release_group_mbid
-       AND rgs.slot IN ('stereo', 'spatial')
-       AND rgs.selected_release_mbid IS NOT NULL
-    )
-    SELECT
-      sr.release_group_mbid AS album_id,
-      COUNT(DISTINCT COALESCE(t.mbid, CAST(t.id AS TEXT), t.title)) AS total_tracks,
-      COUNT(DISTINCT CASE
-        WHEN lf_track.id IS NOT NULL OR lf_recording.id IS NOT NULL
-        THEN COALESCE(t.mbid, CAST(t.id AS TEXT), t.title)
-      END) AS downloaded_tracks
-    FROM selected_releases sr
-    LEFT JOIN Tracks t
-      ON t.release_mbid = sr.release_mbid
-    LEFT JOIN Recordings r
-      ON r.mbid = t.recording_mbid
-    LEFT JOIN TrackFiles lf_track
-      ON (lf_track.track_id = t.id OR lf_track.canonical_track_mbid = t.mbid)
-     AND lf_track.file_type = 'track'
-     AND lf_track.library_slot = sr.slot
-    LEFT JOIN TrackFiles lf_recording
-      ON (lf_recording.recording_id = t.recording_id OR (lf_recording.canonical_recording_mbid = t.recording_mbid AND lf_recording.canonical_track_mbid IS NULL))
-     AND lf_recording.file_type = 'track'
-     AND lf_recording.library_slot = sr.slot
-    WHERE (r.is_video IS NULL OR r.is_video = 0)
-    GROUP BY sr.release_group_mbid
-  `).all(...ids) as Array<{
-    album_id: string;
-    total_tracks: number;
-    downloaded_tracks: number;
-  }>;
-
-  const statsByAlbumId = new Map(canonicalRows.map((row) => [String(row.album_id), row]));
-
-  for (const albumId of ids) {
-    const row = statsByAlbumId.get(albumId);
-    result.set(
-      albumId,
-      toAlbumStats(
-        albumId,
-        Number(row?.total_tracks || 0),
-        Number(row?.downloaded_tracks || 0),
-      ),
-    );
-  }
-
-  return result;
+  return getReleaseGroupDownloadStatsMap(albumIds);
 }
 
 export function getAlbumDownloadStats(albumId: string | number): AlbumDownloadStats {
@@ -198,20 +138,20 @@ export function getAlbumDownloadStats(albumId: string | number): AlbumDownloadSt
 
 export function getReleaseGroupDownloadStatsMap(
   releaseGroupMbids: Array<string | number>,
-  slot?: "stereo" | "spatial" | "video" | null,
+  slot?: "stereo" | "spatial" | null,
 ): Map<string, AlbumDownloadStats> {
   const ids = uniqueIds(releaseGroupMbids);
   const result = new Map<string, AlbumDownloadStats>();
   if (ids.length === 0) return result;
 
   const values = ids.map(() => "(?)").join(", ");
-  const normalizedSlot = slot === "spatial" ? "spatial" : slot === "video" ? "video" : slot === "stereo" ? "stereo" : null;
-  const slotPredicate = normalizedSlot
-    ? `AND rgs.slot = '${normalizedSlot}'`
-    : "AND rgs.slot IN ('stereo', 'spatial')";
-  const trackDiscriminator = normalizedSlot
-    ? "sr.slot || ':' || COALESCE(t.mbid, CAST(t.id AS TEXT), t.title)"
-    : "COALESCE(t.mbid, CAST(t.id AS TEXT), t.title)";
+  const enabledLibrarySlots = getEnabledDownloadLibrarySlots();
+  const normalizedSlot = slot === "spatial" ? "spatial" : slot === "stereo" ? "stereo" : null;
+  const selectedSlots = normalizedSlot ? [normalizedSlot] : enabledLibrarySlots.audio;
+  const slotPredicate = `AND rgs.slot IN (${selectedSlots.map(() => "?").join(", ")})`;
+  // A stereo and spatial copy of the same canonical track are two independent
+  // completion requirements whenever both slots are enabled.
+  const trackDiscriminator = "sr.slot || ':' || COALESCE(t.mbid, CAST(t.id AS TEXT), t.title)";
   const rows = db.prepare(`
     WITH target_release_groups(release_group_mbid) AS (
       VALUES ${values}
@@ -231,22 +171,17 @@ export function getReleaseGroupDownloadStatsMap(
       sr.release_group_mbid,
       COUNT(DISTINCT ${trackDiscriminator}) AS total_tracks,
       COUNT(DISTINCT CASE
-        WHEN lf_track.id IS NOT NULL OR lf_recording.id IS NOT NULL
+        WHEN ${buildTrackFileCompletionExistsPredicate("t", "sr.slot", "release_group_file")}
         THEN ${trackDiscriminator}
       END) AS downloaded_tracks
     FROM selected_releases sr
     LEFT JOIN Tracks t
       ON t.release_mbid = sr.release_mbid
-    LEFT JOIN TrackFiles lf_track
-      ON (lf_track.track_id = t.id OR lf_track.canonical_track_mbid = t.mbid)
-     AND lf_track.file_type = 'track'
-     AND lf_track.library_slot = sr.slot
-    LEFT JOIN TrackFiles lf_recording
-      ON (lf_recording.recording_id = t.recording_id OR (lf_recording.canonical_recording_mbid = t.recording_mbid AND lf_recording.canonical_track_mbid IS NULL))
-     AND lf_recording.file_type = 'track'
-     AND lf_recording.library_slot = sr.slot
+    LEFT JOIN Recordings recording
+      ON recording.mbid = t.recording_mbid
+    WHERE (recording.is_video IS NULL OR recording.is_video = 0)
     GROUP BY sr.release_group_mbid
-  `).all(...ids) as Array<{
+  `).all(...ids, ...selectedSlots) as Array<{
     release_group_mbid: string;
     total_tracks: number;
     downloaded_tracks: number;
@@ -296,48 +231,42 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
     targets.map((target) => target.artistMetadataId).filter((id): id is number => id != null),
   ));
   const mbidMarks = mbids.map(() => "?").join(", ");
+  const enabledLibrarySlots = getEnabledDownloadLibrarySlots();
+  const audioSlotMarks = enabledLibrarySlots.audio.map(() => "?").join(", ");
 
   // 1. Monitored release-slot completeness (indexed on rgs.artist_mbid).
   const slotRows = mbids.length === 0 ? [] : db.prepare(`
     SELECT
       rgs.artist_mbid,
       COUNT(DISTINCT track.mbid) AS total_tracks,
-      COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN track.mbid END) AS downloaded_tracks
+      COUNT(DISTINCT CASE
+        WHEN ${buildTrackFileCompletionExistsPredicate("track", "rgs.slot", "artist_file")}
+        THEN track.mbid
+      END) AS downloaded_tracks
     FROM ReleaseGroupSlots rgs
     LEFT JOIN Tracks track
       ON track.release_mbid = rgs.selected_release_mbid
     LEFT JOIN Recordings recording
       ON recording.mbid = track.recording_mbid
-    LEFT JOIN TrackFiles lf
-      ON (
-        lf.track_id = track.id
-        OR lf.canonical_track_mbid = track.mbid
-        OR (
-          lf.recording_id = track.recording_id
-          OR (lf.canonical_track_mbid IS NULL AND lf.canonical_recording_mbid = track.recording_mbid)
-        )
-      )
-     AND lf.file_type = 'track'
-     AND lf.library_slot = rgs.slot
     WHERE rgs.artist_mbid IN (${mbidMarks})
       AND (rgs.monitored = 1 OR rgs.monitored_lock = 1)
-      AND rgs.slot IN ('stereo', 'spatial')
+      AND rgs.slot IN (${audioSlotMarks})
       AND rgs.selected_release_mbid IS NOT NULL
       AND (recording.is_video IS NULL OR recording.is_video = 0)
     GROUP BY rgs.artist_mbid, rgs.release_group_mbid, rgs.slot
-  `).all(...mbids) as Array<{ artist_mbid: string; total_tracks: number; downloaded_tracks: number }>;
+  `).all(...mbids, ...enabledLibrarySlots.audio) as Array<{ artist_mbid: string; total_tracks: number; downloaded_tracks: number }>;
 
   // 2. Monitored videos — one indexed query per artist-link column instead of
   //    an OR-join that defeats both indexes.
   const monitoredVideoFlag = "(recording.monitored = 1 OR recording.monitored_lock = 1)";
-  const videosLinkedByMbid = mbids.length === 0 ? [] : db.prepare(`
+  const videosLinkedByMbid = !enabledLibrarySlots.video || mbids.length === 0 ? [] : db.prepare(`
     SELECT recording.artist_mbid AS link, recording.id AS recording_id
     FROM Recordings recording
     WHERE recording.is_video = 1
       AND recording.artist_mbid IN (${mbidMarks})
       AND ${monitoredVideoFlag}
   `).all(...mbids) as Array<{ link: string; recording_id: number }>;
-  const videosLinkedByMetadataId = metadataIds.length === 0 ? [] : db.prepare(`
+  const videosLinkedByMetadataId = !enabledLibrarySlots.video || metadataIds.length === 0 ? [] : db.prepare(`
     SELECT recording.artist_metadata_id AS link, recording.id AS recording_id
     FROM Recordings recording
     WHERE recording.is_video = 1
@@ -348,7 +277,7 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
   // 3. Downloaded video recordings, derived once from the (small) set of
   //    downloaded video files; no video files ⇒ nothing is downloaded.
   const downloadedVideoIds = new Set<number>();
-  if (db.prepare("SELECT 1 FROM TrackFiles WHERE file_type = 'video' LIMIT 1").get()) {
+  if (enabledLibrarySlots.video && db.prepare("SELECT 1 FROM TrackFiles WHERE file_type = 'video' LIMIT 1").get()) {
     const downloadedRows = db.prepare(`
       SELECT recording.id AS recording_id
       FROM TrackFiles lf
@@ -427,6 +356,7 @@ export function getArtistDownloadStats(artistId: string | number): ArtistDownloa
 }
 
 export function countDownloadedAlbums(): number {
+  const enabledAudioSlots = getEnabledDownloadLibrarySlots().audio;
   const row = db.prepare(`
     SELECT COUNT(*) AS count
     FROM (
@@ -434,62 +364,41 @@ export function countDownloadedAlbums(): number {
         rgs.release_group_mbid,
         rgs.slot,
         COUNT(DISTINCT t.mbid) AS total_tracks,
-        COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN t.mbid END) AS downloaded_tracks
+        COUNT(DISTINCT CASE
+          WHEN ${buildTrackFileCompletionExistsPredicate("t", "rgs.slot", "album_count_file")}
+          THEN t.mbid
+        END) AS downloaded_tracks
       FROM ReleaseGroupSlots rgs
       JOIN Tracks t
-        ON t.album_release_id = rgs.selected_album_release_id
-        OR (t.album_release_id IS NULL AND t.release_mbid = rgs.selected_release_mbid)
-      LEFT JOIN TrackFiles lf
-        ON (
-          lf.track_id = t.id
-          OR lf.canonical_track_mbid = t.mbid
-          OR (
-            lf.track_id IS NULL
-            AND lf.canonical_track_mbid IS NULL
-            AND (
-              lf.recording_id = t.recording_id
-              OR (lf.recording_id IS NULL AND lf.canonical_recording_mbid = t.recording_mbid)
-            )
-          )
-        )
-       AND lf.file_type = 'track'
-       AND lf.library_slot = rgs.slot
-      WHERE rgs.slot IN ('stereo', 'spatial')
+        ON t.release_mbid = rgs.selected_release_mbid
+      LEFT JOIN Recordings recording
+        ON recording.mbid = t.recording_mbid
+      WHERE rgs.slot IN (${enabledAudioSlots.map(() => "?").join(", ")})
         AND rgs.selected_release_mbid IS NOT NULL
+        AND (recording.is_video IS NULL OR recording.is_video = 0)
       GROUP BY rgs.release_group_mbid, rgs.slot
     ) slot_stats
     WHERE total_tracks > 0
       AND downloaded_tracks >= total_tracks
-  `).get() as { count: number } | undefined;
+  `).get(...enabledAudioSlots) as { count: number } | undefined;
 
   return Number(row?.count || 0);
 }
 
 export function countDownloadedTracks(): number {
+  const enabledAudioSlots = getEnabledDownloadLibrarySlots().audio;
   const row = db.prepare(`
     SELECT COUNT(DISTINCT rgs.release_group_mbid || ':' || rgs.slot || ':' || t.mbid) AS count
     FROM ReleaseGroupSlots rgs
     JOIN Tracks t
-      ON t.album_release_id = rgs.selected_album_release_id
-      OR (t.album_release_id IS NULL AND t.release_mbid = rgs.selected_release_mbid)
-    JOIN TrackFiles lf
-      ON (
-        lf.track_id = t.id
-        OR lf.canonical_track_mbid = t.mbid
-        OR (
-          lf.track_id IS NULL
-          AND lf.canonical_track_mbid IS NULL
-          AND (
-            lf.recording_id = t.recording_id
-            OR (lf.recording_id IS NULL AND lf.canonical_recording_mbid = t.recording_mbid)
-          )
-        )
-      )
-     AND lf.file_type = 'track'
-     AND lf.library_slot = rgs.slot
-    WHERE rgs.slot IN ('stereo', 'spatial')
+      ON t.release_mbid = rgs.selected_release_mbid
+    LEFT JOIN Recordings recording
+      ON recording.mbid = t.recording_mbid
+    WHERE rgs.slot IN (${enabledAudioSlots.map(() => "?").join(", ")})
       AND rgs.selected_release_mbid IS NOT NULL
-  `).get() as { count: number } | undefined;
+      AND (recording.is_video IS NULL OR recording.is_video = 0)
+      AND ${buildTrackFileCompletionExistsPredicate("t", "rgs.slot", "track_count_file")}
+  `).get(...enabledAudioSlots) as { count: number } | undefined;
 
   return Number(row?.count || 0);
 }

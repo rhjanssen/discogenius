@@ -94,13 +94,13 @@ import {
   detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { ActionOverflowMenu, type OverflowAction } from "@/components/overflow/ActionOverflowMenu";
-import { DataGrid, useDataGridCellStyles } from "@/components/DataGrid";
-import type { DataGridColumn } from "@/components/DataGrid";
+import { DataGrid } from "@/components/DataGrid";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import { albumSelectedQualityOffers } from "@/utils/albumSelectedQualityOffers";
 import { LibraryRowActions } from "@/components/library/LibraryRowActions";
+import { useAlbumTableColumns } from "@/components/library/useAlbumTableColumns";
 import {
   RenamePreviewDialog,
   RetagPreviewDialog,
@@ -924,7 +924,6 @@ const ArtistPage = () => {
     }
   };
 
-  const dgCell = useDataGridCellStyles();
   const handleToggleAlbumLock = useCallback(async (e: React.MouseEvent, albumId: string, isLocked: boolean) => {
     e.stopPropagation();
     try {
@@ -941,105 +940,38 @@ const ArtistPage = () => {
     await api.addAlbum(String(album.id));
   }, []);
 
-  const albumColumns = useMemo<DataGridColumn[]>(() => [
-    {
-      key: "thumb",
-      header: "",
-      width: "40px",
-      media: true,
-      render: (album: any) => {
-        const src = mediaCoverSrc(album);
-        return src ? (
-          <img
-            src={src}
-            alt={album.title}
-            className={dgCell.thumbnailSquare}
-          />
-        ) : (
-          <div className={mergeClasses(dgCell.thumbnailSquare, dgCell.thumbnailPlaceholder)}>?</div>
-        );
-      },
-    },
-    {
-      key: "title",
-      header: "Title",
-      width: "1fr",
-      render: (album: any) => (
-        <div className={dgCell.nameStack}>
-          <span className={dgCell.nameCell} title={album.title}>{album.title}</span>
-        </div>
-      ),
-    },
-    {
-      key: "year",
-      header: "Year",
-      width: "65px",
-      align: "center",
-      className: dgCell.hideOnMobile,
-      render: (album: any) => {
-        const year = album.release_date ? album.release_date.split('-')[0] : '';
-        return <>{year || '—'}</>;
-      },
-    },
-    {
-      key: "tracks",
-      header: "Tracks",
-      width: "60px",
-      align: "center",
-      render: (album: any) => {
-        const files = Number(album.track_file_count ?? 0);
-        const total = Number(album.track_count ?? album.num_tracks ?? 0);
-        return <>{total > 0 ? `${files} / ${total}` : files}</>;
-      },
-    },
-    {
-      key: "quality",
-      header: "Quality",
-      width: "120px",
-      align: "left",
-      render: (album: any) => {
-        const offers = albumSelectedQualityOffers(album);
-        if (offers.length > 0) {
-          return <ProviderQualityRow size="small" offers={offers} />;
-        }
-        return album.quality ? <QualityBadge quality={album.quality} size="small" /> : null;
-      },
-    },
-    {
-      key: "actions",
-      header: "",
-      width: "120px",
-      align: "right",
-      render: (album: any) => {
-        const isLocked = Boolean(album.monitored_lock);
-        return (
-          <LibraryRowActions
-            actions={[
-              {
-                key: "download",
-                label: "Download album",
-                icon: <ArrowDownload24 />,
-                onClick: (event) => handleDownloadAlbumRow(event, album),
-              },
-              {
-                key: "monitor",
-                label: isLocked ? "Monitoring is locked" : (album.is_monitored ? "Unmonitor" : "Monitor"),
-                icon: album.is_monitored ? <EyeOff24 /> : <Eye24 />,
-                onClick: (event) => toggleAlbumMonitored(event, String(album.id), !album.is_monitored),
-                disabled: isLocked,
-              },
-              {
-                key: "lock",
-                label: isLocked ? "Unlock" : "Lock",
-                icon: isLocked ? <LockOpen24 /> : <LockClosed24 />,
-                onClick: (event) => handleToggleAlbumLock(event, String(album.id), isLocked),
-              },
-            ]}
-          />
-        );
-      },
-    },
-  ], [dgCell, handleDownloadAlbumRow, handleToggleAlbumLock, toggleAlbumMonitored]);
+  const renderAlbumRowActions = useCallback((album: any) => {
+    const isLocked = Boolean(album.monitored_lock);
+    return (
+      <LibraryRowActions
+        actions={[
+          {
+            key: "download",
+            label: "Download album",
+            icon: <ArrowDownload24 />,
+            onClick: (event) => handleDownloadAlbumRow(event, album),
+          },
+          {
+            key: "monitor",
+            label: isLocked ? "Monitoring is locked" : (album.is_monitored ? "Unmonitor" : "Monitor"),
+            icon: album.is_monitored ? <EyeOff24 /> : <Eye24 />,
+            onClick: (event) => toggleAlbumMonitored(event, String(album.id), !album.is_monitored),
+            disabled: isLocked,
+          },
+          {
+            key: "lock",
+            label: isLocked ? "Unlock" : "Lock",
+            icon: isLocked ? <LockOpen24 /> : <LockClosed24 />,
+            onClick: (event) => handleToggleAlbumLock(event, String(album.id), isLocked),
+          },
+        ]}
+      />
+    );
+  }, [handleDownloadAlbumRow, handleToggleAlbumLock, toggleAlbumMonitored]);
+
+  const albumColumns = useAlbumTableColumns({
+    renderActions: renderAlbumRowActions,
+  });
 
   // Rendering Helpers
   const renderAlbumCard = (item: any) => {

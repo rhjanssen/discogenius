@@ -108,7 +108,7 @@ function formatQueueTrackNumber(
     tracks?: Array<{ volumeNum?: number | null }>,
     fallbackIndex?: number,
 ): string {
-    const multiVolume = isMultiVolumeTrackList((tracks || []).map((row) => ({ volumeNumber: row.volumeNum })));
+    const multiVolume = isMultiVolumeTrackList(tracks || []);
     return formatTrackPosition(trackNum, volumeNum, { multiVolume, fallbackIndex });
 }
 

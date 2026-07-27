@@ -4,7 +4,12 @@ import { MediaSeedService } from "../../music/media-seed-service.js";
 import { getManagedArtists } from "../../music/managed-artists.js";
 import { db } from "../../../database.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
-import { buildMatchArtistProvidersCommand, queueArtistWorkflow } from "../../music/artist-workflow.js";
+import {
+    ARTIST_WORKFLOW_PRIORITY,
+    buildMatchArtistProvidersCommand,
+    nextArtistWorkflowPriority,
+    queueArtistWorkflow,
+} from "../../music/artist-workflow.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
 import { CommandNames } from "../command-names.js";
@@ -59,7 +64,7 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
             monitoringCycle: job.payload.monitoringCycle,
         }),
         job.payload.artistId,
-        0,
+        nextArtistWorkflowPriority(job.priority),
         job.trigger ?? CommandTrigger.Unspecified,
     );
 };
@@ -120,6 +125,13 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         job.payload.shouldHydrateCatalog,
     );
 
+    // A deferred refresh is not complete until provider matching succeeds.
+    // Fresh artists that only rebuild selections (`shouldHydrateCatalog=false`)
+    // already carry a valid watermark and must not be artificially re-stamped.
+    if (job.payload.shouldHydrateCatalog) {
+        RefreshArtistService.markArtistRefreshComplete(job.payload.artistId);
+    }
+
     ArtistStatisticsService.refresh([job.payload.artistId]);
     ctx.updateCommandDescription(job, {
         progress: 95,
@@ -138,6 +150,7 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         forceDownloadQueue: job.payload.forceDownloadQueue ?? false,
         monitoringCycle: job.payload.monitoringCycle,
         trigger: job.trigger ?? CommandTrigger.Unspecified,
+        priority: job.priority ?? 0,
     });
 };
 
@@ -186,7 +199,7 @@ export const handleRefreshMetadata: CommandHandler<"RefreshMetadata"> = async (j
                 artistName,
                 workflow: monitoringCycle ? "monitoring-intake" : "metadata-refresh",
                 monitoringCycle,
-                priority: -1,
+                priority: ARTIST_WORKFLOW_PRIORITY.MONITORED_BATCH_BASE,
                 trigger: job.trigger ?? CommandTrigger.Unspecified,
             });
             if (commandId !== -1) {

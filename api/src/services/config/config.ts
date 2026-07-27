@@ -215,8 +215,8 @@ const DEFAULT_CONFIG: DiscoGeniusConfig = {
   },
   naming: {
     artist_folder: "{Artist Name} {mbid-{Artist MbId}}",
-    album_track_path_single: "{Album FullTitle} ({Release Year})/{track:00} - {Track FullTitle}",
-    album_track_path_multi: "{Album FullTitle} ({Release Year})/{medium:0}{track:00} - {Track FullTitle}",
+    album_track_path_single: "{Album Title} ({Release Year})/{track:00} - {Track Title}",
+    album_track_path_multi: "{Album Title} ({Release Year})/{medium:0}{track:00} - {Track Title}",
     // The default "separated" layout already puts video files in per-artist
     // folders, so the artist prefix in the filename is redundant. Include
     // {Video Type} so Plex/Jellyfin extras classification is template-owned
@@ -559,33 +559,30 @@ export class Config {
   /**
    * Get resolved music library path
    */
-  static getMusicPath(): string {
+  static getMusicPath(pathConfig?: PathConfig): string {
     const envOverride = process.env.MUSIC_PATH?.trim();
     if (envOverride) return Config.resolvePath(envOverride, 'library/stereo-music');
-    const pathConfig = getConfigSection("path");
-    const configuredPath = pathConfig.music_path || '/library/stereo-music';
+    const configuredPath = (pathConfig ?? getConfigSection("path")).music_path || '/library/stereo-music';
     return Config.resolvePath(configuredPath, 'library/stereo-music');
   }
 
   /**
    * Get resolved spatial library path
    */
-  static getSpatialPath(): string {
+  static getSpatialPath(pathConfig?: PathConfig): string {
     const envOverride = process.env.SPATIAL_PATH?.trim();
     if (envOverride) return Config.resolvePath(envOverride, 'library/spatial-music');
-    const pathConfig = getConfigSection("path");
-    const configuredPath = pathConfig.spatial_path || '/library/spatial-music';
+    const configuredPath = (pathConfig ?? getConfigSection("path")).spatial_path || '/library/spatial-music';
     return Config.resolvePath(configuredPath, 'library/spatial-music');
   }
 
   /**
    * Get resolved video library path
    */
-  static getVideoPath(): string {
+  static getVideoPath(pathConfig?: PathConfig): string {
     const envOverride = process.env.VIDEO_PATH?.trim();
     if (envOverride) return Config.resolvePath(envOverride, 'library/music-videos');
-    const pathConfig = getConfigSection("path");
-    const configuredPath = pathConfig.video_path || '/library/music-videos';
+    const configuredPath = (pathConfig ?? getConfigSection("path")).video_path || '/library/music-videos';
     return Config.resolvePath(configuredPath, 'library/music-videos');
   }
 

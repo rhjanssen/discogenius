@@ -86,6 +86,7 @@ export const NON_DOWNLOAD_COMMAND_NAMES = [
     CommandNames.RescanAllRoots,
     CommandNames.CheckHealth,
     CommandNames.CompactDatabase,
+    CommandNames.BackupDatabase,
     CommandNames.CleanupTempFiles,
     CommandNames.UpdateLibraryMetadata,
     CommandNames.ImportProviderArtists,

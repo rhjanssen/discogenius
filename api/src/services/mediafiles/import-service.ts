@@ -837,7 +837,6 @@ export class ImportService {
                         artistName,
                         artistMbId: artistRow?.mbid || null,
                         albumTitle: canonicalAlbum?.title || albumRow.title,
-                        albumVersion: canonicalAlbum ? null : albumRow.version,
                         releaseYear,
                         trackTitle,
                         trackNumber,

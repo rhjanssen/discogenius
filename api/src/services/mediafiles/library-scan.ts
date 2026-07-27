@@ -693,28 +693,32 @@ export class DiskScanService {
                 return;
             }
 
-            const { downloadArtistPicture, saveArtistNfoFile } = await import("./metadata-files.js");
+            const { saveArtistNfoFile } = await import("./metadata-files.js");
+            const { syncCachedMediaCoverToFile } = await import("../metadata/media-cover-service.js");
+            const artist = db.prepare("SELECT mbid FROM Artists WHERE id = ? LIMIT 1")
+                .get(artistId) as { mbid?: string | null } | undefined;
             const artistPicName = metadataConfig.artist_picture_name || "folder.jpg";
 
             for (const folder of folders) {
                 if (wantPicture) {
                     const picPath = path.join(folder, artistPicName);
-                    if (!fs.existsSync(picPath)) {
-                        try {
-                            await downloadArtistPicture(artistId, "origin", picPath);
-                        } catch (error) {
-                            console.warn(`[DiskScan] Failed to write artist picture for empty folder ${folder}:`, error);
-                        }
+                    try {
+                        syncCachedMediaCoverToFile({
+                            entityId: artist?.mbid || artistId,
+                            coverEntity: "Artist",
+                            coverTypes: ["poster", "headshot"],
+                            outputPath: picPath,
+                        });
+                    } catch (error) {
+                        console.warn(`[DiskScan] Failed to write artist picture for empty folder ${folder}:`, error);
                     }
                 }
                 if (wantNfo) {
                     const nfoPath = path.join(folder, "artist.nfo");
-                    if (!fs.existsSync(nfoPath)) {
-                        try {
-                            await saveArtistNfoFile(artistId, nfoPath);
-                        } catch (error) {
-                            console.warn(`[DiskScan] Failed to write artist NFO for empty folder ${folder}:`, error);
-                        }
+                    try {
+                        await saveArtistNfoFile(artistId, nfoPath);
+                    } catch (error) {
+                        console.warn(`[DiskScan] Failed to write artist NFO for empty folder ${folder}:`, error);
                     }
                 }
             }

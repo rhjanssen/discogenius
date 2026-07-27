@@ -10,6 +10,7 @@ import { useNavigate } from "react-router-dom";
 import type { VideoAlbumRefContract } from "@contracts/media";
 import { mediaCoverSrc } from "@/utils/artwork";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
+import { formatDescriptiveTrackPosition } from "@/utils/trackPosition";
 
 const useStyles = makeStyles({
   root: {
@@ -107,28 +108,6 @@ const useStyles = makeStyles({
   },
 });
 
-function formatTrackPosition(album: VideoAlbumRefContract): string | null {
-  if (album.track_number == null || !Number.isFinite(album.track_number)) {
-    return null;
-  }
-  const track = Math.trunc(album.track_number);
-  if (track <= 0) {
-    return null;
-  }
-  const trackLabel = `Track ${track}`;
-  const volume = album.volume_number == null ? null : Math.trunc(album.volume_number);
-  const mediaCount = album.media_count == null || !Number.isFinite(album.media_count)
-    ? null
-    : Math.trunc(album.media_count);
-  const showDisc = volume != null
-    && volume > 0
-    && (volume > 1 || (mediaCount != null && mediaCount > 1));
-  if (showDisc) {
-    return `Disc ${volume} · ${trackLabel}`;
-  }
-  return trackLabel;
-}
-
 export function VideoAlbumAffiliation({
   albums,
   className,
@@ -151,7 +130,7 @@ export function VideoAlbumAffiliation({
       <div className={styles.list}>
         {albums.map((album) => {
           const coverUrl = mediaCoverSrc(album) || undefined;
-          const position = formatTrackPosition(album);
+          const position = formatDescriptiveTrackPosition(album);
           const goToAlbum = () => {
             if (album.track_mbid) {
               navigateToAlbumTrack(navigate, album.id, album.track_mbid);

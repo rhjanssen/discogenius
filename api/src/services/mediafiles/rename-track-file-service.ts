@@ -7,6 +7,9 @@ import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-path
 import {
   LibraryFilesService,
   createExpectedPathCache,
+  hasExpectedTrackPathConflict,
+  preloadExpectedPathIdentities,
+  preloadExpectedTrackPathOccupants,
   removeEmptyParents,
   type RenameApplyResult,
   type RenamePreviewItem,
@@ -170,48 +173,82 @@ export class RenameTrackFileService {
       expectedOccupants.set(normalizeResolvedPath(resolvedFilePath), row.id);
     }
 
-    const pathConflictStmtByTable = new Map<string, any>();
-    const expectedConflictStmtByTable = new Map<string, any>();
-    const getPathConflictStmt = (tableName: RenameTableName): any => {
-      let stmt = pathConflictStmtByTable.get(tableName);
-      if (!stmt) {
-        const idCol = tableIdColumn(tableName);
-        stmt = db.prepare(`
-          SELECT ${idCol} AS id FROM ${tableName}
-          WHERE ${idCol} != ? AND file_path = ?
-          LIMIT 1
-        `);
-        pathConflictStmtByTable.set(tableName, stmt);
-      }
-      return stmt;
-    };
-    const getExpectedConflictStmt = (tableName: RenameTableName): any => {
-      let stmt = expectedConflictStmtByTable.get(tableName);
-      if (!stmt) {
-        const idCol = tableIdColumn(tableName);
-        stmt = db.prepare(`
-          SELECT ${idCol} AS id FROM ${tableName}
-          WHERE ${idCol} != ? AND expected_path = ?
-          LIMIT 1
-        `);
-        expectedConflictStmtByTable.set(tableName, stmt);
-      }
-      return stmt;
-    };
-
     // One read cache for the whole row batch so the shared artist row + album
-    // metadata are resolved once, not once per row (Lidarr "load once, reuse").
-    const pathCache = createExpectedPathCache();
-    const results: RenamePreviewItem[] = rows.map((row) => {
+    // metadata are resolved once, not once per row (Lidarr "load once, reuse"),
+    // including selected-release hybrid track remaps. Collision paths are
+    // collected during this first pass and looked up as bounded indexed batches.
+    const pathCache = createExpectedPathCache({ deferTrackCollisionLookup: true });
+    preloadExpectedPathIdentities(rows, pathCache);
+    const preliminary = rows.map((row) => {
       const resolvedFilePath = resolveStoredLibraryPath({
         filePath: row.file_path,
         libraryRoot: row.library_root,
         relativePath: row.relative_path,
       });
       // Preview is DB/path computation only (Lidarr). Disk existence is checked on Apply.
-      const missing = false;
-
       const { expectedPath, reason } = LibraryFilesService.computeExpectedPath(row, pathCache);
+      return { row, resolvedFilePath, expectedPath, reason };
+    });
+
+    preloadExpectedTrackPathOccupants(pathCache);
+    const evaluated = preliminary.map((item) => {
+      if (
+        item.row.file_type !== "track"
+        || !hasExpectedTrackPathConflict(pathCache, item.expectedPath, item.row.id)
+      ) {
+        return item;
+      }
+      const recomputed = LibraryFilesService.computeExpectedPath(item.row, pathCache);
+      return { ...item, expectedPath: recomputed.expectedPath, reason: recomputed.reason };
+    });
+
+    // Load current/expected destination owners once per table. The previous
+    // implementation ran two SELECTs for every preview row.
+    const expectedPathsByTable = new Map<RenameTableName, Map<string, string>>();
+    for (const { row, resolvedFilePath, expectedPath } of evaluated) {
+      if (!expectedPath || normalizeResolvedPath(expectedPath) === normalizeResolvedPath(resolvedFilePath)) {
+        continue;
+      }
+      const tableName = decodeSyntheticId(row.id).tableName;
+      const paths = expectedPathsByTable.get(tableName) ?? new Map<string, string>();
+      paths.set(normalizeResolvedPath(expectedPath), expectedPath);
+      expectedPathsByTable.set(tableName, paths);
+    }
+
+    const conflictOwnersByTable = new Map<RenameTableName, Map<string, Set<number>>>();
+    for (const [tableName, pathMap] of expectedPathsByTable) {
+      const ownerMap = new Map<string, Set<number>>();
+      const paths = Array.from(pathMap.values());
+      const idCol = tableIdColumn(tableName);
+      for (let i = 0; i < paths.length; i += 400) {
+        const chunk = paths.slice(i, i + 400);
+        const marks = chunk.map(() => "?").join(",");
+        const owners = db.prepare(`
+          SELECT ${idCol} AS id, file_path, expected_path
+          FROM ${tableName}
+          WHERE file_path IN (${marks})
+             OR expected_path IN (${marks})
+        `).all(...chunk, ...chunk) as Array<{
+          id: number;
+          file_path?: string | null;
+          expected_path?: string | null;
+        }>;
+        for (const owner of owners) {
+          for (const candidatePath of [owner.file_path, owner.expected_path]) {
+            if (!candidatePath) continue;
+            const key = normalizeResolvedPath(candidatePath);
+            if (!pathMap.has(key)) continue;
+            const ids = ownerMap.get(key) ?? new Set<number>();
+            ids.add(Number(owner.id));
+            ownerMap.set(key, ids);
+          }
+        }
+      }
+      conflictOwnersByTable.set(tableName, ownerMap);
+    }
+
+    const results: RenamePreviewItem[] = evaluated.map(({ row, resolvedFilePath, expectedPath, reason }) => {
+      const missing = false;
       const needsRename = Boolean(expectedPath && normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath));
 
       let conflict = false;
@@ -223,10 +260,11 @@ export class RenameTrackFileService {
         const normalizedExpected = normalizeResolvedPath(expectedPath);
         const pageOccupantId = expectedOccupants.get(normalizedExpected);
         const pageConflict = pageOccupantId != null && pageOccupantId !== row.id;
-        const dbConflict = getPathConflictStmt(tableName).get(decoded.id, expectedPath)
-          || getExpectedConflictStmt(tableName).get(decoded.id, expectedPath);
+        const dbConflict = Array.from(
+          conflictOwnersByTable.get(tableName)?.get(normalizedExpected) ?? [],
+        ).some((ownerId) => ownerId !== decoded.id);
 
-        const hasCollision = pageConflict || Boolean(dbConflict);
+        const hasCollision = pageConflict || dbConflict;
         if (hasCollision) {
           if (row.file_type === "lyrics" && tableName === "LyricFiles") {
             // Same audio stem claimed by two lyric rows — Apply keeps the

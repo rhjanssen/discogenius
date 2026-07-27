@@ -54,6 +54,7 @@ export interface ArtistRefreshCompleteEventPayload {
     isNewArtist: boolean;
     forceDownloadQueue: boolean;
     trigger: number;
+    priority: number;
 }
 
 // Raised when a disk scan completes.
@@ -67,6 +68,7 @@ export interface ArtistScannedEventPayload {
     skipMetadataBackfill: boolean;
     forceDownloadQueue: boolean;
     trigger: number;
+    priority: number;
 }
 
 export interface ImportArtistsProgressEventPayload {

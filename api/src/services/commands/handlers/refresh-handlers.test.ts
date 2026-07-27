@@ -56,6 +56,7 @@ test("provider-match completion preserves monitoring-cycle context", async () =>
       id: 42,
       name: "MatchArtistProviders",
       status: "started",
+      priority: 9,
       trigger: 2,
       payload: {
         artistId: "artist-1",
@@ -80,6 +81,117 @@ test("provider-match completion preserves monitoring-cycle context", async () =>
   assert.ok(emitted);
   assert.equal(emitted.monitoringCycle, "full-cycle");
   assert.equal(emitted.artistId, "artist-1");
+  assert.equal(emitted.priority, 9);
+});
+
+test("deferred provider matching stamps credited artists only after a successful hydrated match", async () => {
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, library_origin, last_scanned)
+    VALUES ('credited-success', 'Credited success', 'credited-success-mbid', 'musicbrainz-credit', NULL)
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, library_origin, last_scanned)
+    VALUES ('credited-failure', 'Credited failure', 'credited-failure-mbid', 'musicbrainz-credit', NULL)
+  `).run();
+
+  const originalMatch = RefreshArtistService.matchArtistProviders;
+  const originalRefreshStats = ArtistStatisticsService.refresh;
+  (ArtistStatisticsService as any).refresh = () => undefined;
+
+  const context = {
+    updateCommandDescription: () => undefined,
+    formatArtistPhaseDescription: (_job: unknown, phase: string) => phase,
+  } as any;
+  const makeJob = (artistId: string) => ({
+    id: artistId === "credited-success" ? 51 : 52,
+    name: "MatchArtistProviders",
+    status: "started",
+    priority: -9,
+    payload: {
+      artistId,
+      artistName: artistId,
+      artistMbid: `${artistId}-mbid`,
+      shouldHydrateCatalog: true,
+      metadataChanged: true,
+      isNewArtist: true,
+    },
+  } as any);
+
+  try {
+    (RefreshArtistService as any).matchArtistProviders = async () => undefined;
+    await handleMatchArtistProviders(makeJob("credited-success"), context);
+
+    (RefreshArtistService as any).matchArtistProviders = async () => {
+      throw new Error("provider match failed");
+    };
+    await assert.rejects(
+      handleMatchArtistProviders(makeJob("credited-failure"), context),
+      /provider match failed/,
+    );
+  } finally {
+    (RefreshArtistService as any).matchArtistProviders = originalMatch;
+    (ArtistStatisticsService as any).refresh = originalRefreshStats;
+  }
+
+  const success = dbModule.db.prepare(`
+    SELECT last_scanned, library_origin
+    FROM Artists
+    WHERE id = 'credited-success'
+  `).get() as { last_scanned: string | null; library_origin: string | null };
+  assert.ok(success.last_scanned);
+  assert.equal(success.library_origin, "musicbrainz-credit-hydrated");
+
+  const failure = dbModule.db.prepare(`
+    SELECT last_scanned, library_origin
+    FROM Artists
+    WHERE id = 'credited-failure'
+  `).get() as { last_scanned: string | null; library_origin: string | null };
+  assert.equal(failure.last_scanned, null);
+  assert.equal(failure.library_origin, "musicbrainz-credit");
+});
+
+test("stored-offer-only provider matching does not re-stamp a fresh artist", async () => {
+  const originalTimestamp = "2001-02-03 04:05:06";
+  dbModule.db.prepare(`
+    INSERT INTO Artists (id, name, mbid, library_origin, last_scanned)
+    VALUES ('fresh-artist', 'Fresh artist', 'fresh-artist-mbid', 'musicbrainz-credit-hydrated', ?)
+  `).run(originalTimestamp);
+
+  const originalMatch = RefreshArtistService.matchArtistProviders;
+  const originalRefreshStats = ArtistStatisticsService.refresh;
+  (RefreshArtistService as any).matchArtistProviders = async () => undefined;
+  (ArtistStatisticsService as any).refresh = () => undefined;
+
+  try {
+    await handleMatchArtistProviders({
+      id: 53,
+      name: "MatchArtistProviders",
+      status: "started",
+      priority: 0,
+      payload: {
+        artistId: "fresh-artist",
+        artistName: "Fresh artist",
+        artistMbid: "fresh-artist-mbid",
+        shouldHydrateCatalog: false,
+        metadataChanged: false,
+        isNewArtist: false,
+      },
+    } as any, {
+      updateCommandDescription: () => undefined,
+      formatArtistPhaseDescription: (_job: unknown, phase: string) => phase,
+    } as any);
+  } finally {
+    (RefreshArtistService as any).matchArtistProviders = originalMatch;
+    (ArtistStatisticsService as any).refresh = originalRefreshStats;
+  }
+
+  const row = dbModule.db.prepare(`
+    SELECT last_scanned, library_origin
+    FROM Artists
+    WHERE id = 'fresh-artist'
+  `).get() as { last_scanned: string; library_origin: string };
+  assert.equal(row.last_scanned, originalTimestamp);
+  assert.equal(row.library_origin, "musicbrainz-credit-hydrated");
 });
 
 test("SeedVideo monitors only the requested provider offer when IDs collide", async () => {

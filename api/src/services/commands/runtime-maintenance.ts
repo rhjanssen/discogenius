@@ -9,6 +9,7 @@ import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-f
 import { normalizeComparablePath } from "../mediafiles/path-utils.js";
 import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
+import { pruneRelationalOrphans } from "./relational-orphan-housekeeping.js";
 
 interface LibraryFileRow {
   id: number;
@@ -42,6 +43,8 @@ export interface RuntimeMaintenanceSummary {
   staleTempDirsRemoved: number;
   /** Video files whose quality tag was corrected from stored dimensions */
   videoQualitiesCorrected: number;
+  /** Direct provider-match edges whose owning provider offer no longer exists */
+  orphanProviderItemMatchesRemoved: number;
 }
 
 function toTimestamp(value: string | null | undefined): number {
@@ -324,6 +327,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     orphanDownloadFoldersRemoved: 0,
     staleTempDirsRemoved: 0,
     videoQualitiesCorrected: 0,
+    orphanProviderItemMatchesRemoved: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
@@ -334,6 +338,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   db.transaction(() => {
     dedupeLibraryFiles(summary);
+    summary.orphanProviderItemMatchesRemoved = pruneRelationalOrphans().providerItemMatchesRemoved;
   })();
 
   refreshDownloadState(summary);
@@ -358,7 +363,8 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     summary.duplicateLibraryFilesRemoved > 0 ||
     summary.orphanDownloadFoldersRemoved > 0 ||
     summary.staleTempDirsRemoved > 0 ||
-    summary.videoQualitiesCorrected > 0
+    summary.videoQualitiesCorrected > 0 ||
+    summary.orphanProviderItemMatchesRemoved > 0
   ) {
     console.log(
       `[Maintenance] Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s), ` +
@@ -366,6 +372,7 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
       `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s), ` +
       `${summary.orphanDownloadFoldersRemoved} orphan download folder(s), ` +
       `${summary.staleTempDirsRemoved} temp dir(s), ` +
+      `${summary.orphanProviderItemMatchesRemoved} orphan provider match(es), ` +
       `corrected ${summary.videoQualitiesCorrected} video quality tag(s), refreshed ${summary.albumStatesRefreshed} albums and ` +
       `${summary.artistStatesRefreshed} artists.`,
     );

@@ -878,6 +878,7 @@ const root = configModule.Config.getMusicPath();
 });
 
 test("upsertLibraryFile keeps stereo and spatial track rows separate for the same canonical track", () => {
+  writeTestConfig({ includeSpatial: true });
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES (?, ?)
@@ -974,9 +975,9 @@ dbModule.db.prepare(`
   assert.equal(snapshot.albums.total, 1);
   assert.equal(snapshot.albums.monitored, 1);
   assert.equal(snapshot.albums.downloaded, 1);
-  assert.equal(snapshot.tracks.total, 1);
-  assert.equal(snapshot.tracks.monitored, 1);
-  assert.equal(snapshot.tracks.downloaded, 1);
+  assert.equal(snapshot.tracks.total, 2);
+  assert.equal(snapshot.tracks.monitored, 2);
+  assert.equal(snapshot.tracks.downloaded, 2);
   assert.equal(snapshot.files?.total, 2);
 });
 

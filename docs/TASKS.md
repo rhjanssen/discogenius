@@ -129,28 +129,19 @@ preview is cluttered with cover/lyric/nfo rows.
   `cover`/`lyrics`/`bio`/etc. on `TrackFiles`; migrated non-media rows so `TrackFiles` is audio/video-only (Lidarr's invariant).
 - consolidates: the "Cross-album cover/lyric bleed" item under Tagging below.
 
-### Artwork — one universal pipeline (port `MediaCoverService`)
+### Artwork — two independent entries (corrected regression ledger)
 
-Today the sidecar, UI, and embedded cover each resolve independently and can disagree —
-*that divergence is the bug.* Replace the ~7 scattered call sites (media-cover-service,
-`downloadAlbumCover`, organizer sidecar, `resolvePreferredEmbeddedCover`,
-library-metadata-backfill, refresh-artist, library-scan) with ONE fetch-and-store
-method, exactly like Lidarr.
+#### A. Sidecar placement and missing-file regeneration
+- done (2.7.4): **Sidecar placement and missing-file regeneration.** Writing into the actual existing album folder is known-good (`ensureAlbumCoverArtSidecarSync`, regenerated on scan).
+- done: **Store-once, reuse-everywhere (MediaCover Cache).** Local disk cache in `CONFIG_DIR/media-cover` serves sidecars and audio tag embedding offline without live network re-fetches.
+- pending: Preserve and strengthen testing for sidecar generation and backfill/repair without network fetching during tagging or sidecar reconciliation.
 
-- done: **Store-once, reuse-everywhere (MediaCover Cache).** Local disk cache in `CONFIG_DIR/media-cover`
-  serves sidecars and audio tag embedding offline without live network re-fetches.
-- pending: **Both preference orderings in that one method** (canonical→provider and
-  provider→canonical), applied uniformly to master + proxies + sidecar + embed.
-- pending: **Per-provider high-res master (API digging).** Each provider already has
-  `getArtworkUrl({size})`; make a "max" size return the true master:
-  TIDAL `origin`; Apple `{w}x{h}` at max advertised (1500–3000, no "origin"); Deezer CDN
-  `{size}x{size}` (raise from hardcoded 500); SoundCloud `-original` (currently capped at
-  `-t500x500`); Spotify ceiling 640; YouTube `=w…-h…`/maxres; Amazon largest variant;
-  canonical CAA verbatim (mirror Lidarr `MediaCoverService.DownloadAlbumCover`).
-- pending: **Hybrid artwork = the RG-title-closest provider album**, chosen *inside the
-  one pipeline* (no hybrid-special-case). Because every track is (re)embedded from the
-  single stored master, a contributing single's baked-in cover is overwritten
-  automatically — no separate hybrid embed logic.
+#### B. Artwork identity in hybrid albums and supplemental singles (the unresolved regression)
+- pending: **Artwork identity in hybrid albums and supplemental singles.** During a hybrid album download, supplemental single artwork must never override the canonical `ArtworkOwner` album cover unless the user has explicitly selected that image as a manual artwork override.
+- pending: **Source order invariance.** Reversing the order of hybrid provider IDs in release group slots must not change the resolved artwork result.
+- pending: **Slot isolation.** Stereo and spatial artwork must not cross-contaminate if their slot folders or selections are distinct.
+- pending: **Both preference orderings in the universal pipeline** (canonical→provider and provider→canonical), applied uniformly to master + proxies + sidecar + embed.
+- pending: **Per-provider high-res master (API digging).** Each provider already has `getArtworkUrl({size})`; make a "max" size return the true master: TIDAL `origin`; Apple `{w}x{h}` at max advertised; Deezer CDN `{size}x{size}`; SoundCloud `-original`; Spotify ceiling 640; YouTube maxres; Amazon largest variant; canonical CAA verbatim.
 - done (kept): 1200px embed cap (`EMBEDDED_COVER_HEIGHT`), both preference modes.
 
 ### Provider metadata is match-time-only (catalog-first everywhere)

@@ -430,6 +430,370 @@ test("RenameTrackFileService derives track paths from canonical MusicBrainz rows
   assert.equal(trackedFile.canonicalTrackMbid, "track-mbid-1");
 });
 
+test("rename preload follows the selected-release track identity for hybrid source tracks", () => {
+  const musicRoot = configModule.Config.getMusicPath();
+  const sourcePath = path.join(musicRoot, "Artist One", "Imports", "hybrid-source.flac");
+  fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+  fs.writeFileSync(sourcePath, "test-audio");
+
+  seedCanonicalGraph({ albumTitle: "Hybrid Album", trackTitle: "Selected Track" });
+  dbModule.db.prepare(`
+    UPDATE Tracks
+    SET position = 2, number = '2', title = 'Selected Track'
+    WHERE mbid = 'track-mbid-1'
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Albums (foreign_album_id, mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES ('source-rg', 'source-rg', 'artist-mbid-1', 'Source Single', 'Single', '2024-02-01')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO AlbumReleases (
+      foreign_release_id, mbid, release_group_mbid, artist_mbid, title,
+      status, country, date, media_count, track_count
+    ) VALUES (
+      'source-release', 'source-release', 'source-rg', 'artist-mbid-1', 'Source Single',
+      'Official', '["[Worldwide]"]', '2024-02-01', 1, 1
+    )
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      foreign_track_id, mbid, release_mbid, recording_mbid,
+      medium_position, position, number, title
+    ) VALUES (
+      'source-track', 'source-track', 'source-release', 'recording-mbid-1',
+      1, 1, '1', 'Source Track'
+    )
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, selected_provider,
+      selected_provider_id, selected_release_mbid, monitored, quality, match_status
+    ) VALUES (
+      'artist-mbid-1', 'release-group-mbid-1', 'stereo', 'tidal',
+      'hybrid-album', 'release-mbid-1', 1, 'LOSSLESS', 'verified'
+    )
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot
+    ) VALUES (
+      'tidal', 'track', 'hybrid-track', 'artist-mbid-1', 'source-rg',
+      'source-release', 'source-track', 'recording-mbid-1', 'hybrid-album',
+      'Source Track', 'LOSSLESS', 'stereo'
+    )
+  `).run();
+
+  libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+    artistId: "1",
+    albumId: "hybrid-album",
+    mediaId: "hybrid-track",
+    filePath: sourcePath,
+    libraryRoot: musicRoot,
+    fileType: "track",
+    quality: "LOSSLESS",
+    librarySlot: "stereo",
+    canonicalArtistMbid: "artist-mbid-1",
+    canonicalReleaseGroupMbid: "release-group-mbid-1",
+    canonicalReleaseMbid: "source-release",
+    canonicalTrackMbid: "source-track",
+    canonicalRecordingMbid: "recording-mbid-1",
+    provider: "tidal",
+    providerEntityType: "track",
+    providerId: "hybrid-track",
+  });
+
+  // Reproduce a pre-remap row from a source provider album. Preview must resolve
+  // it through the monitored slot before bulk-loading canonical track metadata.
+  dbModule.db.prepare(`
+    UPDATE TrackFiles
+    SET canonical_release_mbid = 'source-release',
+        canonical_track_mbid = 'source-track'
+    WHERE provider_id = 'hybrid-track'
+  `).run();
+
+  const previews = renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews({ artistId: "1" });
+  const expectedPath = path.join(musicRoot, "Artist One", "Hybrid Album", "02 - Selected Track.flac");
+
+  assert.equal(previews.length, 1);
+  assert.equal(path.resolve(previews[0]?.expected_path || ""), path.resolve(expectedPath));
+  assert.equal(previews[0]?.reason, undefined);
+});
+
+test("rename path cache keeps provider-scoped album folders distinct across slots", () => {
+  seedCanonicalGraph();
+  const config = configModule.readConfig();
+  config.naming.album_track_path_single = "{providerName}/{albumTitle}/{trackNumber00} - {trackTitle}";
+  configModule.writeConfig(config);
+
+  const cache = libraryFilesModule.createExpectedPathCache();
+  const commonRow = {
+    artist_id: "1",
+    album_id: null,
+    media_id: null,
+    canonical_artist_mbid: "artist-mbid-1",
+    canonical_release_group_mbid: "release-group-mbid-1",
+    canonical_release_mbid: "release-mbid-1",
+    canonical_track_mbid: null,
+    canonical_recording_mbid: null,
+    provider_entity_type: "album",
+    file_type: "cover",
+    extension: "jpg",
+    relative_path: null,
+  };
+
+  const tidal = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    ...commonRow,
+    id: 501,
+    provider: "tidal",
+    provider_id: "tidal-album",
+    library_slot: "stereo",
+    library_root: configModule.Config.getMusicPath(),
+    file_path: path.join(configModule.Config.getMusicPath(), "Imports", "tidal.jpg"),
+    quality: "LOSSLESS",
+  }, cache);
+  assert.equal(cache.albumDirs.size, 1);
+  const apple = libraryFilesModule.LibraryFilesService.computeExpectedPath({
+    ...commonRow,
+    id: 502,
+    provider: "apple-music",
+    provider_id: "apple-album",
+    library_slot: "spatial",
+    library_root: configModule.Config.getSpatialPath(),
+    file_path: path.join(configModule.Config.getSpatialPath(), "Imports", "apple.jpg"),
+    quality: "DOLBY_ATMOS",
+  }, cache);
+
+  assert.ok(tidal.expectedPath?.includes(path.join("Artist One", "TIDAL", "Canonical Album")));
+  assert.ok(apple.expectedPath?.includes(path.join("Artist One", "Apple Music", "Canonical Album")));
+  assert.equal(cache.albumDirs.size, 2);
+});
+
+test("rename preview batches canonical metadata and collision-owner lookups", () => {
+  const seeded = seedTrackedFile();
+  for (let index = 2; index <= 4; index += 1) {
+    const providerId = String(index * 100);
+    const recordingMbid = `rec-${index}`;
+    const trackMbid = `trk-${index}`;
+    const trackTitle = `Track ${index}`;
+    const sourcePath = path.join(seeded.musicRoot, "Artist One", "Imports", `track-${index}.flac`);
+    fs.writeFileSync(sourcePath, `test-audio-${index}`);
+
+    dbModule.db.prepare(
+      "INSERT INTO Recordings (mbid, title, artist_mbid, length_ms) VALUES (?, ?, ?, ?)",
+    ).run(recordingMbid, trackTitle, "artist-one-mbid", 180000);
+    dbModule.db.prepare(`
+      INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+      VALUES (?, 'rel-one', ?, 1, ?, ?, ?)
+    `).run(trackMbid, recordingMbid, index, String(index), trackTitle);
+    dbModule.db.prepare(`
+      INSERT INTO ProviderItems (
+        provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+        release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot
+      ) VALUES (
+        'tidal', 'track', ?, 'artist-one-mbid', 'rg-one',
+        'rel-one', ?, ?, '10', ?, 'LOSSLESS', 'stereo'
+      )
+    `).run(providerId, trackMbid, recordingMbid, trackTitle);
+    libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+      artistId: "1",
+      albumId: "10",
+      mediaId: providerId,
+      filePath: sourcePath,
+      libraryRoot: seeded.musicRoot,
+      fileType: "track",
+      canonicalArtistMbid: "artist-one-mbid",
+      canonicalReleaseGroupMbid: "rg-one",
+      canonicalReleaseMbid: "rel-one",
+      canonicalTrackMbid: trackMbid,
+      canonicalRecordingMbid: recordingMbid,
+      provider: "tidal",
+      providerEntityType: "track",
+      providerId,
+    });
+  }
+
+  const observedSql: string[] = [];
+  const database = (dbModule.db.prepare("SELECT 1") as any).database as typeof dbModule.db;
+  const originalPrepare = database.prepare;
+  (database as any).prepare = function instrumentedPrepare(sql: string) {
+    observedSql.push(sql.replace(/\s+/g, " ").trim());
+    return originalPrepare.call(this, sql);
+  };
+
+  let previews: ReturnType<typeof renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews>;
+  try {
+    previews = renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews({ artistId: "1" });
+  } finally {
+    delete (database as any).prepare;
+  }
+
+  assert.equal(previews.length, 4);
+  assert.equal(previews.every((preview) => preview.needs_rename && !preview.conflict), true);
+  assert.equal(
+    observedSql.filter((sql) =>
+      /WHERE file_type = 'track' AND file_path = \? AND id != \?/i.test(sql)
+    ).length,
+    0,
+  );
+  assert.equal(
+    observedSql.filter((sql) =>
+      /SELECT id, file_path FROM TrackFiles WHERE file_type = 'track' AND file_path IN \(/i.test(sql)
+    ).length,
+    1,
+  );
+  assert.equal(
+    observedSql.filter((sql) =>
+      /FROM Tracks t LEFT JOIN Recordings r ON r\.mbid = t\.recording_mbid WHERE t\.mbid = \?/i.test(sql)
+    ).length,
+    0,
+  );
+});
+
+test("benchmark: 200-row rename preview statement shape", () => {
+  seedCanonicalGraph();
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupSlots (
+      artist_mbid, release_group_mbid, slot, selected_provider,
+      selected_provider_id, selected_release_mbid, quality, match_status
+    ) VALUES (
+      'artist-mbid-1', 'release-group-mbid-1', 'stereo', 'tidal',
+      'album-1', 'release-mbid-1', 'LOSSLESS', 'verified'
+    )
+  `).run();
+
+  const insertRecording = dbModule.db.prepare(`
+    INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title)
+    VALUES (?, ?, 'artist-mbid-1', ?)
+  `);
+  const insertTrack = dbModule.db.prepare(`
+    INSERT INTO Tracks (
+      foreign_track_id, mbid, release_mbid, recording_mbid,
+      medium_position, position, number, title
+    ) VALUES (?, ?, 'release-mbid-1', ?, 1, ?, ?, ?)
+  `);
+  const insertOffer = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot
+    ) VALUES (
+      'tidal', 'track', ?, 'artist-mbid-1', 'release-group-mbid-1',
+      'release-mbid-1', ?, ?, 'album-1', ?, 'LOSSLESS', 'stereo'
+    )
+  `);
+  const insertFile = dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_id, canonical_artist_mbid, canonical_release_group_mbid,
+      canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
+      provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension,
+      file_type, quality
+    ) VALUES (
+      '1', 'artist-mbid-1', 'release-group-mbid-1',
+      'release-mbid-1', ?, ?, 'tidal', 'track', ?, 'stereo',
+      ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS'
+    )
+  `);
+  const musicRoot = configModule.Config.getMusicPath();
+  dbModule.db.transaction(() => {
+    for (let index = 1; index <= 200; index += 1) {
+      const recordingMbid = index === 1 ? "recording-mbid-1" : `recording-mbid-${index}`;
+      const trackMbid = index === 1 ? "track-mbid-1" : `track-mbid-${index}`;
+      const title = `Canonical Song ${index}`;
+      const providerId = `provider-track-${index}`;
+      if (index > 1) {
+        insertRecording.run(recordingMbid, recordingMbid, title);
+        insertTrack.run(trackMbid, trackMbid, recordingMbid, index, String(index), title);
+      }
+      insertOffer.run(providerId, trackMbid, recordingMbid, title);
+      const relativePath = path.join("Artist One", "Imports", `${index}.flac`);
+      insertFile.run(
+        trackMbid,
+        recordingMbid,
+        providerId,
+        path.join(musicRoot, relativePath),
+        relativePath,
+        musicRoot,
+        `${index}.flac`,
+      );
+    }
+  })();
+
+  let statementCount = 0;
+  const statementsBySql = new Map<string, number>();
+  const database = (dbModule.db.prepare("SELECT 1") as any).database as typeof dbModule.db;
+  const originalPrepare = database.prepare;
+  (database as any).prepare = function instrumentedPrepare(sql: string) {
+    statementCount += 1;
+    const normalized = sql.replace(/\s+/g, " ").trim();
+    statementsBySql.set(normalized, (statementsBySql.get(normalized) || 0) + 1);
+    return originalPrepare.call(this, sql);
+  };
+
+  let previews: ReturnType<typeof renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews>;
+  const startedAt = performance.now();
+  try {
+    previews = renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews({
+      artistId: "1",
+      limit: 200,
+    });
+  } finally {
+    delete (database as any).prepare;
+  }
+  const elapsedMs = performance.now() - startedAt;
+
+  assert.equal(previews.length, 200);
+  console.log(`[rename benchmark] rows=200 statements=${statementCount} elapsedMs=${elapsedMs.toFixed(1)}`);
+  console.log(
+    [...statementsBySql.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 12)
+      .map(([sql, count]) => `${count}x ${sql}`)
+      .join("\n"),
+  );
+});
+
+test("batched collision preload still disambiguates spatial audio in a shared root", () => {
+  seedCanonicalGraph();
+  const musicRoot = configModule.Config.getMusicPath();
+  const config = configModule.readConfig();
+  config.path.spatial_path = musicRoot;
+  configModule.writeConfig(config);
+
+  const stereoPath = path.join(musicRoot, "Artist One", "Canonical Album", "01 - Canonical Song.m4a");
+  const spatialSource = path.join(musicRoot, "Artist One", "Imports", "canonical-song-atmos.m4a");
+  fs.mkdirSync(path.dirname(stereoPath), { recursive: true });
+  fs.mkdirSync(path.dirname(spatialSource), { recursive: true });
+  fs.writeFileSync(stereoPath, "stereo-audio");
+  fs.writeFileSync(spatialSource, "spatial-audio");
+
+  upsertCanonicalAudioFile({
+    filePath: stereoPath,
+    libraryRoot: musicRoot,
+    librarySlot: "stereo",
+    quality: "LOSSLESS",
+  });
+  upsertCanonicalAudioFile({
+    filePath: spatialSource,
+    libraryRoot: musicRoot,
+    librarySlot: "spatial",
+    quality: "DOLBY_ATMOS",
+  });
+
+  const previews = renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews({ artistId: "1" });
+  const spatial = previews.find((preview) => preview.file_path === spatialSource);
+  const expectedSpatialPath = path.join(
+    musicRoot,
+    "Artist One",
+    "Canonical Album",
+    "01 - Canonical Song [DOLBY_ATMOS].m4a",
+  );
+
+  assert.ok(spatial);
+  assert.equal(path.resolve(spatial.expected_path || ""), path.resolve(expectedSpatialPath));
+  assert.equal(spatial.conflict, false);
+});
+
 test("RenameTrackFileService derives video paths from canonical provider-only recordings without provider media rows", () => {
   const videoRoot = configModule.Config.getVideoPath();
   const sourceDir = path.join(videoRoot, "Artist One", "Imports");

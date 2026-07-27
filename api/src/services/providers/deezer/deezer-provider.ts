@@ -89,6 +89,22 @@ interface DeezerTrackResource {
   album?: DeezerAlbumResource;
 }
 
+export function deezerArtworkUrl(
+  url: string | null | undefined,
+  size: string | number | null = "origin",
+): string | null {
+  const value = String(url || "").trim();
+  if (!value) return null;
+  // cover_xl / picture_xl are Deezer's largest advertised API tier.
+  const pixels = String(size || "").toLowerCase() === "origin"
+    ? 1000
+    : Math.min(1000, Math.max(56, Number(size) || 1000));
+  return value.replace(
+    /\/\d+x\d+(-[^/?#]+\.(?:jpe?g|png|webp))(?:\?.*)?$/i,
+    `/${pixels}x${pixels}$1`,
+  );
+}
+
 function resourceId(value: unknown): string {
   return value == null ? "" : String(value);
 }
@@ -324,9 +340,19 @@ export class DeezerProvider implements StreamingProvider {
   }
 
   async getArtworkUrl(request: ProviderArtworkRequest): Promise<string | null> {
-    if (request.providerId == null) return null;
-    if (request.entityType === "artist") return (await this.getArtist(request.providerId)).picture || null;
-    if (request.entityType === "album") return (await this.getAlbum(request.providerId)).cover || null;
+    const direct = String(request.imageId || "").trim() || null;
+    if (request.entityType === "artist") {
+      const source = direct || (request.providerId != null
+        ? (await this.getArtist(request.providerId)).picture
+        : null);
+      return deezerArtworkUrl(source, request.size || "origin");
+    }
+    if (request.entityType === "album") {
+      const source = direct || (request.providerId != null
+        ? (await this.getAlbum(request.providerId)).cover
+        : null);
+      return deezerArtworkUrl(source, request.size || "origin");
+    }
     return null;
   }
 

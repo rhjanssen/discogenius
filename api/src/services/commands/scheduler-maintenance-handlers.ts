@@ -3,12 +3,17 @@ import { db } from "../../database.js";
 import { collectHealthDiagnosticsSnapshot, type HealthDiagnosticsSnapshot } from "./health.js";
 import { DiskScanService } from "../mediafiles/library-scan.js";
 import { OrganizerService } from "../mediafiles/organizer.js";
-import { CommandModel } from "./command-model.js";
+import { CommandModel, type CommandModelOf } from "./command-model.js";
 import { CommandNames } from "./command-names.js";
 import { CommandQueueManager } from "./command-queue-manager.js";
 import { ArtistTopTrackService } from "../music/artist-top-track-service.js";
 import { AlbumLibraryIndexService } from "../music/album-library-index-service.js";
 import { TrackLibraryIndexService } from "../music/track-library-index-service.js";
+import {
+    refreshArtworkPreferenceCache,
+    type ArtworkPreferenceRefreshOptions,
+    type ArtworkPreferenceRefreshSummary,
+} from "../metadata/artwork-preference-refresh.js";
 
 export interface SchedulerJobDescriptionUpdate {
     progress?: number;
@@ -17,6 +22,92 @@ export interface SchedulerJobDescriptionUpdate {
 
 export interface SchedulerMaintenanceHandlerContext {
     updateCommandDescription: (options: SchedulerJobDescriptionUpdate) => void;
+    yieldToEventLoop?: () => Promise<void>;
+}
+
+export interface ConfigPruneMaintenanceDependencies {
+    refreshArtworkPreferenceCache: (
+        options: ArtworkPreferenceRefreshOptions,
+    ) => Promise<ArtworkPreferenceRefreshSummary>;
+    pruneDisabledMetadata: () => Promise<void>;
+    reconcileLibraryMetadata: () => Promise<{
+        downloaded: number;
+        failed: number;
+        skipped: number;
+    }>;
+}
+
+const CONFIG_PRUNE_DEPENDENCIES: ConfigPruneMaintenanceDependencies = {
+    refreshArtworkPreferenceCache,
+    pruneDisabledMetadata: () => OrganizerService.pruneDisabledMetadata(),
+    reconcileLibraryMetadata: () => DiskScanService.fillMissingMetadataFilesForLibrary(),
+};
+
+/**
+ * Preference flips add a global, durable cache-acquisition phase before the
+ * existing ConfigPrune sidecar/embed reconciliation. Without the payload flag,
+ * this remains the ordinary two-step ConfigPrune behavior.
+ */
+export async function runConfigPruneMaintenance(
+    job: CommandModelOf<typeof CommandNames.ConfigPrune>,
+    context: SchedulerMaintenanceHandlerContext,
+    dependencies: ConfigPruneMaintenanceDependencies = CONFIG_PRUNE_DEPENDENCIES,
+): Promise<void> {
+    const refreshArtworkPreference = job.payload.refreshArtworkPreference === true;
+    let artworkSummary: ArtworkPreferenceRefreshSummary | null = null;
+
+    if (refreshArtworkPreference) {
+        context.updateCommandDescription({
+            progress: 1,
+            description: "Refreshing artwork preference across the canonical catalog",
+        });
+        artworkSummary = await dependencies.refreshArtworkPreferenceCache({
+            yieldToEventLoop: context.yieldToEventLoop,
+            onProgress: (progress) => {
+                const percent = progress.total > 0
+                    ? Math.min(85, Math.max(1, Math.round((progress.completed / progress.total) * 85)))
+                    : 85;
+                context.updateCommandDescription({
+                    progress: percent,
+                    description:
+                        `Refreshing canonical artwork (${progress.completed}/${progress.total}; ` +
+                        `${progress.albumsCompleted} album(s), ${progress.artistsCompleted} artist(s))`,
+                });
+            },
+        });
+        context.updateCommandDescription({
+            progress: 88,
+            description:
+                `Refreshed artwork for ${artworkSummary.completed}/${artworkSummary.total} ` +
+                `catalog item(s)${artworkSummary.failed > 0 ? ` (${artworkSummary.failed} failed)` : ""}`,
+        });
+    }
+
+    if (refreshArtworkPreference) {
+        context.updateCommandDescription({
+            progress: 90,
+            description: "Pruning metadata disabled by the current configuration",
+        });
+    }
+    await dependencies.pruneDisabledMetadata();
+
+    if (refreshArtworkPreference) {
+        context.updateCommandDescription({
+            progress: 95,
+            description: "Reconciling library artwork sidecars and embedded covers",
+        });
+    }
+    const reconciliation = await dependencies.reconcileLibraryMetadata();
+
+    if (refreshArtworkPreference && artworkSummary) {
+        context.updateCommandDescription({
+            progress: 100,
+            description:
+                `Artwork preference applied to ${artworkSummary.completed - artworkSummary.failed}/` +
+                `${artworkSummary.total} catalog item(s); reconciled ${reconciliation.downloaded} ` +
+                `library metadata file(s), ${reconciliation.failed} failed`,
+        });
+    }
 }
 
 export function formatHealthCheckDescription(snapshot: HealthDiagnosticsSnapshot): string {
@@ -166,9 +257,7 @@ export async function runLowCouplingMaintenanceJob(
             return;
         }
         case CommandNames.ConfigPrune: {
-            await OrganizerService.pruneDisabledMetadata();
-            await DiskScanService.fillMissingMetadataFilesForLibrary();
-            return;
+            return runConfigPruneMaintenance(job, context);
         }
         default:
             throw new Error(`Unsupported low-coupling maintenance job: ${job.name}`);

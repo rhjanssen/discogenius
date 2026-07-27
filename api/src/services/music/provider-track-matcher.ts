@@ -49,6 +49,61 @@ export interface MatchProviderTrack {
     durationSec: number | null;
 }
 
+export interface TrackMatchOptions {
+    /**
+     * A provider album that is already strongly bound to this exact canonical
+     * release may expose a superset whose relevant edition starts at a later
+     * provider position. Some providers also flatten every remix/version title
+     * to the base title. Callers must only enable this for that verified
+     * same-release superset context; it is intentionally unsafe as a global
+     * fallback.
+     */
+    allowSameReleaseSupersetPositionMismatch?: boolean;
+}
+
+export interface RankedTrackMatchEdge<TSource> {
+    sourceKey: string;
+    source: TSource;
+    matchScore: number;
+}
+
+/**
+ * Deterministic maximum-cardinality one-to-one assignment for caller-ranked
+ * track edges. Keeping the augmenting-path implementation here prevents the
+ * slot selector and provider-offer materializer from growing subtly different
+ * copies of the same matching workflow.
+ */
+export function assignRankedTrackMatches<TSource>(
+    edgesByTarget: Array<Array<RankedTrackMatchEdge<TSource>>>,
+): Map<number, RankedTrackMatchEdge<TSource>> {
+    const sourceOwner = new Map<string, number>();
+    const assignedEdge = new Map<number, RankedTrackMatchEdge<TSource>>();
+
+    const tryAssign = (targetIndex: number, visitedSources: Set<string>): boolean => {
+        for (const edge of edgesByTarget[targetIndex] || []) {
+            if (visitedSources.has(edge.sourceKey)) continue;
+            visitedSources.add(edge.sourceKey);
+            const previousTarget = sourceOwner.get(edge.sourceKey);
+            if (previousTarget == null || tryAssign(previousTarget, visitedSources)) {
+                sourceOwner.set(edge.sourceKey, targetIndex);
+                assignedEdge.set(targetIndex, edge);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const targetOrder = edgesByTarget
+        .map((edges, targetIndex) => ({ targetIndex, choices: edges.length }))
+        .filter((entry) => entry.choices > 0)
+        .sort((left, right) => left.choices - right.choices || left.targetIndex - right.targetIndex);
+    for (const { targetIndex } of targetOrder) {
+        tryAssign(targetIndex, new Set());
+    }
+
+    return assignedEdge;
+}
+
 /** Lidarr uses a 10-second grace before penalizing a duration difference. */
 const DURATION_GRACE_SEC = 10;
 
@@ -63,7 +118,11 @@ function normalizeIsrc(value: string | null | undefined): string {
  * Score how confidently a provider track is the same recording as a target
  * MusicBrainz track. Range 0..1; >= TRACK_MATCH_THRESHOLD counts as a match.
  */
-export function scoreTrackMatch(target: MatchTargetTrack, pt: MatchProviderTrack): number {
+export function scoreTrackMatch(
+    target: MatchTargetTrack,
+    pt: MatchProviderTrack,
+    options: TrackMatchOptions = {},
+): number {
     // 1. Deterministic identifiers win outright.
     if (target.recordingMbid && pt.mbid && target.recordingMbid === pt.mbid) {
         return 1.0;
@@ -129,6 +188,21 @@ export function scoreTrackMatch(target: MatchTargetTrack, pt: MatchProviderTrack
     //    purely on a coincidental runtime.
     if (versionsOk && baseMatch && durationClose) {
         return 0.9;
+    }
+    // A small number of provider releases are supersets containing several
+    // editions back-to-back while flattening their displayed titles (for
+    // example all "Reality (... remix)" tracks become simply "Reality").
+    // Position cannot corroborate those tracks, but an exact/near-exact runtime
+    // can once the caller has independently established this is the same
+    // release. Preserve a duration gradient so the one-to-one assignment picks
+    // the exact later block instead of a merely close track from another block.
+    if (
+        options.allowSameReleaseSupersetPositionMismatch
+        && oneSidedVersion
+        && baseMatch
+        && durationClose
+    ) {
+        return Number((0.9 + (1 - (durationDiff / DURATION_GRACE_SEC)) * 0.04).toFixed(3));
     }
 
     // 4. Blended fallback (title is the dominant signal, structure

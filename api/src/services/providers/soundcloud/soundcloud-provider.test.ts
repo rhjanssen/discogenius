@@ -19,7 +19,11 @@ const {
   SOUNDCLOUD_COOKIES_FILE,
   SOUNDCLOUD_DEFAULT_CLIENT_ID,
 } = await import("./soundcloud-auth.js");
-const { SoundCloudProvider, parseSoundCloudUrl } = await import("./soundcloud-provider.js");
+const {
+  SoundCloudProvider,
+  parseSoundCloudUrl,
+  soundCloudArtworkUrl,
+} = await import("./soundcloud-provider.js");
 const {
   buildSoundCloudSourceUrl,
   SoundCloudBackend,
@@ -78,6 +82,21 @@ const album = {
     },
   ],
 };
+
+test("SoundCloud origin artwork selects the original CDN rendition", async () => {
+  const provider = new SoundCloudProvider(async () => {
+    throw new Error("direct image ids must not call the catalog");
+  });
+  const source = "https://i1.sndcdn.com/artworks-album-t500x500.jpg";
+  assert.equal(
+    soundCloudArtworkUrl(source, "origin"),
+    "https://i1.sndcdn.com/artworks-album-original.jpg",
+  );
+  assert.equal(
+    await provider.getArtworkUrl({ entityType: "album", imageId: source, size: "origin" }),
+    "https://i1.sndcdn.com/artworks-album-original.jpg",
+  );
+});
 
 const track = album.tracks[0]!;
 

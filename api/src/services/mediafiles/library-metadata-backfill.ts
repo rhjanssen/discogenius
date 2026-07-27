@@ -4,20 +4,20 @@ import { db } from "../../database.js";
 import { Config, getConfigSection } from "../config/config.js";
 import { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext } from "../config/naming.js";
 import {
-    downloadAlbumCover,
     downloadAlbumVideoCover,
-    downloadArtistPicture,
     downloadVideoThumbnail,
     saveAlbumNfoFile,
     saveArtistNfoFile,
     saveLyricsFile,
     saveVideoNfoFile,
 } from "./metadata-files.js";
-import { AUDIO_COVER_EMBED_EXTENSIONS, embedAudioCover, compareEmbeddedAudioCover, embedVideoThumbnail, hasEmbeddedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
+import { embedVideoThumbnail, hasEmbeddedVideoThumbnail, writeVideoTags } from "./audioUtils.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 import { LibraryFilesService } from "./library-files.js";
+import { AudioTagService } from "./audio-tag-service.js";
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
+import { syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
 import {
     findAdjacentLyricSidecar,
     lyricSidecarPath,
@@ -131,43 +131,38 @@ class LibraryMetadataBackfillService {
             if (metadataConfig.save_artist_picture) {
                 const picName = metadataConfig.artist_picture_name || "folder.jpg";
                 const picPath = path.join(artistDir, picName);
-                if (!fs.existsSync(picPath)) {
-                    try {
-                        // Saved sidecar artwork always uses the highest available
-                        // resolution, independent of metadata.artist_picture_resolution
-                        // (which only caps the UI's cached display thumbnail).
-                        await downloadArtistPicture(artistId, "origin", picPath);
-                        if (fs.existsSync(picPath)) {
-                            this.upsertLibraryFile({
-                                artistId,
-                                filePath: picPath,
-                                libraryRoot,
-                                fileType: "cover",
-                                expectedPath: picPath,
-                            });
-                            result.downloaded++;
-                        } else {
-                            result.failed++;
-                        }
-                    } catch {
-                        result.failed++;
-                    }
-                } else {
-                    this.upsertLibraryFile({
-                        artistId,
-                        filePath: picPath,
-                        libraryRoot,
-                        fileType: "cover",
-                        expectedPath: picPath,
+                try {
+                    const artistRow = db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
+                    const artistMbid = artistRow?.mbid ? String(artistRow.mbid) : artistId;
+                    const syncResult = syncCachedMediaCoverToFile({
+                        entityId: artistMbid,
+                        coverEntity: "Artist",
+                        coverTypes: ["poster", "headshot"],
+                        outputPath: picPath,
                     });
-                    result.skipped++;
+                    if (syncResult === "written") {
+                        result.downloaded++;
+                    } else {
+                        result.skipped++;
+                    }
+                    if (fs.existsSync(picPath)) {
+                        this.upsertLibraryFile({
+                            artistId,
+                            filePath: picPath,
+                            libraryRoot,
+                            fileType: "cover",
+                            expectedPath: picPath,
+                        });
+                    }
+                } catch {
+                    result.failed++;
                 }
             }
 
             if (metadataConfig.save_nfo) {
                 const nfoPath = path.join(artistDir, "artist.nfo");
                 try {
-                    await saveArtistNfoFile(artistId, nfoPath);
+                    const updated = await saveArtistNfoFile(artistId, nfoPath);
                     this.upsertLibraryFile({
                         artistId,
                         filePath: nfoPath,
@@ -175,7 +170,11 @@ class LibraryMetadataBackfillService {
                         fileType: "nfo",
                         expectedPath: nfoPath,
                     });
-                    result.downloaded++;
+                    if (updated) {
+                        result.downloaded++;
+                    } else {
+                        result.skipped++;
+                    }
                 } catch {
                     result.failed++;
                 }
@@ -193,11 +192,15 @@ class LibraryMetadataBackfillService {
         // Canonical-first: the set of album slots to backfill is the distinct
         // (release group, library slot) pairs of this artist's tracked audio files.
         const albums = db.prepare(`
-      SELECT DISTINCT lf.canonical_release_group_mbid AS canonical_release_group_mbid, lf.library_slot
+      SELECT
+        lf.canonical_release_group_mbid AS canonical_release_group_mbid,
+        lf.library_slot,
+        MIN(NULLIF(TRIM(lf.canonical_release_mbid), '')) AS canonical_release_mbid
       FROM TrackFiles lf
       WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
         AND lf.canonical_release_group_mbid IS NOT NULL
+      GROUP BY lf.canonical_release_group_mbid, lf.library_slot
     `).all(artistId) as any[];
         const processedAlbumSlots = new Set<string>();
 
@@ -232,10 +235,12 @@ class LibraryMetadataBackfillService {
                 ? db.prepare(`
                     SELECT provider, provider_id, release_mbid, quality, title, version, release_date, cover
                     FROM ProviderItems
-                    WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                    WHERE provider = ?
+                      AND entity_type = 'album'
+                      AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
                     ORDER BY updated_at DESC
                     LIMIT 1
-                `).get(selectedProviderAlbumId) as ProviderAlbumOfferRow | undefined
+                `).get(selectedSlot?.selected_provider, selectedProviderAlbumId) as ProviderAlbumOfferRow | undefined
                 : db.prepare(`
                     SELECT provider, provider_id, release_mbid, quality, title, version, release_date, cover
                     FROM ProviderItems
@@ -246,7 +251,10 @@ class LibraryMetadataBackfillService {
                     LIMIT 1
                 `).get(canonicalReleaseGroupMbid, librarySlot) as ProviderAlbumOfferRow | undefined;
             const representativeAlbumId = String(albumProviderItem?.provider_id || selectedProviderAlbumId || "").trim() || null;
-            const canonicalReleaseMbid = selectedSlot?.selected_release_mbid || albumProviderItem?.release_mbid || null;
+            const canonicalReleaseMbid = selectedSlot?.selected_release_mbid
+                || sourceAlbum.canonical_release_mbid
+                || albumProviderItem?.release_mbid
+                || null;
             const canonicalAlbum = getCanonicalAlbumMetadata({
                 canonicalReleaseGroupMbid,
                 canonicalReleaseMbid,
@@ -262,11 +270,8 @@ class LibraryMetadataBackfillService {
                 quality: albumProviderItem?.quality || albumData.quality || null,
                 mbid: canonicalAlbum?.albumMbid || null,
                 mb_release_group_id: canonicalReleaseGroupMbid,
-                provider: albumProviderItem?.provider || selectedSlot?.selected_provider || "tidal",
+                provider: albumProviderItem?.provider || selectedSlot?.selected_provider || null,
             };
-            if (!album.id) {
-                continue;
-            }
             // Fetch a representative ON-DISK track per library root so sidecars are
             // written into the album's ACTUAL folder. Using only the expected folder
             // (from the naming template) silently skipped every album whose files sit
@@ -279,9 +284,10 @@ class LibraryMetadataBackfillService {
         AND lf.file_type = 'track'
         AND lf.library_root IS NOT NULL
         AND lf.canonical_release_group_mbid = ?
+        AND lf.library_slot IS ?
       GROUP BY lf.library_root
       ORDER BY lf.library_root ASC
-    `).all(artistId, canonicalReleaseGroupMbid) as Array<{ library_root: string | null; file_path: string | null; relative_path: string | null }>)
+    `).all(artistId, canonicalReleaseGroupMbid, sourceAlbum.library_slot ?? null) as Array<{ library_root: string | null; file_path: string | null; relative_path: string | null }>)
                 .filter((row) => String(row.library_root || "").trim());
 
             for (const libraryRootRow of libraryRootRows) {
@@ -296,7 +302,7 @@ class LibraryMetadataBackfillService {
                 const expectedAlbumNfoPath = LibraryFilesService.computeExpectedPath({
                     id: -1,
                     artist_id: artistId as unknown as number,
-                    album_id: album.id as unknown as number,
+                    album_id: (album.id || null) as unknown as number,
                     media_id: null,
                     file_path: "",
                     relative_path: null,
@@ -315,99 +321,63 @@ class LibraryMetadataBackfillService {
                 if (metadataConfig.save_album_cover) {
                     const coverName = metadataConfig.album_cover_name || "cover.jpg";
                     const coverPath = path.join(albumDir, coverName);
-                    if (!fs.existsSync(coverPath)) {
-                        try {
-                            // Write the folder cover from the SAME canonical cover the
-                            // UI and the tag embedder use (already warmed into the
-                            // mediacover cache for this release group), so the sidecar
-                            // is consistent and does not depend on a live provider
-                            // re-fetch that can silently fail. Only when nothing is
-                            // cached do we acquire the origin (scan/refresh is the
-                            // art-acquisition phase).
-                            const { getCachedMediaCoverFilePath } = await import("../metadata/media-cover-service.js");
-                            const cachedCover = getCachedMediaCoverFilePath(
-                                canonicalReleaseGroupMbid || String(album.id),
-                                "Album",
-                                "cover",
-                            );
-                            if (cachedCover && fs.existsSync(cachedCover)) {
-                                fs.copyFileSync(cachedCover, coverPath);
-                            } else {
-                                await downloadAlbumCover(
-                                    String(album.id),
-                                    "origin",
-                                    coverPath,
-                                    { provider: album.provider },
-                                );
-                            }
-                            if (fs.existsSync(coverPath)) {
-                                this.upsertLibraryFile({
-                                    artistId,
-                                    albumId: String(album.id),
-                                    filePath: coverPath,
-                                    libraryRoot,
-                                    fileType: "cover",
-                                    expectedPath: coverPath,
-                                    provider: album.provider,
-                                    providerEntityType: "album",
-                                    providerId: String(album.id),
-                                    canonicalReleaseGroupMbid,
-                                    canonicalReleaseMbid,
-                                    librarySlot,
-                                });
-                                result.downloaded++;
-
-                                // A previously-missing cover.jpg means this album's
-                                // audio was likely imported before the cover fetch
-                                // succeeded (or via the pre-fix un-hinted resolve), so
-                                // its files can still carry stale/foreign embedded art.
-                                // Re-embed the freshly-written cover into any diverging
-                                // files in the folder — bounded to the missing-cover
-                                // case, diff-gated, and best effort so it never fails
-                                // the backfill.
-                                const qualityConfig = getConfigSection("quality") as { embed_cover?: boolean };
-                                if (qualityConfig?.embed_cover !== false) {
-                                    let coverFolderEntries: string[] = [];
-                                    try { coverFolderEntries = fs.readdirSync(albumDir); } catch { /* dir vanished */ }
-                                    for (const entry of coverFolderEntries) {
-                                        if (!AUDIO_COVER_EMBED_EXTENSIONS.has(path.extname(entry).toLowerCase())) continue;
-                                        const audioPath = path.join(albumDir, entry);
-                                        try {
-                                            if ((await compareEmbeddedAudioCover(audioPath, coverPath)).matches) continue;
-                                            await embedAudioCover(audioPath, coverPath);
-                                        } catch { /* best effort: never fail backfill on a cover re-embed */ }
-                                    }
-                                }
-                            } else {
-                                result.failed++;
-                            }
-                        } catch {
-                            result.failed++;
-                        }
-                    } else {
-                        this.upsertLibraryFile({
-                            artistId,
-                            albumId: String(album.id),
-                            filePath: coverPath,
-                            libraryRoot,
-                            fileType: "cover",
-                            expectedPath: coverPath,
-                            provider: album.provider,
-                            providerEntityType: "album",
-                            providerId: String(album.id),
-                            canonicalReleaseGroupMbid,
-                            canonicalReleaseMbid,
-                            librarySlot,
+                    try {
+                        const syncResult = syncCachedMediaCoverToFile({
+                            entityId: canonicalReleaseGroupMbid,
+                            coverEntity: "Album",
+                            coverTypes: "cover",
+                            outputPath: coverPath,
                         });
-                        result.skipped++;
+                        if (syncResult === "written") {
+                            result.downloaded++;
+                        } else {
+                            result.skipped++;
+                        }
+                        if (fs.existsSync(coverPath)) {
+                            this.upsertLibraryFile({
+                                artistId,
+                                albumId: album.id ? String(album.id) : null,
+                                filePath: coverPath,
+                                libraryRoot,
+                                fileType: "cover",
+                                expectedPath: coverPath,
+                                provider: album.provider,
+                                providerEntityType: "album",
+                                providerId: album.id ? String(album.id) : null,
+                                canonicalReleaseGroupMbid,
+                                canonicalReleaseMbid,
+                                librarySlot,
+                            });
+                        }
+
+                        if (syncResult === "written") {
+                            const trackFileIds = (db.prepare(`
+                                SELECT id
+                                FROM TrackFiles
+                                WHERE artist_id = ?
+                                  AND file_type = 'track'
+                                  AND canonical_release_group_mbid = ?
+                                  AND library_root = ?
+                                  AND library_slot IS ?
+                                ORDER BY id ASC
+                            `).all(
+                                artistId,
+                                canonicalReleaseGroupMbid,
+                                libraryRoot,
+                                sourceAlbum.library_slot ?? null,
+                            ) as Array<{ id: number }>).map((row) => row.id);
+                            await AudioTagService.syncEmbeddedCovers(trackFileIds);
+                        }
+                    } catch {
+                        result.failed++;
                     }
 
-                    const resolvedVideoCover = await resolveAlbumVideoCoverForLibrary({
+                    const resolvedVideoCover = album.id ? await resolveAlbumVideoCoverForLibrary({
                         storedVideoCover: album.video_cover,
                         provider: album.provider,
                         providerAlbumId: String(album.id),
                         releaseGroupMbid: canonicalReleaseGroupMbid,
-                    });
+                    }) : null;
                     if (resolvedVideoCover) {
                         const videoCoverName = `${path.parse(coverName).name}.mp4`;
                         const videoCoverPath = path.join(albumDir, videoCoverName);
@@ -471,22 +441,32 @@ class LibraryMetadataBackfillService {
                 if (metadataConfig.save_nfo) {
                     const nfoPath = path.join(albumDir, "album.nfo");
                     try {
-                        await saveAlbumNfoFile(String(album.id), nfoPath);
+                        const updated = await saveAlbumNfoFile(canonicalReleaseGroupMbid, nfoPath, {
+                            releaseGroupMbid: canonicalReleaseGroupMbid,
+                            releaseMbid: canonicalReleaseMbid,
+                            librarySlot,
+                            provider: album.provider,
+                            providerAlbumId: album.id ? String(album.id) : null,
+                        });
                         this.upsertLibraryFile({
                             artistId,
-                            albumId: String(album.id),
+                            albumId: album.id ? String(album.id) : null,
                             filePath: nfoPath,
                             libraryRoot,
                             fileType: "nfo",
                             expectedPath: nfoPath,
                             provider: album.provider,
                             providerEntityType: "album",
-                            providerId: String(album.id),
+                            providerId: album.id ? String(album.id) : null,
                             canonicalReleaseGroupMbid,
                             canonicalReleaseMbid,
                             librarySlot,
                         });
-                        result.downloaded++;
+                        if (updated) {
+                            result.downloaded++;
+                        } else {
+                            result.skipped++;
+                        }
                     } catch {
                         result.failed++;
                     }
@@ -515,7 +495,7 @@ class LibraryMetadataBackfillService {
           lf.canonical_release_mbid,
           lf.canonical_track_mbid,
           lf.canonical_recording_mbid,
-          COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
+          COALESCE(lf.provider, pi.provider) AS provider,
           'track' AS provider_entity_type,
           COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
           pi.album_id AS album_id
@@ -542,21 +522,6 @@ class LibraryMetadataBackfillService {
       SELECT *
       FROM track_candidates track
       WHERE track.provider_id IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM LyricFiles lyric
-          WHERE lyric.library_slot IS track.library_slot
-            AND (
-              (
-                lyric.provider_entity_type = 'track'
-                AND CAST(lyric.provider_id AS TEXT) = CAST(track.provider_id AS TEXT)
-                AND (lyric.provider IS NULL OR lyric.provider = track.provider)
-              )
-              OR (
-                track.canonical_recording_mbid IS NOT NULL
-                AND lyric.canonical_recording_mbid = track.canonical_recording_mbid
-              )
-            )
-        )
       GROUP BY track.track_file_id
     `).all(artistId) as Array<{
             track_file_id: number;
@@ -654,14 +619,10 @@ class LibraryMetadataBackfillService {
         lf.library_slot,
         lf.canonical_artist_mbid,
         lf.canonical_recording_mbid,
-        COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
+        COALESCE(lf.provider, pi.provider) AS provider,
         COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
         pi.provider_album_id AS album_id,
-        COALESCE(
-          NULLIF(TRIM(r.cover_image_id), ''),
-          NULLIF(TRIM(pi.asset_id), ''),
-          NULLIF(TRIM(pi.cover), '')
-        ) AS cover
+        r.id AS recording_id
       FROM TrackFiles lf
       LEFT JOIN ProviderItems pi ON pi.rowid = (
         SELECT candidate.rowid
@@ -690,7 +651,7 @@ class LibraryMetadataBackfillService {
                 provider: string | null;
                 provider_id: string;
                 album_id: string | null;
-                cover: string | null;
+                recording_id: number | null;
             }>;
 
             for (const video of thumbnailVideos) {
@@ -706,61 +667,21 @@ class LibraryMetadataBackfillService {
                         : true;
                     const needsEmbedding = metadataConfig.embed_video_thumbnail !== false && !alreadyEmbedded;
                     let downloadedThumbnail = false;
-                    let coverId = String(video.cover || "").trim() || null;
 
-                    if (!coverId && (metadataConfig.save_video_thumbnail || needsEmbedding) && !fs.existsSync(thumbPath)) {
-                        try {
-                            const { streamingProviderManager } = await import("../providers/index.js");
-                            const provider = video.provider
-                                ? streamingProviderManager.getStreamingProvider(video.provider)
-                                : streamingProviderManager.getDefaultStreamingProvider();
-                            const fetched = provider.getVideo
-                                ? await provider.getVideo(video.provider_id)
-                                : null;
-                            coverId = String(fetched?.cover || "").trim() || null;
-                            if (coverId) {
-                                db.prepare(`
-                                  UPDATE Recordings
-                                  SET cover_image_id = COALESCE(?, cover_image_id), updated_at = CURRENT_TIMESTAMP
-                                  WHERE id = (
-                                    SELECT recording_id FROM ProviderItems
-                                    WHERE provider = ?
-                                      AND entity_type IN ('video', 'track')
-                                      AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                                      AND recording_id IS NOT NULL
-                                    ORDER BY CASE entity_type WHEN 'video' THEN 0 ELSE 1 END
-                                    LIMIT 1
-                                  )
-                                `).run(coverId, video.provider, video.provider_id);
-                                db.prepare(`
-                                  UPDATE ProviderItems
-                                  SET
-                                    asset_id = COALESCE(asset_id, ?),
-                                    cover = COALESCE(cover, ?),
-                                    updated_at = CURRENT_TIMESTAMP
-                                  WHERE provider = ?
-                                    AND entity_type IN ('video', 'track')
-                                    AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                                `).run(coverId, coverId, video.provider, video.provider_id);
-                            }
-                        } catch (error) {
-                            console.warn(`[MetadataBackfill] Failed to resolve video cover for ${video.provider}:${video.provider_id}:`, error);
-                        }
-                    }
-
-                    // No artwork available yet — skip rather than fail; import/refresh
-                    // will populate cover and a later backfill can finish the sidecar.
-                    if (!coverId && !fs.existsSync(thumbPath)) {
-                        result.skipped++;
-                        continue;
-                    }
-
-                    if (!fs.existsSync(thumbPath) && coverId && (metadataConfig.save_video_thumbnail || needsEmbedding)) {
-                        await downloadVideoThumbnail(coverId, resolution as any, thumbPath, {
+                    if (metadataConfig.save_video_thumbnail || needsEmbedding) {
+                        const syncResult = await downloadVideoThumbnail("", resolution as any, thumbPath, {
                             provider: video.provider,
                             providerId: video.provider_id,
+                            videoId: video.recording_id ?? video.canonical_recording_mbid,
                         });
-                        downloadedThumbnail = fs.existsSync(thumbPath);
+                        downloadedThumbnail = syncResult === "written";
+                        // A cache miss is expected until refresh/match acquires the
+                        // canonical recording cover. Do not turn it into a failed
+                        // sidecar job or fetch from the provider here.
+                        if (syncResult === "missing" && !fs.existsSync(thumbPath)) {
+                            result.skipped++;
+                            continue;
+                        }
                     }
 
                     if (metadataConfig.save_video_thumbnail && fs.existsSync(thumbPath)) {
@@ -783,7 +704,9 @@ class LibraryMetadataBackfillService {
                     }
 
                     let embeddedThumbnail = false;
-                    if (needsEmbedding && fs.existsSync(thumbPath)) {
+                    const shouldEmbed = metadataConfig.embed_video_thumbnail !== false
+                        && (needsEmbedding || downloadedThumbnail);
+                    if (shouldEmbed && fs.existsSync(thumbPath)) {
                         embeddedThumbnail = await embedVideoThumbnail(video.file_path, thumbPath);
                         if (embeddedThumbnail) {
                             const stat = fs.statSync(video.file_path);
@@ -800,7 +723,7 @@ class LibraryMetadataBackfillService {
                     }
 
                     const savedThumbnailReady = !metadataConfig.save_video_thumbnail || fs.existsSync(persistentThumbPath);
-                    const embeddedThumbnailReady = !needsEmbedding || embeddedThumbnail;
+                    const embeddedThumbnailReady = !shouldEmbed || embeddedThumbnail;
                     if (!savedThumbnailReady || !embeddedThumbnailReady) {
                         result.failed++;
                     } else if (downloadedThumbnail || embeddedThumbnail) {
@@ -982,7 +905,6 @@ class LibraryMetadataBackfillService {
         const albumContext: NamingContext = {
             artistName: "",
             albumTitle: canonicalAlbum?.title || album.title,
-            albumVersion: canonicalAlbum ? null : album.version || null,
             releaseYear,
         };
 

@@ -41,10 +41,12 @@ test("unchanged scheduled monitoring refresh skips rescan and continues to curat
     isNewArtist: false,
     forceDownloadQueue: false,
     trigger: 2,
+    priority: 4,
   });
 
-  const commands = dbModule.db.prepare("SELECT name FROM commands ORDER BY id").all() as Array<{ name: string }>;
+  const commands = dbModule.db.prepare("SELECT name, priority FROM commands ORDER BY id").all() as Array<{ name: string; priority: number }>;
   assert.deepEqual(commands.map((command) => command.name), [commandNamesModule.CommandNames.CurateArtist]);
+  assert.equal(commands[0]?.priority, 5);
 });
 
 test("scheduled monitoring context reaches the queued curation command", () => {
@@ -58,6 +60,7 @@ test("scheduled monitoring context reaches the queued curation command", () => {
     isNewArtist: false,
     forceDownloadQueue: false,
     trigger: 2,
+    priority: 0,
   });
 
   const command = dbModule.db.prepare("SELECT name, payload FROM commands ORDER BY id DESC LIMIT 1").get() as { name: string; payload: string };
@@ -75,10 +78,12 @@ test("changed scheduled monitoring refresh queues the per-artist rescan", () => 
     isNewArtist: false,
     forceDownloadQueue: false,
     trigger: 2,
+    priority: 7,
   });
 
-  const commands = dbModule.db.prepare("SELECT name FROM commands ORDER BY id").all() as Array<{ name: string }>;
+  const commands = dbModule.db.prepare("SELECT name, priority FROM commands ORDER BY id").all() as Array<{ name: string; priority: number }>;
   assert.deepEqual(commands.map((command) => command.name), [commandNamesModule.CommandNames.RescanFolders]);
+  assert.equal(commands[0]?.priority, 8);
 });
 
 test("manual refresh-scan rescans even when metadata is unchanged", () => {
@@ -91,8 +96,29 @@ test("manual refresh-scan rescans even when metadata is unchanged", () => {
     isNewArtist: false,
     forceDownloadQueue: false,
     trigger: 1,
+    priority: 0,
   });
 
   const commands = dbModule.db.prepare("SELECT name FROM commands ORDER BY id").all() as Array<{ name: string }>;
   assert.deepEqual(commands.map((command) => command.name), [commandNamesModule.CommandNames.RescanFolders]);
+});
+
+test("artist scan completion advances curation priority", () => {
+  eventsModule.appEvents.emit(eventsModule.AppEvent.ARTIST_SCANNED, {
+    artistId: "artist-1",
+    artistName: "Bastille",
+    workflow: "monitoring-intake",
+    monitoringCycle: "full-cycle",
+    skipDownloadQueue: false,
+    skipCuration: false,
+    skipMetadataBackfill: false,
+    forceDownloadQueue: true,
+    trigger: 2,
+    priority: 11,
+  });
+
+  const command = dbModule.db.prepare("SELECT name, priority FROM commands ORDER BY id DESC LIMIT 1")
+    .get() as { name: string; priority: number };
+  assert.equal(command.name, commandNamesModule.CommandNames.CurateArtist);
+  assert.equal(command.priority, 12);
 });

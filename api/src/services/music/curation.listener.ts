@@ -7,6 +7,7 @@ import {
     buildCurateArtistCommand,
     buildRescanFoldersCommand,
     isArtistWorkflow,
+    nextArtistWorkflowPriority,
 } from "./artist-workflow.js";
 
 function resolveRescanWorkflow(workflow: unknown): Extract<ArtistWorkflow, "refresh-scan" | "library-scan" | "monitoring-intake" | "full-monitoring"> | null {
@@ -62,7 +63,7 @@ export function initCurationListeners() {
                             monitoringCycle: payload.monitoringCycle,
                         }),
                         payload.artistId,
-                        0,
+                        nextArtistWorkflowPriority(payload.priority),
                         payload.trigger ?? CommandTrigger.Unspecified,
                     );
                 }
@@ -85,7 +86,7 @@ export function initCurationListeners() {
                     monitoringCycle: payload.monitoringCycle,
                 }),
                 payload.artistId,
-                0,
+                nextArtistWorkflowPriority(payload.priority),
                 payload.trigger ?? CommandTrigger.Unspecified
             );
         }
@@ -121,7 +122,7 @@ export function initCurationListeners() {
                     forceDownloadQueue: payload.forceDownloadQueue ?? false,
                 },
             payload.artistId,
-            0,
+            nextArtistWorkflowPriority(payload.priority),
             payload.trigger ?? CommandTrigger.Unspecified
         );
     });

@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { scoreTrackMatch, isTrackMatch, TRACK_MATCH_THRESHOLD, type MatchTargetTrack, type MatchProviderTrack } from "./provider-track-matcher.js";
+import {
+  assignRankedTrackMatches,
+  scoreTrackMatch,
+  isTrackMatch,
+  TRACK_MATCH_THRESHOLD,
+  type MatchTargetTrack,
+  type MatchProviderTrack,
+} from "./provider-track-matcher.js";
 
 function target(over: Partial<MatchTargetTrack> = {}): MatchTargetTrack {
   return { recordingMbid: null, isrcs: new Set(), title: "Bad Blood", trackNumber: 3, volumeNumber: 1, durationSec: 200, ...over };
@@ -8,6 +15,25 @@ function target(over: Partial<MatchTargetTrack> = {}): MatchTargetTrack {
 function provider(over: Partial<MatchProviderTrack> = {}): MatchProviderTrack {
   return { mbid: null, isrc: null, title: "Bad Blood", trackNumber: 3, volumeNumber: 1, durationSec: 200, ...over };
 }
+
+test("ranked assignment finds full one-to-one coverage without reusing a source", () => {
+  const sourceA = { id: "a" };
+  const sourceB = { id: "b" };
+  const assignments = assignRankedTrackMatches([
+    [
+      { sourceKey: "a", source: sourceA, matchScore: 0.95 },
+      { sourceKey: "b", source: sourceB, matchScore: 0.9 },
+    ],
+    [
+      { sourceKey: "a", source: sourceA, matchScore: 1 },
+    ],
+  ]);
+
+  assert.equal(assignments.size, 2);
+  assert.equal(assignments.get(0)?.sourceKey, "b");
+  assert.equal(assignments.get(1)?.sourceKey, "a");
+  assert.equal(new Set([...assignments.values()].map((edge) => edge.sourceKey)).size, 2);
+});
 
 test("recording MBID match wins outright", () => {
   assert.equal(scoreTrackMatch(target({ recordingMbid: "rec-1" }), provider({ mbid: "rec-1", title: "totally different" })), 1.0);
@@ -145,6 +171,27 @@ test("a one-sided variant at the SAME slot with close duration still matches (Ha
     provider({ title: "Rehab", trackNumber: 1, volumeNumber: 3, durationSec: 213 }),
   );
   assert.ok(s >= 0.9, `same-slot one-sided qualifier should match, got ${s}`);
+});
+
+test("same-release superset context permits a flattened version title at a shifted position", () => {
+  const canonical = target({
+    title: "Reality (Dave Winnel remix)",
+    trackNumber: 1,
+    durationSec: 245,
+  });
+  const flattened = provider({
+    title: "Reality",
+    trackNumber: 11,
+    durationSec: 245,
+  });
+
+  assert.ok(scoreTrackMatch(canonical, flattened) < TRACK_MATCH_THRESHOLD);
+  assert.equal(
+    scoreTrackMatch(canonical, flattened, {
+      allowSameReleaseSupersetPositionMismatch: true,
+    }),
+    0.94,
+  );
 });
 
 test("elaborated qualifiers describe the same variant (demo vs original demo)", () => {

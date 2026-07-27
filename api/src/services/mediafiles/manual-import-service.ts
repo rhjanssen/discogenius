@@ -338,7 +338,6 @@ export class ManualImportService {
                     artistName: artistRow?.name || trackData.artist?.name || trackData.artist_name || "Unknown Artist",
                     artistMbId: artistRow?.mbid || null,
                     albumTitle: canonicalAlbum?.title || trackData.album?.title || trackData.album_title || "Unknown Album",
-                    albumVersion: canonicalAlbum ? null : albumRow?.version,
                     releaseYear: canonicalReleaseYear,
                     trackTitle: canonicalPosition?.title || trackData.title,
                     trackNumber: canonicalPosition?.trackNumber ?? trackData.trackNumber ?? trackData.track_num ?? 1,

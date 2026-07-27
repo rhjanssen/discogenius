@@ -62,10 +62,20 @@ function commandAvailable(command: string): boolean {
   return Boolean(resolveCommandPath(command));
 }
 
-function artworkUrl(url: string | null | undefined): string | null {
+export function soundCloudArtworkUrl(
+  url: string | null | undefined,
+  size: string | number | null = 500,
+): string | null {
   const value = String(url || "").trim();
   if (!value) return null;
-  return value.replace("-large.", "-t500x500.").replace("-badge.", "-t500x500.");
+  const rendition = String(size || "").toLowerCase() === "origin"
+    ? "original"
+    : `t${Math.max(1, Number(size) || 500)}x${Math.max(1, Number(size) || 500)}`;
+  return value.replace(/-(?:large|badge|t\d+x\d+|original)\./i, `-${rendition}.`);
+}
+
+function artworkUrl(url: string | null | undefined): string | null {
+  return soundCloudArtworkUrl(url, 500);
 }
 
 function durationSeconds(ms: number | undefined): number {
@@ -685,9 +695,19 @@ export class SoundCloudProvider implements StreamingProvider {
   }
 
   async getArtworkUrl(request: ProviderArtworkRequest): Promise<string | null> {
-    if (request.providerId == null) return null;
-    if (request.entityType === "artist") return (await this.getArtist(request.providerId)).picture || null;
-    if (request.entityType === "album") return (await this.getAlbum(request.providerId)).cover || null;
+    const direct = String(request.imageId || "").trim() || null;
+    if (request.entityType === "artist") {
+      const source = direct || (request.providerId != null
+        ? (await this.getArtist(request.providerId)).picture
+        : null);
+      return soundCloudArtworkUrl(source, request.size || 500);
+    }
+    if (request.entityType === "album") {
+      const source = direct || (request.providerId != null
+        ? (await this.getAlbum(request.providerId)).cover
+        : null);
+      return soundCloudArtworkUrl(source, request.size || 500);
+    }
     return null;
   }
 

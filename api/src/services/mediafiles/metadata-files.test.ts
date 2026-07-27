@@ -18,6 +18,8 @@ before(async () => {
 });
 
 beforeEach(() => {
+    fs.rmSync(path.join(tempDir, "media-cover"), { recursive: true, force: true });
+    fs.rmSync(path.join(tempDir, "video-thumbnail-tests"), { recursive: true, force: true });
     dbModule.db.prepare("DELETE FROM LyricFiles").run();
     dbModule.db.prepare("DELETE FROM MetadataFiles").run();
     dbModule.db.prepare("DELETE FROM ExtraFiles").run();
@@ -136,7 +138,7 @@ function seedMusicBrainzMetadata() {
       );
 }
 
-test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs", async () => {
+test("Jellyfin NFO files use canonical local metadata and include MusicBrainz IDs", async () => {
     seedMusicBrainzMetadata();
 
     const artistPath = path.join(tempDir, "artist.nfo");
@@ -144,7 +146,12 @@ test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs
     const videoPath = path.join(tempDir, "video.nfo");
 
     await metadataFilesModule.saveArtistNfoFile("100", artistPath);
-    await metadataFilesModule.saveAlbumNfoFile("200", albumPath);
+    await metadataFilesModule.saveAlbumNfoFile("release-group-mbid-200", albumPath, {
+        releaseGroupMbid: "release-group-mbid-200",
+        releaseMbid: "album-mbid-200",
+        provider: "tidal",
+        providerAlbumId: "200",
+    });
     await metadataFilesModule.saveVideoNfoFile("400", videoPath);
 
     const artistNfo = fs.readFileSync(artistPath, "utf-8");
@@ -165,6 +172,7 @@ test("Jellyfin NFO files fall back to local metadata and include MusicBrainz IDs
     assert.match(albumNfo, /<label>Virgin Records<\/label>/);
     assert.match(albumNfo, /<upc>123456789012<\/upc>/);
     assert.match(albumNfo, /<isrc>GBUM72300001<\/isrc>/);
+    assert.match(albumNfo, /<duration>03:00<\/duration>/);
 
     const videoNfo = fs.readFileSync(videoPath, "utf-8");
     assert.match(videoNfo, /<musicvideo>/);
@@ -499,7 +507,13 @@ test("album NFO uses the selected canonical release for a composite provider slo
       `).run("release-group-mbid-200", "artist-mbid-100", "stereo", "tidal", "200;201", "album-mbid-200");
 
     const albumPath = path.join(tempDir, "composite-album.nfo");
-    await metadataFilesModule.saveAlbumNfoFile("200", albumPath);
+    await metadataFilesModule.saveAlbumNfoFile("release-group-mbid-200", albumPath, {
+        releaseGroupMbid: "release-group-mbid-200",
+        releaseMbid: "album-mbid-200",
+        librarySlot: "stereo",
+        provider: "tidal",
+        providerAlbumId: "200",
+    });
     const albumNfo = fs.readFileSync(albumPath, "utf-8");
 
     assert.match(albumNfo, /<uniqueid type="tidalAlbum" default="false">200<\/uniqueid>/);
@@ -508,6 +522,167 @@ test("album NFO uses the selected canonical release for a composite provider slo
     assert.doesNotMatch(albumNfo, /Edition-Specific Release Title/);
     assert.match(albumNfo, /<position>2<\/position>/);
     assert.match(albumNfo, /<uniqueid type="MusicBrainzTrack" default="false">track-mbid-301<\/uniqueid>/);
+});
+
+test("a cold static video thumbnail sidecar performs no provider or network access", async () => {
+    seedMusicBrainzMetadata();
+    const providerModule = await import("../providers/index.js");
+    const manager = providerModule.streamingProviderManager as any;
+    const originalGetStreamingProvider = manager.getStreamingProvider;
+    const originalGetDefaultStreamingProvider = manager.getDefaultStreamingProvider;
+    const originalGetDefaultProviderId = manager.getDefaultProviderId;
+    const originalFetch = globalThis.fetch;
+    let providerCalls = 0;
+    let fetchCalls = 0;
+    manager.getStreamingProvider = () => {
+        providerCalls += 1;
+        throw new Error("provider access is forbidden for sidecar sync");
+    };
+    manager.getDefaultStreamingProvider = () => {
+        providerCalls += 1;
+        throw new Error("provider access is forbidden for sidecar sync");
+    };
+    manager.getDefaultProviderId = () => {
+        providerCalls += 1;
+        throw new Error("provider access is forbidden for sidecar sync");
+    };
+    globalThis.fetch = (async () => {
+        fetchCalls += 1;
+        throw new Error("network access is forbidden for sidecar sync");
+    }) as typeof fetch;
+
+    const outputPath = path.join(tempDir, "video-thumbnail-tests", "cold.jpg");
+    try {
+        const result = await metadataFilesModule.downloadVideoThumbnail(
+            "remote-cover-id",
+            "origin",
+            outputPath,
+            { provider: "tidal", providerId: "400" },
+        );
+        assert.equal(result, "missing");
+        assert.equal(fs.existsSync(outputPath), false);
+        assert.equal(providerCalls, 0);
+        assert.equal(fetchCalls, 0);
+    } finally {
+        manager.getStreamingProvider = originalGetStreamingProvider;
+        manager.getDefaultStreamingProvider = originalGetDefaultStreamingProvider;
+        manager.getDefaultProviderId = originalGetDefaultProviderId;
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("static video thumbnail sidecars copy the canonical recording's cached origin", async () => {
+    seedMusicBrainzMetadata();
+    const recording = dbModule.db.prepare(`
+      SELECT id FROM Recordings WHERE mbid = ?
+    `).get("video-mbid-400") as { id: number };
+    const cachedOrigin = path.join(
+        tempDir,
+        "media-cover",
+        "Videos",
+        String(recording.id),
+        "cover.png",
+    );
+    const outputPath = path.join(tempDir, "video-thumbnail-tests", "cached.jpg");
+    const expected = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    fs.mkdirSync(path.dirname(cachedOrigin), { recursive: true });
+    fs.writeFileSync(cachedOrigin, expected);
+
+    assert.equal(
+        await metadataFilesModule.downloadVideoThumbnail(
+            "remote-cover-id",
+            "1080x720",
+            outputPath,
+            { provider: "tidal", providerId: "400" },
+        ),
+        "written",
+    );
+    assert.deepEqual(fs.readFileSync(outputPath), expected);
+    assert.equal(
+        await metadataFilesModule.downloadVideoThumbnail(
+            "remote-cover-id",
+            "origin",
+            outputPath,
+            { provider: "tidal", providerId: "400" },
+        ),
+        "unchanged",
+    );
+});
+
+test("Bad Blood NFO cannot cross providers when composite Apple IDs collide with TIDAL", async () => {
+    seedMusicBrainzMetadata();
+    dbModule.db.prepare("UPDATE Albums SET title = ? WHERE mbid = ?")
+        .run("Bad Blood", "release-group-mbid-200");
+    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems(
+          provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+          release_mbid, album_id, title, library_slot
+        ) VALUES(?, 'album', ?, ?, ?, ?, ?, ?, 'stereo')
+    `).run(
+        "apple-music",
+        "1705033078",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "album-mbid-200",
+        "1705033078",
+        "Pompeii MMXXIII",
+    );
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems(
+          provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+          release_mbid, album_id, title, library_slot
+        ) VALUES(?, 'album', ?, ?, ?, ?, ?, ?, 'stereo')
+    `).run(
+        "apple-music",
+        "1710633308",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "album-mbid-200",
+        "1710633308",
+        "Bad Blood X (10th Anniversary Edition)",
+    );
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItems(
+          provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+          release_mbid, album_id, title, library_slot
+        ) VALUES(?, 'album', ?, ?, ?, ?, ?, ?, 'stereo')
+    `).run(
+        "tidal",
+        "1705033078",
+        "artist-mbid-100",
+        "release-group-mbid-200",
+        "album-mbid-200",
+        "1705033078",
+        "Wrong TIDAL Collision",
+    );
+    dbModule.db.prepare(`
+        INSERT INTO ReleaseGroupSlots(
+          release_group_mbid, artist_mbid, slot, selected_provider,
+          selected_provider_id, selected_release_mbid
+        ) VALUES(?, ?, 'stereo', ?, ?, ?)
+    `).run(
+        "release-group-mbid-200",
+        "artist-mbid-100",
+        "apple-music",
+        "1705033078;1710633308",
+        "album-mbid-200",
+    );
+
+    const nfoPath = path.join(tempDir, "bad-blood.nfo");
+    await metadataFilesModule.saveAlbumNfoFile("release-group-mbid-200", nfoPath, {
+        releaseGroupMbid: "release-group-mbid-200",
+        releaseMbid: "album-mbid-200",
+        librarySlot: "stereo",
+        provider: "apple-music",
+        providerAlbumId: "1705033078",
+    });
+    const nfo = fs.readFileSync(nfoPath, "utf8");
+    assert.match(nfo, /<title>Bad Blood<\/title>/);
+    assert.match(nfo, /<uniqueid type="apple-musicAlbum" default="false">1705033078<\/uniqueid>/);
+    assert.match(nfo, /<uniqueid type="apple-musicAlbum" default="false">1710633308<\/uniqueid>/);
+    assert.doesNotMatch(nfo, /tidalAlbum[^>]*>1705033078/);
+    assert.doesNotMatch(nfo, /Wrong TIDAL Collision|Pompeii MMXXIII/);
 });
 
 test("downloadAlbumVideoCover resolves artwork through the requested provider", async () => {

@@ -275,11 +275,10 @@ type EmbeddedCoverContext = {
   temporaryDirectories: string[];
 };
 
-// Height (px) of the artwork embedded into audio files. Sized to land in Lidarr's
-// embedded-cover ballpark (a few hundred KB, well under 1 MB) while the full-res
-// origin is kept as the folder sidecar. The provider origin (e.g. a 3000px Apple
-// cover) is intentionally NOT embedded verbatim. Must be one of the sizes
-// downloadAlbumCover renders (160/250/320/500/640/1200/1280); 1200 ≈ Lidarr's.
+type EmbeddedCoverSyncOutcome = "embedded" | "unchanged" | "failed";
+
+// Keep embedded artwork in Lidarr's practical size range while the cached
+// master and folder sidecar retain the provider/catalog origin.
 const EMBEDDED_COVER_HEIGHT = 1200;
 
 // How many files the retag preview/status reads at once. Disk/parse bound, so a
@@ -306,8 +305,11 @@ async function resolvePreferredEmbeddedCover(
   let pending = context.byAlbum.get(key);
   if (!pending) {
     pending = (async () => {
-      const { getCachedMediaCoverFilePath, renderCappedCoverBuffer } = await import("../metadata/media-cover-service.js");
-      const cover = getCachedMediaCoverFilePath(albumMbid, "Album", "cover");
+      const {
+        getCachedMediaCoverOriginalFilePath,
+        renderCappedCoverBuffer,
+      } = await import("../metadata/media-cover-service.js");
+      const cover = getCachedMediaCoverOriginalFilePath(albumMbid, "Album", "cover");
       if (!cover || !fs.existsSync(cover)) return null;
 
       // Cap the embedded rendition at EMBEDDED_COVER_HEIGHT: scale down on the fly
@@ -2483,6 +2485,100 @@ export class AudioTagService {
     };
   }
 
+  private static async syncEmbeddedCoverForRow(
+    row: RetagTrackRow,
+    config: MetadataConfig,
+    mediaPath: string,
+    context: EmbeddedCoverContext,
+  ): Promise<EmbeddedCoverSyncOutcome> {
+    const quality = getConfigSection("quality");
+    if (quality.embed_cover === false) return "unchanged";
+    const coverPath = await resolvePreferredEmbeddedCover(row, config, mediaPath, context);
+    if (!coverPath) return "unchanged";
+    if (shouldSkipCoverEmbed(await compareEmbeddedAudioCover(mediaPath, coverPath))) {
+      return "unchanged";
+    }
+    return await embedAudioCover(mediaPath, coverPath) ? "embedded" : "failed";
+  }
+
+  /**
+   * Reconcile only embedded artwork for tracked files. This is the sole
+   * backfill/import entry point and shares the same cached-master + 1200px cap
+   * as normal retagging; it never downloads artwork or rewrites other tags.
+   */
+  static async syncEmbeddedCovers(ids: number[]): Promise<RetagApplyResult> {
+    const uniqueIds = Array.from(new Set(
+      ids.map((id) => Number(id)).filter((id) => Number.isFinite(id)),
+    ));
+    const result: RetagApplyResult = {
+      retagged: 0,
+      skipped: 0,
+      missing: 0,
+      errors: [],
+    };
+    if (uniqueIds.length === 0) return result;
+
+    const config = getConfigSection("metadata") as MetadataConfig;
+    const rowsById = new Map(this.getTrackRowsByIds(uniqueIds).map((row) => [row.id, row]));
+    const context: EmbeddedCoverContext = {
+      byAlbum: new Map(),
+      temporaryDirectories: [],
+    };
+    const updated: Array<[number, string, number]> = [];
+
+    try {
+      for (const id of uniqueIds) {
+        const row = rowsById.get(id);
+        if (!row) {
+          result.missing++;
+          continue;
+        }
+        const mediaPath = resolveStoredLibraryPath({
+          filePath: row.file_path,
+          libraryRoot: row.library_root,
+          relativePath: row.relative_path,
+        });
+        if (!fs.existsSync(mediaPath)) {
+          result.missing++;
+          continue;
+        }
+        try {
+          const outcome = await this.syncEmbeddedCoverForRow(row, config, mediaPath, context);
+          if (outcome === "embedded") {
+            const stat = fs.statSync(mediaPath);
+            updated.push([stat.size, stat.mtime.toISOString(), id]);
+            result.retagged++;
+          } else if (outcome === "failed") {
+            result.errors.push({ id, error: "Embedded cover write failed" });
+          } else {
+            result.skipped++;
+          }
+        } catch (error) {
+          result.errors.push({
+            id,
+            error: error instanceof Error ? error.message : "Embedded cover sync failed",
+          });
+        }
+      }
+    } finally {
+      for (const tempDir of context.temporaryDirectories) {
+        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best effort */ }
+      }
+    }
+
+    if (updated.length > 0) {
+      const update = db.prepare(`
+        UPDATE TrackFiles
+        SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      db.transaction(() => {
+        for (const values of updated) update.run(...values);
+      })();
+    }
+    return result;
+  }
+
   static async apply(ids: number[], options: RetagApplyOptions = {}): Promise<RetagApplyResult> {
     const config = getConfigSection("metadata") as MetadataConfig;
     if (!isRetagMaintenanceEnabled(config)) {
@@ -2516,18 +2612,16 @@ export class AudioTagService {
     };
 
     const applyPreferredCover = async (row: RetagTrackRow, mediaPath: string, id: number): Promise<boolean> => {
-      if (quality.embed_cover === false) return false;
-      const coverPath = await resolvePreferredEmbeddedCover(row, config, mediaPath, embeddedCoverContext);
-      if (!coverPath) return false;
-      // Only rewrite when the embedded art actually differs from the target
-      // (the cover analogue of the audio-tag diff), so an already-correct file
-      // is left untouched instead of needlessly re-muxed.
-      if (shouldSkipCoverEmbed(await compareEmbeddedAudioCover(mediaPath, coverPath))) return false;
-      const embedded = await embedAudioCover(mediaPath, coverPath);
-      if (!embedded) {
+      const outcome = await this.syncEmbeddedCoverForRow(
+        row,
+        config,
+        mediaPath,
+        embeddedCoverContext,
+      );
+      if (outcome === "failed") {
         result.errors.push({ id, error: "Embedded cover write failed" });
       }
-      return embedded;
+      return outcome === "embedded";
     };
 
     let processedCount = 0;

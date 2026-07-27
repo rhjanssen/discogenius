@@ -12,8 +12,6 @@ export type NamingContext = {
   artistGenre?: string | null;
 
   albumTitle?: string | null;
-  albumVersion?: string | null;
-  albumFullTitle?: string | null;
   albumType?: string | null;
   albumMbId?: string | null;
   albumDisambiguation?: string | null;
@@ -23,8 +21,6 @@ export type NamingContext = {
   explicit?: boolean | null;
 
   trackTitle?: string | null;
-  trackVersion?: string | null;
-  trackFullTitle?: string | null;
   trackArtistName?: string | null;
   trackArtistMbId?: string | null;
   trackMbId?: string | null;
@@ -196,23 +192,11 @@ function buildDerived(context: NamingContext) {
   const albumDisambiguation = context.albumDisambiguation || "";
   const albumGenre = context.albumGenre || "";
   const releaseGroupMbId = context.releaseGroupMbId || "";
-  const albumVersion = context.albumVersion ?? "";
-  const albumFullTitle =
-    context.albumFullTitle ||
-    (albumVersion && !albumTitle.toLowerCase().includes(albumVersion.toLowerCase())
-      ? `${albumTitle} (${albumVersion})`
-      : albumTitle);
 
   const trackTitle = context.trackTitle || "Unknown Track";
-  const trackVersion = context.trackVersion ?? "";
   const trackArtistName = context.trackArtistName || artistName;
   const trackArtistMbId = context.trackArtistMbId || artistMbId;
   const trackMbId = context.trackMbId || "";
-  const trackFullTitle =
-    context.trackFullTitle ||
-    (trackVersion && !trackTitle.toLowerCase().includes(trackVersion.toLowerCase())
-      ? `${trackTitle} (${trackVersion})`
-      : trackTitle);
 
   const trackNumber = Number(context.trackNumber || 0);
   const volumeNumber = Number(context.volumeNumber || 1);
@@ -247,8 +231,6 @@ function buildDerived(context: NamingContext) {
     albumDisambiguation,
     albumGenre,
     releaseGroupMbId,
-    albumVersion,
-    albumFullTitle,
     releaseYear,
     trackTitle,
     trackArtistName,
@@ -257,8 +239,6 @@ function buildDerived(context: NamingContext) {
     recordingId,
     recordingMbId,
     mediaId,
-    trackVersion,
-    trackFullTitle,
     trackNumber,
     volumeNumber,
     videoTitle,
@@ -273,9 +253,15 @@ function buildDerived(context: NamingContext) {
   };
 }
 
-function resolveTokenValue(tokenName: string, customFormat: string, context: NamingContext): string {
-  const derived = buildDerived(context);
-  const normalizedName = normalizeTokenName(tokenName);
+type DerivedNamingContext = ReturnType<typeof buildDerived>;
+
+function resolveTokenValue(
+  tokenName: string,
+  customFormat: string,
+  context: NamingContext,
+  derived: DerivedNamingContext,
+  normalizedName = normalizeTokenName(tokenName),
+): string {
 
   let baseValue: string | null = null;
   let isNumericToken = false;
@@ -383,9 +369,6 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
     case "provideralbumid":
       baseValue = derived.providerAlbumId;
       break;
-    case "albumfulltitle":
-      baseValue = derived.albumFullTitle;
-      break;
     case "releaseyear":
       baseValue = derived.releaseYear;
       break;
@@ -402,9 +385,6 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
       break;
     case "trackcleantitlethe":
       baseValue = cleanTitleThe(derived.trackTitle);
-      break;
-    case "trackfulltitle":
-      baseValue = derived.trackFullTitle;
       break;
 
     // Track artist names - all variants
@@ -447,7 +427,6 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
 
     // Video titles - all variants
     case "videotitle":
-    case "videofulltitle":
       baseValue = derived.videoTitle;
       break;
     case "videocleantitle":
@@ -525,121 +504,214 @@ function resolveTokenValue(tokenName: string, customFormat: string, context: Nam
   return baseValue || "";
 }
 
-function resolveToken(rawTokenBody: string, context: NamingContext): string {
+type TokenLetterCase = "lower" | "upper" | null;
+
+type CompiledTokenExpression = {
+  tokenName: string;
+  normalizedName: string;
+  customFormat: string;
+  letterCase: TokenLetterCase;
+};
+
+type CompiledNamingNode =
+  | { kind: "text"; value: string }
+  | {
+      kind: "token";
+      expression: CompiledTokenExpression;
+      prefix: string;
+      suffix: string;
+      separator: string;
+    }
+  | {
+      kind: "provider-wrapper";
+      provider: CompiledTokenExpression;
+      providerIds: CompiledTokenExpression;
+    }
+  | { kind: "mbid-wrapper"; value: CompiledTokenExpression };
+
+type CompiledNamingTemplate = {
+  nodes: CompiledNamingNode[];
+};
+
+const NAMING_TEMPLATE_CACHE_LIMIT = 128;
+const namingTemplatePlanCache = new Map<string, CompiledNamingTemplate>();
+const SpecialMarkerRegex = /\uE000DISCOGENIUS_SPECIAL_(\d+)\uE000/g;
+const TitleTokenRegex = /(\{\{|\}\})|\{([- ._[(]*)([a-zA-Z0-9]+(?:[- ._]+[a-zA-Z0-9]+)?)(?::([ a-zA-Z0-9+-:]+(?<![- ])))?([- ._)\]]*)\}/g;
+
+function getTokenLetterCase(tokenName: string): TokenLetterCase {
+  const letters = tokenName.replace(/[^a-zA-Z]/g, "");
+  if (letters.length === 0) return null;
+  if (letters === letters.toLowerCase()) return "lower";
+  if (letters === letters.toUpperCase()) return "upper";
+  return null;
+}
+
+function compileTokenExpression(tokenName: string, customFormat = ""): CompiledTokenExpression {
+  return {
+    tokenName,
+    normalizedName: normalizeTokenName(tokenName),
+    customFormat,
+    letterCase: getTokenLetterCase(tokenName),
+  };
+}
+
+function compileRawTokenExpression(rawTokenBody: string): CompiledTokenExpression {
   const parts = rawTokenBody.split(":");
-  const tokenName = parts[0];
-  const customFormat = parts.slice(1).join(":") || "";
+  return compileTokenExpression(parts[0] || "", parts.slice(1).join(":") || "");
+}
 
-  const hasLetters = /[a-zA-Z]/.test(tokenName);
-  const isAllLowercase = hasLetters && tokenName === tokenName.toLowerCase();
-  const isAllUppercase = hasLetters && tokenName === tokenName.toUpperCase();
+function appendCompiledText(
+  nodes: CompiledNamingNode[],
+  value: string,
+  specialNodes: CompiledNamingNode[],
+): void {
+  if (!value) return;
 
-  let result = resolveTokenValue(tokenName, customFormat, context);
+  let lastIndex = 0;
+  SpecialMarkerRegex.lastIndex = 0;
+  for (const match of value.matchAll(SpecialMarkerRegex)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      nodes.push({ kind: "text", value: value.slice(lastIndex, index) });
+    }
+    const specialIndex = Number(match[1]);
+    const special = specialNodes[specialIndex];
+    if (special) nodes.push(special);
+    lastIndex = index + match[0].length;
+  }
+  if (lastIndex < value.length) {
+    nodes.push({ kind: "text", value: value.slice(lastIndex) });
+  }
+}
 
-  if (isAllLowercase) {
+function compileNamingTemplate(template: string): CompiledNamingTemplate {
+  const specialNodes: CompiledNamingNode[] = [];
+  let processedTemplate = String(template || "");
+
+  // Compile conditional provider wrappers once. At render time only the two
+  // token values change; no nested-token regex work is repeated per track.
+  processedTemplate = processedTemplate.replace(
+    /\{\{([^{}]+)\}-\{([^{}]+)\}\}/g,
+    (_match, providerToken: string, providerIdsToken: string) => {
+      const index = specialNodes.push({
+        kind: "provider-wrapper",
+        provider: compileRawTokenExpression(providerToken),
+        providerIds: compileRawTokenExpression(providerIdsToken),
+      }) - 1;
+      return `\uE000DISCOGENIUS_SPECIAL_${index}\uE000`;
+    },
+  );
+
+  // Preserve the legacy conditional MusicBrainz wrapper as a compiled node.
+  processedTemplate = processedTemplate.replace(
+    /\{mbid-\{([^{}]+)\}\}/gi,
+    (_match, token: string) => {
+      const index = specialNodes.push({
+        kind: "mbid-wrapper",
+        value: compileRawTokenExpression(token),
+      }) - 1;
+      return `\uE000DISCOGENIUS_SPECIAL_${index}\uE000`;
+    },
+  );
+
+  const nodes: CompiledNamingNode[] = [];
+  let lastIndex = 0;
+  TitleTokenRegex.lastIndex = 0;
+  for (const match of processedTemplate.matchAll(TitleTokenRegex)) {
+    const index = match.index ?? 0;
+    appendCompiledText(nodes, processedTemplate.slice(lastIndex, index), specialNodes);
+
+    const escaped = match[1];
+    if (escaped) {
+      nodes.push({ kind: "text", value: escaped === "{{" ? "{" : escaped === "}}" ? "}" : escaped });
+    } else {
+      const tokenName = match[3] || "";
+      const customFormat = (match[4] || "").split(":")[0] || "";
+      nodes.push({
+        kind: "token",
+        expression: compileTokenExpression(tokenName, customFormat),
+        prefix: match[2] || "",
+        suffix: match[5] || "",
+        separator: /[- ._]/.exec(tokenName)?.[0] || "",
+      });
+    }
+    lastIndex = index + match[0].length;
+  }
+  appendCompiledText(nodes, processedTemplate.slice(lastIndex), specialNodes);
+  return { nodes };
+}
+
+function getCompiledNamingTemplate(template: string): CompiledNamingTemplate {
+  const key = String(template || "");
+  const cached = namingTemplatePlanCache.get(key);
+  if (cached) return cached;
+
+  const compiled = compileNamingTemplate(key);
+  if (namingTemplatePlanCache.size >= NAMING_TEMPLATE_CACHE_LIMIT) {
+    const oldest = namingTemplatePlanCache.keys().next().value as string | undefined;
+    if (oldest !== undefined) namingTemplatePlanCache.delete(oldest);
+  }
+  namingTemplatePlanCache.set(key, compiled);
+  return compiled;
+}
+
+function renderCompiledToken(
+  expression: CompiledTokenExpression,
+  context: NamingContext,
+  derived: DerivedNamingContext,
+  separator = "",
+): string {
+  let result = resolveTokenValue(
+    expression.tokenName,
+    expression.customFormat,
+    context,
+    derived,
+    expression.normalizedName,
+  ).trim();
+
+  if (expression.letterCase === "lower") {
     result = result.toLowerCase();
-  } else if (isAllUppercase) {
+  } else if (expression.letterCase === "upper") {
     result = result.toUpperCase();
   }
-
+  if (separator) {
+    result = result.replace(/ /g, separator);
+  }
   return cleanFileName(result);
 }
 
 function renderTokens(template: string, context: NamingContext): string {
-  const literalPlaceholders: string[] = [];
-  let processedTemplate = (template || "");
+  const derived = buildDerived(context);
+  const plan = getCompiledNamingTemplate(template);
+  let rendered = "";
 
-  // 1. Handle new double-bracket nested style: {{token1}-{token2}} -> e.g. {{providerName}-{providerAlbumId}}
-  processedTemplate = processedTemplate.replace(/\{\{([^{}]+)\}-\{([^{}]+)\}\}/g, (_match, token1: string, token2: string) => {
-    const val1 = resolveToken(token1, context);
-    const val2Raw = resolveToken(token2, context);
-    if (!val1 || !val2Raw) {
-      return "";
+  for (const node of plan.nodes) {
+    if (node.kind === "text") {
+      rendered += node.value;
+      continue;
     }
-    const parts = val2Raw.split(";").map(p => p.trim()).filter(Boolean);
-    if (parts.length === 0) return "";
-    const combinedIds = parts.join("; ");
-    const placeholder = `__DISCOGENIUS_LITERAL_${literalPlaceholders.length}__`;
-    literalPlaceholders.push(`{${val1}-${combinedIds}}`);
-    return placeholder;
-  });
-
-  // Preserve older single-brace wrappers used by existing configs, e.g.
-  // {mbid-{artistMbId}} -> {mbid-7808...}. The main token regex deliberately
-  // stays simple, so handle this explicit wrapper before generic tokenization.
-  processedTemplate = processedTemplate.replace(/\{mbid-\{([^{}]+)\}\}/gi, (_match, token: string) => {
-    const value = resolveToken(token, context);
-    if (!value) {
-      return "";
+    if (node.kind === "provider-wrapper") {
+      const provider = renderCompiledToken(node.provider, context, derived);
+      const rawProviderIds = renderCompiledToken(node.providerIds, context, derived);
+      const providerIds = rawProviderIds.split(";").map((part) => part.trim()).filter(Boolean);
+      if (provider && providerIds.length > 0) {
+        rendered += `{${provider}-${providerIds.join("; ")}}`;
+      }
+      continue;
     }
-    const placeholder = `__DISCOGENIUS_LITERAL_${literalPlaceholders.length}__`;
-    literalPlaceholders.push(`{mbid-${value}}`);
-    return placeholder;
-  });
-
-  // 2. Allow colons in customFormat (TitleRegex / ReplaceToken behavior)
-  const TitleRegex = /(\{\{|\}\})|\{([- ._[(]*)([a-zA-Z0-9]+(?:[- ._]+[a-zA-Z0-9]+)?)(?::([ a-zA-Z0-9+-:]+(?<![- ])))?([- ._)\]]*)\}/g;
-
-  const rendered = processedTemplate.replace(TitleRegex, (
-    match: string,
-    escaped: string | undefined,
-    prefix: string | undefined,
-    token: string | undefined,
-    customFormat: string | undefined,
-    suffix: string | undefined,
-  ) => {
-    if (escaped) {
-      if (escaped === "{{") return "{";
-      if (escaped === "}}") return "}";
-      return escaped;
+    if (node.kind === "mbid-wrapper") {
+      const value = renderCompiledToken(node.value, context, derived);
+      if (value) rendered += `{mbid-${value}}`;
+      continue;
     }
 
-    const tokenName = token || "";
-    const customFormatVal = customFormat || "";
-    const prefixVal = prefix || "";
-    const suffixVal = suffix || "";
-
-    const separatorMatch = /[- ._]/.exec(tokenName);
-    const separator = separatorMatch ? separatorMatch[0] : "";
-
-    const formatSpecifiers = customFormatVal.split(":");
-    const primaryFormat = formatSpecifiers[0] || "";
-
-    let replacementText = resolveTokenValue(tokenName, primaryFormat, context);
-
-    if (replacementText === null || replacementText === undefined) {
-      return match;
+    const replacement = renderCompiledToken(node.expression, context, derived, node.separator);
+    if (replacement) {
+      rendered += node.prefix + replacement + node.suffix;
     }
+  }
 
-    replacementText = replacementText.trim();
-
-    const letters = tokenName.replace(/[^a-zA-Z]/g, "");
-    const isAllLowercase = letters.length > 0 && letters === letters.toLowerCase();
-    const isAllUppercase = letters.length > 0 && letters === letters.toUpperCase();
-
-    if (isAllLowercase) {
-      replacementText = replacementText.toLowerCase();
-    } else if (isAllUppercase) {
-      replacementText = replacementText.toUpperCase();
-    }
-
-    if (separator) {
-      replacementText = replacementText.replace(/ /g, separator);
-    }
-
-    replacementText = cleanFileName(replacementText);
-
-    if (replacementText.length > 0) {
-      return prefixVal + replacementText + suffixVal;
-    }
-
-    return "";
-  });
-
-  return literalPlaceholders.reduce(
-    (current, value, index) => current.replace(`__DISCOGENIUS_LITERAL_${index}__`, value),
-    rendered,
-  );
+  return rendered;
 }
 
 export function getNamingConfig(): NamingConfig {
@@ -667,13 +739,11 @@ const KNOWN_TOKEN_NAMES = new Set([
   "albummbid",
   "releasegroupmbid",
   "albumid",
-  "albumfulltitle",
   "releaseyear",
   "tracktitle",
   "trackcleantitle",
   "tracktitlethe",
   "trackcleantitlethe",
-  "trackfulltitle",
   "trackartistname",
   "trackartistcleanname",
   "trackartistnamethe",
@@ -785,7 +855,7 @@ export function validateNamingTemplate(
   }
 
   if (kind === "track") {
-    if (!hasAnyToken(tokens, ["trackTitle", "trackFullTitle", "trackCleanTitle", "trackTitleThe", "trackCleanTitleThe"])) {
+    if (!hasAnyToken(tokens, ["trackTitle", "trackCleanTitle", "trackTitleThe", "trackCleanTitleThe"])) {
       errors.push("Track template must include a track title token.");
     }
     if (!hasTrackNumberToken(tokens)) {
@@ -793,7 +863,7 @@ export function validateNamingTemplate(
     }
   }
 
-  if (kind === "video" && !hasAnyToken(tokens, ["videoTitle", "videoFullTitle", "videoCleanTitle", "videoTitleThe", "videoCleanTitleThe", "mediaId", "trackId", "videoId", "providerMediaId", "providerTrackId", "providerVideoId"])) {
+  if (kind === "video" && !hasAnyToken(tokens, ["videoTitle", "videoCleanTitle", "videoTitleThe", "videoCleanTitleThe", "mediaId", "trackId", "videoId", "providerMediaId", "providerTrackId", "providerVideoId"])) {
     errors.push("Video template must include a video title or provider track/video ID token.");
   }
 
@@ -823,8 +893,6 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     artistDisambiguation: "English pop rock band",
     artistGenre: "Alternative Rock",
     albumTitle: "Bad Blood",
-    albumVersion: "The Extended Cut",
-    albumFullTitle: "Bad Blood (The Extended Cut)",
     albumType: "album",
     albumId: "26065586",
     albumMbId: "a1a8c886-df06-44ec-b851-f76156a086cf",
@@ -833,8 +901,6 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
     releaseGroupMbId: "5b591b9a-4c28-444a-aab4-cd61be5bb5fb",
     releaseYear: "2013",
     trackTitle: "Pompeii",
-    trackVersion: "Live From MTV Unplugged",
-    trackFullTitle: "Pompeii (Live From MTV Unplugged)",
     trackArtistName: "Bastille",
     trackArtistMbId: "7808accb-6395-4b25-858c-678bbb73896b",
     trackMbId: "a3a1f1a5-817e-40af-b98a-d5f9b4515ed0",

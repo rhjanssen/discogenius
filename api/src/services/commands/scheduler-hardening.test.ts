@@ -91,7 +91,24 @@ test("CheckHealth collects a real diagnostics snapshot and reports issue counts"
 
     const completed = queueModule.CommandQueueManager.get(commandId);
     assert.equal(completed?.status, "completed");
-    assert.equal((completed?.payload as Record<string, unknown>)?.description, expectedDescription);
+  assert.equal((completed?.payload as Record<string, unknown>)?.description, expectedDescription);
+});
+
+test("BackupDatabase is executed by the non-download command executor", async () => {
+    const commandId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.BackupDatabase,
+        {},
+    );
+
+    const job = queueModule.CommandQueueManager.get(commandId);
+    assert.ok(job);
+    await (schedulerModule.CommandExecutor as any).processJob(job);
+
+    const completed = queueModule.CommandQueueManager.get(commandId);
+    assert.equal(completed?.status, "completed");
+    assert.match(String((completed?.payload as Record<string, unknown>)?.description || ""), /^Created database backup /);
+    const backupsDir = path.join(tempDir, "Backups");
+    assert.ok(fs.readdirSync(backupsDir).some((fileName) => fileName.endsWith(".db")));
 });
 
 test("BulkRefreshArtist delegates to queueMetadataRefreshPass and queues a RefreshMetadata job", async () => {

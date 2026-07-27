@@ -11,19 +11,12 @@ import {
 } from "../extras/lyrics/lyric-sidecar.js";
 import { resolveFfmpegBinary } from "./audioUtils.js";
 import {
-    albumProviderArtworkCandidatesFromRow,
-    imageContainerFromImagesColumn,
-    getCachedMediaCoverSourceUrlFromLocalUrl,
     getMediaCoverFilePathFromUrl,
     normalizeArtworkUrl,
     parseJsonObject,
-    resolveAlbumArtwork,
-    resolveArtistArtwork,
-    resolveVideoArtwork,
-    resolveProviderArtworkUrl,
     resolveMediaCoverProxyUrl,
-    type ProviderArtworkCandidate,
-    type ServarrMetadataImageContainer,
+    syncCachedMediaCoverToFile,
+    type MediaCoverSidecarSyncResult,
 } from "../metadata/media-cover-service.js";
 
 type AlbumProviderItemRow = {
@@ -139,9 +132,20 @@ function xmlUniqueId(type: string, value: unknown, isDefault = false): string | 
     return `  <uniqueid type="${escapeXml(type)}" default="${isDefault ? "true" : "false"}">${escapeXml(text)}</uniqueid>`;
 }
 
-function writeXmlFile(outputPath: string, xml: string): void {
+function writeXmlFile(outputPath: string, xml: string): boolean {
+    if (fs.existsSync(outputPath)) {
+        try {
+            const existing = fs.readFileSync(outputPath, 'utf-8');
+            if (existing.trim() === xml.trim()) {
+                return false;
+            }
+        } catch {
+            /* best effort */
+        }
+    }
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, xml, 'utf-8');
+    return true;
 }
 
 function warnNfoFallback(entity: string, id: string, error: unknown): void {
@@ -164,7 +168,7 @@ function splitProviderIds(value: string | null | undefined): string[] {
         .filter(Boolean);
 }
 
-function loadAlbumProviderItem(albumId: string): AlbumProviderItemRow | null {
+function loadAlbumProviderItem(albumId: string, provider?: string | null): AlbumProviderItemRow | null {
     return (db.prepare(`
         SELECT
             pi.provider,
@@ -209,9 +213,10 @@ function loadAlbumProviderItem(albumId: string): AlbumProviderItemRow | null {
         LEFT JOIN Artists artist ON artist.mbid = artist_metadata.mbid
         WHERE pi.entity_type = 'album'
           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+          AND (? = '' OR pi.provider = ?)
         ORDER BY pi.updated_at DESC
         LIMIT 1
-    `).get(albumId) as AlbumProviderItemRow | undefined) ?? null;
+    `).get(albumId, String(provider || ""), String(provider || "")) as AlbumProviderItemRow | undefined) ?? null;
 }
 
 function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
@@ -255,101 +260,6 @@ function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
         ORDER BY pi.updated_at DESC
         LIMIT 1
     `).get(videoId) as VideoProviderItemRow | undefined) ?? null;
-}
-
-async function getArtistForNfo(artistId: string) {
-    try {
-        return await streamingProviderManager.getDefaultStreamingProvider().getArtist(artistId);
-    } catch (error) {
-        warnNfoFallback("artist", artistId, error);
-        const row = db.prepare(`
-            SELECT id, name, picture, popularity
-            FROM Artists
-            WHERE id = ?
-        `).get(artistId) as { id: number | string; name: string; picture?: string | null; popularity?: number | null } | undefined;
-
-        if (!row) throw error;
-        return {
-            id: String(row.id),
-            name: row.name || "Unknown Artist",
-            picture: row.picture || null,
-            popularity: row.popularity || 0,
-            artist_types: ["ARTIST"],
-            artist_roles: [],
-        };
-    }
-}
-
-async function getArtistBioTextForNfo(artistId: string): Promise<string> {
-    const row = db.prepare("SELECT bio_text FROM Artists WHERE id = ? OR mbid = ? LIMIT 1")
-        .get(artistId, artistId) as { bio_text?: string | null } | undefined;
-    if (row?.bio_text) {
-        return cleanProviderText(row.bio_text);
-    }
-    return "";
-}
-
-async function getAlbumForNfo(albumId: string) {
-    try {
-        return await streamingProviderManager.getDefaultStreamingProvider().getAlbum(albumId);
-    } catch (error) {
-        warnNfoFallback("album", albumId, error);
-        const row = loadAlbumProviderItem(albumId);
-
-        if (!row) throw error;
-        const artistName = row.artist_name || "Unknown Artist";
-        const artistId = row.artist_id || row.artist_mbid || "";
-        const title = row.release_group_title || row.release_title || row.provider_title || "Unknown Album";
-        const releaseDate = row.release_date || row.first_release_date || row.provider_release_date || null;
-        return {
-            id: String(row.provider_id),
-            title,
-            url: (() => {
-                try {
-                    return buildStreamingMediaUrl("album", String(row.provider_id));
-                } catch {
-                    return null;
-                }
-            })(),
-            cover: row.release_group_cover_image_id || row.provider_asset_id || null,
-            releaseDate,
-            release_date: releaseDate,
-            type: row.primary_type || "ALBUM",
-            quality: row.provider_quality || "UNKNOWN",
-            explicit: Boolean(row.provider_explicit ),
-            popularity: row.release_group_popularity || 0,
-            duration: row.provider_duration || 0,
-            numberOfTracks: row.track_count || 0,
-            numberOfVideos: 0,
-            numberOfVolumes: row.media_count || 1,
-            vibrant_color: row.release_group_vibrant_color || null,
-            version: row.provider_version || null,
-            items: [],
-            artist: {
-                id: String(artistId),
-                name: artistName,
-                picture: null,
-            },
-            artist_id: String(artistId),
-            artist_name: artistName,
-            upc: row.barcode || row.provider_upc || null,
-            copyright: row.release_copyright || null,
-            video_cover: row.release_group_video_cover || null,
-            num_videos: 0,
-            num_volumes: row.media_count || 1,
-            num_tracks: row.track_count || 0,
-            artists: [{ id: String(artistId), name: artistName, picture: null }],
-        };
-    }
-}
-
-async function getAlbumReviewTextForNfo(albumId: string): Promise<string> {
-    const row = loadAlbumProviderItem(albumId);
-    const review = textOrNull(
-        row?.release_group_review_text,
-        row?.release_group_overview,
-    );
-    return review ? cleanProviderText(review) : "";
 }
 
 function parseRecordingCredits(value: unknown): Array<{ id?: string; name?: string; join_phrase?: string }> {
@@ -424,33 +334,10 @@ type VideoThumbnailResolution =
     | "1280x720"
     | "origin";
 
-/** TIDAL CDN sizes that center-crop the native landscape still to 3:2. */
-const VIDEO_THUMBNAIL_CROP_SIZES = new Set<string>([
-    "160x107",
-    "480x320",
-    "750x500",
-    "1080x720",
-]);
-
-/**
- * Prefer full-aspect origin over TIDAL 3:2 crop sizes. Legacy defaults and
- * seeded configs still say 1080x720; remap those so store/embed keep the frame.
- * Explicit 16:9 sizes (640x360 / 1280x720) and origin pass through.
- */
-const normalizeVideoThumbnailResolution = (
-    resolution: VideoThumbnailResolution,
-): VideoThumbnailResolution => {
-    if (!resolution || VIDEO_THUMBNAIL_CROP_SIZES.has(resolution)) {
-        return "origin";
-    }
-    return resolution;
-};
-
 async function downloadProviderArtwork(
     url: string | null | undefined,
     outputPath: string,
     label: string,
-    options: { preferRemoteOrigin?: boolean } = {},
 ): Promise<boolean> {
     if (!url) {
         console.log(`ℹ️ [METADATA] No ${label} available, skipping.`);
@@ -466,14 +353,7 @@ async function downloadProviderArtwork(
         return true;
     }
 
-    let fetchSource = String(url);
-    if (options.preferRemoteOrigin) {
-        const originRemote = getCachedMediaCoverSourceUrlFromLocalUrl(url);
-        if (originRemote) {
-            fetchSource = originRemote;
-        }
-    }
-
+    const fetchSource = String(url);
     const fetchUrl = resolveMediaCoverProxyUrl(fetchSource) || (
         /^https?:\/\//i.test(fetchSource) ? fetchSource : null
     );
@@ -504,163 +384,6 @@ async function downloadProviderArtwork(
 
     console.log(`✅ [METADATA] ${label} saved: ${outputPath}`);
     return true;
-}
-
-function wantsLibraryOriginArtwork(resolution: number | string): boolean {
-    if (resolution === "origin") return true;
-    const size = Number(resolution);
-    return Number.isFinite(size) && size >= 1000;
-}
-
-function loadAlbumArtworkContext(albumId: string, provider?: string | null): {
-    albumMbid: string | null;
-    servarrMetadataData: ServarrMetadataImageContainer | null;
-    providerCandidates: ProviderArtworkCandidate[];
-} | null {
-    const row = db.prepare(`
-        SELECT
-            pi.provider_id AS provider_album_id,
-            pi.asset_id AS provider_cover,
-            pi.provider AS selected_provider,
-            pi.provider_id AS selected_provider_id,
-            pi.asset_id AS provider_asset_id,
-            pi.cover AS provider_cover,
-            rg.mbid AS album_mbid,
-            rg.cover_image_id AS release_group_cover,
-            rg.images AS release_group_images,
-            stereo.selected_provider AS stereo_provider,
-            stereo.selected_provider_id AS stereo_provider_id,
-            stereo.cover AS stereo_cover,
-            spatial.selected_provider AS spatial_provider,
-            spatial.selected_provider_id AS spatial_provider_id,
-            spatial.cover AS spatial_cover
-        FROM ProviderItems pi
-        LEFT JOIN Albums rg
-          ON rg.mbid = pi.release_group_mbid
-        LEFT JOIN ReleaseGroupSlots stereo
-          ON stereo.release_group_mbid = rg.mbid
-         AND stereo.slot = 'stereo'
-        LEFT JOIN ReleaseGroupSlots spatial
-          ON spatial.release_group_mbid = rg.mbid
-         AND spatial.slot = 'spatial'
-        WHERE pi.entity_type = 'album'
-          AND (
-            CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-            OR pi.release_group_mbid = ?
-            OR pi.release_mbid = ?
-          )
-          AND (? = '' OR pi.provider = ?)
-        ORDER BY CASE WHEN CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT) THEN 0 ELSE 1 END,
-                 pi.updated_at DESC
-        LIMIT 1
-    `).get(albumId, albumId, albumId, String(provider || ""), String(provider || ""), albumId) as Record<string, any> | undefined;
-
-    if (!row) {
-        return null;
-    }
-
-    const providerCandidates = [
-        ...albumProviderArtworkCandidatesFromRow(row),
-        {
-            provider: String(row.selected_provider || "tidal"),
-            entityId: row.provider_album_id == null ? albumId : String(row.provider_album_id),
-            imageId: row.release_group_cover == null ? null : String(row.release_group_cover),
-            data: null,
-        },
-        {
-            provider: String(row.selected_provider || "tidal"),
-            entityId: row.provider_album_id == null ? albumId : String(row.provider_album_id),
-            imageId: row.provider_cover == null ? null : String(row.provider_cover),
-
-        },
-    ];
-
-    return {
-        albumMbid: row.album_mbid ? String(row.album_mbid) : null,
-        servarrMetadataData: imageContainerFromImagesColumn(row.release_group_images),
-        providerCandidates,
-    };
-}
-
-function loadArtistArtworkContext(artistId: string): {
-    artistMbid: string | null;
-    servarrMetadataData: ServarrMetadataImageContainer | null;
-    providerCandidates: ProviderArtworkCandidate[];
-} | null {
-    const row = db.prepare(`
-        SELECT
-            a.id,
-            a.mbid,
-            a.picture,
-            a.cover_image_url,
-            am.images AS artist_metadata_images,
-            pi.provider,
-            pi.provider_id,
-            pi.cover AS provider_cover
-        FROM Artists a
-        LEFT JOIN ArtistMetadata am
-          ON am.mbid = a.mbid
-        LEFT JOIN ProviderItems pi
-          ON pi.entity_type = 'artist'
-         AND (
-            (a.mbid IS NOT NULL AND pi.artist_mbid = a.mbid)
-            OR CAST(pi.provider_id AS TEXT) = CAST(a.id AS TEXT)
-         )
-        WHERE CAST(a.id AS TEXT) = CAST(? AS TEXT)
-           OR CAST(a.mbid AS TEXT) = CAST(? AS TEXT)
-        ORDER BY CASE WHEN pi.artist_mbid IS NOT NULL THEN 0 ELSE 1 END
-        LIMIT 1
-    `).get(artistId, artistId) as Record<string, any> | undefined;
-
-    if (!row) {
-        return null;
-    }
-
-    return {
-        artistMbid: row.mbid ? String(row.mbid) : (row.id ? String(row.id) : null),
-        servarrMetadataData: imageContainerFromImagesColumn(row.artist_metadata_images),
-        providerCandidates: [
-            {
-                provider: row.provider ? String(row.provider) : "tidal",
-                entityId: row.provider_id == null ? artistId : String(row.provider_id),
-                // Profile / folder.jpg only — never Artists.cover_image_url (fanart/backdrop).
-                imageId: normalizeArtworkUrl(row.picture) ? String(row.picture) : (row.picture == null ? null : String(row.picture)),
-            },
-        ],
-    };
-}
-
-/**
- * Download album cover at specified resolution.
- * Uses media-cover-service resolveAlbumArtwork (same preference ladder as UI).
- * Library origin/full-res writes fetch the remote source — never the UI 500px cache.
- */
-export async function downloadAlbumCover(
-    albumId: string,
-    resolution: 80 | 160 | 250 | 320 | 500 | 640 | 1200 | 1280 | 'origin',
-    outputPath: string,
-    options: { provider?: string | null } = {},
-): Promise<void> {
-    const context = loadAlbumArtworkContext(albumId, options.provider);
-    const providerCandidates = context?.providerCandidates?.length
-        ? context.providerCandidates
-        : [{ provider: options.provider || streamingProviderManager.getDefaultProviderId(), entityId: albumId }];
-    const albumMbid = context?.albumMbid || (/^[0-9a-f-]{36}$/i.test(String(albumId).trim()) ? String(albumId).trim() : null);
-    const preferRemoteOrigin = wantsLibraryOriginArtwork(resolution);
-
-    const localUrl = await resolveAlbumArtwork({
-        albumMbid,
-        servarrMetadataData: context?.servarrMetadataData ?? null,
-        providerCandidates,
-        size: preferRemoteOrigin ? "origin" : resolution,
-    });
-    if (await downloadProviderArtwork(localUrl, outputPath, `album cover for ${albumId}`, { preferRemoteOrigin })) {
-        return;
-    }
-
-    // Last resort: direct provider fetch if resolve returned nothing usable.
-    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "album", preferRemoteOrigin ? "origin" : resolution);
-    await downloadProviderArtwork(providerUrl, outputPath, `album cover for ${albumId}`, { preferRemoteOrigin });
 }
 
 /**
@@ -817,75 +540,82 @@ export async function downloadAlbumVideoCover(
     await downloadProviderArtwork(url, outputPath, "album video cover");
 }
 
-/**
- * Download artist picture at specified resolution.
- * Uses media-cover-service resolveArtistArtwork (same preference ladder as UI).
- * Library origin/full-res writes fetch the remote source — never the UI 500px cache.
- */
-export async function downloadArtistPicture(
-    artistId: string,
-    resolution: number | "origin",
-    outputPath: string
-): Promise<void> {
-    const context = loadArtistArtworkContext(artistId);
-    const preferredCoverTypes = ["Poster", "Headshot"];
-    const providerCandidates = context?.providerCandidates?.length
-        ? context.providerCandidates
-        : [{ provider: streamingProviderManager.getDefaultProviderId(), entityId: artistId }];
-    const artistMbid = context?.artistMbid
-        || (/^[0-9a-f-]{36}$/i.test(String(artistId).trim()) ? String(artistId).trim() : null);
-    const preferRemoteOrigin = wantsLibraryOriginArtwork(resolution);
+function resolveCanonicalVideoCoverId(context: {
+    provider?: string | null;
+    providerId?: string | number | null;
+    videoId?: string | number | null;
+}): string | null {
+    const explicitVideoId = String(context.videoId ?? "").trim();
+    if (explicitVideoId) {
+        const byId = db.prepare(`
+          SELECT id
+          FROM Recordings
+          WHERE id = ? AND is_video = 1
+          LIMIT 1
+        `).get(explicitVideoId) as { id: number } | undefined;
+        if (byId?.id != null) return String(byId.id);
 
-    const localUrl = await resolveArtistArtwork({
-        artistMbid,
-        servarrMetadataData: context?.servarrMetadataData ?? null,
-        providerCandidates,
-        preferredCoverTypes,
-        size: preferRemoteOrigin ? "origin" : resolution,
-    });
-    if (await downloadProviderArtwork(localUrl, outputPath, `artist picture for ${artistId}`, { preferRemoteOrigin })) {
-        return;
+        const byMbid = db.prepare(`
+          SELECT id
+          FROM Recordings
+          WHERE mbid = ? AND is_video = 1
+          LIMIT 1
+        `).get(explicitVideoId) as { id: number } | undefined;
+        if (byMbid?.id != null) return String(byMbid.id);
     }
 
-    const providerUrl = await resolveProviderArtworkUrl(providerCandidates, "artist", preferRemoteOrigin ? "origin" : resolution);
-    await downloadProviderArtwork(providerUrl, outputPath, `artist picture for ${artistId}`, { preferRemoteOrigin });
+    const provider = String(context.provider || "").trim();
+    const providerId = String(context.providerId ?? "").trim();
+    if (!provider || !providerId) return null;
+
+    const providerItem = db.prepare(`
+      SELECT recording_id, recording_mbid
+      FROM ProviderItems
+      WHERE provider = ?
+        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+        AND (
+          entity_type = 'video'
+          OR (entity_type = 'track' AND library_slot = 'video')
+        )
+      ORDER BY CASE entity_type WHEN 'video' THEN 0 ELSE 1 END, updated_at DESC
+      LIMIT 1
+    `).get(provider, providerId) as {
+        recording_id?: number | null;
+        recording_mbid?: string | null;
+    } | undefined;
+    if (providerItem?.recording_id != null) return String(providerItem.recording_id);
+
+    const recordingMbid = String(providerItem?.recording_mbid || "").trim();
+    if (!recordingMbid) return null;
+    const recording = db.prepare(`
+      SELECT id
+      FROM Recordings
+      WHERE mbid = ? AND is_video = 1
+      LIMIT 1
+    `).get(recordingMbid) as { id: number } | undefined;
+    return recording?.id != null ? String(recording.id) : null;
 }
 
 /**
- * Download music video thumbnail at specified resolution.
- * Prefer resolveVideoArtwork when a recording id is known; otherwise provider imageId.
- * Prefer `origin` so the stored/embedded still keeps the provider's native aspect
- * (TIDAL 3:2 sizes like 1080x720 crop; Apple/YouTube landscape stills do not).
+ * Materialize a static music-video thumbnail from the canonical recording's
+ * cached full-resolution MediaCover master. The image id and resolution remain
+ * in the signature for call-site compatibility; refresh/match owns all source
+ * selection, provider access, and network I/O.
  */
 export async function downloadVideoThumbnail(
-    imageId: string,
-    resolution: VideoThumbnailResolution,
+    _imageId: string,
+    _resolution: VideoThumbnailResolution,
     outputPath: string,
     context: { provider?: string | null; providerId?: string | number | null; videoId?: string | number | null } = {},
-): Promise<void> {
-    const normalizedResolution = normalizeVideoThumbnailResolution(resolution);
-    const videoId = context.videoId ?? context.providerId;
-    if (videoId != null && String(videoId).trim() !== "") {
-        const localUrl = await resolveVideoArtwork({
-            videoId,
-            providerCandidates: [{
-                provider: context.provider || streamingProviderManager.getDefaultProviderId(),
-                entityId: context.providerId,
-                imageId,
-            }],
-            size: normalizedResolution,
-        });
-        if (await downloadProviderArtwork(localUrl, outputPath, "video thumbnail")) {
-            return;
-        }
-    }
-
-    const url = await resolveProviderArtworkUrl([{
-        provider: context.provider || streamingProviderManager.getDefaultProviderId(),
-        entityId: context.providerId,
-        imageId,
-    }], "video", normalizedResolution);
-    await downloadProviderArtwork(url, outputPath, "video thumbnail");
+): Promise<MediaCoverSidecarSyncResult> {
+    const videoId = resolveCanonicalVideoCoverId(context);
+    if (!videoId) return "missing";
+    return syncCachedMediaCoverToFile({
+        entityId: videoId,
+        coverEntity: "Video",
+        coverTypes: "cover",
+        outputPath,
+    });
 }
 
 /**
@@ -936,15 +666,31 @@ export async function saveLyricsFile(
 export async function saveArtistNfoFile(
     artistId: string,
     outputPath: string
-): Promise<void> {
-    const provider = streamingProviderManager.getDefaultStreamingProvider();
-    const artist = await getArtistForNfo(artistId);
-    const bioText = await getArtistBioTextForNfo(artistId);
+): Promise<boolean> {
     const localArtist = db.prepare(`
-        SELECT mbid
-        FROM Artists
-        WHERE id = ?
-    `).get(artistId) as { mbid?: string | null } | undefined;
+        SELECT
+            artist.id,
+            artist.mbid,
+            COALESCE(NULLIF(TRIM(artist.name), ''), metadata.name) AS name,
+            COALESCE(NULLIF(TRIM(metadata.sort_name), ''), NULLIF(TRIM(artist.name), ''), metadata.name) AS sort_name,
+            COALESCE(NULLIF(TRIM(artist.bio_text), ''), NULLIF(TRIM(metadata.overview), '')) AS biography
+        FROM Artists artist
+        LEFT JOIN ArtistMetadata metadata ON metadata.mbid = artist.mbid
+        WHERE CAST(artist.id AS TEXT) = CAST(? AS TEXT)
+           OR artist.mbid = ?
+        ORDER BY CASE WHEN CAST(artist.id AS TEXT) = CAST(? AS TEXT) THEN 0 ELSE 1 END
+        LIMIT 1
+    `).get(artistId, artistId, artistId) as {
+        id: string;
+        mbid: string | null;
+        name: string;
+        sort_name: string | null;
+        biography: string | null;
+    } | undefined;
+    if (!localArtist) {
+        throw new Error(`Cannot write artist NFO without local canonical artist ${artistId}`);
+    }
+    const bioText = localArtist.biography ? cleanProviderText(localArtist.biography) : "";
 
     const albums = localArtist?.mbid
         ? db.prepare(`
@@ -958,16 +704,27 @@ export async function saveArtistNfoFile(
         LIMIT 250
     `).all(localArtist.mbid) as Array<{ title: string; release_date: string | null }>
         : [];
+    const providerIds = localArtist.mbid
+        ? db.prepare(`
+            SELECT provider, CAST(provider_id AS TEXT) AS provider_id
+            FROM ProviderItems
+            WHERE entity_type = 'artist'
+              AND artist_mbid = ?
+              AND provider IS NOT NULL
+              AND provider_id IS NOT NULL
+            ORDER BY provider ASC, CAST(provider_id AS TEXT) ASC
+        `).all(localArtist.mbid) as Array<{ provider: string; provider_id: string }>
+        : [];
 
     const elements = [
-        xmlElement("title", artist.name),
-        xmlElement("name", artist.name),
-        xmlElement("sorttitle", artist.name),
+        xmlElement("title", localArtist.name),
+        xmlElement("name", localArtist.name),
+        xmlElement("sorttitle", localArtist.sort_name || localArtist.name),
         xmlElement("biography", bioText),
         xmlElement("outline", bioText),
         xmlElement("musicbrainzartistid", localArtist?.mbid),
         xmlUniqueId("MusicBrainzArtist", localArtist?.mbid, true),
-        xmlUniqueId(`${provider.id}Artist`, artistId),
+        ...providerIds.map((entry) => xmlUniqueId(`${entry.provider}Artist`, entry.provider_id)),
         ...albums.map((album) => {
             const year = String(album.release_date || "").match(/^\d{4}/)?.[0] || "";
             return `  <album>\n${[
@@ -978,8 +735,28 @@ export async function saveArtistNfoFile(
     ].filter((element): element is string => element !== null);
 
     const xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<artist>\n${elements.join("\n")}\n</artist>\n`;
-    writeXmlFile(outputPath, xml);
-    console.log(`✅ [METADATA] Artist NFO saved: ${outputPath}`);
+    const written = writeXmlFile(outputPath, xml);
+    if (written) {
+        console.log(`✅ [METADATA] Artist NFO saved: ${outputPath}`);
+    }
+    return written;
+}
+
+export type AlbumNfoOptions = {
+    releaseGroupMbid?: string | null;
+    releaseMbid?: string | null;
+    librarySlot?: string | null;
+    provider?: string | null;
+    providerAlbumId?: string | null;
+};
+
+function formatNfoTrackDuration(value: number | null | undefined): string | null {
+    const totalSeconds = Number(value);
+    if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return null;
+    const rounded = Math.round(totalSeconds);
+    const minutes = Math.floor(rounded / 60);
+    const seconds = rounded % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 /**
@@ -987,54 +764,121 @@ export async function saveArtistNfoFile(
  */
 export async function saveAlbumNfoFile(
     albumId: string,
-    outputPath: string
-): Promise<void> {
-    const provider = streamingProviderManager.getDefaultStreamingProvider();
-    const album = await getAlbumForNfo(albumId);
-    const reviewText = await getAlbumReviewTextForNfo(albumId);
-    const localAlbum = loadAlbumProviderItem(albumId);
-    const selectedSlot = localAlbum?.release_group_mbid
-        ? db.prepare(`
-            SELECT selected_release_mbid, selected_provider_id
-            FROM ReleaseGroupSlots
+    outputPath: string,
+    options: AlbumNfoOptions = {},
+): Promise<boolean> {
+    let releaseGroupMbid = textOrNull(options.releaseGroupMbid);
+    if (!releaseGroupMbid) {
+        const canonical = db.prepare(`
+            SELECT mbid AS release_group_mbid
+            FROM Albums
+            WHERE mbid = ?
+            UNION ALL
+            SELECT release_group_mbid
+            FROM AlbumReleases
+            WHERE mbid = ?
+            LIMIT 1
+        `).get(albumId, albumId) as { release_group_mbid?: string | null } | undefined;
+        releaseGroupMbid = textOrNull(canonical?.release_group_mbid);
+    }
+    if (!releaseGroupMbid && options.provider) {
+        const qualifiedOffer = db.prepare(`
+            SELECT release_group_mbid
+            FROM ProviderItems
+            WHERE provider = ?
+              AND entity_type = 'album'
+              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            LIMIT 1
+        `).get(options.provider, options.providerAlbumId || albumId) as {
+            release_group_mbid?: string | null;
+        } | undefined;
+        releaseGroupMbid = textOrNull(qualifiedOffer?.release_group_mbid);
+    }
+    if (!releaseGroupMbid) {
+        throw new Error(`Cannot write album NFO without a canonical release group for ${albumId}`);
+    }
+
+    const selectedSlot = db.prepare(`
+        SELECT slot, selected_provider, selected_provider_id, selected_release_mbid
+        FROM ReleaseGroupSlots
+        WHERE release_group_mbid = ?
+          AND (? = '' OR slot = ?)
+        ORDER BY
+          CASE slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+          id ASC
+        LIMIT 1
+    `).get(
+        releaseGroupMbid,
+        String(options.librarySlot || ""),
+        String(options.librarySlot || ""),
+    ) as {
+        slot?: string | null;
+        selected_provider?: string | null;
+        selected_provider_id?: string | null;
+        selected_release_mbid?: string | null;
+    } | undefined;
+    const canonicalReleaseMbid = textOrNull(
+        options.releaseMbid,
+        selectedSlot?.selected_release_mbid,
+        (db.prepare(`
+            SELECT mbid
+            FROM AlbumReleases
             WHERE release_group_mbid = ?
-              AND selected_release_mbid IS NOT NULL
-              AND (
-                selected_provider_id = ?
-                OR selected_provider_id LIKE ?
-                OR selected_provider_id LIKE ?
-                OR selected_provider_id LIKE ?
-              )
-            ORDER BY CASE WHEN slot = 'stereo' THEN 0 ELSE 1 END
+            ORDER BY monitored DESC, CASE WHEN date IS NULL THEN 1 ELSE 0 END, date ASC, mbid ASC
             LIMIT 1
-        `).get(
-            localAlbum.release_group_mbid,
-            albumId,
-            `${albumId};%`,
-            `%;${albumId};%`,
-            `%;${albumId}`,
-        ) as { selected_release_mbid?: string | null; selected_provider_id?: string | null } | undefined
-        : undefined;
-    const canonicalReleaseMbid = selectedSlot?.selected_release_mbid || localAlbum?.release_mbid || null;
-    const canonicalRelease = canonicalReleaseMbid
-        ? db.prepare(`
-            SELECT release.mbid, release_group.title, release.date, release.barcode, release.label,
-                   release_group.genres
-            FROM AlbumReleases release
-            JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
-            WHERE release.mbid = ?
-            LIMIT 1
-        `).get(canonicalReleaseMbid) as {
-            mbid?: string | null;
-            title?: string | null;
-            date?: string | null;
-            barcode?: string | null;
-            label?: string | null;
-            genres?: string | null;
-        } | undefined
-        : undefined;
-    const providerAlbumIds = splitProviderIds(selectedSlot?.selected_provider_id || albumId);
-    const tracks = canonicalRelease?.mbid
+        `).get(releaseGroupMbid) as { mbid?: string | null } | undefined)?.mbid,
+    );
+    const canonicalAlbum = db.prepare(`
+        SELECT
+            release_group.mbid AS release_group_mbid,
+            release_group.title,
+            release_group.artist_mbid,
+            release_group.first_release_date,
+            release_group.review_text,
+            release_group.overview,
+            release_group.genres,
+            release.mbid AS release_mbid,
+            release.date,
+            release.barcode,
+            release.label,
+            COALESCE(NULLIF(TRIM(artist.name), ''), artist_metadata.name) AS artist_name
+        FROM Albums release_group
+        LEFT JOIN AlbumReleases release
+          ON release.mbid = ?
+         AND release.release_group_mbid = release_group.mbid
+        LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = release_group.artist_mbid
+        LEFT JOIN Artists artist ON artist.mbid = release_group.artist_mbid
+        WHERE release_group.mbid = ?
+        LIMIT 1
+    `).get(canonicalReleaseMbid, releaseGroupMbid) as {
+        release_group_mbid: string;
+        title: string;
+        artist_mbid: string | null;
+        first_release_date: string | null;
+        review_text: string | null;
+        overview: string | null;
+        genres: string | null;
+        release_mbid: string | null;
+        date: string | null;
+        barcode: string | null;
+        label: string | null;
+        artist_name: string | null;
+    } | undefined;
+    if (!canonicalAlbum) {
+        throw new Error(`Canonical release group ${releaseGroupMbid} is missing`);
+    }
+
+    const artistCredits = db.prepare(`
+        SELECT credited_name
+        FROM AlbumArtists
+        WHERE release_group_mbid = ?
+        ORDER BY ord ASC
+    `).all(releaseGroupMbid) as Array<{ credited_name: string }>;
+    const artists = artistCredits.length > 0
+        ? artistCredits.map((entry) => entry.credited_name)
+        : [canonicalAlbum.artist_name || "Unknown Artist"];
+
+    const tracks = canonicalAlbum.release_mbid
         ? db.prepare(`
             SELECT
                 track.title,
@@ -1048,23 +892,8 @@ export async function saveAlbumNfoFile(
             LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
             WHERE track.release_mbid = ?
             ORDER BY COALESCE(track.medium_position, 1), COALESCE(track.position, 0), track.id
-        `).all(canonicalRelease.mbid)
-        : db.prepare(`
-        SELECT
-            pi.title,
-            pi.duration,
-            NULL AS track_number,
-            NULL AS volume_number,
-            pi.recording_mbid,
-            pi.track_mbid,
-            recording.isrcs AS recording_isrcs,
-            pi.isrc AS provider_isrc
-        FROM ProviderItems pi
-        LEFT JOIN Recordings recording ON recording.mbid = pi.recording_mbid
-        WHERE pi.entity_type = 'track'
-          AND CAST(pi.album_id AS TEXT) = CAST(? AS TEXT)
-        ORDER BY pi.provider_id
-    `).all(albumId);
+        `).all(canonicalAlbum.release_mbid)
+        : [];
     const nfoTracks = tracks as Array<{
         title: string;
         duration: number | null;
@@ -1073,14 +902,13 @@ export async function saveAlbumNfoFile(
         recording_mbid: string | null;
         track_mbid: string | null;
         recording_isrcs: string | null;
-        provider_isrc?: string | null;
     }>;
-    const releaseDate = canonicalRelease?.date || album.releaseDate;
+    const releaseDate = canonicalAlbum.date || canonicalAlbum.first_release_date;
     const year = releaseDate ? releaseDate.substring(0, 4) : "";
-    const albumRecord = album as any;
-    const artists = Array.isArray(albumRecord.artists) && albumRecord.artists.length > 0
-        ? albumRecord.artists.map((artist: { name?: unknown }) => artist?.name).filter((name: unknown) => String(name ?? "").trim().length > 0)
-        : [albumRecord.artist_name || albumRecord.artist?.name || "Unknown"];
+    const reviewText = cleanProviderText(textOrNull(
+        canonicalAlbum.review_text,
+        canonicalAlbum.overview,
+    ) || "");
 
     // Kodi album.nfo reads <genre> (multiple) and <label>; Jellyfin ignores NFO
     // genre for music albums but still benefits from embedded file tags.
@@ -1089,17 +917,22 @@ export async function saveAlbumNfoFile(
     // children for archival (Kodi has no album-level ISRC and does not wire
     // album.nfo tracks to library songs).
     const albumGenres = parseJsonStringList(
-        canonicalRelease?.genres
-        || (localAlbum?.release_group_mbid
-            ? (db.prepare("SELECT genres FROM Albums WHERE mbid = ? LIMIT 1")
-                .get(localAlbum.release_group_mbid) as { genres?: string | null } | undefined)?.genres
-            : null)
-        || null,
+        canonicalAlbum.genres,
     );
-    const albumLabels = parseJsonStringList(canonicalRelease?.label || null);
+    const albumLabels = parseJsonStringList(canonicalAlbum.label);
+    const providerUniqueIds = new Map<string, string>();
+    const addProviderIds = (provider: string | null | undefined, providerIds: string | null | undefined) => {
+        const normalizedProvider = String(provider || "").trim();
+        if (!normalizedProvider) return;
+        for (const providerId of splitProviderIds(providerIds)) {
+            providerUniqueIds.set(`${normalizedProvider}\u0000${providerId}`, providerId);
+        }
+    };
+    addProviderIds(selectedSlot?.selected_provider, selectedSlot?.selected_provider_id);
+    addProviderIds(options.provider, options.providerAlbumId);
 
     const elements = [
-        xmlElement("title", canonicalRelease?.title || album.title),
+        xmlElement("title", canonicalAlbum.title),
         xmlElement("review", reviewText),
         xmlElement("year", year),
         xmlElement("releasedate", releaseDate),
@@ -1107,23 +940,24 @@ export async function saveAlbumNfoFile(
         ...artists.map((artistName: unknown) => xmlElement("albumartist", artistName)),
         ...albumGenres.map((genre) => xmlElement("genre", genre)),
         ...albumLabels.map((labelName) => xmlElement("label", labelName)),
-        xmlElement("musicbrainzalbumid", canonicalRelease?.mbid || localAlbum?.release_mbid),
-        xmlElement("musicbrainzreleasegroupid", localAlbum?.release_group_mbid),
-        xmlElement("musicbrainzalbumartistid", localAlbum?.artist_mbid),
-        xmlElement("upc", canonicalRelease?.barcode || album.upc),
-        xmlUniqueId("MusicBrainzAlbum", canonicalRelease?.mbid || localAlbum?.release_mbid, true),
-        xmlUniqueId("MusicBrainzReleaseGroup", localAlbum?.release_group_mbid),
-        xmlUniqueId("MusicBrainzAlbumArtist", localAlbum?.artist_mbid),
-        ...providerAlbumIds.map((providerAlbumId) => xmlUniqueId(`${provider.id}Album`, providerAlbumId)),
+        xmlElement("musicbrainzalbumid", canonicalAlbum.release_mbid),
+        xmlElement("musicbrainzreleasegroupid", canonicalAlbum.release_group_mbid),
+        xmlElement("musicbrainzalbumartistid", canonicalAlbum.artist_mbid),
+        xmlElement("upc", canonicalAlbum.barcode),
+        xmlUniqueId("MusicBrainzAlbum", canonicalAlbum.release_mbid, true),
+        xmlUniqueId("MusicBrainzReleaseGroup", canonicalAlbum.release_group_mbid),
+        xmlUniqueId("MusicBrainzAlbumArtist", canonicalAlbum.artist_mbid),
+        ...Array.from(providerUniqueIds.entries()).map(([key, providerAlbumId]) => {
+            const provider = key.split("\u0000", 1)[0];
+            return xmlUniqueId(`${provider}Album`, providerAlbumId);
+        }),
         ...nfoTracks.map((track) => {
-            const trackIsrc = parseJsonStringList(track.recording_isrcs)[0]
-                || String(track.provider_isrc || "").trim()
-                || null;
+            const trackIsrc = parseJsonStringList(track.recording_isrcs)[0] || null;
             const trackElements = [
                 xmlElement("disc", track.volume_number || 1),
                 xmlElement("position", track.track_number),
                 xmlElement("title", track.title),
-                xmlElement("duration", track.duration),
+                xmlElement("duration", formatNfoTrackDuration(track.duration)),
                 xmlElement("isrc", trackIsrc),
                 xmlUniqueId("MusicBrainzTrack", track.track_mbid),
                 xmlUniqueId("MusicBrainzRecording", track.recording_mbid),
@@ -1133,8 +967,11 @@ export async function saveAlbumNfoFile(
     ].filter((element): element is string => element !== null);
 
     const xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<album>\n${elements.join("\n")}\n</album>\n`;
-    writeXmlFile(outputPath, xml);
-    console.log(`✅ [METADATA] Album NFO saved: ${outputPath}`);
+    const written = writeXmlFile(outputPath, xml);
+    if (written) {
+        console.log(`✅ [METADATA] Album NFO saved: ${outputPath}`);
+    }
+    return written;
 }
 
 /**
@@ -1155,7 +992,9 @@ export async function saveVideoNfoFile(
     const artistRow = videoArtistId
         ? db.prepare("SELECT mbid FROM Artists WHERE id = ?").get(videoArtistId) as { mbid?: string | null } | undefined
         : undefined;
-    const albumItem = videoAlbumId ? loadAlbumProviderItem(String(videoAlbumId)) : null;
+    const albumItem = videoAlbumId
+        ? loadAlbumProviderItem(String(videoAlbumId), localVideo?.provider)
+        : null;
     const albumRow = albumItem ? {
         title: albumItem.release_group_title || albumItem.release_title || albumItem.provider_title,
         mbid: albumItem.release_mbid,

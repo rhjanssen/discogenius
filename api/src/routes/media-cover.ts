@@ -4,9 +4,6 @@ import { Router } from "express";
 
 import { CONFIG_DIR } from "../services/config/config.js";
 import {
-  resolveAlbumArtwork,
-  resolveArtistArtwork,
-  resolveVideoArtwork,
   normalizeMediaCoverEntityId,
 } from "../services/metadata/media-cover-service.js";
 
@@ -18,7 +15,6 @@ const MEDIA_COVER_ROOT = path.resolve(CONFIG_DIR, "media-cover");
 // Album/artist UI: 500 + 250. Video: bare cover.jpg is origin; cards use 250 only.
 const UI_COVER_HEIGHTS = [500, 250] as const;
 const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".gif"] as const;
-const artworkResolveInFlight = new Map<string, Promise<void>>();
 
 function mediaCoverFolder(...segments: string[]): string | null {
   const folder = path.resolve(MEDIA_COVER_ROOT, ...segments);
@@ -141,45 +137,6 @@ function sendMediaCover(res: any, filePath: string): void {
   });
 }
 
-function coalescedArtworkResolve(key: string, resolve: () => Promise<unknown>): Promise<void> {
-  const existing = artworkResolveInFlight.get(key);
-  if (existing) {
-    return existing;
-  }
-
-  const pending = resolve()
-    .then(() => undefined)
-    .finally(() => {
-      if (artworkResolveInFlight.get(key) === pending) {
-        artworkResolveInFlight.delete(key);
-      }
-    });
-  artworkResolveInFlight.set(key, pending);
-  return pending;
-}
-
-/**
- * Serve like Lidarr: local bytes only on the hot path. Fetch/resize only when
- * the file is missing (cold cache / first paint), never block serving existing
- * bytes on preference re-checks.
- */
-async function resolveArtworkWhenNeeded(options: {
-  resolveKey: string;
-  filePath: string | null;
-  resolve: () => Promise<unknown>;
-  refreshFilePath: () => string | null;
-  logLabel: string;
-}): Promise<string | null> {
-  if (options.filePath) {
-    return options.filePath;
-  }
-
-  await coalescedArtworkResolve(options.resolveKey, options.resolve).catch((error) => {
-    console.warn(`[MediaCover Route] Failed to fetch missing ${options.logLabel} on-the-fly:`, error);
-  });
-  return options.refreshFilePath();
-}
-
 router.get("/Albums/:albumId/:filename", async (req, res) => {
   const albumId = normalizeMediaCoverEntityId(req.params.albumId);
   const albumFolder = albumId ? mediaCoverFolder("Albums", albumId) : null;
@@ -187,14 +144,7 @@ router.get("/Albums/:albumId/:filename", async (req, res) => {
     return res.status(400).end();
   }
   const filename = String(req.params.filename || "");
-  const refreshFilePath = () => resolveUiMediaCoverFilePath(albumFolder, filename);
-  const filePath = await resolveArtworkWhenNeeded({
-    resolveKey: `Album:${albumId}:Cover`,
-    filePath: refreshFilePath(),
-    resolve: () => resolveAlbumArtwork({ albumMbid: albumId }),
-    refreshFilePath,
-    logLabel: `album cover for ${albumId}`,
-  });
+  const filePath = resolveUiMediaCoverFilePath(albumFolder, filename);
 
   if (!filePath) {
     return res.status(404).end();
@@ -209,14 +159,7 @@ router.get("/Videos/:videoId/:filename", async (req, res) => {
     return res.status(400).end();
   }
   const filename = String(req.params.filename || "");
-  const refreshFilePath = () => resolveUiMediaCoverFilePath(videoFolder, filename, { preferOrigin: true });
-  const filePath = await resolveArtworkWhenNeeded({
-    resolveKey: `Video:${videoId}:Cover`,
-    filePath: refreshFilePath(),
-    resolve: () => resolveVideoArtwork({ videoId }),
-    refreshFilePath,
-    logLabel: `video cover for ${videoId}`,
-  });
+  const filePath = resolveUiMediaCoverFilePath(videoFolder, filename, { preferOrigin: true });
 
   if (!filePath) {
     return res.status(404).end();
@@ -231,15 +174,7 @@ router.get("/:artistId/:filename", async (req, res) => {
     return res.status(400).end();
   }
   const filename = String(req.params.filename || "");
-  const requestedCoverType = filename.replace(/-\d+(?=\.[a-z0-9]+$)/i, "").replace(/\.[a-z0-9]+$/i, "") || "Poster";
-  const refreshFilePath = () => resolveUiMediaCoverFilePath(artistFolder, filename);
-  const filePath = await resolveArtworkWhenNeeded({
-    resolveKey: `Artist:${artistId}:${requestedCoverType}`,
-    filePath: refreshFilePath(),
-    resolve: () => resolveArtistArtwork({ artistMbid: artistId, preferredCoverTypes: requestedCoverType }),
-    refreshFilePath,
-    logLabel: `artist cover for ${artistId}`,
-  });
+  const filePath = resolveUiMediaCoverFilePath(artistFolder, filename);
 
   if (!filePath) {
     return res.status(404).end();

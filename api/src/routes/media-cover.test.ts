@@ -145,6 +145,32 @@ test("local covers expose validators, content length, HEAD, and conditional 304"
   assert.equal((await head.arrayBuffer()).byteLength, 0);
 });
 
+test("a true cache miss returns 404 without acquiring artwork on the delivery route", async () => {
+  const albumMbid = "route-cold-miss-album";
+  const artistMbid = "route-cold-miss-artist";
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run(artistMbid, "Cold Miss Artist");
+  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, images) VALUES (?, ?, ?, ?)")
+    .run(
+      albumMbid,
+      artistMbid,
+      "Cold Miss Album",
+      JSON.stringify([{ coverType: "Cover", url: "https://example.test/remote.jpg" }]),
+    );
+
+  let remoteFetches = 0;
+  globalThis.fetch = (async () => {
+    remoteFetches += 1;
+    throw new Error("delivery route must not fetch");
+  }) as typeof fetch;
+
+  const response = await rawRequest(
+    `${baseUrl}/media-cover/Albums/${albumMbid}/cover.jpg`,
+  );
+  assert.equal(response.statusCode, 404);
+  assert.equal(remoteFetches, 0);
+});
+
 test("existing local covers are served immediately without blocking on source refresh", async () => {
   const albumMbid = "route-source-change-album";
   const artistMbid = "route-source-change-artist";

@@ -88,6 +88,7 @@ import { useArtworkBrandColor } from "@/hooks/useArtworkBrandColor";
 import { useUltraBlurHero } from "@/hooks/useUltraBlurHero";
 import { getAlbumPath, getAlbumRouteTrackTarget } from "@/utils/albumNavigation";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
+import { formatDescriptiveTrackPosition } from "@/utils/trackPosition";
 import { readArtistViewMode, type ArtistViewMode } from "@/utils/artistViewMode";
 import {
   detailActionGlassButtonStyles,
@@ -122,20 +123,6 @@ const Play24 = bundleIcon(Play24Filled, Play24Regular);
 
 function albumAssociatedVideoElementId(videoId: string): string {
   return `album-associated-video-${videoId}`;
-}
-
-function formatAssociatedVideoTrackLabel(video: AlbumAssociatedVideo): string | null {
-  const trackNumber = video.track_number == null || !Number.isFinite(video.track_number)
-    ? null
-    : Math.trunc(video.track_number);
-  const volumeNumber = video.volume_number == null || !Number.isFinite(video.volume_number)
-    ? null
-    : Math.trunc(video.volume_number);
-  if (trackNumber == null || trackNumber <= 0) return null;
-  if (volumeNumber != null && volumeNumber > 1) {
-    return `Disc ${volumeNumber} · Track ${trackNumber}`;
-  }
-  return `Track ${trackNumber}`;
 }
 
 const useStyles = makeStyles({
@@ -1703,7 +1690,7 @@ const AlbumPage = () => {
             >
               {associatedVideos.map((video) => {
                 const videoId = String(video.id);
-                const trackLabel = formatAssociatedVideoTrackLabel(video);
+                const trackLabel = formatDescriptiveTrackPosition(video);
                 const year = video.release_date ? new Date(video.release_date).getFullYear() : null;
                 const subtitle = [trackLabel, year || null].filter(Boolean).join(" · ");
                 const videoProvider = String(video.provider || "").trim() || null;

@@ -18,6 +18,20 @@ export type ArtistWorkflowEntryJobType =
   | typeof CommandNames.RescanFolders
   | typeof CommandNames.CurateArtist;
 
+/**
+ * Workflow tiers leave enough room for every monitored handoff to run
+ * depth-first before first-degree credited-artist metadata backfill begins.
+ */
+export const ARTIST_WORKFLOW_PRIORITY = {
+  MONITORED_BATCH_BASE: -1,
+  CREDITED_ARTIST_BASE: -10,
+} as const;
+
+export function nextArtistWorkflowPriority(priority?: number | null): number {
+  const normalized = Number(priority);
+  return Number.isFinite(normalized) ? normalized + 1 : 1;
+}
+
 export interface ManagedArtistWorkflowProgress {
   processed: number;
   total: number;

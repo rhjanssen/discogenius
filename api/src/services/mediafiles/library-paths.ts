@@ -5,6 +5,8 @@ import { Config } from "../config/config.js";
 import { normalizeComparablePath } from "./path-utils.js";
 import type { library_root } from "../config/naming.js";
 
+export type CurrentLibraryRoots = Readonly<Record<library_root, string>>;
+
 function isAbsolutePathLike(inputPath: string): boolean {
   return path.isAbsolute(inputPath) || /^[A-Za-z]:[\\/]/.test(String(inputPath || ""));
 }
@@ -15,14 +17,24 @@ function basenameForCompare(inputPath: string): string {
   return segments.length > 0 ? segments[segments.length - 1] : "";
 }
 
-function guessRootKeyFromStoredPath(candidatePath: string): library_root | null {
+function currentRootPath(
+  key: library_root,
+  roots?: CurrentLibraryRoots,
+): string {
+  return roots?.[key] ?? getCurrentLibraryRootPath(key);
+}
+
+function guessRootKeyFromStoredPath(
+  candidatePath: string,
+  roots?: CurrentLibraryRoots,
+): library_root | null {
   const candidateBase = basenameForCompare(candidatePath);
   if (!candidateBase) {
     return null;
   }
 
   for (const key of ["music", "spatial", "videos"] as const) {
-    const currentBase = basenameForCompare(getCurrentLibraryRootPath(key));
+    const currentBase = basenameForCompare(currentRootPath(key, roots));
     if (candidateBase === currentBase) {
       return key;
     }
@@ -71,6 +83,7 @@ export function getCurrentLibraryRootPath(libraryRoot: library_root): string {
 export function resolveLibraryRootKey(
   libraryRoot: string | null | undefined,
   filePath?: string | null | undefined,
+  roots?: CurrentLibraryRoots,
 ): library_root | null {
   const direct = String(libraryRoot || "").trim();
   if (direct === "music" || direct === "spatial" || direct === "videos") {
@@ -82,13 +95,13 @@ export function resolveLibraryRootKey(
     .filter(Boolean);
 
   for (const candidate of candidates) {
-    const guessedKey = guessRootKeyFromStoredPath(candidate);
+    const guessedKey = guessRootKeyFromStoredPath(candidate, roots);
     if (guessedKey) {
       return guessedKey;
     }
 
     for (const key of ["music", "spatial", "videos"] as const) {
-      if (isWithinRoot(candidate, getCurrentLibraryRootPath(key))) {
+      if (isWithinRoot(candidate, currentRootPath(key, roots))) {
         return key;
       }
     }
