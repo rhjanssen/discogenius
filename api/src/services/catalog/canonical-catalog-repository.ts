@@ -101,11 +101,11 @@ export class CanonicalCatalogRepository {
   upsertReleaseGroup(input: CanonicalReleaseGroupInput): number {
     const row = this.db.prepare(`
       INSERT INTO Albums (
-        mbid, primary_artist_id, title, primary_type, secondary_types,
+        mbid, artist_metadata_id, title, primary_type, secondary_types,
         first_release_date, disambiguation, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
-        primary_artist_id = excluded.primary_artist_id,
+        artist_metadata_id = excluded.artist_metadata_id,
         title = excluded.title,
         primary_type = excluded.primary_type,
         secondary_types = excluded.secondary_types,
@@ -185,11 +185,11 @@ export class CanonicalCatalogRepository {
   upsertTrack(input: CanonicalTrackInput): number {
     const row = this.db.prepare(`
       INSERT INTO Tracks (
-        mbid, release_id, recording_id, medium_position, position,
+        mbid, album_release_id, recording_id, medium_position, position,
         number, title, length_ms, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
-        release_id = excluded.release_id,
+        album_release_id = excluded.album_release_id,
         recording_id = excluded.recording_id,
         medium_position = excluded.medium_position,
         position = excluded.position,

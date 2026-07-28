@@ -52,7 +52,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       id INTEGER PRIMARY KEY,
       mbid TEXT NOT NULL UNIQUE,
       foreign_album_id TEXT UNIQUE,
-      primary_artist_id INTEGER,
+      artist_metadata_id INTEGER,
       title TEXT NOT NULL,
       primary_type TEXT,
       secondary_types TEXT,
@@ -74,7 +74,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       old_foreign_ids TEXT,
       content_hash TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (primary_artist_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL
+      FOREIGN KEY (artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL
     );
 
     CREATE TABLE AlbumReleases (
@@ -126,7 +126,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       mbid TEXT NOT NULL UNIQUE,
       foreign_track_id TEXT UNIQUE,
       foreign_recording_id TEXT,
-      release_id INTEGER NOT NULL,
+      album_release_id INTEGER NOT NULL,
       recording_id INTEGER NOT NULL,
       medium_position INTEGER NOT NULL,
       position INTEGER NOT NULL,
@@ -134,8 +134,8 @@ export function createDomainSchemaV41(db: Database.Database): void {
       title TEXT NOT NULL,
       length_ms INTEGER,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (release_id, medium_position, position),
-      FOREIGN KEY (release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE,
+      UNIQUE (album_release_id, medium_position, position),
+      FOREIGN KEY (album_release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE,
       FOREIGN KEY (recording_id) REFERENCES Recordings(id) ON DELETE CASCADE
     );
 
@@ -502,7 +502,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE TABLE TrackFiles (
       id INTEGER PRIMARY KEY,
       library_id INTEGER NOT NULL,
-      release_id INTEGER NOT NULL,
+      album_release_id INTEGER NOT NULL,
       track_id INTEGER,
       recording_id INTEGER NOT NULL,
       provider_item_id INTEGER,
@@ -538,7 +538,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       modified_at TEXT,
       verified_at TEXT,
       FOREIGN KEY (library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
-      FOREIGN KEY (release_id) REFERENCES AlbumReleases(id),
+      FOREIGN KEY (album_release_id) REFERENCES AlbumReleases(id),
       FOREIGN KEY (track_id) REFERENCES Tracks(id),
       FOREIGN KEY (recording_id) REFERENCES Recordings(id),
       FOREIGN KEY (provider_item_id) REFERENCES ProviderItems(id) ON DELETE SET NULL,
@@ -558,10 +558,10 @@ export function createDomainSchemaV41(db: Database.Database): void {
 
   db.exec(`
     CREATE INDEX idx_managed_artists_artist ON ManagedArtists(artist_id);
-    CREATE INDEX idx_albums_primary_artist ON Albums(primary_artist_id, first_release_date);
+    CREATE INDEX idx_albums_primary_artist ON Albums(artist_metadata_id, first_release_date);
     CREATE INDEX idx_releases_group ON AlbumReleases(release_group_id, date);
-    CREATE INDEX idx_tracks_release_position ON Tracks(release_id, medium_position, position);
-    CREATE INDEX idx_tracks_recording_release ON Tracks(recording_id, release_id);
+    CREATE INDEX idx_tracks_release_position ON Tracks(album_release_id, medium_position, position);
+    CREATE INDEX idx_tracks_recording_release ON Tracks(recording_id, album_release_id);
     CREATE INDEX idx_rg_credits_artist ON ReleaseGroupArtistCredits(artist_id, release_group_id);
     CREATE INDEX idx_release_credits_artist ON ReleaseArtistCredits(artist_id, release_id);
     CREATE INDEX idx_track_credits_artist ON TrackArtistCredits(artist_id, track_id);
@@ -601,7 +601,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE INDEX idx_acquisition_tracks_match ON AcquisitionPlanTracks(provider_track_match_id);
     CREATE INDEX idx_track_files_library_track ON TrackFiles(library_id, track_id);
     CREATE INDEX idx_track_files_library_recording ON TrackFiles(library_id, recording_id);
-    CREATE INDEX idx_track_files_library_release ON TrackFiles(library_id, release_id);
+    CREATE INDEX idx_track_files_library_release ON TrackFiles(library_id, album_release_id);
   `);
 
   db.exec(`

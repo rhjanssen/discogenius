@@ -22,7 +22,7 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
 
     db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
     db.prepare("INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1)").run();
-    db.prepare("INSERT INTO Albums (id, mbid, primary_artist_id, title) VALUES (1, 'group-a', 1, 'Group A')").run();
+    db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A')").run();
     db.prepare("INSERT INTO AlbumReleases (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A')").run();
     const libraryArtistId = repository.upsertLibraryArtist({
       libraryId: libraries.stereoId,

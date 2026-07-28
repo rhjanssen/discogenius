@@ -122,11 +122,11 @@ test("schema 41 provider items contain provider-native facts only", () => {
 test("schema 41 validates provider membership, credits, and track recording identity", () => {
   withSchema((db) => {
     db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-mbid', 'Artist')").run();
-    db.prepare("INSERT INTO Albums (id, mbid, primary_artist_id, title) VALUES (1, 'group-mbid', 1, 'Release Group')").run();
+    db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-mbid', 1, 'Release Group')").run();
     db.prepare("INSERT INTO AlbumReleases (id, mbid, release_group_id, title) VALUES (1, 'release-mbid', 1, 'Release')").run();
     db.prepare("INSERT INTO Recordings (id, mbid, title) VALUES (1, 'recording-a', 'A'), (2, 'recording-b', 'B')").run();
     db.prepare(`
-      INSERT INTO Tracks (id, mbid, release_id, recording_id, medium_position, position, title)
+      INSERT INTO Tracks (id, mbid, album_release_id, recording_id, medium_position, position, title)
       VALUES (1, 'track-a', 1, 1, 1, 1, 'A')
     `).run();
     db.prepare(`

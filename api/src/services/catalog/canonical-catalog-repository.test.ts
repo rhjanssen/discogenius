@@ -54,8 +54,8 @@ test("canonical catalogue writes resolve boundaries once and persist integer rel
       SELECT release_group_id FROM AlbumReleases WHERE id = ?
     `).get(releaseId), { release_group_id: groupId });
     assert.deepEqual(db.prepare(`
-      SELECT release_id, recording_id FROM Tracks WHERE id = ?
-    `).get(trackId), { release_id: releaseId, recording_id: recordingId });
+      SELECT album_release_id, recording_id FROM Tracks WHERE id = ?
+    `).get(trackId), { album_release_id: releaseId, recording_id: recordingId });
     assert.deepEqual(db.prepare(`
       SELECT artist_id, ordinal, credited_name, join_phrase
       FROM ReleaseGroupArtistCredits

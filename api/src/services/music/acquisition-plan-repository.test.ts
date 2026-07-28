@@ -16,10 +16,10 @@ test("plan replacement is atomic and partial completion counts only imported ass
     db.exec(`
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist');
       INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
-      INSERT INTO Albums (id, mbid, primary_artist_id, title) VALUES (1, 'group', 1, 'Group');
+      INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Group');
       INSERT INTO AlbumReleases (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Release');
       INSERT INTO Recordings (id, mbid, title) VALUES (1, 'recording-1', 'One'), (2, 'recording-2', 'Two');
-      INSERT INTO Tracks (id, mbid, release_id, recording_id, medium_position, position, title)
+      INSERT INTO Tracks (id, mbid, album_release_id, recording_id, medium_position, position, title)
         VALUES (1, 'track-1', 1, 1, 1, 1, 'One'), (2, 'track-2', 1, 2, 1, 2, 'Two');
       INSERT INTO MetadataProfiles (id, name, release_type_policy) VALUES (1, 'Default', '{}');
       INSERT INTO QualityProfiles (
@@ -87,7 +87,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
     });
     db.prepare(`
       INSERT INTO TrackFiles (
-        library_id, release_id, track_id, recording_id, file_path, relative_path,
+        library_id, album_release_id, track_id, recording_id, file_path, relative_path,
         filename, extension, file_class, source_quality, imported_quality
       ) VALUES (1, 1, 1, 1, '/library/stereo/one.flac', 'one.flac', 'one.flac',
                 'flac', 'audio', 'lossless', 'lossless')
