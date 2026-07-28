@@ -1378,6 +1378,8 @@ export class DownloadProcessor {
                 path: entry.downloadPath,
                 quality: payload.quality ?? null,
                 qualityProfile: payload.qualityProfile,
+                libraryId: payload.libraryId,
+                acquisitionPlanId: payload.acquisitionPlanId,
                 title: payload.title,
                 artist: payload.artist,
                 artists: payload.artists,

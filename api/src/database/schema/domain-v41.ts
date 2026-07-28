@@ -374,7 +374,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE QualityProfiles (
+    CREATE TABLE quality_profiles (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       allowed_source_formats TEXT NOT NULL,
@@ -398,7 +398,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (metadata_profile_id) REFERENCES MetadataProfiles(id),
-      FOREIGN KEY (quality_profile_id) REFERENCES QualityProfiles(id)
+      FOREIGN KEY (quality_profile_id) REFERENCES quality_profiles(id)
     );
 
     CREATE TABLE LibraryArtists (

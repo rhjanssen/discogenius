@@ -142,6 +142,8 @@ export interface CommandBodyCommon {
   url?: string | null;
   path?: string | null;
   libraryRoot?: string;
+  libraryId?: number;
+  acquisitionPlanId?: number;
   slot?: "stereo" | "spatial" | string;
   trackNumber?: number | null;
   volumeNumber?: number | null;
@@ -263,6 +265,8 @@ export interface ImportDownloadCommand extends CommandBodyCommon {
   originalJobId?: number;
   acquisitionMode?: DownloadAlbumAcquisitionMode;
   trackOffers?: DownloadTrackOffer[];
+  libraryId?: number;
+  acquisitionPlanId?: number;
 }
 
 export interface ConfigPruneCommand extends CommandBodyCommon {

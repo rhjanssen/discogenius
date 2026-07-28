@@ -23,17 +23,25 @@ export class LibraryCurationRepository {
     return this.db.transaction(() => {
       this.db.prepare(`
         INSERT OR IGNORE INTO MetadataProfiles (
-          id, name, release_type_policy, explicit_policy,
+          name, release_type_policy, explicit_policy,
           require_provider_availability, redundancy_enabled
-        ) VALUES (1, 'Default', '{}', 'allow', 1, 0)
+        ) VALUES ('Default', '{}', 'allow', 1, 0)
       `).run();
       this.db.prepare(`
-        INSERT OR IGNORE INTO QualityProfiles (
-          id, name, allowed_source_formats, preference_order, cutoff,
+        INSERT INTO quality_profiles (
+          name, allowed_source_formats, preference_order, cutoff,
           continue_upgrades, fallback_policy, output_format, transcode_policy
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+          allowed_source_formats = excluded.allowed_source_formats,
+          preference_order = excluded.preference_order,
+          cutoff = excluded.cutoff,
+          continue_upgrades = excluded.continue_upgrades,
+          fallback_policy = excluded.fallback_policy,
+          output_format = excluded.output_format,
+          transcode_policy = excluded.transcode_policy,
+          updated_at = CURRENT_TIMESTAMP
       `).run(
-        1,
         "High Quality",
         JSON.stringify(["lossless", "hires-lossless"]),
         JSON.stringify(["hires-lossless", "lossless"]),
@@ -44,12 +52,20 @@ export class LibraryCurationRepository {
         "downconvert_hires",
       );
       this.db.prepare(`
-        INSERT OR IGNORE INTO QualityProfiles (
-          id, name, allowed_source_formats, preference_order, cutoff,
+        INSERT INTO quality_profiles (
+          name, allowed_source_formats, preference_order, cutoff,
           continue_upgrades, fallback_policy, output_format, transcode_policy
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+          allowed_source_formats = excluded.allowed_source_formats,
+          preference_order = excluded.preference_order,
+          cutoff = excluded.cutoff,
+          continue_upgrades = excluded.continue_upgrades,
+          fallback_policy = excluded.fallback_policy,
+          output_format = excluded.output_format,
+          transcode_policy = excluded.transcode_policy,
+          updated_at = CURRENT_TIMESTAMP
       `).run(
-        2,
         "Spatial",
         JSON.stringify(["spatial"]),
         JSON.stringify(["spatial"]),
@@ -59,9 +75,23 @@ export class LibraryCurationRepository {
         JSON.stringify({ spatial: true }),
         "preserve",
       );
+      const metadataProfileId = (this.db.prepare(`
+        SELECT id FROM MetadataProfiles WHERE name = 'Default'
+      `).get() as { id: number }).id;
+      const qualityProfileRows = this.db.prepare(`
+        SELECT id, name FROM quality_profiles WHERE name IN ('High Quality', 'Spatial')
+      `).all() as Array<{ id: number; name: string }>;
+      const qualityProfileIdByName = new Map(
+        qualityProfileRows.map((profile) => [profile.name, profile.id]),
+      );
+      const highQualityProfileId = qualityProfileIdByName.get("High Quality");
+      const spatialQualityProfileId = qualityProfileIdByName.get("Spatial");
+      if (highQualityProfileId == null || spatialQualityProfileId == null) {
+        throw new Error("Default library quality profiles were not materialized");
+      }
       const upsertLibrary = this.db.prepare(`
         INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id, enabled)
-        VALUES (?, ?, 1, ?, 1)
+        VALUES (?, ?, ?, ?, 1)
         ON CONFLICT(name) DO UPDATE SET
           root_path = excluded.root_path,
           metadata_profile_id = excluded.metadata_profile_id,
@@ -70,8 +100,18 @@ export class LibraryCurationRepository {
           updated_at = CURRENT_TIMESTAMP
         RETURNING id
       `);
-      const stereoId = (upsertLibrary.get("Stereo", paths.stereoRoot, 1) as { id: number }).id;
-      const spatialId = (upsertLibrary.get("Spatial", paths.spatialRoot, 2) as { id: number }).id;
+      const stereoId = (upsertLibrary.get(
+        "Stereo",
+        paths.stereoRoot,
+        metadataProfileId,
+        highQualityProfileId,
+      ) as { id: number }).id;
+      const spatialId = (upsertLibrary.get(
+        "Spatial",
+        paths.spatialRoot,
+        metadataProfileId,
+        spatialQualityProfileId,
+      ) as { id: number }).id;
       return { stereoId, spatialId };
     })();
   }

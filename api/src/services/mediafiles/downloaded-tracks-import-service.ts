@@ -20,6 +20,15 @@ import { ProviderTrackTagSupplementService } from "./provider-track-tag-suppleme
 import { TrackLyricsMaterializer, type TrackLyricsMaterializeResult } from "./track-lyrics-materializer.js";
 import { removeEmptyParents } from "./library-files.js";
 import { Config } from "../config/config.js";
+import {
+    decideImportedQuality,
+    QualityProfileRepository,
+    type ImportQualityDecision,
+} from "../music/quality-profile-policy.js";
+import { classifyNeutralAudio } from "../providers/provider-quality.js";
+import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
+import { deriveQuality, parseAudioFile } from "./audioUtils.js";
+import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
@@ -127,6 +136,121 @@ function workspaceContainsMediaFiles(dir: string): boolean {
     }
 
     return false;
+}
+
+const AUDIO_IMPORT_EXTENSIONS = new Set([
+    ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".wma", ".ape", ".mp2",
+]);
+
+function listWorkspaceAudioFiles(dir: string): string[] {
+    const files: string[] = [];
+    const stack = [dir];
+    while (stack.length > 0) {
+        const current = stack.pop();
+        if (!current) continue;
+        const entries = fs.readdirSync(current, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(current, entry.name);
+            if (entry.isDirectory()) stack.push(fullPath);
+            else if (entry.isFile() && AUDIO_IMPORT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+                files.push(fullPath);
+            }
+        }
+    }
+    return files.sort((left, right) => left.localeCompare(right));
+}
+
+interface PreparedImportQuality {
+    sourceQuality: string;
+    importedQuality: string;
+}
+
+async function prepareWorkspaceForLibraryProfile(
+    downloadPath: string,
+    libraryId: number,
+    isCancelled?: () => boolean,
+): Promise<Map<string, PreparedImportQuality>> {
+    const library = db.prepare(`
+        SELECT quality_profile_id FROM Libraries WHERE id = ? AND enabled = 1
+    `).get(libraryId) as { quality_profile_id: number } | undefined;
+    if (!library) throw new Error(`Import library ${libraryId} is unavailable`);
+    const profile = new QualityProfileRepository(db).get(library.quality_profile_id);
+    const outcomes = new Map<string, PreparedImportQuality>();
+    for (const filePath of listWorkspaceAudioFiles(downloadPath)) {
+        if (isCancelled?.()) throw new ImportDownloadCancelledError("quality-profile conversion");
+        const metrics = await parseAudioFile(filePath);
+        const legacyQuality = deriveQuality(path.extname(filePath), metrics);
+        const normalizedQuality = isSpatialAudioQuality(legacyQuality)
+            ? "spatial"
+            : classifyNeutralAudio(legacyQuality)
+                || classifyNeutralAudio(metrics.codec)
+                || (path.extname(filePath).toLowerCase() === ".flac" ? "lossless" : "lossy");
+        const decision: ImportQualityDecision = decideImportedQuality(profile, {
+            quality: normalizedQuality,
+            codec: metrics.codec,
+            bitDepth: metrics.bitDepth,
+            sampleRate: metrics.sampleRate,
+            bitrate: metrics.bitrate,
+            spatialFormat: normalizedQuality === "spatial" ? legacyQuality : null,
+        });
+        if (!decision.accepted || !decision.importedQuality) {
+            throw new Error(`Source ${path.basename(filePath)} does not satisfy ${profile.name}: ${decision.reason}`);
+        }
+        const result = await transcodeForQualityProfile(filePath, decision, { isCancelled });
+        const providerKey = path.basename(result.outputPath, path.extname(result.outputPath));
+        outcomes.set(providerKey, {
+            sourceQuality: decision.sourceQuality,
+            importedQuality: decision.importedQuality,
+        });
+    }
+    return outcomes;
+}
+
+function persistPreparedImportQuality(
+    libraryId: number,
+    outcomes: ReadonlyMap<string, PreparedImportQuality>,
+    processedTrackIds: readonly string[],
+): void {
+    const update = db.prepare(`
+        UPDATE TrackFiles
+        SET
+          library_id = ?,
+          file_class = 'audio',
+          source_quality = ?,
+          imported_quality = ?
+        WHERE provider_id = ?
+          AND file_type = 'track'
+          AND (library_id IS NULL OR library_id = ?)
+    `);
+    const resolved = new Map<string, PreparedImportQuality>();
+    const unused = [...outcomes.entries()];
+    for (const providerId of processedTrackIds) {
+        const direct = outcomes.get(String(providerId));
+        if (direct) {
+            resolved.set(String(providerId), direct);
+            const index = unused.findIndex(([key]) => key === String(providerId));
+            if (index >= 0) unused.splice(index, 1);
+        }
+    }
+    const unmatchedProviderIds = processedTrackIds
+        .map(String)
+        .filter((providerId) => !resolved.has(providerId));
+    if (unmatchedProviderIds.length === unused.length) {
+        unmatchedProviderIds.forEach((providerId, index) => {
+            resolved.set(providerId, unused[index][1]);
+        });
+    }
+    db.transaction(() => {
+        for (const [providerId, outcome] of resolved) {
+            update.run(
+                libraryId,
+                outcome.sourceQuality,
+                outcome.importedQuality,
+                providerId,
+                libraryId,
+            );
+        }
+    })();
 }
 
 function recoverExistingLibraryImport(
@@ -372,6 +496,7 @@ export class DownloadedTracksImportService {
     try {
         cancellationCheckpoint("preparing import");
         let organizeResult: OrganizeResult;
+        let preparedImportQuality = new Map<string, PreparedImportQuality>();
         const workspaceHasMedia = workspaceContainsMediaFiles(downloadPath);
         if (!workspaceHasMedia) {
             const recovered = recoverExistingLibraryImport(type, providerId, provider);
@@ -392,6 +517,19 @@ export class DownloadedTracksImportService {
             console.warn(`[ImportDownload] Download workspace missing or empty for ${type} ${providerId}, but imported library file(s) already exist. Recovering import job.`);
         } else {
             cancellationCheckpoint("before organizing downloaded files");
+            if (type !== "video" && job.payload.libraryId != null) {
+                options.updateState({
+                    progress: 10,
+                    description: "ImportDownload: applying quality profile",
+                    statusMessage: "Applying library quality profile",
+                    state: "importing",
+                });
+                preparedImportQuality = await prepareWorkspaceForLibraryProfile(
+                    downloadPath,
+                    job.payload.libraryId,
+                    options.isCancelled,
+                );
+            }
             options.updateState({
                 progress: 15,
                 description: "ImportDownload: importing downloaded files",
@@ -441,6 +579,13 @@ export class DownloadedTracksImportService {
         }
 
         cancellationCheckpoint("after organizing downloaded files");
+        if (job.payload.libraryId != null && preparedImportQuality.size > 0) {
+            persistPreparedImportQuality(
+                job.payload.libraryId,
+                preparedImportQuality,
+                organizeResult.processedTrackIds,
+            );
+        }
 
         options.updateState({
             progress: 78,

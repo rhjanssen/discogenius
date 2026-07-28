@@ -42,7 +42,7 @@ function fixture() {
     ) VALUES (1, 'Default', '{}', 'allow', 1, 0)
   `).run();
   db.prepare(`
-    INSERT INTO QualityProfiles (
+    INSERT INTO quality_profiles (
       id, name, allowed_source_formats, preference_order, cutoff,
       continue_upgrades, fallback_policy, output_format, transcode_policy
     ) VALUES (1, 'High', '["lossless"]', '["lossless"]', 'lossless', 0, 'none', '{}', 'preserve')

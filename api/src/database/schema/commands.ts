@@ -26,7 +26,7 @@ export function createCommandsSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE scheduled_tasks (
       task_key TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
+      name TEXT NOT NULL UNIQUE,
       interval_minutes INT NOT NULL,
       enabled BOOLEAN NOT NULL DEFAULT 1,
       last_queued_at DATETIME,
@@ -101,7 +101,6 @@ export function createCommandsIndexes(db: Database.Database): void {
   db.exec(`CREATE INDEX idx_commands_poll ON commands(status, priority DESC, trigger DESC, queue_order ASC, created_at ASC)`);
   db.exec(`CREATE INDEX idx_commands_queue_view ON commands(name, status, priority, trigger, queue_order, created_at, started_at, updated_at, id)`);
   db.exec(`CREATE INDEX idx_scheduled_tasks_enabled ON scheduled_tasks(enabled)`);
-  db.exec(`CREATE INDEX idx_quality_profiles_name ON quality_profiles(name)`);
   db.exec("CREATE INDEX idx_history_events_date ON history_events(date DESC)");
   db.exec("CREATE INDEX idx_history_events_artist ON history_events(artist_id, date DESC)");
   db.exec("CREATE INDEX idx_history_events_album ON history_events(album_id, date DESC)");
