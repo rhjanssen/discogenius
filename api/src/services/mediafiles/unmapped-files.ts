@@ -152,6 +152,124 @@ export class UnmappedFilesService {
         return this.importService.bulkImportUnmapped(items);
     }
 
+    listManualImportLibraries(): Array<{
+        id: number;
+        name: string;
+        rootPath: string;
+        qualityProfile: string;
+    }> {
+        return db.prepare(`
+            SELECT
+                library.id,
+                library.name,
+                library.root_path AS rootPath,
+                profile.name AS qualityProfile
+            FROM Libraries library
+            JOIN quality_profiles profile ON profile.id = library.quality_profile_id
+            WHERE library.enabled = 1
+            ORDER BY library.id
+        `).all() as Array<{
+            id: number;
+            name: string;
+            rootPath: string;
+            qualityProfile: string;
+        }>;
+    }
+
+    getCanonicalImportRelease(identity: string): {
+        id: number;
+        mbid: string;
+        releaseGroupId: number;
+        releaseGroupMbid: string;
+        title: string;
+        disambiguation: string | null;
+        date: string | null;
+        country: string | null;
+        mediumFormat: string | null;
+        mediumCount: number | null;
+        trackCount: number;
+        tracks: Array<{
+            id: number;
+            mbid: string;
+            recordingId: number;
+            recordingMbid: string;
+            mediumPosition: number;
+            position: number;
+            number: string | null;
+            title: string;
+            durationMs: number | null;
+        }>;
+    } | null {
+        const numericId = Number(identity);
+        const release = db.prepare(`
+            SELECT
+                release.id,
+                release.mbid,
+                release.release_group_id AS releaseGroupId,
+                release_group.mbid AS releaseGroupMbid,
+                release.title,
+                release.disambiguation,
+                release.date,
+                release.country,
+                release.media_count AS mediumCount,
+                COALESCE(release.track_count, (
+                    SELECT COUNT(*) FROM Tracks WHERE album_release_id = release.id
+                )) AS trackCount,
+                (
+                    SELECT GROUP_CONCAT(DISTINCT COALESCE(
+                        json_extract(medium.value, '$.Format'),
+                        json_extract(medium.value, '$.format')
+                    ))
+                    FROM json_each(release.media) medium
+                ) AS mediumFormat
+            FROM AlbumReleases release
+            JOIN Albums release_group ON release_group.id = release.release_group_id
+            WHERE release.mbid = ? OR release.id = ?
+            LIMIT 1
+        `).get(identity, Number.isInteger(numericId) ? numericId : -1) as {
+            id: number;
+            mbid: string;
+            releaseGroupId: number;
+            releaseGroupMbid: string;
+            title: string;
+            disambiguation: string | null;
+            date: string | null;
+            country: string | null;
+            mediumFormat: string | null;
+            mediumCount: number | null;
+            trackCount: number;
+        } | undefined;
+        if (!release) return null;
+        const tracks = db.prepare(`
+            SELECT
+                track.id,
+                track.mbid,
+                track.recording_id AS recordingId,
+                recording.mbid AS recordingMbid,
+                track.medium_position AS mediumPosition,
+                track.position,
+                track.number,
+                track.title,
+                COALESCE(track.length_ms, recording.length_ms) AS durationMs
+            FROM Tracks track
+            JOIN Recordings recording ON recording.id = track.recording_id
+            WHERE track.album_release_id = ?
+              AND recording.is_video = 0
+            ORDER BY track.medium_position, track.position, track.id
+        `).all(release.id) as Array<{
+            id: number;
+            mbid: string;
+            recordingId: number;
+            recordingMbid: string;
+            mediumPosition: number;
+            position: number;
+            number: string | null;
+            title: string;
+            durationMs: number | null;
+        }>;
+        return { ...release, tracks };
+    }
+
     /**
      * Identify a group of local files against a specific release group, purely
      * from the local catalog (Lidarr: IdentificationService with an Album

@@ -1170,6 +1170,29 @@ class ApiClient {
     });
   }
 
+  async getManualImportLibraries() {
+    return this.request('/unmapped/canonical/libraries');
+  }
+
+  async getCanonicalManualImportRelease(releaseIdentity: string) {
+    return this.request(`/unmapped/canonical/releases/${encodeURIComponent(releaseIdentity)}`);
+  }
+
+  async canonicalManualImport(payload: {
+    libraryId: number;
+    releaseId: number;
+    mappings: Array<{
+      unmappedFileId: number;
+      trackId: number;
+      providerItemId?: number;
+    }>;
+  }) {
+    return this.request('/unmapped/canonical-import', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async bulkActionUnmappedFiles(ids: number[], action: 'ignore' | 'unignore' | 'delete') {
     return this.request(`/unmapped/bulk-action`, {
       method: 'POST',

@@ -325,7 +325,16 @@ export interface ImportProviderArtistsCommand extends CommandBodyCommon {
 }
 
 export interface ImportUnmappedFilesCommand extends CommandBodyCommon {
-  items: Array<{ id: number; providerId: string }>;
+  items?: Array<{ id: number; providerId: string }>;
+  canonical?: {
+    libraryId: number;
+    releaseId: number;
+    mappings: Array<{
+      unmappedFileId: number;
+      trackId: number;
+      providerItemId?: number | null;
+    }>;
+  };
 }
 
 export interface LibraryBulkActionCommand extends CommandBodyCommon {

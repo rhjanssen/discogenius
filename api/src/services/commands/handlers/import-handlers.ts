@@ -1,5 +1,8 @@
 import { FollowedArtistsImportService } from "../../providers/followed-artists-import.js";
 import { UnmappedFilesService } from "../../mediafiles/unmapped-files.js";
+import { CanonicalManualImportService } from "../../mediafiles/canonical-manual-import-service.js";
+import { ManualImportService } from "../../mediafiles/manual-import-service.js";
+import { db } from "../../../database.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import type { CommandHandler } from "./handler-context.js";
 
@@ -53,8 +56,9 @@ export const handleImportProviderArtists: CommandHandler<"ImportProviderArtists"
 
 export const handleImportUnmappedFiles: CommandHandler<"ImportUnmappedFiles"> = async (job, ctx) => {
     const items = Array.isArray(job.payload.items) ? job.payload.items : [];
+    const canonical = job.payload.canonical;
 
-    if (items.length === 0) {
+    if (items.length === 0 && !canonical) {
         ctx.updateCommandDescription(job, {
             progress: 100,
             description: "No unmapped files to import",
@@ -62,12 +66,18 @@ export const handleImportUnmappedFiles: CommandHandler<"ImportUnmappedFiles"> = 
         return;
     }
 
+    const importCount = canonical?.mappings.length ?? items.length;
     ctx.updateCommandDescription(job, {
         progress: 5,
-        description: `Importing ${items.length} mapped file${items.length === 1 ? "" : "s"}`,
+        description: `Importing ${importCount} mapped file${importCount === 1 ? "" : "s"}`,
     });
 
-    const summary = await new UnmappedFilesService().bulkMap(items);
+    const summary = canonical
+        ? await new CanonicalManualImportService(
+            db,
+            (legacyItems, options) => new ManualImportService().bulkImportUnmapped(legacyItems, options),
+        ).import(canonical)
+        : await new UnmappedFilesService().bulkMap(items);
 
     // Report what actually happened, not a blanket success — a silent no-op
     // (nothing resolved, all duplicates) must be visible in the activity log.

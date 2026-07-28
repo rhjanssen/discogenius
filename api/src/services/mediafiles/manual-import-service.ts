@@ -29,7 +29,10 @@ export interface ManualImportSummary {
 }
 
 export class ManualImportService {
-    async bulkImportUnmapped(items: { id: number, providerId: string }[]): Promise<ManualImportSummary> {
+    async bulkImportUnmapped(
+        items: { id: number, providerId: string }[],
+        options?: { libraryRootPath?: string },
+    ): Promise<ManualImportSummary> {
         const { db } = await import("../../database.js");
         const { streamingProviderManager } = await import("../providers/index.js");
         const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
@@ -349,9 +352,9 @@ export class ManualImportService {
                         : undefined,
                 }) + "." + extension;
 
-                let rootPath = Config.getMusicPath();
-                if (libraryRootKey === "videos") rootPath = Config.getVideoPath();
-                else if (isSpatialAudioQuality(quality)) rootPath = Config.getSpatialPath();
+                let rootPath = options?.libraryRootPath || Config.getMusicPath();
+                if (!options?.libraryRootPath && libraryRootKey === "videos") rootPath = Config.getVideoPath();
+                else if (!options?.libraryRootPath && isSpatialAudioQuality(quality)) rootPath = Config.getSpatialPath();
 
                 const expectedPath = path.join(rootPath, expectedRelPath);
                 const relativePath = path.relative(rootPath, file.file_path);

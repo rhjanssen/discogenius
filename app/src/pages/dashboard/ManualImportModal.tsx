@@ -257,8 +257,6 @@ const buildInitialSearchQuery = (file: UnmappedFile, isVideoImport: boolean) => 
 };
 
 const getResultId = (result: any) => String(result.id || '');
-const getResultProvider = (result: any) => String(result.provider || result.providerId || result.source || 'tidal');
-
 const getResultTitle = (result: any) => result.name || result.title || 'Unknown Release';
 
 const getResultSubtitle = (result: any) =>
@@ -268,6 +266,13 @@ const getResultImage = (result: any, preferVideoProxy = false) =>
     (preferVideoProxy ? mediaCoverProxySrc(result) : mediaCoverSrc(result))
     ?? renderableArtworkUrl(result.image_id)
     ?? null;
+
+interface ManualImportLibrary {
+    id: number;
+    name: string;
+    rootPath: string;
+    qualityProfile: string;
+}
 
 const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, initialMatch, allFiles }) => {
     const styles = useStyles();
@@ -303,6 +308,9 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
     const [albumTracks, setAlbumTracks] = useState<any[]>([]);
     const [releaseVersions, setReleaseVersions] = useState<any[]>([]);
     const [selectedReleaseMbid, setSelectedReleaseMbid] = useState<string>('');
+    const [selectedReleaseId, setSelectedReleaseId] = useState<number | null>(null);
+    const [libraries, setLibraries] = useState<ManualImportLibrary[]>([]);
+    const [selectedLibraryId, setSelectedLibraryId] = useState<number | null>(null);
     const [isLoadingTracks, setIsLoadingTracks] = useState(false);
     const [selectedFiles, setSelectedFiles] = useState<Record<number, boolean>>({});
     const [mappedTracks, setMappedTracks] = useState<Record<number, string>>({});
@@ -319,24 +327,43 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         }
 
         setIsLoadingTracks(true);
+        setMappedTracks({});
+        setAlbumTracks([]);
+        setSelectedReleaseId(null);
 
         try {
-            const providerId = getResultProvider(result);
             const albumId = getResultId(result);
+            let versions = releaseVersions;
 
             if (!isVideoImport && albumId) {
                 try {
-                    const versions = await api.request(`/v1/album/${albumId}/versions`) as any[];
-                    if (Array.isArray(versions)) {
-                        setReleaseVersions(versions);
+                    const loadedVersions = await api.request(`/v1/album/${albumId}/versions`) as any[];
+                    if (Array.isArray(loadedVersions)) {
+                        versions = loadedVersions;
+                        setReleaseVersions(loadedVersions);
                     }
                 } catch {
                     // Ignore versions load failure
                 }
             }
 
-            const activeReleaseMbid = releaseMbidOverride ?? selectedReleaseMbid;
-            const tracks = await api.getProviderAlbumTracks(providerId, albumId, activeReleaseMbid) as any[];
+            const activeReleaseMbid = releaseMbidOverride
+                || selectedReleaseMbid
+                || String(versions[0]?.mbid || versions[0]?.id || '');
+            if (!activeReleaseMbid) {
+                throw new Error('Choose a canonical MusicBrainz release before mapping files.');
+            }
+            setSelectedReleaseMbid(activeReleaseMbid);
+            const canonicalRelease = await api.getCanonicalManualImportRelease(activeReleaseMbid) as any;
+            setSelectedReleaseId(Number(canonicalRelease.id));
+            const tracks = (Array.isArray(canonicalRelease.tracks) ? canonicalRelease.tracks : []).map((track: any) => ({
+                ...track,
+                providerId: track.mbid,
+                trackNumber: track.position,
+                rawTrackNumber: track.position,
+                volumeNumber: track.mediumPosition,
+                duration: track.durationMs == null ? 0 : Math.round(Number(track.durationMs) / 1000),
+            }));
             setAlbumTracks(tracks);
 
             if (targetFiles.length === 0 || tracks.length === 0) {
@@ -346,10 +373,20 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
 
             const response = await api.identifyUnmappedFiles(
                 targetFiles.map((file) => file.id),
-                albumId
+                activeReleaseMbid
             ) as any;
 
-            setMappedTracks(response?.success && response.mappedTracks ? response.mappedTracks : {});
+            const idByMbid = new Map<string, string>(
+                tracks.map((track: any) => [String(track.mbid), String(track.id)] as [string, string]),
+            );
+            const canonicalMappings: Record<number, string> = {};
+            for (const [fileId, trackMbid] of Object.entries(
+                response?.success && response.mappedTracks ? response.mappedTracks : {},
+            )) {
+                const trackId = idByMbid.get(String(trackMbid));
+                if (trackId) canonicalMappings[Number(fileId)] = trackId;
+            }
+            setMappedTracks(canonicalMappings);
             setDecisionRejections(Array.isArray(response?.rejections) ? response.rejections : []);
         } catch (error: any) {
             toast({ title: 'Failed to fetch or map tracks', description: error.message, variant: 'destructive' });
@@ -389,6 +426,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         setAlbumTracks([]);
         setReleaseVersions([]);
         setSelectedReleaseMbid('');
+        setSelectedReleaseId(null);
         setHasSearched(false);
         setMappedTracks({});
         setDecisionRejections([]);
@@ -422,6 +460,19 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
             .finally(() => setIsSearching(false));
     }, [initialFile, initialMatch, isOpen, isVideoImport, targetFiles]);
 
+    useEffect(() => {
+        if (!isOpen || isVideoImport) return;
+        api.getManualImportLibraries()
+            .then((result: any) => {
+                const nextLibraries = Array.isArray(result) ? result : [];
+                setLibraries(nextLibraries);
+                setSelectedLibraryId((current) => current ?? (Number(nextLibraries[0]?.id || 0) || null));
+            })
+            .catch((error: Error) => {
+                toast({ title: 'Libraries unavailable', description: error.message, variant: 'destructive' });
+            });
+    }, [isOpen, isVideoImport, toast]);
+
     const handleSearch = async (queryToSearch: string = searchQuery) => {
         if (!queryToSearch.trim()) return;
 
@@ -443,7 +494,16 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
     };
 
     const importMutation = useMutation({
-        mutationFn: async (payload: { items: Array<{ id: number; providerId: string }> }) => api.bulkMapUnmappedFiles(payload.items),
+        mutationFn: async (payload: {
+            videoItems?: Array<{ id: number; providerId: string }>;
+            canonical?: {
+                libraryId: number;
+                releaseId: number;
+                mappings: Array<{ unmappedFileId: number; trackId: number }>;
+            };
+        }) => payload.canonical
+            ? api.canonicalManualImport(payload.canonical)
+            : api.bulkMapUnmappedFiles(payload.videoItems || []),
         onSuccess: (data: any) => {
             queryClient.invalidateQueries({ queryKey: ['unmapped-files'] });
             dispatchActivityRefresh();
@@ -474,7 +534,28 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
             return;
         }
 
-        importMutation.mutate({ items: payloadItems });
+        if (isVideoImport) {
+            importMutation.mutate({ videoItems: payloadItems });
+            return;
+        }
+        if (!selectedLibraryId || !selectedReleaseId) {
+            toast({
+                title: 'Choose Library and Release',
+                description: 'Canonical audio import requires an explicit destination library and release.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        importMutation.mutate({
+            canonical: {
+                libraryId: selectedLibraryId,
+                releaseId: selectedReleaseId,
+                mappings: payloadItems.map((item) => ({
+                    unmappedFileId: item.id,
+                    trackId: Number(item.providerId),
+                })),
+            },
+        });
     };
 
     const albumIsMultiVolume = useMemo(
@@ -612,17 +693,28 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                     </div>
                                 ) : null}
 
-                                 {releaseVersions.length > 1 && !isVideoImport ? (
+                                 {!isVideoImport ? (
                                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', margin: '8px 0' }}>
-                                         <Text weight="semibold" size={200}>Release Version:</Text>
+                                         <Text weight="semibold" size={200}>Library:</Text>
+                                         <Select
+                                             value={selectedLibraryId == null ? '' : String(selectedLibraryId)}
+                                             onChange={(_, data) => setSelectedLibraryId(Number(data.value))}
+                                             style={{ minWidth: '180px' }}
+                                         >
+                                             {libraries.map((library) => (
+                                                 <option key={library.id} value={library.id}>
+                                                     {library.name} · {library.qualityProfile}
+                                                 </option>
+                                             ))}
+                                         </Select>
+                                         <Text weight="semibold" size={200}>Release:</Text>
                                          <Select
                                              value={selectedReleaseMbid}
                                              onChange={(_, data) => handleSelectReleaseVersion(data.value)}
                                              style={{ minWidth: '280px' }}
                                          >
-                                             <option value="">Default (Best Match / Complete Edition)</option>
                                              {releaseVersions.map((v) => (
-                                                 <option key={v.mbid} value={v.mbid}>
+                                                 <option key={v.mbid || v.id} value={v.mbid || v.id}>
                                                      {v.title || 'Release'} {v.version_label ? `(${v.version_label})` : v.track_count ? `(${v.track_count} tracks)` : ''}
                                                  </option>
                                              ))}
@@ -666,7 +758,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                          />
                                                      </TableHeaderCell>
                                                      <TableHeaderCell style={{ width: '50%' }}>Local File</TableHeaderCell>
-                                                     <TableHeaderCell>Provider Track Assignment</TableHeaderCell>
+                                                     <TableHeaderCell>Canonical Track Assignment</TableHeaderCell>
                                                  </TableRow>
                                              </TableHeader>
                                              <TableBody>
@@ -698,7 +790,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                                  >
                                                                      <option value="">-- Don&apos;t Map --</option>
                                                                      {albumTracks.map((track) => {
-                                                                         const providerId = String(track.providerId || track.id || track.provider_id || '');
+                                                                         const providerId = String(track.id || '');
                                                                          const volNum = track.volumeNumber ?? track.volume_number ?? track.medium_position ?? 1;
                                                                          // Raw per-disc number for display: the endpoint's `trackNumber` is the
                                                                          // encoded medium*100+position (e.g. 201) used for sorting, so disc 2
@@ -729,7 +821,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                         <Button
                             appearance="primary"
                             icon={importMutation.isPending ? <Spinner size="tiny" /> : <ArrowImport24 />}
-                            disabled={!canImport || importMutation.isPending || !selectedMatch}
+                            disabled={!canImport || importMutation.isPending || !selectedMatch || (!isVideoImport && (!selectedLibraryId || !selectedReleaseId))}
                             onClick={handleImport}
                         >
                             {importMutation.isPending ? 'Importing...' : isVideoImport ? 'Import Video' : 'Import Selected'}

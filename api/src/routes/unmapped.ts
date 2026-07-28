@@ -36,6 +36,27 @@ function queueUnmappedImport(items: Array<{ id: number; providerId: string }>): 
     );
 }
 
+function queueCanonicalUnmappedImport(canonical: {
+    libraryId: number;
+    releaseId: number;
+    mappings: Array<{ unmappedFileId: number; trackId: number; providerItemId?: number | null }>;
+}): Promise<number> {
+    const sortedIds = canonical.mappings
+        .map((mapping) => mapping.unmappedFileId)
+        .sort((left, right) => left - right);
+    return runWithAsyncBusyRetry(() =>
+        CommandQueueManager.push(
+            CommandNames.ImportUnmappedFiles,
+            {
+                canonical,
+                title: "Importing canonical files",
+                description: `Importing ${canonical.mappings.length} mapped file${canonical.mappings.length === 1 ? "" : "s"}`,
+            },
+            `canonical-unmapped-import:${canonical.libraryId}:${canonical.releaseId}:${sortedIds.join(",")}`,
+        ),
+    );
+}
+
 /**
  * GET /api/unmapped
  * Returns all unmapped local files.
@@ -57,6 +78,59 @@ router.get("/", async (req, res) => {
     } catch (e: any) {
         console.error("[Unmapped API] Error fetching unmapped files:", e);
         res.status(500).json({ error: e.message || "Failed to fetch unmapped files" });
+    }
+});
+
+router.get("/canonical/libraries", (_req, res) => {
+    const libraries = unmappedFilesService.listManualImportLibraries();
+    res.json(libraries);
+});
+
+router.get("/canonical/releases/:releaseIdentity", (req, res) => {
+    try {
+        const release = unmappedFilesService.getCanonicalImportRelease(req.params.releaseIdentity);
+        if (!release) return res.status(404).json({ error: "Canonical release not found" });
+        res.json(release);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || "Failed to load canonical release" });
+    }
+});
+
+router.post("/canonical-import", async (req, res) => {
+    try {
+        const body = getObjectBody(req.body);
+        const rawMappings = body.mappings;
+        if (!Array.isArray(rawMappings) || rawMappings.length === 0) {
+            return res.status(400).json({ error: "mappings must be a non-empty array" });
+        }
+        const mappings = rawMappings.map((entry, index) => {
+            const mapping = getObjectBody(entry, `mappings[${index}] must be a JSON object`);
+            const providerItemId = mapping.providerItemId == null
+                ? undefined
+                : getRequiredInteger(mapping, "providerItemId");
+            return {
+                unmappedFileId: getRequiredInteger(mapping, "unmappedFileId"),
+                trackId: getRequiredInteger(mapping, "trackId"),
+                providerItemId,
+            };
+        });
+        const canonical = {
+            libraryId: getRequiredInteger(body, "libraryId"),
+            releaseId: getRequiredInteger(body, "releaseId"),
+            mappings,
+        };
+        const commandId = await queueCanonicalUnmappedImport(canonical);
+        res.status(202).json({
+            success: true,
+            queued: commandId !== -1,
+            commandId,
+            message: `Queued canonical import for ${mappings.length} mapped file${mappings.length === 1 ? "" : "s"}.`,
+        });
+    } catch (error: any) {
+        if (isRequestValidationError(error)) {
+            return res.status(400).json({ error: error.message });
+        }
+        res.status(500).json({ error: error.message || "Failed to queue canonical import" });
     }
 });
 
