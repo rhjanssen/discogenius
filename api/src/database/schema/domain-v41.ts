@@ -582,6 +582,13 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE INDEX idx_provider_track_matches_release_match ON ProviderTrackMatches(provider_release_match_id, match_state);
     CREATE INDEX idx_provider_track_matches_track ON ProviderTrackMatches(track_id, match_state);
     CREATE INDEX idx_provider_track_matches_recording ON ProviderTrackMatches(recording_id, match_state);
+    CREATE UNIQUE INDEX idx_provider_track_matches_unique_edge
+      ON ProviderTrackMatches(
+        provider_release_member_id,
+        provider_release_match_id,
+        COALESCE(track_id, -1),
+        recording_id
+      );
     CREATE INDEX idx_provider_video_matches_recording ON ProviderVideoMatches(recording_id, match_state);
 
     CREATE INDEX idx_library_artists_library ON LibraryArtists(library_id, monitored, managed_artist_id);
@@ -625,6 +632,33 @@ export function createDomainSchemaV41(db: Database.Database): void {
       SELECT CASE
         WHEN (SELECT recording_id FROM Tracks WHERE id = NEW.track_id) != NEW.recording_id
           THEN RAISE(ABORT, 'provider track match recording disagrees with canonical track')
+      END;
+    END;
+
+    CREATE TRIGGER provider_artist_matches_validate_insert
+    BEFORE INSERT ON ProviderArtistMatches
+    BEGIN
+      SELECT CASE
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_artist_item_id) != 'artist'
+          THEN RAISE(ABORT, 'provider artist match source must be an artist item')
+      END;
+    END;
+
+    CREATE TRIGGER provider_release_matches_validate_insert
+    BEFORE INSERT ON ProviderReleaseMatches
+    BEGIN
+      SELECT CASE
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_release_item_id) != 'release'
+          THEN RAISE(ABORT, 'provider release match source must be a release item')
+      END;
+    END;
+
+    CREATE TRIGGER provider_video_matches_validate_insert
+    BEFORE INSERT ON ProviderVideoMatches
+    BEGIN
+      SELECT CASE
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_video_item_id) != 'video'
+          THEN RAISE(ABORT, 'provider video match source must be a video item')
       END;
     END;
   `);
