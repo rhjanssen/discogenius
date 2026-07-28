@@ -470,154 +470,6 @@ function runStartupIntegrityCheck(): void {
   }
 }
 
-function migrateSchema39To40(): void {
-  console.log("🛠️ Migrating database schema from 39 to 40...");
-
-  try {
-    db.exec("ALTER TABLE ReleaseGroupSlots ADD COLUMN plan_status TEXT NOT NULL DEFAULT 'current'");
-    db.exec("ALTER TABLE ReleaseGroupSlots ADD COLUMN plan_matcher_version INTEGER NOT NULL DEFAULT 1");
-  } catch (error) {
-    console.log("[Migration] Note: ReleaseGroupSlots plan columns might already exist:", (error as Error).message);
-  }
-
-  try {
-    db.prepare(`
-      UPDATE ReleaseGroupSlots
-      SET plan_status = 'stale', plan_matcher_version = 0
-      WHERE (selected_release_mbid IS NOT NULL OR selected_album_release_id IS NOT NULL OR selected_provider_id IS NOT NULL)
-        AND (plan_status != 'stale' OR plan_matcher_version != 0)
-    `).run();
-  } catch (error) {
-    console.warn("[Migration] Failed to mark existing slots as stale:", (error as Error).message);
-  }
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ReleaseGroupSlotTargets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      slot_id INTEGER NOT NULL,
-      target_track_id INTEGER NOT NULL,
-      target_recording_id INTEGER,
-      target_track_mbid TEXT NOT NULL,
-      target_recording_mbid TEXT,
-      recording_equivalence_key TEXT,
-      is_wanted BOOLEAN NOT NULL DEFAULT 1,
-      is_attainable BOOLEAN NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'unmatched',
-      wanted_reason TEXT,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(slot_id, target_track_id),
-      UNIQUE(id, slot_id),
-      FOREIGN KEY(slot_id) REFERENCES ReleaseGroupSlots(id) ON DELETE CASCADE,
-      FOREIGN KEY(target_track_id) REFERENCES Tracks(id) ON DELETE CASCADE,
-      FOREIGN KEY(target_recording_id) REFERENCES Recordings(id) ON DELETE SET NULL,
-      CHECK (status IN ('unmatched', 'pending', 'assigned', 'ambiguous', 'queued', 'downloaded', 'imported', 'failed', 'unavailable', 'complete'))
-    );
-
-    CREATE TABLE IF NOT EXISTS ReleaseGroupSlotSources (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      slot_id INTEGER NOT NULL,
-      provider TEXT NOT NULL,
-      provider_album_id TEXT NOT NULL,
-      quality TEXT,
-      role TEXT NOT NULL DEFAULT 'primary',
-      release_relation TEXT NOT NULL DEFAULT 'exact',
-      explicit BOOLEAN,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      matcher_version INTEGER NOT NULL DEFAULT 1,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(slot_id, provider, provider_album_id),
-      UNIQUE(id, slot_id),
-      FOREIGN KEY(slot_id) REFERENCES ReleaseGroupSlots(id) ON DELETE CASCADE,
-      CHECK (role IN ('primary', 'supplement')),
-      CHECK (release_relation IN ('exact', 'provider_subset', 'provider_superset', 'overlap', 'unknown'))
-    );
-
-    CREATE TABLE IF NOT EXISTS ReleaseGroupSlotTrackAssignments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      slot_id INTEGER NOT NULL,
-      target_id INTEGER NOT NULL,
-      slot_source_id INTEGER NOT NULL,
-      target_track_id INTEGER NOT NULL,
-      target_recording_id INTEGER,
-      target_track_mbid TEXT NOT NULL,
-      target_recording_mbid TEXT,
-      provider TEXT NOT NULL,
-      provider_track_id TEXT NOT NULL,
-      provider_album_id TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'assigned',
-      match_score REAL NOT NULL,
-      match_method TEXT NOT NULL,
-      matcher_version INTEGER NOT NULL DEFAULT 1,
-      match_evidence TEXT,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(slot_id, target_track_id),
-      UNIQUE(slot_id, provider, provider_track_id),
-      FOREIGN KEY(slot_id) REFERENCES ReleaseGroupSlots(id) ON DELETE CASCADE,
-      FOREIGN KEY(target_id, slot_id) REFERENCES ReleaseGroupSlotTargets(id, slot_id) ON DELETE CASCADE,
-      FOREIGN KEY(slot_source_id, slot_id) REFERENCES ReleaseGroupSlotSources(id, slot_id) ON DELETE CASCADE,
-      FOREIGN KEY(target_track_id) REFERENCES Tracks(id) ON DELETE CASCADE,
-      FOREIGN KEY(target_recording_id) REFERENCES Recordings(id) ON DELETE SET NULL,
-      CHECK (status IN ('assigned', 'imported', 'rejected', 'failed', 'unmatched'))
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_rg_slot_targets_slot_id ON ReleaseGroupSlotTargets(slot_id);
-    CREATE INDEX IF NOT EXISTS idx_rg_slot_targets_track_id ON ReleaseGroupSlotTargets(target_track_id);
-    CREATE INDEX IF NOT EXISTS idx_rg_slot_sources_slot_id ON ReleaseGroupSlotSources(slot_id);
-    CREATE INDEX IF NOT EXISTS idx_rg_slot_assignments_slot_id ON ReleaseGroupSlotTrackAssignments(slot_id);
-    CREATE INDEX IF NOT EXISTS idx_rg_slot_assignments_target_id ON ReleaseGroupSlotTrackAssignments(target_id);
-    CREATE INDEX IF NOT EXISTS idx_rg_slot_assignments_source_id ON ReleaseGroupSlotTrackAssignments(slot_source_id);
-    CREATE INDEX IF NOT EXISTS idx_rg_slot_assignments_track_id ON ReleaseGroupSlotTrackAssignments(target_track_id);
-
-    CREATE TRIGGER IF NOT EXISTS trg_rg_slot_targets_fks_ai
-    AFTER INSERT ON ReleaseGroupSlotTargets
-    BEGIN
-      UPDATE ReleaseGroupSlotTargets SET
-        target_track_mbid = COALESCE(NEW.target_track_mbid, (SELECT mbid FROM Tracks WHERE id = NEW.target_track_id)),
-        target_recording_mbid = COALESCE(NEW.target_recording_mbid, (SELECT mbid FROM Recordings WHERE id = NEW.target_recording_id))
-      WHERE id = NEW.id;
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS trg_rg_slot_targets_fks_au
-    AFTER UPDATE OF target_track_id, target_recording_id ON ReleaseGroupSlotTargets
-    BEGIN
-      UPDATE ReleaseGroupSlotTargets SET
-        target_track_mbid = (SELECT mbid FROM Tracks WHERE id = NEW.target_track_id),
-        target_recording_mbid = (SELECT mbid FROM Recordings WHERE id = NEW.target_recording_id)
-      WHERE id = NEW.id;
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS trg_rg_slot_assignments_derive_ai
-    AFTER INSERT ON ReleaseGroupSlotTrackAssignments
-    BEGIN
-      UPDATE ReleaseGroupSlotTrackAssignments SET
-        target_track_id = COALESCE(NEW.target_track_id, (SELECT target_track_id FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id)),
-        target_recording_id = COALESCE(NEW.target_recording_id, (SELECT target_recording_id FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id)),
-        target_track_mbid = COALESCE(NEW.target_track_mbid, (SELECT target_track_mbid FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id)),
-        target_recording_mbid = COALESCE(NEW.target_recording_mbid, (SELECT target_recording_mbid FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id)),
-        provider_album_id = COALESCE(NEW.provider_album_id, (SELECT provider_album_id FROM ReleaseGroupSlotSources WHERE id = NEW.slot_source_id))
-      WHERE id = NEW.id;
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS trg_rg_slot_assignments_derive_au
-    AFTER UPDATE OF target_id, slot_source_id ON ReleaseGroupSlotTrackAssignments
-    BEGIN
-      UPDATE ReleaseGroupSlotTrackAssignments SET
-        target_track_id = (SELECT target_track_id FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id),
-        target_recording_id = (SELECT target_recording_id FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id),
-        target_track_mbid = (SELECT target_track_mbid FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id),
-        target_recording_mbid = (SELECT target_recording_mbid FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id),
-        provider_album_id = (SELECT provider_album_id FROM ReleaseGroupSlotSources WHERE id = NEW.slot_source_id)
-      WHERE id = NEW.id;
-    END;
-  `);
-
-  db.pragma(`user_version = ${BASE_SCHEMA_VERSION}`);
-  console.log(`✅ Successfully migrated database to schema version ${BASE_SCHEMA_VERSION}.`);
-}
-
 export function initDatabase() {
   console.log("🗄️  Initializing database schema...");
   assertDatabaseVersionCanStart();
@@ -628,14 +480,12 @@ export function initDatabase() {
   if (isEmptyDatabase) {
     // Fresh database: build the schema-41 baseline in one coherent pass,
     // stamp the version, then seed defaults.
-    createBaselineSchemaV38();
+    createBaselineSchemaV41();
     stampSchemaVersion();
     runStartupIntegrityCheck();
     console.log("✅ Database schema initialized");
   } else {
     // Existing schema-41 database: open only.
-    ensureRuntimePerformanceIndexes();
-    ensureRuntimeStatisticsColumns();
     runStartupIntegrityCheck();
     console.log(`✅ Opened existing schema ${BASE_SCHEMA_VERSION} database`);
   }
@@ -644,63 +494,12 @@ export function initDatabase() {
 }
 
 /**
- * Additive indexes that older schema-39 databases may lack. CREATE INDEX IF
- * NOT EXISTS is safe on every boot and does not change user_version.
- */
-function ensureRuntimePerformanceIndexes(): void {
-  const statements = [
-    "CREATE INDEX IF NOT EXISTS idx_track_files_expected_path ON TrackFiles(expected_path)",
-    "CREATE INDEX IF NOT EXISTS idx_track_files_recording_id ON TrackFiles(recording_id)",
-    "CREATE INDEX IF NOT EXISTS idx_track_files_provider_id_type_slot ON TrackFiles(provider_id, file_type, library_slot)",
-    "CREATE INDEX IF NOT EXISTS idx_lyric_files_expected_path ON LyricFiles(expected_path)",
-    "CREATE INDEX IF NOT EXISTS idx_metadata_files_expected_path ON MetadataFiles(expected_path)",
-    "CREATE INDEX IF NOT EXISTS idx_extra_files_expected_path ON ExtraFiles(expected_path)",
-  ];
-  for (const sql of statements) {
-    try {
-      db.exec(sql);
-    } catch (error) {
-      console.warn(`[SQLite] Skipping runtime index: ${sql} (${error instanceof Error ? error.message : error})`);
-    }
-  }
-}
-
-/**
- * Additive ArtistStatistics columns that shipped without a schema-version bump.
- * Older schema-39 databases were created before these columns joined the
- * baseline CREATE TABLE, so the open-existing path never gets them and every
- * artist-list query fails with "no such column". ADD COLUMN is idempotent here
- * because we probe the live table_info first and only add what is missing.
- */
-function ensureRuntimeStatisticsColumns(): void {
-  const existing = new Set(
-    (db.prepare("PRAGMA table_info(ArtistStatistics)").all() as Array<{ name: string }>)
-      .map((column) => column.name),
-  );
-  const additiveColumns: Array<{ name: string; ddl: string }> = [
-    { name: "downloaded_album_count", ddl: "downloaded_album_count INTEGER NOT NULL DEFAULT 0" },
-    { name: "video_count", ddl: "video_count INTEGER NOT NULL DEFAULT 0" },
-  ];
-  for (const column of additiveColumns) {
-    if (existing.has(column.name)) {
-      continue;
-    }
-    try {
-      db.exec(`ALTER TABLE ArtistStatistics ADD COLUMN ${column.ddl}`);
-      console.log(`[SQLite] Added missing ArtistStatistics.${column.name} column`);
-    } catch (error) {
-      console.warn(`[SQLite] Could not add ArtistStatistics.${column.name}: ${error instanceof Error ? error.message : error}`);
-    }
-  }
-}
-
-/**
- * Create the complete schema-39 baseline: every table, index, trigger and FTS
+ * Create the complete schema-41 baseline: every table, index, trigger and FTS
  * object, using plain CREATE statements (no IF NOT EXISTS). Only ever runs
  * against a verified-empty database, so ordering and uniqueness are guaranteed.
  * Parents are created before children where trigger/index bodies depend on them.
  */
-function createBaselineSchemaV38(): void {
+function createBaselineSchemaV41(): void {
   // ====================================================================
   // ARTISTS TABLE
   // ====================================================================

@@ -106,7 +106,7 @@ test("an older populated database fails with reset guidance", () => {
   }
 });
 
-test("fresh schema-39 TrackFiles baseline includes video_codec and frame size columns", () => {
+test("fresh schema-41 TrackFiles baseline includes video_codec and frame size columns", () => {
   const columns = tableColumns("TrackFiles");
   assert.ok(columns.includes("video_codec"), "Expected TrackFiles.video_codec on CREATE TABLE baseline");
   assert.ok(columns.includes("width"), "Expected TrackFiles.width on CREATE TABLE baseline");
