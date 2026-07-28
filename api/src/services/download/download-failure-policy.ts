@@ -51,6 +51,12 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\bnot available in (?:your|this) country\b/i,
   /\binvalid (?:arl|token)\b/i,
   /\barl (?:expired|invalid)\b/i,
+  /\bwronglicense\b/i,
+  /\blicense.*(?:denied|invalid)\b/i,
+  /\bsubscription required\b/i,
+  /\bentitlement\b/i,
+  /\bgeo(?:graphically)?[- ]?restricted\b/i,
+  /\bformat.*not available\b/i,
 ];
 
 const TRANSIENT_PATTERNS: RegExp[] = [

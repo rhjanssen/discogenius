@@ -16,11 +16,33 @@ export interface StreamripRunOptions {
   onLine(line: string): void;
 }
 
+export type StreamripErrorKind =
+  | "authentication"
+  | "entitlement"
+  | "geography"
+  | "quality"
+  | "unavailable"
+  | "transient"
+  | "unknown";
+
+export interface StreamripClassifiedError {
+  kind: StreamripErrorKind;
+  permanent: boolean;
+  message: string;
+}
+
+export interface StreamripRunResult {
+  exitCode: number | null;
+  outputTail: string;
+  classifiedErrors: StreamripClassifiedError[];
+  producedFiles: string[];
+}
+
 export type StreamripCommandRunner = (
   command: string,
   args: string[],
   options: StreamripRunOptions,
-) => Promise<void>;
+) => Promise<StreamripRunResult>;
 
 export function getStreamripBinary(): string {
   return process.env.STREAMRIP_BIN?.trim() || "/opt/streamrip-venv/bin/rip";
@@ -151,8 +173,7 @@ export function buildStreamripArgs(request: DownloadRequest): string[] {
   if (request.entityType === "video") {
     throw new Error("Deezer does not expose music-video downloads.");
   }
-  const quality = String(request.quality || "").toLowerCase();
-  const streamripQuality = quality.includes("lossy") || quality.includes("mp3") ? "1" : "2";
+  const streamripQuality = streamripQualityCeiling(request.quality);
   const kind = request.entityType === "album" ? "album" : "track";
   const resourceUrl = `https://www.deezer.com/${kind}/${encodeURIComponent(request.providerId)}`;
   return [
@@ -169,6 +190,18 @@ export function buildStreamripArgs(request: DownloadRequest): string[] {
   ];
 }
 
+export function streamripQualityCeiling(quality: string | null | undefined): "0" | "1" | "2" {
+  const normalized = String(quality || "").trim().toLowerCase().replace(/[\s_-]+/gu, "");
+  if (normalized === "low" || normalized.includes("128")) return "0";
+  if (
+    normalized === "normal"
+    || normalized === "lossy"
+    || normalized.includes("mp3")
+    || normalized.includes("320")
+  ) return "1";
+  return "2";
+}
+
 function mediaFilesUnder(root: string): string[] {
   if (!fs.existsSync(root)) return [];
   const result: string[] = [];
@@ -182,6 +215,48 @@ function mediaFilesUnder(root: string): string[] {
     }
   }
   return result;
+}
+
+export function redactStreamripOutput(value: string): string {
+  return String(value || "")
+    .replace(/((?:arl|cookie|token)\s*[=:]\s*)[^\s,;]+/giu, "$1[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{64,}\b/gu, "[redacted]");
+}
+
+export function classifyStreamripOutput(output: string): StreamripClassifiedError[] {
+  const lines = redactStreamripOutput(output)
+    .split(/\r?\n/gu)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const errors: StreamripClassifiedError[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    let kind: StreamripErrorKind | null = null;
+    let permanent = true;
+    if (/invalid\s+arl|arl\s+(?:expired|invalid)|authentication|not logged in|login required/iu.test(line)) {
+      kind = "authentication";
+    } else if (/wronglicense|license.*(?:denied|invalid)|entitlement|subscription required/iu.test(line)) {
+      kind = "entitlement";
+    } else if (/not available in (?:your|this) country|geo(?:graphically)?[- ]?restricted/iu.test(line)) {
+      kind = "geography";
+    } else if (/quality.*(?:unavailable|not available|restricted)|format.*not available/iu.test(line)) {
+      kind = "quality";
+    } else if (/not found|no longer available|unavailable/iu.test(line)) {
+      kind = "unavailable";
+    } else if (/rate.?limit|too many requests|timeout|temporar|network|connection/iu.test(line)) {
+      kind = "transient";
+      permanent = false;
+    } else if (/\berror\b|\bfailed\b|traceback/iu.test(line)) {
+      kind = "unknown";
+      permanent = false;
+    }
+    if (!kind) continue;
+    const key = `${kind}:${line}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    errors.push({ kind, permanent, message: line.slice(0, 500) });
+  }
+  return errors;
 }
 
 export function streamripProgressForLine(line: string): DownloadProgress | null {
@@ -215,8 +290,9 @@ export const runStreamripCommand: StreamripCommandRunner = (command, args, optio
     const lines = buffers[source].split(/\r?\n/u);
     buffers[source] = lines.pop() || "";
     for (const line of lines) {
-      outputTail = `${outputTail}\n${line}`.trim().slice(-4000);
-      options.onLine(line);
+      const redacted = redactStreamripOutput(line);
+      outputTail = `${outputTail}\n${redacted}`.trim().slice(-4000);
+      options.onLine(redacted);
     }
   };
   child.stdout.on("data", (chunk) => consume("stdout", chunk));
@@ -232,17 +308,21 @@ export const runStreamripCommand: StreamripCommandRunner = (command, args, optio
     options.signal?.removeEventListener("abort", abort);
     for (const source of ["stdout", "stderr"] as const) {
       if (buffers[source].trim()) {
-        const leftover = buffers[source].trim();
+        const leftover = redactStreamripOutput(buffers[source].trim());
         outputTail = `${outputTail}\n${leftover}`.trim().slice(-4000);
         options.onLine(leftover);
       }
     }
     if (options.signal?.aborted) {
       reject(new Error("Deezer download cancelled."));
-    } else if (code === 0) {
-      resolve();
     } else {
-      reject(new Error(`Streamrip exited with ${signal || code}: ${outputTail || "unknown error"}`));
+      const producedFiles = mediaFilesUnder(options.cwd);
+      resolve({
+        exitCode: code,
+        outputTail,
+        classifiedErrors: classifyStreamripOutput(outputTail),
+        producedFiles,
+      });
     }
   });
 });
@@ -264,7 +344,7 @@ export class StreamripDeezerBackend implements DownloadBackend {
     syncDeezerStreamripConfig();
     fs.mkdirSync(request.downloadPath, { recursive: true });
     options.onProgress({ progress: 1, state: "downloading", statusMessage: "Starting Deezer download" });
-    await this.runner(getStreamripBinary(), buildStreamripArgs(request), {
+    const result = await this.runner(getStreamripBinary(), buildStreamripArgs(request), {
       cwd: request.downloadPath,
       signal: options.signal,
       onLine: (line) => {
@@ -272,8 +352,33 @@ export class StreamripDeezerBackend implements DownloadBackend {
         if (progress) options.onProgress(progress);
       },
     });
-    if (mediaFilesUnder(request.downloadPath).length === 0) {
-      throw new Error("Streamrip exited successfully but produced no Deezer media files.");
+    const producedFiles = result.producedFiles.length > 0
+      ? result.producedFiles
+      : mediaFilesUnder(request.downloadPath);
+    const errors = result.classifiedErrors.length > 0
+      ? result.classifiedErrors
+      : classifyStreamripOutput(result.outputTail);
+    const errorSummary = errors.map((error) => `${error.kind}: ${error.message}`).join("; ");
+    if (result.exitCode !== 0 && producedFiles.length === 0) {
+      throw new Error(
+        `Streamrip exited with ${result.exitCode ?? "unknown"}: ${errorSummary || result.outputTail || "unknown error"}`,
+      );
+    }
+    if (producedFiles.length === 0) {
+      throw new Error(
+        `Streamrip produced no Deezer media files${errorSummary ? `: ${errorSummary}` : ""}.`,
+      );
+    }
+    if (errors.length > 0 && request.entityType !== "album") {
+      throw new Error(`Streamrip reported a Deezer item failure: ${errorSummary}`);
+    }
+    if (errors.length > 0) {
+      options.onProgress({
+        progress: 95,
+        state: "downloading",
+        statusMessage: `Deezer download produced ${producedFiles.length} file(s) with skipped items`,
+        trackStatus: "error",
+      });
     }
     options.onProgress({ progress: 100, state: "downloading", statusMessage: "Deezer download complete" });
   }

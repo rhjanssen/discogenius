@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { isDeezerQuotaError } from "./deezer-api.js";
+import type { StreamripRunResult } from "./streamrip-backend.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-deezer-"));
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
@@ -23,6 +24,10 @@ const {
   getStreamripConfigPath,
   renderStreamripConfig,
   streamripProgressForLine,
+  streamripQualityCeiling,
+  classifyStreamripOutput,
+  redactStreamripOutput,
+  runStreamripCommand,
   syncDeezerStreamripConfig,
 } = await import("./streamrip-backend.js");
 
@@ -202,6 +207,13 @@ test("Streamrip arguments select resource, output root and account quality witho
   assert.equal(args.at(-1), "https://www.deezer.com/album/658386461");
 });
 
+test("Deezer presets map to Streamrip ceilings without claiming actual output quality", () => {
+  assert.equal(streamripQualityCeiling("LOW"), "0");
+  assert.equal(streamripQualityCeiling("NORMAL"), "1");
+  assert.equal(streamripQualityCeiling("HIGH"), "2");
+  assert.equal(streamripQualityCeiling("MAX"), "2");
+});
+
 test("Streamrip progress recognizes download, completion and error output", () => {
   assert.equal(streamripProgressForLine("Downloading Test")?.trackStatus, "downloading");
   assert.equal(streamripProgressForLine("Downloaded Test")?.trackStatus, "completed");
@@ -227,6 +239,12 @@ test("Streamrip backend rejects empty success and completes only after a media f
     options.onLine("Downloading Eurydice");
     fs.mkdirSync(downloadPath, { recursive: true });
     fs.writeFileSync(path.join(downloadPath, "3103033041.flac"), "fixture");
+    return {
+      exitCode: 0,
+      outputTail: "Downloaded Eurydice",
+      classifiedErrors: [],
+      producedFiles: [path.join(downloadPath, "3103033041.flac")],
+    };
   });
   await backend.download({
     provider: "deezer",
@@ -237,9 +255,94 @@ test("Streamrip backend rejects empty success and completes only after a media f
   assert.equal(progress.at(-1), 100);
 
   const emptyPath = path.join(tempDir, "empty-job");
-  const emptyBackend = new StreamripDeezerBackend(async () => undefined);
+  const emptyBackend = new StreamripDeezerBackend(async () => ({
+    exitCode: 0,
+    outputTail: "",
+    classifiedErrors: [],
+    producedFiles: [],
+  }));
   await assert.rejects(
     emptyBackend.download({ provider: "deezer", entityType: "album", providerId: "658386461", downloadPath: emptyPath }, { onProgress: () => undefined }),
     /produced no Deezer media files/u,
   );
+});
+
+test("Streamrip exit zero still surfaces authentication and quality failures", async () => {
+  saveDeezerCredentials({ arl: "c".repeat(192) });
+  const request = {
+    provider: "deezer",
+    entityType: "track" as const,
+    providerId: "1",
+    downloadPath: path.join(tempDir, "classified"),
+  };
+  for (const outputTail of [
+    "ERROR Invalid ARL: reconnect Deezer",
+    "ERROR WrongLicense quality not available",
+  ]) {
+    const classifiedErrors = classifyStreamripOutput(outputTail);
+    const backend = new StreamripDeezerBackend(async (): Promise<StreamripRunResult> => ({
+      exitCode: 0,
+      outputTail,
+      classifiedErrors,
+      producedFiles: [],
+    }));
+    await assert.rejects(backend.download(request, { onProgress: () => undefined }));
+    assert.equal(classifiedErrors[0]?.permanent, true);
+  }
+});
+
+test("Streamrip keeps partial album output and reports mixed file formats", async () => {
+  saveDeezerCredentials({ arl: "d".repeat(192) });
+  const downloadPath = path.join(tempDir, "partial");
+  fs.mkdirSync(downloadPath, { recursive: true });
+  const flac = path.join(downloadPath, "1.flac");
+  const mp3 = path.join(downloadPath, "2.mp3");
+  fs.writeFileSync(flac, "fixture");
+  fs.writeFileSync(mp3, "fixture");
+  const progress: string[] = [];
+  const backend = new StreamripDeezerBackend(async () => ({
+    exitCode: 0,
+    outputTail: "Downloaded 1\nERROR track 3 unavailable",
+    classifiedErrors: classifyStreamripOutput("ERROR track 3 unavailable"),
+    producedFiles: [flac, mp3],
+  }));
+  await backend.download({
+    provider: "deezer",
+    entityType: "album",
+    providerId: "album",
+    downloadPath,
+  }, {
+    onProgress: (update) => progress.push(update.statusMessage || ""),
+  });
+  assert.ok(progress.some((message) => /skipped items/u.test(message)));
+});
+
+test("Streamrip redacts ARL and token-shaped secrets from diagnostics", () => {
+  const secret = "secret".repeat(32);
+  const redacted = redactStreamripOutput(`ERROR arl=${secret} token: ${secret}`);
+  assert.equal(redacted.includes(secret), false);
+  assert.match(redacted, /\[redacted\]/u);
+});
+
+test("Streamrip runner retains an unterminated output tail on exit zero", async () => {
+  const secret = "z".repeat(96);
+  const result = await runStreamripCommand(
+    process.execPath,
+    ["-e", `process.stdout.write("ERROR Invalid ARL token=${secret}")`],
+    { cwd: tempDir, onLine: () => undefined },
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.outputTail.includes(secret), false);
+  assert.equal(result.classifiedErrors[0]?.kind, "authentication");
+});
+
+test("Streamrip runner terminates a cancelled child", async () => {
+  const controller = new AbortController();
+  const pending = runStreamripCommand(
+    process.execPath,
+    ["-e", "setInterval(() => undefined, 1000)"],
+    { cwd: tempDir, signal: controller.signal, onLine: () => undefined },
+  );
+  setTimeout(() => controller.abort(), 20);
+  await assert.rejects(pending, /cancelled/u);
 });
