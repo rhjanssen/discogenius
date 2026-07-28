@@ -5,6 +5,7 @@ import { invalidateReleaseGroupDownloadStatus } from "../download/download-state
 import { getConfigSection } from "../config/config.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { queueCatalogAlbumDownload } from "./release-group-acquisition-plan.js";
+import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 
 type AlbumSlotSelection = {
     slot: "stereo" | "spatial";
@@ -246,8 +247,31 @@ export class AlbumCommandService {
         }
 
         this.setReleaseGroupMonitored(albumId, true);
+        const normalizedPlanIds = (db.prepare(`
+            SELECT plan.id
+            FROM AcquisitionPlans plan
+            JOIN LibraryReleases library_release
+              ON library_release.id = plan.library_release_id
+            JOIN Libraries library ON library.id = library_release.library_id
+            JOIN AlbumReleases release ON release.id = library_release.release_id
+            JOIN Albums release_group ON release_group.id = release.release_group_id
+            WHERE release_group.mbid = ?
+              AND plan.state = 'current'
+              AND library.enabled = 1
+              AND (
+                ? IS NULL
+                OR LOWER(library.name) = LOWER(?)
+                OR (? = 'stereo' AND LOWER(library.name) NOT LIKE '%spatial%')
+              )
+            ORDER BY library.id, plan.id
+        `).all(
+            albumId,
+            requestedSlot ?? null,
+            requestedSlot ?? null,
+            requestedSlot ?? null,
+        ) as Array<{ id: number }>).map(({ id }) => id);
         const selections = this.resolveSelectedProviderAlbumSelections(albumId, requestedSlot);
-        if (selections.length === 0) {
+        if (normalizedPlanIds.length === 0 && selections.length === 0) {
             return {
                 success: false,
                 status: 409,
@@ -258,6 +282,14 @@ export class AlbumCommandService {
         }
         const commandIds: number[] = [];
         if (shouldDownload) {
+            for (const planId of normalizedPlanIds) {
+                const queued = queueAcquisitionPlan(db, planId);
+                if (queued.commandId != null) commandIds.push(queued.commandId);
+            }
+            if (normalizedPlanIds.length > 0) {
+                return { success: true, albumId, commandId: commandIds[0] ?? null, commandIds };
+            }
+
             for (const selection of selections) {
                 const queued = queueCatalogAlbumDownload({
                     ...selection,

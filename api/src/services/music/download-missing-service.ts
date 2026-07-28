@@ -9,6 +9,7 @@ import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } fro
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { queueCatalogAlbumDownload } from "./release-group-acquisition-plan.js";
+import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
 import { resolveVideoTypeSuffix } from "../mediafiles/video-naming.js";
 import {
@@ -169,6 +170,57 @@ export class DownloadMissingService {
             return true;
         };
 
+        const normalizedPlanIds = (db.prepare(`
+            SELECT plan.id
+            FROM AcquisitionPlans plan
+            JOIN LibraryReleases library_release
+              ON library_release.id = plan.library_release_id
+            JOIN Libraries library ON library.id = library_release.library_id
+            JOIN AlbumReleases release ON release.id = library_release.release_id
+            JOIN Albums release_group ON release_group.id = release.release_group_id
+            LEFT JOIN ArtistMetadata primary_artist
+              ON primary_artist.id = release_group.artist_metadata_id
+            WHERE plan.state = 'current'
+              AND library.enabled = 1
+              AND (
+                ? IS NULL
+                OR primary_artist.mbid = COALESCE(
+                  (SELECT mbid FROM Artists WHERE id = ? LIMIT 1),
+                  ?
+                )
+              )
+              AND EXISTS (
+                SELECT 1
+                FROM AcquisitionPlanTracks plan_track
+                JOIN Tracks plan_track_catalog ON plan_track_catalog.id = plan_track.track_id
+                WHERE plan_track.plan_id = plan.id
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM TrackFiles file
+                    WHERE file.library_id = library_release.library_id
+                      AND file.album_release_id = library_release.release_id
+                      AND file.track_id = plan_track.track_id
+                      AND file.recording_id = plan_track_catalog.recording_id
+                      AND file.file_class = 'audio'
+                  )
+              )
+            ORDER BY release_group.first_release_date DESC, release_group.title, library.id
+            ${Number.isFinite(maxToQueue) ? "LIMIT ?" : ""}
+        `).all(
+            artistId ?? null,
+            artistId ?? null,
+            artistId ?? null,
+            ...(Number.isFinite(maxToQueue) ? [Math.max(Number(maxToQueue) * 5, Number(maxToQueue) + 100)] : []),
+        ) as Array<{ id: number }>).map(({ id }) => id);
+        for (const planId of normalizedPlanIds) {
+            const queued = queueAcquisitionPlan(db, planId, {
+                canQueue: hasBatchCapacity,
+                onQueued: () => { albumJobs += 1; },
+            });
+            if (!queued.queued && !hasBatchCapacity()) break;
+        }
+
+        if (normalizedPlanIds.length === 0) {
         const audioSlotPlaceholders = enabledLibrarySlots.audio.map(() => "?").join(", ");
         const slotParams: any[] = [...enabledLibrarySlots.audio];
         // Slot-level monitoring is the download authority: an album whose
@@ -293,6 +345,7 @@ export class DownloadMissingService {
                     slot: slot.slot || null,
                 }, artistNames);
             }
+        }
         }
 
         if (allowVideos) {
