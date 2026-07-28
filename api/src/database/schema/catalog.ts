@@ -410,9 +410,16 @@ export function createCatalogSchema(db: Database.Database): void {
     );
 
     CREATE TABLE ProviderItems (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider TEXT NOT NULL,
       entity_type TEXT NOT NULL,
       provider_id TEXT NOT NULL,
+      provider_type TEXT,
+      duration_ms INTEGER,
+      availability_reason TEXT,
+      checked_at TEXT,
+      cover_id TEXT,
+      artwork_url TEXT,
       artist_mbid TEXT,
       release_group_mbid TEXT,
       release_mbid TEXT,
@@ -457,7 +464,7 @@ export function createCatalogSchema(db: Database.Database): void {
       match_evidence TEXT,
       provider_artist_name TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY(provider, entity_type, provider_id)
+      UNIQUE(provider, entity_type, provider_id)
     );
 
     CREATE TABLE RecordingRelations (
@@ -629,6 +636,202 @@ export function createCatalogSchema(db: Database.Database): void {
     CREATE INDEX idx_provider_item_matches_track ON ProviderItemMatches(musicbrainz_track_mbid, provider_item_type);
     CREATE INDEX idx_provider_item_matches_recording ON ProviderItemMatches(musicbrainz_recording_mbid, provider_item_type);
     CREATE INDEX idx_provider_item_matches_source ON ProviderItemMatches(provider, provider_item_type, provider_item_id);
+  `);
+
+  db.exec(`
+    CREATE TABLE ProviderReleaseMembers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_release_item_id INTEGER NOT NULL,
+      member_item_id INTEGER NOT NULL,
+      medium_position INTEGER NOT NULL DEFAULT 1,
+      position INTEGER NOT NULL,
+      number TEXT,
+      contextual_title TEXT,
+      contextual_duration_ms INTEGER,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(provider_release_item_id, medium_position, position),
+      FOREIGN KEY(provider_release_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
+      FOREIGN KEY(member_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE ProviderItemCredits (
+      item_id INTEGER NOT NULL,
+      artist_item_id INTEGER NOT NULL,
+      ordinal INTEGER NOT NULL,
+      credited_name TEXT NOT NULL,
+      join_phrase TEXT NOT NULL DEFAULT '',
+      normalized_role TEXT NOT NULL DEFAULT 'other'
+        CHECK(normalized_role IN ('primary', 'featured', 'remixer', 'other')),
+      provider_role TEXT,
+      PRIMARY KEY(item_id, ordinal),
+      FOREIGN KEY(item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
+      FOREIGN KEY(artist_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE ProviderItemAudioVariants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_item_id INTEGER NOT NULL,
+      variant_key TEXT NOT NULL,
+      quality_class TEXT NOT NULL
+        CHECK(quality_class IN ('lossy', 'lossless', 'hires-lossless', 'spatial')),
+      codec TEXT,
+      container TEXT,
+      lossless BOOLEAN,
+      bit_depth INTEGER,
+      sample_rate INTEGER,
+      bitrate INTEGER,
+      channel_count INTEGER,
+      channel_layout TEXT,
+      spatial_format TEXT,
+      provider_quality_label TEXT,
+      availability TEXT NOT NULL DEFAULT 'unknown',
+      availability_reason TEXT,
+      verified_at DATETIME,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(provider_item_id, variant_key),
+      FOREIGN KEY(provider_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE ProviderArtistMatches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_artist_item_id INTEGER NOT NULL,
+      artist_id INTEGER NOT NULL,
+      match_state TEXT NOT NULL CHECK(match_state IN ('candidate', 'accepted', 'ambiguous', 'rejected')),
+      decision_source TEXT NOT NULL CHECK(decision_source IN ('automatic', 'manual')),
+      confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+      method TEXT NOT NULL,
+      evidence TEXT,
+      matcher_version INTEGER NOT NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(provider_artist_item_id, artist_id),
+      FOREIGN KEY(provider_artist_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
+      FOREIGN KEY(artist_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE ProviderReleaseMatches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_release_item_id INTEGER NOT NULL,
+      release_id INTEGER NOT NULL,
+      relation TEXT NOT NULL CHECK(relation IN ('exact', 'source_superset', 'source_subset', 'overlap')),
+      match_state TEXT NOT NULL CHECK(match_state IN ('candidate', 'accepted', 'ambiguous', 'rejected')),
+      decision_source TEXT NOT NULL CHECK(decision_source IN ('automatic', 'manual')),
+      confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+      method TEXT NOT NULL,
+      evidence TEXT,
+      matcher_version INTEGER NOT NULL,
+      matched_track_count INTEGER NOT NULL DEFAULT 0,
+      source_track_count INTEGER NOT NULL DEFAULT 0,
+      target_track_count INTEGER NOT NULL DEFAULT 0,
+      source_coverage REAL NOT NULL DEFAULT 0,
+      target_coverage REAL NOT NULL DEFAULT 0,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(provider_release_item_id, release_id),
+      FOREIGN KEY(provider_release_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
+      FOREIGN KEY(release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE ProviderTrackMatches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_release_member_id INTEGER NOT NULL,
+      provider_release_match_id INTEGER NOT NULL,
+      track_id INTEGER,
+      recording_id INTEGER NOT NULL,
+      match_state TEXT NOT NULL CHECK(match_state IN ('candidate', 'accepted', 'ambiguous', 'rejected')),
+      decision_source TEXT NOT NULL CHECK(decision_source IN ('automatic', 'manual')),
+      confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+      method TEXT NOT NULL,
+      evidence TEXT,
+      matcher_version INTEGER NOT NULL,
+      duration_delta_ms INTEGER,
+      ambiguity_margin REAL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(provider_release_member_id) REFERENCES ProviderReleaseMembers(id) ON DELETE CASCADE,
+      FOREIGN KEY(provider_release_match_id) REFERENCES ProviderReleaseMatches(id) ON DELETE CASCADE,
+      FOREIGN KEY(track_id) REFERENCES Tracks(id) ON DELETE CASCADE,
+      FOREIGN KEY(recording_id) REFERENCES Recordings(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE ProviderVideoMatches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_video_item_id INTEGER NOT NULL,
+      recording_id INTEGER NOT NULL,
+      match_state TEXT NOT NULL CHECK(match_state IN ('candidate', 'accepted', 'ambiguous', 'rejected')),
+      decision_source TEXT NOT NULL CHECK(decision_source IN ('automatic', 'manual')),
+      confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+      method TEXT NOT NULL,
+      evidence TEXT,
+      matcher_version INTEGER NOT NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(provider_video_item_id, recording_id),
+      FOREIGN KEY(provider_video_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
+      FOREIGN KEY(recording_id) REFERENCES Recordings(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX idx_provider_release_members_release
+      ON ProviderReleaseMembers(provider_release_item_id, medium_position, position);
+    CREATE INDEX idx_provider_release_members_member
+      ON ProviderReleaseMembers(member_item_id, provider_release_item_id);
+    CREATE INDEX idx_provider_item_credits_artist
+      ON ProviderItemCredits(artist_item_id, item_id);
+    CREATE INDEX idx_provider_audio_variants_item
+      ON ProviderItemAudioVariants(provider_item_id, availability);
+    CREATE INDEX idx_provider_artist_matches_provider
+      ON ProviderArtistMatches(provider_artist_item_id, match_state);
+    CREATE INDEX idx_provider_artist_matches_artist
+      ON ProviderArtistMatches(artist_id, match_state);
+    CREATE INDEX idx_provider_release_matches_provider
+      ON ProviderReleaseMatches(provider_release_item_id, match_state, relation);
+    CREATE INDEX idx_provider_release_matches_release
+      ON ProviderReleaseMatches(release_id, match_state, relation);
+    CREATE INDEX idx_provider_track_matches_member
+      ON ProviderTrackMatches(provider_release_member_id, match_state);
+    CREATE INDEX idx_provider_track_matches_release_match
+      ON ProviderTrackMatches(provider_release_match_id, match_state);
+    CREATE INDEX idx_provider_track_matches_track
+      ON ProviderTrackMatches(track_id, match_state);
+    CREATE INDEX idx_provider_track_matches_recording
+      ON ProviderTrackMatches(recording_id, match_state);
+    CREATE UNIQUE INDEX idx_provider_track_matches_unique_edge
+      ON ProviderTrackMatches(
+        provider_release_member_id,
+        provider_release_match_id,
+        COALESCE(track_id, -1),
+        recording_id
+      );
+    CREATE INDEX idx_provider_video_matches_recording
+      ON ProviderVideoMatches(recording_id, match_state);
+
+    CREATE TRIGGER provider_release_members_validate_insert
+    BEFORE INSERT ON ProviderReleaseMembers
+    BEGIN
+      SELECT CASE
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_release_item_id) NOT IN ('release', 'album')
+          THEN RAISE(ABORT, 'provider release member parent must be a release')
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.member_item_id) NOT IN ('track', 'video')
+          THEN RAISE(ABORT, 'provider release member must be a track or video')
+      END;
+    END;
+
+    CREATE TRIGGER provider_item_credits_validate_insert
+    BEFORE INSERT ON ProviderItemCredits
+    BEGIN
+      SELECT CASE
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.artist_item_id) != 'artist'
+          THEN RAISE(ABORT, 'provider credit artist must be an artist item')
+      END;
+    END;
+
+    CREATE TRIGGER provider_track_matches_validate_insert
+    BEFORE INSERT ON ProviderTrackMatches
+    WHEN NEW.track_id IS NOT NULL
+    BEGIN
+      SELECT CASE
+        WHEN (SELECT recording_id FROM Tracks WHERE id = NEW.track_id) != NEW.recording_id
+          THEN RAISE(ABORT, 'provider track match recording disagrees with canonical track')
+      END;
+    END;
   `);
 
   db.exec("CREATE INDEX idx_mb_release_groups_artist ON Albums(artist_mbid, first_release_date)");

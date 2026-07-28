@@ -39,6 +39,9 @@ test("fresh database initializes the current development baseline", () => {
     "Artists", "ArtistMetadata", "Albums", "AlbumReleases",
     "AlbumArtists", "ArtistReleaseGroups", "ArtistReleaseGroupCuration",
     "Tracks", "Recordings", "ProviderItems", "ProviderItemMatches",
+    "ProviderReleaseMembers", "ProviderItemCredits", "ProviderItemAudioVariants",
+    "ProviderArtistMatches", "ProviderReleaseMatches", "ProviderTrackMatches",
+    "ProviderVideoMatches",
     "RecordingRelations", "ReleaseGroupSlots",
     "ReleaseGroupSlotTargets", "ReleaseGroupSlotSources", "ReleaseGroupSlotTrackAssignments",
     "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles", "UnmappedFiles",
@@ -166,6 +169,7 @@ test("provider evidence schema is provider-agnostic and match edges target Music
   const providerMatchColumns = tableColumns("ProviderItemMatches");
 
   for (const columnName of [
+    "id",
     "provider",
     "entity_type",
     "provider_id",
@@ -188,6 +192,17 @@ test("provider evidence schema is provider-agnostic and match edges target Music
     "provider_url",
     "asset_id",
     "match_evidence"
+  ]) {
+    assert.ok(providerItemColumns.includes(columnName), `Expected ProviderItems.${columnName}`);
+  }
+
+  for (const columnName of [
+    "provider_type",
+    "duration_ms",
+    "availability_reason",
+    "checked_at",
+    "cover_id",
+    "artwork_url",
   ]) {
     assert.ok(providerItemColumns.includes(columnName), `Expected ProviderItems.${columnName}`);
   }
