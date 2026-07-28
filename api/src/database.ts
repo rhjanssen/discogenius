@@ -26,6 +26,10 @@ import {
   createCommandsSchema,
   createCommandsIndexes,
 } from "./database/schema/commands.js";
+import {
+  createCanonicalCreditSchemaV41,
+  createLibrarySchemaV41,
+} from "./database/schema/library-v41.js";
 import { getCurrentAppReleaseInfo } from "./services/config/app-release.js";
 
 let _db: Database.Database | null = null;
@@ -778,6 +782,8 @@ function createBaselineSchemaV38(): void {
       provider_entity_type TEXT,
       provider_id TEXT,
       library_slot TEXT NOT NULL DEFAULT 'stereo',                 -- stereo, spatial, video
+      library_id INTEGER,
+      source_audio_variant_id INTEGER,
       
       -- File Location
       file_path TEXT NOT NULL UNIQUE,    -- Absolute path to the file in library
@@ -802,6 +808,9 @@ function createBaselineSchemaV38(): void {
       -- Content Type
       file_type TEXT NOT NULL,           -- track, video, cover, video_cover, video_thumbnail, bio, review, lyrics
       quality TEXT,                      -- LOSSLESS, HIRES_LOSSLESS, DOLBY_ATMOS, etc
+      file_class TEXT,
+      source_quality TEXT,
+      imported_quality TEXT,
       
       -- Naming & Organization
       naming_template TEXT,              -- Template used when file was created
@@ -821,12 +830,15 @@ function createBaselineSchemaV38(): void {
       modified_at DATETIME,              -- File system modified time
       verified_at DATETIME,              -- Last time file existence was verified
       
-      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE
+      FOREIGN KEY(artist_id) REFERENCES Artists(id) ON DELETE CASCADE,
+      FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY(source_audio_variant_id) REFERENCES ProviderItemAudioVariants(id) ON DELETE SET NULL
     )
   `);
 
   createMetadataIdentitySchema(db);
   createCatalogSchema(db);
+  createCanonicalCreditSchemaV41(db);
   createArtistTopTrackProjectionSchema(db);
   createAlbumLibraryProjectionSchema(db);
   createTrackLibraryProjectionSchema(db);
@@ -871,6 +883,7 @@ function createBaselineSchemaV38(): void {
 
 
   createCommandsSchema(db);
+  createLibrarySchemaV41(db);
 
   createCatalogForeignKeyIndexes(db);
   createCatalogForeignKeyTriggers(db);

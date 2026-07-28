@@ -50,7 +50,13 @@ export function createCommandsSchema(db: Database.Database): void {
       name TEXT NOT NULL UNIQUE,
       upgrade_allowed BOOLEAN DEFAULT 1,
       cutoff TEXT NOT NULL,          -- 'LOSSLESS', 'HIRES_LOSSLESS', etc.
-      items TEXT NOT NULL,           -- JSON array of allowed qualities (ordered by preference)
+      items TEXT NOT NULL DEFAULT '[]', -- Legacy-compatible ordered quality labels
+      allowed_source_formats TEXT,
+      preference_order TEXT,
+      continue_upgrades BOOLEAN NOT NULL DEFAULT 0,
+      fallback_policy TEXT,
+      output_format TEXT,
+      transcode_policy TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
