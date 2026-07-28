@@ -96,6 +96,11 @@ export class AcquisitionPlanRepository {
     `).run(libraryReleaseId).changes;
   }
 
+  clear(libraryReleaseId: number): number {
+    return this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_release_id = ?")
+      .run(libraryReleaseId).changes;
+  }
+
   getCompletion(libraryReleaseId: number): LibraryReleaseCompletion {
     const row = this.db.prepare(`
       SELECT

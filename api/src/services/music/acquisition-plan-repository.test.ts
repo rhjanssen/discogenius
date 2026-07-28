@@ -22,7 +22,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
       INSERT INTO Tracks (id, mbid, album_release_id, recording_id, medium_position, position, title)
         VALUES (1, 'track-1', 1, 1, 1, 1, 'One'), (2, 'track-2', 1, 2, 1, 2, 'Two');
       INSERT INTO MetadataProfiles (id, name, release_type_policy) VALUES (1, 'Default', '{}');
-      INSERT INTO QualityProfiles (
+      INSERT INTO quality_profiles (
         id, name, allowed_source_formats, preference_order, cutoff,
         fallback_policy, output_format, transcode_policy
       ) VALUES (1, 'High', '[]', '[]', 'lossless', 'best', '{}', 'preserve');
