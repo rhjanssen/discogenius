@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   ARTIST_WORKFLOW_PRIORITY,
+  CREDITED_ARTIST_HYDRATION_BATCH_SIZE,
   buildRefreshArtistCommand,
   nextArtistWorkflowPriority,
+  queueCreditedArtistHydrationBatch,
   queueArtistIntake,
 } from "./artist-workflow.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
@@ -75,4 +77,38 @@ test("workflow handoffs run depth-first while credited artists stay in a lower t
   );
   assert.ok(ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE < refreshPriority);
   assert.ok(nextArtistWorkflowPriority(ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE) < refreshPriority);
+});
+
+test("first-degree credited hydration is bounded and persists a durable continuation", () => {
+  const originalPush = CommandQueueManager.push;
+  const originalUpdateState = CommandQueueManager.updateState;
+  const queued: Array<{ refId?: string; priority?: number }> = [];
+  let continuation: Array<{ artistId: string; artistName: string }> = [];
+  CommandQueueManager.push = ((_type: string, _payload: unknown, refId?: string, priority?: number) => {
+    queued.push({ refId, priority });
+    return queued.length;
+  }) as typeof CommandQueueManager.push;
+  CommandQueueManager.updateState = ((_id: number, options: any) => {
+    continuation = options.payloadPatch.creditedContinuation;
+    return null;
+  }) as typeof CommandQueueManager.updateState;
+
+  try {
+    const items = Array.from({ length: 60 }, (_, index) => ({
+      artistId: `credited-${index + 1}`,
+      artistName: `Credited ${index + 1}`,
+    }));
+    const result = queueCreditedArtistHydrationBatch(items);
+    assert.equal(result.queued, CREDITED_ARTIST_HYDRATION_BATCH_SIZE);
+    assert.equal(result.remaining, 35);
+    assert.equal(queued.length, 25);
+    assert.ok(queued.every((item) => item.priority === ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE));
+    assert.deepEqual(
+      continuation.map((item) => item.artistId),
+      items.slice(25).map((item) => item.artistId),
+    );
+  } finally {
+    CommandQueueManager.push = originalPush;
+    CommandQueueManager.updateState = originalUpdateState;
+  }
 });

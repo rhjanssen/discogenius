@@ -9,6 +9,7 @@ import {
     buildMatchArtistProvidersCommand,
     nextArtistWorkflowPriority,
     queueArtistWorkflow,
+    queueCreditedArtistHydrationBatch,
 } from "../../music/artist-workflow.js";
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
@@ -62,6 +63,7 @@ export const handleRefreshArtist: CommandHandler<"RefreshArtist"> = async (job, 
             workflow: job.payload.workflow,
             forceUpdate: job.payload.forceUpdate ?? false,
             monitoringCycle: job.payload.monitoringCycle,
+            creditedContinuation: job.payload.creditedContinuation,
         }),
         job.payload.artistId,
         nextArtistWorkflowPriority(job.priority),
@@ -152,6 +154,11 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
         trigger: job.trigger ?? CommandTrigger.Unspecified,
         priority: job.priority ?? 0,
     });
+
+    if (job.payload.creditedContinuation?.length) {
+        await ctx.yieldToEventLoop();
+        queueCreditedArtistHydrationBatch(job.payload.creditedContinuation);
+    }
 };
 
 export const handleRefreshAlbum: CommandHandler<"RefreshAlbum"> = async (job) => {

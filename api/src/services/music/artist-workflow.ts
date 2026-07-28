@@ -27,6 +27,48 @@ export const ARTIST_WORKFLOW_PRIORITY = {
   CREDITED_ARTIST_BASE: -10,
 } as const;
 
+export const CREDITED_ARTIST_HYDRATION_BATCH_SIZE = 25;
+
+export interface CreditedArtistHydrationItem {
+  artistId: string;
+  artistName: string;
+}
+
+/**
+ * Queue one bounded first-degree collaborator batch. Any remainder is persisted
+ * on the last queued command and handed to the next batch only after that
+ * artist's provider match succeeds.
+ */
+export function queueCreditedArtistHydrationBatch(
+  items: readonly CreditedArtistHydrationItem[],
+): { queued: number; remaining: number } {
+  const unique = [...new Map(
+    items
+      .filter((item) => item.artistId)
+      .map((item) => [item.artistId, item]),
+  ).values()];
+  const queuedCommandIds: number[] = [];
+  let cursor = 0;
+  while (cursor < unique.length && queuedCommandIds.length < CREDITED_ARTIST_HYDRATION_BATCH_SIZE) {
+    const item = unique[cursor++];
+    const commandId = queueArtistWorkflow({
+      artistId: item.artistId,
+      artistName: item.artistName,
+      workflow: "metadata-refresh",
+      priority: ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE,
+    });
+    if (commandId !== -1) queuedCommandIds.push(commandId);
+  }
+  const continuation = unique.slice(cursor);
+  const lastCommandId = queuedCommandIds.at(-1);
+  if (lastCommandId != null && continuation.length > 0) {
+    CommandQueueManager.updateState(lastCommandId, {
+      payloadPatch: { creditedContinuation: continuation },
+    });
+  }
+  return { queued: queuedCommandIds.length, remaining: continuation.length };
+}
+
 export function nextArtistWorkflowPriority(priority?: number | null): number {
   const normalized = Number(priority);
   return Number.isFinite(normalized) ? normalized + 1 : 1;
@@ -146,6 +188,7 @@ export function buildMatchArtistProvidersCommand(params: {
   workflow: ArtistWorkflow;
   forceUpdate?: boolean;
   monitoringCycle?: RescanFoldersCommand["monitoringCycle"];
+  creditedContinuation?: CreditedArtistHydrationItem[];
 }) {
   const phases = getArtistWorkflowPhases(params.workflow);
   return {
@@ -160,6 +203,7 @@ export function buildMatchArtistProvidersCommand(params: {
     forceDownloadQueue: phases.queueDownloads,
     forceUpdate: Boolean(params.forceUpdate),
     monitoringCycle: params.monitoringCycle,
+    creditedContinuation: params.creditedContinuation,
   };
 }
 

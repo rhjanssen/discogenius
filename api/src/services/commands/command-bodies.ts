@@ -152,6 +152,7 @@ export interface CommandBodyCommon {
   originalJobId?: number;
   resolved?: ResolvedDownloadMetadata;
   downloadState?: DownloadStatePayload;
+  creditedContinuation?: Array<{ artistId: string; artistName: string }>;
 }
 
 export interface RefreshArtistCommand extends CommandBodyCommon {
@@ -190,6 +191,7 @@ export interface MatchArtistProvidersCommand extends CommandBodyCommon {
   scanLibrary: boolean;
   forceDownloadQueue: boolean;
   forceUpdate: boolean;
+  creditedContinuation?: Array<{ artistId: string; artistName: string }>;
 }
 
 export interface RefreshAlbumCommand extends CommandBodyCommon {

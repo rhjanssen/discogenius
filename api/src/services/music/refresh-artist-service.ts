@@ -173,20 +173,15 @@ export class RefreshArtistService {
         if (pending.length === 0) return;
 
         try {
-            const { ARTIST_WORKFLOW_PRIORITY, queueArtistWorkflow } = await import("./artist-workflow.js");
-            for (const row of pending) {
-                queueArtistWorkflow({
-                    artistId: String(row.id),
-                    artistName: row.name || row.mbid,
-                    workflow: "metadata-refresh",
-                    // Lower priority than monitored-artist work (default 0; the queue
-                    // runs highest priority first). When 500+ artists are imported,
-                    // the monitored set is scanned/matched/curated/downloaded first,
-                    // then this first-degree credited backfill drains behind it.
-                    priority: ARTIST_WORKFLOW_PRIORITY.CREDITED_ARTIST_BASE,
-                });
-            }
-            console.log(`[RefreshArtistService] Queued metadata refresh (low priority) for ${pending.length} first-degree credited artist(s)`);
+            const { queueCreditedArtistHydrationBatch } = await import("./artist-workflow.js");
+            const result = queueCreditedArtistHydrationBatch(pending.map((row) => ({
+                artistId: String(row.id),
+                artistName: row.name || row.mbid,
+            })));
+            console.log(
+                `[RefreshArtistService] Queued ${result.queued} low-priority first-degree credited artist(s)` +
+                (result.remaining > 0 ? `; ${result.remaining} persisted for continuation` : ""),
+            );
         } catch (error) {
             console.warn("[RefreshArtistService] Failed to queue credited-artist refreshes:", error);
         }
