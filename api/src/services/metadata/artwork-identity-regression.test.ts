@@ -681,6 +681,19 @@ test("explicit manual override wins in either preference mode", async () => {
   assert.match(canonicalModeUrl || "", /cover\.jpg$/);
   const cacheFolder = path.join(tempDir, "media-cover", "Albums", mbid);
   assert.equal(sha256(fs.readFileSync(path.join(cacheFolder, "cover.jpg"))), HASH_D, "Manual artwork D must win under canonical preference");
+  assert.deepEqual(
+    db.prepare(`
+      SELECT source_kind, content_hash, source_identity
+      FROM MediaCoverSelections
+      WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
+    `).get(mbid),
+    {
+      source_kind: "manual",
+      content_hash: HASH_D,
+      source_identity: "http://test/manual-D.jpg",
+    },
+    "Manual artwork must be recorded as manual provenance",
+  );
 
   fs.rmSync(cacheFolder, { recursive: true, force: true });
 
@@ -691,4 +704,12 @@ test("explicit manual override wins in either preference mode", async () => {
   });
   assert.match(providerModeUrl || "", /cover\.jpg$/);
   assert.equal(sha256(fs.readFileSync(path.join(cacheFolder, "cover.jpg"))), HASH_D, "Manual artwork D must win under provider preference");
+  assert.equal(
+    (db.prepare(`
+      SELECT source_kind FROM MediaCoverSelections
+      WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
+    `).get(mbid) as { source_kind: string }).source_kind,
+    "manual",
+    "Provider preference must not demote manual artwork authority",
+  );
 });

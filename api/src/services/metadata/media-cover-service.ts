@@ -10,6 +10,10 @@ import * as pngjs from "pngjs";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderArtworkEntityType } from "../providers/streaming-provider.js";
 import { normalizeComparableText, stringSimilarity } from "../mediafiles/import-matching-utils.js";
+import {
+  MediaCoverSelectionRepository,
+  type MediaCoverSourceKind,
+} from "./media-cover-selection-repository.js";
 
 export type ServarrMetadataImage = {
   Url?: string | null;
@@ -37,6 +41,8 @@ export type ProviderArtworkCandidate = {
   imageId?: string | null;
   title?: string | null;
   url?: string | null;
+  /** Companion/single source that must not displace an existing active cover. */
+  supplemental?: boolean;
 };
 
 type MediaCoverProxyEntry = {
@@ -255,7 +261,7 @@ function writeSourceMarker(
   coverEntity: MediaCoverEntity,
   coverType: string,
   sourceUrl: string,
-  fulfilledBy: "canonical" | "provider",
+  fulfilledBy: MediaCoverSourceKind,
   contentHash?: string | null,
 ): void {
   const markerPath = sourceMarkerPath(entityId, coverEntity, coverType);
@@ -809,7 +815,7 @@ export async function ensureCachedMediaCover(options: {
   coverType: string;
   sourceUrl: string | null | undefined;
   /** Which preference branch produced this URL (drives stale-fallback invalidation). */
-  fulfilledBy?: "canonical" | "provider";
+  fulfilledBy?: MediaCoverSourceKind;
 }): Promise<string | null> {
   const sourceUrl = normalizeArtworkUrl(options.sourceUrl);
   const entityId = normalizeMediaCoverEntityId(options.entityId);
@@ -2010,21 +2016,57 @@ export async function resolveAlbumArtwork(options: {
     .filter((image) => !isProviderFallbackImage(image as Record<string, any>));
   const servarrMetadataUrl = getServarrMetadataAlbumImageUrl({ images: explicitCanonicalImages });
 
+  const releaseGroupId = options.albumMbid
+    ? (db.prepare("SELECT id FROM Albums WHERE mbid = ? LIMIT 1").get(options.albumMbid) as {
+      id?: number;
+    } | undefined)?.id ?? null
+    : null;
+  const selectionRepository = new MediaCoverSelectionRepository(db);
+  const persistSelection = (
+    sourceUrl: string,
+    sourceKind: MediaCoverSourceKind,
+    supplemental = false,
+  ): void => {
+    if (releaseGroupId == null) return;
+    const cached = existingMediaCover(options.albumMbid, "Album", "Cover");
+    if (!cached) return;
+    let contentHash: string;
+    try {
+      contentHash = crypto.createHash("sha256").update(fs.readFileSync(cached.path)).digest("hex");
+    } catch {
+      return;
+    }
+    selectionRepository.select({
+      releaseGroupId,
+      sourceKind,
+      contentHash,
+      sourceIdentity: sourceUrl,
+      supplemental,
+    });
+  };
+
   const cacheSource = async (
     sourceUrl: string | null,
-    fulfilledBy: "canonical" | "provider",
-  ): Promise<string | null> => sourceUrl
-    ? ensureCachedMediaCover({
+    fulfilledBy: MediaCoverSourceKind,
+    supplemental = false,
+  ): Promise<string | null> => {
+    if (!sourceUrl) return null;
+    if (supplemental && releaseGroupId != null && selectionRepository.get(releaseGroupId)) {
+      return null;
+    }
+    const localUrl = await ensureCachedMediaCover({
       entityId: options.albumMbid,
       coverEntity: "Album",
       coverType: "Cover",
       sourceUrl,
       fulfilledBy,
-    })
-    : null;
+    });
+    if (localUrl) persistSelection(sourceUrl, fulfilledBy, supplemental);
+    return localUrl;
+  };
 
   const resolveManual = async (): Promise<string | null> => {
-    return cacheSource(storedManualUrl, "canonical");
+    return cacheSource(storedManualUrl, "manual");
   };
 
   const resolveCanonical = async (): Promise<string | null> => {
@@ -2040,21 +2082,25 @@ export async function resolveAlbumArtwork(options: {
   };
 
   const resolveProvider = async (): Promise<string | null> => {
+    const providerCandidates = [
+      ...(options.providerCandidates || []),
+      ...loadAlbumProviderArtworkCandidates(options.albumMbid),
+    ];
+    const primaryCandidates = providerCandidates.filter((candidate) => !candidate.supplemental);
+    const candidates = primaryCandidates.length > 0 ? primaryCandidates : providerCandidates;
+    const supplemental = candidates.length > 0 && candidates.every((candidate) => candidate.supplemental);
     const providerUrl = await resolveProviderArtworkUrl(
-      [
-        ...(options.providerCandidates || []),
-        ...loadAlbumProviderArtworkCandidates(options.albumMbid),
-      ],
+      candidates,
       "album",
       // Fetch the origin image as the cached source; local derivatives serve UI.
       options.size ?? "origin",
     );
     if (providerUrl) {
       persistResolvedFallbackArtwork("Albums", options.albumMbid, "Cover", providerUrl);
-      const cached = await cacheSource(providerUrl, "provider");
+      const cached = await cacheSource(providerUrl, "provider", supplemental);
       if (cached) return cached;
     }
-    return cacheSource(storedProviderFallbackUrl, "provider");
+    return cacheSource(storedProviderFallbackUrl, "provider", supplemental);
   };
 
   const manualResolved = await resolveManual();
@@ -2168,7 +2214,7 @@ export function loadAlbumProviderArtworkCandidates(
 
     const candidate = { provider, entityId, imageId, title: textOrNull(row.title) };
     if (isSupplementalCompanion(row)) {
-      supplementalCandidates.push(candidate);
+      supplementalCandidates.push({ ...candidate, supplemental: true });
     } else {
       candidates.push(candidate);
     }
