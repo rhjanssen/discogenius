@@ -1,5 +1,13 @@
 # Discogenius Data Model Direction
 
+> **2.8.0 / schema 41 target:** The former fixed-slot and generic provider-match
+> design below describes the pre-cutover tree and is superseded by
+> [SCHEMA_41_AUTHORITY_CUTOVER.md](SCHEMA_41_AUTHORITY_CUTOVER.md). Schema 41
+> makes canonical facts, provider facts, typed match evidence, and per-library
+> curation/acquisition independent authorities. The historical material remains
+> here only until all runtime callers have been migrated and the document can be
+> consolidated without losing implementation context.
+
 This document describes the current data-model rules and the direction for new
 schema/provider work. It is not a migration log. Current schema details live in
 `api/src/database.ts`; release blockers and future work live in `docs/TASKS.md`.
