@@ -2674,3 +2674,64 @@ test("hybrid prefers explicit member albums and surfaces explicit on the stitch"
   assert.equal(stereo?.album.explicit, true);
   assert.equal((stereo?.match.evidence as { explicit?: boolean | null })?.explicit, true);
 });
+
+test("syncProviderAlbumSelections populates Schema 40 tables (Targets, Sources, Assignments) atomically", () => {
+  const { db } = dbModule;
+  const releaseGroupMbid = "rg-schema40";
+  const releaseMbid = "rel-schema40";
+
+  insertReleaseGroup(releaseGroupMbid);
+  db.prepare(`
+    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, track_count, media_count)
+    VALUES (?, ?, ?, ?, 'Official', 2, 1)
+  `).run(releaseMbid, releaseGroupMbid, "artist-mbid-1", "Schema 40 Album");
+
+  const insertRecording = db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)");
+  const insertTrack = db.prepare("INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms) VALUES (?, ?, ?, ?, ?, ?, ?)");
+
+  insertRecording.run("rec-40-1", "Track One", JSON.stringify(["ISRC4001"]));
+  insertTrack.run("trk-40-1", releaseMbid, "rec-40-1", "Track One", 1, 1, 200000);
+
+  insertRecording.run("rec-40-2", "Track Two", JSON.stringify(["ISRC4002"]));
+  insertTrack.run("trk-40-2", releaseMbid, "rec-40-2", "Track Two", 2, 1, 210000);
+
+  slotServiceModule.ReleaseGroupSlotService.syncProviderAlbumSelections({
+    provider: "tidal",
+    artistMbid: "artist-mbid-1",
+    albums: [{
+      providerId: "tidal-album-40",
+      title: "Schema 40 Album",
+      quality: "HI_RES",
+      trackCount: 2,
+      volumeCount: 1,
+      tracks: [
+        { mbid: "rec-40-1", isrc: "ISRC4001", title: "Track One", track_number: 1, volume_number: 1, duration: 200, providerId: "tidal-t1" },
+        { mbid: "rec-40-2", isrc: "ISRC4002", title: "Track Two", track_number: 2, volume_number: 1, duration: 210, providerId: "tidal-t2" },
+      ],
+    }],
+    matches: new Map([["tidal-album-40", { ...buildMatch(releaseGroupMbid, "tidal-album-40"), releaseMbid }]]),
+  });
+
+  const slotRow = db.prepare("SELECT id FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get(releaseGroupMbid) as { id: number };
+  assert.ok(slotRow);
+
+  const targets = db.prepare("SELECT * FROM ReleaseGroupSlotTargets WHERE slot_id = ? ORDER BY target_track_mbid ASC").all(slotRow.id) as Array<{ is_wanted: number; is_attainable: number; status: string; target_track_mbid: string }>;
+  assert.equal(targets.length, 2);
+  assert.equal(targets[0].is_wanted, 1);
+  assert.equal(targets[0].is_attainable, 1);
+  assert.equal(targets[0].status, "assigned");
+
+  const sources = db.prepare("SELECT * FROM ReleaseGroupSlotSources WHERE slot_id = ?").all(slotRow.id) as Array<{ provider: string; provider_album_id: string; role: string; release_relation: string }>;
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].provider, "tidal");
+  assert.equal(sources[0].provider_album_id, "tidal-album-40");
+  assert.equal(sources[0].role, "primary");
+  assert.equal(sources[0].release_relation, "exact");
+
+  const assignments = db.prepare("SELECT * FROM ReleaseGroupSlotTrackAssignments WHERE slot_id = ? ORDER BY provider_track_id ASC").all(slotRow.id) as Array<{ provider_track_id: string; status: string }>;
+  assert.equal(assignments.length, 2);
+  assert.equal(assignments[0].provider_track_id, "tidal-t1");
+  assert.equal(assignments[0].status, "assigned");
+  assert.equal(assignments[1].provider_track_id, "tidal-t2");
+  assert.equal(assignments[1].status, "assigned");
+});

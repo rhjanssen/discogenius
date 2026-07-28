@@ -48,6 +48,7 @@ export type ReleaseGroupSlotSelection = {
     album: ProviderAlbumSlotCandidate;
     match: ProviderReleaseGroupMatch;
     score: number;
+    plan?: ReleaseCoveragePlan | null;
 };
 
 function objectRecord(value: unknown): Record<string, any> {
@@ -1084,6 +1085,7 @@ export function selectReleaseGroupSlotAlbums(
             album: mergedAlbum,
             match: selectedMatch,
             score: selectedPlan.scoreTotal,
+            plan: selectedPlan,
         });
     }
 
@@ -1104,6 +1106,277 @@ export function selectReleaseGroupSlotAlbums(
 
     return finalSelections
         .sort((left, right) => left.releaseGroupMbid.localeCompare(right.releaseGroupMbid) || left.slot.localeCompare(right.slot));
+}
+
+function determineSlotSourceRelation(
+    targetTrackCount: number,
+    providerTrackCount: number | null,
+    assignedTrackCount: number
+): "exact" | "provider_subset" | "provider_superset" | "overlap" | "unknown" {
+    if (providerTrackCount == null || providerTrackCount <= 0 || targetTrackCount <= 0) {
+        return "unknown";
+    }
+    if (providerTrackCount === targetTrackCount) {
+        return assignedTrackCount === targetTrackCount ? "exact" : "overlap";
+    }
+    if (providerTrackCount < targetTrackCount) {
+        return "provider_subset";
+    }
+    return assignedTrackCount === targetTrackCount ? "provider_superset" : "overlap";
+}
+
+function syncSlotSchema40(
+    slotId: number,
+    selection: ReleaseGroupSlotSelection,
+    candidates: Array<{
+        provider: string;
+        album: ProviderAlbumSlotCandidate;
+        match: ProviderReleaseGroupMatch;
+    }>
+): void {
+    const clearAssignments = db.prepare("DELETE FROM ReleaseGroupSlotTrackAssignments WHERE slot_id = ?");
+    const clearSources = db.prepare("DELETE FROM ReleaseGroupSlotSources WHERE slot_id = ?");
+    const clearTargets = db.prepare("DELETE FROM ReleaseGroupSlotTargets WHERE slot_id = ?");
+
+    if (!selection.match.releaseMbid || selection.match.status === "unmatched") {
+        clearAssignments.run(slotId);
+        clearSources.run(slotId);
+        clearTargets.run(slotId);
+        return;
+    }
+
+    const targetTracks = db.prepare(`
+        SELECT t.id, t.recording_id, t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
+        FROM Tracks t
+        LEFT JOIN Recordings rec ON rec.id = t.recording_id
+        WHERE t.release_mbid = ?
+          AND (rec.is_video IS NULL OR rec.is_video = 0)
+        ORDER BY t.medium_position ASC, t.position ASC
+    `).all(selection.match.releaseMbid) as Array<{
+        id: number;
+        recording_id: number | null;
+        mbid: string;
+        recording_mbid: string | null;
+        title: string;
+        position: number;
+        medium_position: number;
+    }>;
+
+    if (targetTracks.length === 0) {
+        clearAssignments.run(slotId);
+        clearSources.run(slotId);
+        clearTargets.run(slotId);
+        return;
+    }
+
+    const upsertTarget = db.prepare(`
+        INSERT INTO ReleaseGroupSlotTargets (
+            slot_id, target_track_id, target_recording_id, target_track_mbid, target_recording_mbid,
+            recording_equivalence_key, is_wanted, is_attainable, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 'unmatched', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(slot_id, target_track_id) DO UPDATE SET
+            target_recording_id = excluded.target_recording_id,
+            target_track_mbid = excluded.target_track_mbid,
+            target_recording_mbid = excluded.target_recording_mbid,
+            recording_equivalence_key = excluded.recording_equivalence_key,
+            updated_at = CURRENT_TIMESTAMP
+    `);
+
+    for (const t of targetTracks) {
+        const eqKey = t.recording_mbid || t.mbid;
+        upsertTarget.run(slotId, t.id, t.recording_id, t.mbid, t.recording_mbid, eqKey);
+    }
+
+    const currentTrackIds = targetTracks.map(t => t.id);
+    const placeholders = currentTrackIds.map(() => "?").join(",");
+    db.prepare(`DELETE FROM ReleaseGroupSlotTargets WHERE slot_id = ? AND target_track_id NOT IN (${placeholders})`).run(slotId, ...currentTrackIds);
+
+    const targetRows = db.prepare(`
+        SELECT id, target_track_id, target_recording_id, target_track_mbid, target_recording_mbid, status
+        FROM ReleaseGroupSlotTargets
+        WHERE slot_id = ?
+    `).all(slotId) as Array<{
+        id: number;
+        target_track_id: number;
+        target_recording_id: number | null;
+        target_track_mbid: string;
+        target_recording_mbid: string | null;
+        status: string;
+    }>;
+    const targetByTrackMbid = new Map(targetRows.map(r => [r.target_track_mbid, r]));
+
+    let sourceCandidates: Array<{
+        provider: string;
+        providerAlbumId: string;
+        quality: string | null;
+        explicit: boolean | null;
+        trackCount: number | null;
+    }> = [];
+
+    if (selection.plan && selection.plan.candidates.length > 0) {
+        sourceCandidates = selection.plan.candidates.map(c => ({
+            provider: selection.provider,
+            providerAlbumId: c.album.providerId,
+            quality: c.album.quality || null,
+            explicit: c.album.explicit === true ? true : c.album.explicit === false ? false : null,
+            trackCount: c.tracks?.length ?? c.album.trackCount ?? null,
+        }));
+    } else {
+        const albumIds = selection.album.providerId.split(";").map(id => id.trim()).filter(Boolean);
+        sourceCandidates = albumIds.map(albumId => {
+            const found = candidates.find(c => c.provider === selection.provider && c.album.providerId === albumId);
+            const album = found ? found.album : selection.album;
+            return {
+                provider: selection.provider,
+                providerAlbumId: albumId,
+                quality: album.quality || null,
+                explicit: album.explicit === true ? true : album.explicit === false ? false : null,
+                trackCount: album.tracks?.length ?? album.trackCount ?? null,
+            };
+        });
+    }
+
+    const assignedCountByAlbumId = new Map<string, number>();
+    if (selection.plan) {
+        for (const a of selection.plan.assignments) {
+            const id = a.candidate.album.providerId;
+            assignedCountByAlbumId.set(id, (assignedCountByAlbumId.get(id) || 0) + 1);
+        }
+    }
+
+    const upsertSource = db.prepare(`
+        INSERT INTO ReleaseGroupSlotSources (
+            slot_id, provider, provider_album_id, quality, role, release_relation, explicit, sort_order, matcher_version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(slot_id, provider, provider_album_id) DO UPDATE SET
+            quality = excluded.quality,
+            role = excluded.role,
+            release_relation = excluded.release_relation,
+            explicit = excluded.explicit,
+            sort_order = excluded.sort_order,
+            matcher_version = excluded.matcher_version,
+            updated_at = CURRENT_TIMESTAMP
+        RETURNING id, provider_album_id
+    `);
+
+    const sourceIdByAlbumId = new Map<string, number>();
+    const activeAlbumIds: string[] = [];
+    for (let idx = 0; idx < sourceCandidates.length; idx++) {
+        const sc = sourceCandidates[idx];
+        const assignedCount = assignedCountByAlbumId.get(sc.providerAlbumId) || (selection.plan ? 0 : targetTracks.length);
+        const rel = determineSlotSourceRelation(targetTracks.length, sc.trackCount, assignedCount);
+        const row = upsertSource.get(
+            slotId,
+            sc.provider,
+            sc.providerAlbumId,
+            sc.quality,
+            idx === 0 ? "primary" : "supplement",
+            rel,
+            sc.explicit === true ? 1 : sc.explicit === false ? 0 : null,
+            idx
+        ) as { id: number; provider_album_id: string };
+        sourceIdByAlbumId.set(row.provider_album_id, row.id);
+        activeAlbumIds.push(sc.providerAlbumId);
+    }
+
+    if (activeAlbumIds.length > 0) {
+        const sourcePlaceholders = activeAlbumIds.map(() => "?").join(",");
+        db.prepare(`DELETE FROM ReleaseGroupSlotSources WHERE slot_id = ? AND provider_album_id NOT IN (${sourcePlaceholders})`).run(slotId, ...activeAlbumIds);
+    } else {
+        clearSources.run(slotId);
+    }
+
+    const seenTargetIds = new Set<number>();
+    const seenProviderTrackIds = new Set<string>();
+    const activeAssignmentIds: number[] = [];
+
+    if (selection.plan) {
+        const upsertAssignment = db.prepare(`
+            INSERT INTO ReleaseGroupSlotTrackAssignments (
+                slot_id, target_id, slot_source_id, target_track_id, target_recording_id,
+                target_track_mbid, target_recording_mbid, provider, provider_track_id, provider_album_id,
+                status, match_score, match_method, matcher_version, match_evidence, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'assigned', ?, ?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(slot_id, target_track_id) DO UPDATE SET
+                slot_source_id = excluded.slot_source_id,
+                provider = excluded.provider,
+                provider_track_id = excluded.provider_track_id,
+                provider_album_id = excluded.provider_album_id,
+                match_score = excluded.match_score,
+                match_method = excluded.match_method,
+                matcher_version = excluded.matcher_version,
+                match_evidence = excluded.match_evidence,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id
+        `);
+
+        for (const a of selection.plan.assignments) {
+            const targetTrack = selection.plan.targetTracks[a.targetIndex];
+            if (!targetTrack) continue;
+            const targetRow = targetByTrackMbid.get(targetTrack.trackMbid);
+            if (!targetRow) continue;
+            const sourceId = sourceIdByAlbumId.get(a.candidate.album.providerId);
+            if (!sourceId) continue;
+
+            const providerTrackId = String(a.providerTrack.providerId || a.providerTrack.provider_id || "").trim();
+            if (!providerTrackId) continue;
+            if (seenTargetIds.has(targetRow.id) || seenProviderTrackIds.has(providerTrackId)) continue;
+
+            seenTargetIds.add(targetRow.id);
+            seenProviderTrackIds.add(providerTrackId);
+
+            const assignRow = upsertAssignment.get(
+                slotId,
+                targetRow.id,
+                sourceId,
+                targetRow.target_track_id,
+                targetRow.target_recording_id,
+                targetRow.target_track_mbid,
+                targetRow.target_recording_mbid,
+                selection.provider,
+                providerTrackId,
+                a.candidate.album.providerId,
+                a.matchScore,
+                selection.match.method,
+                JSON.stringify({
+                    canonicalTrackMbid: targetRow.target_track_mbid,
+                    canonicalRecordingMbid: targetRow.target_recording_mbid,
+                    title: targetTrack.title,
+                    providerTrackId,
+                    providerAlbumId: a.candidate.album.providerId,
+                    matchScore: a.matchScore,
+                })
+            ) as { id: number };
+            activeAssignmentIds.push(assignRow.id);
+        }
+    }
+
+    if (activeAssignmentIds.length > 0) {
+        const assignPlaceholders = activeAssignmentIds.map(() => "?").join(",");
+        db.prepare(`DELETE FROM ReleaseGroupSlotTrackAssignments WHERE slot_id = ? AND id NOT IN (${assignPlaceholders})`).run(slotId, ...activeAssignmentIds);
+    } else {
+        clearAssignments.run(slotId);
+    }
+
+    db.prepare(`
+        UPDATE ReleaseGroupSlotTargets
+        SET is_attainable = 1,
+            status = CASE
+                WHEN status IN ('unmatched', 'unavailable') THEN 'assigned'
+                ELSE status
+            END
+        WHERE slot_id = ? AND id IN (SELECT target_id FROM ReleaseGroupSlotTrackAssignments WHERE slot_id = ?)
+    `).run(slotId, slotId);
+
+    db.prepare(`
+        UPDATE ReleaseGroupSlotTargets
+        SET is_attainable = 0,
+            status = CASE
+                WHEN status = 'assigned' THEN CASE WHEN is_wanted = 1 THEN 'unavailable' ELSE 'unmatched' END
+                ELSE status
+            END
+        WHERE slot_id = ? AND id NOT IN (SELECT target_id FROM ReleaseGroupSlotTrackAssignments WHERE slot_id = ?)
+    `).run(slotId, slotId);
 }
 
 export class ReleaseGroupSlotService {
@@ -1225,6 +1498,9 @@ export class ReleaseGroupSlotService {
                 const key = `${existing.release_group_mbid}:${existing.slot}`;
                 if (!selectionKeys.has(key)) {
                     clearStaleSelection.run(existing.id);
+                    db.prepare("DELETE FROM ReleaseGroupSlotTrackAssignments WHERE slot_id = ?").run(existing.id);
+                    db.prepare("DELETE FROM ReleaseGroupSlotSources WHERE slot_id = ?").run(existing.id);
+                    db.prepare("DELETE FROM ReleaseGroupSlotTargets WHERE slot_id = ?").run(existing.id);
                 }
             }
 
@@ -1256,6 +1532,10 @@ export class ReleaseGroupSlotService {
                         method: selection.match.method,
                         evidence: JSON.stringify({ ...selection.match.evidence, score: selection.score }),
                     });
+                }
+                const slotRow = db.prepare("SELECT id FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = ?").get(selection.releaseGroupMbid, selection.slot) as { id: number } | undefined;
+                if (slotRow) {
+                    syncSlotSchema40(slotRow.id, selection, candidates);
                 }
                 counts[selection.slot] += 1;
             }
