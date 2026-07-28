@@ -418,7 +418,7 @@ export function batchDelete(table: string, ids: Array<string | number>): number 
   return run();
 }
 
-const BASE_SCHEMA_VERSION = 40;
+const BASE_SCHEMA_VERSION = 41;
 
 function getUserTableCount(): number {
   const row = db.prepare(`
@@ -437,7 +437,7 @@ function assertDatabaseVersionCanStart(): void {
     return;
   }
 
-  if (fromVersion !== BASE_SCHEMA_VERSION && fromVersion !== 39) {
+  if (fromVersion !== BASE_SCHEMA_VERSION) {
     throw new Error(
       `Database schema ${fromVersion || "unversioned"} is not supported by this build. ` +
       `Reset the runtime database so Discogenius can create a clean schema ${BASE_SCHEMA_VERSION} database.`,
@@ -623,20 +623,14 @@ export function initDatabase() {
   const isEmptyDatabase = currentVersion === 0 && getUserTableCount() === 0;
 
   if (isEmptyDatabase) {
-    // Fresh database: build the entire schema-39/40 baseline in one coherent pass,
+    // Fresh database: build the schema-41 baseline in one coherent pass,
     // stamp the version, then seed defaults.
     createBaselineSchemaV38();
     stampSchemaVersion();
     runStartupIntegrityCheck();
     console.log("✅ Database schema initialized");
-  } else if (currentVersion === 39) {
-    migrateSchema39To40();
-    ensureRuntimePerformanceIndexes();
-    ensureRuntimeStatisticsColumns();
-    runStartupIntegrityCheck();
-    console.log(`✅ Migrated existing schema 39 database to version ${BASE_SCHEMA_VERSION}`);
   } else {
-    // Existing schema-40 database: open only.
+    // Existing schema-41 database: open only.
     ensureRuntimePerformanceIndexes();
     ensureRuntimeStatisticsColumns();
     runStartupIntegrityCheck();

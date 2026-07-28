@@ -9,7 +9,7 @@ process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("./database.js");
-const CURRENT_SCHEMA_VERSION = 40;
+const CURRENT_SCHEMA_VERSION = 41;
 
 before(async () => {
   dbModule = await import("./database.js");
@@ -70,7 +70,7 @@ test("fresh database initializes the current development baseline", () => {
   }
 });
 
-test("re-initializing an existing schema-40 database opens it without a wipe", () => {
+test("re-initializing an existing schema-41 database opens it without a wipe", () => {
   // Seed a row so we can prove the open-only path never drops/recreates tables.
   dbModule.db
     .prepare("INSERT INTO config (key, value, description) VALUES (?, ?, ?)")
@@ -91,6 +91,18 @@ test("re-initializing an existing schema-40 database opens it without a wipe", (
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
       .get(tableName) as { name: string } | undefined;
     assert.ok(row, `Expected table '${tableName}' to survive re-initialization`);
+  }
+});
+
+test("an older populated database fails with reset guidance", () => {
+  dbModule.db.pragma("user_version = 40");
+  try {
+    assert.throws(
+      () => dbModule.initDatabase(),
+      /Database schema 40 is not supported.*Reset the runtime database.*schema 41/s,
+    );
+  } finally {
+    dbModule.db.pragma(`user_version = ${CURRENT_SCHEMA_VERSION}`);
   }
 });
 
