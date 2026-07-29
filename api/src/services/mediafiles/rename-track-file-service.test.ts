@@ -1288,3 +1288,39 @@ test("rename preview lists media files only; id-based apply co-moves the linked 
   ).get(audioId) as { file_path: string };
   assert.equal(path.resolve(lyricRow.file_path), path.resolve(expectedLyric));
 });
+
+test("a failed rename leaves the DB pointing at the surviving original file", () => {
+  const seeded = seedTrackedFile();
+  const trackedFile = dbModule.db.prepare(`
+    SELECT id, file_path AS filePath FROM TrackFiles WHERE provider_id = ?
+  `).get("100") as { id: number; filePath: string };
+  const originalPath = trackedFile.filePath;
+  assert.equal(fs.existsSync(originalPath), true);
+
+  // Make the move fail the way a cross-device/permission error would.
+  const realRename = fs.renameSync;
+  const realCopy = fs.copyFileSync;
+  (fs as any).renameSync = () => { throw new Error("EACCES: simulated rename failure"); };
+  (fs as any).copyFileSync = () => { throw new Error("EACCES: simulated copy failure"); };
+
+  let result: ReturnType<typeof renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles>;
+  try {
+    result = renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]);
+  } finally {
+    (fs as any).renameSync = realRename;
+    (fs as any).copyFileSync = realCopy;
+  }
+
+  // The failure is reported, not swallowed as a rename.
+  assert.equal(result.renamed, 0);
+  assert.equal(result.errors.length, 1);
+
+  // Filesystem success must precede DB completion state: the destination was
+  // never created, the original still exists, and the row still points at it.
+  assert.equal(fs.existsSync(seeded.expectedPath), false);
+  assert.equal(fs.existsSync(originalPath), true);
+  const after = dbModule.db.prepare(`
+    SELECT file_path AS filePath FROM TrackFiles WHERE id = ?
+  `).get(trackedFile.id) as { filePath: string };
+  assert.equal(path.resolve(after.filePath), path.resolve(originalPath));
+});
