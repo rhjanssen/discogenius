@@ -79,7 +79,7 @@ test("canonical manual import pins Library, Release, Track and Recording", async
       db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
       db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
       db.prepare("UPDATE TrackFiles SET canonical_track_mbid = ? WHERE id = 1").run(items[0].providerId);
-      return { requested: 1, imported: 1, duplicates: 0, skipped: 0 };
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
     });
 
     const summary = await service.import({
@@ -135,7 +135,7 @@ test("changing release rejects stale track assignments before importing", async 
     let called = false;
     const service = new CanonicalManualImportService(db, async () => {
       called = true;
-      return { requested: 1, imported: 1, duplicates: 0, skipped: 0 };
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
     });
     await assert.rejects(
       service.import({
@@ -178,7 +178,7 @@ test("manual import needs no acquisition plan and no provider item at all", asyn
           '01 Track A.flac', 'flac', 'audio'
         )
       `).run();
-      return { requested: 1, imported: 1, duplicates: 0, skipped: 0 };
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
     });
 
     const summary = await service.import({
@@ -235,7 +235,7 @@ test("optional provider provenance attaches without becoming canonical identity"
           '01 Track A.flac', 'flac', 'audio'
         )
       `).run();
-      return { requested: 1, imported: 1, duplicates: 0, skipped: 0 };
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
     });
 
     await service.import({
@@ -304,7 +304,7 @@ test("a recording shared by two selected releases keeps the release-track the us
           '02 Track A.flac', 'flac', 'audio'
         )
       `).run();
-      return { requested: 1, imported: 1, duplicates: 0, skipped: 0 };
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
     });
 
     // The user explicitly imports onto Release B's occurrence of the recording.
@@ -455,6 +455,69 @@ test("manual import monitors and custom-selects without silently locking", async
     assert.equal((db.prepare(`
       SELECT locked FROM LibraryReleaseGroups WHERE library_id = 1 AND release_group_id = 1
     `).get() as { locked: number }).locked, 1, "an existing lock survives a later import");
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("a reported row outside the target library root fails closed", async () => {
+  const { db, folder } = fixture();
+  try {
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
+
+    const service = new CanonicalManualImportService(db, async () => {
+      // The row exists but lives outside /library/stereo.
+      db.prepare(`
+        INSERT INTO TrackFiles (
+          id, library_id, album_release_id, track_id, recording_id,
+          file_path, relative_path, filename, extension, file_class
+        ) VALUES (
+          7, 1, 10, 1000, 100,
+          '/somewhere/else/01 Track A.flac', '01 Track A.flac',
+          '01 Track A.flac', 'flac', 'audio'
+        )
+      `).run();
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 7 } };
+    });
+
+    await assert.rejects(
+      () => service.import({
+        libraryId: 1,
+        releaseId: 10,
+        mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+      }),
+      /outside library root/,
+    );
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("a reported row that does not exist fails closed", async () => {
+  const { db, folder } = fixture();
+  try {
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
+    const service = new CanonicalManualImportService(db, async () =>
+      ({ requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 4242 } }));
+
+    await assert.rejects(
+      () => service.import({
+        libraryId: 1,
+        releaseId: 10,
+        mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+      }),
+      /no such row exists/,
+    );
   } finally {
     db.close();
     rmSync(folder, { recursive: true, force: true });

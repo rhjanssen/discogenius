@@ -522,6 +522,13 @@ export class ImportService {
                 const providerVideo = match.item;
                 const videoId = providerVideo?.id?.toString?.() ?? providerVideo?.provider_id?.toString?.();
                 if (!videoId) continue;
+                // provider_id is only unique WITHIN a provider, so every lookup
+                // below binds the active provider too. An Apple album id can equal
+                // a TIDAL video id.
+                const activeProvider = String(
+                    providerVideo?.provider
+                    || streamingProviderManager.getDefaultStreamingProvider().id,
+                );
 
                 let videoData = providerVideo;
                 try {
@@ -580,9 +587,10 @@ export class ImportService {
                      AND video_match.match_state = 'accepted'
                     JOIN Recordings recording ON recording.id = video_match.recording_id
                     WHERE pi.entity_type = 'video'
+                      AND pi.provider = ?
                       AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
                     LIMIT 1
-                `).get(videoId) as { title?: string | null; video_variant?: string | null } | undefined;
+                `).get(activeProvider, videoId) as { title?: string | null; video_variant?: string | null } | undefined;
                 const catalogVideoTitle = catalogVideo?.title || "Unknown Video";
                 if (monitorValue) {
                     db.prepare(`
@@ -597,6 +605,7 @@ export class ImportService {
                               ON video_match.provider_video_item_id = item.id
                              AND video_match.match_state = 'accepted'
                             WHERE item.entity_type = 'video'
+                              AND item.provider = ?
                               AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
                             ORDER BY
                               CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
@@ -604,7 +613,7 @@ export class ImportService {
                               video_match.id
                             LIMIT 1
                         )
-                    `).run(videoId);
+                    `).run(activeProvider, videoId);
                 }
 
                 const videoTemplate = path.join(artistFolder, namingConfig.video_file);
@@ -695,6 +704,7 @@ export class ImportService {
                               ON video_match.provider_video_item_id = item.id
                              AND video_match.match_state = 'accepted'
                             WHERE item.entity_type = 'video'
+                              AND item.provider = ?
                               AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
                             ORDER BY
                               CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
@@ -702,7 +712,7 @@ export class ImportService {
                               video_match.id
                             LIMIT 1
                         )
-                    `).run(videoId);
+                    `).run(activeProvider, videoId);
                     updateArtistDownloadStatusFromMedia(videoId);
 
                     dirMappings.set(path.dirname(file.path), {
@@ -727,6 +737,11 @@ export class ImportService {
             const providerAlbum = match.item;
             const albumId = providerAlbum?.id?.toString?.() ?? providerAlbum?.provider_id?.toString?.();
             if (!albumId) continue;
+            // Same collision risk as the video branch: scope by provider as well.
+            const activeAlbumProvider = String(
+                providerAlbum?.provider
+                || streamingProviderManager.getDefaultStreamingProvider().id,
+            );
 
             try {
                 await RefreshAlbumService.refreshMetadata(albumId);
@@ -754,13 +769,14 @@ export class ImportService {
                 JOIN ArtistMetadata artist
                   ON artist.id = COALESCE(credit.artist_id, release_group.artist_metadata_id)
                 WHERE item.entity_type = 'release'
+                  AND item.provider = ?
                   AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
                 ORDER BY
                   CASE release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
                   release_match.confidence DESC,
                   release_match.id
                 LIMIT 1
-            `).get(albumId) as any;
+            `).get(activeAlbumProvider, albumId) as any;
 
             if (!albumRow) continue;
 

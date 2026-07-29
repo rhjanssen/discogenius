@@ -26,6 +26,12 @@ export interface ManualImportSummary {
     imported: number;
     duplicates: number;
     skipped: number;
+    /**
+     * Authoritative operation result: requested item id -> the TrackFiles row it
+     * created. Callers attach canonical/provider authority to exactly this row
+     * instead of rediscovering it by canonical mbid.
+     */
+    importedFileIds?: Record<string, number>;
 }
 
 export class ManualImportService {
@@ -407,7 +413,7 @@ export class ManualImportService {
         }
 
         if (collected.length === 0) {
-            return { requested: items.length, imported: 0, duplicates: 0, skipped: items.length };
+            return { requested: items.length, imported: 0, duplicates: 0, skipped: items.length, importedFileIds: {} };
         }
 
         let duplicateCount = 0;
@@ -419,6 +425,8 @@ export class ManualImportService {
         const videoInsertedIds: number[] = [];
         const videoDirMappings = new Map<string, ImportedDirectoryMapping>();
         const statusUpdates: Array<{ albumId: string | null; providerId: string }> = [];
+        // Requested item id -> the TrackFiles row it actually created.
+        const importedFileIds: Record<string, number> = {};
 
         // Pre-pass (outside the transaction — RefreshVideoService opens its own):
         // ensure each video's canonical Recordings(is_video=1) + ProviderItems offer
@@ -608,6 +616,9 @@ export class ManualImportService {
                 // Track finalization targets (outside transaction, post-commit)
                 const libraryFileId = resolveImportedLibraryFileId(c.file.file_path);
                 if (libraryFileId !== null) {
+                    // Authoritative operation result: exactly which TrackFiles row
+                    // this requested item produced. Callers must not rediscover it.
+                    importedFileIds[String(c.id)] = libraryFileId;
                     const oldDir = path.dirname(c.file.file_path);
                     const destDir = path.dirname(c.expectedPath);
                     const targetIds = c.isVideo ? videoInsertedIds : audioInsertedIds;
@@ -674,6 +685,7 @@ export class ManualImportService {
             imported,
             duplicates: duplicateCount,
             skipped: Math.max(0, items.length - imported - duplicateCount),
+            importedFileIds,
         };
     }
 }

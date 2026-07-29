@@ -55,6 +55,18 @@ export type LegacyManualImporter = (
  * track MBIDs, then this service attaches schema-41 integer authority and
  * optional provider provenance to the imported TrackFiles.
  */
+function normalizeForCompare(value: string): string {
+  return value.split("\\").join("/").replace(/\/+$/, "").toLowerCase();
+}
+
+/** True when `filePath` sits under `rootPath` (both normalized). */
+function isUnderLibraryRoot(filePath: string, rootPath: string): boolean {
+  const file = normalizeForCompare(String(filePath || ""));
+  const root = normalizeForCompare(String(rootPath || ""));
+  if (!file || !root) return false;
+  return file === root || file.startsWith(`${root}/`);
+}
+
 export class CanonicalManualImportService {
   constructor(
     private readonly db: Database.Database,
@@ -167,15 +179,13 @@ export class CanonicalManualImportService {
       }
     }
 
-    // Fallback only when the importer supplies no exact id: still scoped to the
-    // library and release being imported into, never a global mbid lookup.
-    const findImportedFileInLibrary = this.db.prepare(`
-      SELECT id
-      FROM TrackFiles
-      WHERE canonical_track_mbid = @trackMbid
-        AND (library_id IS NULL OR library_id = @libraryId)
-      ORDER BY verified_at DESC, id DESC
-      LIMIT 1
+    // The importer's reported row is authoritative. Validate it belongs to this
+    // operation — it must exist and sit under the target library root — and fail
+    // closed otherwise. There is no mbid-based rediscovery fallback: adopting an
+    // arbitrary legacy row (including one with a NULL library_id) would silently
+    // re-point another library's file.
+    const loadReportedFile = this.db.prepare(`
+      SELECT id, library_id, file_path FROM TrackFiles WHERE id = ?
     `);
     const updateImportedFile = this.db.prepare(`
       UPDATE TrackFiles
@@ -235,13 +245,29 @@ export class CanonicalManualImportService {
       for (const mapping of request.mappings) {
         const track = trackById.get(mapping.trackId)!;
         const exactFileId = importedFileIdByUnmappedId.get(mapping.unmappedFileId);
-        const imported = exactFileId != null
-          ? { id: exactFileId }
-          : findImportedFileInLibrary.get({
-              trackMbid: track.mbid,
-              libraryId: request.libraryId,
-            }) as { id: number } | undefined;
-        if (!imported) continue;
+        if (exactFileId == null) {
+          // Nothing was imported for this mapping (duplicate/skipped) — the
+          // importer's own summary already reports that. Never guess a row.
+          continue;
+        }
+        const reported = loadReportedFile.get(exactFileId) as
+          { id: number; library_id: number | null; file_path: string } | undefined;
+        if (!reported) {
+          throw new Error(
+            `Importer reported TrackFiles ${exactFileId} for unmapped file ${mapping.unmappedFileId}, but no such row exists`,
+          );
+        }
+        if (reported.library_id != null && reported.library_id !== request.libraryId) {
+          throw new Error(
+            `Importer reported TrackFiles ${exactFileId} in library ${reported.library_id}, expected ${request.libraryId}`,
+          );
+        }
+        if (!isUnderLibraryRoot(reported.file_path, library.root_path)) {
+          throw new Error(
+            `Imported file ${reported.file_path} is outside library root ${library.root_path}`,
+          );
+        }
+        const imported = { id: reported.id };
         const provenance = provenanceByTrackId.get(mapping.trackId) ?? null;
         updateImportedFile.run({
           fileId: imported.id,
