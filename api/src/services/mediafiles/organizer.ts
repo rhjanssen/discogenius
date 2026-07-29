@@ -20,6 +20,12 @@ import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../met
 import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.js";
 import { albumCoverLocalUrl, syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
 import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
+import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
+import { ProviderMatchRepository } from "../music/provider-match-repository.js";
+import {
+  PROVIDER_RESOLVED_ALBUM_ID_SQL,
+  providerItemOnAnyReleaseSql,
+} from "../providers/provider-item-artist-scope.js";
 import {
   findAdjacentLyricSidecar,
   LYRIC_SIDECAR_EXTENSIONS,
@@ -483,12 +489,12 @@ export class OrganizerService {
             ORDER BY plan_track.id
             LIMIT 1
           ),
-          pi.quality
+          NULL
         ) AS quality,
         rg.title,
         rg.artist_mbid AS artistMbid,
         am.name AS artistName,
-        COALESCE(pi.cover_id, pi.artwork_url, pi.cover) AS providerCover,
+        COALESCE(pi.cover_id, pi.artwork_url) AS providerCover,
         rg.video_cover AS videoCover,
         selected_release.date AS releaseDate,
         rg.primary_type AS albumType,
@@ -677,17 +683,39 @@ export class OrganizerService {
       try { fs.rmSync(params.src, { force: true }); } catch { /* staging cleanup is best-effort */ }
       return false;
     }
+    // Read the bundled video's identity from the typed authority the download
+    // already resolved: the provider VIDEO item, its accepted ProviderVideoMatches
+    // edge, and the canonical release context of the release it occurs on. The
+    // organizer consumes those decisions — it never re-matches.
     const row = db.prepare(`
       SELECT
         COALESCE(NULLIF(TRIM(recording.title), ''), pi.title) AS title,
         recording.video_variant AS video_variant,
-        pi.duration, pi.explicit, pi.quality,
-        pi.recording_mbid, pi.recording_id, pi.artist_mbid, pi.release_group_mbid
+        pi.duration_ms / 1000.0 AS duration,
+        pi.explicit,
+        pi.video_quality AS quality,
+        recording.mbid AS recording_mbid,
+        video_match.recording_id AS recording_id,
+        recording.artist_mbid AS artist_mbid,
+        (
+          SELECT release_group.mbid
+          FROM ProviderReleaseMembers member
+          JOIN ProviderReleaseMatches release_match
+            ON release_match.provider_release_item_id = member.provider_release_item_id
+           AND release_match.match_state = 'accepted'
+          JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+          JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
+          WHERE member.member_item_id = pi.id
+          ORDER BY release_match.id
+          LIMIT 1
+        ) AS release_group_mbid
       FROM ProviderItems pi
-      LEFT JOIN Recordings recording ON recording.id = pi.recording_id
-      WHERE pi.provider = ? AND pi.entity_type = 'track'
+      LEFT JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = pi.id
+       AND video_match.match_state = 'accepted'
+      LEFT JOIN Recordings recording ON recording.id = video_match.recording_id
+      WHERE pi.provider = ? AND pi.entity_type = 'video'
         AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-        AND pi.library_slot = 'video'
       LIMIT 1
     `).get(params.provider, params.providerTrackId) as {
       title?: string | null;
@@ -772,32 +800,34 @@ export class OrganizerService {
 
     let libraryFileId: number | null = null;
     db.transaction(() => {
-      // Surface the provider VIDEO offer on the canonical recording so the
-      // video library and video page list this source, deduped with any
-      // standalone upload of the same video (same recording).
-      db.prepare(`
-        INSERT INTO ProviderItems (
-          provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_mbid,
-          title, quality, duration, availability, library_slot, recording_id,
-          match_status, match_confidence, match_method, updated_at
-        ) VALUES (?, 'video', ?, NULL, ?, ?, ?, ?, ?, 'available', 'video', ?, 'matched', 0.9, 'album-bundled-track', CURRENT_TIMESTAMP)
-        ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-          recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
-          recording_id = COALESCE(excluded.recording_id, ProviderItems.recording_id),
-          title = excluded.title,
-          quality = excluded.quality,
-          duration = excluded.duration,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(
-        params.provider,
-        params.providerTrackId,
-        row.artist_mbid || params.artistMbId || null,
-        row.recording_mbid || null,
+      // Refresh the provider VIDEO offer's own facts (never canonical ids, never
+      // INSERT OR REPLACE) and re-affirm the typed match the download already
+      // resolved, so the video library lists this source deduped with any
+      // standalone upload of the same recording.
+      const providerVideoItemId = new ProviderCatalogRepository(db).upsertItem({
+        provider: params.provider,
+        entityType: "video",
+        providerId: params.providerTrackId,
         title,
-        derivedVideoQuality,
-        row.duration || null,
-        row.recording_id || null,
-      );
+        durationMs: row.duration == null ? null : Math.round(Number(row.duration) * 1000),
+        availability: "available",
+        checkedAt: new Date().toISOString(),
+        videoQuality: derivedVideoQuality,
+      });
+      if (row.recording_id != null) {
+        new ProviderMatchRepository(db).upsertVideoMatch({
+          providerVideoItemId,
+          recordingId: Number(row.recording_id),
+          decision: {
+            matchState: "accepted",
+            decisionSource: "automatic",
+            confidence: 0.9,
+            method: "album_bundled_track",
+            evidence: { source: "organizer-album-bundled-video" },
+            matcherVersion: 1,
+          },
+        });
+      }
 
       libraryFileId = this.upsertLibraryFile({
         artistId: params.artistId,
@@ -1925,7 +1955,13 @@ export class OrganizerService {
           return !trackRow;
         } else {
           const placeholders = albumIds.map(() => '?').join(', ');
-          const trackRow = db.prepare(`SELECT 1 FROM ProviderItems WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT) AND provider_album_id IN (${placeholders}) LIMIT 1`).get(trackId, ...albumIds) as any;
+          const trackRow = db.prepare(`
+            SELECT 1 FROM ProviderItems pi
+            WHERE pi.entity_type = 'track'
+              AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+              AND ${providerItemOnAnyReleaseSql(placeholders)}
+            LIMIT 1
+          `).get(trackId, ...albumIds) as any;
           return !trackRow;
         }
       });
@@ -2062,18 +2098,28 @@ export class OrganizerService {
             : trackId
               ? (db.prepare(`
                   SELECT
-                    provider_album_id AS album_id,
-                    quality,
-                    title,
-                    version,
-                    explicit,
-                    NULL AS track_number,
-                    NULL AS volume_number,
-                    track_mbid AS canonical_track_mbid,
-                    recording_mbid AS canonical_recording_mbid,
-                    artist_mbid AS artist_id
-                  FROM ProviderItems
-                  WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT) AND provider_album_id IN (${placeholders})
+                    ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS album_id,
+                    NULL AS quality,
+                    pi.title,
+                    pi.version,
+                    pi.explicit,
+                    member.position AS track_number,
+                    member.medium_position AS volume_number,
+                    canonical_track.mbid AS canonical_track_mbid,
+                    canonical_recording.mbid AS canonical_recording_mbid,
+                    canonical_artist.mbid AS artist_id
+                  FROM ProviderItems pi
+                  LEFT JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+                  LEFT JOIN ProviderTrackMatches track_match
+                    ON track_match.provider_release_member_id = member.id
+                   AND track_match.match_state = 'accepted'
+                  LEFT JOIN Tracks canonical_track ON canonical_track.id = track_match.track_id
+                  LEFT JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id
+                  LEFT JOIN ArtistMetadata canonical_artist
+                    ON canonical_artist.id = canonical_recording.artist_metadata_id
+                  WHERE pi.entity_type = 'track'
+                    AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+                    AND ${providerItemOnAnyReleaseSql(placeholders)}
                   LIMIT 1
                 `).get(trackId, ...albumIds) as any)
               : null;
@@ -2543,10 +2589,10 @@ export class OrganizerService {
       try {
         const placeholders = albumIds.map(() => '?').join(', ');
         expectedTracks = Number((db.prepare(`
-          SELECT COUNT(*) as count FROM ProviderItems
-          WHERE provider = ?
-            AND entity_type = 'track'
-            AND provider_album_id IN (${placeholders})
+          SELECT COUNT(*) as count FROM ProviderItems pi
+          WHERE pi.provider = ?
+            AND pi.entity_type = 'track'
+            AND ${providerItemOnAnyReleaseSql(placeholders)}
         `).get(streamingProviderId, ...albumIds) as { count?: number } | undefined)?.count || 0);
       } catch (error) {
         console.warn("[Organizer] Failed to query expected track count from ProviderItems:", error);
@@ -2592,13 +2638,15 @@ export class OrganizerService {
       // (YouTube/Apple singles often omit album on the track payload).
       let albumId = trackData?.album_id ? String(trackData.album_id) : null;
       if (!albumId) {
+        // The release this download belongs to: the plan's selected source when
+        // the plans agree, else a single unambiguous membership. Never a guess.
         const linked = db.prepare(`
-          SELECT CAST(COALESCE(provider_album_id, album_id) AS TEXT) AS album_id
-          FROM ProviderItems
-          WHERE provider = ?
-            AND entity_type = 'track'
-            AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-          ORDER BY updated_at DESC
+          SELECT ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS album_id
+          FROM ProviderItems pi
+          WHERE pi.provider = ?
+            AND pi.entity_type = 'track'
+            AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+          ORDER BY pi.updated_at DESC
           LIMIT 1
         `).get(streamingProviderId, providerId) as { album_id?: string | null } | undefined;
         albumId = linked?.album_id ? String(linked.album_id) : null;
@@ -2609,18 +2657,35 @@ export class OrganizerService {
       const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
       await RefreshAlbumService.refreshMetadata(albumId, { provider: streamingProviderId });
 
+      // Canonical album identity comes from the accepted release match, not from
+      // provider-shadow columns; the provider row only contributes its own facts.
       const album = db.prepare(`
         SELECT
-          artist_mbid AS artist_id,
-          release_group_mbid AS mb_release_group_id,
-          release_mbid AS mbid,
-          quality, title, version, release_date,
-          NULL AS num_volumes, NULL AS type, NULL AS mb_primary
-        FROM ProviderItems
-        WHERE provider = ?
-          AND entity_type = 'album'
-          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        ORDER BY updated_at DESC
+          canonical_artist.mbid AS artist_id,
+          release_group.mbid AS mb_release_group_id,
+          canonical_release.mbid AS mbid,
+          NULL AS quality,
+          COALESCE(NULLIF(TRIM(release_group.title), ''), pi.title) AS title,
+          pi.version,
+          COALESCE(canonical_release.date, pi.release_date) AS release_date,
+          canonical_release.media_count AS num_volumes,
+          release_group.primary_type AS type,
+          release_group.primary_type AS mb_primary
+        FROM ProviderItems pi
+        LEFT JOIN ProviderReleaseMatches release_match
+          ON release_match.provider_release_item_id = pi.id
+         AND release_match.match_state = 'accepted'
+        LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+        LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
+        LEFT JOIN ArtistMetadata canonical_artist
+          ON canonical_artist.id = release_group.artist_metadata_id
+        WHERE pi.provider = ?
+          AND pi.entity_type = 'release'
+          AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY
+          CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+          release_match.confidence DESC,
+          pi.updated_at DESC
         LIMIT 1
       `).get(streamingProviderId, albumId) as any;
       if (!album) throw new Error(`Album ${albumId} offer not found in ProviderItems after scan`);
@@ -2629,31 +2694,40 @@ export class OrganizerService {
       // best-known release (job-supplied release mbid, else the album's own).
       // Never use match_evidence or live provider-native disc/track numbers.
       const trackPositionReleaseMbid = String(raw.releaseMbid || "").trim() || album.mbid || null;
+      // Release-track identity comes from the accepted typed track match, scoped
+      // to the release this download targets. Title/position are canonical; the
+      // provider row supplies only its own version/explicit facts.
       const trackRow = db.prepare(`
         SELECT
           pi.provider_id AS id,
-          pi.provider_album_id AS album_id,
-          pi.quality,
+          ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS album_id,
+          NULL AS quality,
           COALESCE(NULLIF(TRIM(t.title), ''), pi.title) AS title,
           pi.version,
           pi.explicit,
-          pi.track_mbid AS mbid,
-          pi.artist_mbid AS artist_id,
+          t.mbid AS mbid,
+          canonical_artist.mbid AS artist_id,
           t.position AS track_number,
           t.medium_position AS volume_number
         FROM ProviderItems pi
+        LEFT JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+        LEFT JOIN ProviderTrackMatches track_match
+          ON track_match.provider_release_member_id = member.id
+         AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks t
-          ON t.release_mbid = ?
-          AND (
-            (pi.track_mbid IS NOT NULL AND t.mbid = pi.track_mbid)
-            OR (pi.recording_mbid IS NOT NULL AND t.recording_mbid = pi.recording_mbid)
-          )
+          ON t.id = track_match.track_id
+         AND (? IS NULL OR t.release_mbid = ?)
+        LEFT JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id
+        LEFT JOIN ArtistMetadata canonical_artist
+          ON canonical_artist.id = canonical_recording.artist_metadata_id
         WHERE pi.provider = ?
           AND pi.entity_type = 'track'
           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-        ORDER BY pi.updated_at DESC
+        ORDER BY
+          CASE WHEN t.id IS NULL THEN 1 ELSE 0 END,
+          pi.updated_at DESC
         LIMIT 1
-      `).get(trackPositionReleaseMbid, streamingProviderId, providerId) as any;
+      `).get(trackPositionReleaseMbid, trackPositionReleaseMbid, streamingProviderId, providerId) as any;
       if (!trackRow) throw new Error(`Track ${providerId} offer not found in ProviderItems after scan`);
 
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
@@ -3120,12 +3194,13 @@ export class OrganizerService {
       if (!canonicalArtistId) {
         // Fallback: look up ProviderItems artist_mbid directly
         const piRow = db.prepare(`
-          SELECT 
-            COALESCE(
-              (SELECT id FROM Artists WHERE mbid = pi.artist_mbid LIMIT 1),
-              (SELECT id FROM Artists WHERE id = pi.artist_mbid LIMIT 1)
-            ) as artist_id
+          SELECT managed_artist.id AS artist_id
           FROM ProviderItems pi
+          JOIN ProviderVideoMatches video_match
+            ON video_match.provider_video_item_id = pi.id
+           AND video_match.match_state = 'accepted'
+          JOIN Recordings recording ON recording.id = video_match.recording_id
+          JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
           WHERE pi.provider = ? AND pi.entity_type = 'video' AND pi.provider_id = ?
           LIMIT 1
         `).get(videoProvider, providerId) as any;

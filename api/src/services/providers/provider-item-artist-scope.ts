@@ -227,3 +227,24 @@ export function providerResolvedAlbumIdSql(context: ProviderAlbumContext = {}): 
  * have no library, plan or canonical target in hand. Plans must agree.
  */
 export const PROVIDER_RESOLVED_ALBUM_ID_SQL = providerResolvedAlbumIdSql();
+
+/**
+ * Predicate: the provider track/video item (`pi`) occurs on one of the given
+ * provider releases. This is a MEMBERSHIP question — the schema-41 replacement
+ * for `provider_album_id IN (...)` — and stays true for every release the item
+ * legitimately appears on, so it never has to pick a winner.
+ *
+ * `placeholders` is the caller's already-built bind list (e.g. "?, ?, ?").
+ */
+export function providerItemOnAnyReleaseSql(placeholders: string): string {
+  return `
+    EXISTS (
+      SELECT 1
+      FROM ProviderReleaseMembers scope_member
+      JOIN ProviderItems scope_release
+        ON scope_release.id = scope_member.provider_release_item_id
+      WHERE scope_member.member_item_id = pi.id
+        AND CAST(scope_release.provider_id AS TEXT) IN (${placeholders})
+    )
+  `;
+}

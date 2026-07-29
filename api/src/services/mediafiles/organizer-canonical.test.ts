@@ -3,6 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import {
+  seedAcceptedProviderTrackMatch,
+  seedAcceptedProviderVideoMatch,
+} from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-organizer-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -78,11 +82,13 @@ test("organizer resolves exact provider track ids to their linked canonical trac
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-2", "release-1", "recording-2", "Track Two", 1, 2);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)
-  `).run( "tidal", "track", "provider-track-2", "Track Two" );
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "provider-album-1",
+    providerTrackId: "provider-track-2",
+    releaseMbid: "release-1",
+    trackMbid: "track-2",
+  });
 
   const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
     provider: "tidal",
@@ -149,12 +155,20 @@ test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC 
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-vol3", "rel-3vol", "rec-vol3", "Running Away", 3, 6);
-  // Provider offer has ISRC evidence but no track/recording MBIDs yet (stereo vol 3 case).
+  // The matcher already accepted this offer onto the trailing-disc track using
+  // its ISRC evidence. The organizer CONSUMES that decision — it does not
+  // re-match — and must bind to the vol-3 occurrence, not disc 1.
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "243864035",
+    providerTrackId: "243864079",
+    releaseMbid: "rel-3vol",
+    trackMbid: "track-vol3",
+  });
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, isrc, title
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run( "tidal", "track", "243864079", "GBUM72202390", "Running Away" );
+    UPDATE ProviderItems SET isrc = 'GBUM72202390', title = 'Running Away'
+    WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = '243864079'
+  `).run();
 
   const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
     provider: "tidal",
@@ -189,14 +203,16 @@ test("organizer matches provider-id staging filenames to materialized provider t
     INSERT INTO Tracks (id, mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(101, "track-1", "release-1", "recording-1", "Feeling Good", 1, 1);
-  // Materialized provider track offer row (the single source of truth). tiddl
-  // stages the file as {provider_id}.flac; the importer matches by provider id
-  // only — no title/metadata/position fuzzing, no album blob.
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES (?, 'track', ?, ?)
-  `).run( "tidal", "provider-track-1", "Feeling Good" );
+  // Materialized provider track offer with its accepted typed match (the single
+  // source of truth). tiddl stages the file as {provider_id}.flac; the importer
+  // matches by provider id only — no title/metadata/position fuzzing.
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "provider-album-1",
+    providerTrackId: "provider-track-1",
+    releaseMbid: "release-1",
+    trackMbid: "track-1",
+  });
 
   const stagedFile = path.join(tempDir, "provider-album-1", "provider-track-1.flac");
   const matches = await (organizerModule.OrganizerService as any).matchAlbumFilesToTracks(
@@ -229,17 +245,34 @@ test("organizer matches provider-id staging filenames to materialized provider t
 });
 
 test("organizer deterministically maps Apple album-bundled video filenames to provider ids", async () => {
-  const insertOffer = dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, title,
-      track_number, volume_number, library_slot, match_status
-    ) VALUES (?, 'track', ?, ?, ?, ?, 1, 'video', 'matched')
-  `);
-  insertOffer.run("apple-music", "1445311105", "1445311094", "Bad Blood (Live)", 6);
-  insertOffer.run("apple-music", "1445311108", "1445311094", "Pompeii (Live)", 7);
+  // A bundled video's album context is a release OCCURRENCE (ProviderReleaseMembers),
+  // not a scalar column; its position comes from that occurrence.
+  const insertOffer = (provider: string, providerId: string, albumProviderId: string, title: string, position: number) => {
+    const item = dbModule.db.prepare(`
+      INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+      VALUES (?, 'track', ?, ?) RETURNING id
+    `).get(provider, providerId, title) as { id: number };
+    let release = dbModule.db.prepare(`
+      SELECT id FROM ProviderItems
+      WHERE provider = ? AND entity_type = 'release' AND provider_id = ?
+    `).get(provider, albumProviderId) as { id: number } | undefined;
+    if (!release) {
+      release = dbModule.db.prepare(`
+        INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+        VALUES (?, 'release', ?, ?) RETURNING id
+      `).get(provider, albumProviderId, "Bundled Album") as { id: number };
+    }
+    dbModule.db.prepare(`
+      INSERT INTO ProviderReleaseMembers (
+        provider_release_item_id, member_item_id, medium_position, position, contextual_title
+      ) VALUES (?, ?, 1, ?, ?)
+    `).run(release.id, item.id, position, title);
+  };
+  insertOffer("apple-music", "1445311105", "1445311094", "Bad Blood (Live)", 6);
+  insertOffer("apple-music", "1445311108", "1445311094", "Pompeii (Live)", 7);
   // The same provider album id in another provider must not enter Apple's
   // fallback candidate set.
-  insertOffer.run("tidal", "tidal-video-collision", "1445311094", "Bad Blood (Live)", 6);
+  insertOffer("tidal", "tidal-video-collision", "1445311094", "Bad Blood (Live)", 6);
 
   const badBlood = path.join(tempDir, "1445311094", "06. Bad Blood (Live).mp4");
   const pompeii = path.join(tempDir, "1445311094", "07. Pompeii (Live).mp4");
@@ -292,15 +325,18 @@ test("video imports prefer the managed MusicBrainz artist over a provider-only a
     .run("managed-artist", "Canonical Artist", "artist-mbid", "Canonical Artist {mbid-artist-mbid}");
   dbModule.db.prepare("INSERT INTO Artists (id, name, path) VALUES (?, ?, ?)")
     .run("12345", "Canonical Artist", "Canonical Artist");
-  const recording = dbModule.db.prepare(`
+  dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
     VALUES (?, ?, ?, 1)
   `).run("video-recording-mbid", "artist-mbid", "Canonical Video");
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES ('tidal', 'video', ?, ?)
-  `).run( "provider-video-1", "Canonical Video" );
+  const recordingId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("video-recording-mbid") as { id: number }).id;
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal",
+    providerVideoId: "provider-video-1",
+    recordingId,
+    title: "Canonical Video",
+  });
 
   const artistId = (organizerModule.OrganizerService as any)
     .resolveCanonicalVideoArtistId("tidal", "provider-video-1");
@@ -715,17 +751,16 @@ test("hybrid tips with providerAlbumId on secondary albums match organize scope"
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-secondary", "rel-hybrid-tips", "rec-secondary", "Secondary Tip", 1, 2);
 
-  // Primary album offer only — secondary track lives on a different provider album.
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES (?, 'track', ?, ?)
-  `).run( "tidal", "trk-primary", "Primary Tip" );
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES (?, 'track', ?, ?)
-  `).run( "tidal", "trk-secondary", "Secondary Tip" );
+  // Each track occurs on a DIFFERENT provider album, both accepted-matched onto
+  // the one canonical release — the hybrid case membership must express.
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal", providerReleaseId: "album-primary", providerTrackId: "trk-primary",
+    releaseMbid: "rel-hybrid-tips", trackMbid: "t-primary",
+  });
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal", providerReleaseId: "album-secondary", providerTrackId: "trk-secondary",
+    releaseMbid: "rel-hybrid-tips", trackMbid: "t-secondary",
+  });
 
   const stagedPrimary = path.join(tempDir, "hybrid-tips", "trk-primary.flac");
   const stagedSecondary = path.join(tempDir, "hybrid-tips", "trk-secondary.flac");
