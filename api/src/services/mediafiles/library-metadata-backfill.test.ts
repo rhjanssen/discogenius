@@ -258,11 +258,11 @@ function seedCanonicalLibraryFiles() {
         INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-    `).run( "tidal", "album", "200", "Provider Album" );
+    `).run( "tidal", "release", "200", "Provider Album" );
     const providerRelease = dbModule.db.prepare(`
         SELECT id
         FROM ProviderItems
-        WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = '200'
+        WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = '200'
     `).get() as { id: number };
     const releaseMatch = dbModule.db.prepare(`
         INSERT INTO ProviderReleaseMatches (
@@ -347,6 +347,22 @@ function seedCanonicalLibraryFiles() {
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
     `).run( "tidal", "video", "400", "Provider Video" );
+    const providerVideoItemId = Number((dbModule.db.prepare(`
+        SELECT id FROM ProviderItems
+        WHERE provider = 'tidal' AND entity_type = 'video' AND provider_id = '400'
+    `).get() as { id: number }).id);
+    dbModule.db.prepare(`
+        INSERT INTO ProviderVideoMatches (
+          provider_video_item_id, recording_id, match_state, decision_source,
+          confidence, method, matcher_version
+        ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    `).run(providerVideoItemId, videoRecordingId);
+    // The video's album identity derives from its related audio recording.
+    dbModule.db.prepare(`
+        INSERT INTO RecordingRelations (
+          source_recording_id, target_recording_id, relation_type, confidence
+        ) VALUES (?, ?, 'provider_video_for', 0.95)
+    `).run(videoRecordingId, recording.id);
 
     const videoRoot = configModule.Config.getVideoPath();
     const videoDir = path.join(videoRoot, "The Example Artist");

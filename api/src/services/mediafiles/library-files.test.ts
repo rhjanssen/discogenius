@@ -668,7 +668,7 @@ dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run( "tidal", "album", "provider-album-1", "Give Me The Future" );
+  `).run( "tidal", "release", "provider-album-1", "Give Me The Future" );
   // Track offer carries the recording mbid; the selected slot resolves the exact
   // release/track (preferring the selected-release over the offer's legacy release).
   dbModule.db.prepare(`
@@ -746,16 +746,47 @@ test("disk scan relinks album covers and renamed lyrics to their provider album 
     VALUES (?, ?, ?, ?, ?)
   `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
 
-dbModule.db.prepare(`
+  const releaseItem = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run( "tidal", "album", "provider-album-1", "SAVE MY SOUL" );
+    RETURNING id
+  `).get("tidal", "release", "provider-album-1", "SAVE MY SOUL") as { id: number };
+  const trackItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
+    RETURNING id
+  `).get("tidal", "track", "provider-track-1", "SAVE MY SOUL") as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)
-  `).run( "tidal", "track", "provider-track-1", "SAVE MY SOUL" );
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+  `).run(releaseItem.id, trackItem.id);
+  // Scope the provider release/track to the managed artist through the typed
+  // credit chain, the way real ingestion does.
+  dbModule.db.prepare(`
+    INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid-1', 'Bastille')
+  `).run();
+  const artistMeta = dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid-1'")
+    .get() as { id: number };
+  const artistItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES ('tidal', 'artist', 'provider-artist-1', 'Bastille')
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(artistItem.id, artistMeta.id);
+  for (const itemId of [releaseItem.id, trackItem.id]) {
+    dbModule.db.prepare(`
+      INSERT INTO ProviderItemCredits (item_id, artist_item_id, ordinal, credited_name)
+      VALUES (?, ?, 0, 'Bastille')
+    `).run(itemId, artistItem.id);
+  }
 
   const root = configModule.Config.getMusicPath();
   const albumDir = path.join(root, "Bastille {mbid-artist-mbid-1}", "SAVE MY SOUL (2025)");
@@ -1132,11 +1163,18 @@ dbModule.db.prepare(`
     VALUES (?, ?, ?, 1)
   `).run("video-rec-pompeii", "Pompeii Video", "artist-mbid-bastille");
   const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get("video-rec-pompeii") as { id: number }).id;
-  dbModule.db.prepare(`
+  const videoItem = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-inline-test', 'Pompeii Video')
-  `).run();
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(videoItem.id, videoRecId);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)
@@ -1254,11 +1292,18 @@ dbModule.db.prepare(`
     .run("video-rec-dup", "Pompeii (Official Video)", "artist-mbid-bastille");
   const dupVideoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-rec-dup") as { id: number }).id;
-  dbModule.db.prepare(`
+  const dupVideoItem = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-inline-duplicate', 'Pompeii (Official Video)')
-  `).run();
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(dupVideoItem.id, dupVideoRecId);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.9)
@@ -1288,11 +1333,22 @@ dbModule.db.prepare(`
 
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
     .run("video-rec-unlinked", "Pompeii (Official Video)", "artist-mbid-bastille");
-  dbModule.db.prepare(`
+  const unlinkedVideoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get("video-rec-unlinked") as { id: number }).id;
+  const unlinkedVideoItem = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-inline-unlinked', 'Pompeii (Official Video)')
-  `).run();
+    RETURNING id
+  `).get() as { id: number };
+  // Matched to its own recording, but deliberately NO provider_video_for
+  // relation — the inline gate must fall back to the separated video library.
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(unlinkedVideoItem.id, unlinkedVideoRecId);
 
   const expectedUnlinked = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     ...rowVideoSeparated,
@@ -1342,11 +1398,18 @@ test("computeExpectedPath inline requires a monitored nonspatial library release
   `).run("video-rec-inline-gate", "Pompeii", "artist-mbid-inline-gate");
   const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-rec-inline-gate") as { id: number }).id;
-  dbModule.db.prepare(`
+  const videoItem = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-inline-gate', 'Pompeii')
-  `).run();
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(videoItem.id, videoRecId);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)
@@ -1419,11 +1482,18 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
   `).run("video-rec-stereo-pref", "Pompeii", "artist-mbid-stereo-pref");
   const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-rec-stereo-pref") as { id: number }).id;
-  dbModule.db.prepare(`
+  const videoItem = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-stereo-pref', 'Pompeii')
-  `).run();
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(videoItem.id, videoRecId);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)

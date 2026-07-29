@@ -41,7 +41,7 @@ export function seedAcceptedProviderReleaseMatch(
   const providerRelease = providerItem(
     db,
     fixture.provider,
-    ["release", "album"],
+    ["release"],
     fixture.providerReleaseId,
     release.title,
   );
@@ -78,7 +78,7 @@ function providerItem(
     WHERE provider = ?
       AND entity_type IN (${marks})
       AND provider_id = ?
-    ORDER BY CASE entity_type WHEN 'release' THEN 0 WHEN 'album' THEN 1 ELSE 2 END, id
+    ORDER BY id
     LIMIT 1
   `).get(provider, ...entityTypes, providerId) as { id: number } | undefined;
   if (existing) return existing;
@@ -119,7 +119,7 @@ export function seedAcceptedProviderTrackMatch(
   const providerRelease = providerItem(
     db,
     fixture.provider,
-    ["release", "album"],
+    ["release"],
     fixture.providerReleaseId,
     release.title,
   );

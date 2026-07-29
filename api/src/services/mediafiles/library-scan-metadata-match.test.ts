@@ -47,19 +47,109 @@ function seedArtist() {
   `).run();
 }
 
+/**
+ * Seed a provider track offer with its typed linkage: the parent provider
+ * release (ProviderReleaseMembers) and the credit chain to the managed artist
+ * (ProviderItemCredits → accepted ProviderArtistMatches → ArtistMetadata) —
+ * the same rows real ingestion writes.
+ */
 function seedOffer(params: {
   providerId: string;
   title: string;
   albumId: string;
   duration: number;
-  recordingId?: number;
+  recordingMbid?: string;
 }) {
   const { db } = dbModule;
-  db.prepare(`
+  const track = db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES ('tidal', 'track', ?, ?, ?)
-  `).run( params.providerId, params.title, params.duration );
+    RETURNING id
+  `).get(params.providerId, params.title, params.duration * 1000) as { id: number };
+
+  let release = db.prepare(`
+    SELECT id FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = ?
+  `).get(params.albumId) as { id: number } | undefined;
+  if (!release) {
+    release = db.prepare(`
+      INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+      VALUES ('tidal', 'release', ?, ?)
+      RETURNING id
+    `).get(params.albumId, `Album ${params.albumId}`) as { id: number };
+  }
+  const position = (db.prepare(`
+    SELECT COUNT(*) AS count FROM ProviderReleaseMembers WHERE provider_release_item_id = ?
+  `).get(release.id) as { count: number }).count + 1;
+  const member = db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, ?)
+    RETURNING id
+  `).get(release.id, track.id, position) as { id: number };
+
+  let artistItem = db.prepare(`
+    SELECT id FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'artist' AND provider_id = 'artist-provider-1'
+  `).get() as { id: number } | undefined;
+  if (!artistItem) {
+    artistItem = db.prepare(`
+      INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+      VALUES ('tidal', 'artist', 'artist-provider-1', 'Bastille')
+      RETURNING id
+    `).get() as { id: number };
+    const artistMeta = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")
+      .get() as { id: number };
+    db.prepare(`
+      INSERT INTO ProviderArtistMatches (
+        provider_artist_item_id, artist_id, match_state, decision_source,
+        confidence, method, matcher_version
+      ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    `).run(artistItem.id, artistMeta.id);
+  }
+  db.prepare(`
+    INSERT OR IGNORE INTO ProviderItemCredits (item_id, artist_item_id, ordinal, credited_name)
+    VALUES (?, ?, 0, 'Bastille')
+  `).run(track.id, artistItem.id);
+
+  if (params.recordingMbid) {
+    const recording = db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+      .get(params.recordingMbid) as { id: number } | undefined;
+    if (recording) {
+      const canonicalRelease = db.prepare(`
+        SELECT track.album_release_id AS release_id
+        FROM Tracks track
+        WHERE track.recording_id = ?
+        ORDER BY track.id
+        LIMIT 1
+      `).get(recording.id) as { release_id: number } | undefined;
+      let releaseMatchId: number | null = null;
+      if (canonicalRelease?.release_id) {
+        const releaseMatch = db.prepare(`
+          INSERT OR IGNORE INTO ProviderReleaseMatches (
+            provider_release_item_id, release_id, relation, match_state,
+            decision_source, confidence, method, matcher_version
+          ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+        `).run(release.id, canonicalRelease.release_id);
+        releaseMatchId = releaseMatch.lastInsertRowid
+          ? Number(releaseMatch.lastInsertRowid)
+          : (db.prepare(`
+              SELECT id FROM ProviderReleaseMatches
+              WHERE provider_release_item_id = ? AND release_id = ?
+            `).get(release.id, canonicalRelease.release_id) as { id: number }).id;
+        const canonicalTrack = db.prepare(`
+          SELECT id FROM Tracks WHERE recording_id = ? AND album_release_id = ? LIMIT 1
+        `).get(recording.id, canonicalRelease.release_id) as { id: number } | undefined;
+        db.prepare(`
+          INSERT INTO ProviderTrackMatches (
+            provider_release_member_id, provider_release_match_id, track_id,
+            recording_id, match_state, decision_source, confidence, method, matcher_version
+          ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+        `).run(member.id, releaseMatchId, canonicalTrack?.id ?? null, recording.id);
+      }
+    }
+  }
 }
 
 /**

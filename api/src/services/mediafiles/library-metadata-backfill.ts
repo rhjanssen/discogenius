@@ -225,14 +225,26 @@ class LibraryMetadataBackfillService {
                       plan.provider AS selected_provider,
                       provider_release.provider_id AS selected_provider_id,
                       selected_release.mbid AS selected_release_mbid,
-                      provider_release.quality,
+                      (
+                        SELECT COALESCE(NULLIF(TRIM(variant.provider_quality_label), ''), variant.quality_class)
+                        FROM AcquisitionPlanTracks plan_track
+                        JOIN ProviderItemAudioVariants variant
+                          ON variant.id = plan_track.provider_audio_variant_id
+                        WHERE plan_track.plan_id = plan.id
+                        ORDER BY CASE variant.quality_class
+                          WHEN 'spatial' THEN 0
+                          WHEN 'hires-lossless' THEN 1
+                          WHEN 'lossless' THEN 2
+                          ELSE 3 END,
+                          variant.id
+                        LIMIT 1
+                      ) AS quality,
                       provider_release.title,
                       provider_release.version,
                       provider_release.release_date,
                       COALESCE(
                         provider_release.cover_id,
-                        provider_release.artwork_url,
-                        provider_release.cover
+                        provider_release.artwork_url
                       ) AS cover
                     FROM LibraryReleases library_release
                     JOIN AlbumReleases selected_release
@@ -526,7 +538,14 @@ class LibraryMetadataBackfillService {
           COALESCE(lf.provider, pi.provider) AS provider,
           'track' AS provider_entity_type,
           COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
-          pi.album_id AS album_id
+          (
+            SELECT CAST(release_item.provider_id AS TEXT)
+            FROM ProviderReleaseMembers member
+            JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+            WHERE member.member_item_id = pi.id
+            ORDER BY member.id
+            LIMIT 1
+          ) AS album_id
         FROM TrackFiles lf
         LEFT JOIN ProviderItems pi
           ON pi.entity_type = 'track'
@@ -538,9 +557,21 @@ class LibraryMetadataBackfillService {
             )
             OR (
               lf.provider_id IS NULL
-              AND (
-                (lf.canonical_track_mbid IS NOT NULL AND pi.track_mbid = lf.canonical_track_mbid)
-                OR (lf.canonical_recording_mbid IS NOT NULL AND pi.recording_mbid = lf.canonical_recording_mbid)
+              -- Provider-free TrackFiles: reach the offer through its accepted
+              -- typed track match instead of the retired MBID shadow columns.
+              AND EXISTS (
+                SELECT 1
+                FROM ProviderReleaseMembers member
+                JOIN ProviderTrackMatches track_match
+                  ON track_match.provider_release_member_id = member.id
+                 AND track_match.match_state = 'accepted'
+                LEFT JOIN Tracks canonical_track ON canonical_track.id = track_match.track_id
+                JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id
+                WHERE member.member_item_id = pi.id
+                  AND (
+                    (lf.canonical_track_mbid IS NOT NULL AND canonical_track.mbid = lf.canonical_track_mbid)
+                    OR (lf.canonical_recording_mbid IS NOT NULL AND canonical_recording.mbid = lf.canonical_recording_mbid)
+                  )
               )
             )
          )
@@ -649,7 +680,14 @@ class LibraryMetadataBackfillService {
         lf.canonical_recording_mbid,
         COALESCE(lf.provider, pi.provider) AS provider,
         COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
-        pi.provider_album_id AS album_id,
+        (
+          SELECT CAST(release_item.provider_id AS TEXT)
+          FROM ProviderReleaseMembers member
+          JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+          WHERE member.member_item_id = pi.id
+          ORDER BY member.id
+          LIMIT 1
+        ) AS album_id,
         r.id AS recording_id
       FROM TrackFiles lf
       LEFT JOIN ProviderItems pi ON pi.rowid = (
@@ -657,14 +695,14 @@ class LibraryMetadataBackfillService {
         FROM ProviderItems candidate
         WHERE CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
           AND (lf.provider IS NULL OR candidate.provider = lf.provider)
-          AND (
-            candidate.entity_type = 'video'
-            OR (candidate.entity_type = 'track' AND candidate.library_slot = 'video')
-          )
-        ORDER BY CASE candidate.entity_type WHEN 'video' THEN 0 ELSE 1 END, candidate.updated_at DESC
+          AND candidate.entity_type = 'video'
+        ORDER BY candidate.updated_at DESC
         LIMIT 1
       )
-      LEFT JOIN Recordings r ON r.id = pi.recording_id
+      LEFT JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = pi.id
+       AND video_match.match_state = 'accepted'
+      LEFT JOIN Recordings r ON r.id = video_match.recording_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
         AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
@@ -781,9 +819,29 @@ class LibraryMetadataBackfillService {
         lf.canonical_recording_mbid,
         COALESCE(lf.provider, pi.provider, 'tidal') AS provider,
         COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
-        pi.album_id AS album_id
+        (
+          SELECT CAST(release_item.provider_id AS TEXT)
+          FROM ProviderReleaseMembers member
+          JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+          WHERE member.member_item_id = pi.id
+          ORDER BY member.id
+          LIMIT 1
+        ) AS album_id,
+        -- A music video's album identity is the release group of the audio
+        -- recording it is related to (provider_video_for), resolved canonically.
+        related_release.mbid AS canonical_release_mbid,
+        related_group.mbid AS canonical_release_group_mbid
       FROM TrackFiles lf
       JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+      LEFT JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = pi.id
+       AND video_match.match_state = 'accepted'
+      LEFT JOIN RecordingRelations relation
+        ON relation.source_recording_id = video_match.recording_id
+       AND relation.relation_type IN ('provider_video_for', 'music_video_for')
+      LEFT JOIN Tracks related_track ON related_track.recording_id = relation.target_recording_id
+      LEFT JOIN AlbumReleases related_release ON related_release.id = related_track.album_release_id
+      LEFT JOIN Albums related_group ON related_group.id = related_release.release_group_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
         AND COALESCE(lf.provider_id, pi.provider_id) IS NOT NULL
@@ -798,6 +856,8 @@ class LibraryMetadataBackfillService {
                 provider: string | null;
                 provider_id: string;
                 album_id: string | null;
+                canonical_release_mbid: string | null;
+                canonical_release_group_mbid: string | null;
             }>;
 
             for (const video of videos) {
@@ -819,6 +879,8 @@ class LibraryMetadataBackfillService {
                         providerId: String(video.provider_id),
                         canonicalArtistMbid: video.canonical_artist_mbid,
                         canonicalRecordingMbid: video.canonical_recording_mbid,
+                        canonicalReleaseMbid: video.canonical_release_mbid,
+                        canonicalReleaseGroupMbid: video.canonical_release_group_mbid,
                     });
                     result.downloaded++;
                 } catch {
@@ -840,9 +902,22 @@ class LibraryMetadataBackfillService {
              album.title AS album_title
       FROM TrackFiles lf
       JOIN ProviderItems pi ON pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-      JOIN Recordings r ON r.id = pi.recording_id
+      JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = pi.id
+       AND video_match.match_state = 'accepted'
+      JOIN Recordings r ON r.id = video_match.recording_id
       JOIN Artists ar ON ar.id = lf.artist_id
-      LEFT JOIN Albums album ON album.mbid = pi.release_group_mbid
+      LEFT JOIN Albums album ON album.id = (
+        SELECT canonical_release.release_group_id
+        FROM ProviderReleaseMembers member
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.provider_release_item_id = member.provider_release_item_id
+         AND release_match.match_state = 'accepted'
+        JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+        WHERE member.member_item_id = pi.id
+        ORDER BY release_match.id
+        LIMIT 1
+      )
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
     `).all(artistId) as Array<{

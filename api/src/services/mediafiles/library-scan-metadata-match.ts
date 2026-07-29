@@ -4,6 +4,10 @@ import {
     normalizeComparableText,
     sameRecordingTitle,
 } from "./import-matching-utils.js";
+import {
+    PROVIDER_MEMBER_ALBUM_ID_SQL,
+    PROVIDER_MEMBER_ARTIST_SCOPE_SQL,
+} from "../providers/provider-item-artist-scope.js";
 import type { LibraryRootKey } from "./library-scan-relink.js";
 
 export type MetadataMatchResult = {
@@ -161,12 +165,11 @@ type ProviderOfferRow = {
     provider_id: string;
     title: string;
     provider_album_id: string | null;
-    recording_id: number | null;
     recording_mbid: string | null;
     isrc: string | null;
+    /** Seconds (ProviderItems stores duration_ms). */
     duration: number | null;
     quality: string | null;
-    library_slot: string | null;
 };
 
 const DURATION_TOLERANCE_SECONDS = 3;
@@ -192,15 +195,54 @@ function durationClose(left: number | null | undefined, right: number | null | u
     return Math.abs(left - right) <= DURATION_TOLERANCE_SECONDS;
 }
 
+/**
+ * Shared SELECT list for provider track offers, resolved entirely through the
+ * typed authority: the parent release comes from ProviderReleaseMembers, the
+ * canonical recording from an accepted ProviderTrackMatches edge, and quality
+ * from the normalized audio-variant boundary (spatial variants preferred when
+ * scanning the spatial root). Scalar subqueries keep one row per provider item
+ * even when a track appears on several provider releases.
+ */
+const OFFER_SELECT = `
+    SELECT
+      pi.provider,
+      CAST(pi.provider_id AS TEXT) AS provider_id,
+      pi.title,
+      ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS provider_album_id,
+      (
+        SELECT recording.mbid
+        FROM ProviderReleaseMembers member
+        JOIN ProviderTrackMatches track_match
+          ON track_match.provider_release_member_id = member.id
+         AND track_match.match_state = 'accepted'
+        JOIN Recordings recording ON recording.id = track_match.recording_id
+        WHERE member.member_item_id = pi.id
+        ORDER BY track_match.id
+        LIMIT 1
+      ) AS recording_mbid,
+      pi.isrc,
+      pi.duration_ms / 1000.0 AS duration,
+      (
+        SELECT COALESCE(NULLIF(TRIM(variant.provider_quality_label), ''), variant.quality_class)
+        FROM ProviderItemAudioVariants variant
+        WHERE variant.provider_item_id = pi.id
+        ORDER BY
+          CASE WHEN (variant.quality_class = 'spatial') = (@preferredSlot = 'spatial') THEN 0 ELSE 1 END,
+          variant.id
+        LIMIT 1
+      ) AS quality
+    FROM ProviderItems pi
+`;
+
+const OFFER_ARTIST_SCOPE = PROVIDER_MEMBER_ARTIST_SCOPE_SQL;
+
 function scoreOffer(
     offer: ProviderOfferRow,
     tags: ParsedAudioTags,
     preferredAlbumIds: Set<string>,
-    preferredSlot: string,
 ): number {
     let score = 0;
     if (preferredAlbumIds.has(String(offer.provider_album_id || ""))) score += 40;
-    if ((offer.library_slot || "stereo") === preferredSlot) score += 10;
     if (tags.durationSeconds && offer.duration && durationClose(tags.durationSeconds, offer.duration)) {
         score += 20;
         score += Math.max(0, 5 - Math.abs(tags.durationSeconds - offer.duration));
@@ -214,13 +256,12 @@ function pickBestOffer(
     offers: ProviderOfferRow[],
     tags: ParsedAudioTags,
     preferredAlbumIds: Set<string>,
-    preferredSlot: string,
 ): ProviderOfferRow | null {
     if (offers.length === 0) return null;
     if (offers.length === 1) return offers[0];
 
     const ranked = offers
-        .map((offer) => ({ offer, score: scoreOffer(offer, tags, preferredAlbumIds, preferredSlot) }))
+        .map((offer) => ({ offer, score: scoreOffer(offer, tags, preferredAlbumIds) }))
         .sort((left, right) => right.score - left.score || String(left.offer.provider_id).localeCompare(String(right.offer.provider_id)));
 
     const best = ranked[0];
@@ -242,48 +283,79 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
 
     const albumIds = new Set<string>();
 
+    // Sibling TrackFiles in the same folder → their offers' parent provider releases.
     const rows = db.prepare(`
-        SELECT DISTINCT CAST(pi.provider_album_id AS TEXT) AS album_id
+        SELECT DISTINCT CAST(release_item.provider_id AS TEXT) AS album_id
         FROM TrackFiles tf
         JOIN ProviderItems pi
           ON CAST(pi.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
          AND pi.entity_type IN ('track', 'video')
          AND (tf.provider IS NULL OR pi.provider = tf.provider)
+        JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+        JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
         WHERE tf.artist_id = ?
           AND tf.provider_id IS NOT NULL
           AND replace(tf.file_path, '\\', '/') LIKE ? || '/%'
-          AND pi.provider_album_id IS NOT NULL
     `).all(artistId, normalizedFolder) as Array<{ album_id: string }>;
 
     for (const row of rows) {
         if (row.album_id) albumIds.add(String(row.album_id));
     }
 
-    // Check tags.musicbrainzAlbumId if present
+    // Check tags.musicbrainzAlbumId if present — provider releases accepted-matched
+    // to that canonical release (or its release group).
     const mbid = tags?.musicbrainzAlbumId?.trim() || null;
     if (mbid) {
         const mbidOffers = db.prepare(`
-            SELECT DISTINCT CAST(provider_id AS TEXT) AS provider_album_id
-            FROM ProviderItems
-            WHERE entity_type = 'album'
-              AND (release_mbid = ? OR release_group_mbid = ?)
+            SELECT DISTINCT CAST(release_item.provider_id AS TEXT) AS provider_album_id
+            FROM ProviderItems release_item
+            JOIN ProviderReleaseMatches release_match
+              ON release_match.provider_release_item_id = release_item.id
+             AND release_match.match_state = 'accepted'
+            JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+            WHERE release_item.entity_type = 'release'
+              AND (canonical_release.mbid = ? OR canonical_release.release_group_mbid = ?)
         `).all(mbid, mbid) as Array<{ provider_album_id: string }>;
         for (const row of mbidOffers) {
             if (row.provider_album_id) albumIds.add(String(row.provider_album_id));
         }
     }
 
-    // Match album title from tags or folder name against Albums & ProviderItems
+    // Match album title from tags or folder name against the artist's provider
+    // releases (canonical release-group title preferred over the provider title).
     const albumTitleCandidate = tags?.album?.trim() || folderName;
     if (albumTitleCandidate) {
         const albumRows = db.prepare(`
-            SELECT pi.provider_id AS provider_album_id, COALESCE(a.title, pi.title) AS title
-            FROM ProviderItems pi
-            LEFT JOIN Albums a ON a.mbid = pi.release_group_mbid
-            JOIN Artists artist ON artist.mbid = pi.artist_mbid OR CAST(artist.id AS TEXT) = CAST(pi.artist_mbid AS TEXT)
-            WHERE pi.entity_type = 'album'
-              AND artist.id = ?
-        `).all(artistId) as Array<{ provider_album_id: string; title: string }>;
+            SELECT
+              CAST(release_item.provider_id AS TEXT) AS provider_album_id,
+              COALESCE(release_group.title, release_item.title) AS title
+            FROM ProviderItems release_item
+            LEFT JOIN ProviderReleaseMatches release_match
+              ON release_match.provider_release_item_id = release_item.id
+             AND release_match.match_state = 'accepted'
+            LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+            LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
+            WHERE release_item.entity_type = 'release'
+              AND (
+                EXISTS (
+                  SELECT 1
+                  FROM ProviderItemCredits credit
+                  JOIN ProviderArtistMatches artist_match
+                    ON artist_match.provider_artist_item_id = credit.artist_item_id
+                   AND artist_match.match_state = 'accepted'
+                  JOIN ArtistMetadata artist_meta ON artist_meta.id = artist_match.artist_id
+                  JOIN Artists managed_artist ON managed_artist.mbid = artist_meta.mbid
+                  WHERE credit.item_id = release_item.id
+                    AND managed_artist.id = @artistId
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM Artists managed_artist
+                  WHERE managed_artist.mbid = canonical_release.artist_mbid
+                    AND managed_artist.id = @artistId
+                )
+              )
+        `).all({ artistId }) as Array<{ provider_album_id: string; title: string }>;
 
         for (const row of albumRows) {
             if (row.provider_album_id && row.title && sameRecordingTitle(albumTitleCandidate, row.title)) {
@@ -317,28 +389,29 @@ function existingTrackFileForOffer(
 
 function offersByRecordingMbid(artistId: string, recordingMbid: string, preferredSlot: string): ProviderOfferRow[] {
     return db.prepare(`
-        SELECT pi.provider, pi.provider_id, pi.title, pi.provider_album_id, pi.recording_id,
-               pi.recording_mbid, pi.isrc, pi.duration, pi.quality, pi.library_slot
-        FROM ProviderItems pi
-        JOIN Artists a ON a.mbid = pi.artist_mbid OR CAST(a.id AS TEXT) = CAST(pi.artist_mbid AS TEXT)
+        ${OFFER_SELECT}
         WHERE pi.entity_type = 'track'
-          AND a.id = ?
-          AND pi.recording_mbid = ?
-          AND (pi.library_slot IS NULL OR pi.library_slot = ?)
-    `).all(artistId, recordingMbid, preferredSlot) as ProviderOfferRow[];
+          AND ${OFFER_ARTIST_SCOPE}
+          AND EXISTS (
+            SELECT 1
+            FROM ProviderReleaseMembers member
+            JOIN ProviderTrackMatches track_match
+              ON track_match.provider_release_member_id = member.id
+             AND track_match.match_state = 'accepted'
+            JOIN Recordings recording ON recording.id = track_match.recording_id
+            WHERE member.member_item_id = pi.id
+              AND recording.mbid = @recordingMbid
+          )
+    `).all({ artistId, recordingMbid, preferredSlot }) as ProviderOfferRow[];
 }
 
 function offersByIsrc(artistId: string, isrc: string, preferredSlot: string): ProviderOfferRow[] {
     return db.prepare(`
-        SELECT pi.provider, pi.provider_id, pi.title, pi.provider_album_id, pi.recording_id,
-               pi.recording_mbid, pi.isrc, pi.duration, pi.quality, pi.library_slot
-        FROM ProviderItems pi
-        JOIN Artists a ON a.mbid = pi.artist_mbid OR CAST(a.id AS TEXT) = CAST(pi.artist_mbid AS TEXT)
+        ${OFFER_SELECT}
         WHERE pi.entity_type = 'track'
-          AND a.id = ?
-          AND upper(pi.isrc) = ?
-          AND (pi.library_slot IS NULL OR pi.library_slot = ?)
-    `).all(artistId, isrc, preferredSlot) as ProviderOfferRow[];
+          AND ${OFFER_ARTIST_SCOPE}
+          AND upper(pi.isrc) = @isrc
+    `).all({ artistId, isrc, preferredSlot }) as ProviderOfferRow[];
 }
 
 function offersByTitleInAlbums(
@@ -350,17 +423,21 @@ function offersByTitleInAlbums(
 ): ProviderOfferRow[] {
     if (albumIds.size === 0) return [];
     const albumList = Array.from(albumIds);
-    const placeholders = albumList.map(() => "?").join(", ");
+    const placeholders = albumList.map((_, index) => `@album${index}`).join(", ");
+    const params: Record<string, string> = { artistId, preferredSlot };
+    albumList.forEach((albumId, index) => { params[`album${index}`] = albumId; });
     const rows = db.prepare(`
-        SELECT pi.provider, pi.provider_id, pi.title, pi.provider_album_id, pi.recording_id,
-               pi.recording_mbid, pi.isrc, pi.duration, pi.quality, pi.library_slot
-        FROM ProviderItems pi
-        JOIN Artists a ON a.mbid = pi.artist_mbid OR CAST(a.id AS TEXT) = CAST(pi.artist_mbid AS TEXT)
+        ${OFFER_SELECT}
         WHERE pi.entity_type = 'track'
-          AND a.id = ?
-          AND CAST(pi.provider_album_id AS TEXT) IN (${placeholders})
-          AND (pi.library_slot IS NULL OR pi.library_slot = ?)
-    `).all(artistId, ...albumList, preferredSlot) as ProviderOfferRow[];
+          AND ${OFFER_ARTIST_SCOPE}
+          AND EXISTS (
+            SELECT 1
+            FROM ProviderReleaseMembers member
+            JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+            WHERE member.member_item_id = pi.id
+              AND CAST(release_item.provider_id AS TEXT) IN (${placeholders})
+          )
+    `).all(params) as ProviderOfferRow[];
 
     return rows.filter((offer) =>
         sameRecordingTitle(title, offer.title)
@@ -375,14 +452,10 @@ function offersByTitleForArtist(
     durationSeconds: number | null | undefined,
 ): ProviderOfferRow[] {
     const rows = db.prepare(`
-        SELECT pi.provider, pi.provider_id, pi.title, pi.provider_album_id, pi.recording_id,
-               pi.recording_mbid, pi.isrc, pi.duration, pi.quality, pi.library_slot
-        FROM ProviderItems pi
-        JOIN Artists a ON a.mbid = pi.artist_mbid OR CAST(a.id AS TEXT) = CAST(pi.artist_mbid AS TEXT)
+        ${OFFER_SELECT}
         WHERE pi.entity_type = 'track'
-          AND a.id = ?
-          AND (pi.library_slot IS NULL OR pi.library_slot = ?)
-    `).all(artistId, preferredSlot) as ProviderOfferRow[];
+          AND ${OFFER_ARTIST_SCOPE}
+    `).all({ artistId, preferredSlot }) as ProviderOfferRow[];
 
     return rows.filter((offer) =>
         sameRecordingTitle(title, offer.title)
@@ -399,7 +472,16 @@ function findSameFolderDuplicate(
     const folder = path.dirname(filePath).replace(/\\/g, "/");
     const rows = db.prepare(`
         SELECT tf.file_path, tf.provider, tf.provider_id, tf.library_slot, tf.quality, tf.duration,
-               pi.title, pi.provider_album_id, pi.duration AS offer_duration, pi.recording_id
+               pi.title,
+               (
+                 SELECT CAST(release_item.provider_id AS TEXT)
+                 FROM ProviderReleaseMembers member
+                 JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+                 WHERE member.member_item_id = pi.id
+                 ORDER BY member.id
+                 LIMIT 1
+               ) AS provider_album_id,
+               pi.duration_ms / 1000.0 AS offer_duration
         FROM TrackFiles tf
         LEFT JOIN ProviderItems pi
           ON CAST(pi.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
@@ -419,7 +501,6 @@ function findSameFolderDuplicate(
         title: string | null;
         provider_album_id: string | null;
         offer_duration: number | null;
-        recording_id: number | null;
     }>;
 
     const candidates = rows.filter((row) => {
@@ -572,7 +653,7 @@ export function matchAudioFileByMetadata(
         }
     }
 
-    const best = pickBestOffer(offers, tags, preferredAlbumIds, preferredSlot);
+    const best = pickBestOffer(offers, tags, preferredAlbumIds);
     if (!best) {
         // No provider offer, but the embedded MB IDs resolve to a catalog track:
         // link the file directly (Lidarr-style). The TrackFile carries no
@@ -594,7 +675,9 @@ export function matchAudioFileByMetadata(
         return null;
     }
 
-    const librarySlot = best.library_slot || preferredSlot;
+    // Provider items are slot-agnostic in schema 41 (renditions live on
+    // ProviderItemAudioVariants), so the scanned root decides the slot.
+    const librarySlot = preferredSlot;
     const existing = existingTrackFileForOffer(artistId, best.provider, String(best.provider_id), librarySlot);
     const resolvedExisting = existing?.file_path || null;
     const duplicateOfExisting = Boolean(

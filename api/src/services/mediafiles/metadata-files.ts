@@ -256,7 +256,9 @@ function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
           ON video_match.provider_video_item_id = pi.id
          AND video_match.match_state = 'accepted'
         JOIN Recordings recording ON recording.id = video_match.recording_id
-        LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.id = recording.artist_metadata_id
+        LEFT JOIN ArtistMetadata artist_metadata
+          ON artist_metadata.id = recording.artist_metadata_id
+          OR (recording.artist_metadata_id IS NULL AND artist_metadata.mbid = recording.artist_mbid)
         LEFT JOIN Artists artist ON artist.mbid = artist_metadata.mbid
         LEFT JOIN RecordingRelations relation
           ON relation.source_recording_id = recording.id
@@ -595,31 +597,18 @@ function resolveCanonicalVideoCoverId(context: {
     if (!provider || !providerId) return null;
 
     const providerItem = db.prepare(`
-      SELECT recording_id, recording_mbid
-      FROM ProviderItems
-      WHERE provider = ?
-        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        AND (
-          entity_type = 'video'
-          OR (entity_type = 'track' AND library_slot = 'video')
-        )
-      ORDER BY CASE entity_type WHEN 'video' THEN 0 ELSE 1 END, updated_at DESC
+      SELECT video_match.recording_id
+      FROM ProviderItems pi
+      JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = pi.id
+       AND video_match.match_state = 'accepted'
+      WHERE pi.provider = ?
+        AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+        AND pi.entity_type = 'video'
+      ORDER BY pi.updated_at DESC
       LIMIT 1
-    `).get(provider, providerId) as {
-        recording_id?: number | null;
-        recording_mbid?: string | null;
-    } | undefined;
-    if (providerItem?.recording_id != null) return String(providerItem.recording_id);
-
-    const recordingMbid = String(providerItem?.recording_mbid || "").trim();
-    if (!recordingMbid) return null;
-    const recording = db.prepare(`
-      SELECT id
-      FROM Recordings
-      WHERE mbid = ? AND is_video = 1
-      LIMIT 1
-    `).get(recordingMbid) as { id: number } | undefined;
-    return recording?.id != null ? String(recording.id) : null;
+    `).get(provider, providerId) as { recording_id?: number | null } | undefined;
+    return providerItem?.recording_id != null ? String(providerItem.recording_id) : null;
 }
 
 /**
@@ -732,13 +721,17 @@ export async function saveArtistNfoFile(
         : [];
     const providerIds = localArtist.mbid
         ? db.prepare(`
-            SELECT provider, CAST(provider_id AS TEXT) AS provider_id
-            FROM ProviderItems
-            WHERE entity_type = 'artist'
-              AND artist_mbid = ?
-              AND provider IS NOT NULL
-              AND provider_id IS NOT NULL
-            ORDER BY provider ASC, CAST(provider_id AS TEXT) ASC
+            SELECT pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id
+            FROM ProviderItems pi
+            JOIN ProviderArtistMatches artist_match
+              ON artist_match.provider_artist_item_id = pi.id
+             AND artist_match.match_state = 'accepted'
+            JOIN ArtistMetadata artist_meta ON artist_meta.id = artist_match.artist_id
+            WHERE pi.entity_type = 'artist'
+              AND artist_meta.mbid = ?
+              AND pi.provider IS NOT NULL
+              AND pi.provider_id IS NOT NULL
+            ORDER BY pi.provider ASC, CAST(pi.provider_id AS TEXT) ASC
         `).all(localArtist.mbid) as Array<{ provider: string; provider_id: string }>
         : [];
 
@@ -809,11 +802,20 @@ export async function saveAlbumNfoFile(
     }
     if (!releaseGroupMbid && options.provider) {
         const qualifiedOffer = db.prepare(`
-            SELECT release_group_mbid
-            FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = 'album'
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            SELECT release_group.mbid AS release_group_mbid
+            FROM ProviderItems pi
+            JOIN ProviderReleaseMatches release_match
+              ON release_match.provider_release_item_id = pi.id
+             AND release_match.match_state = 'accepted'
+            JOIN AlbumReleases release ON release.id = release_match.release_id
+            JOIN Albums release_group ON release_group.id = release.release_group_id
+            WHERE pi.provider = ?
+              AND pi.entity_type = 'release'
+              AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+            ORDER BY
+              CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+              release_match.confidence DESC,
+              release_match.id
             LIMIT 1
         `).get(options.provider, options.providerAlbumId || albumId) as {
             release_group_mbid?: string | null;

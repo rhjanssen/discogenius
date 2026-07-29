@@ -10,6 +10,11 @@ import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
 import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
 import { matchAudioFileByMetadata, resolveCatalogTrackFromEmbeddedMbids } from "./library-scan-metadata-match.js";
+import {
+    PROVIDER_MEMBER_ALBUM_ID_SQL,
+    PROVIDER_MEMBER_ARTIST_SCOPE_SQL,
+    PROVIDER_RELEASE_ARTIST_SCOPE_SQL,
+} from "../providers/provider-item-artist-scope.js";
 import { resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import {
     updateAlbumDownloadStatus,
@@ -1547,15 +1552,15 @@ export class DiskScanService {
             if (!mediaId) return null;
             const albumIdFromTrack = mediaId
                 ? (db.prepare(`
-                    SELECT provider_album_id AS album_id
-                    FROM ProviderItems
-                    WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY updated_at DESC
+                    SELECT ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id
+                    FROM ProviderItems pi
+                    WHERE pi.entity_type = 'track' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY pi.updated_at DESC
                     LIMIT 1
                   `).get(mediaId) as any)?.album_id?.toString() || null
                 : null;
-            // A lyric sidecar lives in its album folder; when the track row carries no
-            // explicit provider_album_id, resolve the album from the path just like the
+            // A lyric sidecar lives in its album folder; when the track has no
+            // release membership, resolve the album from the path just like the
             // cover does, so the lyric still relinks to the right album.
             const albumId = albumIdFromTrack || this.findAlbumIdFromPath(filePath, artistId);
             return { albumId, mediaId, fileType: "lyrics", quality: null };
@@ -1568,10 +1573,19 @@ export class DiskScanService {
             const mediaId = this.findMediaIdByStem(stem, artistId);
             if (mediaId) {
                 const media = db.prepare(`
-                    SELECT provider_album_id AS album_id, quality, provider
-                    FROM ProviderItems
-                    WHERE entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY updated_at DESC
+                    SELECT
+                      ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id,
+                      (
+                        SELECT COALESCE(NULLIF(TRIM(variant.provider_quality_label), ''), variant.quality_class)
+                        FROM ProviderItemAudioVariants variant
+                        WHERE variant.provider_item_id = pi.id
+                        ORDER BY CASE WHEN variant.quality_class = 'spatial' THEN 1 ELSE 0 END, variant.id
+                        LIMIT 1
+                      ) AS quality,
+                      pi.provider
+                    FROM ProviderItems pi
+                    WHERE pi.entity_type = 'track' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY pi.updated_at DESC
                     LIMIT 1
                 `).get(mediaId) as any;
                 return {
@@ -1602,10 +1616,12 @@ export class DiskScanService {
             const mediaId = this.findMediaIdByStem(stem, artistId);
             if (mediaId) {
                 const media = db.prepare(`
-                    SELECT provider_album_id AS album_id, quality
-                    FROM ProviderItems
-                    WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY updated_at DESC
+                    SELECT
+                      ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id,
+                      pi.video_quality AS quality
+                    FROM ProviderItems pi
+                    WHERE pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY pi.updated_at DESC
                     LIMIT 1
                 `).get(mediaId) as any;
                 if (media) {
@@ -1626,10 +1642,10 @@ export class DiskScanService {
             const videoMediaId = this.findVideoIdByStem(stem, artistId);
             if (videoMediaId) {
                 const media = db.prepare(`
-                    SELECT provider_album_id AS album_id
-                    FROM ProviderItems
-                    WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY updated_at DESC
+                    SELECT ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id
+                    FROM ProviderItems pi
+                    WHERE pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY pi.updated_at DESC
                     LIMIT 1
                 `).get(videoMediaId) as any;
                 return {
@@ -1657,13 +1673,12 @@ export class DiskScanService {
             const media = db.prepare(`
                 SELECT pi.provider_id
                 FROM ProviderItems pi
-                JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
                 WHERE pi.entity_type IN ('track', 'video')
-                  AND CAST(pi.provider_id AS TEXT) = ?
-                  AND a.id = ?
+                  AND CAST(pi.provider_id AS TEXT) = @providerId
+                  AND ${PROVIDER_MEMBER_ARTIST_SCOPE_SQL}
                 ORDER BY pi.updated_at DESC
                 LIMIT 1
-            `).get(stem, artistId) as any;
+            `).get({ providerId: stem, artistId }) as any;
             if (media) return String(media.provider_id);
         }
 
@@ -1673,13 +1688,12 @@ export class DiskScanService {
             const media = db.prepare(`
                 SELECT pi.provider_id
                 FROM ProviderItems pi
-                JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
                 WHERE pi.entity_type IN ('track', 'video')
-                  AND CAST(pi.provider_id AS TEXT) = ?
-                  AND a.id = ?
+                  AND CAST(pi.provider_id AS TEXT) = @providerId
+                  AND ${PROVIDER_MEMBER_ARTIST_SCOPE_SQL}
                 ORDER BY pi.updated_at DESC
                 LIMIT 1
-            `).get(idMatch[1], artistId) as any;
+            `).get({ providerId: idMatch[1], artistId }) as any;
             if (media) return String(media.provider_id);
         }
 
@@ -1713,12 +1727,11 @@ export class DiskScanService {
             const exactVideo = db.prepare(`
               SELECT pi.provider_id AS id
               FROM ProviderItems pi
-              JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
               WHERE pi.entity_type = 'video'
-                AND CAST(pi.provider_id AS TEXT) = ?
-                AND a.id = ?
+                AND CAST(pi.provider_id AS TEXT) = @providerId
+                AND ${PROVIDER_MEMBER_ARTIST_SCOPE_SQL}
               LIMIT 1
-            `).get(embeddedMediaId, artistId) as { id: string } | undefined;
+            `).get({ providerId: embeddedMediaId, artistId }) as { id: string } | undefined;
             if (exactVideo) {
                 return exactVideo.id;
             }
@@ -1727,11 +1740,13 @@ export class DiskScanService {
         const videos = db.prepare(`
             SELECT pi.provider_id AS id, r.title
             FROM ProviderItems pi
-            JOIN Recordings r ON r.id = pi.recording_id
-            JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = pi.id
+             AND video_match.match_state = 'accepted'
+            JOIN Recordings r ON r.id = video_match.recording_id
             WHERE pi.entity_type = 'video'
-              AND a.id = ?
-        `).all(artistId) as Array<{ id: string; title: string }>;
+              AND ${PROVIDER_MEMBER_ARTIST_SCOPE_SQL}
+        `).all({ artistId }) as Array<{ id: string; title: string }>;
 
         const titleMatches = videos.filter((video) => stem.includes(video.title) || video.title.includes(stem));
         return titleMatches.length === 1 ? titleMatches[0].id : null;
@@ -1747,10 +1762,9 @@ export class DiskScanService {
         const albums = db.prepare(`
             SELECT DISTINCT pi.provider_id AS id, pi.title
             FROM ProviderItems pi
-            JOIN Artists a ON a.mbid = pi.artist_mbid OR a.id = pi.artist_mbid
-            WHERE pi.entity_type = 'album'
-              AND a.id = ?
-        `).all(artistId) as Array<{ id: string; title: string }>;
+            WHERE pi.entity_type = 'release'
+              AND ${PROVIDER_RELEASE_ARTIST_SCOPE_SQL}
+        `).all({ artistId }) as Array<{ id: string; title: string }>;
 
         for (const album of albums) {
             if (dirName.includes(album.title) || album.title.includes(dirName)) {
@@ -1767,9 +1781,11 @@ export class DiskScanService {
     private static findMediaByExpectedPath(filePath: string, artistId: string): { albumId: string | null; mediaId: string; quality: string | null } | null {
         const resolved = path.resolve(filePath);
 
-        // Check if any track's expected path matches this file
+        // Check if any track's expected path matches this file. Quality comes
+        // from the tracked file itself (its actual imported quality), not the
+        // retired ProviderItems scalar.
         const match = db.prepare(`
-            SELECT lf.provider_id AS media_id, pi.provider_album_id AS album_id, pi.quality
+            SELECT lf.provider_id AS media_id, ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id, lf.quality
             FROM TrackFiles lf
             JOIN ProviderItems pi ON pi.provider_id = lf.provider_id AND pi.entity_type IN ('track', 'video')
             WHERE lf.artist_id = ? AND lf.expected_path = ?

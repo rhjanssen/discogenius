@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-metadata-files-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.metadata-files.test.db");
@@ -66,26 +67,51 @@ function seedMusicBrainzMetadata() {
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-mbid-300", "album-mbid-200", "recording-mbid-300", 1, 1, "Example Track", 180000);
 
+      // Release + track offers linked to the canonical release/track through the
+      // typed match authority (ProviderReleaseMembers + accepted Provider*Matches).
+      seedAcceptedProviderTrackMatch(dbModule.db, {
+          provider: "tidal",
+          providerReleaseId: "200",
+          providerTrackId: "300",
+          releaseMbid: "album-mbid-200",
+          trackMbid: "track-mbid-300",
+      });
       dbModule.db.prepare(`
-          INSERT INTO ProviderItems(
-      provider, entity_type, provider_id, title, upc, duration_ms, release_date
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run( "tidal", "album", "200", "Example Album", "123456789012", 180, "2024-02-03" );
-    dbModule.db.prepare(`
-        INSERT INTO ProviderItems(
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES (?, ?, ?, ?, ?)
-    `).run( "tidal", "track", "300", "Example Track", 180 );
+          UPDATE ProviderItems
+          SET upc = '123456789012', duration_ms = 180, release_date = '2024-02-03',
+              title = 'Example Album'
+          WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = '200'
+      `).run();
+      dbModule.db.prepare(`
+          UPDATE ProviderItems
+          SET duration_ms = 180, title = 'Example Track'
+          WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = '300'
+      `).run();
       dbModule.db.prepare(`
           INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date, length_ms, credits)
           VALUES(?, ?, ?, ?, ?, ?, ?)
       `).run("video-mbid-400", "artist-mbid-100", "Example Video", 1, "2024-02-03", 210000, JSON.stringify([{ name: "The Example Artist" }, { name: "Guest Artist" }]));
     const videoRecordingId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get("video-mbid-400") as { id: number }).id;
-      dbModule.db.prepare(`
+      const videoItem = dbModule.db.prepare(`
           INSERT INTO ProviderItems(
       provider, entity_type, provider_id, title, duration_ms, release_date
     ) VALUES (?, ?, ?, ?, ?, ?)
-      `).run( "tidal", "video", "400", "Example Video", 210, "2024-02-03" );
+    RETURNING id
+      `).get( "tidal", "video", "400", "Example Video", 210, "2024-02-03" ) as { id: number };
+    dbModule.db.prepare(`
+        INSERT INTO ProviderVideoMatches (
+          provider_video_item_id, recording_id, match_state, decision_source,
+          confidence, method, matcher_version
+        ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    `).run(videoItem.id, videoRecordingId);
+    // The video's album identity is derived from its related audio recording.
+    const audioRecordingId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+        .get("recording-mbid-300") as { id: number }).id;
+    dbModule.db.prepare(`
+        INSERT INTO RecordingRelations (
+          source_recording_id, target_recording_id, relation_type, confidence
+        ) VALUES (?, ?, 'provider_video_for', 0.95)
+    `).run(videoRecordingId, audioRecordingId);
 }
 
 test("Jellyfin NFO files use canonical local metadata and include MusicBrainz IDs", async () => {
@@ -181,17 +207,47 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-spatial", "album-mbid-spatial", "recording-atmos", 1, 1, "Example Track", 181000);
 
+    // Each offer reaches its canonical recording through the typed match chain,
+    // and its stereo/spatial rendition through the normalized audio-variant
+    // boundary (quality is no longer a ProviderItems scalar).
+    const stereoIds = seedAcceptedProviderTrackMatch(dbModule.db, {
+        provider: "tidal",
+        providerReleaseId: "stereo-release",
+        providerTrackId: "stereo-track",
+        releaseMbid: "album-mbid-stereo",
+        trackMbid: "track-stereo",
+    });
+    const spatialIds = seedAcceptedProviderTrackMatch(dbModule.db, {
+        provider: "tidal",
+        providerReleaseId: "spatial-release",
+        providerTrackId: "spatial-track",
+        releaseMbid: "album-mbid-spatial",
+        trackMbid: "track-spatial",
+    });
     dbModule.db.prepare(`
-        INSERT INTO ProviderItems(
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES (?, ?, ?, ?, ?)
-    `).run( "tidal", "track", "stereo-track", "Example Track", 180 );
-
+        UPDATE ProviderItems SET duration_ms = 180000
+        WHERE id = ?
+    `).run(stereoIds.providerTrackItemId);
     dbModule.db.prepare(`
-        INSERT INTO ProviderItems(
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES (?, ?, ?, ?, ?)
-    `).run( "tidal", "track", "spatial-track", "Example Track", 181 );
+        UPDATE ProviderItems SET duration_ms = 181000
+        WHERE id = ?
+    `).run(spatialIds.providerTrackItemId);
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItemAudioVariants (
+          provider_item_id, variant_key, quality_class, provider_quality_label, availability
+        ) VALUES (?, 'lossless', 'lossless', 'LOSSLESS', 'available')
+    `).run(stereoIds.providerTrackItemId);
+    dbModule.db.prepare(`
+        INSERT INTO ProviderItemAudioVariants (
+          provider_item_id, variant_key, quality_class, provider_quality_label, availability
+        ) VALUES (?, 'atmos', 'spatial', 'DOLBY_ATMOS', 'available')
+    `).run(spatialIds.providerTrackItemId);
+    const artistMetaId = (dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid-100'")
+        .get() as { id: number }).id;
+    dbModule.db.prepare("UPDATE Albums SET artist_metadata_id = ? WHERE mbid = 'release-group-mbid-200'")
+        .run(artistMetaId);
+    dbModule.db.prepare("UPDATE Recordings SET artist_metadata_id = ? WHERE mbid IN ('recording-stereo', 'recording-atmos')")
+        .run(artistMetaId);
 
     const stereoLyricsPath = path.join(tempDir, "stereo-track.lrc");
     fs.writeFileSync(stereoLyricsPath, "[00:01.00]plain lyric", "utf-8");
@@ -245,11 +301,15 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
 
 test("lyrics fall back across providers for the same canonical recording", async () => {
     seedMusicBrainzMetadata();
-    dbModule.db.prepare(`
-        INSERT INTO ProviderItems(
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES (?, ?, ?, ?, ?)
-    `).run( "apple-music", "track", "apple-track-300", "Example Track", 180 );
+    // Apple offer for the SAME canonical recording as the tidal one seeded above,
+    // so the lyric lookup can fall back across providers through typed matches.
+    seedAcceptedProviderTrackMatch(dbModule.db, {
+        provider: "apple-music",
+        providerReleaseId: "apple-release-200",
+        providerTrackId: "apple-track-300",
+        releaseMbid: "album-mbid-200",
+        trackMbid: "track-mbid-300",
+    });
 
     const providersModule = await import("../providers/index.js");
     const tidal = providersModule.streamingProviderManager.getStreamingProvider("tidal") as any;
