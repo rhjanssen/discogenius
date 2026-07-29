@@ -20,8 +20,17 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+  db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  db.prepare("DELETE FROM AcquisitionPlans").run();
+  db.prepare("DELETE FROM LibraryReleases").run();
+  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM ProviderTrackMatches").run();
+  db.prepare("DELETE FROM ProviderVideoMatches").run();
+  db.prepare("DELETE FROM ProviderReleaseMatches").run();
+  db.prepare("DELETE FROM ProviderReleaseMembers").run();
+  db.prepare("DELETE FROM ProviderItemAudioVariants").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -121,22 +130,88 @@ test("local search returns canonical tracks", async () => {
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES ('track-mbid', 'release-mbid', 'recording-mbid', 1, 1, '1', 'Canonical Search Track', 181000)
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, selected_release_mbid, quality
-    )
-    VALUES ('artist-mbid', 'rg-mbid', 'stereo', 1, 'tidal', 'provider-album-1', 'release-mbid', 'LOSSLESS')
-  `).run();
-  dbModule.db.prepare(`
+  const providerRelease = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      track_mbid, recording_mbid, title, explicit, quality, duration, asset_id, match_status
+      provider, entity_type, provider_id, title
     )
-    VALUES (
-      'tidal', 'track', 'provider-track-1', 'artist-mbid', 'rg-mbid', 'release-mbid',
-      'track-mbid', 'recording-mbid', 'Canonical Search Track', 1, 'HIRES_LOSSLESS', 181, 'track-cover', 'verified'
+    VALUES ('tidal', 'release', 'provider-album-1', 'Search Album')
+    RETURNING id
+  `).get() as { id: number };
+  const providerTrack = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, explicit, duration
     )
-  `).run();
+    VALUES ('tidal', 'track', 'provider-track-1', 'Canonical Search Track', 1, 181)
+    RETURNING id
+  `).get() as { id: number };
+  const member = dbModule.db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+    RETURNING id
+  `).get(providerRelease.id, providerTrack.id) as { id: number };
+  const release = dbModule.db.prepare(`
+    SELECT id, release_group_id FROM AlbumReleases WHERE mbid = 'release-mbid'
+  `).get() as { id: number; release_group_id: number };
+  const track = dbModule.db.prepare(`
+    SELECT id, recording_id FROM Tracks WHERE mbid = 'track-mbid'
+  `).get() as { id: number; recording_id: number };
+  const releaseMatch = dbModule.db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(providerRelease.id, release.id) as { id: number };
+  const trackMatch = dbModule.db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_release_member_id, provider_release_match_id, track_id,
+      recording_id, match_state, decision_source, confidence, method,
+      matcher_version
+    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(member.id, releaseMatch.id, track.id, track.recording_id) as { id: number };
+  const variant = dbModule.db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label,
+      availability
+    ) VALUES (?, 'hires', 'hires-lossless', 'HIRES_LOSSLESS', 'available')
+    RETURNING id
+  `).get(providerTrack.id) as { id: number };
+  const library = dbModule.db.prepare(`
+    SELECT id FROM Libraries WHERE name = 'Stereo'
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      curation_version
+    ) VALUES (?, ?, 1, 'auto', 0, 1)
+  `).run(library.id, release.release_group_id);
+  const libraryRelease = dbModule.db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, curation_version
+    ) VALUES (?, ?, 'auto', 0, 1)
+    RETURNING id
+  `).get(library.id, release.id) as { id: number };
+  const plan = dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlans (
+      library_release_id, provider, composition, download_mode, state,
+      planner_version, policy_hash, computed_at
+    ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
+    RETURNING id
+  `).get(libraryRelease.id) as { id: number };
+  const source = dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlanSources (
+      plan_id, provider_release_match_id, role, sort_order
+    ) VALUES (?, ?, 'primary', 0)
+    RETURNING id
+  `).get(plan.id, releaseMatch.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlanTracks (
+      plan_id, track_id, source_id, provider_track_match_id,
+      provider_audio_variant_id, source_quality_snapshot
+    ) VALUES (?, ?, ?, ?, ?, '{"quality":"HIRES_LOSSLESS"}')
+  `).run(plan.id, track.id, source.id, trackMatch.id, variant.id);
 
   const res = createMockResponse();
   await getSearchHandler()({ query: { query: "Canonical Search", type: "tracks", limit: "10" } }, res);
@@ -162,16 +237,23 @@ test("local search returns canonical videos", async () => {
     RETURNING id
   `).get(artist.id) as { id: number };
 
-  dbModule.db.prepare(`
+  const providerVideo = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality, duration, release_date, asset_id, match_status
+      provider, entity_type, provider_id, title, quality, duration,
+      release_date, cover_id
     )
     VALUES (
-      'tidal', 'video', 'provider-video-1', 'artist-mbid', ?,
-      'Canonical Search Video', 'FHD', 201, '2023-02-03', 'provider-cover', 'verified'
+      'tidal', 'video', 'provider-video-1',
+      'Canonical Search Video', 'FHD', 201, '2023-02-03', 'provider-cover'
     )
-  `).run(video.id);
+    RETURNING id
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(providerVideo.id, video.id);
 
   const res = createMockResponse();
   await getSearchHandler()({ query: { query: "Canonical Search", type: "videos", limit: "10" } }, res);

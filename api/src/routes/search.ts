@@ -251,22 +251,77 @@ router.get("/", async (req, res) => {
               rg.primary_type,
               a.name AS artist_name,
               rg.images,
-              COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
-              COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
-              stereo.selected_provider AS stereo_provider,
-              stereo.selected_provider_id AS stereo_provider_id,
-              spatial.selected_provider AS spatial_provider,
-              spatial.selected_provider_id AS spatial_provider_id,
-              COALESCE(stereo.quality, spatial.quality) AS quality,
-              CASE WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1 ELSE 0 END AS monitored
+              (
+                SELECT COALESCE(
+                  provider_release.quality,
+                  (
+                    SELECT COALESCE(
+                      NULLIF(TRIM(CASE
+                        WHEN json_valid(plan_track.source_quality_snapshot)
+                        THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
+                        ELSE plan_track.source_quality_snapshot
+                      END), ''),
+                      NULLIF(TRIM(variant.provider_quality_label), ''),
+                      variant.quality_class
+                    )
+                    FROM AcquisitionPlanTracks plan_track
+                    JOIN ProviderItemAudioVariants variant
+                      ON variant.id = plan_track.provider_audio_variant_id
+                    WHERE plan_track.plan_id = plan.id
+                    ORDER BY plan_track.id
+                    LIMIT 1
+                  )
+                )
+                FROM LibraryReleases library_release
+                JOIN Libraries library
+                  ON library.id = library_release.library_id
+                 AND library.enabled = 1
+                JOIN quality_profiles quality_profile
+                  ON quality_profile.id = library.quality_profile_id
+                JOIN AlbumReleases selected_release
+                  ON selected_release.id = library_release.release_id
+                 AND selected_release.release_group_id = rg.id
+                JOIN AcquisitionPlans plan
+                  ON plan.library_release_id = library_release.id
+                 AND plan.state = 'current'
+                JOIN AcquisitionPlanSources source
+                  ON source.plan_id = plan.id
+                 AND source.id = (
+                   SELECT preferred_source.id
+                   FROM AcquisitionPlanSources preferred_source
+                   WHERE preferred_source.plan_id = plan.id
+                   ORDER BY
+                     CASE preferred_source.role WHEN 'primary' THEN 0 ELSE 1 END,
+                     preferred_source.sort_order,
+                     preferred_source.id
+                   LIMIT 1
+                 )
+                JOIN ProviderReleaseMatches release_match
+                  ON release_match.id = source.provider_release_match_id
+                 AND release_match.match_state = 'accepted'
+                JOIN ProviderItems provider_release
+                  ON provider_release.id = release_match.provider_release_item_id
+                ORDER BY
+                  CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                    WHERE allowed.value = 'spatial'
+                  ) THEN 1 ELSE 0 END,
+                  library_release.updated_at DESC,
+                  library_release.id DESC
+                LIMIT 1
+              ) AS quality,
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM LibraryReleaseGroups library_group
+                JOIN Libraries library
+                  ON library.id = library_group.library_id
+                 AND library.enabled = 1
+                WHERE library_group.release_group_id = rg.id
+                  AND library_group.monitored = 1
+              ) THEN 1 ELSE 0 END AS monitored
             FROM Albums rg
             LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-            LEFT JOIN ReleaseGroupSlots stereo
-              ON stereo.release_group_mbid = rg.mbid
-             AND stereo.slot = 'stereo'
-            LEFT JOIN ReleaseGroupSlots spatial
-              ON spatial.release_group_mbid = rg.mbid
-             AND spatial.slot = 'spatial'
             WHERE rg.mbid IN (${albumMarks})
             ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC`
                     )
@@ -318,7 +373,18 @@ router.get("/", async (req, res) => {
               t.mbid AS id,
               t.title,
               artist.name AS artist_name,
-              COALESCE(file_quality.quality, provider_track.quality, selected_slot.quality) AS quality,
+              COALESCE(
+                file_quality.imported_quality,
+                file_quality.source_quality,
+                file_quality.quality,
+                NULLIF(TRIM(CASE
+                  WHEN json_valid(selected_plan_track.source_quality_snapshot)
+                  THEN json_extract(selected_plan_track.source_quality_snapshot, '$.quality')
+                  ELSE selected_plan_track.source_quality_snapshot
+                END), ''),
+                selected_variant.provider_quality_label,
+                selected_variant.quality_class
+              ) AS quality,
               COALESCE(provider_track.explicit, 0) AS explicit,
               COALESCE(ROUND(COALESCE(t.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0), 0) AS duration,
               COALESCE(release.date, rg.first_release_date) AS release_date,
@@ -326,64 +392,72 @@ router.get("/", async (req, res) => {
               rg.images AS rg_images,
               CASE WHEN EXISTS (
                 SELECT 1
-                FROM ReleaseGroupSlots monitored_slot
-                WHERE monitored_slot.release_group_mbid = rg.mbid
-                  AND monitored_slot.monitored = 1
+                FROM LibraryReleaseGroups library_group
+                JOIN Libraries monitored_library
+                  ON monitored_library.id = library_group.library_id
+                 AND monitored_library.enabled = 1
+                WHERE library_group.release_group_id = rg.id
+                  AND library_group.monitored = 1
               ) THEN 1 ELSE 0 END AS monitored
             FROM Tracks t
-            JOIN AlbumReleases release ON release.mbid = t.release_mbid
-            JOIN Albums rg ON rg.mbid = release.release_group_mbid
-            JOIN ArtistMetadata artist ON artist.mbid = rg.artist_mbid
+            JOIN AlbumReleases release ON release.id = t.album_release_id
+            JOIN Albums rg ON rg.id = release.release_group_id
+            JOIN ArtistMetadata artist ON artist.id = rg.artist_metadata_id
             JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
-            LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid
-            LEFT JOIN ProviderItems provider_track
-              -- COALESCE of two single-index lookups: an OR across track_mbid /
-              -- recording_mbid defeats both (entity_type, *) indexes and scans
-              -- every track offer per result row (~0.5s x row).
-              ON provider_track.rowid = COALESCE(
-                (
-                  SELECT preferred_provider_track.rowid
-                  FROM ProviderItems preferred_provider_track
-                  WHERE preferred_provider_track.entity_type = 'track'
-                    AND preferred_provider_track.track_mbid = t.mbid
-                  ORDER BY
-                    CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-                    preferred_provider_track.updated_at DESC,
-                    preferred_provider_track.provider_id ASC
-                  LIMIT 1
-                ),
-                (
-                  SELECT preferred_provider_track.rowid
-                  FROM ProviderItems preferred_provider_track
-                  WHERE preferred_provider_track.entity_type = 'track'
-                    AND preferred_provider_track.recording_mbid = t.recording_mbid
-                  ORDER BY
-                    CASE preferred_provider_track.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-                    preferred_provider_track.updated_at DESC,
-                    preferred_provider_track.provider_id ASC
-                  LIMIT 1
-                )
+            LEFT JOIN Recordings recording ON recording.id = t.recording_id
+            LEFT JOIN AcquisitionPlanTracks selected_plan_track
+              ON selected_plan_track.id = (
+                SELECT candidate_plan_track.id
+                FROM AcquisitionPlanTracks candidate_plan_track
+                JOIN AcquisitionPlans plan
+                  ON plan.id = candidate_plan_track.plan_id
+                 AND plan.state = 'current'
+                JOIN LibraryReleases library_release
+                  ON library_release.id = plan.library_release_id
+                 AND library_release.release_id = t.album_release_id
+                JOIN Libraries library
+                  ON library.id = library_release.library_id
+                 AND library.enabled = 1
+                JOIN quality_profiles quality_profile
+                  ON quality_profile.id = library.quality_profile_id
+                WHERE candidate_plan_track.track_id = t.id
+                ORDER BY
+                  CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                    WHERE allowed.value = 'spatial'
+                  ) THEN 1 ELSE 0 END,
+                  library_release.updated_at DESC,
+                  candidate_plan_track.id DESC
+                LIMIT 1
               )
-            LEFT JOIN ReleaseGroupSlots selected_slot
-              ON selected_slot.release_group_mbid = rg.mbid
-             AND selected_slot.selected_release_mbid = t.release_mbid
-             AND selected_slot.id = (
-               SELECT preferred_slot.id
-               FROM ReleaseGroupSlots preferred_slot
-               WHERE preferred_slot.release_group_mbid = rg.mbid
-                 AND preferred_slot.selected_release_mbid = t.release_mbid
-               ORDER BY CASE preferred_slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
-               LIMIT 1
-             )
+            LEFT JOIN ProviderItemAudioVariants selected_variant
+              ON selected_variant.id = selected_plan_track.provider_audio_variant_id
+            LEFT JOIN ProviderTrackMatches selected_track_match
+              ON selected_track_match.id = selected_plan_track.provider_track_match_id
+             AND selected_track_match.match_state = 'accepted'
+            LEFT JOIN ProviderReleaseMembers selected_member
+              ON selected_member.id = selected_track_match.provider_release_member_id
+            LEFT JOIN ProviderItems provider_track
+              ON provider_track.id = selected_member.member_item_id
             LEFT JOIN TrackFiles file_quality
-              ON file_quality.canonical_track_mbid = t.mbid
-             AND file_quality.file_type = 'track'
-             AND file_quality.id = (
+              ON file_quality.id = (
                SELECT preferred_file.id
                FROM TrackFiles preferred_file
-               WHERE preferred_file.canonical_track_mbid = t.mbid
-                 AND preferred_file.file_type = 'track'
-               ORDER BY CASE preferred_file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, preferred_file.id ASC
+               JOIN Libraries file_library
+                 ON file_library.id = preferred_file.library_id
+                AND file_library.enabled = 1
+               JOIN quality_profiles file_quality_profile
+                 ON file_quality_profile.id = file_library.quality_profile_id
+               WHERE preferred_file.track_id = t.id
+                 AND (preferred_file.file_class = 'audio' OR preferred_file.file_type = 'track')
+               ORDER BY
+                 CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM json_each(COALESCE(file_quality_profile.allowed_source_formats, '[]')) allowed
+                   WHERE allowed.value = 'spatial'
+                 ) THEN 1 ELSE 0 END,
+                 preferred_file.id ASC
                LIMIT 1
              )
             WHERE t.mbid IN (${trackMarks})
@@ -432,17 +506,10 @@ router.get("/", async (req, res) => {
               recording.title,
               artist.name AS artist_name,
               recording.monitored AS monitored,
-              COALESCE(recording.cover_image_id, provider_video.asset_id) AS cover,
+              COALESCE(recording.cover_image_id, provider_video.cover_id, provider_video.asset_id) AS cover,
               recording.cover_image_url AS cover_url,
               COALESCE(recording.release_date, provider_video.release_date) AS release_date,
               COALESCE((
-                SELECT lf.quality
-                FROM TrackFiles lf
-                WHERE lf.file_type = 'video'
-                  AND lf.canonical_recording_mbid = recording.mbid
-                ORDER BY lf.verified_at DESC, lf.id DESC
-                LIMIT 1
-              ), (
                 SELECT lf.quality
                 FROM TrackFiles lf
                 WHERE lf.file_type = 'video'
@@ -451,74 +518,23 @@ router.get("/", async (req, res) => {
                 LIMIT 1
               ), provider_video.quality) AS current_quality
             FROM Recordings recording
-            LEFT JOIN ArtistMetadata artist ON artist.mbid = recording.artist_mbid
+            LEFT JOIN ArtistMetadata artist ON artist.id = recording.artist_metadata_id
             LEFT JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
+            LEFT JOIN ProviderVideoMatches video_match
+              ON video_match.id = (
+                SELECT preferred_match.id
+                FROM ProviderVideoMatches preferred_match
+                WHERE preferred_match.recording_id = recording.id
+                  AND preferred_match.match_state = 'accepted'
+                ORDER BY preferred_match.updated_at DESC, preferred_match.id DESC
+                LIMIT 1
+              )
             LEFT JOIN ProviderItems provider_video
-              -- Same COALESCE-of-indexed-lookups pattern as tracks: OR across
-              -- recording_id / recording_mbid / provider_id defeats indexes.
-              ON provider_video.rowid = COALESCE(
-                (
-                  SELECT preferred_provider_video.rowid
-                  FROM ProviderItems preferred_provider_video
-                  WHERE preferred_provider_video.entity_type = 'video'
-                    AND preferred_provider_video.recording_id = recording.id
-                    AND (
-                      preferred_provider_video.match_status IS NULL
-                      OR LOWER(preferred_provider_video.match_status) <> 'rejected'
-                    )
-                    AND (
-                      preferred_provider_video.availability IS NULL
-                      OR LOWER(CAST(preferred_provider_video.availability AS TEXT))
-                         NOT IN ('0', 'false', 'unavailable', 'no', '')
-                    )
-                  ORDER BY
-                    preferred_provider_video.updated_at DESC,
-                    preferred_provider_video.provider ASC,
-                    preferred_provider_video.provider_id ASC
-                  LIMIT 1
-                ),
-                (
-                  SELECT preferred_provider_video.rowid
-                  FROM ProviderItems preferred_provider_video
-                  WHERE preferred_provider_video.entity_type = 'video'
-                    AND recording.mbid IS NOT NULL
-                    AND preferred_provider_video.recording_mbid = recording.mbid
-                    AND (
-                      preferred_provider_video.match_status IS NULL
-                      OR LOWER(preferred_provider_video.match_status) <> 'rejected'
-                    )
-                    AND (
-                      preferred_provider_video.availability IS NULL
-                      OR LOWER(CAST(preferred_provider_video.availability AS TEXT))
-                         NOT IN ('0', 'false', 'unavailable', 'no', '')
-                    )
-                  ORDER BY
-                    preferred_provider_video.updated_at DESC,
-                    preferred_provider_video.provider ASC,
-                    preferred_provider_video.provider_id ASC
-                  LIMIT 1
-                ),
-                (
-                  SELECT preferred_provider_video.rowid
-                  FROM ProviderItems preferred_provider_video
-                  WHERE preferred_provider_video.entity_type = 'video'
-                    AND recording.foreign_recording_id IS NOT NULL
-                    AND preferred_provider_video.provider_id = recording.foreign_recording_id
-                    AND (
-                      preferred_provider_video.match_status IS NULL
-                      OR LOWER(preferred_provider_video.match_status) <> 'rejected'
-                    )
-                    AND (
-                      preferred_provider_video.availability IS NULL
-                      OR LOWER(CAST(preferred_provider_video.availability AS TEXT))
-                         NOT IN ('0', 'false', 'unavailable', 'no', '')
-                    )
-                  ORDER BY
-                    preferred_provider_video.updated_at DESC,
-                    preferred_provider_video.provider ASC,
-                    preferred_provider_video.provider_id ASC
-                  LIMIT 1
-                )
+              ON provider_video.id = video_match.provider_video_item_id
+             AND (
+               provider_video.availability IS NULL
+               OR LOWER(CAST(provider_video.availability AS TEXT))
+                  NOT IN ('0', 'false', 'unavailable', 'no', '')
               )
             WHERE recording.id IN (${videoMarks})
               AND (managed_artist.id IS NOT NULL OR provider_video.provider_id IS NOT NULL)
@@ -607,10 +623,16 @@ router.get("/", async (req, res) => {
                     const mbid = releaseGroup.mbid;
                     if (mbid && !addedAlbumMbids.has(mbid)) {
                         const localAlbum = db.prepare(`
-                            SELECT rg.mbid, CASE WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1 ELSE 0 END AS monitored
+                            SELECT rg.mbid, CASE WHEN EXISTS (
+                              SELECT 1
+                              FROM LibraryReleaseGroups library_group
+                              JOIN Libraries library
+                                ON library.id = library_group.library_id
+                               AND library.enabled = 1
+                              WHERE library_group.release_group_id = rg.id
+                                AND library_group.monitored = 1
+                            ) THEN 1 ELSE 0 END AS monitored
                             FROM Albums rg
-                            LEFT JOIN ReleaseGroupSlots stereo ON stereo.release_group_mbid = rg.mbid AND stereo.slot = 'stereo'
-                            LEFT JOIN ReleaseGroupSlots spatial ON spatial.release_group_mbid = rg.mbid AND spatial.slot = 'spatial'
                             WHERE rg.mbid = ?
                             LIMIT 1
                         `).get(mbid) as any;
