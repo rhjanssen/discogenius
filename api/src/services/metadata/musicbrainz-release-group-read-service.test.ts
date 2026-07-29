@@ -19,8 +19,17 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
+  dbModule.db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+  dbModule.db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  dbModule.db.prepare("DELETE FROM AcquisitionPlans").run();
+  dbModule.db.prepare("DELETE FROM LibraryReleases").run();
+  dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  dbModule.db.prepare("DELETE FROM Libraries").run();
+  dbModule.db.prepare("DELETE FROM ProviderTrackMatches").run();
+  dbModule.db.prepare("DELETE FROM ProviderReleaseMatches").run();
+  dbModule.db.prepare("DELETE FROM ProviderReleaseMembers").run();
+  dbModule.db.prepare("DELETE FROM ProviderItemAudioVariants").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
-  dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM AlbumReleases").run();
@@ -29,6 +38,130 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
+
+function hydrateCanonicalForeignKeys(releaseGroupMbid: string): void {
+  const { db } = dbModule;
+  db.prepare(`
+    UPDATE Albums
+    SET artist_metadata_id = (
+      SELECT id FROM ArtistMetadata WHERE mbid = Albums.artist_mbid
+    )
+    WHERE mbid = ?
+  `).run(releaseGroupMbid);
+  db.prepare(`
+    UPDATE AlbumReleases
+    SET
+      release_group_id = (
+        SELECT id FROM Albums WHERE mbid = AlbumReleases.release_group_mbid
+      ),
+      artist_metadata_id = (
+        SELECT id FROM ArtistMetadata WHERE mbid = AlbumReleases.artist_mbid
+      )
+    WHERE release_group_mbid = ?
+  `).run(releaseGroupMbid);
+  db.prepare(`
+    UPDATE Tracks
+    SET
+      album_release_id = (
+        SELECT id FROM AlbumReleases WHERE mbid = Tracks.release_mbid
+      ),
+      recording_id = (
+        SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
+      )
+    WHERE release_mbid IN (
+      SELECT mbid FROM AlbumReleases WHERE release_group_mbid = ?
+    )
+  `).run(releaseGroupMbid);
+}
+
+function selectLibraryRelease(
+  releaseGroupMbid: string,
+  releaseMbid: string,
+  libraryClass: "stereo" | "spatial" = "stereo",
+): number {
+  const { db } = dbModule;
+  db.prepare(`
+    INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+    VALUES ('Read Service Test', '{}')
+  `).run();
+  if (libraryClass === "spatial") {
+    db.prepare(`
+      INSERT OR IGNORE INTO quality_profiles (
+        name, cutoff, items, allowed_source_formats, preference_order
+      ) VALUES ('Read Service Spatial', 'DOLBY_ATMOS', '["DOLBY_ATMOS"]', '["spatial"]', '["spatial"]')
+    `).run();
+  }
+  const metadataProfile = db.prepare(`
+    SELECT id FROM MetadataProfiles WHERE name = 'Read Service Test'
+  `).get() as { id: number };
+  const qualityProfile = db.prepare(`
+    SELECT id
+    FROM quality_profiles
+    WHERE ${libraryClass === "spatial"
+      ? "name = 'Read Service Spatial'"
+      : "COALESCE(allowed_source_formats, '[]') NOT LIKE '%spatial%'"}
+    ORDER BY id
+    LIMIT 1
+  `).get() as { id: number };
+  const libraryName = `Read ${libraryClass} ${releaseGroupMbid}`;
+  db.prepare(`
+    INSERT OR IGNORE INTO Libraries (
+      name, root_path, metadata_profile_id, quality_profile_id
+    ) VALUES (?, ?, ?, ?)
+  `).run(
+    libraryName,
+    path.join(tempDir, "libraries", libraryClass, releaseGroupMbid),
+    metadataProfile.id,
+    qualityProfile.id,
+  );
+  const library = db.prepare("SELECT id FROM Libraries WHERE name = ?")
+    .get(libraryName) as { id: number };
+  const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
+    .get(releaseGroupMbid) as { id: number };
+  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?")
+    .get(releaseMbid) as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      reason, curation_version
+    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+  `).run(library.id, releaseGroup.id);
+  return (db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+    RETURNING id
+  `).get(library.id, release.id) as { id: number }).id;
+}
+
+function insertAcceptedReleaseMatch(
+  releaseMbid: string,
+  provider: string,
+  providerId: string,
+  title: string,
+  providerUrl: string | null = null,
+): { providerItemId: number; releaseMatchId: number } {
+  const { db } = dbModule;
+  const providerItem = db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, provider_url
+    ) VALUES (?, 'release', ?, ?, ?)
+    RETURNING id
+  `).get(provider, providerId, title, providerUrl) as { id: number };
+  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?")
+    .get(releaseMbid) as { id: number };
+  const releaseMatch = db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(providerItem.id, release.id) as { id: number };
+  return {
+    providerItemId: providerItem.id,
+    releaseMatchId: releaseMatch.id,
+  };
+}
 
 after(() => {
   dbModule.closeDatabase();
@@ -97,31 +230,24 @@ test("album versions expose provider offers for all compatible MusicBrainz relea
     27,
     "explicit",
   );
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, quality, release_date,
-      artist_mbid, release_group_mbid, release_mbid, library_slot,
-      match_status, match_confidence, match_method, match_evidence
-    ) VALUES
-      ('tidal', 'album', ?, ?, 'HIRES_LOSSLESS', '2022-02-04', ?, ?, NULL, 'stereo', 'verified', 1, 'musicbrainz-release-group-title-year-type-track-count', ?),
-      ('tidal', 'album', ?, ?, 'HIRES_LOSSLESS', '2022-02-07', ?, ?, NULL, 'stereo', 'probable', 1, 'musicbrainz-release-group-title-year-type-track-count', ?),
-      ('tidal', 'album', ?, ?, 'HIRES_LOSSLESS', '2022-08-26', ?, ?, NULL, 'stereo', 'verified', 1, 'musicbrainz-release-group-title-year-type-track-count', ?)
-  `).run(
+  hydrateCanonicalForeignKeys(releaseGroupMbid);
+  insertAcceptedReleaseMatch(
+    standardReleaseMbid,
+    "tidal",
     "tidal-standard",
     "Give Me The Future",
-    artistMbid,
-    releaseGroupMbid,
-    JSON.stringify({ availableReleaseMbids: [standardReleaseMbid] }),
+  );
+  insertAcceptedReleaseMatch(
+    deluxeReleaseMbid,
+    "tidal",
     "tidal-deluxe",
     "Give Me The Future (Deluxe Edition)",
-    artistMbid,
-    releaseGroupMbid,
-    JSON.stringify({ availableReleaseMbids: [deluxeReleaseMbid] }),
+  );
+  insertAcceptedReleaseMatch(
+    expandedReleaseMbid,
+    "tidal",
     "tidal-expanded",
     "Give Me The Future + Dreams Of The Past",
-    artistMbid,
-    releaseGroupMbid,
-    JSON.stringify({ availableReleaseMbids: [expandedReleaseMbid] }),
   );
 
   const versions = await readServiceModule.MusicBrainzReleaseGroupReadService.getVersions(releaseGroupMbid);
@@ -177,12 +303,6 @@ test("album tracks attach library files by recording MBID when track MBIDs diffe
   );
 
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(artistMbid, releaseGroupMbid, "stereo", 1, stereoReleaseMbid);
-
-  dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, length_ms)
     VALUES (?, ?, ?)
   `).run(recordingMbid, "Rehab", 214000);
@@ -214,6 +334,8 @@ test("album tracks attach library files by recording MBID when track MBIDs diffe
     "track",
     "DOLBY_ATMOS",
   );
+  hydrateCanonicalForeignKeys(releaseGroupMbid);
+  selectLibraryRelease(releaseGroupMbid, stereoReleaseMbid);
 
   const tracks = await readServiceModule.MusicBrainzReleaseGroupReadService.getTracks(releaseGroupMbid);
 
@@ -279,18 +401,6 @@ test("single release group does not inherit album files by shared recording MBID
   );
 
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(artistMbid, albumReleaseGroupMbid, "stereo", 1, albumReleaseMbid);
-
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(artistMbid, singleReleaseGroupMbid, "stereo", 1, singleReleaseMbid);
-
-  dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, length_ms)
     VALUES (?, ?, ?)
   `).run(recordingMbid, "Rehab", 214000);
@@ -304,6 +414,10 @@ test("single release group does not inherit album files by shared recording MBID
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(singleTrackMbid, singleReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
+  hydrateCanonicalForeignKeys(albumReleaseGroupMbid);
+  hydrateCanonicalForeignKeys(singleReleaseGroupMbid);
+  selectLibraryRelease(albumReleaseGroupMbid, albumReleaseMbid);
+  selectLibraryRelease(singleReleaseGroupMbid, singleReleaseMbid);
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
@@ -342,8 +456,7 @@ test("single release group does not inherit album files by shared recording MBID
   assert.notEqual(singleTracks[0].is_downloaded, true);
 });
 
-test("hybrid trackSources tip wins over same-ISRC LOSSLESS rematch on primary album", async () => {
-  const providersModule = await import("../providers/index.js");
+test("exact acquisition-plan track wins without positional or ISRC rematching", async () => {
   const artistMbid = "artist-mbid-amy-ost";
   const releaseGroupMbid = "rg-amy-ost";
   const releaseMbid = "release-amy-ost";
@@ -372,96 +485,88 @@ test("hybrid trackSources tip wins over same-ISRC LOSSLESS rematch on primary al
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(trackMbid, releaseMbid, recordingMbid, 1, 10, "10", "Tears Dry on Their Own", 187000);
-
-  const evidence = {
-    matchKind: "composite",
-    providerAlbumIds: ["1440827079", "1422677780"],
-    coverage: {
-      coveredTracks: 1,
-      targetTracks: 1,
-      complete: true,
-      qualityTrackCounts: { LOSSLESS: 0, HIRES_LOSSLESS: 1 },
-    },
-    trackSources: [{
-      canonicalTrackMbid: trackMbid,
-      canonicalRecordingMbid: recordingMbid,
-      title: "Tears Dry on Their Own",
-      trackNum: 10,
-      volumeNum: 1,
-      providerTrackId: "1422677787",
-      providerAlbumId: "1422677780",
-      quality: "HIRES_LOSSLESS",
-      matchScore: 1,
-    }],
-  };
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, selected_release_mbid,
-      quality, match_status, match_method, match_evidence
-    ) VALUES (?, ?, 'stereo', 1, ?, ?, ?, ?, 'verified', ?, ?)
-  `).run(
-    artistMbid,
-    releaseGroupMbid,
-    "apple-music",
-    "1440827079;1422677780",
+  hydrateCanonicalForeignKeys(releaseGroupMbid);
+  const libraryReleaseId = selectLibraryRelease(releaseGroupMbid, releaseMbid);
+  const releaseMatch = insertAcceptedReleaseMatch(
     releaseMbid,
-    "LOSSLESS",
-    "quality_optimized_composite_track_coverage",
-    JSON.stringify(evidence),
+    "apple-music",
+    "1422677780",
+    "Amy",
+    "https://music.apple.com/album/1422677780",
   );
-  dbModule.db.prepare(`
+  const providerTrack = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id,
-      release_group_mbid, release_mbid, provider_url
-    ) VALUES
-      ('apple-music', 'album', '1422677780', NULL, ?, ?, 'https://music.apple.com/album/1422677780'),
-      ('apple-music', 'track', '1422677787', '1422677780', ?, ?, 'https://music.apple.com/song/1422677787')
-  `).run(releaseGroupMbid, releaseMbid, releaseGroupMbid, releaseMbid);
-
-  const artist = { providerId: "apple-artist", name: "Amy Winehouse" };
-  providersModule.streamingProviderManager.registerStreamingProvider({
-    id: "apple-music",
-    name: "Apple Music",
-    capabilities: {},
-    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
-    getArtist: async () => artist,
-    getArtistAlbums: async () => [],
-    getAlbum: async () => ({ providerId: "1440827079", title: "Amy", artist, trackCount: 1, volumeCount: 1 }),
-    getTrack: async (id: string | number) => ({
-      providerId: String(id),
-      title: "Tears Dry on Their Own",
-      artist,
-      duration: 187,
-      trackNumber: 10,
-      volumeNumber: 1,
-    }),
-    getAlbumTracks: async (id: string | number) => {
-      if (String(id) === "1440827079") {
-        return [{
-          providerId: "1440827414",
-          title: "Tears Dry on Their Own",
-          artist,
-          isrc,
-          duration: 187,
-          trackNumber: 10,
-          volumeNumber: 1,
-          quality: "LOSSLESS",
-        }];
-      }
-      return [{
-        providerId: "1422677787",
-        title: "Tears Dry On Their Own",
-        artist,
-        isrc,
-        duration: 186,
-        trackNumber: 7,
-        volumeNumber: 1,
-        quality: "HIRES_LOSSLESS",
-      }];
-    },
-    getStreamUrl: async () => null,
-  } as any);
+      provider, entity_type, provider_id, title, isrc, duration,
+      track_number, volume_number, provider_url
+    ) VALUES (
+      'apple-music', 'track', '1422677787', 'Tears Dry On Their Own',
+      ?, 186, 7, 1, 'https://music.apple.com/song/1422677787'
+    )
+    RETURNING id
+  `).get(isrc) as { id: number };
+  const distractorTrack = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, isrc, duration,
+      track_number, volume_number
+    ) VALUES (
+      'apple-music', 'track', '1440827414', 'Tears Dry on Their Own',
+      ?, 187, 10, 1
+    )
+    RETURNING id
+  `).get(isrc) as { id: number };
+  const member = dbModule.db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 7)
+    RETURNING id
+  `).get(releaseMatch.providerItemId, providerTrack.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 10)
+  `).run(releaseMatch.providerItemId, distractorTrack.id);
+  const canonicalTrack = dbModule.db.prepare(`
+    SELECT id, recording_id FROM Tracks WHERE mbid = ?
+  `).get(trackMbid) as { id: number; recording_id: number };
+  const trackMatch = dbModule.db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_release_member_id, provider_release_match_id, track_id,
+      recording_id, match_state, decision_source, confidence, method,
+      matcher_version
+    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(
+    member.id,
+    releaseMatch.releaseMatchId,
+    canonicalTrack.id,
+    canonicalTrack.recording_id,
+  ) as { id: number };
+  const variant = dbModule.db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label,
+      availability
+    ) VALUES (?, 'hires', 'hires-lossless', 'HIRES_LOSSLESS', 'available')
+    RETURNING id
+  `).get(providerTrack.id) as { id: number };
+  const plan = dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlans (
+      library_release_id, provider, composition, download_mode, state,
+      planner_version, policy_hash, computed_at
+    ) VALUES (?, 'apple-music', 'single_source', 'tracks', 'current', 1, 'test', CURRENT_TIMESTAMP)
+    RETURNING id
+  `).get(libraryReleaseId) as { id: number };
+  const source = dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlanSources (
+      plan_id, provider_release_match_id, role, sort_order
+    ) VALUES (?, ?, 'primary', 0)
+    RETURNING id
+  `).get(plan.id, releaseMatch.releaseMatchId) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlanTracks (
+      plan_id, track_id, source_id, provider_track_match_id,
+      provider_audio_variant_id
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(plan.id, canonicalTrack.id, source.id, trackMatch.id, variant.id);
 
   const tracks = await readServiceModule.MusicBrainzReleaseGroupReadService.getTracks(releaseGroupMbid);
   assert.equal(tracks.length, 1);

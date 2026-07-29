@@ -4,9 +4,6 @@ import type { AlbumPageContract } from "../../contracts/pages.js";
 import type { AlbumTrackContract, AlbumVersionContract } from "../../contracts/media.js";
 import { servarrMetadata } from "./servarr-metadata.js";
 import { catalogProviderRegistry } from "../catalog/index.js";
-import { scoreTrackMatch as sharedScoreTrackMatch } from "../music/provider-track-matcher.js";
-import { streamingProviderManager } from "../providers/index.js";
-import type { ProviderTrack } from "../providers/streaming-provider.js";
 import {
     albumCoverLocalUrl,
     albumProviderArtworkCandidatesFromRow,
@@ -18,7 +15,6 @@ import { resolveHydratedReleaseGroupArtwork } from "./release-group-artwork-serv
 import { MusicBrainzReleaseSelectionService } from "./musicbrainz-release-selection-service.js";
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "./musicbrainz-artist-credit-service.js";
 import { getConfigSection } from "../config/config.js";
-import { isSpatialAudioQuality, normalizeQualityTag } from "../../utils/spatial-audio.js";
 
 function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values: unknown[]): string | null {
     return mapArtistArtworkToLocalUrl({
@@ -29,6 +25,92 @@ function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values:
 
 function queryReleaseGroup(releaseGroupMbid: string): any | null {
     return db.prepare(`
+      WITH ranked_selection AS (
+        SELECT
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END AS library_class,
+          release.mbid AS release_mbid,
+          COALESCE(provider_release.provider, plan.provider) AS provider,
+          provider_release.provider_id AS provider_id,
+          provider_release.provider_url AS provider_url,
+          COALESCE(
+            provider_release.cover_id,
+            provider_release.artwork_url
+          ) AS provider_cover,
+          CASE
+            WHEN release_match.match_state = 'accepted' THEN 'verified'
+            ELSE release_match.match_state
+          END AS match_status,
+          COALESCE(
+            (
+              SELECT NULLIF(variant.provider_quality_label, '')
+              FROM AcquisitionPlanTracks plan_track
+              JOIN ProviderItemAudioVariants variant
+                ON variant.id = plan_track.provider_audio_variant_id
+              WHERE plan_track.plan_id = plan.id
+              ORDER BY
+                CASE variant.quality_class
+                  WHEN 'spatial' THEN 0
+                  WHEN 'hires-lossless' THEN 1
+                  WHEN 'lossless' THEN 2
+                  ELSE 3
+                END,
+                plan_track.id
+              LIMIT 1
+            ),
+            (
+              SELECT variant.quality_class
+              FROM AcquisitionPlanTracks plan_track
+              JOIN ProviderItemAudioVariants variant
+                ON variant.id = plan_track.provider_audio_variant_id
+              WHERE plan_track.plan_id = plan.id
+              ORDER BY plan_track.id
+              LIMIT 1
+            )
+          ) AS quality,
+          ROW_NUMBER() OVER (
+            PARTITION BY CASE WHEN EXISTS (
+              SELECT 1
+              FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+              WHERE allowed.value = 'spatial'
+            ) THEN 'spatial' ELSE 'stereo' END
+            ORDER BY library_release.updated_at DESC, library_release.id DESC
+          ) AS selection_rank
+        FROM Albums selected_group
+        JOIN LibraryReleases library_release
+          ON 1 = 1
+        JOIN AlbumReleases release
+          ON release.id = library_release.release_id
+         AND release.release_group_id = selected_group.id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        LEFT JOIN AcquisitionPlans plan
+          ON plan.library_release_id = library_release.id
+         AND plan.state = 'current'
+        LEFT JOIN AcquisitionPlanSources plan_source
+          ON plan_source.plan_id = plan.id
+         AND plan_source.role = 'primary'
+        LEFT JOIN ProviderReleaseMatches release_match
+          ON release_match.id = plan_source.provider_release_match_id
+         AND release_match.match_state = 'accepted'
+        LEFT JOIN ProviderItems provider_release
+          ON provider_release.id = release_match.provider_release_item_id
+        WHERE selected_group.mbid = ?
+      ),
+      stereo AS (
+        SELECT * FROM ranked_selection
+        WHERE library_class = 'stereo' AND selection_rank = 1
+      ),
+      spatial AS (
+        SELECT * FROM ranked_selection
+        WHERE library_class = 'spatial' AND selection_rank = 1
+      )
       SELECT
         rg.*,
         a.id AS local_artist_id,
@@ -36,88 +118,76 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         a.picture AS artist_picture,
         a.cover_image_url AS artist_cover_image_url,
         a.monitored AS artist_monitor,
-        CASE WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1 ELSE 0 END AS wanted,
-        CASE WHEN stereo.monitored_lock = 1 OR spatial.monitored_lock = 1 THEN 1 ELSE 0 END AS monitored_lock,
-        COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
-        COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
-        COALESCE(stereo.selected_release_mbid, spatial.selected_release_mbid) AS selected_release_mbid,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM LibraryReleaseGroups library_group
+          WHERE library_group.release_group_id = rg.id
+            AND library_group.monitored = 1
+        ) THEN 1 ELSE 0 END AS wanted,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM LibraryReleaseGroups library_group
+          WHERE library_group.release_group_id = rg.id
+            AND library_group.locked = 1
+        ) THEN 1 ELSE 0 END AS monitored_lock,
+        COALESCE(stereo.provider, spatial.provider) AS selected_provider,
+        COALESCE(stereo.provider_id, spatial.provider_id) AS selected_provider_id,
+        COALESCE(stereo.release_mbid, spatial.release_mbid) AS selected_release_mbid,
         COALESCE(stereo.quality, spatial.quality) AS selected_quality,
-        stereo.selected_provider AS stereo_provider,
-        stereo.selected_provider_id AS stereo_provider_id,
-        stereo_provider_item.provider_url AS stereo_provider_url,
-        stereo.selected_release_mbid AS stereo_release_mbid,
+        stereo.provider AS stereo_provider,
+        stereo.provider_id AS stereo_provider_id,
+        stereo.provider_url AS stereo_provider_url,
+        stereo.provider_cover AS stereo_cover,
+        stereo.release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
-        stereo.match_evidence AS stereo_match_evidence,
-        spatial.selected_provider AS spatial_provider,
-        spatial.selected_provider_id AS spatial_provider_id,
-        spatial_provider_item.provider_url AS spatial_provider_url,
-        spatial.selected_release_mbid AS spatial_release_mbid,
+        spatial.provider AS spatial_provider,
+        spatial.provider_id AS spatial_provider_id,
+        spatial.provider_url AS spatial_provider_url,
+        spatial.provider_cover AS spatial_cover,
+        spatial.release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
-        spatial.match_status AS spatial_match_status,
-        spatial.match_evidence AS spatial_match_evidence
+        spatial.match_status AS spatial_match_status
       FROM Albums rg
       LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-      LEFT JOIN ReleaseGroupSlots stereo
-        ON stereo.release_group_mbid = rg.mbid
-       AND stereo.slot = 'stereo'
-      LEFT JOIN ReleaseGroupSlots spatial
-        ON spatial.release_group_mbid = rg.mbid
-       AND spatial.slot = 'spatial'
-      LEFT JOIN ProviderItems stereo_provider_item
-        ON stereo_provider_item.provider = stereo.selected_provider
-       AND stereo_provider_item.entity_type = 'album'
-       AND stereo_provider_item.provider_id = stereo.selected_provider_id
-       AND (stereo_provider_item.match_status IS NULL OR LOWER(stereo_provider_item.match_status) <> 'rejected')
-       AND (
-         stereo_provider_item.availability IS NULL
-         OR LOWER(CAST(stereo_provider_item.availability AS TEXT))
-            NOT IN ('0', 'false', 'unavailable', 'no', '')
-       )
-      LEFT JOIN ProviderItems spatial_provider_item
-        ON spatial_provider_item.provider = spatial.selected_provider
-       AND spatial_provider_item.entity_type = 'album'
-       AND spatial_provider_item.provider_id = spatial.selected_provider_id
-       AND (spatial_provider_item.match_status IS NULL OR LOWER(spatial_provider_item.match_status) <> 'rejected')
-       AND (
-         spatial_provider_item.availability IS NULL
-         OR LOWER(CAST(spatial_provider_item.availability AS TEXT))
-            NOT IN ('0', 'false', 'unavailable', 'no', '')
-       )
+      LEFT JOIN stereo ON 1 = 1
+      LEFT JOIN spatial ON 1 = 1
       WHERE rg.mbid = ?
-    `).get(releaseGroupMbid) as any | null;
+    `).get(releaseGroupMbid, releaseGroupMbid) as any | null;
 }
 
 function selectPreferredRelease(releaseGroupMbid: string): any | null {
-    const selectedSlot = db.prepare(`
-        SELECT selected_release_mbid
-        FROM ReleaseGroupSlots
-        WHERE release_group_mbid = ?
-          AND selected_release_mbid IS NOT NULL
-        ORDER BY CASE slot WHEN 'stereo' THEN 0 ELSE 1 END
+    const selectedLibraryRelease = db.prepare(`
+        SELECT release.*
+        FROM Albums release_group
+        JOIN AlbumReleases release
+          ON release.release_group_id = release_group.id
+        JOIN LibraryReleases library_release
+          ON library_release.release_id = release.id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        WHERE release_group.mbid = ?
+        ORDER BY
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 1 ELSE 0 END,
+          library_release.updated_at DESC,
+          library_release.id DESC
         LIMIT 1
-    `).get(releaseGroupMbid) as { selected_release_mbid?: string | null } | undefined;
-    if (selectedSlot?.selected_release_mbid) {
-        const selectedRelease = db.prepare("SELECT * FROM AlbumReleases WHERE mbid = ?")
-            .get(selectedSlot.selected_release_mbid) as any | null;
-        if (selectedRelease) {
-            return selectedRelease;
-        }
+    `).get(releaseGroupMbid) as any | null;
+    if (selectedLibraryRelease) {
+        return selectedLibraryRelease;
     }
 
     const selected = MusicBrainzReleaseSelectionService.selectRepresentativeRelease(releaseGroupMbid);
     return selected
         ? db.prepare("SELECT * FROM AlbumReleases WHERE mbid = ?").get(selected.mbid) as any | null
         : null;
-}
-
-
-
-function splitProviderAlbumIds(value: unknown): string[] {
-    return String(value || "")
-        .split(/[;+]/)
-        .map((part) => part.trim())
-        .filter(Boolean);
 }
 
 function formatReleaseVersionLabel(release: any): string | null {
@@ -201,21 +271,62 @@ function listMusicBrainzReleaseVersions(
     const artistName = String(releaseGroup.local_artist_name || "Unknown Artist");
     const providerOffers = db.prepare(`
       SELECT
-        provider,
-        provider_id,
-        release_mbid,
-        library_slot,
-        quality,
-        match_status,
-        match_confidence,
-        match_evidence
-      FROM ProviderItems
-      WHERE entity_type = 'album'
-        AND release_group_mbid = ?
-        AND match_status IN ('verified', 'probable')
+        provider_item.provider,
+        provider_item.provider_id,
+        release.mbid AS release_mbid,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM AcquisitionPlanSources source
+          JOIN AcquisitionPlans plan
+            ON plan.id = source.plan_id
+           AND plan.state = 'current'
+          JOIN LibraryReleases library_release
+            ON library_release.id = plan.library_release_id
+          JOIN Libraries library
+            ON library.id = library_release.library_id
+          JOIN quality_profiles quality_profile
+            ON quality_profile.id = library.quality_profile_id
+          JOIN json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+          WHERE source.provider_release_match_id = release_match.id
+            AND allowed.value = 'spatial'
+        ) THEN 'spatial' ELSE 'stereo' END AS library_class,
+        (
+          SELECT COALESCE(
+            NULLIF(variant.provider_quality_label, ''),
+            variant.quality_class
+          )
+          FROM AcquisitionPlanSources source
+          JOIN AcquisitionPlans plan
+            ON plan.id = source.plan_id
+           AND plan.state = 'current'
+          JOIN AcquisitionPlanTracks plan_track
+            ON plan_track.plan_id = plan.id
+          JOIN ProviderItemAudioVariants variant
+            ON variant.id = plan_track.provider_audio_variant_id
+          WHERE source.provider_release_match_id = release_match.id
+          ORDER BY
+            CASE variant.quality_class
+              WHEN 'spatial' THEN 0
+              WHEN 'hires-lossless' THEN 1
+              WHEN 'lossless' THEN 2
+              ELSE 3
+            END,
+            plan_track.id
+          LIMIT 1
+        ) AS quality,
+        release_match.match_state AS match_status,
+        release_match.confidence AS match_confidence
+      FROM ProviderReleaseMatches release_match
+      JOIN ProviderItems provider_item
+        ON provider_item.id = release_match.provider_release_item_id
+      JOIN AlbumReleases release
+        ON release.id = release_match.release_id
+      JOIN Albums release_group
+        ON release_group.id = release.release_group_id
+      WHERE release_group.mbid = ?
+        AND release_match.match_state = 'accepted'
       ORDER BY
-        CASE match_status WHEN 'verified' THEN 0 WHEN 'probable' THEN 1 ELSE 2 END ASC,
-        COALESCE(match_confidence, 0) DESC,
+        release_match.confidence DESC,
         CASE UPPER(COALESCE(quality, ''))
           WHEN 'HIRES_LOSSLESS' THEN 0
           WHEN 'HI_RES_LOSSLESS' THEN 0
@@ -223,57 +334,29 @@ function listMusicBrainzReleaseVersions(
           WHEN 'LOSSLESS' THEN 1
           ELSE 2
         END ASC,
-        provider_id ASC
+        provider_item.provider_id ASC
     `).all(releaseGroup.mbid) as Array<{
         provider: string | null;
         provider_id: string | number | null;
         release_mbid: string | null;
-        library_slot: string | null;
+        library_class: string | null;
         quality: string | null;
         match_status: string | null;
         match_confidence: number | null;
-        match_evidence: string | null;
     }>;
-
-    const compatibleReleaseMbidsForOffer = (offer: typeof providerOffers[number]): Set<string> => {
-        const mbids = new Set<string>();
-        const directReleaseMbid = String(offer.release_mbid || "").trim();
-        if (directReleaseMbid) {
-            mbids.add(directReleaseMbid);
-        }
-        try {
-            const evidence = JSON.parse(String(offer.match_evidence || "{}"));
-            const evidenceMbids = Array.isArray(evidence.availableReleaseMbids)
-                ? evidence.availableReleaseMbids
-                : [];
-            for (const releaseMbid of evidenceMbids) {
-                const normalized = String(releaseMbid || "").trim();
-                if (normalized) {
-                    mbids.add(normalized);
-                }
-            }
-            const matchedReleaseMbid = String(evidence.matchedReleaseMbid || "").trim();
-            if (matchedReleaseMbid) {
-                mbids.add(matchedReleaseMbid);
-            }
-        } catch {
-            // Ignore malformed match evidence; the durable release_mbid is enough.
-        }
-        return mbids;
-    };
 
     const offersByReleaseMbid = new Map<string, typeof providerOffers>();
     for (const offer of providerOffers) {
-        for (const releaseMbid of compatibleReleaseMbidsForOffer(offer)) {
-            const offers = offersByReleaseMbid.get(releaseMbid) || [];
-            offers.push(offer);
-            offersByReleaseMbid.set(releaseMbid, offers);
-        }
+        const releaseMbid = String(offer.release_mbid || "").trim();
+        if (!releaseMbid) continue;
+        const offers = offersByReleaseMbid.get(releaseMbid) || [];
+        offers.push(offer);
+        offersByReleaseMbid.set(releaseMbid, offers);
     }
 
-    const selectOfferForSlot = (releaseMbid: string, slot: "stereo" | "spatial") => {
+    const selectOfferForLibraryClass = (releaseMbid: string, libraryClass: "stereo" | "spatial") => {
         const offers = offersByReleaseMbid.get(releaseMbid) || [];
-        return offers.find((offer) => String(offer.library_slot || "stereo") === slot) || null;
+        return offers.find((offer) => String(offer.library_class || "stereo") === libraryClass) || null;
     };
 
     return releases.map((release) => {
@@ -282,9 +365,9 @@ function listMusicBrainzReleaseVersions(
         const isSpatialSelected = releaseGroup.spatial_release_mbid === releaseMbid;
         const stereoOffer = isStereoSelected
             ? null
-            : selectOfferForSlot(releaseMbid, "stereo");
+            : selectOfferForLibraryClass(releaseMbid, "stereo");
         const spatialOffer = includeSpatial && !isSpatialSelected
-            ? selectOfferForSlot(releaseMbid, "spatial")
+            ? selectOfferForLibraryClass(releaseMbid, "spatial")
             : null;
 
         return {
@@ -516,35 +599,6 @@ function getReleaseTrackContracts(
     });
 }
 
-// The album-page UI uses the same matcher as curation, so a "matched" badge can
-// never disagree with the per-track availability shown below it. Adapts the
-// camelCase ProviderTrack shape into the shared matcher.
-function scoreProviderTrackMatch(
-    track: AlbumTrackContract,
-    providerTrack: ProviderTrack,
-    canonicalIsrcs: Set<string> = new Set(),
-): number {
-    return sharedScoreTrackMatch(
-        {
-            recordingMbid: track.musicbrainz_recording_id ?? null,
-            isrcs: canonicalIsrcs,
-            title: track.title,
-            trackNumber: Number(track.track_number || 0),
-            volumeNumber: Number(track.volume_number || 1),
-            durationSec: track.duration == null ? null : Number(track.duration),
-        },
-        {
-            mbid: null,
-            isrc: providerTrack.isrc ?? null,
-            title: providerTrack.title,
-            version: (providerTrack as { version?: string | null }).version ?? null,
-            trackNumber: providerTrack.trackNumber ?? null,
-            volumeNumber: providerTrack.volumeNumber ?? null,
-            durationSec: providerTrack.duration == null ? null : Number(providerTrack.duration),
-        },
-    );
-}
-
 function normalizeLibraryFileFromRow(row: any) {
     return {
         id: Number(row.file_id ?? row.id),
@@ -731,23 +785,18 @@ function attachCanonicalFilesToTracks(
     });
 }
 
-type ProviderTrackSlot = "stereo" | "spatial" | "selected";
-
-type ProviderTrackSelection = {
-    providerId: string;
-    providerAlbumId: string;
-    slot: ProviderTrackSlot;
+type PlannedTrackOffer = {
+    track_mbid: string;
+    recording_mbid: string | null;
+    library_class: "stereo" | "spatial";
+    provider: string;
+    provider_album_id: string;
+    provider_album_url: string | null;
+    provider_track_id: string;
+    provider_track_url: string | null;
     quality: string | null;
-};
-
-type AnnotatedProviderTrack = ProviderTrack & {
-    __providerId: string;
-    __providerAlbumId: string;
-    __providerAlbumUrl: string | null;
-    __providerTrackUrl: string | null;
-    __slot: ProviderTrackSlot;
-    __albumQuality: string | null;
-    __key: string;
+    selected_release_mbid: string;
+    match_status: string;
 };
 
 function mergeQualityTags(values: Array<string | null | undefined>): string[] {
@@ -764,533 +813,178 @@ function mergeQualityTags(values: Array<string | null | undefined>): string[] {
         });
 }
 
-/**
- * Quality shown for a selected slot offer on the album tracklist.
- *
- * Apple (and similar) often put Atmos in `qualityTags` while `quality` is the
- * best *stereo* trait (LOSSLESS → MAX). Preferring track.quality for a spatial
- * slot then makes the tracklist show Apple MAX next to a header that correctly
- * says Dolby Atmos. Slot/album spatial quality wins for spatial offers.
- */
-function offerDisplayQuality(
-    providerTrack: AnnotatedProviderTrack | null | undefined,
-    slot: ProviderTrackSlot,
-): string | null {
-    if (!providerTrack) return null;
-
-    const trackQuality = String(providerTrack.quality || "").trim() || null;
-    const albumQuality = String(providerTrack.__albumQuality || "").trim() || null;
-    const tags = Array.isArray(providerTrack.qualityTags)
-        ? providerTrack.qualityTags.map((tag) => String(tag || "").trim()).filter(Boolean)
-        : [];
-
-    if (slot === "spatial") {
-        if (albumQuality && isSpatialAudioQuality(albumQuality)) {
-            return normalizeSpatialBadgeQuality(albumQuality);
-        }
-        for (const tag of tags) {
-            if (isSpatialAudioQuality(tag)) {
-                return normalizeSpatialBadgeQuality(tag);
-            }
-        }
-        if (trackQuality && isSpatialAudioQuality(trackQuality)) {
-            return normalizeSpatialBadgeQuality(trackQuality);
-        }
-        return albumQuality || trackQuality;
-    }
-
-    return trackQuality || albumQuality;
-}
-
-function normalizeSpatialBadgeQuality(value: string): string {
-    const normalized = normalizeQualityTag(value);
-    if (normalized === "ATMOS" || normalized === "DOLBY_ATMOS") {
+function normalizePlannedQuality(value: string | null, libraryClass: "stereo" | "spatial"): string | null {
+    const quality = String(value || "").trim();
+    if (!quality) return null;
+    if (libraryClass === "spatial" && /^(ATMOS|DOLBY[-_ ]?ATMOS)$/i.test(quality)) {
         return "DOLBY_ATMOS";
     }
-    return value;
+    return quality;
 }
 
-function providerArtistCredits(track: AnnotatedProviderTrack | null | undefined): Array<{ id: string; name: string; join_phrase: string }> {
-    const trackArtists = track?.artists;
-    const artists = Array.isArray(trackArtists) && trackArtists.length > 0
-        ? trackArtists
-        : track?.artist
-            ? [track.artist]
-            : [];
-    const seen = new Set<string>();
-    const names = artists
-        .map((artist) => String(artist?.name || "").trim())
-        .filter((name) => {
-            const key = name.toLowerCase();
-            if (!name || seen.has(key)) {
-                return false;
-            }
-            seen.add(key);
-            return true;
-        });
-
-    return names.map((name, index) => ({
-        id: "",
-        name,
-        join_phrase: index < names.length - 1 ? ", " : "",
-    }));
-}
-
-function buildProviderTrackSelections(releaseGroup: any): ProviderTrackSelection[] {
-    const selections: Array<{
-        providerId: string;
-        providerAlbumIds: string[];
-        slot: ProviderTrackSlot;
-        quality: string | null;
-    }> = [
-        {
-            providerId: String(releaseGroup.stereo_provider || releaseGroup.selected_provider || "").trim(),
-            providerAlbumIds: splitProviderAlbumIds(releaseGroup.stereo_provider_id),
-            slot: "stereo",
-            quality: releaseGroup.stereo_quality || null,
-        },
-        {
-            providerId: String(releaseGroup.spatial_provider || releaseGroup.selected_provider || "").trim(),
-            providerAlbumIds: splitProviderAlbumIds(releaseGroup.spatial_provider_id),
-            slot: "spatial",
-            quality: releaseGroup.spatial_quality || null,
-        },
-        {
-            providerId: String(releaseGroup.selected_provider || "").trim(),
-            providerAlbumIds: splitProviderAlbumIds(releaseGroup.selected_provider_id),
-            slot: "selected",
-            quality: releaseGroup.selected_quality || null,
-        },
-    ];
-
-    const unique: ProviderTrackSelection[] = [];
-    const seenAlbums = new Set<string>();
-    for (const selection of selections) {
-        for (const providerAlbumId of selection.providerAlbumIds) {
-            // Key includes slot so the same provider album can fill stereo and
-            // spatial (Apple dual-format) and so cross-provider stereo/Atmos
-            // both stay available for per-track matching.
-            const key = `${selection.providerId}:${providerAlbumId}:${selection.slot}`;
-            if (!selection.providerId || !providerAlbumId || seenAlbums.has(key)) {
-                continue;
-            }
-            seenAlbums.add(key);
-            unique.push({
-                providerId: selection.providerId,
-                providerAlbumId,
-                slot: selection.slot,
-                quality: selection.quality,
-            });
-        }
-    }
-
-    return unique;
-}
-
-type SlotTrackSourceTip = {
-    providerTrackId: string;
-    providerAlbumId: string | null;
-    quality: string | null;
-};
-
-function parseSlotTrackSourceTips(matchEvidence: unknown): Map<string, SlotTrackSourceTip> {
-    const byCanonical = new Map<string, SlotTrackSourceTip>();
-    if (!matchEvidence) return byCanonical;
-    let evidence: { trackSources?: Array<Record<string, unknown>> };
-    try {
-        evidence = typeof matchEvidence === "string"
-            ? JSON.parse(matchEvidence)
-            : matchEvidence as { trackSources?: Array<Record<string, unknown>> };
-    } catch {
-        return byCanonical;
-    }
-    if (!Array.isArray(evidence.trackSources)) return byCanonical;
-
-    for (const source of evidence.trackSources) {
-        const providerTrackId = String(source.providerTrackId || "").trim();
-        if (!providerTrackId) continue;
-        const tip: SlotTrackSourceTip = {
-            providerTrackId,
-            providerAlbumId: source.providerAlbumId ? String(source.providerAlbumId) : null,
-            quality: source.quality ? String(source.quality) : null,
-        };
-        const trackMbid = String(source.canonicalTrackMbid || "").trim();
-        const recordingMbid = String(source.canonicalRecordingMbid || "").trim();
-        if (trackMbid) byCanonical.set(`track:${trackMbid}`, tip);
-        if (recordingMbid) byCanonical.set(`recording:${recordingMbid}`, tip);
-    }
-    return byCanonical;
-}
-
-function slotTrackSourceForCatalogTrack(
-    track: AlbumTrackContract,
-    tips: Map<string, SlotTrackSourceTip>,
-): SlotTrackSourceTip | null {
-    const trackMbid = String(track.musicbrainz_track_id || track.id || "").trim();
-    const recordingMbid = String(track.musicbrainz_recording_id || "").trim();
-    return (trackMbid ? tips.get(`track:${trackMbid}`) : undefined)
-        || (recordingMbid ? tips.get(`recording:${recordingMbid}`) : undefined)
-        || null;
-}
-
-function findBestProviderTrackMatch(
-    track: AlbumTrackContract,
-    providerTracks: AnnotatedProviderTrack[],
-    unusedProviderTracks: Set<string>,
-    canonicalIsrcs: Set<string> | undefined,
-    slot: ProviderTrackSlot,
-    preferredTip?: SlotTrackSourceTip | null,
-): { providerTrack: AnnotatedProviderTrack; score: number } | null {
-    const slotTracks = providerTracks.filter(
-        (providerTrack) => providerTrack.__slot === slot && unusedProviderTracks.has(providerTrack.__key),
-    );
-
-    // Hybrid/composite slots already chose per-track tips in match_evidence.
-    // Prefer those over a fresh title/duration rematch — otherwise a LOSSLESS
-    // same-ISRC cut on the primary album can hide the HIRES tip the slot won on.
-    if (preferredTip?.providerTrackId) {
-        const preferred = slotTracks.find((providerTrack) =>
-            String(providerTrack.providerId || "").trim() === preferredTip.providerTrackId
-            && (
-                !preferredTip.providerAlbumId
-                || String(providerTrack.__providerAlbumId || "").trim() === preferredTip.providerAlbumId
-            ),
-        );
-        if (preferred) {
-            const preferredWithQuality = preferredTip.quality
-                ? { ...preferred, quality: preferred.quality || preferredTip.quality }
-                : preferred;
-            return {
-                providerTrack: preferredWithQuality,
-                score: Math.max(0.99, scoreProviderTrackMatch(track, preferred, canonicalIsrcs)),
-            };
-        }
-    }
-
-    const candidates = slotTracks
-        .map((providerTrack) => ({
-            providerTrack,
-            score: scoreProviderTrackMatch(track, providerTrack, canonicalIsrcs),
-        }))
-        .filter((candidate) => candidate.score >= 0.55)
-        .sort((left, right) => right.score - left.score);
-
-    return candidates[0] || null;
-}
-
-function loadProviderTracksFromDb(
-    selections: ProviderTrackSelection[],
-    storedProviderUrl: (provider: string, entityType: "album" | "track", providerId: string) => string | null,
-): AnnotatedProviderTrack[] {
-    const selectTracks = db.prepare(`
+function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
+    return db.prepare(`
+      WITH ranked_offers AS (
         SELECT
-          CAST(provider_id AS TEXT) AS provider_id,
-          title,
-          version,
-          isrc,
-          duration,
-          track_number,
-          volume_number,
-          quality,
-          provider_url,
-          provider_artist_name,
-          CAST(provider_album_id AS TEXT) AS provider_album_id
-        FROM ProviderItems
-        WHERE provider = ?
-          AND entity_type = 'track'
-          AND CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
-          AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
-          AND (
-            availability IS NULL
-            OR LOWER(CAST(availability AS TEXT))
-               NOT IN ('0', 'false', 'unavailable', 'no', '')
-          )
-        ORDER BY
-          COALESCE(volume_number, 1) ASC,
-          COALESCE(track_number, 0) ASC,
-          provider_id ASC
-    `);
-
-    const out: AnnotatedProviderTrack[] = [];
-    for (const selection of selections) {
-        const rows = selectTracks.all(selection.providerId, selection.providerAlbumId) as Array<{
-            provider_id: string;
-            title: string | null;
-            version: string | null;
-            isrc: string | null;
-            duration: number | null;
-            track_number: number | null;
-            volume_number: number | null;
-            quality: string | null;
-            provider_url: string | null;
-            provider_artist_name: string | null;
-            provider_album_id: string | null;
-        }>;
-        if (rows.length === 0) {
-            continue;
-        }
-
-        const providerAlbumUrl = storedProviderUrl(
-            selection.providerId,
-            "album",
-            selection.providerAlbumId,
-        );
-        const artistName = String(rows[0]?.provider_artist_name || "").trim() || "Unknown Artist";
-        const artist = { providerId: "", name: artistName };
-
-        for (const row of rows) {
-            const providerTrackId = String(row.provider_id || "").trim();
-            if (!providerTrackId) continue;
-            const trackUrl = String(row.provider_url || "").trim()
-                || storedProviderUrl(selection.providerId, "track", providerTrackId)
-                || null;
-            out.push({
-                providerId: providerTrackId,
-                title: String(row.title || "").trim() || "Unknown Track",
-                version: row.version,
-                artist,
-                artists: [artist],
-                album: {
-                    providerId: selection.providerAlbumId,
-                    title: "",
-                    artist,
-                    url: providerAlbumUrl || undefined,
-                },
-                duration: Number(row.duration) || 0,
-                trackNumber: Number(row.track_number) || 0,
-                volumeNumber: row.volume_number == null ? undefined : Number(row.volume_number),
-                url: trackUrl || undefined,
-                isrc: row.isrc,
-                quality: row.quality,
-                __providerId: selection.providerId,
-                __providerAlbumId: selection.providerAlbumId,
-                __providerAlbumUrl: providerAlbumUrl,
-                __providerTrackUrl: trackUrl,
-                __slot: selection.slot,
-                __albumQuality: selection.quality,
-                __key: `${selection.providerId}:${selection.providerAlbumId}:${providerTrackId}`,
-            });
-        }
-    }
-    return out;
+          track.mbid AS track_mbid,
+          recording.mbid AS recording_mbid,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END AS library_class,
+          provider_release.provider AS provider,
+          provider_release.provider_id AS provider_album_id,
+          provider_release.provider_url AS provider_album_url,
+          provider_track.provider_id AS provider_track_id,
+          provider_track.provider_url AS provider_track_url,
+          COALESCE(
+            NULLIF(audio_variant.provider_quality_label, ''),
+            audio_variant.quality_class
+          ) AS quality,
+          release.mbid AS selected_release_mbid,
+          release_match.match_state AS match_status,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              COALESCE(track.recording_id, track.id),
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE allowed.value = 'spatial'
+              ) THEN 'spatial' ELSE 'stereo' END
+            ORDER BY library_release.updated_at DESC, plan_track.id DESC
+          ) AS offer_rank
+        FROM AcquisitionPlanTracks plan_track
+        JOIN AcquisitionPlans plan
+          ON plan.id = plan_track.plan_id
+         AND plan.state = 'current'
+        JOIN LibraryReleases library_release
+          ON library_release.id = plan.library_release_id
+        JOIN AlbumReleases release
+          ON release.id = library_release.release_id
+        JOIN Albums release_group
+          ON release_group.id = release.release_group_id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        JOIN Tracks track
+          ON track.id = plan_track.track_id
+        LEFT JOIN Recordings recording
+          ON recording.id = track.recording_id
+        JOIN AcquisitionPlanSources source
+          ON source.id = plan_track.source_id
+         AND source.plan_id = plan.id
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.id = source.provider_release_match_id
+         AND release_match.match_state = 'accepted'
+        JOIN ProviderItems provider_release
+          ON provider_release.id = release_match.provider_release_item_id
+        JOIN ProviderTrackMatches track_match
+          ON track_match.id = plan_track.provider_track_match_id
+         AND track_match.provider_release_match_id = release_match.id
+         AND track_match.track_id = plan_track.track_id
+         AND track_match.match_state = 'accepted'
+        JOIN ProviderReleaseMembers member
+          ON member.id = track_match.provider_release_member_id
+         AND member.provider_release_item_id = provider_release.id
+        JOIN ProviderItems provider_track
+          ON provider_track.id = member.member_item_id
+        JOIN ProviderItemAudioVariants audio_variant
+          ON audio_variant.id = plan_track.provider_audio_variant_id
+         AND audio_variant.provider_item_id = provider_track.id
+        WHERE release_group.mbid = ?
+      )
+      SELECT
+        track_mbid,
+        recording_mbid,
+        library_class,
+        provider,
+        provider_album_id,
+        provider_album_url,
+        provider_track_id,
+        provider_track_url,
+        quality,
+        selected_release_mbid,
+        match_status
+      FROM ranked_offers
+      WHERE offer_rank = 1
+      ORDER BY
+        CASE library_class WHEN 'stereo' THEN 0 ELSE 1 END,
+        track_mbid
+    `).all(releaseGroupMbid) as PlannedTrackOffer[];
 }
 
-async function loadProviderTracksLive(
-    selections: ProviderTrackSelection[],
-    storedProviderUrl: (provider: string, entityType: "album" | "track", providerId: string) => string | null,
-): Promise<AnnotatedProviderTrack[]> {
-    const providerTracks = (await Promise.all(selections.map(async (selection) => {
-        const provider = streamingProviderManager.getStreamingProvider(selection.providerId);
-        const albumTracks = await provider.getAlbumTracks(selection.providerAlbumId);
-        const providerAlbumUrl = storedProviderUrl(
-            selection.providerId,
-            "album",
-            selection.providerAlbumId,
-        );
-        return albumTracks.map((track, index) => ({
-            ...track,
-            __providerId: selection.providerId,
-            __providerAlbumId: selection.providerAlbumId,
-            __providerAlbumUrl: providerAlbumUrl
-                || String(track.album?.url || "").trim()
-                || null,
-            __providerTrackUrl: storedProviderUrl(
-                selection.providerId,
-                "track",
-                String(track.providerId || ""),
-            ) || String(track.url || "").trim() || null,
-            __slot: selection.slot,
-            __albumQuality: selection.quality,
-            __key: `${selection.providerId}:${selection.providerAlbumId}:${track.providerId || index}`,
-        } satisfies AnnotatedProviderTrack));
-    }))).flat() as AnnotatedProviderTrack[];
-    return providerTracks;
-}
-
-async function attachProviderPreviewTracks(
+function attachProviderPreviewTracks(
     tracks: AlbumTrackContract[],
     releaseGroup: any,
-): Promise<AlbumTrackContract[]> {
-    const providerAlbumSelections = buildProviderTrackSelections(releaseGroup);
-    if (providerAlbumSelections.length === 0 || tracks.length === 0) {
-        return tracks;
+): AlbumTrackContract[] {
+    if (tracks.length === 0) return tracks;
+
+    const offers = loadPlannedTrackOffers(String(releaseGroup.mbid));
+    if (offers.length === 0) {
+        return tracks.map((track) => ({
+            ...track,
+            remoteOffers: [],
+        }));
     }
 
-    try {
-        const recordingIsrcs = new Map<string, Set<string>>();
-        const selectRecordingIsrcs = db.prepare("SELECT isrcs FROM Recordings WHERE mbid = ?");
-        for (const track of tracks) {
-            const recordingMbid = String(track.musicbrainz_recording_id || "").trim();
-            if (!recordingMbid || recordingIsrcs.has(recordingMbid)) {
-                continue;
-            }
-            const row = selectRecordingIsrcs.get(recordingMbid) as { isrcs?: string | null } | undefined;
-            try {
-                const isrcs = JSON.parse(String(row?.isrcs || "[]")) as unknown;
-                recordingIsrcs.set(
-                    recordingMbid,
-                    new Set(Array.isArray(isrcs)
-                        ? isrcs.map((isrc) => String(isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "")).filter(Boolean)
-                        : []),
-                );
-            } catch {
-                recordingIsrcs.set(recordingMbid, new Set());
-            }
-        }
-
-        const stereoTips = parseSlotTrackSourceTips(releaseGroup.stereo_match_evidence);
-        const spatialTips = parseSlotTrackSourceTips(releaseGroup.spatial_match_evidence);
-        // selected slot mirrors stereo when both are set; prefer stereo tips.
-        const selectedTips = stereoTips.size > 0 ? stereoTips : spatialTips;
-
-        const lookupProviderItemUrl = db.prepare(`
-            SELECT provider_url
-            FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = ?
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-              AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
-              AND (
-                availability IS NULL
-                OR LOWER(CAST(availability AS TEXT))
-                   NOT IN ('0', 'false', 'unavailable', 'no', '')
-              )
-            LIMIT 1
-        `);
-        const storedProviderUrl = (
-            provider: string,
-            entityType: "album" | "track",
-            providerId: string,
-        ): string | null => {
-            const row = lookupProviderItemUrl.get(provider, entityType, providerId) as {
-                provider_url?: string | null;
-            } | undefined;
-            return String(row?.provider_url || "").trim() || null;
-        };
-
-        // Prefer persisted ProviderItems (artist page already does this). Live
-        // getAlbumTracks is only a fallback for albums whose track offers were
-        // never written — page views must not N+1 provider APIs.
-        const dbTracks = loadProviderTracksFromDb(providerAlbumSelections, storedProviderUrl);
-        const coveredKeys = new Set(
-            dbTracks.map((track) => `${track.__providerId}:${track.__providerAlbumId}:${track.__slot}`),
+    return tracks.map((track) => {
+        const trackMbid = String(track.musicbrainz_track_id || track.id || "").trim();
+        const recordingMbid = String(track.musicbrainz_recording_id || "").trim();
+        const matching = offers.filter((offer) =>
+            offer.track_mbid === trackMbid
+            || Boolean(recordingMbid && offer.recording_mbid === recordingMbid),
         );
-        const missingSelections = providerAlbumSelections.filter(
-            (selection) => !coveredKeys.has(`${selection.providerId}:${selection.providerAlbumId}:${selection.slot}`),
-        );
-        const liveTracks = missingSelections.length > 0
-            ? await loadProviderTracksLive(missingSelections, storedProviderUrl)
-            : [];
-        const providerTracks = [...dbTracks, ...liveTracks];
-        const unusedProviderTracks = new Set(providerTracks.map((track) => track.__key));
-
-        return tracks.map((track) => {
-            const trackIsrcs = recordingIsrcs.get(String(track.musicbrainz_recording_id || "").trim());
-            const stereoBest = findBestProviderTrackMatch(
-                track,
-                providerTracks,
-                unusedProviderTracks,
-                trackIsrcs,
-                "stereo",
-                slotTrackSourceForCatalogTrack(track, stereoTips),
-            );
-            const spatialBest = findBestProviderTrackMatch(
-                track,
-                providerTracks,
-                unusedProviderTracks,
-                trackIsrcs,
-                "spatial",
-                slotTrackSourceForCatalogTrack(track, spatialTips),
-            );
-            const selectedBest = findBestProviderTrackMatch(
-                track,
-                providerTracks,
-                unusedProviderTracks,
-                trackIsrcs,
-                "selected",
-                slotTrackSourceForCatalogTrack(track, selectedTips),
-            );
-            const bestPreview = stereoBest || selectedBest || spatialBest;
-
-            if (!stereoBest && !spatialBest && !selectedBest) {
-                return {
-                    ...track,
-                    quality: "",
-                    qualityTags: [],
-                    remoteOffers: [],
-                };
-            }
-
-            for (const best of [stereoBest, spatialBest, selectedBest]) {
-                if (best) {
-                    unusedProviderTracks.delete(best.providerTrack.__key);
-                }
-            }
-
-            const credits = providerArtistCredits(bestPreview?.providerTrack);
-            const qualityTags = mergeQualityTags([
-                offerDisplayQuality(spatialBest?.providerTrack, "spatial"),
-                offerDisplayQuality(stereoBest?.providerTrack, "stereo"),
-                offerDisplayQuality(selectedBest?.providerTrack, "selected"),
-            ]);
-            const primaryQuality = offerDisplayQuality(stereoBest?.providerTrack, "stereo")
-                || offerDisplayQuality(selectedBest?.providerTrack, "selected")
-                || offerDisplayQuality(spatialBest?.providerTrack, "spatial")
-                || track.quality;
-
-            // Per-slot offers (with provider) so the tracklist quality column
-            // mirrors the album header when stereo and Atmos are from different
-            // providers — qualityTags alone would collapse both onto preview_provider.
-            const remoteOffers = [
-                stereoBest ? {
-                    slot: "stereo",
-                    provider: stereoBest.providerTrack.__providerId,
-                    providerAlbumId: stereoBest.providerTrack.__providerAlbumId,
-                    ...(stereoBest.providerTrack.__providerAlbumUrl
-                        ? { providerUrl: stereoBest.providerTrack.__providerAlbumUrl }
-                        : {}),
-                    quality: offerDisplayQuality(stereoBest.providerTrack, "stereo"),
-                    matchStatus: releaseGroup.stereo_match_status || null,
-                    selectedReleaseMbid: releaseGroup.stereo_release_mbid || null,
-                    providerTrackId: String(stereoBest.providerTrack.providerId || "").trim() || null,
-                    ...(stereoBest.providerTrack.__providerTrackUrl
-                        ? { providerTrackUrl: stereoBest.providerTrack.__providerTrackUrl }
-                        : {}),
-                } : null,
-                spatialBest ? {
-                    slot: "spatial",
-                    provider: spatialBest.providerTrack.__providerId,
-                    providerAlbumId: spatialBest.providerTrack.__providerAlbumId,
-                    ...(spatialBest.providerTrack.__providerAlbumUrl
-                        ? { providerUrl: spatialBest.providerTrack.__providerAlbumUrl }
-                        : {}),
-                    quality: offerDisplayQuality(spatialBest.providerTrack, "spatial"),
-                    matchStatus: releaseGroup.spatial_match_status || null,
-                    selectedReleaseMbid: releaseGroup.spatial_release_mbid || null,
-                    providerTrackId: String(spatialBest.providerTrack.providerId || "").trim() || null,
-                    ...(spatialBest.providerTrack.__providerTrackUrl
-                        ? { providerTrackUrl: spatialBest.providerTrack.__providerTrackUrl }
-                        : {}),
-                } : null,
-            ].filter((offer): offer is NonNullable<typeof offer> => Boolean(offer));
-
+        const stereo = matching.find((offer) => offer.library_class === "stereo") || null;
+        const spatial = matching.find((offer) => offer.library_class === "spatial") || null;
+        const preview = stereo || spatial;
+        if (!preview) {
             return {
                 ...track,
-                preview_provider: bestPreview ? bestPreview.providerTrack.__providerId : track.preview_provider,
-                preview_provider_track_id: bestPreview ? String(bestPreview.providerTrack.providerId) : track.preview_provider_track_id,
-                quality: primaryQuality,
-                qualityTags,
-                remoteOffers,
-                artist_name: credits.length > 0
-                    ? credits.map((credit) => credit.name).join(", ")
-                    : track.artist_name,
-                artist_credits: credits.length > 0 ? credits : track.artist_credits,
+                remoteOffers: [],
             };
-        });
-    } catch (error) {
-        console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate provider tracks for ${releaseGroup.mbid}:`, error);
-        return tracks;
-    }
+        }
+
+        const stereoQuality = stereo
+            ? normalizePlannedQuality(stereo.quality, "stereo")
+            : null;
+        const spatialQuality = spatial
+            ? normalizePlannedQuality(spatial.quality, "spatial")
+            : null;
+        const remoteOffers = [stereo, spatial]
+            .filter((offer): offer is PlannedTrackOffer => Boolean(offer))
+            .map((offer) => ({
+                slot: offer.library_class,
+                provider: offer.provider,
+                providerAlbumId: offer.provider_album_id,
+                ...(offer.provider_album_url
+                    ? { providerUrl: offer.provider_album_url }
+                    : {}),
+                quality: normalizePlannedQuality(offer.quality, offer.library_class),
+                matchStatus: offer.match_status === "accepted" ? "verified" : offer.match_status,
+                selectedReleaseMbid: offer.selected_release_mbid,
+                providerTrackId: offer.provider_track_id,
+                ...(offer.provider_track_url
+                    ? { providerTrackUrl: offer.provider_track_url }
+                    : {}),
+            }));
+
+        return {
+            ...track,
+            preview_provider: preview.provider,
+            preview_provider_track_id: preview.provider_track_id,
+            quality: stereoQuality || spatialQuality || track.quality,
+            qualityTags: mergeQualityTags([
+                spatialQuality,
+                stereoQuality,
+                ...(track.qualityTags || []),
+                track.quality,
+            ]),
+            remoteOffers,
+        };
+    });
 }
 
 async function buildReleaseGroupTrackContracts(
