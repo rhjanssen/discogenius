@@ -3,6 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import {
+  seedAcceptedProviderRecordingTrack,
+  seedAcceptedProviderVideoMatch,
+} from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-refresh-video-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -76,9 +80,11 @@ test("provider videos create canonical recordings without artist-wide audio link
   assert.equal(video.cover_image_id, "cover-id");
 
   const providerOffer = dbModule.db.prepare(`
-    SELECT provider, entity_type AS entityType, provider_id AS providerId, recording_id AS recordingId
-    FROM ProviderItems
-    WHERE provider = 'tidal' AND entity_type = 'video'
+    SELECT pi.provider, pi.entity_type AS entityType, pi.provider_id AS providerId, vm.recording_id AS recordingId
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.provider = 'tidal' AND pi.entity_type = 'video'
   `).get() as { provider: string; entityType: string; providerId: string; recordingId: number };
   assert.deepEqual(providerOffer, {
     provider: "tidal",
@@ -133,10 +139,12 @@ test("the same video from two providers dedupes onto one recording; different va
   assert.equal(videos.length, 2);
 
   const offers = dbModule.db.prepare(`
-    SELECT provider, provider_id AS providerId, recording_id AS recordingId
-    FROM ProviderItems
-    WHERE entity_type = 'video'
-    ORDER BY provider, provider_id
+    SELECT pi.provider, pi.provider_id AS providerId, vm.recording_id AS recordingId
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video'
+    ORDER BY pi.provider, pi.provider_id
   `).all() as Array<{ provider: string; providerId: string; recordingId: number }>;
 
   const tidalMain = offers.find((offer) => offer.providerId === "tidal-video-dwyb");
@@ -187,10 +195,12 @@ test("canonical MusicBrainz video matching keeps official, lyric, and live asset
   }]);
 
   const offers = dbModule.db.prepare(`
-    SELECT provider_id AS providerId, recording_id AS recordingId
-    FROM ProviderItems
-    WHERE entity_type = 'video'
-    ORDER BY provider_id
+    SELECT pi.provider_id AS providerId, vm.recording_id AS recordingId
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video'
+    ORDER BY pi.provider_id
   `).all() as Array<{ providerId: string; recordingId: number }>;
   const byId = new Map(offers.map((offer) => [offer.providerId, offer.recordingId]));
 
@@ -282,9 +292,11 @@ test("named venue live attaches to unlabeled MusicBrainz video at exact duration
     }]);
 
     const offers = dbModule.db.prepare(`
-      SELECT provider, provider_id AS providerId, recording_id AS recordingId, title
-      FROM ProviderItems
-      WHERE entity_type = 'video' ORDER BY provider
+      SELECT pi.provider, pi.provider_id AS providerId, vm.recording_id AS recordingId, pi.title
+      FROM ProviderItems pi
+      LEFT JOIN ProviderVideoMatches vm
+        ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+      WHERE pi.entity_type = 'video' ORDER BY pi.provider
     `).all() as Array<{ provider: string; providerId: string; recordingId: number; title: string }>;
     const videos = dbModule.db.prepare(`
       SELECT id, title, mbid, video_variant, length_ms FROM Recordings WHERE is_video = 1 ORDER BY id
@@ -363,8 +375,11 @@ test("refresh promotes legacy provider-only venue live onto MusicBrainz twin", (
   }]);
 
   const apple = dbModule.db.prepare(`
-    SELECT recording_id AS recordingId FROM ProviderItems
-    WHERE provider = 'apple-music' AND provider_id = 'apple-mej-live'
+    SELECT vm.recording_id AS recordingId
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.provider = 'apple-music' AND pi.entity_type = 'video' AND pi.provider_id = 'apple-mej-live'
   `).get() as { recordingId: number };
   assert.equal(apple.recordingId, canonical.id);
 
@@ -391,15 +406,19 @@ test("refresh repairs legacy canonical overmerges across providers", () => {
     RETURNING id
   `).get() as { id: number };
 
-  const insertOffer = dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, title, duration, availability, recording_id
-    ) VALUES (?, 'video', ?, 'artist-mbid', ?, ?, 'available', ?)
-  `);
-  insertOffer.run("tidal", "tidal-pompeii-official", "Pompeii (Official Music Video)", 232, canonical.id);
-  insertOffer.run("tidal", "tidal-pompeii-lyric", "Pompeii (Lyric Video)", 214, canonical.id);
-  insertOffer.run("apple-music", "apple-pompeii-lyric", "Pompeii (Official Lyric Video)", 214, canonical.id);
-  insertOffer.run("apple-music", "apple-pompeii-performance", "Pompeii (Good Morning America Performance)", 228, canonical.id);
+  const insertOffer = (provider: string, providerVideoId: string, title: string, durationSec: number) =>
+    seedAcceptedProviderVideoMatch(dbModule.db, {
+      provider,
+      providerVideoId,
+      recordingId: canonical.id,
+      title,
+      durationMs: durationSec * 1000,
+      availability: "available",
+    });
+  insertOffer("tidal", "tidal-pompeii-official", "Pompeii (Official Music Video)", 232);
+  insertOffer("tidal", "tidal-pompeii-lyric", "Pompeii (Lyric Video)", 214);
+  insertOffer("apple-music", "apple-pompeii-lyric", "Pompeii (Official Lyric Video)", 214);
+  insertOffer("apple-music", "apple-pompeii-performance", "Pompeii (Good Morning America Performance)", 228);
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, canonical_recording_mbid, recording_id,
@@ -423,9 +442,11 @@ test("refresh repairs legacy canonical overmerges across providers", () => {
   }]);
 
   const offers = dbModule.db.prepare(`
-    SELECT provider_id AS providerId, recording_id AS recordingId
-    FROM ProviderItems
-    WHERE entity_type = 'video'
+    SELECT pi.provider_id AS providerId, vm.recording_id AS recordingId
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video'
   `).all() as Array<{ providerId: string; recordingId: number }>;
   const byId = new Map(offers.map((offer) => [offer.providerId, offer.recordingId]));
 
@@ -436,7 +457,11 @@ test("refresh repairs legacy canonical overmerges across providers", () => {
   assert.notEqual(byId.get("apple-pompeii-performance"), byId.get("apple-pompeii-lyric"));
 
   const canonicalOfferCount = dbModule.db.prepare(`
-    SELECT COUNT(*) AS count FROM ProviderItems WHERE entity_type = 'video' AND recording_id = ?
+    SELECT COUNT(*) AS count
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video' AND vm.recording_id = ?
   `).get(canonical.id) as { count: number };
   assert.equal(canonicalOfferCount.count, 1);
 
@@ -478,7 +503,11 @@ test("a parenthetical qualifier one provider omits still dedupes when durations 
   assert.equal(videos.length, 1);
 
   const offers = dbModule.db.prepare(`
-    SELECT DISTINCT recording_id AS recordingId FROM ProviderItems WHERE entity_type = 'video'
+    SELECT DISTINCT vm.recording_id AS recordingId
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video'
   `).all() as Array<{ recordingId: number }>;
   assert.equal(offers.length, 1);
   assert.equal(offers[0].recordingId, videos[0].id);
@@ -500,7 +529,11 @@ test("two exact same-provider offers merge; near-duration same-provider offers s
   }]);
 
   const exact = dbModule.db.prepare(`
-    SELECT COUNT(DISTINCT recording_id) AS c FROM ProviderItems WHERE entity_type = 'video'
+    SELECT COUNT(DISTINCT vm.recording_id) AS c
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video'
   `).get() as { c: number };
   assert.equal(exact.c, 1);
 
@@ -520,9 +553,11 @@ test("two exact same-provider offers merge; near-duration same-provider offers s
   }]);
 
   const oneSecond = dbModule.db.prepare(`
-    SELECT COUNT(DISTINCT recording_id) AS c
-    FROM ProviderItems
-    WHERE entity_type = 'video' AND provider_id LIKE 'tidal-pompeii-%'
+    SELECT COUNT(DISTINCT vm.recording_id) AS c
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video' AND pi.provider_id LIKE 'tidal-pompeii-%'
   `).get() as { c: number };
   assert.equal(oneSecond.c, 1, "±1s same-provider twins share one recording");
 
@@ -541,9 +576,11 @@ test("two exact same-provider offers merge; near-duration same-provider offers s
   }]);
 
   const near = dbModule.db.prepare(`
-    SELECT COUNT(DISTINCT recording_id) AS c
-    FROM ProviderItems
-    WHERE entity_type = 'video' AND provider_id LIKE 'tidal-oblivion-%'
+    SELECT COUNT(DISTINCT vm.recording_id) AS c
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video' AND pi.provider_id LIKE 'tidal-oblivion-%'
   `).get() as { c: number };
   assert.equal(near.c, 2, "5s duration gap keeps same-provider cuts separate");
 });
@@ -596,8 +633,11 @@ test("same-provider TIDAL twin attaches to MusicBrainz video within 2s", () => {
   assert.equal(videos[0].mbid, recordingMbid);
 
   const offers = dbModule.db.prepare(`
-    SELECT provider, CAST(provider_id AS TEXT) AS provider_id, recording_id
-    FROM ProviderItems WHERE entity_type = 'video' ORDER BY provider, provider_id
+    SELECT pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, vm.recording_id
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video' ORDER BY pi.provider, pi.provider_id
   `).all() as Array<{ provider: string; provider_id: string; recording_id: number }>;
   assert.equal(offers.length, 3);
   assert.ok(offers.every((o) => o.recording_id === videos[0].id));
@@ -709,7 +749,11 @@ test("refresh retro-merges pre-existing duplicate provider-only video recordings
   }]);
 
   const offers = dbModule.db.prepare(`
-    SELECT provider, recording_id AS recordingId FROM ProviderItems WHERE entity_type = 'video' ORDER BY provider
+    SELECT pi.provider, vm.recording_id AS recordingId
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video' ORDER BY pi.provider
   `).all() as Array<{ provider: string; recordingId: number }>;
   assert.equal(offers.length, 2);
   assert.equal(offers[0].recordingId, offers[1].recordingId);
@@ -746,7 +790,11 @@ test("lyric and unlabeled merge when durations agree within 2s", () => {
   assert.equal(videos[0].video_variant, "lyric");
 
   const offers = dbModule.db.prepare(`
-    SELECT provider, recording_id AS recordingId FROM ProviderItems WHERE entity_type = 'video'
+    SELECT pi.provider, vm.recording_id AS recordingId
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video'
   `).all() as Array<{ provider: string; recordingId: number }>;
   assert.equal(offers.length, 2);
   assert.equal(offers[0].recordingId, offers[1].recordingId);
@@ -982,13 +1030,14 @@ test("provider video album_id scopes title matching to that album's tracks", () 
     RETURNING id
   `).get() as { id: number };
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_id, title, duration
-    ) VALUES
-      ('tidal', 'track', 'tidal-track-on', 'tidal-album-42', 'artist-mbid', ?, 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457),
-      ('tidal', 'track', 'tidal-track-off', 'tidal-album-99', 'artist-mbid', ?, 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457)
-  `).run(onAlbum.id, offAlbum.id);
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "tidal", providerReleaseId: "tidal-album-42", providerTrackId: "tidal-track-on",
+    recordingId: onAlbum.id, title: "Romeo & Juliet (Live At The Hammersmith Odeon)", durationMs: 457000,
+  });
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "tidal", providerReleaseId: "tidal-album-99", providerTrackId: "tidal-track-off",
+    recordingId: offAlbum.id, title: "Romeo & Juliet (Live At The Hammersmith Odeon)", durationMs: 457000,
+  });
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
@@ -1025,13 +1074,14 @@ test("album-linked video does not fall back to artist-wide audio when in-album t
     RETURNING id
   `).get() as { id: number };
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_id, title, duration
-    ) VALUES
-      ('tidal', 'track', 'tidal-track-miss', 'tidal-album-miss', 'artist-mbid', ?, 'Other Song', 200),
-      ('tidal', 'track', 'tidal-track-wide', 'tidal-album-other', 'artist-mbid', ?, 'Romeo & Juliet', 457)
-  `).run(onAlbum.id, artistWide.id);
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "tidal", providerReleaseId: "tidal-album-miss", providerTrackId: "tidal-track-miss",
+    recordingId: onAlbum.id, title: "Other Song", durationMs: 200000,
+  });
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "tidal", providerReleaseId: "tidal-album-other", providerTrackId: "tidal-track-wide",
+    recordingId: artistWide.id, title: "Romeo & Juliet", durationMs: 457000,
+  });
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",

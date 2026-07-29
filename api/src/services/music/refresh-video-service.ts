@@ -737,11 +737,17 @@ function applyCatalogVideoIdentity(
 
 function recordingVideoProvider(recordingId: number): string | null {
     const row = db.prepare(`
-        SELECT provider
-        FROM ProviderItems
-        WHERE entity_type = 'video'
-          AND recording_id = ?
-        ORDER BY updated_at DESC
+        SELECT pi.provider
+        FROM ProviderItems pi
+        JOIN ProviderVideoMatches video_match
+          ON video_match.provider_video_item_id = pi.id
+         AND video_match.match_state = 'accepted'
+        WHERE pi.entity_type = 'video'
+          AND video_match.recording_id = ?
+        ORDER BY
+          CASE WHEN video_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+          video_match.confidence DESC,
+          pi.updated_at DESC
         LIMIT 1
     `).get(recordingId) as { provider?: string } | undefined;
     return row?.provider ? String(row.provider) : null;
@@ -1267,10 +1273,17 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         JOIN Recordings recording ON recording.id = video_match.recording_id
         LEFT JOIN ProviderReleaseMembers release_member
           ON release_member.id = (
+            -- Only an UNAMBIGUOUS membership yields a release context: one
+            -- provider video may sit on several releases, and picking the
+            -- lowest member id would invent one.
             SELECT candidate_member.id
             FROM ProviderReleaseMembers candidate_member
             WHERE candidate_member.member_item_id = provider_item.id
-            ORDER BY candidate_member.id
+              AND (
+                SELECT COUNT(DISTINCT sibling.provider_release_item_id)
+                FROM ProviderReleaseMembers sibling
+                WHERE sibling.member_item_id = provider_item.id
+              ) = 1
             LIMIT 1
           )
         LEFT JOIN ProviderItems release_item
@@ -1402,10 +1415,17 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         JOIN Recordings recording ON recording.id = video_match.recording_id
         LEFT JOIN ProviderReleaseMembers release_member
           ON release_member.id = (
+            -- Only an UNAMBIGUOUS membership yields a release context: one
+            -- provider video may sit on several releases, and picking the
+            -- lowest member id would invent one.
             SELECT candidate_member.id
             FROM ProviderReleaseMembers candidate_member
             WHERE candidate_member.member_item_id = provider_item.id
-            ORDER BY candidate_member.id
+              AND (
+                SELECT COUNT(DISTINCT sibling.provider_release_item_id)
+                FROM ProviderReleaseMembers sibling
+                WHERE sibling.member_item_id = provider_item.id
+              ) = 1
             LIMIT 1
           )
         LEFT JOIN ProviderItems release_item
