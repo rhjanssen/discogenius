@@ -10,6 +10,7 @@ import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-rele
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { selectFewestReleaseGroupsForCoverage } from "./artist-coverage-optimizer.js";
 import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
+import { LibraryCurationService } from "./library-curation-service.js";
 
 type ReleaseGroupForCuration = {
     mbid: string;
@@ -594,6 +595,57 @@ export class CurationService {
 
         const result = await this.processReleaseGroupSlots(artistId);
         const cleanupArtistId = identity.artistId ?? (this.looksLikeMusicBrainzMbid(artistId) ? null : artistId);
+
+        if (identity.artistMbid) {
+            const canonicalArtist = db.prepare(`
+                SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1
+            `).get(identity.artistMbid) as { id: number } | undefined;
+            if (canonicalArtist) {
+                const managedArtistId = (db.prepare(`
+                    INSERT INTO ManagedArtists (artist_id, path, metadata_status, updated_at)
+                    VALUES (
+                      ?,
+                      (SELECT path FROM Artists WHERE mbid = ? LIMIT 1),
+                      'verified',
+                      CURRENT_TIMESTAMP
+                    )
+                    ON CONFLICT(artist_id) DO UPDATE SET
+                      path = COALESCE(excluded.path, ManagedArtists.path),
+                      metadata_status = excluded.metadata_status,
+                      updated_at = CURRENT_TIMESTAMP
+                    RETURNING id
+                `).get(canonicalArtist.id, identity.artistMbid) as { id: number }).id;
+                db.prepare(`
+                    INSERT OR IGNORE INTO LibraryArtists (
+                      library_id, managed_artist_id, monitored, credited_scope
+                    )
+                    SELECT id, ?, 1, 'release_and_track_credit'
+                    FROM Libraries
+                    WHERE enabled = 1
+                `).run(managedArtistId);
+
+                const providerPriority = getConfigSection("streaming")?.provider_priority || [];
+                const curation = new LibraryCurationService(db);
+                const libraries = db.prepare(`
+                    SELECT DISTINCT library.id
+                    FROM Libraries library
+                    JOIN LibraryArtists library_artist
+                      ON library_artist.library_id = library.id
+                    WHERE library.enabled = 1
+                      AND library_artist.managed_artist_id = ?
+                      AND library_artist.monitored = 1
+                    ORDER BY library.id
+                `).all(managedArtistId) as Array<{ id: number }>;
+                for (const library of libraries) {
+                    curation.curateLibrary({
+                        libraryId: library.id,
+                        curationVersion: 1,
+                        acquisitionPlannerVersion: 1,
+                        providerPriority,
+                    });
+                }
+            }
+        }
 
         if (cleanupArtistId && monitoringConfig.remove_unmonitored_files === true) {
             const cleanup = LibraryFilesService.pruneUnmonitoredFiles(cleanupArtistId);
