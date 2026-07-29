@@ -128,11 +128,72 @@ function insertTestAlbum(db: any, mbid: string, title: string, imagesJson: strin
   `).run(mbid, title, imagesJson);
 }
 
-function insertTestSlot(db: any, mbid: string, slot: string, provider: string, providerId: string) {
+function insertTestProviderCandidate(
+  db: any,
+  options: {
+    releaseGroupMbid: string;
+    providerId: string;
+    title: string;
+    version?: string | null;
+    artworkUrl?: string | null;
+  },
+) {
+  const releaseGroup = db.prepare(`
+    SELECT id, artist_metadata_id, artist_mbid
+    FROM Albums
+    WHERE mbid = ?
+  `).get(options.releaseGroupMbid) as {
+    id: number;
+    artist_metadata_id: number | null;
+    artist_mbid: string;
+  };
+  const releaseMbid = `${options.releaseGroupMbid}-release`;
   db.prepare(`
-    INSERT OR REPLACE INTO ReleaseGroupSlots (release_group_mbid, artist_mbid, slot, monitored, selected_provider, selected_provider_id)
-    VALUES (?, 'test-artist', ?, 1, ?, ?)
-  `).run(mbid, slot, provider, providerId);
+    INSERT OR IGNORE INTO AlbumReleases (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id,
+      artist_mbid, title
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    releaseMbid,
+    releaseGroup.id,
+    options.releaseGroupMbid,
+    releaseGroup.artist_metadata_id,
+    releaseGroup.artist_mbid,
+    options.title,
+  );
+  const release = db.prepare(`
+    SELECT id FROM AlbumReleases WHERE mbid = ?
+  `).get(releaseMbid) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderItems (
+      entity_type, provider, provider_id, title, version, artwork_url
+    ) VALUES ('release', 'test-hybrid-provider', ?, ?, ?, ?)
+    ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
+      title = excluded.title,
+      version = excluded.version,
+      artwork_url = excluded.artwork_url
+  `).run(
+    options.providerId,
+    options.title,
+    options.version ?? null,
+    options.artworkUrl ?? null,
+  );
+  const providerItem = db.prepare(`
+    SELECT id
+    FROM ProviderItems
+    WHERE provider = 'test-hybrid-provider'
+      AND entity_type = 'release'
+      AND provider_id = ?
+  `).get(options.providerId) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    ON CONFLICT(provider_release_item_id, release_id) DO UPDATE SET
+      match_state = 'accepted',
+      confidence = 1
+  `).run(providerItem.id, release.id);
 }
 
 // ---------------------------------------------------------------------------
@@ -203,16 +264,17 @@ test("supplemental-provider-artwork-cannot-own-primary-album", async () => {
   const db = dbModule.db;
   const mbid = "rg-hybrid-primary-test";
   insertTestAlbum(db, mbid, "Hybrid Album");
-  insertTestSlot(db, mbid, 'stereo', 'test-hybrid-provider', '00-single-carrier-id;11-album-carrier-id');
-
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '00-single-carrier-id', 'Hybrid Album', 'Single', 1.0)
-  `).run(mbid);
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '11-album-carrier-id', 'Hybrid Album', NULL, 1.0)
-  `).run(mbid);
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "00-single-carrier-id",
+    title: "Hybrid Album",
+    version: "Single",
+  });
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "11-album-carrier-id",
+    title: "Hybrid Album",
+  });
 
   const resolvedUrl = await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
   assert.ok(resolvedUrl, "Expected resolved artwork URL");
@@ -232,26 +294,28 @@ test("hybrid-source-order-is-artwork-invariant", async () => {
   insertTestAlbum(db, mbid1, "Invariant Album 1");
   insertTestAlbum(db, mbid2, "Invariant Album 2");
 
-  insertTestSlot(db, mbid1, 'stereo', 'test-hybrid-provider', '11-album-carrier-id-1;00-single-carrier-id-1');
-  insertTestSlot(db, mbid2, 'stereo', 'test-hybrid-provider', '00-single-carrier-id-2;11-album-carrier-id-2');
-
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '00-single-carrier-id-1', 'Invariant Album 1', 'Single', 1.0)
-  `).run(mbid1);
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '11-album-carrier-id-1', 'Invariant Album 1', NULL, 1.0)
-  `).run(mbid1);
-
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '00-single-carrier-id-2', 'Invariant Album 2', 'Single', 1.0)
-  `).run(mbid2);
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '11-album-carrier-id-2', 'Invariant Album 2', NULL, 1.0)
-  `).run(mbid2);
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid1,
+    providerId: "00-single-carrier-id-1",
+    title: "Invariant Album 1",
+    version: "Single",
+  });
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid1,
+    providerId: "11-album-carrier-id-1",
+    title: "Invariant Album 1",
+  });
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid2,
+    providerId: "00-single-carrier-id-2",
+    title: "Invariant Album 2",
+    version: "Single",
+  });
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid2,
+    providerId: "11-album-carrier-id-2",
+    title: "Invariant Album 2",
+  });
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid1 });
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid2 });
@@ -280,9 +344,6 @@ test("canonical-cache-survives-hybrid-import", async () => {
   fs.mkdirSync(cacheFolder, { recursive: true });
   fs.writeFileSync(path.join(cacheFolder, "origin.jpg"), ALBUM_ARTWORK_A);
   fs.writeFileSync(path.join(cacheFolder, "cover.jpg"), ALBUM_ARTWORK_A);
-
-  // Slot has hybrid IDs
-  insertTestSlot(db, mbid, 'stereo', 'test-hybrid-provider', '00-single-carrier-id;11-album-carrier-id');
 
   const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
   assert.ok(originPath && fs.existsSync(originPath));
@@ -328,12 +389,11 @@ test("canonical-preference-preserves-canonical-cache", async () => {
   const mbid = "rg-canonical-pref-test";
   const canonicalImages = JSON.stringify([{ CoverType: "Cover", Url: "https://example.test/canonical-cover.jpg" }]);
   insertTestAlbum(db, mbid, "Canonical Pref Test", canonicalImages);
-  insertTestSlot(db, mbid, 'stereo', 'test-hybrid-provider', '11-album-c-carrier-id');
-
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '11-album-c-carrier-id', 'Canonical Pref Test', NULL, 1.0)
-  `).run(mbid);
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "11-album-c-carrier-id",
+    title: "Canonical Pref Test",
+  });
 
   // Set preference to canonical
   configModule.updateConfig("metadata", { artwork_preference: "canonical", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
@@ -349,12 +409,11 @@ test("canonical-missing-provider-fallback-populates-cache", async () => {
   const mbid = "rg-canonical-fallback-test";
   // No canonical images JSON
   insertTestAlbum(db, mbid, "Canonical Fallback Test", null);
-  insertTestSlot(db, mbid, 'stereo', 'test-hybrid-provider', '11-album-c-carrier-id');
-
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '11-album-c-carrier-id', 'Canonical Fallback Test', NULL, 1.0)
-  `).run(mbid);
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "11-album-c-carrier-id",
+    title: "Canonical Fallback Test",
+  });
 
   configModule.updateConfig("metadata", { artwork_preference: "canonical", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
@@ -369,12 +428,11 @@ test("provider-preference-replaces-canonical-cache-at-refresh", async () => {
   const mbid = "rg-provider-pref-replace";
   const canonicalImages = JSON.stringify([{ CoverType: "Cover", Url: "https://example.test/canonical-cover.jpg" }]);
   insertTestAlbum(db, mbid, "Provider Pref Replace Test", canonicalImages);
-  insertTestSlot(db, mbid, 'stereo', 'test-hybrid-provider', '11-album-c-carrier-id');
-
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '11-album-c-carrier-id', 'Provider Pref Replace Test', NULL, 1.0)
-  `).run(mbid);
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "11-album-c-carrier-id",
+    title: "Provider Pref Replace Test",
+  });
 
   configModule.updateConfig("metadata", { artwork_preference: "provider", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
@@ -388,16 +446,17 @@ test("provider-preference-selects-owner-provider-at-refresh", async () => {
   const db = dbModule.db;
   const mbid = "rg-provider-owner-select";
   insertTestAlbum(db, mbid, "Provider Owner Select Test");
-  insertTestSlot(db, mbid, 'stereo', 'test-hybrid-provider', '11-album-c-carrier-id;00-single-carrier-id');
-
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '00-single-carrier-id', 'Provider Owner Select Test', 'Single', 1.0)
-  `).run(mbid);
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '11-album-c-carrier-id', 'Provider Owner Select Test', NULL, 1.0)
-  `).run(mbid);
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "00-single-carrier-id",
+    title: "Provider Owner Select Test",
+    version: "Single",
+  });
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "11-album-c-carrier-id",
+    title: "Provider Owner Select Test",
+  });
 
   configModule.updateConfig("metadata", { artwork_preference: "provider", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
@@ -528,48 +587,56 @@ test("ui-mediacover-route-does-not-lazily-fetch", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// RELEASE-GROUP ARTWORK OWNERSHIP AND SLOT INVARIANCE
+// RELEASE-GROUP ARTWORK OWNERSHIP AND LIBRARY INVARIANCE
 // ---------------------------------------------------------------------------
 
-test("release-group artwork ownership and slot invariance", async () => {
+test("release-group artwork ownership is invariant across library classes", async () => {
   const db = dbModule.db;
   const mbid = "rg-stereo-spatial-cross";
   insertTestAlbum(db, mbid, "Spatial Cross Test");
 
-  insertTestSlot(db, mbid, 'stereo', 'test-hybrid-provider', 'album-carrier-id');
-  insertTestSlot(db, mbid, 'spatial', 'test-hybrid-provider', 'single-carrier-id');
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "album-carrier-id",
+    title: "Spatial Cross Test",
+    artworkUrl: "http://test/stereo-cover.jpg",
+  });
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "single-carrier-id",
+    title: "Spatial Cross Test",
+    version: "Single",
+    artworkUrl: "http://test/single-cover.jpg",
+  });
 
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence, cover)
-    VALUES ('album', ?, 'test-hybrid-provider', 'album-carrier-id', 'Spatial Cross Test', NULL, 1.0, 'http://test/stereo-cover.jpg')
-  `).run(mbid);
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence, cover)
-    VALUES ('album', ?, 'test-hybrid-provider', 'single-carrier-id', 'Spatial Cross Test', 'Single', 1.0, 'http://test/single-cover.jpg')
-  `).run(mbid);
-
-  // 1. Unrelated or supplemental non-stereo candidates cannot contaminate selection
+  // 1. Supplemental single candidates cannot contaminate album selection.
   const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(mbid);
   assert.ok(candidates.length > 0, "Expected candidates");
-  assert.equal(candidates.length, 1, "Supplemental single carrier in spatial slot must not pollute primary album candidates");
-  assert.equal(candidates[0].entityId, "album-carrier-id", "Provider preference chooses the eligible primary stereo image first");
+  assert.equal(candidates.length, 1, "Supplemental single carrier must not pollute primary album candidates");
+  assert.equal(candidates[0].entityId, "album-carrier-id", "Provider preference chooses the eligible album image first");
 
-  // 2. When no eligible stereo image exists, an eligible non-stereo image is used
-  db.prepare("DELETE FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").run(mbid);
-  db.prepare("DELETE FROM ProviderItems WHERE release_group_mbid = ? AND provider_id = 'album-carrier-id'").run(mbid);
+  // 2. When the first accepted release disappears, another eligible accepted
+  // release becomes the owner.
   db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence, cover)
-    VALUES ('album', ?, 'test-hybrid-provider', 'spatial-carrier-id', 'Spatial Cross Test', NULL, 1.0, 'http://test/spatial-cover.jpg')
-  `).run(mbid);
-  insertTestSlot(db, mbid, 'spatial', 'test-hybrid-provider', 'spatial-carrier-id');
+    DELETE FROM ProviderItems
+    WHERE provider = 'test-hybrid-provider'
+      AND entity_type = 'release'
+      AND provider_id = 'album-carrier-id'
+  `).run();
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "spatial-carrier-id",
+    title: "Spatial Cross Test",
+    artworkUrl: "http://test/spatial-cover.jpg",
+  });
 
   const spatialCandidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(mbid);
-  assert.equal(spatialCandidates[0]?.entityId, "spatial-carrier-id", "When no eligible stereo image exists, an eligible non-stereo image is used");
+  assert.equal(spatialCandidates[0]?.entityId, "spatial-carrier-id", "The remaining eligible release is used");
 
-  // 3. Stereo and non-stereo consumers read the same active release-group MediaCover (one release group has one active image)
+  // 3. All libraries consume the same active release-group MediaCover.
   const stereoPath = mediaCoverServiceModule.getMediaCoverPath(mbid, "Album", "cover", ".jpg");
   const spatialPath = mediaCoverServiceModule.getMediaCoverPath(mbid, "Album", "cover", ".jpg");
-  assert.equal(stereoPath, spatialPath, "One release group has one active MediaCover path regardless of slot consumer");
+  assert.equal(stereoPath, spatialPath, "One release group has one active MediaCover path");
 });
 
 // ---------------------------------------------------------------------------
@@ -582,17 +649,50 @@ test("same-release-group-characterization", async () => {
   insertTestAlbum(db, rgMbid, "Same Group Char Album");
 
   // Create two distinct release_mbids in AlbumReleases for the same release group
-  try {
-    db.prepare(`
-      INSERT OR REPLACE INTO AlbumReleases (id, mbid, release_group_mbid, title, status, track_count, media_count)
-      VALUES (101, 'rel-edition-1', ?, 'Standard Edition', 'Official', 10, 1),
-             (102, 'rel-edition-2', ?, 'Japanese Deluxe', 'Official', 15, 2)
-    `).run(rgMbid, rgMbid);
-  } catch { /* ignore */ }
+  const releaseGroup = db.prepare(`
+    SELECT id, artist_metadata_id, artist_mbid
+    FROM Albums
+    WHERE mbid = ?
+  `).get(rgMbid) as {
+    id: number;
+    artist_metadata_id: number | null;
+    artist_mbid: string;
+  };
+  db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id,
+      artist_mbid, title, status, track_count, media_count
+    ) VALUES (?, ?, ?, ?, ?, ?, 'Official', ?, ?)
+  `).run(
+    "rel-edition-1",
+    releaseGroup.id,
+    rgMbid,
+    releaseGroup.artist_metadata_id,
+    releaseGroup.artist_mbid,
+    "Standard Edition",
+    10,
+    1,
+  );
+  db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id,
+      artist_mbid, title, status, track_count, media_count
+    ) VALUES (?, ?, ?, ?, ?, ?, 'Official', ?, ?)
+  `).run(
+    "rel-edition-2",
+    releaseGroup.id,
+    rgMbid,
+    releaseGroup.artist_metadata_id,
+    releaseGroup.artist_mbid,
+    "Japanese Deluxe",
+    15,
+    2,
+  );
 
-  // Check if ReleaseGroupSlots allows multiple rows per release group across editions or slots
-  const slots = db.prepare("SELECT * FROM ReleaseGroupSlots WHERE release_group_mbid = ?").all(rgMbid);
-  assert.ok(Array.isArray(slots), "Characterization of release group slot materialization");
+  const editions = db.prepare(`
+    SELECT id FROM AlbumReleases WHERE release_group_mbid = ?
+  `).all(rgMbid);
+  assert.equal(editions.length, 2, "One release group can own multiple canonical editions");
 });
 
 // ---------------------------------------------------------------------------
@@ -603,12 +703,11 @@ test("provenance-updates-atomically-with-selected-bytes", async () => {
   const db = dbModule.db;
   const mbid = "rg-provenance-atomic";
   insertTestAlbum(db, mbid, "Provenance Atomic Test");
-  insertTestSlot(db, mbid, 'stereo', 'test-hybrid-provider', '11-album-carrier-id');
-
-  db.prepare(`
-    INSERT OR REPLACE INTO ProviderItems (entity_type, release_group_mbid, provider, provider_id, title, version, match_confidence)
-    VALUES ('album', ?, 'test-hybrid-provider', '11-album-carrier-id', 'Provenance Atomic Test', NULL, 1.0)
-  `).run(mbid);
+  insertTestProviderCandidate(db, {
+    releaseGroupMbid: mbid,
+    providerId: "11-album-carrier-id",
+    title: "Provenance Atomic Test",
+  });
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
   const cacheFolder = path.join(tempDir, "media-cover", "Albums", mbid);

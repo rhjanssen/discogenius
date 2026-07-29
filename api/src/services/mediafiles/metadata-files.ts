@@ -161,13 +161,6 @@ function textOrNull(...values: unknown[]): string | null {
     return null;
 }
 
-function splitProviderIds(value: string | null | undefined): string[] {
-    return String(value || "")
-        .split(/[;+]/)
-        .map((id) => id.trim())
-        .filter(Boolean);
-}
-
 function loadAlbumProviderItem(albumId: string, provider?: string | null): AlbumProviderItemRow | null {
     return (db.prepare(`
         SELECT
@@ -411,24 +404,41 @@ function resolveAlbumVideoCoverProvider(options?: AlbumVideoCoverDownloadOptions
 
     const releaseGroupMbid = String(options?.releaseGroupMbid || "").trim();
     if (releaseGroupMbid) {
-        const slot = db.prepare(`
-            SELECT selected_provider, selected_provider_id
-            FROM ReleaseGroupSlots
-            WHERE release_group_mbid = ?
-              AND selected_provider IS NOT NULL
-              AND TRIM(selected_provider) != ''
-            ORDER BY CASE slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+        const source = db.prepare(`
+            SELECT
+              plan.provider AS selected_provider,
+              provider_release.provider_id AS selected_provider_id
+            FROM AcquisitionPlans plan
+            JOIN LibraryReleases library_release
+              ON library_release.id = plan.library_release_id
+            JOIN AlbumReleases release
+              ON release.id = library_release.release_id
+            JOIN Albums release_group
+              ON release_group.id = release.release_group_id
+            JOIN AcquisitionPlanSources plan_source
+              ON plan_source.plan_id = plan.id
+            JOIN ProviderReleaseMatches release_match
+              ON release_match.id = plan_source.provider_release_match_id
+            JOIN ProviderItems provider_release
+              ON provider_release.id = release_match.provider_release_item_id
+            WHERE release_group.mbid = ?
+              AND plan.state = 'current'
+              AND release_match.match_state = 'accepted'
+            ORDER BY
+              plan_source.sort_order,
+              plan_source.id
             LIMIT 1
-        `).get(releaseGroupMbid) as { selected_provider?: string | null; selected_provider_id?: string | null } | undefined;
-        const slotProvider = String(slot?.selected_provider || "").trim();
-        if (slotProvider) {
-            const slotAlbumId = String(slot?.selected_provider_id || "")
-                .split(";")
-                .map((part) => part.trim())
-                .find(Boolean) || null;
+        `).get(releaseGroupMbid) as {
+            selected_provider?: string | null;
+            selected_provider_id?: string | null;
+        } | undefined;
+        const selectedProvider = String(source?.selected_provider || "").trim();
+        if (selectedProvider) {
             return {
-                providerId: slotProvider,
-                providerAlbumId: requestedAlbumId || slotAlbumId,
+                providerId: selectedProvider,
+                providerAlbumId: requestedAlbumId
+                    || String(source?.selected_provider_id || "").trim()
+                    || null,
             };
         }
     }
@@ -798,28 +808,71 @@ export async function saveAlbumNfoFile(
         throw new Error(`Cannot write album NFO without a canonical release group for ${albumId}`);
     }
 
-    const selectedSlot = db.prepare(`
-        SELECT slot, selected_provider, selected_provider_id, selected_release_mbid
-        FROM ReleaseGroupSlots
-        WHERE release_group_mbid = ?
-          AND (? = '' OR slot = ?)
+    const requestedLibraryClass = String(options.librarySlot || "").trim().toLowerCase();
+    const selectedLibrary = db.prepare(`
+        SELECT
+          plan.provider AS selected_provider,
+          provider_release.provider_id AS selected_provider_id,
+          release.mbid AS selected_release_mbid
+        FROM Albums release_group
+        JOIN LibraryReleaseGroups library_group
+          ON library_group.release_group_id = release_group.id
+        JOIN Libraries library
+          ON library.id = library_group.library_id
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        JOIN LibraryReleases library_release
+          ON library_release.library_id = library.id
+        JOIN AlbumReleases release
+          ON release.id = library_release.release_id
+         AND release.release_group_id = release_group.id
+        LEFT JOIN AcquisitionPlans plan
+          ON plan.library_release_id = library_release.id
+         AND plan.state = 'current'
+        LEFT JOIN AcquisitionPlanSources plan_source
+          ON plan_source.plan_id = plan.id
+         AND plan_source.role = 'primary'
+        LEFT JOIN ProviderReleaseMatches release_match
+          ON release_match.id = plan_source.provider_release_match_id
+         AND release_match.match_state = 'accepted'
+        LEFT JOIN ProviderItems provider_release
+          ON provider_release.id = release_match.provider_release_item_id
+        WHERE release_group.mbid = ?
+          AND (
+            ? = ''
+            OR (? = 'spatial' AND EXISTS (
+              SELECT 1
+              FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+              WHERE allowed.value = 'spatial'
+            ))
+            OR (? = 'stereo' AND EXISTS (
+              SELECT 1
+              FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+              WHERE allowed.value <> 'spatial'
+            ))
+          )
         ORDER BY
-          CASE slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-          id ASC
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 1 ELSE 0 END,
+          library_release.updated_at DESC,
+          library_release.id
         LIMIT 1
     `).get(
         releaseGroupMbid,
-        String(options.librarySlot || ""),
-        String(options.librarySlot || ""),
+        requestedLibraryClass,
+        requestedLibraryClass,
+        requestedLibraryClass,
     ) as {
-        slot?: string | null;
         selected_provider?: string | null;
         selected_provider_id?: string | null;
         selected_release_mbid?: string | null;
     } | undefined;
     const canonicalReleaseMbid = textOrNull(
         options.releaseMbid,
-        selectedSlot?.selected_release_mbid,
+        selectedLibrary?.selected_release_mbid,
         (db.prepare(`
             SELECT mbid
             FROM AlbumReleases
@@ -923,12 +976,11 @@ export async function saveAlbumNfoFile(
     const providerUniqueIds = new Map<string, string>();
     const addProviderIds = (provider: string | null | undefined, providerIds: string | null | undefined) => {
         const normalizedProvider = String(provider || "").trim();
-        if (!normalizedProvider) return;
-        for (const providerId of splitProviderIds(providerIds)) {
-            providerUniqueIds.set(`${normalizedProvider}\u0000${providerId}`, providerId);
-        }
+        const providerId = String(providerIds || "").trim();
+        if (!normalizedProvider || !providerId) return;
+        providerUniqueIds.set(`${normalizedProvider}\u0000${providerId}`, providerId);
     };
-    addProviderIds(selectedSlot?.selected_provider, selectedSlot?.selected_provider_id);
+    addProviderIds(selectedLibrary?.selected_provider, selectedLibrary?.selected_provider_id);
     addProviderIds(options.provider, options.providerAlbumId);
 
     const elements = [

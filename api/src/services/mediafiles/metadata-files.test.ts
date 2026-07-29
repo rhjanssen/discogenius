@@ -484,7 +484,7 @@ test("saveLyricsFile chooses txt for plain lyrics and lrc for valid timestamps",
     }
 });
 
-test("album NFO uses the selected canonical release for a composite provider slot", async () => {
+test("album NFO uses the selected canonical release and one exact provider release", async () => {
     seedMusicBrainzMetadata();
     dbModule.db.prepare("UPDATE Albums SET title = ? WHERE mbid = ?")
       .run("Canonical Release Group Title", "release-group-mbid-200");
@@ -499,13 +499,6 @@ test("album NFO uses the selected canonical release for a composite provider slo
         INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-mbid-301", "album-mbid-200", "recording-mbid-301", 1, 2, "Second Canonical Track", 120000);
-      dbModule.db.prepare(`
-        INSERT INTO ReleaseGroupSlots(
-          release_group_mbid, artist_mbid, slot, selected_provider, selected_provider_id, selected_release_mbid
-        )
-        VALUES(?, ?, ?, ?, ?, ?)
-      `).run("release-group-mbid-200", "artist-mbid-100", "stereo", "tidal", "200;201", "album-mbid-200");
-
     const albumPath = path.join(tempDir, "composite-album.nfo");
     await metadataFilesModule.saveAlbumNfoFile("release-group-mbid-200", albumPath, {
         releaseGroupMbid: "release-group-mbid-200",
@@ -517,7 +510,7 @@ test("album NFO uses the selected canonical release for a composite provider slo
     const albumNfo = fs.readFileSync(albumPath, "utf-8");
 
     assert.match(albumNfo, /<uniqueid type="tidalAlbum" default="false">200<\/uniqueid>/);
-    assert.match(albumNfo, /<uniqueid type="tidalAlbum" default="false">201<\/uniqueid>/);
+    assert.doesNotMatch(albumNfo, /<uniqueid type="tidalAlbum" default="false">201<\/uniqueid>/);
     assert.match(albumNfo, /<title>Canonical Release Group Title<\/title>/);
     assert.doesNotMatch(albumNfo, /Edition-Specific Release Title/);
     assert.match(albumNfo, /<position>2<\/position>/);
@@ -609,11 +602,10 @@ test("static video thumbnail sidecars copy the canonical recording's cached orig
     );
 });
 
-test("Bad Blood NFO cannot cross providers when composite Apple IDs collide with TIDAL", async () => {
+test("Bad Blood NFO cannot cross providers when Apple and TIDAL IDs collide", async () => {
     seedMusicBrainzMetadata();
     dbModule.db.prepare("UPDATE Albums SET title = ? WHERE mbid = ?")
         .run("Bad Blood", "release-group-mbid-200");
-    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
     dbModule.db.prepare(`
         INSERT INTO ProviderItems(
           provider, entity_type, provider_id, artist_mbid, release_group_mbid,
@@ -656,19 +648,6 @@ test("Bad Blood NFO cannot cross providers when composite Apple IDs collide with
         "1705033078",
         "Wrong TIDAL Collision",
     );
-    dbModule.db.prepare(`
-        INSERT INTO ReleaseGroupSlots(
-          release_group_mbid, artist_mbid, slot, selected_provider,
-          selected_provider_id, selected_release_mbid
-        ) VALUES(?, ?, 'stereo', ?, ?, ?)
-    `).run(
-        "release-group-mbid-200",
-        "artist-mbid-100",
-        "apple-music",
-        "1705033078;1710633308",
-        "album-mbid-200",
-    );
-
     const nfoPath = path.join(tempDir, "bad-blood.nfo");
     await metadataFilesModule.saveAlbumNfoFile("release-group-mbid-200", nfoPath, {
         releaseGroupMbid: "release-group-mbid-200",
@@ -680,7 +659,7 @@ test("Bad Blood NFO cannot cross providers when composite Apple IDs collide with
     const nfo = fs.readFileSync(nfoPath, "utf8");
     assert.match(nfo, /<title>Bad Blood<\/title>/);
     assert.match(nfo, /<uniqueid type="apple-musicAlbum" default="false">1705033078<\/uniqueid>/);
-    assert.match(nfo, /<uniqueid type="apple-musicAlbum" default="false">1710633308<\/uniqueid>/);
+    assert.doesNotMatch(nfo, /<uniqueid type="apple-musicAlbum" default="false">1710633308<\/uniqueid>/);
     assert.doesNotMatch(nfo, /tidalAlbum[^>]*>1705033078/);
     assert.doesNotMatch(nfo, /Wrong TIDAL Collision|Pompeii MMXXIII/);
 });

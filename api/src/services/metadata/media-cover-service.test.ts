@@ -19,6 +19,133 @@ function sourceRevision(url: string): string {
   return crypto.createHash("sha256").update(url).digest("hex").slice(0, 16);
 }
 
+function linkProviderArtworkCandidate(options: {
+  releaseGroupMbid: string;
+  provider: string;
+  providerId: string;
+  libraryClass?: "stereo" | "spatial";
+}): void {
+  const { db } = dbModule;
+  const releaseGroup = db.prepare(`
+    SELECT id, artist_metadata_id, artist_mbid, title
+    FROM Albums
+    WHERE mbid = ?
+  `).get(options.releaseGroupMbid) as {
+    id: number;
+    artist_metadata_id: number | null;
+    artist_mbid: string;
+    title: string;
+  };
+  db.prepare(`
+    INSERT OR IGNORE INTO AlbumReleases (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id,
+      artist_mbid, title
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    `${options.releaseGroupMbid}-release`,
+    releaseGroup.id,
+    options.releaseGroupMbid,
+    releaseGroup.artist_metadata_id,
+    releaseGroup.artist_mbid,
+    releaseGroup.title,
+  );
+  const release = db.prepare(`
+    SELECT id FROM AlbumReleases WHERE mbid = ?
+  `).get(`${options.releaseGroupMbid}-release`) as { id: number };
+  const providerItem = db.prepare(`
+    SELECT id
+    FROM ProviderItems
+    WHERE provider = ? AND provider_id = ?
+    ORDER BY id
+    LIMIT 1
+  `).get(options.provider, options.providerId) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    ON CONFLICT(provider_release_item_id, release_id) DO UPDATE SET
+      match_state = 'accepted',
+      confidence = 1
+  `).run(providerItem.id, release.id);
+
+  if (!options.libraryClass) return;
+  db.prepare(`
+    INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+    VALUES ('Artwork Test', '{}')
+  `).run();
+  if (options.libraryClass === "spatial") {
+    db.prepare(`
+      INSERT OR IGNORE INTO quality_profiles (
+        name, cutoff, items, allowed_source_formats, preference_order
+      ) VALUES ('Artwork Spatial', 'DOLBY_ATMOS', '["DOLBY_ATMOS"]', '["spatial"]', '["spatial"]')
+    `).run();
+  }
+  const metadataProfile = db.prepare(`
+    SELECT id FROM MetadataProfiles WHERE name = 'Artwork Test'
+  `).get() as { id: number };
+  const qualityProfile = db.prepare(`
+    SELECT id
+    FROM quality_profiles
+    WHERE ${options.libraryClass === "spatial"
+      ? "name = 'Artwork Spatial'"
+      : "COALESCE(allowed_source_formats, '[]') NOT LIKE '%spatial%'"}
+    ORDER BY id
+    LIMIT 1
+  `).get() as { id: number };
+  const libraryName = `Artwork ${options.libraryClass} ${options.releaseGroupMbid}`;
+  db.prepare(`
+    INSERT OR IGNORE INTO Libraries (
+      name, root_path, metadata_profile_id, quality_profile_id
+    ) VALUES (?, ?, ?, ?)
+  `).run(
+    libraryName,
+    path.join(tempDir, "libraries", options.libraryClass, options.releaseGroupMbid),
+    metadataProfile.id,
+    qualityProfile.id,
+  );
+  const library = db.prepare(`
+    SELECT id FROM Libraries WHERE name = ?
+  `).get(libraryName) as { id: number };
+  db.prepare(`
+    INSERT OR IGNORE INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      reason, curation_version
+    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+  `).run(library.id, releaseGroup.id);
+  db.prepare(`
+    INSERT OR IGNORE INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, release.id);
+  const libraryRelease = db.prepare(`
+    SELECT id FROM LibraryReleases WHERE library_id = ? AND release_id = ?
+  `).get(library.id, release.id) as { id: number };
+  const releaseMatch = db.prepare(`
+    SELECT id
+    FROM ProviderReleaseMatches
+    WHERE provider_release_item_id = ? AND release_id = ?
+  `).get(providerItem.id, release.id) as { id: number };
+  db.prepare(`
+    INSERT INTO AcquisitionPlans (
+      library_release_id, provider, composition, download_mode, state,
+      planner_version, policy_hash, computed_at
+    ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
+    ON CONFLICT(library_release_id) DO UPDATE SET
+      provider = excluded.provider,
+      state = 'current'
+  `).run(libraryRelease.id, options.provider);
+  const plan = db.prepare(`
+    SELECT id FROM AcquisitionPlans WHERE library_release_id = ?
+  `).get(libraryRelease.id) as { id: number };
+  db.prepare("DELETE FROM AcquisitionPlanSources WHERE plan_id = ?").run(plan.id);
+  db.prepare(`
+    INSERT INTO AcquisitionPlanSources (
+      plan_id, provider_release_match_id, role, sort_order
+    ) VALUES (?, ?, 'primary', 0)
+  `).run(plan.id, releaseMatch.id);
+}
+
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
@@ -903,6 +1030,12 @@ test("provider source changes invalidate markers, replace fallback evidence, and
       asset_id, match_status, match_confidence
     ) VALUES (?, 'album', ?, ?, ?, ?, 'matched', 1)
   `).run(providerId, "provider-source-change-offer", artistMbid, albumMbid, newUrl);
+  linkProviderArtworkCandidate({
+    releaseGroupMbid: albumMbid,
+    provider: providerId,
+    providerId: "provider-source-change-offer",
+    libraryClass: "stereo",
+  });
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(path.join(folder, "cover-500.jpg"), Buffer.alloc(32, 1));
   fs.writeFileSync(
@@ -1123,7 +1256,7 @@ test("artist provider artwork candidates follow streaming.provider_priority", as
   }
 });
 
-test("album provider artwork candidates prefer stereo slot then spatial then other matches", () => {
+test("album provider artwork candidates prefer nonspatial plans, then spatial plans, then other matches", () => {
   const { db } = dbModule;
   const albumMbid = "album-slot-art-mbid";
   const artistMbid = "album-slot-art-artist";
@@ -1148,16 +1281,23 @@ test("album provider artwork candidates prefer stereo slot then spatial then oth
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("apple-music", "album", "other-album-1", artistMbid, albumMbid, "other-cover", null, 0.99, "2026-01-03T00:00:00Z");
 
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id
-    ) VALUES (?, ?, ?, ?, ?, ?)
-  `).run(artistMbid, albumMbid, "spatial", 1, "spotify", "spatial-album-1");
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id
-    ) VALUES (?, ?, ?, ?, ?, ?)
-  `).run(artistMbid, albumMbid, "stereo", 1, "tidal", "stereo-album-1");
+  linkProviderArtworkCandidate({
+    releaseGroupMbid: albumMbid,
+    provider: "tidal",
+    providerId: "stereo-album-1",
+    libraryClass: "stereo",
+  });
+  linkProviderArtworkCandidate({
+    releaseGroupMbid: albumMbid,
+    provider: "spotify",
+    providerId: "spatial-album-1",
+    libraryClass: "spatial",
+  });
+  linkProviderArtworkCandidate({
+    releaseGroupMbid: albumMbid,
+    provider: "apple-music",
+    providerId: "other-album-1",
+  });
 
   const withStereo = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(albumMbid);
   assert.deepEqual(
@@ -1169,14 +1309,23 @@ test("album provider artwork candidates prefer stereo slot then spatial then oth
     ],
   );
 
-  db.prepare("DELETE FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = ?")
-    .run(albumMbid, "stereo");
+  db.prepare(`
+    UPDATE AcquisitionPlans
+    SET state = 'stale'
+    WHERE id IN (
+      SELECT plan.id
+      FROM AcquisitionPlans plan
+      JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
+      JOIN Libraries library ON library.id = library_release.library_id
+      WHERE library.name = ?
+    )
+  `).run(`Artwork stereo ${albumMbid}`);
   const spatialOnly = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(albumMbid);
   assert.equal(spatialOnly[0]?.provider, "spotify");
   assert.equal(spatialOnly[0]?.imageId, "spatial-cover");
 });
 
-test("Bad Blood composite artwork ranks the title-close member ahead of the first stored ID", () => {
+test("Bad Blood artwork ranks the title-close accepted release ahead of another edition", () => {
   const { db } = dbModule;
   const albumMbid = "bf37b1a0-d94f-4230-b2c7-09b17f9f8a68";
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
@@ -1198,12 +1347,16 @@ test("Bad Blood composite artwork ranks the title-close member ahead of the firs
     "Bad Blood X (10th Anniversary Edition)",
     "bad-blood-cover",
   );
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id
-    ) VALUES (?, ?, 'stereo', 1, 'apple-music', ?)
-  `).run(artistMbid, albumMbid, "1705033078;1710633308");
+  linkProviderArtworkCandidate({
+    releaseGroupMbid: albumMbid,
+    provider: "apple-music",
+    providerId: "1705033078",
+  });
+  linkProviderArtworkCandidate({
+    releaseGroupMbid: albumMbid,
+    provider: "apple-music",
+    providerId: "1710633308",
+  });
 
   const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(albumMbid);
   assert.equal(candidates[0]?.entityId, "1710633308");

@@ -2116,13 +2116,8 @@ export async function resolveAlbumArtwork(options: {
 /**
  * Reconstruct album artwork candidates from persisted provider offers.
  *
- * Order is slot-driven (not streaming.provider_priority):
- *   1. Stereo ReleaseGroupSlots selected offer(s)
- *   2. Spatial slot selected offer(s)
- *   3. Other ProviderItems matched to the release group
- *
- * Hybrid `selected_provider_id` values (`id1;id2`) expand so each member album
- * can supply a cover. Refresh/match uses these candidates to populate the
+ * Current acquisition-plan sources come first, with ordinary accepted release
+ * matches as fallbacks. Refresh/match uses these candidates to populate the
  * canonical cache; delivery and sidecar paths remain local-only.
  */
 export function loadAlbumProviderArtworkCandidates(
@@ -2141,12 +2136,6 @@ export function loadAlbumProviderArtworkCandidates(
     version?: string | null;
     match_confidence?: number | null;
   };
-
-  const splitProviderIds = (value: string | null | undefined): string[] =>
-    String(value || "")
-      .split(/[;+]/)
-      .map((part) => part.trim())
-      .filter(Boolean);
 
   const { canonicalTitle, canonicalPrimaryType } = (() => {
     try {
@@ -2221,48 +2210,70 @@ export function loadAlbumProviderArtworkCandidates(
   };
 
   try {
-    const lookupOffer = db.prepare(`
-      SELECT provider, CAST(provider_id AS TEXT) AS provider_id, asset_id, cover,
-             title, version, match_confidence
-      FROM ProviderItems
-      WHERE entity_type = 'album'
-        AND provider = ?
-        AND CAST(provider_id AS TEXT) = ?
-      LIMIT 1
-    `);
-    const slots = db.prepare(`
-      SELECT slot, selected_provider, selected_provider_id
-      FROM ReleaseGroupSlots
-      WHERE release_group_mbid = ?
-        AND selected_provider IS NOT NULL
-        AND selected_provider_id IS NOT NULL
+    const selectedRows = db.prepare(`
+      SELECT
+        provider_item.provider,
+        CAST(provider_item.provider_id AS TEXT) AS provider_id,
+        COALESCE(provider_item.asset_id, provider_item.cover_id) AS asset_id,
+        COALESCE(provider_item.artwork_url, provider_item.cover) AS cover,
+        provider_item.title,
+        provider_item.version,
+        release_match.confidence AS match_confidence
+      FROM AcquisitionPlans plan
+      JOIN LibraryReleases library_release
+        ON library_release.id = plan.library_release_id
+      JOIN AlbumReleases release
+        ON release.id = library_release.release_id
+      JOIN Albums release_group
+        ON release_group.id = release.release_group_id
+      JOIN Libraries library
+        ON library.id = library_release.library_id
+      JOIN quality_profiles quality_profile
+        ON quality_profile.id = library.quality_profile_id
+      JOIN AcquisitionPlanSources source
+        ON source.plan_id = plan.id
+      JOIN ProviderReleaseMatches release_match
+        ON release_match.id = source.provider_release_match_id
+      JOIN ProviderItems provider_item
+        ON provider_item.id = release_match.provider_release_item_id
+      WHERE release_group.mbid = ?
+        AND plan.state = 'current'
+        AND release_match.match_state = 'accepted'
       ORDER BY
-        CASE slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-        id ASC
-    `).all(mbid) as Array<{
-      slot?: string | null;
-      selected_provider?: string | null;
-      selected_provider_id?: string | null;
-    }>;
-
-    for (const slot of slots) {
-      const provider = textOrNull(slot.selected_provider);
-      if (!provider) continue;
-      const selectedRows = splitProviderIds(slot.selected_provider_id)
-        .map((providerAlbumId) => lookupOffer.get(provider, providerAlbumId) as ArtworkRow | undefined)
-        .filter((row): row is ArtworkRow => Boolean(row));
-      for (const row of sortRows(selectedRows)) {
-        pushRow(row);
-      }
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+          WHERE allowed.value = 'spatial'
+        ) THEN 1 ELSE 0 END,
+        source.sort_order,
+        source.id
+    `).all(mbid) as ArtworkRow[];
+    for (const row of selectedRows) {
+      pushRow(row);
     }
 
     const matchedRows = db.prepare(`
-      SELECT provider, CAST(provider_id AS TEXT) AS provider_id, asset_id, cover,
-             title, version, match_confidence
-      FROM ProviderItems
-      WHERE entity_type = 'album'
-        AND release_group_mbid = ?
-      ORDER BY COALESCE(match_confidence, 0) DESC, updated_at DESC
+      SELECT
+        provider_item.provider,
+        CAST(provider_item.provider_id AS TEXT) AS provider_id,
+        COALESCE(provider_item.asset_id, provider_item.cover_id) AS asset_id,
+        COALESCE(provider_item.artwork_url, provider_item.cover) AS cover,
+        provider_item.title,
+        provider_item.version,
+        release_match.confidence AS match_confidence
+      FROM ProviderReleaseMatches release_match
+      JOIN ProviderItems provider_item
+        ON provider_item.id = release_match.provider_release_item_id
+      JOIN AlbumReleases release
+        ON release.id = release_match.release_id
+      JOIN Albums release_group
+        ON release_group.id = release.release_group_id
+      WHERE release_group.mbid = ?
+        AND release_match.match_state = 'accepted'
+      ORDER BY
+        CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+        release_match.confidence DESC,
+        release_match.updated_at DESC
       LIMIT 8
     `).all(mbid) as ArtworkRow[];
     for (const row of sortRows(matchedRows)) {
