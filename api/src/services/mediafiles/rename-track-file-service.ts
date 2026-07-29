@@ -18,6 +18,7 @@ import {
 } from "./library-files.js";
 import { allowsInlineVideoPlacement } from "./video-folder-layout.js";
 import { normalizeResolvedPath } from "./path-utils.js";
+import { providerUnambiguousAlbumIdSql } from "../providers/provider-item-artist-scope.js";
 import {
   buildRenameFilters,
   buildRenameStatusSummary,
@@ -837,18 +838,7 @@ export class RenameTrackFileService {
 
     const tracks = db.prepare(`
       SELECT tf.id, tf.artist_id,
-             (
-               SELECT CAST(release_item.provider_id AS TEXT)
-               FROM ProviderReleaseMembers member
-               JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
-               WHERE member.member_item_id = provider_track.id
-                 AND (
-                   SELECT COUNT(DISTINCT sibling.provider_release_item_id)
-                   FROM ProviderReleaseMembers sibling
-                   WHERE sibling.member_item_id = provider_track.id
-                 ) = 1
-               LIMIT 1
-             ) AS album_id,
+             ${providerUnambiguousAlbumIdSql("provider_track")} AS album_id,
              tf.provider_id AS media_id, tf.library_slot, tf.quality, tf.file_type,
              tf.canonical_artist_mbid, tf.canonical_release_group_mbid, tf.canonical_release_mbid,
              tf.canonical_track_mbid, tf.canonical_recording_mbid,

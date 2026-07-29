@@ -116,9 +116,12 @@ test("canonical manual import pins Library, Release, Track and Recording", async
     `).get(), {
       monitored: 1,
       group_mode: "manual",
-      group_locked: 1,
+      // Importing establishes a custom selection and monitors the group, but it
+      // is NOT a lock: "automatic curation may not change this" is separate
+      // user intent. See the dedicated lock-preservation test below.
+      group_locked: 0,
       release_mode: "manual",
-      release_locked: 1,
+      release_locked: 0,
     });
   } finally {
     db.close();
@@ -320,6 +323,138 @@ test("a recording shared by two selected releases keeps the release-track the us
     assert.equal(row.album_release_id, 20);
     assert.equal(row.track_id, 2100);
     assert.equal(row.recording_id, 100);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("only the newly imported row is updated when the same track exists in another library", async () => {
+  const { db, folder } = fixture();
+  try {
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
+
+    // A SECOND library already holds the very same canonical track.
+    db.prepare(`
+      INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
+      VALUES (2, 'Spatial', '/library/spatial', 1, 1)
+    `).run();
+    db.prepare(`
+      INSERT INTO TrackFiles (
+        id, library_id, album_release_id, track_id, recording_id,
+        canonical_track_mbid, file_path, relative_path, filename, extension, file_class,
+        verified_at
+      ) VALUES (
+        99, 2, 10, 1000, 100,
+        'track-a', '/library/spatial/Artist/Release A/01 Track A.m4a',
+        'Artist/Release A/01 Track A.m4a', '01 Track A.m4a', 'm4a', 'audio',
+        CURRENT_TIMESTAMP
+      )
+    `).run();
+
+    const service = new CanonicalManualImportService(db, async () => {
+      db.prepare(`
+        INSERT INTO TrackFiles (
+          id, library_id, album_release_id, track_id, recording_id,
+          canonical_track_mbid, file_path, relative_path, filename, extension, file_class
+        ) VALUES (
+          1, 1, 10, 1000, 100,
+          'track-a', '/library/stereo/Artist/Release A/01 Track A.flac',
+          'Artist/Release A/01 Track A.flac', '01 Track A.flac', 'flac', 'audio'
+        )
+      `).run();
+      // The importer reports exactly which row it created for which request.
+      return {
+        requested: 1, imported: 1, duplicates: 0, skipped: 0,
+        importedFileIds: { 1: 1 },
+      };
+    });
+
+    await service.import({
+      libraryId: 1,
+      releaseId: 10,
+      mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+    });
+
+    // The newly imported row was updated...
+    const imported = db.prepare(`
+      SELECT library_id, track_id, recording_id, verified_at FROM TrackFiles WHERE id = 1
+    `).get() as Record<string, unknown>;
+    assert.equal(imported.library_id, 1);
+    assert.equal(imported.track_id, 1000);
+    assert.ok(imported.verified_at, "the imported row is verified");
+
+    // ...and the other library's pre-existing copy was left completely alone.
+    const other = db.prepare(`
+      SELECT library_id, file_path, album_release_id FROM TrackFiles WHERE id = 99
+    `).get() as Record<string, unknown>;
+    assert.equal(other.library_id, 2, "the other library's row must not be re-pointed");
+    assert.equal(other.file_path, "/library/spatial/Artist/Release A/01 Track A.m4a");
+    assert.equal(other.album_release_id, 10);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("manual import monitors and custom-selects without silently locking", async () => {
+  const { db, folder } = fixture();
+  try {
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
+
+    const service = new CanonicalManualImportService(db, async () => {
+      db.prepare(`
+        INSERT INTO TrackFiles (
+          id, library_id, album_release_id, track_id, recording_id,
+          canonical_track_mbid, file_path, relative_path, filename, extension, file_class
+        ) VALUES (
+          1, 1, 10, 1000, 100, 'track-a',
+          '/library/stereo/a.flac', 'a.flac', 'a.flac', 'flac', 'audio'
+        )
+      `).run();
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
+    });
+
+    await service.import({
+      libraryId: 1,
+      releaseId: 10,
+      mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+    });
+
+    // Monitored and custom-selected, but NOT locked: lock is separate user intent.
+    const group = db.prepare(`
+      SELECT monitored, selection_mode, locked FROM LibraryReleaseGroups
+      WHERE library_id = 1 AND release_group_id = 1
+    `).get() as Record<string, unknown>;
+    assert.equal(group.monitored, 1);
+    assert.equal(group.selection_mode, "manual");
+    assert.equal(group.locked, 0, "manual import must not silently lock the group");
+
+    // An existing lock is preserved across a later import.
+    db.prepare("UPDATE LibraryReleaseGroups SET locked = 1 WHERE library_id = 1").run();
+    db.prepare("UPDATE LibraryReleases SET locked = 1 WHERE library_id = 1").run();
+    db.prepare("DELETE FROM TrackFiles WHERE id = 1").run();
+    db.prepare("INSERT INTO UnmappedFiles (id, file_path, filename) VALUES (2, '/incoming/b.flac', 'b.flac')").run();
+
+    await service.import({
+      libraryId: 1,
+      releaseId: 10,
+      mappings: [{ unmappedFileId: 2, trackId: 1000 }],
+    });
+
+    assert.equal((db.prepare(`
+      SELECT locked FROM LibraryReleaseGroups WHERE library_id = 1 AND release_group_id = 1
+    `).get() as { locked: number }).locked, 1, "an existing lock survives a later import");
   } finally {
     db.close();
     rmSync(folder, { recursive: true, force: true });

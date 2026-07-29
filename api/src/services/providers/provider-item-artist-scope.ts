@@ -109,8 +109,8 @@ export const LEGACY_FOLDER_SCAN_RELEASE_ARTIST_SCOPE_SQL = `
 
 /**
  * Scalar subquery: the parent provider release's provider_id for a track/video
- * item (`pi`) **only when that release context is unambiguous** — i.e. the item
- * belongs to exactly one provider release.
+ * item **only when that release context is unambiguous** — i.e. the item belongs
+ * to exactly one provider release.
  *
  * One provider track may legitimately appear on several provider releases
  * (Apple songs on multiple albums, TIDAL to-many track/album relations,
@@ -119,21 +119,27 @@ export const LEGACY_FOLDER_SCAN_RELEASE_ARTIST_SCOPE_SQL = `
  * sidecar linkage. Ambiguity yields NULL so callers fall back to a context they
  * can actually justify (selected acquisition source, TrackFile canonical
  * release, or the on-disk folder).
+ *
+ * Pass the alias the provider item carries in the caller's query.
  */
-export const PROVIDER_MEMBER_ALBUM_ID_SQL = `
+export function providerUnambiguousAlbumIdSql(itemAlias: string): string {
+  return `
     (
       SELECT CAST(release_item.provider_id AS TEXT)
       FROM ProviderReleaseMembers member
       JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
-      WHERE member.member_item_id = pi.id
+      WHERE member.member_item_id = ${itemAlias}.id
         AND (
           SELECT COUNT(DISTINCT sibling.provider_release_item_id)
           FROM ProviderReleaseMembers sibling
-          WHERE sibling.member_item_id = pi.id
+          WHERE sibling.member_item_id = ${itemAlias}.id
         ) = 1
       LIMIT 1
     )
-`;
+  `;
+}
+
+export const PROVIDER_MEMBER_ALBUM_ID_SQL = providerUnambiguousAlbumIdSql("pi");
 
 /**
  * Which acquisition context a caller can prove. One provider track can be
@@ -227,6 +233,37 @@ export function providerResolvedAlbumIdSql(context: ProviderAlbumContext = {}): 
  * have no library, plan or canonical target in hand. Plans must agree.
  */
 export const PROVIDER_RESOLVED_ALBUM_ID_SQL = providerResolvedAlbumIdSql();
+
+/**
+ * Scalar subquery: the canonical release-group MBID implied by a provider
+ * track/video item (`pi`), returned ONLY when every accepted release match
+ * reachable from its memberships agrees on one release group.
+ *
+ * Callers that hold an explicit download/acquisition context (the release group
+ * the job is importing into) must prefer that context and use this only as the
+ * fallback — a provider item on several releases spanning different groups has
+ * no single answer, and inventing one mis-files the resulting media.
+ */
+export const PROVIDER_ITEM_AGREED_RELEASE_GROUP_MBID_SQL = `
+    (
+      SELECT CASE
+        WHEN COUNT(DISTINCT group_choice.release_group_id) = 1
+        THEN MAX(group_choice.release_group_mbid)
+      END
+      FROM (
+        SELECT
+          release_group.id AS release_group_id,
+          release_group.mbid AS release_group_mbid
+        FROM ProviderReleaseMembers member
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.provider_release_item_id = member.provider_release_item_id
+         AND release_match.match_state = 'accepted'
+        JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+        JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
+        WHERE member.member_item_id = pi.id
+      ) group_choice
+    )
+`;
 
 /**
  * Predicate: the provider track/video item (`pi`) occurs on one of the given

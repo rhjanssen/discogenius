@@ -32,10 +32,20 @@ interface ProviderProvenanceRow {
   provider_id: string;
 }
 
+/**
+ * The legacy mover/tagger. `importedFileIds` maps each requested item id to the
+ * TrackFiles row it actually created, so this service updates exactly that row.
+ * Rediscovering the row by canonical_track_mbid would hit the same canonical
+ * track already imported into ANOTHER library.
+ */
+export type LegacyManualImportResult = ManualImportSummary & {
+  importedFileIds?: Record<string, number> | Map<number, number>;
+};
+
 export type LegacyManualImporter = (
   items: Array<{ id: number; providerId: string }>,
   options?: { libraryRootPath?: string },
-) => Promise<ManualImportSummary>;
+) => Promise<LegacyManualImportResult>;
 
 /**
  * Canonical manual import boundary.
@@ -143,10 +153,27 @@ export class CanonicalManualImportService {
       { libraryRootPath: library.root_path },
     );
 
-    const findImportedFile = this.db.prepare(`
+    // Exact per-mapping operation identity from the importer, keyed by the
+    // unmapped file id it was asked to import.
+    const importedFileIdByUnmappedId = new Map<number, number>();
+    const reported = summary.importedFileIds;
+    if (reported instanceof Map) {
+      for (const [unmappedId, fileId] of reported) {
+        if (Number.isInteger(fileId)) importedFileIdByUnmappedId.set(Number(unmappedId), Number(fileId));
+      }
+    } else if (reported && typeof reported === "object") {
+      for (const [unmappedId, fileId] of Object.entries(reported)) {
+        if (Number.isInteger(fileId)) importedFileIdByUnmappedId.set(Number(unmappedId), Number(fileId));
+      }
+    }
+
+    // Fallback only when the importer supplies no exact id: still scoped to the
+    // library and release being imported into, never a global mbid lookup.
+    const findImportedFileInLibrary = this.db.prepare(`
       SELECT id
       FROM TrackFiles
-      WHERE canonical_track_mbid = ?
+      WHERE canonical_track_mbid = @trackMbid
+        AND (library_id IS NULL OR library_id = @libraryId)
       ORDER BY verified_at DESC, id DESC
       LIMIT 1
     `);
@@ -158,6 +185,7 @@ export class CanonicalManualImportService {
         track_id = @trackId,
         recording_id = @recordingId,
         file_class = 'audio',
+        provider_item_id = @providerItemId,
         provider = @provider,
         provider_entity_type = CASE WHEN @providerItemId IS NULL THEN NULL ELSE 'track' END,
         provider_id = @providerExternalId,
@@ -176,15 +204,19 @@ export class CanonicalManualImportService {
     `);
 
     this.db.transaction(() => {
+      // Importing establishes a CUSTOM selected release and monitors its group.
+      // It deliberately does NOT lock: lock is a separate user intent
+      // ("automatic curation may not change this outcome"), and silently
+      // entrenching it is the selectRelease bug this cutover is removing. A row
+      // that is already locked keeps its lock.
       this.db.prepare(`
         INSERT INTO LibraryReleaseGroups (
           library_id, release_group_id, monitored, selection_mode, locked,
           reason, curation_version, updated_at
-        ) VALUES (?, ?, 1, 'manual', 1, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, 1, 'manual', 0, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, release_group_id) DO UPDATE SET
           monitored = 1,
           selection_mode = 'manual',
-          locked = 1,
           reason = excluded.reason,
           updated_at = CURRENT_TIMESTAMP
       `).run(request.libraryId, release.release_group_id);
@@ -192,18 +224,23 @@ export class CanonicalManualImportService {
         INSERT INTO LibraryReleases (
           library_id, release_id, selection_mode, locked, reason,
           curation_version, selected_at, updated_at
-        ) VALUES (?, ?, 'manual', 1, 'canonical_manual_import', 1,
+        ) VALUES (?, ?, 'manual', 0, 'canonical_manual_import', 1,
                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, release_id) DO UPDATE SET
           selection_mode = 'manual',
-          locked = 1,
           reason = excluded.reason,
           selected_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       `).run(request.libraryId, request.releaseId);
       for (const mapping of request.mappings) {
         const track = trackById.get(mapping.trackId)!;
-        const imported = findImportedFile.get(track.mbid) as { id: number } | undefined;
+        const exactFileId = importedFileIdByUnmappedId.get(mapping.unmappedFileId);
+        const imported = exactFileId != null
+          ? { id: exactFileId }
+          : findImportedFileInLibrary.get({
+              trackMbid: track.mbid,
+              libraryId: request.libraryId,
+            }) as { id: number } | undefined;
         if (!imported) continue;
         const provenance = provenanceByTrackId.get(mapping.trackId) ?? null;
         updateImportedFile.run({

@@ -21,8 +21,8 @@ import { getCanonicalAlbumMetadata } from "../metadata/canonical-album-metadata.
 import { albumCoverLocalUrl, syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
 import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
-import { ProviderMatchRepository } from "../music/provider-match-repository.js";
 import {
+  PROVIDER_ITEM_AGREED_RELEASE_GROUP_MBID_SQL,
   PROVIDER_RESOLVED_ALBUM_ID_SQL,
   providerItemOnAnyReleaseSql,
 } from "../providers/provider-item-artist-scope.js";
@@ -697,18 +697,10 @@ export class OrganizerService {
         recording.mbid AS recording_mbid,
         video_match.recording_id AS recording_id,
         recording.artist_mbid AS artist_mbid,
-        (
-          SELECT release_group.mbid
-          FROM ProviderReleaseMembers member
-          JOIN ProviderReleaseMatches release_match
-            ON release_match.provider_release_item_id = member.provider_release_item_id
-           AND release_match.match_state = 'accepted'
-          JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
-          JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
-          WHERE member.member_item_id = pi.id
-          ORDER BY release_match.id
-          LIMIT 1
-        ) AS release_group_mbid
+        -- Fallback only: the caller prefers the download's explicit release
+        -- group (params.releaseGroupMbid). This yields a group solely when every
+        -- accepted release match for this item agrees, else NULL.
+        ${PROVIDER_ITEM_AGREED_RELEASE_GROUP_MBID_SQL} AS release_group_mbid
       FROM ProviderItems pi
       LEFT JOIN ProviderVideoMatches video_match
         ON video_match.provider_video_item_id = pi.id
@@ -728,7 +720,14 @@ export class OrganizerService {
       artist_mbid?: string | null;
       release_group_mbid?: string | null;
     } | undefined;
-    if (!row) {
+    // Fail closed: without an accepted ProviderVideoMatches edge this bundled
+    // video has no canonical identity, and the organizer does not invent one.
+    if (!row || row.recording_id == null) {
+      if (row) {
+        console.warn(
+          `[Organizer] Skipping bundled video ${params.provider}:${params.providerTrackId} — no accepted provider video match`,
+        );
+      }
       return false;
     }
 
@@ -800,11 +799,11 @@ export class OrganizerService {
 
     let libraryFileId: number | null = null;
     db.transaction(() => {
-      // Refresh the provider VIDEO offer's own facts (never canonical ids, never
-      // INSERT OR REPLACE) and re-affirm the typed match the download already
-      // resolved, so the video library lists this source deduped with any
-      // standalone upload of the same recording.
-      const providerVideoItemId = new ProviderCatalogRepository(db).upsertItem({
+      // Refresh ONLY the provider VIDEO offer's own facts (never canonical ids,
+      // never INSERT OR REPLACE). Match authority belongs to the matcher: the
+      // organizer reads the accepted ProviderVideoMatches edge above and fails
+      // closed without one, but never writes, re-affirms or re-scores it.
+      new ProviderCatalogRepository(db).upsertItem({
         provider: params.provider,
         entityType: "video",
         providerId: params.providerTrackId,
@@ -814,20 +813,6 @@ export class OrganizerService {
         checkedAt: new Date().toISOString(),
         videoQuality: derivedVideoQuality,
       });
-      if (row.recording_id != null) {
-        new ProviderMatchRepository(db).upsertVideoMatch({
-          providerVideoItemId,
-          recordingId: Number(row.recording_id),
-          decision: {
-            matchState: "accepted",
-            decisionSource: "automatic",
-            confidence: 0.9,
-            method: "album_bundled_track",
-            evidence: { source: "organizer-album-bundled-video" },
-            matcherVersion: 1,
-          },
-        });
-      }
 
       libraryFileId = this.upsertLibraryFile({
         artistId: params.artistId,
