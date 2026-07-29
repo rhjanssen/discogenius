@@ -47,6 +47,81 @@ function writeTestConfig(overrides?: {
   configModule.writeConfig(config);
 }
 
+function seedLibraryReleaseSelection(options: {
+  key: string;
+  releaseGroupMbid: string;
+  releaseMbid: string;
+  monitored: boolean;
+  spatial?: boolean;
+}): number {
+  const { db } = dbModule;
+  const metadataProfileName = `Library Files ${options.key}`;
+  db.prepare(`
+    INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+    VALUES (?, '{}')
+  `).run(metadataProfileName);
+  const metadataProfile = db.prepare(`
+    SELECT id FROM MetadataProfiles WHERE name = ?
+  `).get(metadataProfileName) as { id: number };
+
+  let qualityProfile: { id: number };
+  if (options.spatial) {
+    const qualityProfileName = `Library Files Spatial ${options.key}`;
+    db.prepare(`
+      INSERT OR IGNORE INTO quality_profiles (
+        name, upgrade_allowed, cutoff, items, allowed_source_formats,
+        preference_order, continue_upgrades, fallback_policy,
+        output_format, transcode_policy
+      ) VALUES (?, 0, 'DOLBY_ATMOS', '["DOLBY_ATMOS"]', '["spatial"]',
+        '["spatial"]', 0, 'best_allowed', '{"codec":"preserve"}', 'preserve')
+    `).run(qualityProfileName);
+    qualityProfile = db.prepare(`
+      SELECT id FROM quality_profiles WHERE name = ?
+    `).get(qualityProfileName) as { id: number };
+  } else {
+    qualityProfile = db.prepare(`
+      SELECT id
+      FROM quality_profiles
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(quality_profiles.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'spatial'
+      )
+      ORDER BY id
+      LIMIT 1
+    `).get() as { id: number };
+  }
+
+  const rootPath = path.join(tempDir, "normalized-libraries", options.key);
+  db.prepare(`
+    INSERT OR IGNORE INTO Libraries (
+      name, root_path, metadata_profile_id, quality_profile_id, enabled
+    ) VALUES (?, ?, ?, ?, 1)
+  `).run(`Library Files ${options.key}`, rootPath, metadataProfile.id, qualityProfile.id);
+  const library = db.prepare(`
+    SELECT id FROM Libraries WHERE root_path = ?
+  `).get(rootPath) as { id: number };
+  const releaseGroup = db.prepare(`
+    SELECT id FROM Albums WHERE mbid = ?
+  `).get(options.releaseGroupMbid) as { id: number };
+  const release = db.prepare(`
+    SELECT id FROM AlbumReleases WHERE mbid = ?
+  `).get(options.releaseMbid) as { id: number };
+
+  db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      curation_version
+    ) VALUES (?, ?, ?, 'auto', 0, 1)
+  `).run(library.id, releaseGroup.id, options.monitored ? 1 : 0);
+  db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, curation_version
+    ) VALUES (?, ?, 'auto', 0, 1)
+  `).run(library.id, release.id);
+  return library.id;
+}
+
 before(async () => {
   fs.mkdirSync(path.join(tempDir, "library", "music"), { recursive: true });
   fs.mkdirSync(path.join(tempDir, "library", "spatial"), { recursive: true });
@@ -73,6 +148,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM MetadataFiles").run();
   db.prepare("DELETE FROM ExtraFiles").run();
   db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM LibraryReleases").run();
+  db.prepare("DELETE FROM LibraryReleaseGroups").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ReleaseGroupSlots").run();
@@ -1079,11 +1156,12 @@ dbModule.db.prepare(`
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-pompeii", "release-mbid-pompeii", "recording-mbid-pompeii", 1, 1, "1", "Pompeii");
 
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES (?, ?, 'stereo', 1, ?)
-  `).run("artist-mbid-bastille", "rg-mbid-pompeii", "release-mbid-pompeii");
+  const nonspatialLibraryId = seedLibraryReleaseSelection({
+    key: "inline-main",
+    releaseGroupMbid: "rg-mbid-pompeii",
+    releaseMbid: "release-mbid-pompeii",
+    monitored: true,
+  });
 
   // The music video is its own canonical recording (is_video=1) surfaced via a
   // video ProviderItem; naming + inline matching resolve from these, not ProviderMedia.
@@ -1159,13 +1237,17 @@ dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       id, artist_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
-      file_type, quality, recording_id, canonical_recording_mbid, canonical_release_group_mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      file_type, quality, library_id, release_group_id, album_release_id,
+      recording_id, canonical_recording_mbid, canonical_release_group_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     2000, "artist-inline-test", "tidal", "track", "track-inline-test", "stereo",
     path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii.flac"),
     path.join("Bastille", "Bad Blood", "01 - Pompeii.flac"),
     "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS",
+    nonspatialLibraryId,
+    (dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-mbid-pompeii'").get() as { id: number }).id,
+    (dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid-pompeii'").get() as { id: number }).id,
     audioRecId, "recording-mbid-pompeii", "rg-mbid-pompeii",
   );
 
@@ -1261,7 +1343,7 @@ dbModule.db.prepare(`
   );
 });
 
-test("computeExpectedPath inline requires monitored stereo RG slot", () => {
+test("computeExpectedPath inline requires a monitored nonspatial library release group", () => {
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
@@ -1284,10 +1366,12 @@ test("computeExpectedPath inline requires monitored stereo RG slot", () => {
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-inline-gate", "release-mbid-inline-gate", "recording-mbid-inline-gate", 1, 1, "1", "Pompeii");
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored)
-    VALUES (?, ?, 'stereo', 0)
-  `).run("artist-mbid-inline-gate", "rg-mbid-inline-gate");
+  seedLibraryReleaseSelection({
+    key: "inline-gate",
+    releaseGroupMbid: "rg-mbid-inline-gate",
+    releaseMbid: "release-mbid-inline-gate",
+    monitored: false,
+  });
   dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, artist_mbid, is_video, video_variant)
     VALUES (?, ?, ?, 1, 'video')
@@ -1350,10 +1434,19 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-stereo-pref", "release-mbid-stereo-pref", "recording-mbid-stereo-pref", 1, 1, "1", "Pompeii");
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid)
-    VALUES (?, ?, 'stereo', 1, ?)
-  `).run("artist-mbid-stereo-pref", "rg-mbid-stereo-pref", "release-mbid-stereo-pref");
+  const nonspatialLibraryId = seedLibraryReleaseSelection({
+    key: "inline-nonspatial-pref",
+    releaseGroupMbid: "rg-mbid-stereo-pref",
+    releaseMbid: "release-mbid-stereo-pref",
+    monitored: true,
+  });
+  const spatialLibraryId = seedLibraryReleaseSelection({
+    key: "inline-spatial-pref",
+    releaseGroupMbid: "rg-mbid-stereo-pref",
+    releaseMbid: "release-mbid-stereo-pref",
+    monitored: true,
+    spatial: true,
+  });
 
   dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, artist_mbid, is_video, video_variant)
@@ -1377,24 +1470,32 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
     INSERT INTO TrackFiles (
       id, artist_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
-      file_type, quality, recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      file_type, quality, library_id, release_group_id, album_release_id,
+      recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     3001, "artist-inline-stereo-pref", "apple-music", "track", "spatial-track-1", "spatial",
     spatialPath, path.relative(configModule.Config.getSpatialPath(), spatialPath),
     "spatial", "01 - Pompeii.m4a", "m4a", 100, "track", "DOLBY_ATMOS",
+    spatialLibraryId,
+    (dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-mbid-stereo-pref'").get() as { id: number }).id,
+    (dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid-stereo-pref'").get() as { id: number }).id,
     audioRecId, "recording-mbid-stereo-pref", "rg-mbid-stereo-pref", "release-mbid-stereo-pref",
   );
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       id, artist_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
-      file_type, quality, recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      file_type, quality, library_id, release_group_id, album_release_id,
+      recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     3002, "artist-inline-stereo-pref", "tidal", "track", "stereo-track-1", "stereo",
     stereoPath, path.relative(configModule.Config.getMusicPath(), stereoPath),
     "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS",
+    nonspatialLibraryId,
+    (dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-mbid-stereo-pref'").get() as { id: number }).id,
+    (dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid-stereo-pref'").get() as { id: number }).id,
     audioRecId, "recording-mbid-stereo-pref", "rg-mbid-stereo-pref", "release-mbid-stereo-pref",
   );
 
@@ -1416,7 +1517,7 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
 
   assert.equal(
     expected.expectedPath,
-    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video.mp4"),
+    path.join(tempDir, "library", "music", "Bastille", "Bad Blood (2013)", "01 - Pompeii-video.mp4"),
   );
   assert.ok(!String(expected.expectedPath || "").includes(`${path.sep}spatial${path.sep}`));
 });

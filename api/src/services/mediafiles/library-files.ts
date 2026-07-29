@@ -447,7 +447,8 @@ type RebaseLibraryFileRow = {
  * Atmos folders stay Atmos audio only.
  *
  * Callers must already have confirmed `provider_video_for` → audio recording →
- * stereo RG slot monitored; this helper only resolves the filename stem.
+ * monitored nonspatial library release group; this helper only resolves the
+ * filename stem.
  */
 function resolveCanonicalInlineAudioExpectedPath(
   artistId: string | number,
@@ -470,28 +471,62 @@ function resolveCanonicalInlineAudioExpectedPath(
            a.title AS album_title,
            a.primary_type,
            a.first_release_date,
-           COALESCE(rgs.monitored, 0) AS wanted,
+           CASE WHEN EXISTS (
+             SELECT 1
+             FROM LibraryReleaseGroups library_group
+             JOIN Libraries library ON library.id = library_group.library_id
+             JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+             WHERE library_group.release_group_id = a.id
+               AND library_group.monitored = 1
+               AND library.enabled = 1
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                 WHERE allowed.value = 'spatial'
+               )
+           ) THEN 1 ELSE 0 END AS wanted,
            COALESCE(c.included, 0) AS included,
-           CASE WHEN rgs.selected_release_mbid = ar.mbid THEN 1 ELSE 0 END AS selected_release
+           CASE WHEN EXISTS (
+             SELECT 1
+             FROM LibraryReleases library_release
+             JOIN Libraries library ON library.id = library_release.library_id
+             JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+             WHERE library_release.release_id = ar.id
+               AND library.enabled = 1
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                 WHERE allowed.value = 'spatial'
+               )
+           ) THEN 1 ELSE 0 END AS selected_release
     FROM Tracks t
     JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
     JOIN Albums a ON a.mbid = ar.release_group_mbid
-    LEFT JOIN ReleaseGroupSlots rgs
-      ON rgs.artist_mbid = ?
-     AND rgs.release_group_mbid = ar.release_group_mbid
-     AND rgs.slot = 'stereo'
     LEFT JOIN ArtistReleaseGroupCuration c
       ON c.source_artist_mbid = ?
      AND c.release_group_mbid = ar.release_group_mbid
     WHERE a.artist_mbid = ?
-      AND COALESCE(rgs.monitored, 0) = 1
+      AND EXISTS (
+        SELECT 1
+        FROM LibraryReleaseGroups library_group
+        JOIN Libraries library ON library.id = library_group.library_id
+        JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+        WHERE library_group.release_group_id = a.id
+          AND library_group.monitored = 1
+          AND library.enabled = 1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          )
+      )
     ORDER BY included DESC,
              CASE a.primary_type WHEN 'Album' THEN 0 WHEN 'EP' THEN 1 WHEN 'Single' THEN 2 ELSE 3 END,
              selected_release DESC,
              a.first_release_date ASC,
              ar.mbid ASC,
              t.position ASC
-  `).all(artistMbId, artistMbId, artistMbId) as Array<{
+  `).all(artistMbId, artistMbId) as Array<{
     title?: string | null;
     position?: number | null;
     number?: string | null;
@@ -1033,7 +1068,8 @@ export class LibraryFilesService {
           return byOffer?.recording_id == null ? null : Number(byOffer.recording_id);
         })();
         // Inline placement (not download) requires an associated audio recording via
-        // provider_video_for → that audio's album/RG → stereo slot monitored.
+        // provider_video_for → that audio's album/RG → monitored nonspatial
+        // library release group.
         // Download still follows video/artist monitor flags; without association or
         // with an unmonitored stereo RG, keep the separated video-library path even
         // when global layout is "inline" / "inline_only". Spatial folders stay Atmos audio only —
@@ -1051,14 +1087,23 @@ export class LibraryFilesService {
                 rr.target_recording_id AS audio_recording_id,
                 audio.mbid AS audio_recording_mbid,
                 audio.title AS audio_title,
-                COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid) AS release_group_mbid,
+                COALESCE(tf.release_group_id, track_rg.release_group_id) AS release_group_id,
+                album.mbid AS release_group_mbid,
                 COALESCE(track_rg.track_count, 0) AS track_count,
                 CASE WHEN EXISTS (
-                  SELECT 1 FROM ReleaseGroupSlots rgs
-                  WHERE rgs.release_group_mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
-                    AND rgs.slot = 'stereo'
-                    AND rgs.monitored = 1
-                ) THEN 1 ELSE 0 END AS stereo_monitored,
+                  SELECT 1
+                  FROM LibraryReleaseGroups library_group
+                  JOIN Libraries library ON library.id = library_group.library_id
+                  JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+                  WHERE library_group.release_group_id = COALESCE(tf.release_group_id, track_rg.release_group_id)
+                    AND library_group.monitored = 1
+                    AND library.enabled = 1
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                      WHERE allowed.value = 'spatial'
+                    )
+                ) THEN 1 ELSE 0 END AS nonspatial_monitored,
                 ${albumKindRankSql} AS album_kind_rank
               FROM RecordingRelations rr
               JOIN Recordings audio ON audio.id = rr.target_recording_id
@@ -1066,41 +1111,41 @@ export class LibraryFilesService {
               LEFT JOIN TrackFiles tf
                 ON tf.recording_id = rr.target_recording_id
                AND tf.file_type = 'track'
-               AND tf.library_slot = 'stereo'
+               AND EXISTS (
+                 SELECT 1
+                 FROM Libraries file_library
+                 JOIN quality_profiles file_quality_profile
+                   ON file_quality_profile.id = file_library.quality_profile_id
+                 WHERE file_library.id = tf.library_id
+                   AND file_library.enabled = 1
+                   AND NOT EXISTS (
+                     SELECT 1
+                     FROM json_each(COALESCE(file_quality_profile.allowed_source_formats, '[]')) allowed
+                     WHERE allowed.value = 'spatial'
+                   )
+               )
               LEFT JOIN Tracks t
                 ON (t.recording_mbid = audio.mbid OR t.recording_id = audio.id)
               LEFT JOIN AlbumReleases track_rg ON track_rg.mbid = t.release_mbid
               LEFT JOIN Albums album
-                ON album.mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
+                ON album.id = COALESCE(tf.release_group_id, track_rg.release_group_id)
               WHERE rr.source_recording_id = ?
                 AND rr.relation_type IN ('provider_video_for', 'music_video_for')
                 AND ${mayFollowAudio}
-              ORDER BY album_kind_rank ASC, stereo_monitored DESC, track_count DESC, rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
+              ORDER BY album_kind_rank ASC, nonspatial_monitored DESC, track_count DESC, rr.confidence DESC, tf.id ASC, t.position ASC, rr.id ASC
               LIMIT 1
             `).get(videoRecordingId) as {
               audio_recording_id?: number;
               audio_recording_mbid?: string | null;
               audio_title?: string | null;
+              release_group_id?: number | null;
               release_group_mbid?: string | null;
+              nonspatial_monitored?: number;
             } | undefined
           : undefined;
 
-        const releaseGroupMbid = relatedAudio?.release_group_mbid
-          ? String(relatedAudio.release_group_mbid)
-          : null;
-        const stereoSlotMonitored = releaseGroupMbid
-          ? Boolean(db.prepare(`
-              SELECT 1
-              FROM ReleaseGroupSlots
-              WHERE release_group_mbid = ?
-                AND slot = 'stereo'
-                AND monitored = 1
-              LIMIT 1
-            `).get(releaseGroupMbid))
-          : false;
-
-        if (relatedAudio?.audio_recording_id && stereoSlotMonitored) {
-          // Stereo TrackFile only — never park MVs beside a spatial/Atmos copy.
+        if (relatedAudio?.audio_recording_id && Boolean(relatedAudio.nonspatial_monitored)) {
+          // Nonspatial TrackFile only — never park MVs beside a spatial/Atmos copy.
           const audioTrack = db.prepare(`
               SELECT
                 tf.id, tf.artist_id, NULL AS album_id, tf.provider_id AS media_id,
@@ -1109,9 +1154,16 @@ export class LibraryFilesService {
                 tf.file_path, tf.relative_path, tf.library_root, tf.file_type, tf.extension,
                 tf.quality, tf.codec, tf.bitrate, tf.sample_rate, tf.bit_depth, tf.channels
               FROM TrackFiles tf
+              JOIN Libraries library ON library.id = tf.library_id
+              JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
               WHERE tf.recording_id = ?
                 AND tf.file_type = 'track'
-                AND tf.library_slot = 'stereo'
+                AND library.enabled = 1
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                  WHERE allowed.value = 'spatial'
+                )
               ORDER BY tf.id ASC
               LIMIT 1
             `).get(relatedAudio.audio_recording_id) as LibraryFileRow | undefined;
@@ -2596,10 +2648,10 @@ export class LibraryFilesService {
    *
    * A file is kept (monitored) when the canonical entity behind it is monitored
    * or user-locked:
-   *  - audio (any file carrying a `canonical_release_group_mbid`): its
-   *    `ReleaseGroupSlots` row for that release group + `library_slot`;
-   *  - video / recording-scoped files: their `Recordings` row, matched by
-   *    `canonical_recording_mbid` or — for mbid-less provider videos — via
+   *  - audio: its exact `LibraryReleaseGroups` row, keyed by the file's
+   *    `library_id` + `release_group_id`;
+   *  - video / recording-scoped files: their exact `Recordings` row, matched by
+   *    `recording_id` or — for transitional provider videos without that FK — via
    *    `ProviderItems.recording_id` keyed on `provider_id`+`provider_entity_type`.
    *
    * A file is a prune candidate only when it has at least one canonical anchor
@@ -2622,27 +2674,29 @@ export class LibraryFilesService {
       SELECT lf.id, lf.artist_id, NULL AS album_id, lf.provider_id AS media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
       FROM TrackFiles lf
       JOIN Artists art ON art.id = lf.artist_id
-      LEFT JOIN ReleaseGroupSlots rgs
-        ON rgs.artist_mbid = art.mbid
-       AND rgs.release_group_mbid = lf.canonical_release_group_mbid
-       AND rgs.slot = lf.library_slot
+      LEFT JOIN LibraryReleaseGroups library_group
+        ON library_group.library_id = lf.library_id
+       AND library_group.release_group_id = lf.release_group_id
       LEFT JOIN Recordings rec
-        ON rec.mbid = lf.canonical_recording_mbid
+        ON rec.id = lf.recording_id
       LEFT JOIN ProviderItems pi
-        ON lf.canonical_recording_mbid IS NULL
+        ON lf.recording_id IS NULL
+       AND lf.provider IS NOT NULL
        AND lf.provider_entity_type IS NOT NULL
+       AND pi.provider = lf.provider
        AND pi.entity_type = lf.provider_entity_type
        AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
       LEFT JOIN Recordings vrec ON vrec.id = pi.recording_id
       WHERE lf.artist_id = ?
         -- must have at least one canonical anchor to be classifiable
         AND (
-          lf.canonical_release_group_mbid IS NOT NULL
-          OR lf.canonical_recording_mbid IS NOT NULL
+          (lf.library_id IS NOT NULL AND lf.release_group_id IS NOT NULL)
+          OR lf.recording_id IS NOT NULL
           OR vrec.id IS NOT NULL
         )
         -- and none of the anchors may be monitored or user-locked
-        AND (rgs.monitored IS NULL OR rgs.monitored = 0) AND (rgs.monitored_lock IS NULL OR rgs.monitored_lock = 0)
+        AND (library_group.monitored IS NULL OR library_group.monitored = 0)
+        AND (library_group.locked IS NULL OR library_group.locked = 0)
         AND (rec.monitored IS NULL OR rec.monitored = 0) AND (rec.monitored_lock IS NULL OR rec.monitored_lock = 0)
         AND (vrec.monitored IS NULL OR vrec.monitored = 0) AND (vrec.monitored_lock IS NULL OR vrec.monitored_lock = 0)
     `).all(artistId) as Array<{
