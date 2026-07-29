@@ -5,8 +5,32 @@ import {
     type ProviderReleaseGroupMatch,
 } from "../metadata/provider-release-group-matcher.js";
 import type { StreamingProvider, ProviderArtist } from "../providers/streaming-provider.js";
-import type { ProviderAlbumSlotCandidate, ProviderTrackDetail } from "./release-group-slot-service.js";
 import { parseJsonObject } from "./refresh-artist-support.js";
+
+type ProviderTrackDetail = {
+    mbid?: string | null;
+    provider_id?: string | null;
+    isrc?: string | null;
+    title: string;
+    version?: string | null;
+    track_number?: number | null;
+    volume_number?: number | null;
+    duration?: number | null;
+};
+
+type ProviderAlbumSlotCandidate = {
+    providerId: string;
+    providerArtistName?: string | null;
+    title: string;
+    version?: string | null;
+    releaseDate?: string | null;
+    quality?: string | null;
+    qualityTags?: string[];
+    explicit?: boolean | number | null;
+    trackCount?: number | null;
+    volumeCount?: number | null;
+    tracks?: ProviderTrackDetail[];
+};
 
 export function buildProviderReleaseGroupMatches(
     artistMbid: string | null,

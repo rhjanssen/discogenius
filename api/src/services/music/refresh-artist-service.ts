@@ -20,7 +20,6 @@ import {
 import { ProviderArtistIdentityService, normalizeProviderArtist } from "../metadata/provider-artist-identity-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { StreamingProvider, ProviderAlbum } from "../providers/streaming-provider.js";
-import { ReleaseGroupSlotService, type ProviderAlbumSlotCandidate } from "./release-group-slot-service.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { isUntrustedTidalCatalogVideoQuality } from "../providers/tidal/tidal-quality.js";
@@ -36,6 +35,7 @@ import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-c
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
+import { CurationService } from "./curation-service.js";
 import {
     completeBulkTrackList,
     isCoreVideoCatalogProvider,
@@ -49,7 +49,6 @@ import {
 } from "./refresh-artist-support.js";
 import {
     buildProviderReleaseGroupMatches,
-    buildStoredProviderAlbumSelections,
 } from "./refresh-artist-match.js";
 import {
     artistCatalogFingerprint,
@@ -1099,21 +1098,6 @@ export class RefreshArtistService {
         // release group; warming them here raced unrelated covers into one cache.
     }
 
-    static syncProviderSelectionsFromStoredOffers(artistMbid: string | null): { stereo: number; spatial: number } {
-        const candidates = buildStoredProviderAlbumSelections(artistMbid);
-        if (candidates.length === 0) {
-            return { stereo: 0, spatial: 0 };
-        }
-
-        return ReleaseGroupSlotService.syncProviderAlbumSelections({
-            artistMbid,
-            candidates,
-            // Rebuild from the full stored offer graph: clear any previous
-            // provider selection that no longer wins (empty SC stubs, demoted
-            // cross-RG partials, etc.).
-        });
-    }
-
     /**
      * ALL provider identities linked to this canonical artist, not just the
      * most recent one. Providers sometimes split one real-world artist into
@@ -1420,10 +1404,7 @@ export class RefreshArtistService {
 
         if (!shouldHydrateCatalog) {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
-            const slotCounts = this.syncProviderSelectionsFromStoredOffers(artistMbid);
-            if (slotCounts.stereo > 0 || slotCounts.spatial > 0) {
-                console.log(`[RefreshArtistService] Rebuilt provider selections from stored offers for ${slotCounts.stereo} stereo and ${slotCounts.spatial} spatial release-group slots`);
-            }
+            await CurationService.processAll(artistId, { skipDownloadQueue: true });
 
             const shouldRefreshArtistVideos =
                 options.forceUpdate === true ||
@@ -1451,12 +1432,6 @@ export class RefreshArtistService {
             return;
         }
 
-        const allMatchedSelections: Array<{
-            provider: string;
-            album: ProviderAlbumSlotCandidate;
-            match: ProviderReleaseGroupMatch;
-        }> = [];
-        const refreshedProviders = new Set<string>();
         let totalAlbumsCount = 0;
 
         // Core video-catalog providers that are NOT connected for audio still
@@ -1648,7 +1623,6 @@ export class RefreshArtistService {
                 totalAlbumsCount += albums.length;
 
                 await this.storeProviderAlbumOffers(provider.id, artistMbid, albums, providerReleaseGroupMatches);
-                refreshedProviders.add(provider.id);
 
                 // Persist the freshly-fetched tracklists as provider track offer rows.
                 // The album offers now exist, so storeProviderTrackOffers can map each
@@ -1708,23 +1682,6 @@ export class RefreshArtistService {
                             }
                         }
                     }
-                    allMatchedSelections.push({
-                        provider: provider.id,
-                        album: {
-                            providerId: providerAlbumId,
-                            title: String(album.title || ""),
-                            version: album.version ?? null,
-                            releaseDate: album.release_date ?? null,
-                            quality: album.quality ?? null,
-                            qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
-                            explicit: album.explicit ?? null,
-                            trackCount: album.num_tracks ?? null,
-                            volumeCount: album.num_volumes ?? null,
-                            tracks: Array.isArray(album._provider_tracks) ? album._provider_tracks : undefined,
-                            raw: album,
-                        },
-                        match,
-                    });
                 }
 
                 // SoundCloud mixtapes / dj-mixes / demos often live only as fan or
@@ -1806,23 +1763,6 @@ export class RefreshArtistService {
                         const providerAlbumId = String(album.provider_id);
                         const match = widePlaylistOffers.matches.get(providerAlbumId);
                         if (!match) continue;
-                        allMatchedSelections.push({
-                            provider: provider.id,
-                            album: {
-                                providerId: providerAlbumId,
-                                title: String(album.title || ""),
-                                version: album.version ?? null,
-                                releaseDate: album.release_date ?? null,
-                                quality: album.quality ?? null,
-                                qualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
-                                explicit: album.explicit ?? null,
-                                trackCount: album.num_tracks ?? null,
-                                volumeCount: album.num_volumes ?? null,
-                                tracks: Array.isArray(album._provider_tracks) ? album._provider_tracks : undefined,
-                                raw: album,
-                            },
-                            match,
-                        });
                     }
                     totalAlbumsCount += widePlaylistOffers.albums.length;
                     console.log(
@@ -1843,30 +1783,7 @@ export class RefreshArtistService {
                 : "no provider releases found",
         });
 
-        const registeredProviderIds = new Set(providers.map((provider) => provider.id));
-        const staleProviderIds = db
-            .prepare(`
-                SELECT DISTINCT selected_provider AS providerId
-                FROM ReleaseGroupSlots
-                WHERE selected_provider IS NOT NULL
-            `)
-            .all()
-            .map((row) => String((row as { providerId: string }).providerId))
-            .filter((providerId) => !registeredProviderIds.has(providerId));
-
-        const slotCounts = ReleaseGroupSlotService.syncProviderAlbumSelections({
-            artistMbid,
-            candidates: allMatchedSelections,
-            clearProviders: [...new Set([...refreshedProviders, ...staleProviderIds])],
-        });
-        const storedSlotCounts = this.syncProviderSelectionsFromStoredOffers(artistMbid);
-        const totalSlotCounts = {
-            stereo: Math.max(slotCounts.stereo, storedSlotCounts.stereo),
-            spatial: Math.max(slotCounts.spatial, storedSlotCounts.spatial),
-        };
-        if (totalSlotCounts.stereo > 0 || totalSlotCounts.spatial > 0) {
-            console.log(`[RefreshArtistService] Selected provider offers for ${totalSlotCounts.stereo} stereo and ${totalSlotCounts.spatial} spatial release-group slots`);
-        }
+        await CurationService.processAll(artistId, { skipDownloadQueue: true });
         ArtistTopTrackService.rebuildForArtist(artistId, artistMbid);
         await this.precacheArtistMediaCovers(artistId, artistMbid);
     }

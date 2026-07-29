@@ -19,7 +19,6 @@ selectionTestConfig.filtering.require_provider_availability = false;
 configModule.writeConfig(selectionTestConfig);
 
 import { matchProviderAlbumToReleaseGroup } from "./provider-release-group-matcher.js";
-const { selectReleaseGroupSlotAlbums } = await import("../music/release-group-slot-service.js");
 
 const releaseGroups = [
     {
@@ -691,72 +690,6 @@ test("matches symbolic MusicBrainz release-group titles before partial provider 
     assert.equal(match.evidence.typeMatched, true);
 });
 
-test("does not select a one-track provider single as the full release-group slot", () => {
-    const releaseGroups = [{
-        mbid: "no-bad-days-rg",
-        title: "No Bad Days",
-        primaryType: "Single",
-        secondaryTypes: [],
-        firstReleaseDate: "2021-11-19",
-        releases: [{ mbid: "no-bad-days-ep", trackCount: 4, mediaCount: 1 }],
-    }];
-    const oneTrackMatch = matchProviderAlbumToReleaseGroup({
-        providerId: "single",
-        title: "No Bad Days",
-        releaseDate: "2021-11-19",
-        type: "SINGLE",
-        trackCount: 1,
-        volumeCount: 1,
-    }, releaseGroups);
-    const fourTrackMatch = matchProviderAlbumToReleaseGroup({
-        providerId: "ep",
-        title: "No Bad Days",
-        releaseDate: "2021-11-19",
-        type: "SINGLE",
-        trackCount: 4,
-        volumeCount: 1,
-    }, releaseGroups);
-
-    const selections = selectReleaseGroupSlotAlbums([
-        { providerId: "single", title: "No Bad Days", quality: "HIRES_LOSSLESS", trackCount: 1, volumeCount: 1 },
-        { providerId: "ep", title: "No Bad Days", quality: "LOSSLESS", trackCount: 4, volumeCount: 1 },
-    ], new Map([
-        ["single", oneTrackMatch],
-        ["ep", fourTrackMatch],
-    ]), { includeSpatial: false });
-
-    assert.equal(selections.find((selection) => selection.slot === "stereo")?.album.providerId, "ep");
-});
-
-test("prefers higher quality expanded offer when it covers the representative release", () => {
-    const exact = matchProviderAlbumToReleaseGroup({
-        providerId: "exact-lossless",
-        title: "Give Me The Future",
-        releaseDate: "2022-02-04",
-        type: "ALBUM",
-        trackCount: 13,
-        volumeCount: 1,
-    }, releaseGroups);
-    const expanded = matchProviderAlbumToReleaseGroup({
-        providerId: "expanded-hires",
-        title: "Give Me The Future + Dreams Of The Past",
-        releaseDate: "2022-08-26",
-        type: "ALBUM",
-        trackCount: 27,
-        volumeCount: 3,
-    }, releaseGroups);
-
-    const selections = selectReleaseGroupSlotAlbums([
-        { providerId: "exact-lossless", title: "Give Me The Future", quality: "LOSSLESS", trackCount: 13, volumeCount: 1 },
-        { providerId: "expanded-hires", title: "Give Me The Future + Dreams Of The Past", quality: "HIRES_LOSSLESS", trackCount: 27, volumeCount: 3 },
-    ], new Map([
-        ["exact-lossless", exact],
-        ["expanded-hires", expanded],
-    ]), { includeSpatial: false });
-
-    assert.equal(selections.find((selection) => selection.slot === "stereo")?.album.providerId, "expanded-hires");
-});
-
 test("uses ISRC overlap and track count as fallback evidence", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "isrc-match",
@@ -831,30 +764,3 @@ test("does not force weak provider rows into an MB release group", () => {
     assert.equal(match.releaseGroup, undefined);
 });
 
-test("selects separate stereo and spatial provider offers for the same release group", () => {
-    const stereo = matchProviderAlbumToReleaseGroup({
-        providerId: "stereo-hires",
-        title: "Give Me The Future + Dreams Of The Past",
-        releaseDate: "2022-08-26",
-        type: "ALBUM",
-    }, releaseGroups);
-    const spatial = matchProviderAlbumToReleaseGroup({
-        providerId: "spatial",
-        title: "Give Me The Future + Dreams Of The Past",
-        releaseDate: "2022-08-26",
-        type: "ALBUM",
-    }, releaseGroups);
-
-    const selections = selectReleaseGroupSlotAlbums([
-        { providerId: "stereo-lossless", title: "Give Me The Future + Dreams Of The Past", quality: "LOSSLESS", trackCount: 27, volumeCount: 3 },
-        { providerId: "stereo-hires", title: "Give Me The Future + Dreams Of The Past", quality: "HIRES_LOSSLESS", trackCount: 27, volumeCount: 3 },
-        { providerId: "spatial", title: "Give Me The Future + Dreams Of The Past", quality: "DOLBY_ATMOS", trackCount: 27, volumeCount: 3 },
-    ], new Map([
-        ["stereo-lossless", stereo],
-        ["stereo-hires", stereo],
-        ["spatial", spatial],
-    ]), { includeSpatial: true });
-
-    assert.equal(selections.find((selection) => selection.slot === "stereo")?.album.providerId, "stereo-hires");
-    assert.equal(selections.find((selection) => selection.slot === "spatial")?.album.providerId, "spatial");
-});
