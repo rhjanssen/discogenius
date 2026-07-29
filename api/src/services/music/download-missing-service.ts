@@ -4,11 +4,6 @@ import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { getConfigSection, type FilteringConfig } from "../config/config.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getEnabledDownloadLibrarySlots } from "../download/download-library-slots.js";
-import { buildTrackFileCompletionExistsPredicate } from "../download/track-file-completion.js";
-import { isMusicBrainzReleaseGroupIncluded, parseMusicBrainzSecondaryTypes } from "../metadata/musicbrainz-release-group-filter.js";
-import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
-import { RefreshArtistService } from "./refresh-artist-service.js";
-import { queueCatalogAlbumDownload } from "./release-group-acquisition-plan.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 import { compareVideoOffersByQualityThenProvider } from "./video-offer-resolver.js";
 import { resolveVideoTypeSuffix } from "../mediafiles/video-naming.js";
@@ -17,45 +12,6 @@ import {
   requiresAlbumLinkedVideosOnly,
 } from "../mediafiles/video-folder-layout.js";
 import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
-
-type ReleaseGroupForCuration = {
-    mbid: string;
-    artist_mbid: string;
-    title: string;
-    primary_type?: string | null;
-    secondary_types?: string | null;
-};
-
-type ReleaseGroupSlotRow = {
-    id: number;
-    release_group_mbid: string;
-    slot: string;
-    monitored: number;
-    selected_provider?: string | null;
-    selected_provider_id?: string | null;
-    selected_release_mbid?: string | null;
-    provider_cover?: string | null;
-    provider_title?: string | null;
-    provider_artist_name?: string | null;
-    monitored_lock?: number | null;
-};
-
-type CurationTrack = {
-    recordingMbid: string | null;
-    normalizedTitle: string;
-};
-
-type PreferredReleaseRecordings = {
-    releaseMbid: string;
-    tracks: CurationTrack[];
-    recordingIds: Set<string>;
-    normalizedTitles: Set<string>;
-};
-
-type ArtistCurationIdentity = {
-    artistId: string | null;
-    artistMbid: string | null;
-};
 
 export class DownloadMissingService {
     static async queueMonitoredItems(
@@ -85,90 +41,9 @@ export class DownloadMissingService {
             return Boolean(existing);
         };
 
-        const hasActiveAlbumWork = (albumId: string) => {
-            const albumIds = (albumId || "").split(";").filter(Boolean);
-            if (albumIds.length === 0) return false;
-
-            for (const id of albumIds) {
-                if (hasBufferedJob([CommandNames.DownloadAlbum, CommandNames.ImportDownload], id)) {
-                    return true;
-                }
-            }
-            return false;
-        };
-
-        const formatAlbumTitle = (title: string, version?: string | null) => {
-            const base = title || 'Unknown Album';
-            const v = (version || '').trim();
-            if (!v) return base;
-            if (base.toLowerCase().includes(v.toLowerCase())) return base;
-            return `${base} (${v})`;
-        };
-
-        const shouldIncludeReleaseGroup = (row: {
-            slot?: string | null;
-            primary_type?: string | null;
-            secondary_types?: string | null;
-            album_type?: string | null;
-        }): boolean => isMusicBrainzReleaseGroupIncluded(row, filteringConfig);
-
         let albumJobs = 0;
         const trackJobs = 0;
         let videoJobs = 0;
-        const albumQueuedAsAlbum = new Set<string>();
-
-        const queueAlbumDownload = (album: {
-            id: string | number;
-            title: string;
-            version?: string | null;
-            cover?: string | null;
-            quality?: string | null;
-            artist_name?: string | null;
-            provider?: string | null;
-            releaseGroupMbid?: string | null;
-            releaseMbid?: string | null;
-            slot?: string | null;
-        }, artistNames: string[] = []): boolean => {
-            if (!hasBatchCapacity()) {
-                return false;
-            }
-            const albumId = String(album.id);
-            const slotName = String(album.slot || "album").toLowerCase();
-            const releaseGroupMbid = album.releaseGroupMbid ? String(album.releaseGroupMbid) : null;
-            const queueRefId = releaseGroupMbid ? `${releaseGroupMbid}:${slotName}` : albumId;
-            if (
-                !albumId
-                || albumQueuedAsAlbum.has(queueRefId)
-                || hasActiveAlbumWork(albumId)
-                || hasBufferedJob([CommandNames.DownloadAlbum, CommandNames.ImportDownload], queueRefId)
-            ) {
-                return false;
-            }
-
-            const albumTitleFull = formatAlbumTitle(album.title, album.version);
-            const artistName = album.artist_name || artistNames[0] || 'Unknown';
-            const provider = album.provider || "tidal";
-            CommandQueueManager.push(CommandNames.DownloadAlbum, {
-                url: buildStreamingMediaUrl("album", albumId, provider as any),
-                type: 'album',
-                provider,
-                providerId: albumId,
-                releaseGroupMbid: album.releaseGroupMbid || undefined,
-                releaseMbid: album.releaseMbid || null,
-                albumId: album.releaseGroupMbid || undefined,
-                libraryRoot: album.slot === "spatial" ? "spatial" : "music",
-                slot: album.slot || undefined,
-                title: albumTitleFull,
-                artist: artistName,
-                cover: album.cover || null,
-                quality: album.quality || null,
-                artists: artistNames,
-                description: `${albumTitleFull} by ${artistName}`,
-            }, queueRefId);
-            albumQueuedAsAlbum.add(queueRefId);
-            albumJobs++;
-            return true;
-        };
 
         const normalizedPlanIds = (db.prepare(`
             SELECT plan.id
@@ -218,134 +93,6 @@ export class DownloadMissingService {
                 onQueued: () => { albumJobs += 1; },
             });
             if (!queued.queued && !hasBatchCapacity()) break;
-        }
-
-        if (normalizedPlanIds.length === 0) {
-        const audioSlotPlaceholders = enabledLibrarySlots.audio.map(() => "?").join(", ");
-        const slotParams: any[] = [...enabledLibrarySlots.audio];
-        // Slot-level monitoring is the download authority: an album whose
-        // ReleaseGroupSlots.monitored = 1 should download even when its canonical
-        // owner is an unmonitored credited artist (e.g. a feature credit). Only
-        // scope to a specific owner when an artistId is explicitly requested.
-        let slotArtistWhere = "1 = 1";
-        if (artistId) {
-            slotArtistWhere = "monitored_artist.id = ?";
-            slotParams.push(artistId);
-        }
-        const boundedAlbumFetch = Number.isFinite(maxToQueue);
-        const albumFetchLimit = boundedAlbumFetch
-            ? Math.max(Number(maxToQueue) * 5, Number(maxToQueue) + 100)
-            : null;
-
-        const selectedSlotsSql = `
-            SELECT
-                rgs.id,
-                rgs.slot,
-                rgs.release_group_mbid,
-                rgs.selected_provider,
-                rgs.selected_provider_id,
-                rgs.selected_release_mbid,
-                rgs.quality,
-                rgs.match_method,
-                rgs.match_evidence,
-                pi.cover AS provider_cover,
-                pi.title AS provider_title,
-                pi.provider_artist_name AS provider_artist_name,
-                rg.primary_type,
-                rg.secondary_types,
-                rg.title,
-                monitored_artist.name as artist_name
-            FROM ReleaseGroupSlots rgs
-            JOIN Albums rg ON rg.id = rgs.release_group_id
-            LEFT JOIN Artists monitored_artist ON monitored_artist.mbid = rgs.artist_mbid
-            LEFT JOIN ProviderItems pi
-              ON pi.provider = rgs.selected_provider
-             AND pi.provider_id = rgs.selected_provider_id
-             AND pi.entity_type = 'album'
-            WHERE rgs.monitored = 1
-              AND rgs.slot IN (${audioSlotPlaceholders})
-              AND rgs.selected_provider IS NOT NULL
-              AND rgs.selected_provider_id IS NOT NULL
-              AND rgs.selected_release_mbid IS NOT NULL
-              AND ${slotArtistWhere}
-              AND (
-                NOT EXISTS (
-                  SELECT 1
-                  FROM Tracks selected_track
-                  LEFT JOIN Recordings selected_recording
-                    ON selected_recording.mbid = selected_track.recording_mbid
-                  WHERE selected_track.release_mbid = rgs.selected_release_mbid
-                    AND (selected_recording.is_video IS NULL OR selected_recording.is_video = 0)
-                )
-                OR rgs.selected_release_mbid IN (
-                  SELECT missing_track.release_mbid
-                  FROM Tracks missing_track
-                  LEFT JOIN Recordings missing_recording
-                    ON missing_recording.mbid = missing_track.recording_mbid
-                  WHERE missing_track.release_mbid = rgs.selected_release_mbid
-                    AND (missing_recording.is_video IS NULL OR missing_recording.is_video = 0)
-                    AND NOT ${buildTrackFileCompletionExistsPredicate(
-                      "missing_track",
-                      "rgs.slot",
-                      "download_missing_file",
-                    )}
-                )
-              )
-            ORDER BY rg.first_release_date DESC, rg.title ASC, rgs.slot ASC
-            ${boundedAlbumFetch ? "LIMIT ?" : ""}
-        `;
-        const selectedSlots = db.prepare(selectedSlotsSql).all(
-            ...slotParams,
-            ...(boundedAlbumFetch ? [albumFetchLimit] : []),
-        ) as any[];
-
-        for (const slot of selectedSlots) {
-            if (!hasBatchCapacity()) {
-                break;
-            }
-            if (!shouldIncludeReleaseGroup(slot)) {
-                continue;
-            }
-
-            const artistNames = [slot.artist_name || slot.provider_artist_name].filter(Boolean);
-            const queued = queueCatalogAlbumDownload({
-                slot: slot.slot || "stereo",
-                selected_provider: slot.selected_provider || null,
-                selected_provider_id: slot.selected_provider_id || null,
-                selected_release_mbid: slot.selected_release_mbid || null,
-                release_group_mbid: slot.release_group_mbid || null,
-                match_method: slot.match_method || null,
-                match_evidence: slot.match_evidence || null,
-                quality: slot.quality || null,
-                provider_cover: slot.provider_cover || null,
-                provider_artist_name: slot.provider_artist_name || null,
-                artist_name: slot.artist_name || null,
-                title: slot.title || slot.provider_title || null,
-                provider_title: slot.provider_title || null,
-            }, {
-                canQueue: hasBatchCapacity,
-                onQueued: () => { albumJobs += 1; },
-            });
-            if (queued.queued) {
-                continue;
-            }
-            // Fallback for slots that could not build a catalog-anchored plan
-            // (missing release/catalog rows): keep the legacy album push.
-            if (!queued.recognizedHybrid) {
-                queueAlbumDownload({
-                    id: String(slot.selected_provider_id),
-                    title: slot.title || slot.provider_title || null,
-                    version: null,
-                    cover: slot.provider_cover || null,
-                    quality: slot.quality || null,
-                    artist_name: slot.artist_name || slot.provider_artist_name || null,
-                    provider: slot.selected_provider || null,
-                    releaseGroupMbid: slot.release_group_mbid || null,
-                    releaseMbid: slot.selected_release_mbid || null,
-                    slot: slot.slot || null,
-                }, artistNames);
-            }
-        }
         }
 
         if (allowVideos) {
