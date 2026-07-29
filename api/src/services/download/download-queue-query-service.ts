@@ -297,82 +297,98 @@ function resetTracksForImport(tracks?: QueueItemContract["tracks"]): QueueItemCo
 function resolveCanonicalAlbumMetadata(input: {
   releaseGroupMbid?: string | null;
   providerId?: string | null;
-  slot?: string | null;
+  provider?: string | null;
+  acquisitionPlanId?: number | null;
 }): QueueMetadata | null {
   const releaseGroupMbid = getOptionalString(input.releaseGroupMbid);
   const providerId = getOptionalString(input.providerId);
-  if (!releaseGroupMbid && !providerId) {
+  const provider = getOptionalString(input.provider);
+  const acquisitionPlanId = getOptionalNumber(input.acquisitionPlanId);
+  if (!releaseGroupMbid && !providerId && !acquisitionPlanId) {
     return null;
   }
 
   const row = db.prepare(`
     SELECT
-      rg.mbid AS release_group_mbid,
-      rg.title AS release_group_title,
-      rg.images AS release_group_images,
-      COALESCE(artist.name, local_artist.name) AS artist_name,
-      slot.selected_provider AS selected_provider,
-      slot.selected_provider_id AS selected_provider_id,
-      slot.quality AS slot_quality,
-      slot.provider_artist_name AS slot_provider_artist_name,
-      slot.provider_title AS slot_provider_title,
-      slot.cover AS slot_cover,
-      provider_item.provider_artist_name AS provider_artist_name,
+      release_group.mbid AS release_group_mbid,
+      release_group.title AS release_group_title,
+      release_group.images AS release_group_images,
+      COALESCE(canonical_credit.credited_name, artist.name) AS artist_name,
+      provider_item.provider AS selected_provider,
+      provider_item.provider_id AS selected_provider_id,
+      COALESCE(
+        (
+          SELECT variant.provider_quality_label
+          FROM AcquisitionPlanTracks plan_track
+          JOIN ProviderItemAudioVariants variant
+            ON variant.id = plan_track.provider_audio_variant_id
+          WHERE plan_track.plan_id = ?
+          ORDER BY plan_track.id
+          LIMIT 1
+        ),
+        (
+          SELECT variant.quality_class
+          FROM AcquisitionPlanTracks plan_track
+          JOIN ProviderItemAudioVariants variant
+            ON variant.id = plan_track.provider_audio_variant_id
+          WHERE plan_track.plan_id = ?
+          ORDER BY plan_track.id
+          LIMIT 1
+        )
+      ) AS selected_quality,
+      provider_artist.title AS provider_artist_name,
       provider_item.title AS provider_title,
-      provider_item.quality AS provider_quality,
-      provider_item.cover AS provider_cover,
-      provider_item.asset_id AS provider_asset_id
-    FROM Albums rg
-    LEFT JOIN ArtistMetadata artist ON artist.mbid = rg.artist_mbid
-    LEFT JOIN Artists local_artist ON local_artist.mbid = rg.artist_mbid
-    LEFT JOIN ReleaseGroupSlots slot
-      ON slot.release_group_mbid = rg.mbid
-     AND (? IS NULL OR slot.slot = ?)
-     AND (
-       ? IS NULL
-       OR slot.selected_provider_id = ?
-       OR slot.selected_provider_id LIKE ? || ';%'
-       OR slot.selected_provider_id LIKE '%;' || ? || ';%'
-       OR slot.selected_provider_id LIKE '%;' || ?
-     )
-    LEFT JOIN ProviderItems provider_item
-      ON provider_item.rowid = (
-        SELECT candidate.rowid
-        FROM ProviderItems candidate
-        WHERE candidate.entity_type = 'album'
-          AND (
-            (? IS NOT NULL AND candidate.provider_id = ?)
-            OR candidate.release_group_mbid = rg.mbid
-          )
-        ORDER BY
-          CASE WHEN ? IS NOT NULL AND candidate.provider_id = ? THEN 0 ELSE 1 END,
-          CASE candidate.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-          candidate.updated_at DESC,
-          candidate.provider_id ASC
-        LIMIT 1
+      COALESCE(provider_item.artwork_url, provider_item.cover) AS provider_cover,
+      COALESCE(provider_item.asset_id, provider_item.cover_id) AS provider_asset_id
+    FROM ProviderReleaseMatches release_match
+    JOIN ProviderItems provider_item
+      ON provider_item.id = release_match.provider_release_item_id
+    JOIN AlbumReleases release
+      ON release.id = release_match.release_id
+    JOIN Albums release_group
+      ON release_group.id = release.release_group_id
+    LEFT JOIN AcquisitionPlanSources plan_source
+      ON plan_source.provider_release_match_id = release_match.id
+     AND plan_source.plan_id = ?
+    LEFT JOIN ReleaseGroupArtistCredits canonical_credit
+      ON canonical_credit.release_group_id = release_group.id
+     AND canonical_credit.ordinal = 0
+    LEFT JOIN ArtistMetadata artist
+      ON artist.id = release_group.artist_metadata_id
+    LEFT JOIN ProviderItemCredits provider_credit
+      ON provider_credit.item_id = provider_item.id
+     AND provider_credit.ordinal = 0
+    LEFT JOIN ProviderItems provider_artist
+      ON provider_artist.id = provider_credit.artist_item_id
+    WHERE release_match.match_state = 'accepted'
+      AND (
+        (? IS NOT NULL AND plan_source.id IS NOT NULL)
+        OR (
+          ? IS NOT NULL
+          AND provider_item.provider_id = ?
+          AND (? IS NULL OR provider_item.provider = ?)
+        )
+        OR (? IS NOT NULL AND release_group.mbid = ?)
       )
-    WHERE (? IS NOT NULL AND rg.mbid = ?)
-       OR (? IS NOT NULL AND provider_item.provider_id = ?)
-    ORDER BY CASE WHEN ? IS NOT NULL AND rg.mbid = ? THEN 0 ELSE 1 END
+    ORDER BY
+      CASE WHEN plan_source.id IS NOT NULL THEN 0 ELSE 1 END,
+      CASE WHEN provider_item.provider_id = ? THEN 0 ELSE 1 END,
+      CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+      release_match.confidence DESC,
+      release_match.id
     LIMIT 1
   `).get(
-    input.slot ?? null,
-    input.slot ?? null,
+    acquisitionPlanId,
+    acquisitionPlanId,
+    acquisitionPlanId,
+    acquisitionPlanId,
     providerId,
     providerId,
-    providerId,
-    providerId,
-    providerId,
-    providerId,
-    providerId,
-    providerId,
-    providerId,
+    provider,
+    provider,
     releaseGroupMbid,
     releaseGroupMbid,
     providerId,
-    providerId,
-    releaseGroupMbid,
-    releaseGroupMbid,
   ) as {
     release_group_mbid?: string | null;
     release_group_title?: string | null;
@@ -380,10 +396,7 @@ function resolveCanonicalAlbumMetadata(input: {
     artist_name?: string | null;
     selected_provider?: string | null;
     selected_provider_id?: string | null;
-    slot_quality?: string | null;
-    slot_provider_artist_name?: string | null;
-    slot_provider_title?: string | null;
-    slot_cover?: string | null;
+    selected_quality?: string | null;
     provider_title?: string | null;
     provider_quality?: string | null;
     provider_cover?: string | null;
@@ -401,12 +414,12 @@ function resolveCanonicalAlbumMetadata(input: {
   });
 
   return {
-    title: row.release_group_title ?? row.slot_provider_title ?? row.provider_title,
-    artist: row.artist_name ?? row.slot_provider_artist_name ?? row.provider_artist_name,
-    cover: cover ?? row.slot_cover ?? row.provider_cover ?? row.provider_asset_id,
+    title: row.release_group_title ?? row.provider_title,
+    artist: row.artist_name ?? row.provider_artist_name,
+    cover: cover ?? row.provider_cover ?? row.provider_asset_id,
     albumId: row.release_group_mbid ?? null,
     albumTitle: row.release_group_title ?? null,
-    quality: row.slot_quality ?? row.provider_quality,
+    quality: row.selected_quality,
   };
 }
 
@@ -498,46 +511,75 @@ function resolveProviderItemMetadata(input: {
 function resolveCanonicalAlbumTracks(input: {
   releaseGroupMbid?: string | null;
   releaseMbid?: string | null;
-  slot?: string | null;
+  acquisitionPlanId?: number | null;
+  libraryId?: number | null;
 }): QueueItemContract["tracks"] | undefined {
   const releaseMbid = getOptionalString(input.releaseMbid);
   const releaseGroupMbid = getOptionalString(input.releaseGroupMbid);
-  if (!releaseMbid && !releaseGroupMbid) {
+  const acquisitionPlanId = getOptionalNumber(input.acquisitionPlanId);
+  const libraryId = getOptionalNumber(input.libraryId);
+  if (!releaseMbid && !releaseGroupMbid && !acquisitionPlanId) {
     return undefined;
   }
 
-  const selectedReleaseRow = releaseGroupMbid
+  const rows = acquisitionPlanId != null
     ? db.prepare(`
-        SELECT selected_release_mbid
-        FROM ReleaseGroupSlots
-        WHERE release_group_mbid = ?
-          AND (? IS NULL OR slot = ?)
-          AND selected_release_mbid IS NOT NULL
-        ORDER BY CASE WHEN slot = ? THEN 0 ELSE 1 END
-        LIMIT 1
-      `).get(releaseGroupMbid, input.slot ?? null, input.slot ?? null, input.slot ?? null) as { selected_release_mbid?: string | null } | undefined
-    : undefined;
-  const preferredReleaseMbid = releaseMbid ?? getOptionalString(selectedReleaseRow?.selected_release_mbid);
-
-  const rows = preferredReleaseMbid
+        SELECT track.title, track.position, track.medium_position
+        FROM AcquisitionPlanTracks plan_track
+        JOIN Tracks track ON track.id = plan_track.track_id
+        WHERE plan_track.plan_id = ?
+        ORDER BY track.medium_position, track.position, track.id
+      `).all(acquisitionPlanId) as Array<{
+        title?: string | null;
+        position?: number | null;
+        medium_position?: number | null;
+      }>
+    : releaseMbid
     ? db.prepare(`
-        SELECT title
+        SELECT title, position, medium_position
         FROM Tracks
         WHERE release_mbid = ?
         ORDER BY medium_position ASC, position ASC, id ASC
-      `).all(preferredReleaseMbid) as Array<{ title?: string | null }>
+      `).all(releaseMbid) as Array<{
+        title?: string | null;
+        position?: number | null;
+        medium_position?: number | null;
+      }>
     : db.prepare(`
-        SELECT t.title
-        FROM AlbumReleases ar
-        JOIN Tracks t ON t.release_mbid = ar.mbid
-        WHERE ar.release_group_mbid = ?
-        ORDER BY ar.date ASC, ar.mbid ASC, t.medium_position ASC, t.position ASC, t.id ASC
-      `).all(releaseGroupMbid) as Array<{ title?: string | null }>;
+        SELECT track.title, track.position, track.medium_position
+        FROM Albums release_group
+        JOIN AlbumReleases release
+          ON release.release_group_id = release_group.id
+        JOIN LibraryReleases library_release
+          ON library_release.release_id = release.id
+         AND (? IS NULL OR library_release.library_id = ?)
+        JOIN Tracks track
+          ON track.album_release_id = release.id
+        WHERE release_group.mbid = ?
+        ORDER BY
+          library_release.updated_at DESC,
+          track.medium_position,
+          track.position,
+          track.id
+      `).all(
+        libraryId,
+        libraryId,
+        releaseGroupMbid,
+      ) as Array<{
+        title?: string | null;
+        position?: number | null;
+        medium_position?: number | null;
+      }>;
 
   const tracks = rows
     .map((row, index): QueueTrackProgress | null => {
       const title = getOptionalString(row.title);
-      return title ? { title, trackNum: index + 1, status: "queued" } : null;
+      return title ? {
+        title,
+        trackNum: getOptionalNumber(row.position) ?? index + 1,
+        volumeNum: getOptionalNumber(row.medium_position) ?? undefined,
+        status: "queued",
+      } : null;
     })
     .filter((track): track is QueueTrackProgress => track !== null);
 
@@ -548,7 +590,6 @@ function resolveQueueItemTracks(
   job: QueueJobRow,
   downloadState: Record<string, unknown>,
   contentType: QueueItemContract["type"],
-  slot?: string | null,
 ): QueueItemContract["tracks"] | undefined {
   const directTracks = parseDownloadStateTracks(downloadState.tracks);
   if (directTracks) {
@@ -568,7 +609,8 @@ function resolveQueueItemTracks(
       return resolveCanonicalAlbumTracks({
         releaseGroupMbid: getOptionalString(job.payload?.releaseGroupMbid),
         releaseMbid: getOptionalString(job.payload?.releaseMbid),
-        slot,
+        acquisitionPlanId: getOptionalNumber(job.payload?.acquisitionPlanId),
+        libraryId: getOptionalNumber(job.payload?.libraryId),
       });
     }
   }
@@ -1036,7 +1078,7 @@ export class DownloadQueueQueryService {
     const slot = getOptionalString(job.payload?.slot)
       ?? getOptionalString(job.payload?.librarySlot)
       ?? null;
-    const tracks = resolveQueueItemTracks(job, downloadState, contentType, slot);
+    const tracks = resolveQueueItemTracks(job, downloadState, contentType);
 
     // The two resolvers below are heavy per-item joins. They only fill gaps, and
     // queued downloads already carry title/artist/cover in their payload (set at
@@ -1048,7 +1090,8 @@ export class DownloadQueueQueryService {
     const canonicalMetadata = hasDisplayBasics ? null : resolveCanonicalAlbumMetadata({
       releaseGroupMbid: albumId,
       providerId,
-      slot,
+      provider: getOptionalString(job.payload?.provider),
+      acquisitionPlanId: getOptionalNumber(job.payload?.acquisitionPlanId),
     });
     const providerItemMetadata = (!hasDisplayBasics || !cover) ? resolveProviderItemMetadata({
       contentType,
