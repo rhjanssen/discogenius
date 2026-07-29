@@ -106,10 +106,10 @@ export function resolveCanonicalProviderOffer(
                     LIMIT 1
                   )
                 ) AS provider_quality,
-                COALESCE(provider_release.asset_id, provider_release.cover_id) AS asset_id,
-                COALESCE(provider_artist.title, provider_release.provider_artist_name) AS provider_artist_name,
+                provider_release.cover_id AS asset_id,
+                provider_artist.title AS provider_artist_name,
                 provider_release.title AS slot_provider_title,
-                COALESCE(provider_release.artwork_url, provider_release.cover) AS slot_cover,
+                COALESCE(provider_release.artwork_url, provider_release.cover_id) AS slot_cover,
                 COALESCE(
                   (
                     SELECT variant.provider_quality_label
@@ -154,7 +154,7 @@ export function resolveCanonicalProviderOffer(
               ON provider_artist.id = provider_credit.artist_item_id
             WHERE provider_release.provider = ?
               AND provider_release.provider_id = ?
-              AND provider_release.entity_type IN ('release', 'album')
+              AND provider_release.entity_type = 'release'
               AND (? IS NULL OR release_group.mbid = ?)
               AND (
                 ? IS NULL
@@ -193,9 +193,9 @@ export function resolveCanonicalProviderOffer(
                 provider_video.entity_type,
                 artist.mbid AS artist_mbid,
                 provider_video.title AS provider_title,
-                COALESCE(provider_video.asset_id, provider_video.cover_id) AS asset_id,
-                COALESCE(provider_video.artwork_url, provider_video.cover) AS provider_cover,
-                COALESCE(provider_artist.title, provider_video.provider_artist_name) AS provider_artist_name,
+                provider_video.cover_id AS asset_id,
+                COALESCE(provider_video.artwork_url, provider_video.cover_id) AS provider_cover,
+                provider_artist.title AS provider_artist_name,
                 recording.mbid AS recording_mbid,
                 recording.title AS canonical_recording_title,
                 recording.id AS canonical_recording_id,
@@ -237,9 +237,9 @@ export function resolveCanonicalProviderOffer(
             recording.mbid AS recording_mbid,
             provider_track.title AS provider_title,
             COALESCE(variant.provider_quality_label, variant.quality_class) AS provider_quality,
-            COALESCE(provider_track.asset_id, provider_track.cover_id) AS asset_id,
-            COALESCE(provider_track.artwork_url, provider_track.cover) AS provider_cover,
-            COALESCE(provider_artist.title, provider_track.provider_artist_name) AS provider_artist_name,
+            provider_track.cover_id AS asset_id,
+            COALESCE(provider_track.artwork_url, provider_track.cover_id) AS provider_cover,
+            provider_artist.title AS provider_artist_name,
             release_group.title AS canonical_album_title,
             track.title AS canonical_track_title,
             track.id AS canonical_track_id,

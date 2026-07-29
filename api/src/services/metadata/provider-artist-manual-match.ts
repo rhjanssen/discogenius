@@ -45,18 +45,18 @@ export interface ManualMatchCandidatesResult {
 }
 
 type ProviderArtistRow = {
+  id: number;
   provider: string;
   provider_id: string;
   title: string | null;
-  artist_mbid: string | null;
-  match_status: string | null;
-  cover: string | null;
-  popularity: number | null;
+  cover_id: string | null;
+  artwork_url: string | null;
+  provider_url: string | null;
 };
 
 function getProviderArtistRow(provider: string, providerId: string): ProviderArtistRow | null {
   const row = db.prepare(`
-    SELECT provider, provider_id, title, artist_mbid, match_status, cover, popularity
+    SELECT id, provider, provider_id, title, cover_id, artwork_url, provider_url
     FROM ProviderItems
     WHERE provider = ? AND entity_type = 'artist' AND provider_id = ?
     LIMIT 1
@@ -66,9 +66,9 @@ function getProviderArtistRow(provider: string, providerId: string): ProviderArt
 
 function parseStoredArtistData(row: ProviderArtistRow): { picture: string | null; providerUrl: string | null; popularity: number | null } {
   return {
-    picture: row.cover,
-    providerUrl: null, // not stored here; derivable from the provider ID if needed
-    popularity: row.popularity,
+    picture: row.artwork_url || row.cover_id,
+    providerUrl: row.provider_url,
+    popularity: null,
   };
 }
 
@@ -243,14 +243,31 @@ export async function applyManualArtistMatch(provider: string, providerId: strin
  * channels, misspelled duplicates, playlist pseudo-artists).
  */
 export function ignoreProviderArtist(provider: string, providerId: string): { ignored: boolean } {
-  const result = db.prepare(`
-    UPDATE ProviderItems
-    SET match_status = 'ignored', match_method = 'manual-ignore', updated_at = CURRENT_TIMESTAMP
-    WHERE provider = ? AND entity_type = 'artist' AND provider_id = ? AND artist_mbid IS NULL
-  `).run(provider, providerId);
-  if (result.changes === 0) {
+  const row = db.prepare(`
+    SELECT item.id
+    FROM ProviderItems item
+    WHERE item.provider = ?
+      AND item.entity_type = 'artist'
+      AND item.provider_id = ?
+      AND NOT EXISTS (
+        SELECT 1
+        FROM ProviderArtistMatches match
+        WHERE match.provider_artist_item_id = item.id
+          AND match.match_state = 'accepted'
+      )
+  `).get(provider, providerId) as { id: number } | undefined;
+  if (!row) {
     throw new Error(`Unknown or already matched provider artist: ${provider}/${providerId}`);
   }
+  db.prepare(`
+    INSERT INTO ProviderArtistIgnores (
+      provider_artist_item_id, decision_source, reason, updated_at
+    ) VALUES (?, 'manual', 'manual-ignore', CURRENT_TIMESTAMP)
+    ON CONFLICT(provider_artist_item_id) DO UPDATE SET
+      decision_source = excluded.decision_source,
+      reason = excluded.reason,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(row.id);
   return { ignored: true };
 }
 

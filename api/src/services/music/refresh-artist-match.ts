@@ -5,6 +5,7 @@ import {
     type ProviderReleaseGroupMatch,
 } from "../metadata/provider-release-group-matcher.js";
 import type { StreamingProvider, ProviderArtist } from "../providers/streaming-provider.js";
+import { ProviderArtistIdentityService } from "../metadata/provider-artist-identity-service.js";
 
 export function buildProviderReleaseGroupMatches(
     artistMbid: string | null,
@@ -78,31 +79,19 @@ export function storeProviderArtistMatch(
     artist: ProviderArtist,
     status: "verified" | "probable",
 ): void {
-    db.prepare(`
-        INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, artist_mbid,
-            title, match_status, match_confidence, match_method, cover, popularity, updated_at
-        )
-        VALUES (?, 'artist', ?, ?, ?, ?, ?, 'artist-name-search', ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-            artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
-            title = excluded.title,
-            match_status = excluded.match_status,
-            match_confidence = excluded.match_confidence,
-            match_method = excluded.match_method,
-            cover = COALESCE(excluded.cover, ProviderItems.cover),
-            popularity = COALESCE(excluded.popularity, ProviderItems.popularity),
-            updated_at = CURRENT_TIMESTAMP
-    `).run(
-        provider.id,
-        artist.providerId,
-        artistMbid,
-        artist.name || null,
+    ProviderArtistIdentityService.store(provider.id, {
+        providerId: artist.providerId,
+        name: artist.name,
+        picture: artist.picture || null,
+        providerUrl: artist.url || null,
+        popularity: artist.popularity ?? null,
+        mbid: artistMbid,
+    }, {
+        mbid: artistMbid,
         status,
-        status === "verified" ? 1 : 0.75,
-        artist.picture || null,
-        artist.popularity ?? null,
-    );
+        confidence: status === "verified" ? 1 : 0.75,
+        method: "artist-name-search",
+    });
 
     const updatePopularity = artist.popularity ?? 0;
     db.prepare(`

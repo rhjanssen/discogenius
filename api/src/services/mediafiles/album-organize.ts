@@ -25,15 +25,19 @@ export function loadBundledVideoTrackCandidates(
   const placeholders = albumIds.map(() => "?").join(", ");
   return db.prepare(`
     SELECT
-      CAST(provider_id AS TEXT) AS provider_id,
-      COALESCE(title, '') AS title,
-      track_number
-    FROM ProviderItems
-    WHERE provider = ?
-      AND entity_type = 'track'
-      AND library_slot = 'video'
-      AND provider_album_id IN (${placeholders})
-    ORDER BY volume_number ASC, track_number ASC, provider_id ASC
+      CAST(member_item.provider_id AS TEXT) AS provider_id,
+      COALESCE(member.contextual_title, member_item.title, '') AS title,
+      member.position AS track_number
+    FROM ProviderItems provider_release
+    JOIN ProviderReleaseMembers member
+      ON member.provider_release_item_id = provider_release.id
+    JOIN ProviderItems member_item
+      ON member_item.id = member.member_item_id
+     AND member_item.entity_type = 'track'
+    WHERE provider_release.provider = ?
+      AND provider_release.entity_type = 'release'
+      AND provider_release.provider_id IN (${placeholders})
+    ORDER BY member.medium_position ASC, member.position ASC, member_item.provider_id ASC
   `).all(provider, ...albumIds) as Array<{ provider_id: string; title: string; track_number: number | null }>;
 }
 
@@ -59,11 +63,16 @@ export function loadProviderTrackIdSet(albumIds: string[], provider = ""): Set<s
   }
   const placeholders = albumIds.map(() => "?").join(", ");
   const rows = db.prepare(`
-    SELECT CAST(provider_id AS TEXT) AS provider_id
-    FROM ProviderItems
-    WHERE entity_type = 'track'
-      AND provider_album_id IN (${placeholders})
-      AND (? = '' OR provider = ?)
+    SELECT CAST(member_item.provider_id AS TEXT) AS provider_id
+    FROM ProviderItems provider_release
+    JOIN ProviderReleaseMembers member
+      ON member.provider_release_item_id = provider_release.id
+    JOIN ProviderItems member_item
+      ON member_item.id = member.member_item_id
+     AND member_item.entity_type = 'track'
+    WHERE provider_release.entity_type = 'release'
+      AND provider_release.provider_id IN (${placeholders})
+      AND (? = '' OR provider_release.provider = ?)
   `).all(...albumIds, provider, provider) as Array<{ provider_id: string }>;
   return new Set(rows.map((row) => String(row.provider_id)));
 }
@@ -256,39 +265,46 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
       pi.provider_id,
       pi.version,
       pi.explicit,
-      pi.quality,
-      pi.album_id,
-      pi.track_mbid,
-      pi.recording_mbid,
+      COALESCE(variant.provider_quality_label, variant.quality_class) AS quality,
+      provider_release.provider_id AS album_id,
+      canonical_track.mbid AS track_mbid,
+      recording.mbid AS recording_mbid,
       pi.isrc,
-      json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
+      canonical_release.mbid AS canonical_release_mbid
     FROM ProviderItems pi
-    WHERE pi.provider = ?
-      AND pi.entity_type = 'track'
-      AND pi.provider_id = ?
-      AND pi.release_mbid = ?
-    LIMIT 1
-  `).get(params.provider, params.trackId, params.releaseMbid) as any
-  // Hybrid composites often source tracks from a different provider release
-  // than the selected canonical release_mbid. Fall back to the provider id
-  // alone so organize still attaches the file instead of reporting 0 tracks.
-  ?? db.prepare(`
-    SELECT
-      pi.provider_id,
-      pi.version,
-      pi.explicit,
-      pi.quality,
-      pi.album_id,
-      pi.track_mbid,
-      pi.recording_mbid,
-      pi.isrc,
-      json_extract(pi.match_evidence, '$.albumProviderId') AS evidence_album_id
-    FROM ProviderItems pi
+    JOIN ProviderReleaseMembers member
+      ON member.member_item_id = pi.id
+    JOIN ProviderItems provider_release
+      ON provider_release.id = member.provider_release_item_id
+    JOIN ProviderTrackMatches track_match
+      ON track_match.provider_release_member_id = member.id
+     AND track_match.match_state = 'accepted'
+    JOIN ProviderReleaseMatches release_match
+      ON release_match.id = track_match.provider_release_match_id
+     AND release_match.match_state = 'accepted'
+    JOIN AlbumReleases canonical_release
+      ON canonical_release.id = release_match.release_id
+    LEFT JOIN Tracks canonical_track
+      ON canonical_track.id = track_match.track_id
+    JOIN Recordings recording
+      ON recording.id = track_match.recording_id
+    LEFT JOIN ProviderItemAudioVariants variant
+      ON variant.id = (
+        SELECT candidate.id
+        FROM ProviderItemAudioVariants candidate
+        WHERE candidate.provider_item_id = pi.id
+        ORDER BY
+          CASE candidate.availability WHEN 'available' THEN 0 ELSE 1 END,
+          candidate.id
+        LIMIT 1
+      )
     WHERE pi.provider = ?
       AND pi.entity_type = 'track'
       AND pi.provider_id = ?
     ORDER BY
-      CASE WHEN pi.release_mbid = ? THEN 0 ELSE 1 END,
+      CASE WHEN canonical_release.mbid = ? THEN 0 ELSE 1 END,
+      CASE WHEN track_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+      track_match.confidence DESC,
       pi.updated_at DESC
     LIMIT 1
   `).get(params.provider, params.trackId, params.releaseMbid) as any;
@@ -310,7 +326,7 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
 
     return {
       id: providerTrack.provider_id || params.trackId,
-      album_id: providerTrack.album_id || providerTrack.evidence_album_id || params.fallbackAlbumId,
+      album_id: providerTrack.album_id || params.fallbackAlbumId,
       artist_id: params.fallbackArtistId,
       title: canonicalTrack.title,
       version: providerTrack.version || null,

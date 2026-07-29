@@ -56,9 +56,20 @@ function persistNormalizedProviderVideo(input: {
         availabilityReason: nullableText(input.video.availability_reason),
         checkedAt: new Date().toISOString(),
         providerUrl: nullableText(input.video.url),
-        coverId: nullableText(input.video.cover)
-            ?? nullableText(input.video.image_id)
-            ?? nullableText(input.video.imageId),
+        coverId: (() => {
+            const cover = nullableText(input.video.cover)
+                ?? nullableText(input.video.image_id)
+                ?? nullableText(input.video.imageId);
+            return cover && !/^https?:\/\//i.test(cover) ? cover : null;
+        })(),
+        artworkUrl: (() => {
+            const cover = nullableText(input.video.cover)
+                ?? nullableText(input.video.image_id)
+                ?? nullableText(input.video.imageId);
+            return cover && /^https?:\/\//i.test(cover) ? cover : null;
+        })(),
+        popularity: input.video.popularity == null ? null : Number(input.video.popularity),
+        videoQuality: nullableText(input.video.quality),
     });
     if (input.recordingId == null) {
         return;
@@ -74,9 +85,6 @@ function persistNormalizedProviderVideo(input: {
         metadata_status: string | null;
     } | undefined;
     const canonicalMbid = nullableText(canonical?.mbid) ?? nullableText(canonical?.foreign_recording_id);
-    if (!canonicalMbid || canonical?.metadata_status !== "musicbrainz") {
-        return;
-    }
     const suppliedMbid = nullableText(input.video.mbid) ?? nullableText(input.video.recording_mbid);
     new ProviderMatchRepository(db).upsertVideoMatch({
         providerVideoItemId,
@@ -85,12 +93,15 @@ function persistNormalizedProviderVideo(input: {
             matchState: "accepted",
             decisionSource: "automatic",
             confidence: input.identity.confidence,
-            method: suppliedMbid === canonicalMbid ? "external_id" : "title_artist_duration",
+            method: suppliedMbid && canonicalMbid && suppliedMbid === canonicalMbid
+                ? "external_id"
+                : "title_artist_duration",
             matcherVersion: VIDEO_MATCHER_VERSION,
             evidence: {
                 identityKey: input.identity.key,
                 identityMethod: input.identity.method,
                 canonicalRecordingMbid: canonicalMbid,
+                canonicalMetadataStatus: canonical?.metadata_status ?? null,
                 ...input.identity.evidence,
             },
         },
@@ -146,6 +157,25 @@ function getRecordingIdByForeignId(recordingMbid: string | null): number | null 
     return row?.id == null ? null : Number(row.id);
 }
 
+function getAcceptedProviderVideoRecordingId(provider: string, providerId: string): number | null {
+    const row = db.prepare(`
+        SELECT video_match.recording_id
+        FROM ProviderItems item
+        JOIN ProviderVideoMatches video_match
+          ON video_match.provider_video_item_id = item.id
+         AND video_match.match_state = 'accepted'
+        WHERE item.provider = ?
+          AND item.entity_type = 'video'
+          AND item.provider_id = ?
+        ORDER BY
+          CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+          video_match.confidence DESC,
+          video_match.updated_at DESC
+        LIMIT 1
+    `).get(provider, providerId) as { recording_id?: number | null } | undefined;
+    return row?.recording_id == null ? null : Number(row.recording_id);
+}
+
 /** Audio recordings already matched to tracks on a specific provider album. */
 function loadAudioRecordingCandidatesForProviderAlbum(
     provider: string,
@@ -188,13 +218,20 @@ function loadAudioRecordingCandidatesForProviderAlbum(
               )
           ) THEN 1 ELSE 0 END AS has_live_album
         FROM ProviderItems track
-        JOIN Recordings rec
-          ON CAST(rec.id AS TEXT) = CAST(track.recording_id AS TEXT)
-          OR (track.recording_mbid IS NOT NULL AND rec.mbid = track.recording_mbid)
-        WHERE track.provider = ?
+        JOIN ProviderReleaseMembers member ON member.member_item_id = track.id
+        JOIN ProviderItems release_item
+          ON release_item.id = member.provider_release_item_id
+         AND release_item.entity_type = 'release'
+        JOIN ProviderTrackMatches track_match
+          ON track_match.provider_release_member_id = member.id
+         AND track_match.match_state = 'accepted'
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.id = track_match.provider_release_match_id
+         AND release_match.match_state = 'accepted'
+        JOIN Recordings rec ON rec.id = track_match.recording_id
+        WHERE release_item.provider = ?
           AND track.entity_type = 'track'
-          AND CAST(track.provider_album_id AS TEXT) = CAST(? AS TEXT)
-          AND track.recording_id IS NOT NULL
+          AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
           AND (rec.is_video IS NULL OR rec.is_video = 0)
     `).all(provider, providerAlbumId) as AudioRecordingCandidateRow[];
 }
@@ -206,12 +243,17 @@ function findAudioRecordingByProviderTrack(
     const row = db.prepare(`
         SELECT rec.id, rec.mbid, rec.title
         FROM ProviderItems track
-        JOIN Recordings rec
-          ON CAST(rec.id AS TEXT) = CAST(track.recording_id AS TEXT)
+        JOIN ProviderReleaseMembers member ON member.member_item_id = track.id
+        JOIN ProviderTrackMatches track_match
+          ON track_match.provider_release_member_id = member.id
+         AND track_match.match_state = 'accepted'
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.id = track_match.provider_release_match_id
+         AND release_match.match_state = 'accepted'
+        JOIN Recordings rec ON rec.id = track_match.recording_id
         WHERE track.provider = ?
           AND track.entity_type = 'track'
           AND CAST(track.provider_id AS TEXT) = CAST(? AS TEXT)
-          AND track.recording_id IS NOT NULL
           AND (rec.is_video IS NULL OR rec.is_video = 0)
         LIMIT 1
     `).get(provider, providerTrackId) as {
@@ -778,11 +820,13 @@ function recordingHasOtherOfferFromProvider(
 ): boolean {
     const row = db.prepare(`
         SELECT 1 AS hit
-        FROM ProviderItems
-        WHERE entity_type = 'video'
-          AND recording_id = ?
-          AND provider = ?
-          AND CAST(provider_id AS TEXT) != CAST(? AS TEXT)
+        FROM ProviderVideoMatches video_match
+        JOIN ProviderItems item ON item.id = video_match.provider_video_item_id
+        WHERE video_match.recording_id = ?
+          AND video_match.match_state = 'accepted'
+          AND item.entity_type = 'video'
+          AND item.provider = ?
+          AND CAST(item.provider_id AS TEXT) != CAST(? AS TEXT)
         LIMIT 1
     `).get(recordingId, provider, providerId) as { hit?: number } | undefined;
     return Boolean(row?.hit);
@@ -792,13 +836,19 @@ function recordingsShareProvider(leftRecordingId: number, rightRecordingId: numb
     const row = db.prepare(`
         SELECT 1 AS hit
         FROM ProviderItems left_item
+        JOIN ProviderVideoMatches left_match
+          ON left_match.provider_video_item_id = left_item.id
+         AND left_match.match_state = 'accepted'
         JOIN ProviderItems right_item
           ON left_item.provider = right_item.provider
          AND left_item.entity_type = 'video'
          AND right_item.entity_type = 'video'
          AND CAST(left_item.provider_id AS TEXT) != CAST(right_item.provider_id AS TEXT)
-        WHERE left_item.recording_id = ?
-          AND right_item.recording_id = ?
+        JOIN ProviderVideoMatches right_match
+          ON right_match.provider_video_item_id = right_item.id
+         AND right_match.match_state = 'accepted'
+        WHERE left_match.recording_id = ?
+          AND right_match.recording_id = ?
         LIMIT 1
     `).get(leftRecordingId, rightRecordingId) as { hit?: number } | undefined;
     return Boolean(row?.hit);
@@ -857,19 +907,25 @@ function findProviderOnlyVideoRecordingId(
           r.release_date,
           r.isrcs,
           (
-            SELECT pi.duration
+            SELECT pi.duration_ms / 1000.0
             FROM ProviderItems pi
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = pi.id
+             AND video_match.match_state = 'accepted'
             WHERE pi.entity_type = 'video'
-              AND pi.recording_id = r.id
-              AND pi.duration IS NOT NULL
+              AND video_match.recording_id = r.id
+              AND pi.duration_ms IS NOT NULL
             ORDER BY pi.updated_at DESC
             LIMIT 1
           ) AS provider_duration,
           (
             SELECT pi.isrc
             FROM ProviderItems pi
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = pi.id
+             AND video_match.match_state = 'accepted'
             WHERE pi.entity_type = 'video'
-              AND pi.recording_id = r.id
+              AND video_match.recording_id = r.id
               AND pi.isrc IS NOT NULL
               AND TRIM(pi.isrc) != ''
             ORDER BY pi.updated_at DESC
@@ -878,8 +934,11 @@ function findProviderOnlyVideoRecordingId(
           (
             SELECT pi.provider
             FROM ProviderItems pi
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = pi.id
+             AND video_match.match_state = 'accepted'
             WHERE pi.entity_type = 'video'
-              AND pi.recording_id = r.id
+              AND video_match.recording_id = r.id
             ORDER BY pi.updated_at DESC
             LIMIT 1
           ) AS provider
@@ -957,19 +1016,25 @@ function dedupeProviderOnlyVideoRecordings(artistMbid: string): number {
           r.release_date,
           r.isrcs,
           (
-            SELECT pi.duration
+            SELECT pi.duration_ms / 1000.0
             FROM ProviderItems pi
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = pi.id
+             AND video_match.match_state = 'accepted'
             WHERE pi.entity_type = 'video'
-              AND pi.recording_id = r.id
-              AND pi.duration IS NOT NULL
+              AND video_match.recording_id = r.id
+              AND pi.duration_ms IS NOT NULL
             ORDER BY pi.updated_at DESC
             LIMIT 1
           ) AS provider_duration,
           (
             SELECT pi.isrc
             FROM ProviderItems pi
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = pi.id
+             AND video_match.match_state = 'accepted'
             WHERE pi.entity_type = 'video'
-              AND pi.recording_id = r.id
+              AND video_match.recording_id = r.id
               AND pi.isrc IS NOT NULL
               AND TRIM(pi.isrc) != ''
             ORDER BY pi.updated_at DESC
@@ -978,8 +1043,11 @@ function dedupeProviderOnlyVideoRecordings(artistMbid: string): number {
           (
             SELECT pi.provider
             FROM ProviderItems pi
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = pi.id
+             AND video_match.match_state = 'accepted'
             WHERE pi.entity_type = 'video'
-              AND pi.recording_id = r.id
+              AND video_match.recording_id = r.id
             ORDER BY pi.updated_at DESC
             LIMIT 1
           ) AS provider
@@ -1065,7 +1133,11 @@ function dedupeProviderOnlyVideoRecordings(artistMbid: string): number {
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `).run(preferredTitle, mergedVariant, row.length_ms, row.release_date, target.id);
-        db.prepare(`UPDATE ProviderItems SET recording_id = ? WHERE recording_id = ?`).run(target.id, row.id);
+        db.prepare(`
+            UPDATE OR REPLACE ProviderVideoMatches
+            SET recording_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE recording_id = ?
+        `).run(target.id, row.id);
         db.prepare(`UPDATE TrackFiles SET recording_id = ? WHERE recording_id = ?`).run(target.id, row.id);
         db.prepare(`UPDATE OR IGNORE RecordingRelations SET source_recording_id = ? WHERE source_recording_id = ?`).run(target.id, row.id);
         db.prepare(`UPDATE OR IGNORE RecordingRelations SET target_recording_id = ? WHERE target_recording_id = ?`).run(target.id, row.id);
@@ -1105,8 +1177,11 @@ function findMusicBrainzVideoRecordingIdByTitle(
           (
             SELECT pi.provider
             FROM ProviderItems pi
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = pi.id
+             AND video_match.match_state = 'accepted'
             WHERE pi.entity_type = 'video'
-              AND pi.recording_id = r.id
+              AND video_match.recording_id = r.id
             ORDER BY pi.updated_at DESC
             LIMIT 1
           ) AS provider
@@ -1177,18 +1252,31 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         SELECT
             provider_item.provider,
             provider_item.provider_id,
-            provider_item.provider_album_id,
-            provider_item.recording_mbid,
+            release_item.provider_id AS provider_album_id,
+            recording.mbid AS recording_mbid,
             provider_item.title,
-            provider_item.duration,
+            provider_item.duration_ms / 1000.0 AS duration,
             provider_item.release_date,
             provider_item.provider_url,
-            provider_item.asset_id,
-            provider_item.recording_id,
-            COALESCE(provider_item.artist_mbid, recording.artist_mbid) AS artist_mbid
-        FROM ProviderItems provider_item
-        JOIN Recordings recording ON recording.id = provider_item.recording_id
+            COALESCE(provider_item.cover_id, provider_item.artwork_url) AS asset_id,
+            video_match.recording_id,
+            recording.artist_mbid
+        FROM ProviderVideoMatches video_match
+        JOIN ProviderItems provider_item
+          ON provider_item.id = video_match.provider_video_item_id
+        JOIN Recordings recording ON recording.id = video_match.recording_id
+        LEFT JOIN ProviderReleaseMembers release_member
+          ON release_member.id = (
+            SELECT candidate_member.id
+            FROM ProviderReleaseMembers candidate_member
+            WHERE candidate_member.member_item_id = provider_item.id
+            ORDER BY candidate_member.id
+            LIMIT 1
+          )
+        LEFT JOIN ProviderItems release_item
+          ON release_item.id = release_member.provider_release_item_id
         WHERE provider_item.entity_type = 'video'
+          AND video_match.match_state = 'accepted'
           AND recording.artist_mbid = ?
         ORDER BY provider_item.provider, provider_item.provider_id
     `).all(artistMbid) as Array<{
@@ -1205,11 +1293,6 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         artist_mbid: string | null;
     }>;
 
-    const updateProviderItem = db.prepare(`
-        UPDATE ProviderItems
-        SET recording_id = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE provider = ? AND entity_type = 'video' AND provider_id = ?
-    `);
     const updateTrackFiles = db.prepare(`
         UPDATE TrackFiles
         SET recording_id = ?,
@@ -1272,7 +1355,6 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
 
         copyAudioRelations.run(targetRecordingId, targetRecordingId, row.recording_id);
         inheritMonitoredState.run(row.recording_id, targetRecordingId);
-        updateProviderItem.run(targetRecordingId, row.provider, row.provider_id);
         updateTrackFiles.run(targetRecordingId, targetRecordingId, row.provider, row.provider_id);
         const repairedVideo = {
             provider: row.provider,
@@ -1306,17 +1388,30 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         SELECT
             provider_item.provider,
             provider_item.provider_id,
-            provider_item.provider_album_id,
+            release_item.provider_id AS provider_album_id,
             provider_item.title,
-            provider_item.duration,
-            provider_item.recording_id,
-            provider_item.recording_mbid,
-            COALESCE(provider_item.artist_mbid, recording.artist_mbid) AS artist_mbid,
+            provider_item.duration_ms / 1000.0 AS duration,
+            video_match.recording_id,
+            recording.mbid AS recording_mbid,
+            recording.artist_mbid,
             recording.title AS recording_title,
             recording.video_variant AS video_variant
-        FROM ProviderItems provider_item
-        JOIN Recordings recording ON recording.id = provider_item.recording_id
+        FROM ProviderVideoMatches video_match
+        JOIN ProviderItems provider_item
+          ON provider_item.id = video_match.provider_video_item_id
+        JOIN Recordings recording ON recording.id = video_match.recording_id
+        LEFT JOIN ProviderReleaseMembers release_member
+          ON release_member.id = (
+            SELECT candidate_member.id
+            FROM ProviderReleaseMembers candidate_member
+            WHERE candidate_member.member_item_id = provider_item.id
+            ORDER BY candidate_member.id
+            LIMIT 1
+          )
+        LEFT JOIN ProviderItems release_item
+          ON release_item.id = release_member.provider_release_item_id
         WHERE provider_item.entity_type = 'video'
+          AND video_match.match_state = 'accepted'
           AND recording.artist_mbid = ?
         ORDER BY provider_item.provider, provider_item.provider_id
     `).all(artistMbid) as Array<{
@@ -1515,7 +1610,12 @@ function deleteOrphanProviderOnlyVideoRecordings(artistMbid: string): number {
           AND recording.mbid IS NULL
           AND recording.artist_mbid = ?
           AND recording.monitored_lock = 0
-          AND NOT EXISTS (SELECT 1 FROM ProviderItems item WHERE item.recording_id = recording.id)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM ProviderVideoMatches video_match
+            WHERE video_match.recording_id = recording.id
+              AND video_match.match_state = 'accepted'
+          )
           AND NOT EXISTS (SELECT 1 FROM TrackFiles file WHERE file.recording_id = recording.id)
           AND NOT EXISTS (SELECT 1 FROM Tracks track WHERE track.recording_id = recording.id)
     `).all(artistMbid) as Array<{ id: number }>;
@@ -1621,9 +1721,12 @@ export class RefreshVideoService {
         const rows = db.prepare(`
             SELECT DISTINCT pi.provider AS provider, pi.provider_id AS providerId
             FROM ProviderItems pi
-            JOIN Recordings r ON r.id = pi.recording_id
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = pi.id
+             AND video_match.match_state = 'accepted'
+            JOIN Recordings r ON r.id = video_match.recording_id
             WHERE pi.entity_type = 'video'
-              AND (pi.quality IS NULL OR TRIM(pi.quality) = '')
+              AND (pi.video_quality IS NULL OR TRIM(pi.video_quality) = '')
               AND r.is_video = 1
               AND r.artist_mbid = ?
               AND pi.provider_id IS NOT NULL
@@ -1634,11 +1737,11 @@ export class RefreshVideoService {
 
         const updateQuality = db.prepare(`
             UPDATE ProviderItems
-            SET quality = ?, updated_at = CURRENT_TIMESTAMP
+            SET video_quality = ?, updated_at = CURRENT_TIMESTAMP
             WHERE provider = ?
               AND entity_type = 'video'
               AND provider_id = ?
-              AND (quality IS NULL OR TRIM(quality) = '')
+              AND (video_quality IS NULL OR TRIM(video_quality) = '')
         `);
 
         const pLimit = (await import("p-limit")).default;
@@ -1749,12 +1852,6 @@ export class RefreshVideoService {
         // Prefer the shared upsert path so recording creation / repair / dedupe
         // stay identical to artist-video refresh; inject explicit audio matches
         // below by temporarily overriding fuzzy matching via the prepared list.
-        const selectProviderItem = db.prepare(`
-            SELECT recording_id
-            FROM ProviderItems
-            WHERE provider = ? AND entity_type = 'video' AND provider_id = ?
-            LIMIT 1
-        `);
         const updateRecordingState = db.prepare(`
             UPDATE Recordings
             SET
@@ -1764,45 +1861,16 @@ export class RefreshVideoService {
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `);
-        const upsertProviderItem = db.prepare(`
-            INSERT INTO ProviderItems (
-                provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_mbid,
-                release_group_mbid, release_mbid,
-                title, quality, duration, release_date, availability,
-                library_slot, recording_id, provider_url, asset_id,
-                match_status, match_confidence, match_method, match_evidence, updated_at
-            ) VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'video', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-                provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
-                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
-                recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
-                release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
-                release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
-                title = COALESCE(NULLIF(TRIM(excluded.title), ''), ProviderItems.title),
-                -- List endpoints often send null quality (untrusted TIDAL catalog
-                -- MP4_1080P / Apple non-4K). Never wipe a probed SD/HD/FHD/UHD tag.
-                quality = COALESCE(NULLIF(TRIM(excluded.quality), ''), ProviderItems.quality),
-                duration = COALESCE(excluded.duration, ProviderItems.duration),
-                release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
-                availability = excluded.availability,
-                library_slot = excluded.library_slot,
-                recording_id = COALESCE(excluded.recording_id, ProviderItems.recording_id),
-                provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
-                asset_id = COALESCE(excluded.asset_id, ProviderItems.asset_id),
-                match_status = excluded.match_status,
-                match_confidence = excluded.match_confidence,
-                match_method = excluded.match_method,
-                match_evidence = excluded.match_evidence,
-                updated_at = CURRENT_TIMESTAMP
-        `);
-
         db.transaction(() => {
             for (const video of videos) {
-                const existingProviderItem = selectProviderItem.get(video.provider, String(video.provider_id)) as { recording_id?: number | null } | undefined;
+                const existingRecordingId = getAcceptedProviderVideoRecordingId(
+                    video.provider,
+                    String(video.provider_id),
+                );
                 const recordingId = ensureProviderVideoRecording({
                     video,
                     artistMbid,
-                    existingRecordingId: existingProviderItem?.recording_id ?? null,
+                    existingRecordingId,
                 });
                 if (recordingId) {
                     updateRecordingState.run(
@@ -1820,27 +1888,6 @@ export class RefreshVideoService {
                     });
                 }
 
-                upsertProviderItem.run(
-                    video.provider,
-                    String(video.provider_id),
-                    nullableText(video.album_id),
-                    artistMbid,
-                    null,
-                    nullableText(video.release_group_mbid),
-                    nullableText(video.release_mbid),
-                    video.title,
-                    video.quality || null,
-                    video.duration || null,
-                    nullableText(video.release_date),
-                    "available",
-                    recordingId,
-                    nullableText(video.url),
-                    nullableText(video.image_id),
-                    video._explicitAudioMatch ? "verified" : "probable",
-                    video._explicitAudioMatch?.confidence ?? 0.7,
-                    video._explicitAudioMatch?.method ?? "yt-atv-omv-counterpart",
-                    JSON.stringify(video._explicitAudioMatch?.evidence ?? { counterpartKind: "yt-atv-omv" }),
-                );
                 persistNormalizedProviderVideo({
                     video,
                     provider: video.provider,
@@ -1859,12 +1906,6 @@ export class RefreshVideoService {
     }
 
     static upsertArtistVideos(artistId: string, videos: any[], options: RefreshOptions = {}): void {
-        const selectProviderItem = db.prepare(`
-            SELECT recording_id
-            FROM ProviderItems
-            WHERE provider = ? AND entity_type = 'video' AND provider_id = ?
-            LIMIT 1
-        `);
         const updateRecordingState = db.prepare(`
             UPDATE Recordings
             SET
@@ -1873,34 +1914,6 @@ export class RefreshVideoService {
                 length_ms = COALESCE(?, length_ms),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        `);
-        const upsertProviderItem = db.prepare(`
-            INSERT INTO ProviderItems (
-                provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_mbid,
-                title, quality, duration, release_date, availability,
-                library_slot, recording_id, provider_url, asset_id,
-                match_status, match_confidence, match_method, match_evidence, updated_at
-            ) VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'video', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-                provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
-                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
-                recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
-                title = COALESCE(NULLIF(TRIM(excluded.title), ''), ProviderItems.title),
-                -- List endpoints often send null quality (untrusted TIDAL catalog
-                -- MP4_1080P / Apple non-4K). Never wipe a probed SD/HD/FHD/UHD tag.
-                quality = COALESCE(NULLIF(TRIM(excluded.quality), ''), ProviderItems.quality),
-                duration = COALESCE(excluded.duration, ProviderItems.duration),
-                release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
-                availability = excluded.availability,
-                library_slot = excluded.library_slot,
-                recording_id = COALESCE(excluded.recording_id, ProviderItems.recording_id),
-                provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
-                asset_id = COALESCE(excluded.asset_id, ProviderItems.asset_id),
-                match_status = excluded.match_status,
-                match_confidence = excluded.match_confidence,
-                match_method = excluded.match_method,
-                match_evidence = excluded.match_evidence,
-                updated_at = CURRENT_TIMESTAMP
         `);
 
         // Resolve audio↔video matches BEFORE opening the write transaction: the
@@ -1925,16 +1938,17 @@ export class RefreshVideoService {
 
         db.transaction(() => {
             for (const { video, artistMbid, provider, audioMatch } of preparedVideos) {
-                const existingProviderItem = selectProviderItem.get(provider, String(video.provider_id)) as { recording_id?: number | null } | undefined;
                 const identity = buildVideoIdentity(video);
                 const recordingMbid = String(video.mbid || video.recording_mbid || "").trim() || null;
                 const recordingId = ensureProviderVideoRecording({
                     video,
                     artistMbid,
-                    existingRecordingId: existingProviderItem?.recording_id ?? null,
+                    existingRecordingId: getAcceptedProviderVideoRecordingId(
+                        provider,
+                        String(video.provider_id),
+                    ),
                 });
 
-                const quality = video.quality || null;
                 // ProviderVideo uses `cover`; legacy payloads may still send image_id.
                 const cover = nullableText(video.cover)
                     || nullableText(video.image_id)
@@ -1956,25 +1970,6 @@ export class RefreshVideoService {
                     });
                 }
 
-                upsertProviderItem.run(
-                    provider,
-                    String(video.provider_id),
-                    nullableText(video.album_id),
-                    artistMbid,
-                    recordingMbid,
-                    video.title,
-                    quality,
-                    video.duration || null,
-                    video.release_date || null,
-                    "available",
-                    recordingId,
-                    nullableText(video.url),
-                    cover,
-                    identity.confidence >= 0.9 ? "verified" : "probable",
-                    identity.confidence,
-                    identity.method,
-                    JSON.stringify(identity.evidence)
-                );
                 persistNormalizedProviderVideo({
                     video,
                     provider,

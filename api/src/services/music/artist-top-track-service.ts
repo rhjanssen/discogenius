@@ -166,9 +166,14 @@ export class ArtistTopTrackService {
             COALESCE(
               (
                 SELECT provider_score.popularity
-                FROM ProviderItems provider_score INDEXED BY idx_provider_items_recording_id
+                FROM ProviderTrackMatches provider_match
+                JOIN ProviderReleaseMembers provider_member
+                  ON provider_member.id = provider_match.provider_release_member_id
+                JOIN ProviderItems provider_score
+                  ON provider_score.id = provider_member.member_item_id
                 WHERE recording.id IS NOT NULL
-                  AND provider_score.recording_id = recording.id
+                  AND provider_match.recording_id = recording.id
+                  AND provider_match.match_state = 'accepted'
                   AND provider_score.entity_type = 'track'
                   AND provider_score.popularity IS NOT NULL
                 ORDER BY
@@ -180,8 +185,13 @@ export class ArtistTopTrackService {
               ),
               (
                 SELECT provider_score.popularity
-                FROM ProviderItems provider_score INDEXED BY idx_provider_items_track_id
-                WHERE provider_score.track_id = track.id
+                FROM ProviderTrackMatches provider_match
+                JOIN ProviderReleaseMembers provider_member
+                  ON provider_member.id = provider_match.provider_release_member_id
+                JOIN ProviderItems provider_score
+                  ON provider_score.id = provider_member.member_item_id
+                WHERE provider_match.track_id = track.id
+                  AND provider_match.match_state = 'accepted'
                   AND provider_score.entity_type = 'track'
                   AND provider_score.popularity IS NOT NULL
                 ORDER BY

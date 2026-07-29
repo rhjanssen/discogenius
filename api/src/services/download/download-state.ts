@@ -549,10 +549,30 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
       CAST(a.id AS TEXT) AS artist_id,
       rg.mbid AS release_group_mbid
     FROM ProviderItems pi
-    LEFT JOIN Artists a ON a.mbid = pi.artist_mbid
-    LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
+    JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+    JOIN ProviderTrackMatches track_match
+      ON track_match.provider_release_member_id = member.id
+     AND track_match.match_state = 'accepted'
+     AND track_match.track_id IS NOT NULL
+    JOIN Tracks track ON track.id = track_match.track_id
+    JOIN AlbumReleases release ON release.id = track.album_release_id
+    JOIN Albums rg ON rg.id = release.release_group_id
+    LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
     WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-      AND pi.entity_type IN ('track', 'video')
+      AND pi.entity_type = 'track'
+      AND (? IS NULL OR pi.provider = ?)
+    UNION
+    SELECT DISTINCT
+      CAST(a.id AS TEXT) AS artist_id,
+      NULL AS release_group_mbid
+    FROM ProviderItems pi
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = pi.id
+     AND video_match.match_state = 'accepted'
+    JOIN Recordings recording ON recording.id = video_match.recording_id
+    LEFT JOIN Artists a ON a.mbid = recording.artist_mbid
+    WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+      AND pi.entity_type = 'video'
       AND (? IS NULL OR pi.provider = ?)
     UNION
     SELECT DISTINCT
@@ -573,6 +593,9 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
     WHERE recording.mbid = ?
        OR CAST(recording.id AS TEXT) = CAST(? AS TEXT)
   `).all(
+    mediaId,
+    provider || null,
+    provider || null,
     mediaId,
     provider || null,
     provider || null,

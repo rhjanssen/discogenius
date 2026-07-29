@@ -24,6 +24,7 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
+  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
 
 after(() => {
@@ -71,6 +72,10 @@ test("ignoreProviderArtist hides the row from the unmatched list", () => {
 test("ignoreProviderArtist refuses unknown or already matched rows", () => {
   assert.throws(() => manualMatch.ignoreProviderArtist("tidal", "does-not-exist"), /Unknown or already matched/);
 
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name, sort_name)
+    VALUES ('11111111-1111-1111-1111-111111111111', 'Matched Artist', 'Matched Artist')
+  `).run();
   identityService.ProviderArtistIdentityService.store("tidal", {
     providerId: "m-1",
     name: "Matched Artist",

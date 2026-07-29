@@ -79,13 +79,13 @@ export class VideoTagService {
         COALESCE(file.provider, provider_item.provider) AS provider,
         COALESCE(file.provider_id, provider_item.provider_id) AS provider_id,
         provider_item.provider_url,
-        COALESCE(file.quality, provider_item.quality) AS quality,
+        COALESCE(file.quality, provider_item.video_quality) AS quality,
         COALESCE(recording.title, provider_item.title) AS title,
         provider_item.release_date,
         COALESCE(provider_item.copyright, recording.copyright) AS copyright,
-        artist.name AS artist_name,
-        COALESCE(file.canonical_artist_mbid, artist.mbid, provider_item.artist_mbid) AS artist_mbid,
-        COALESCE(file.canonical_recording_mbid, recording.mbid, provider_item.recording_mbid) AS recording_mbid,
+        COALESCE(artist.name, artist_metadata.name) AS artist_name,
+        COALESCE(file.canonical_artist_mbid, artist.mbid, artist_metadata.mbid) AS artist_mbid,
+        COALESCE(file.canonical_recording_mbid, recording.mbid) AS recording_mbid,
         recording.credits AS recording_credits
       FROM TrackFiles file
       JOIN Artists artist ON artist.id = file.artist_id
@@ -99,8 +99,13 @@ export class VideoTagService {
           ORDER BY candidate.updated_at DESC
           LIMIT 1
         )
+      LEFT JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = provider_item.id
+       AND video_match.match_state = 'accepted'
       LEFT JOIN Recordings recording
-        ON recording.id = COALESCE(file.recording_id, provider_item.recording_id)
+        ON recording.id = COALESCE(file.recording_id, video_match.recording_id)
+      LEFT JOIN ArtistMetadata artist_metadata
+        ON artist_metadata.id = recording.artist_metadata_id
       WHERE file.file_type = 'video' AND ${where}
       ORDER BY file.id
     `).all(...params) as VideoTagRow[];

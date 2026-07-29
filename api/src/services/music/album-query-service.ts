@@ -47,9 +47,7 @@ const releaseGroupLibraryStateCte = `
       provider_item.id AS selected_provider_item_id,
       provider_item.provider_id AS selected_provider_id,
       provider_item.provider_url,
-      COALESCE(
-        provider_item.quality,
-        (
+      (
           SELECT COALESCE(
             NULLIF(TRIM(CASE
               WHEN json_valid(plan_track.source_quality_snapshot)
@@ -65,10 +63,9 @@ const releaseGroupLibraryStateCte = `
           WHERE plan_track.plan_id = plan.id
           ORDER BY plan_track.id
           LIMIT 1
-        )
       ) AS quality,
       release_match.match_state AS match_status,
-      COALESCE(provider_item.cover_id, provider_item.cover, provider_item.artwork_url) AS cover,
+      COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,
       COALESCE(CAST(provider_item.popularity AS REAL), 0) AS popularity,
       ROW_NUMBER() OVER (
         PARTITION BY

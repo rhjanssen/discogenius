@@ -21,7 +21,6 @@ import { ProviderArtistIdentityService, normalizeProviderArtist } from "../metad
 import { streamingProviderManager } from "../providers/index.js";
 import type { StreamingProvider, ProviderAlbum } from "../providers/streaming-provider.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
-import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { isUntrustedTidalCatalogVideoQuality } from "../providers/tidal/tidal-quality.js";
 import {
     resolveAlbumArtwork,
@@ -34,6 +33,7 @@ import {
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
+import { providerAudioVariants } from "./refresh-album-service.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
 import { CurationService } from "./curation-service.js";
 import {
@@ -234,11 +234,22 @@ export class RefreshArtistService {
         const artistData = await servarrMetadata.syncArtist(artistMbid);
         const artistName = artistData.artistname || "Unknown Artist";
         const providerArtworkRows = db.prepare(`
-            SELECT provider, provider_id, cover, popularity
-            FROM ProviderItems
-            WHERE entity_type = 'artist'
-              AND artist_mbid = ?
-            ORDER BY updated_at DESC
+            SELECT
+              item.provider,
+              item.provider_id,
+              COALESCE(item.artwork_url, item.cover_id) AS cover,
+              item.popularity
+            FROM ProviderArtistMatches artist_match
+            JOIN ProviderItems item
+              ON item.id = artist_match.provider_artist_item_id
+            JOIN ArtistMetadata canonical_artist ON canonical_artist.id = artist_match.artist_id
+            WHERE item.entity_type = 'artist'
+              AND canonical_artist.mbid = ?
+              AND artist_match.match_state = 'accepted'
+            ORDER BY
+              CASE artist_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+              artist_match.confidence DESC,
+              artist_match.updated_at DESC
         `).all(artistMbid) as Array<{ provider: string; provider_id: string; cover?: string | null; popularity?: number | null }>;
 
         let maxPopularity = 0;
@@ -649,34 +660,32 @@ export class RefreshArtistService {
     ): void {
         db.transaction(() => {
             const existing = db.prepare(`
-                SELECT title, version, type, upc, duration, release_date, explicit,
-                       provider_url, cover, volume_count, copyright
+                SELECT title, version, provider_type, upc, duration_ms, release_date, explicit,
+                       provider_url, cover_id, artwork_url, volume_count, copyright
                 FROM ProviderItems
                 WHERE provider = 'soundcloud'
-                  AND entity_type = 'album'
+                  AND entity_type = 'release'
                   AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
                 LIMIT 1
             `).get(providerAlbumId) as Record<string, unknown> | undefined;
             if (existing) {
-                const durationSeconds = Number(existing.duration);
                 new ProviderCatalogRepository(db).upsertItem({
                     provider: "soundcloud",
                     entityType: "release",
                     providerId: providerAlbumId,
                     title: String(existing.title || "") || null,
                     version: String(existing.version || "") || null,
-                    providerType: String(existing.type || "") || null,
+                    providerType: String(existing.provider_type || "") || null,
                     upc: String(existing.upc || "") || null,
-                    durationMs: Number.isFinite(durationSeconds) && durationSeconds > 0
-                        ? Math.round(durationSeconds * 1000)
-                        : null,
+                    durationMs: existing.duration_ms == null ? null : Number(existing.duration_ms),
                     releaseDate: String(existing.release_date || "") || null,
                     explicit: existing.explicit == null ? null : Boolean(existing.explicit),
                     availability: "unavailable",
                     availabilityReason: reason,
                     checkedAt: new Date().toISOString(),
                     providerUrl: String(existing.provider_url || "") || null,
-                    coverId: String(existing.cover || "") || null,
+                    coverId: String(existing.cover_id || "") || null,
+                    artworkUrl: String(existing.artwork_url || "") || null,
                     volumeCount: existing.volume_count == null ? null : Number(existing.volume_count),
                     copyright: String(existing.copyright || "") || null,
                 });
@@ -684,21 +693,23 @@ export class RefreshArtistService {
             db.prepare(`
                 UPDATE ProviderItems
                 SET availability = 'unavailable',
-                    match_status = 'rejected',
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE provider = 'soundcloud'
-                  AND entity_type = 'album'
-                  AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-            `).run(providerAlbumId);
-            db.prepare(`
-                UPDATE ProviderItems
-                SET availability = 'unavailable',
-                    match_status = 'rejected',
+                    availability_reason = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE provider = 'soundcloud'
                   AND entity_type = 'track'
-                  AND CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
-            `).run(providerAlbumId);
+                  AND id IN (
+                    SELECT member_item_id
+                    FROM ProviderReleaseMembers
+                    WHERE provider_release_item_id = (
+                      SELECT id
+                      FROM ProviderItems
+                      WHERE provider = 'soundcloud'
+                        AND entity_type = 'release'
+                        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                      LIMIT 1
+                    )
+                  )
+            `).run(reason, providerAlbumId);
             db.prepare(`
                 UPDATE ProviderItems
                 SET availability = 'unavailable',
@@ -782,14 +793,18 @@ export class RefreshArtistService {
             ORDER BY medium_position, position
         `);
         const loadStoredPlaylistOffers = db.prepare(`
-            SELECT CAST(provider_id AS TEXT) AS provider_id
-            FROM ProviderItems
-            WHERE provider = 'soundcloud'
-              AND entity_type = 'album'
-              AND release_group_mbid = ?
-              AND match_method = ?
-              AND match_status IN ('verified', 'probable', 'candidate')
-            ORDER BY updated_at DESC, provider_id ASC
+            SELECT CAST(item.provider_id AS TEXT) AS provider_id
+            FROM ProviderReleaseMatches release_match
+            JOIN ProviderItems item
+              ON item.id = release_match.provider_release_item_id
+            JOIN AlbumReleases release ON release.id = release_match.release_id
+            JOIN Albums release_group ON release_group.id = release.release_group_id
+            WHERE item.provider = 'soundcloud'
+              AND item.entity_type = 'release'
+              AND release_group.mbid = ?
+              AND release_match.method = ?
+              AND release_match.match_state IN ('accepted', 'candidate')
+            ORDER BY release_match.updated_at DESC, item.provider_id ASC
         `);
 
         for (const target of targets) {
@@ -994,39 +1009,6 @@ export class RefreshArtistService {
             return;
         }
 
-        const upsert = db.prepare(`
-            INSERT INTO ProviderItems (
-                provider, entity_type, provider_id, title, version, explicit, quality, type,
-                upc, copyright, duration, volume_count, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
-                match_status, match_confidence, match_method, match_evidence, cover, discovered_from_artist_mbid, provider_url, availability, updated_at
-            ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', CURRENT_TIMESTAMP)
-            ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-                title = excluded.title,
-                version = COALESCE(excluded.version, ProviderItems.version),
-                explicit = COALESCE(excluded.explicit, ProviderItems.explicit),
-                quality = COALESCE(excluded.quality, ProviderItems.quality),
-                type = COALESCE(excluded.type, ProviderItems.type),
-                upc = COALESCE(excluded.upc, ProviderItems.upc),
-                copyright = COALESCE(excluded.copyright, ProviderItems.copyright),
-                duration = COALESCE(excluded.duration, ProviderItems.duration),
-                volume_count = COALESCE(excluded.volume_count, ProviderItems.volume_count),
-                release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
-                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
-                release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
-                release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
-                library_slot = excluded.library_slot,
-                match_status = excluded.match_status,
-                match_confidence = COALESCE(excluded.match_confidence, ProviderItems.match_confidence),
-                match_method = COALESCE(excluded.match_method, ProviderItems.match_method),
-                match_evidence = COALESCE(excluded.match_evidence, ProviderItems.match_evidence),
-                cover = COALESCE(excluded.cover, ProviderItems.cover),
-                discovered_from_artist_mbid = COALESCE(excluded.discovered_from_artist_mbid, ProviderItems.discovered_from_artist_mbid),
-                provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
-                availability = excluded.availability,
-                updated_at = CURRENT_TIMESTAMP
-        `);
-
-        const selectCanonicalOwner = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?");
         const normalizedCatalog = new ProviderCatalogRepository(db);
 
         // Chunk the per-album upserts so a prolific artist's provider catalog
@@ -1034,45 +1016,8 @@ export class RefreshArtistService {
         runChunkedWrite(albums, (album) => {
                 const providerAlbumId = String(album.provider_id);
                 const match = matches.get(providerAlbumId);
-                const matchedReleaseGroup = match?.status !== "unmatched" ? match?.releaseGroup : null;
-                const canonicalOwner = matchedReleaseGroup?.mbid
-                    ? selectCanonicalOwner.get(matchedReleaseGroup.mbid) as { artist_mbid?: string | null } | undefined
-                    : null;
-                const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(match);
-                upsert.run(
-                    providerId,
-                    providerAlbumId,
-                    album.title || null,
-                    album.version || null,
-                    album.explicit == null ? null : (album.explicit ? 1 : 0),
-                    album.quality || null,
-                    album.type || null,
-                    album.upc || null,
-                    album.copyright || null,
-                    album.duration || null,
-                    album.num_volumes ?? null,
-                    album.release_date || null,
-                    matchedReleaseGroup ? canonicalOwner?.artist_mbid || artistMbid : null,
-                    matchedReleaseGroup?.mbid || null,
-                    matchedReleaseMbid,
-                    isSpatialAudioQuality(album.quality) ? "spatial" : "stereo",
-                    match?.status || "unmatched",
-                    match?.confidence ?? null,
-                    match?.method || null,
-                    match ? JSON.stringify({
-                        ...match.evidence,
-                        providerQualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
-                    }) : null,
-                    album.cover || null,
-                    artistMbid,
-                    // Persist the provider's human permalink (e.g. a SoundCloud
-                    // set's soundcloud.com/<user>/sets/<slug>) so links/tags use
-                    // the real playlist. Stable numeric ids remain acquisition
-                    // and workspace identity.
-                    album.url || null,
-                );
                 const durationSeconds = Number(album.duration);
-                normalizedCatalog.upsertItem({
+                const itemId = normalizedCatalog.upsertItem({
                     provider: providerId,
                     entityType: "release",
                     providerId: providerAlbumId,
@@ -1088,10 +1033,18 @@ export class RefreshArtistService {
                     availability: "available",
                     checkedAt: new Date().toISOString(),
                     providerUrl: album.url || null,
-                    coverId: album.cover || null,
+                    coverId: /^https?:\/\//i.test(String(album.cover || "")) ? null : album.cover || null,
+                    artworkUrl: /^https?:\/\//i.test(String(album.cover || "")) ? album.cover || null : null,
                     volumeCount: album.num_volumes ?? null,
                     copyright: album.copyright || null,
                 });
+                const variants = providerAudioVariants(providerId, [
+                    ...(Array.isArray(album.qualityTags) ? album.qualityTags : []),
+                    album.quality,
+                ]);
+                if (variants.length > 0) {
+                    normalizedCatalog.replaceAudioVariants(itemId, variants);
+                }
         });
         // Acquire artwork after slot selection in precacheArtistMediaCovers().
         // Provisional matches can point several provider albums at one canonical
@@ -1496,15 +1449,25 @@ export class RefreshArtistService {
                 // evidence.
                 const loadMaterializedTracks = db.prepare(`
                     SELECT
-                        provider_id,
-                        title,
-                        isrc,
-                        duration,
-                        track_number,
-                        volume_number
-                    FROM ProviderItems
-                    WHERE provider = ? AND entity_type = 'track' AND provider_album_id = ?
-                    ORDER BY COALESCE(volume_number, 1), COALESCE(track_number, 0)
+                        track_item.provider_id,
+                        COALESCE(member.contextual_title, track_item.title) AS title,
+                        track_item.isrc,
+                        COALESCE(
+                          ROUND(member.contextual_duration_ms / 1000.0),
+                          ROUND(track_item.duration_ms / 1000.0)
+                        ) AS duration,
+                        member.position AS track_number,
+                        member.medium_position AS volume_number
+                    FROM ProviderItems release_item
+                    JOIN ProviderReleaseMembers member
+                      ON member.provider_release_item_id = release_item.id
+                    JOIN ProviderItems track_item
+                      ON track_item.id = member.member_item_id
+                     AND track_item.entity_type = 'track'
+                    WHERE release_item.provider = ?
+                      AND release_item.entity_type = 'release'
+                      AND release_item.provider_id = ?
+                    ORDER BY member.medium_position, member.position
                 `);
                 for (const album of albums) {
                     const numTracks = Number(album.num_tracks);
@@ -1957,10 +1920,12 @@ export class RefreshArtistService {
               recording.id AS id,
               recording.cover_image_url AS cover_image_url
             FROM Recordings recording
+            JOIN ProviderVideoMatches video_match
+              ON video_match.recording_id = recording.id
+             AND video_match.match_state = 'accepted'
             JOIN ProviderItems offer
-              ON offer.entity_type = 'video'
-             AND (offer.recording_id = recording.id
-                  OR (recording.mbid IS NOT NULL AND offer.recording_mbid = recording.mbid))
+              ON offer.id = video_match.provider_video_item_id
+             AND offer.entity_type = 'video'
             WHERE recording.is_video = 1
               AND (recording.artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = ?)
                    OR recording.artist_mbid = ?)

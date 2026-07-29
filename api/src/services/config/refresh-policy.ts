@@ -105,16 +105,17 @@ export function shouldRefreshTrackSet(options: {
       MIN(track_item.updated_at) AS oldest_scan,
       MAX(COALESCE(release.date, album.first_release_date, album_item.release_date)) AS album_release_date
     FROM ProviderItems album_item
+    LEFT JOIN ProviderReleaseMembers member
+      ON member.provider_release_item_id = album_item.id
     LEFT JOIN ProviderItems track_item
-      ON track_item.provider = album_item.provider
-     AND track_item.entity_type = 'track'
-     AND (
-       (album_item.release_mbid IS NOT NULL AND track_item.release_mbid = album_item.release_mbid)
-       OR (album_item.release_group_mbid IS NOT NULL AND track_item.release_group_mbid = album_item.release_group_mbid)
-     )
-    LEFT JOIN AlbumReleases release ON release.mbid = album_item.release_mbid
-    LEFT JOIN Albums album ON album.mbid = COALESCE(album_item.release_group_mbid, release.release_group_mbid)
-    WHERE album_item.entity_type = 'album'
+      ON track_item.id = member.member_item_id
+     AND track_item.entity_type IN ('track', 'video')
+    LEFT JOIN ProviderReleaseMatches release_match
+      ON release_match.provider_release_item_id = album_item.id
+     AND release_match.match_state = 'accepted'
+    LEFT JOIN AlbumReleases release ON release.id = release_match.release_id
+    LEFT JOIN Albums album ON album.id = release.release_group_id
+    WHERE album_item.entity_type = 'release'
       AND album_item.provider_id = ?
       AND (? IS NULL OR album_item.provider = ?)
   `).get(
@@ -159,8 +160,13 @@ export function shouldRefreshVideos(options: {
       MIN(video_item.updated_at) AS oldest_scan
     FROM target_artist target
     LEFT JOIN ProviderItems video_item
-      ON video_item.artist_mbid = target.mbid
-     AND video_item.entity_type = 'video'
+      ON video_item.entity_type = 'video'
+    LEFT JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = video_item.id
+     AND video_match.match_state = 'accepted'
+    LEFT JOIN Recordings recording ON recording.id = video_match.recording_id
+    LEFT JOIN ArtistMetadata artist ON artist.id = recording.artist_metadata_id
+    WHERE artist.mbid = target.mbid
   `).get(identifier, identifier, identifier) as {
     total_videos?: number;
     missing_scans?: number;

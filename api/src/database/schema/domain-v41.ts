@@ -226,6 +226,8 @@ export function createDomainSchemaV41(db: Database.Database): void {
       peak REAL,
       bpm REAL,
       musical_key TEXT,
+      popularity INTEGER,
+      video_quality TEXT,
       copyright TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -301,6 +303,14 @@ export function createDomainSchemaV41(db: Database.Database): void {
       UNIQUE (provider_artist_item_id, artist_id),
       FOREIGN KEY (provider_artist_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
       FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE ProviderArtistIgnores (
+      provider_artist_item_id INTEGER PRIMARY KEY,
+      decision_source TEXT NOT NULL CHECK (decision_source = 'manual'),
+      reason TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (provider_artist_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE
     );
 
     CREATE TABLE ProviderReleaseMatches (

@@ -2214,8 +2214,8 @@ export function loadAlbumProviderArtworkCandidates(
       SELECT
         provider_item.provider,
         CAST(provider_item.provider_id AS TEXT) AS provider_id,
-        COALESCE(provider_item.asset_id, provider_item.cover_id) AS asset_id,
-        COALESCE(provider_item.artwork_url, provider_item.cover) AS cover,
+        provider_item.cover_id AS asset_id,
+        provider_item.artwork_url AS cover,
         provider_item.title,
         provider_item.version,
         release_match.confidence AS match_confidence
@@ -2256,8 +2256,8 @@ export function loadAlbumProviderArtworkCandidates(
       SELECT
         provider_item.provider,
         CAST(provider_item.provider_id AS TEXT) AS provider_id,
-        COALESCE(provider_item.asset_id, provider_item.cover_id) AS asset_id,
-        COALESCE(provider_item.artwork_url, provider_item.cover) AS cover,
+        provider_item.cover_id AS asset_id,
+        provider_item.artwork_url AS cover,
         provider_item.title,
         provider_item.version,
         release_match.confidence AS match_confidence
@@ -2301,10 +2301,22 @@ export function loadArtistProviderArtworkCandidates(artistMbid?: string | null):
   if (!mbid) return [];
   try {
     const rows = db.prepare(`
-      SELECT provider, provider_id, asset_id, match_confidence
-      FROM ProviderItems
-      WHERE entity_type = 'artist' AND artist_mbid = ?
-      ORDER BY COALESCE(match_confidence, 0) DESC, updated_at DESC
+      SELECT
+        item.provider,
+        item.provider_id,
+        COALESCE(item.cover_id, item.artwork_url) AS asset_id,
+        artist_match.confidence AS match_confidence
+      FROM ProviderArtistMatches artist_match
+      JOIN ProviderItems item
+        ON item.id = artist_match.provider_artist_item_id
+      JOIN ArtistMetadata artist ON artist.id = artist_match.artist_id
+      WHERE item.entity_type = 'artist'
+        AND artist.mbid = ?
+        AND artist_match.match_state = 'accepted'
+      ORDER BY
+        CASE artist_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+        artist_match.confidence DESC,
+        artist_match.updated_at DESC
       LIMIT 12
     `).all(mbid) as Array<{
       provider?: string | null;
@@ -2462,19 +2474,22 @@ export async function resolveVideoArtwork(options: {
           recording.cover_image_id,
           provider_item.provider,
           provider_item.provider_id,
-          provider_item.asset_id AS provider_asset_id,
-          provider_item.cover AS provider_cover
+          provider_item.cover_id AS provider_asset_id,
+          provider_item.artwork_url AS provider_cover
         FROM Recordings recording
         LEFT JOIN ProviderItems provider_item
-          ON provider_item.rowid = (
-            SELECT candidate.rowid
-            FROM ProviderItems candidate
+          ON provider_item.id = (
+            SELECT candidate.id
+            FROM ProviderVideoMatches candidate_match
+            JOIN ProviderItems candidate
+              ON candidate.id = candidate_match.provider_video_item_id
             WHERE candidate.entity_type = 'video'
-              AND (
-                candidate.recording_id = recording.id
-                OR (recording.mbid IS NOT NULL AND candidate.recording_mbid = recording.mbid)
-              )
-            ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
+              AND candidate_match.recording_id = recording.id
+              AND candidate_match.match_state = 'accepted'
+            ORDER BY
+              CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+              candidate_match.confidence DESC,
+              candidate_match.updated_at DESC
             LIMIT 1
           )
         WHERE CAST(recording.id AS TEXT) = CAST(? AS TEXT)

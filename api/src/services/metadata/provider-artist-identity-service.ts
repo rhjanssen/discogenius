@@ -670,27 +670,36 @@ export interface ResolveProviderArtistOptions {
 export class ProviderArtistIdentityService {
   static async resolve(provider: string, artist: ProviderArtistIdentityInput, options?: ResolveProviderArtistOptions): Promise<ProviderArtistIdentityResolution> {
     const cached = db.prepare(`
-      SELECT artist_mbid, match_status, match_confidence, match_method
-      FROM ProviderItems
-      WHERE provider = ?
-        AND entity_type = 'artist'
-        AND provider_id = ?
-        AND artist_mbid IS NOT NULL
-      ORDER BY updated_at DESC
+      SELECT
+        canonical.mbid AS artist_mbid,
+        match.match_state,
+        match.confidence,
+        match.method
+      FROM ProviderItems item
+      JOIN ProviderArtistMatches match
+        ON match.provider_artist_item_id = item.id
+       AND match.match_state = 'accepted'
+      JOIN ArtistMetadata canonical ON canonical.id = match.artist_id
+      WHERE item.provider = ?
+        AND item.entity_type = 'artist'
+        AND item.provider_id = ?
+      ORDER BY
+        CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+        match.updated_at DESC
       LIMIT 1
     `).get(provider, artist.providerId) as {
       artist_mbid?: string | null;
-      match_status?: string | null;
-      match_confidence?: number | null;
-      match_method?: string | null;
+      match_state?: string | null;
+      confidence?: number | null;
+      method?: string | null;
     } | undefined;
 
     if (cached?.artist_mbid) {
       return {
         mbid: cached.artist_mbid,
-        status: cached.match_status === "probable" ? "probable" : "verified",
-        confidence: cached.match_confidence ?? 1,
-        method: cached.match_method || "provider-artist-cache",
+        status: (cached.confidence ?? 1) >= 0.99 ? "verified" : "probable",
+        confidence: cached.confidence ?? 1,
+        method: cached.method || "provider-artist-cache",
       };
     }
 
@@ -776,35 +785,6 @@ export class ProviderArtistIdentityService {
   }
 
   static store(provider: string, artist: ProviderArtistIdentityInput, resolution: ProviderArtistIdentityResolution, _localArtistId?: string | null): void {
-    db.prepare(`
-      INSERT INTO ProviderItems (
-        provider, entity_type, provider_id, artist_mbid,
-        title, match_status, match_confidence, match_method, cover, popularity, provider_url, updated_at
-      )
-      VALUES (?, 'artist', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-        artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
-        title = excluded.title,
-        match_status = excluded.match_status,
-        match_confidence = excluded.match_confidence,
-        match_method = excluded.match_method,
-        cover = excluded.cover,
-        popularity = excluded.popularity,
-        provider_url = excluded.provider_url,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(
-      provider,
-      artist.providerId,
-      resolution.mbid || null,
-      artist.name,
-      resolution.status,
-      resolution.confidence,
-      resolution.method,
-      artist.picture || null,
-      artist.popularity ?? null,
-      artist.providerUrl || artist.providerUrls?.[0] || null,
-    );
-
     const providerItemId = new ProviderCatalogRepository(db).upsertItem({
       provider,
       entityType: "artist",
@@ -816,6 +796,8 @@ export class ProviderArtistIdentityService {
       coverId: /^https?:\/\//i.test(String(artist.picture || "")) ? null : artist.picture || null,
       artworkUrl: /^https?:\/\//i.test(String(artist.picture || "")) ? artist.picture || null : null,
     });
+    db.prepare("DELETE FROM ProviderArtistIgnores WHERE provider_artist_item_id = ?")
+      .run(providerItemId);
     if (resolution.mbid) {
       const canonicalArtist = db.prepare(`
         SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1
@@ -852,17 +834,29 @@ export class ProviderArtistIdentityService {
     updatedAt: string | null;
   }> {
     const rows = db.prepare(`
-      SELECT provider, provider_id, title, match_status, match_method, updated_at
-      FROM ProviderItems
-      WHERE entity_type = 'artist' AND artist_mbid IS NULL
-        AND COALESCE(match_status, '') != 'ignored'
-      ORDER BY title COLLATE NOCASE ASC
+      SELECT
+        item.provider,
+        item.provider_id,
+        item.title,
+        item.updated_at
+      FROM ProviderItems item
+      WHERE item.entity_type = 'artist'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ProviderArtistMatches match
+          WHERE match.provider_artist_item_id = item.id
+            AND match.match_state = 'accepted'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ProviderArtistIgnores ignored
+          WHERE ignored.provider_artist_item_id = item.id
+        )
+      ORDER BY item.title COLLATE NOCASE ASC
     `).all() as Array<{
       provider: string;
       provider_id: string;
       title?: string | null;
-      match_status?: string | null;
-      match_method?: string | null;
       updated_at?: string | null;
     }>;
 
@@ -870,8 +864,8 @@ export class ProviderArtistIdentityService {
       provider: row.provider,
       providerId: row.provider_id,
       name: row.title || row.provider_id,
-      status: row.match_status || "provider_only",
-      method: row.match_method || "unknown",
+      status: "provider_only",
+      method: "provider-artist-unmatched",
       updatedAt: row.updated_at ?? null,
     }));
   }

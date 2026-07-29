@@ -338,57 +338,31 @@ export function createCatalogSchema(db: Database.Database): void {
     CREATE TABLE ProviderItems (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider TEXT NOT NULL,
-      entity_type TEXT NOT NULL,
+      entity_type TEXT NOT NULL CHECK(entity_type IN ('artist', 'release', 'track', 'video')),
       provider_id TEXT NOT NULL,
-      provider_type TEXT,
-      duration_ms INTEGER,
-      availability_reason TEXT,
-      checked_at TEXT,
-      cover_id TEXT,
-      artwork_url TEXT,
-      artist_mbid TEXT,
-      release_group_mbid TEXT,
-      release_mbid TEXT,
-      track_mbid TEXT,
-      recording_mbid TEXT,
       title TEXT,
       version TEXT,
-      explicit BOOLEAN,
-      quality TEXT,
-      type TEXT,                          -- album offer type: album/single/ep/compilation/...
+      provider_type TEXT,
       upc TEXT,
       isrc TEXT,
-      duration INT,
-      volume_count INTEGER,               -- album offer medium/disc count
-      track_number INTEGER,               -- track offer position on its medium
-      volume_number INTEGER,              -- track offer medium/disc number
-      replay_gain REAL,                   -- provider-only: track loudness normalization (MB has none)
-      peak REAL,                          -- provider-only: track peak amplitude
-      bpm REAL,                           -- provider-only: tempo
-      musical_key TEXT,                   -- provider-only: musical key
+      duration_ms INTEGER,
       release_date TEXT,
-      availability TEXT,
-      library_slot TEXT NOT NULL DEFAULT 'stereo',
-      artist_metadata_id INTEGER,
-      album_id INTEGER,
-      cover TEXT,
-      popularity INTEGER,
-      review_text TEXT,
-      review_score REAL,
-      copyright TEXT,
-      audio_quality TEXT,
-      discovered_from_artist_mbid TEXT,
-      album_release_id INTEGER,
-      track_id INTEGER,
-      recording_id INTEGER,
-      provider_album_id TEXT,             -- owning provider album id for track/video offers
+      explicit INTEGER CHECK(explicit IS NULL OR explicit IN (0, 1)),
+      availability TEXT NOT NULL DEFAULT 'unknown',
+      availability_reason TEXT,
+      checked_at TEXT,
       provider_url TEXT,
-      asset_id TEXT,
-      match_status TEXT,
-      match_confidence REAL,
-      match_method TEXT,
-      match_evidence TEXT,
-      provider_artist_name TEXT,
+      cover_id TEXT,
+      artwork_url TEXT,
+      volume_count INTEGER,
+      replay_gain REAL,
+      peak REAL,
+      bpm REAL,
+      musical_key TEXT,
+      popularity INTEGER,
+      video_quality TEXT,
+      copyright TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(provider, entity_type, provider_id)
     );
@@ -484,6 +458,14 @@ export function createCatalogSchema(db: Database.Database): void {
       UNIQUE(provider_artist_item_id, artist_id),
       FOREIGN KEY(provider_artist_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
       FOREIGN KEY(artist_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE ProviderArtistIgnores (
+      provider_artist_item_id INTEGER PRIMARY KEY,
+      decision_source TEXT NOT NULL CHECK(decision_source = 'manual'),
+      reason TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(provider_artist_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE
     );
 
     CREATE TABLE ProviderReleaseMatches (
@@ -583,7 +565,7 @@ export function createCatalogSchema(db: Database.Database): void {
     BEFORE INSERT ON ProviderReleaseMembers
     BEGIN
       SELECT CASE
-        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_release_item_id) NOT IN ('release', 'album')
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_release_item_id) != 'release'
           THEN RAISE(ABORT, 'provider release member parent must be a release')
         WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.member_item_id) NOT IN ('track', 'video')
           THEN RAISE(ABORT, 'provider release member must be a track or video')
@@ -619,22 +601,9 @@ export function createCatalogSchema(db: Database.Database): void {
   // Tracks already has UNIQUE(release_mbid, medium_position, position) and both
   // covering indexes below lead with album_release_id, so no single-column
   // idx_tracks_album_release_id / idx_mb_tracks_release_position is created.
-  db.exec("CREATE INDEX idx_provider_items_mb_artist ON ProviderItems(provider, artist_mbid, entity_type)");
-  db.exec("CREATE INDEX idx_provider_items_mb_release_group ON ProviderItems(provider, release_group_mbid, entity_type)");
-  db.exec("CREATE INDEX idx_provider_items_mb_release ON ProviderItems(provider, release_mbid, entity_type)");
-  db.exec("CREATE INDEX idx_provider_items_recording ON ProviderItems(provider, recording_mbid, entity_type)");
-  db.exec("CREATE INDEX idx_provider_items_entity_track ON ProviderItems(entity_type, track_mbid)");
-  db.exec("CREATE INDEX idx_provider_items_entity_recording ON ProviderItems(entity_type, recording_mbid)");
-  db.exec("CREATE INDEX idx_provider_items_entity_release_group ON ProviderItems(entity_type, release_group_mbid, library_slot)");
-  // Artist-scoped video/slot filters (artist page + offer lists) need artist_mbid
-  // ahead of library_slot; the release-group composite above cannot serve that plan.
-  db.exec("CREATE INDEX idx_provider_items_entity_artist_slot ON ProviderItems(entity_type, artist_mbid, library_slot)");
-  db.exec("CREATE INDEX idx_provider_items_upc ON ProviderItems(provider, upc)");
-  db.exec("CREATE INDEX idx_provider_items_isrc ON ProviderItems(provider, isrc)");
-  db.exec("CREATE INDEX idx_provider_items_match ON ProviderItems(provider, entity_type, match_status)");
-  db.exec("CREATE INDEX idx_provider_items_recording_id ON ProviderItems(recording_id)");
-  db.exec("CREATE INDEX idx_provider_items_track_id ON ProviderItems(track_id, entity_type)");
-  db.exec("CREATE INDEX idx_provider_items_provider_album ON ProviderItems(provider_album_id, entity_type)");
+  db.exec("CREATE INDEX idx_provider_items_type ON ProviderItems(provider, entity_type, provider_id)");
+  db.exec("CREATE INDEX idx_provider_items_upc ON ProviderItems(provider, upc) WHERE upc IS NOT NULL");
+  db.exec("CREATE INDEX idx_provider_items_isrc ON ProviderItems(provider, isrc) WHERE isrc IS NOT NULL");
   // The download-queue list resolves each item's metadata by provider_id (N+1
   // lookups in DownloadQueueQueryService). Every other ProviderItems index leads
   // with `provider` (the provider *name*), so a `WHERE provider_id = ?` lookup

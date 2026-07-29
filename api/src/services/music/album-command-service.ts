@@ -87,23 +87,40 @@ export class AlbumCommandService {
               pi.provider_id,
               pi.title AS provider_title,
               pi.version,
-              pi.quality
+              COALESCE(variant.provider_quality_label, variant.quality_class) AS quality
             FROM Tracks t
-            JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
-            JOIN Albums album ON album.mbid = ar.release_group_mbid
-            LEFT JOIN ArtistMetadata artist ON artist.mbid = ar.artist_mbid
+            JOIN AlbumReleases ar ON ar.id = t.album_release_id
+            JOIN Albums album ON album.id = ar.release_group_id
+            LEFT JOIN ArtistMetadata artist ON artist.id = album.artist_metadata_id
+            LEFT JOIN ProviderTrackMatches provider_match
+              ON provider_match.track_id = t.id
+             AND provider_match.match_state = 'accepted'
+            LEFT JOIN ProviderReleaseMembers provider_member
+              ON provider_member.id = provider_match.provider_release_member_id
             LEFT JOIN ProviderItems pi
-              ON pi.entity_type IN ('track', 'recording')
-             AND (
-                pi.track_id = t.id
-                OR pi.track_mbid = t.mbid
-                OR pi.recording_mbid = t.recording_mbid
+              ON pi.id = provider_member.member_item_id
+             AND pi.entity_type = 'track'
+            LEFT JOIN ProviderItemAudioVariants variant
+              ON variant.id = (
+                SELECT candidate.id
+                FROM ProviderItemAudioVariants candidate
+                WHERE candidate.provider_item_id = pi.id
+                  AND candidate.availability = 'available'
+                ORDER BY
+                  CASE candidate.quality_class
+                    WHEN 'hires-lossless' THEN 0
+                    WHEN 'lossless' THEN 1
+                    WHEN 'lossy' THEN 2
+                    ELSE 3
+                  END,
+                  candidate.id
+                LIMIT 1
              )
             WHERE t.mbid = ? OR CAST(t.id AS TEXT) = ?
             ORDER BY
               CASE WHEN pi.provider_id IS NULL THEN 1 ELSE 0 END,
-              COALESCE(pi.match_confidence, 0) DESC,
-              CASE COALESCE(pi.match_status, '') WHEN 'verified' THEN 0 WHEN 'matched' THEN 1 ELSE 2 END,
+              CASE WHEN provider_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+              COALESCE(provider_match.confidence, 0) DESC,
               pi.updated_at DESC
             LIMIT 1
         `).get(trackId, trackId) as any;

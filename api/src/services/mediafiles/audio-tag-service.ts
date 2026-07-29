@@ -938,8 +938,15 @@ export class AudioTagService {
           AND CAST(lf.provider_id AS TEXT) IN (
             SELECT CAST(scope_item.provider_id AS TEXT)
             FROM ProviderItems scope_item
+            JOIN ProviderReleaseMembers scope_member
+              ON scope_member.member_item_id = scope_item.id
+            JOIN ProviderReleaseMatches scope_match
+              ON scope_match.provider_release_item_id = scope_member.provider_release_item_id
+             AND scope_match.match_state = 'accepted'
+            JOIN AlbumReleases scope_release ON scope_release.id = scope_match.release_id
+            JOIN Albums scope_group ON scope_group.id = scope_release.release_group_id
             WHERE scope_item.entity_type = 'track'
-              AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+              AND (scope_group.mbid = ? OR scope_release.mbid = ?)
           )
         )
       )`);
@@ -974,8 +981,15 @@ export class AudioTagService {
           AND CAST(lf.provider_id AS TEXT) IN (
             SELECT CAST(scope_item.provider_id AS TEXT)
             FROM ProviderItems scope_item
+            JOIN ProviderReleaseMembers scope_member
+              ON scope_member.member_item_id = scope_item.id
+            JOIN ProviderReleaseMatches scope_match
+              ON scope_match.provider_release_item_id = scope_member.provider_release_item_id
+             AND scope_match.match_state = 'accepted'
+            JOIN AlbumReleases scope_release ON scope_release.id = scope_match.release_id
+            JOIN Albums scope_group ON scope_group.id = scope_release.release_group_id
             WHERE scope_item.entity_type = 'track'
-              AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+              AND (scope_group.mbid = ? OR scope_release.mbid = ?)
           )
         )
       )`);
@@ -1020,7 +1034,8 @@ export class AudioTagService {
           CASE WHEN provider_canonical_track.length_ms IS NOT NULL THEN ROUND(provider_canonical_track.length_ms / 1000.0) END,
           CASE WHEN canonical_recording.length_ms IS NOT NULL THEN ROUND(canonical_recording.length_ms / 1000.0) END,
           CASE WHEN provider_recording.length_ms IS NOT NULL THEN ROUND(provider_recording.length_ms / 1000.0) END,
-          provider_track.duration
+          CASE WHEN provider_track.duration_ms IS NOT NULL
+            THEN ROUND(provider_track.duration_ms / 1000.0) END
         ) AS media_duration,
         COALESCE(canonical_release.date, ar.date, provider_track.release_date, provider_album.release_date) AS media_release_date,
         COALESCE(canonical_track.position, provider_canonical_track.position) AS media_track_number,
@@ -1040,7 +1055,7 @@ export class AudioTagService {
         provider_track.peak AS media_peak,
         provider_track.musical_key AS media_musical_key,
         COALESCE(canonical_group.title, canonical_release.title, alb.title, provider_album.title) AS album_title,
-        CASE WHEN COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid, provider_track.release_group_mbid) IS NOT NULL THEN NULL ELSE provider_album.version END AS album_version,
+        CASE WHEN COALESCE(canonical_group.mbid, alb.mbid) IS NOT NULL THEN NULL ELSE provider_album.version END AS album_version,
         COALESCE(canonical_release.date, ar.date, provider_album.release_date) AS album_release_date,
         canonical_release.media_count AS album_num_volumes,
         COALESCE(canonical_release.barcode, provider_album.upc) AS album_upc,
@@ -1057,104 +1072,118 @@ export class AudioTagService {
           alb.review_text
         ) AS album_review_text,
         COALESCE(canonical_recording.credits, provider_recording.credits) AS media_credits,
-        COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, provider_canonical_track.recording_mbid, provider_track.recording_mbid, provider_recording.mbid) AS media_mbid,
+        COALESCE(lf.canonical_recording_mbid, canonical_recording.mbid, provider_recording.mbid) AS media_mbid,
         lf.acoustid_id AS media_acoustid_id,
         lf.fingerprint AS media_acoustid_fingerprint,
         lf.fingerprint_duration AS media_fingerprint_duration,
         provider_track.explicit AS media_explicit,
-        COALESCE(lf.canonical_release_mbid, canonical_track.release_mbid, provider_canonical_track.release_mbid, provider_track.release_mbid, provider_album.release_mbid) AS album_mbid,
-        COALESCE(lf.canonical_release_group_mbid, provider_track.release_group_mbid, provider_album.release_group_mbid) AS album_mb_release_group_id,
+        COALESCE(lf.canonical_release_mbid, canonical_release.mbid, ar.mbid) AS album_mbid,
+        COALESCE(lf.canonical_release_group_mbid, canonical_group.mbid, alb.mbid) AS album_mb_release_group_id,
         -- The file's OWN canonical release group (no hybrid provider-track fallback):
         -- the album identity the UI resolves the cover by. Used for cover embedding
         -- so a hybrid-matched track can never pull a foreign album's art.
         lf.canonical_release_group_mbid AS canonical_release_group_mbid,
         provider_album.provider_id AS album_provider_id,
-        COALESCE(lf.canonical_artist_mbid, canonical_recording.artist_mbid, provider_recording.artist_mbid, provider_track.artist_mbid, provider_album.artist_mbid, artist.mbid) AS artist_mbid,
+        COALESCE(lf.canonical_artist_mbid, canonical_recording.artist_mbid, provider_recording.artist_mbid, canonical_group.artist_mbid, alb.artist_mbid, artist.mbid) AS artist_mbid,
         COALESCE(canonical_release.status, ar.status) AS release_status,
         COALESCE(canonical_release.country, ar.country) AS release_country,
         COALESCE(canonical_group.primary_type, alb.primary_type) AS release_primary_type,
         COALESCE(canonical_group.secondary_types, alb.secondary_types) AS release_secondary_types,
-        COALESCE(lf.canonical_release_mbid, canonical_track.release_mbid, provider_canonical_track.release_mbid, provider_track.release_mbid, provider_album.release_mbid) AS canonical_release_mbid,
-        COALESCE(lf.canonical_track_mbid, canonical_track.mbid, provider_canonical_track.mbid, provider_track.track_mbid) AS canonical_track_mbid,
-        COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid, provider_canonical_track.recording_mbid, provider_track.recording_mbid, provider_recording.mbid) AS canonical_recording_mbid,
+        COALESCE(lf.canonical_release_mbid, canonical_release.mbid, ar.mbid) AS canonical_release_mbid,
+        COALESCE(lf.canonical_track_mbid, canonical_track.mbid, provider_canonical_track.mbid) AS canonical_track_mbid,
+        COALESCE(lf.canonical_recording_mbid, canonical_recording.mbid, provider_recording.mbid) AS canonical_recording_mbid,
         canonical_recording.artist_credit AS recording_artist_credit,
         canonical_recording.credits AS recording_data
       FROM TrackFiles lf
       JOIN Artists artist ON artist.id = lf.artist_id
-      LEFT JOIN Tracks canonical_track ON canonical_track.mbid = lf.canonical_track_mbid
-      LEFT JOIN AlbumReleases canonical_release ON canonical_release.mbid = lf.canonical_release_mbid
-      LEFT JOIN Albums canonical_group ON canonical_group.mbid = lf.canonical_release_group_mbid
+      LEFT JOIN Tracks canonical_track
+        ON canonical_track.id = lf.track_id
+        OR (lf.track_id IS NULL AND canonical_track.mbid = lf.canonical_track_mbid)
+      LEFT JOIN AlbumReleases canonical_release
+        ON canonical_release.id = lf.album_release_id
+        OR (lf.album_release_id IS NULL AND canonical_release.mbid = lf.canonical_release_mbid)
+      LEFT JOIN Albums canonical_group
+        ON canonical_group.id = lf.release_group_id
+        OR (lf.release_group_id IS NULL AND canonical_group.mbid = lf.canonical_release_group_mbid)
       LEFT JOIN Recordings canonical_recording
-        ON canonical_recording.mbid = COALESCE(lf.canonical_recording_mbid, canonical_track.recording_mbid)
+        ON canonical_recording.id = COALESCE(lf.recording_id, canonical_track.recording_id)
+        OR (
+          lf.recording_id IS NULL
+          AND canonical_track.recording_id IS NULL
+          AND canonical_recording.mbid = lf.canonical_recording_mbid
+        )
       LEFT JOIN ProviderItems provider_track
-        ON provider_track.rowid = (
-          SELECT candidate.rowid
+        ON provider_track.id = (
+          SELECT candidate.id
           FROM ProviderItems candidate
           WHERE candidate.entity_type = 'track'
-            AND (
-              (
-                CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END IS NOT NULL
-                AND CAST(candidate.provider_id AS TEXT) = CAST(CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END AS TEXT)
-                AND (lf.provider IS NULL OR candidate.provider = lf.provider)
-              )
-              OR (
-                CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END IS NULL
-                AND (
-                  (lf.canonical_track_mbid IS NOT NULL AND candidate.track_mbid = lf.canonical_track_mbid)
-                  OR (lf.canonical_recording_mbid IS NOT NULL AND candidate.recording_mbid = lf.canonical_recording_mbid)
-                  OR (canonical_track.mbid IS NOT NULL AND candidate.track_mbid = canonical_track.mbid)
-                  OR (canonical_recording.mbid IS NOT NULL AND candidate.recording_mbid = canonical_recording.mbid)
-                  OR (canonical_recording.id IS NOT NULL AND candidate.recording_id = canonical_recording.id)
-                )
-              )
-            )
-          ORDER BY
-            CASE candidate.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-            candidate.updated_at DESC,
-            candidate.provider_id ASC
+            AND CASE WHEN lf.provider_entity_type = 'track' THEN lf.provider_id END IS NOT NULL
+            AND CAST(candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+            AND (lf.provider IS NULL OR candidate.provider = lf.provider)
+          ORDER BY candidate.updated_at DESC, candidate.provider_id ASC
           LIMIT 1
         )
+      LEFT JOIN ProviderReleaseMembers provider_member
+        ON provider_member.id = (
+          SELECT candidate_member.id
+          FROM ProviderReleaseMembers candidate_member
+          LEFT JOIN ProviderTrackMatches candidate_match
+            ON candidate_match.provider_release_member_id = candidate_member.id
+           AND candidate_match.match_state = 'accepted'
+          WHERE candidate_member.member_item_id = provider_track.id
+          ORDER BY
+            CASE
+              WHEN candidate_match.track_id = canonical_track.id THEN 0
+              WHEN candidate_match.recording_id = canonical_recording.id THEN 1
+              ELSE 2
+            END,
+            candidate_member.id
+          LIMIT 1
+        )
+      LEFT JOIN ProviderTrackMatches provider_track_match
+        ON provider_track_match.provider_release_member_id = provider_member.id
+       AND provider_track_match.match_state = 'accepted'
       LEFT JOIN Tracks provider_canonical_track
-        ON provider_canonical_track.mbid = provider_track.track_mbid
-        OR (provider_track.track_id IS NOT NULL AND provider_canonical_track.id = provider_track.track_id)
+        ON provider_canonical_track.id = provider_track_match.track_id
       LEFT JOIN Recordings provider_recording
-        ON provider_recording.mbid = COALESCE(provider_track.recording_mbid, provider_canonical_track.recording_mbid)
-        OR (provider_track.recording_id IS NOT NULL AND provider_recording.id = provider_track.recording_id)
+        ON provider_recording.id = provider_track_match.recording_id
       LEFT JOIN ProviderItems provider_album
-        ON provider_album.rowid = (
-          SELECT album_candidate.rowid
+        ON provider_album.id = (
+          SELECT album_candidate.id
           FROM ProviderItems album_candidate
-          WHERE album_candidate.entity_type = 'album'
+          WHERE album_candidate.entity_type = 'release'
             AND (
               (
-                COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, provider_track.provider_album_id) IS NOT NULL
-                AND CAST(album_candidate.provider_id AS TEXT) = CAST(COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, provider_track.provider_album_id) AS TEXT)
+                lf.provider_entity_type IN ('album', 'release')
+                AND CAST(album_candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
                 AND (COALESCE(lf.provider, provider_track.provider) IS NULL OR album_candidate.provider = COALESCE(lf.provider, provider_track.provider))
               )
-              OR (
-                COALESCE(CASE WHEN lf.provider_entity_type = 'album' THEN lf.provider_id END, provider_track.provider_album_id) IS NULL
-                AND (
-                  (lf.canonical_release_mbid IS NOT NULL AND album_candidate.release_mbid = lf.canonical_release_mbid)
-                  OR (lf.canonical_release_group_mbid IS NOT NULL AND album_candidate.release_group_mbid = lf.canonical_release_group_mbid)
-                  OR (canonical_release.mbid IS NOT NULL AND album_candidate.release_mbid = canonical_release.mbid)
-                  OR (canonical_group.mbid IS NOT NULL AND album_candidate.release_group_mbid = canonical_group.mbid)
-                  OR (provider_track.release_mbid IS NOT NULL AND album_candidate.release_mbid = provider_track.release_mbid)
-                  OR (provider_track.release_group_mbid IS NOT NULL AND album_candidate.release_group_mbid = provider_track.release_group_mbid)
-                )
-              )
+              OR album_candidate.id = provider_member.provider_release_item_id
             )
-          ORDER BY
-            CASE album_candidate.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-            album_candidate.updated_at DESC,
-            album_candidate.provider_id ASC
+          ORDER BY CASE WHEN album_candidate.id = provider_member.provider_release_item_id THEN 0 ELSE 1 END,
+            album_candidate.updated_at DESC
           LIMIT 1
         )
-      LEFT JOIN AlbumReleases ar ON ar.mbid = COALESCE(lf.canonical_release_mbid, provider_album.release_mbid, provider_track.release_mbid)
-      LEFT JOIN Albums alb ON alb.mbid = COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid, provider_track.release_group_mbid)
+      LEFT JOIN ProviderReleaseMatches provider_release_match
+        ON provider_release_match.id = (
+          SELECT candidate_release_match.id
+          FROM ProviderReleaseMatches candidate_release_match
+          WHERE candidate_release_match.provider_release_item_id = provider_album.id
+            AND candidate_release_match.match_state = 'accepted'
+          ORDER BY
+            CASE WHEN candidate_release_match.release_id = canonical_release.id THEN 0 ELSE 1 END,
+            CASE candidate_release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+            candidate_release_match.confidence DESC
+          LIMIT 1
+        )
+      LEFT JOIN AlbumReleases ar
+        ON ar.id = COALESCE(canonical_release.id, canonical_track.album_release_id, provider_release_match.release_id)
+      LEFT JOIN Albums alb
+        ON alb.id = COALESCE(canonical_group.id, ar.release_group_id)
       LEFT JOIN ArtistMetadata am ON am.mbid = artist.mbid
       WHERE ${whereClause}
         AND (provider_track.provider_id IS NOT NULL OR canonical_track.mbid IS NOT NULL OR provider_canonical_track.mbid IS NOT NULL OR canonical_recording.mbid IS NOT NULL OR provider_recording.mbid IS NOT NULL)
-      ORDER BY lf.artist_id, COALESCE(lf.canonical_release_group_mbid, provider_album.release_group_mbid), COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id
+      ORDER BY lf.artist_id, COALESCE(canonical_group.mbid, alb.mbid), COALESCE(canonical_track.medium_position, provider_canonical_track.medium_position, 1), COALESCE(canonical_track.position, provider_canonical_track.position, 0), lf.id
       ${includePaging ? "LIMIT ? OFFSET ?" : ""}
     `;
   }

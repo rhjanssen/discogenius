@@ -17,12 +17,9 @@ type AudioOfferRow = {
   provider: string;
   provider_id: string;
   quality: string | null;
-  library_slot: string | null;
-  match_evidence: string | null;
+  quality_class: string | null;
+  spatial_format: string | null;
   provider_album_id?: string | null;
-  parent_quality?: string | null;
-  parent_library_slot?: string | null;
-  parent_match_evidence?: string | null;
 };
 
 type SpatialRankedDownloadOffer = RankedDownloadOffer & {
@@ -66,20 +63,8 @@ function sortSpatialOffers(offers: SpatialRankedDownloadOffer[]): RankedDownload
     .map(({ spatialRank: _spatialRank, ...offer }) => offer);
 }
 
-function parseProviderQualityTags(value: string | null | undefined): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value) as { providerQualityTags?: unknown };
-    return Array.isArray(parsed?.providerQualityTags)
-      ? parsed.providerQualityTags.map((tag) => String(tag ?? "").trim()).filter(Boolean)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 function rowSlot(row: AudioOfferRow): string {
-  return String(row.library_slot || "stereo").trim().toLowerCase();
+  return row.quality_class === "spatial" ? "spatial" : "stereo";
 }
 
 function toDownloadOffer(row: AudioOfferRow): RankedDownloadOffer {
@@ -96,14 +81,8 @@ function toDownloadOffer(row: AudioOfferRow): RankedDownloadOffer {
 function toSpatialDownloadOffer(row: AudioOfferRow): SpatialRankedDownloadOffer | null {
   const projection = projectProviderSpatialOffer(
     row.provider,
-    [
-      row.quality,
-      row.parent_quality,
-      ...parseProviderQualityTags(row.match_evidence),
-      ...parseProviderQualityTags(row.parent_match_evidence),
-    ],
-    rowSlot(row) === "spatial"
-      || String(row.parent_library_slot || "").trim().toLowerCase() === "spatial",
+    [row.quality, row.spatial_format],
+    rowSlot(row) === "spatial",
   );
   if (!projection) return null;
 
@@ -139,13 +118,24 @@ export function listRankedAlbumOffers(
   const rows = db.prepare(`
     SELECT item.provider,
            CAST(item.provider_id AS TEXT) AS provider_id,
-           item.quality,
-           item.library_slot,
-           item.match_evidence
+           COALESCE(
+             variant.provider_quality_label,
+             variant.spatial_format,
+             variant.quality_class
+           ) AS quality,
+           variant.quality_class,
+           variant.spatial_format
     FROM ProviderItems item
-    WHERE item.entity_type = 'album'
-      AND item.release_group_mbid = ?
-      AND (item.match_status IS NULL OR LOWER(item.match_status) <> 'rejected')
+    JOIN ProviderReleaseMatches release_match
+      ON release_match.provider_release_item_id = item.id
+     AND release_match.match_state = 'accepted'
+    JOIN AlbumReleases release ON release.id = release_match.release_id
+    JOIN Albums release_group ON release_group.id = release.release_group_id
+    LEFT JOIN ProviderItemAudioVariants variant
+      ON variant.provider_item_id = item.id
+     AND ${availabilitySql("variant.availability")}
+    WHERE item.entity_type = 'release'
+      AND release_group.mbid = ?
       AND ${availabilitySql("item.availability")}
   `).all(mbid) as AudioOfferRow[];
 
@@ -174,32 +164,32 @@ export function listRankedTrackOffers(options: {
   const rows = db.prepare(`
     SELECT item.provider,
            CAST(item.provider_id AS TEXT) AS provider_id,
-           item.quality,
-           CAST(item.provider_album_id AS TEXT) AS provider_album_id,
-           item.library_slot,
-           item.match_evidence,
-           parent.quality AS parent_quality,
-           parent.library_slot AS parent_library_slot,
-           parent.match_evidence AS parent_match_evidence
+           COALESCE(
+             variant.provider_quality_label,
+             variant.spatial_format,
+             variant.quality_class
+           ) AS quality,
+           variant.quality_class,
+           variant.spatial_format,
+           CAST(parent.provider_id AS TEXT) AS provider_album_id
     FROM ProviderItems item
-    LEFT JOIN ProviderItems parent
-      ON parent.provider = item.provider
-     AND parent.entity_type = 'album'
-     AND parent.provider_id = item.provider_album_id
+    JOIN ProviderReleaseMembers member ON member.member_item_id = item.id
+    JOIN ProviderItems parent ON parent.id = member.provider_release_item_id
+    JOIN ProviderTrackMatches track_match
+      ON track_match.provider_release_member_id = member.id
+     AND track_match.match_state = 'accepted'
+    LEFT JOIN Tracks track ON track.id = track_match.track_id
+    JOIN Recordings recording ON recording.id = track_match.recording_id
+    LEFT JOIN ProviderItemAudioVariants variant
+      ON variant.provider_item_id = item.id
+     AND ${availabilitySql("variant.availability")}
     WHERE item.entity_type = 'track'
-      AND (item.match_status IS NULL OR LOWER(item.match_status) <> 'rejected')
       AND (
-        (? != '' AND item.track_mbid = ?)
-        OR (? != '' AND item.recording_mbid = ?)
+        (? != '' AND track.mbid = ?)
+        OR (? != '' AND recording.mbid = ?)
       )
       AND ${availabilitySql("item.availability")}
-      AND (
-        parent.rowid IS NULL
-        OR (
-          (parent.match_status IS NULL OR LOWER(parent.match_status) <> 'rejected')
-          AND ${availabilitySql("parent.availability")}
-        )
-      )
+      AND ${availabilitySql("parent.availability")}
   `).all(trackMbid, trackMbid, recordingMbid, recordingMbid) as AudioOfferRow[];
 
   const slot = String(options.librarySlot || "stereo").trim().toLowerCase();
@@ -225,11 +215,16 @@ export function listRankedVideoOffers(recordingRef: string | null | undefined): 
   if (!key) return [];
 
   const rows = db.prepare(`
-    SELECT item.provider, CAST(item.provider_id AS TEXT) AS provider_id, item.quality
+    SELECT item.provider,
+           CAST(item.provider_id AS TEXT) AS provider_id,
+           item.video_quality AS quality
     FROM ProviderItems item
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = item.id
+     AND video_match.match_state = 'accepted'
+    JOIN Recordings recording ON recording.id = video_match.recording_id
     WHERE item.entity_type = 'video'
-      AND (item.match_status IS NULL OR LOWER(item.match_status) <> 'rejected')
-      AND (CAST(item.recording_id AS TEXT) = ? OR item.recording_mbid = ?)
+      AND (CAST(video_match.recording_id AS TEXT) = ? OR recording.mbid = ?)
       AND ${availabilitySql("item.availability")}
   `).all(key, key) as Array<{
     provider: string;

@@ -33,53 +33,26 @@ type LibraryFileRow = {
 
 const canonicalSourceQualitySql = `
   COALESCE(
+    lf.source_quality,
     (
-      SELECT exact.quality
-      FROM ProviderItems exact
-      WHERE exact.provider = lf.provider
-        AND exact.entity_type = lf.provider_entity_type
-        AND exact.provider_id = lf.provider_id
+      SELECT COALESCE(variant.provider_quality_label, variant.quality_class)
+      FROM ProviderItemAudioVariants variant
+      WHERE variant.id = lf.source_audio_variant_id
       LIMIT 1
     ),
     (
-      SELECT item.quality
+      SELECT item.video_quality
       FROM ProviderItems item
-      WHERE item.entity_type IN ('track', 'video')
-        AND item.quality IS NOT NULL
-        AND (lf.provider IS NULL OR item.provider = lf.provider)
-        AND (lf.library_slot IS NULL OR item.library_slot = lf.library_slot)
-        AND (
-          (lf.canonical_track_mbid IS NOT NULL AND item.track_mbid = lf.canonical_track_mbid)
-          OR (lf.canonical_recording_mbid IS NOT NULL AND item.recording_mbid = lf.canonical_recording_mbid)
-        )
-      ORDER BY
-        CASE WHEN item.track_mbid IS NOT NULL THEN 0 ELSE 1 END,
-        CASE WHEN item.recording_mbid IS NOT NULL THEN 0 ELSE 1 END,
-        item.updated_at DESC
+      WHERE lf.provider_entity_type = 'video'
+        AND item.provider = lf.provider
+        AND item.entity_type = 'video'
+        AND item.provider_id = lf.provider_id
       LIMIT 1
     )
   )
 `;
 
-const canonicalAlbumQualitySql = `
-  (
-    SELECT item.quality
-    FROM ProviderItems item
-    WHERE item.entity_type = 'album'
-      AND item.quality IS NOT NULL
-      AND (lf.provider IS NULL OR item.provider = lf.provider)
-      AND (lf.library_slot IS NULL OR item.library_slot = lf.library_slot)
-      AND (
-        (lf.canonical_release_mbid IS NOT NULL AND item.release_mbid = lf.canonical_release_mbid)
-        OR (lf.canonical_release_group_mbid IS NOT NULL AND item.release_group_mbid = lf.canonical_release_group_mbid)
-      )
-    ORDER BY
-      CASE WHEN item.release_mbid IS NOT NULL THEN 0 ELSE 1 END,
-      CASE WHEN item.release_group_mbid IS NOT NULL THEN 0 ELSE 1 END,
-      item.updated_at DESC
-    LIMIT 1
-  )
-`;
+const canonicalAlbumQualitySql = "NULL";
 
 type TextLibraryFileRow = {
   id: number;
@@ -286,7 +259,8 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
     FROM (
       SELECT
         id, artist_id, NULL AS album_id, provider_id AS media_id, recording_id, file_path, relative_path, library_root, file_type, filename, extension,
-        quality, file_size, bitrate, sample_rate, bit_depth, channels, codec, video_codec, width, height, duration,
+        quality, source_quality, imported_quality, source_audio_variant_id,
+        file_size, bitrate, sample_rate, bit_depth, channels, codec, video_codec, width, height, duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
         provider, provider_entity_type, provider_id, library_slot,
@@ -296,7 +270,8 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       UNION ALL
 
       SELECT id + 10000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
-        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
+        NULL AS quality, NULL AS source_quality, NULL AS imported_quality, NULL AS source_audio_variant_id,
+        NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
         provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id, library_slot AS library_slot,
@@ -306,7 +281,8 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       UNION ALL
 
       SELECT id + 20000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, file_type AS file_type, NULL AS filename, extension AS extension,
-        NULL AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
+        NULL AS quality, NULL AS source_quality, NULL AS imported_quality, NULL AS source_audio_variant_id,
+        NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
         provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id, library_slot AS library_slot,
@@ -316,7 +292,8 @@ export function listLibraryFiles(options: ListLibraryFilesOptions = {}): Library
       UNION ALL
 
       SELECT id + 30000000 AS id, artist_id AS artist_id, COALESCE(canonical_release_group_mbid, canonical_release_mbid) AS album_id, COALESCE(canonical_track_mbid, canonical_recording_mbid, provider_id) AS media_id, NULL AS recording_id, file_path AS file_path, relative_path AS relative_path, library_root AS library_root, 'lyrics' AS file_type, NULL AS filename, extension AS extension,
-        quality AS quality, NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
+        quality AS quality, NULL AS source_quality, NULL AS imported_quality, NULL AS source_audio_variant_id,
+        NULL AS file_size, NULL AS bitrate, NULL AS sample_rate, NULL AS bit_depth, NULL AS channels, NULL AS codec, NULL AS video_codec, NULL AS width, NULL AS height, NULL AS duration,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid,
         provider AS provider, provider_entity_type AS provider_entity_type, provider_id AS provider_id, library_slot AS library_slot,

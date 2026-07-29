@@ -297,7 +297,10 @@ function getCanonicalVideoMetadataForRow(row: LibraryFileRow, recordingMbid: str
            recording.is_video AS is_video,
            recording.metadata_status AS metadata_status
     FROM ProviderItems pi
-    JOIN Recordings recording ON recording.id = pi.recording_id
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = pi.id
+     AND video_match.match_state = 'accepted'
+    JOIN Recordings recording ON recording.id = video_match.recording_id
     WHERE ${providerClause}
       pi.entity_type = 'video'
       AND pi.provider_id = ?
@@ -603,7 +606,10 @@ function resolveExpectedLibraryRootKey(
     const isVideo = db.prepare(`
       SELECT 1
       FROM ProviderItems pi
-      JOIN Recordings r ON r.id = pi.recording_id
+      JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = pi.id
+       AND video_match.match_state = 'accepted'
+      JOIN Recordings r ON r.id = video_match.recording_id
       WHERE pi.entity_type = 'video'
         AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
         AND r.is_video = 1
@@ -1059,15 +1065,23 @@ export class LibraryFilesService {
           // video offer by provider_id alone so inline gating still applies.
           const byOffer = provider
             ? db.prepare(`
-                SELECT recording_id FROM ProviderItems
-                WHERE provider = ? AND entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                  AND recording_id IS NOT NULL
+                SELECT video_match.recording_id
+                FROM ProviderItems item
+                JOIN ProviderVideoMatches video_match
+                  ON video_match.provider_video_item_id = item.id
+                 AND video_match.match_state = 'accepted'
+                WHERE item.provider = ? AND item.entity_type = 'video'
+                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
                 LIMIT 1
               `).get(provider, providerId) as { recording_id?: number | null } | undefined
             : db.prepare(`
-                SELECT recording_id FROM ProviderItems
-                WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                  AND recording_id IS NOT NULL
+                SELECT video_match.recording_id
+                FROM ProviderItems item
+                JOIN ProviderVideoMatches video_match
+                  ON video_match.provider_video_item_id = item.id
+                 AND video_match.match_state = 'accepted'
+                WHERE item.entity_type = 'video'
+                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
                 LIMIT 1
               `).get(providerId) as { recording_id?: number | null } | undefined;
           return byOffer?.recording_id == null ? null : Number(byOffer.recording_id);
@@ -2744,7 +2758,10 @@ export class LibraryFilesService {
        AND pi.provider = lf.provider
        AND pi.entity_type = lf.provider_entity_type
        AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-      LEFT JOIN Recordings vrec ON vrec.id = pi.recording_id
+      LEFT JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = pi.id
+       AND video_match.match_state = 'accepted'
+      LEFT JOIN Recordings vrec ON vrec.id = video_match.recording_id
       WHERE lf.artist_id = ?
         -- must have at least one canonical anchor to be classifiable
         AND (

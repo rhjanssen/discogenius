@@ -1,5 +1,7 @@
 import { db } from "../../database.js";
 import { getMusicBrainzHeaders, scheduleMusicBrainzRequest } from "../mediafiles/fingerprint.js";
+import { ProviderMatchRepository } from "../music/provider-match-repository.js";
+import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import { parseProviderResourceIdentity } from "./provider-url-identity.js";
 
 type MusicBrainzRecording = {
@@ -275,37 +277,11 @@ function upsertMusicBrainzVideoUrlOffers(
     return 0;
   }
 
-  const recordingMbid = nullableText(video.id);
   const title = nullableText(video.title);
-  const durationSec = Number(video.length || 0) > 0
-    ? Math.round(Number(video.length) / 1000)
-    : null;
+  const durationMs = Number(video.length || 0) > 0 ? Math.round(Number(video.length)) : null;
   let created = 0;
-
-  const upsert = db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_mbid,
-      title, duration, availability, library_slot, recording_id, provider_url,
-      match_status, match_confidence, match_method, match_evidence, updated_at
-    ) VALUES (?, 'video', ?, ?, ?, ?, ?, 'available', 'video', ?, ?,
-      'verified', 0.98, 'musicbrainz-recording-url', ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-      artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
-      recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
-      title = COALESCE(NULLIF(TRIM(excluded.title), ''), ProviderItems.title),
-      duration = COALESCE(excluded.duration, ProviderItems.duration),
-      availability = 'available',
-      library_slot = 'video',
-      -- MB URL ownership wins over fuzzy catalog matches: the recording that
-      -- carries the free-streaming link is the identity for this provider id.
-      recording_id = excluded.recording_id,
-      provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
-      match_status = excluded.match_status,
-      match_confidence = excluded.match_confidence,
-      match_method = excluded.match_method,
-      match_evidence = excluded.match_evidence,
-      updated_at = CURRENT_TIMESTAMP
-  `);
+  const catalog = new ProviderCatalogRepository(db);
+  const matches = new ProviderMatchRepository(db);
 
   for (const relation of video.relations || []) {
     const relationType = String(relation.type || "").toLowerCase();
@@ -321,21 +297,32 @@ function upsertMusicBrainzVideoUrlOffers(
       continue;
     }
 
-    upsert.run(
-      identity.provider,
-      identity.id,
-      nullableText(artistMbid),
-      recordingMbid,
+    const providerVideoItemId = catalog.upsertItem({
+      provider: identity.provider,
+      entityType: "video",
+      providerId: identity.id,
       title,
-      durationSec,
+      durationMs,
+      availability: "available",
+      providerUrl: resource,
+    });
+    matches.upsertVideoMatch({
+      providerVideoItemId,
       recordingId,
-      resource,
-      JSON.stringify({
-        recordingMbid,
-        url: resource,
-        relationType,
-      }),
-    );
+      decision: {
+        matchState: "accepted",
+        decisionSource: "automatic",
+        confidence: 0.98,
+        method: "musicbrainz-recording-url",
+        matcherVersion: 1,
+        evidence: {
+          recordingMbid: nullableText(video.id),
+          artistMbid: nullableText(artistMbid),
+          url: resource,
+          relationType,
+        },
+      },
+    });
     created += 1;
   }
 

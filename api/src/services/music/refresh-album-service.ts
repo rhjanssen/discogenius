@@ -160,7 +160,7 @@ function providerCredits(value: unknown): ProviderArtistCreditFacts[] | undefine
     return credits.length > 0 ? credits : undefined;
 }
 
-function providerAudioVariants(
+export function providerAudioVariants(
     providerId: string,
     rawValues: Iterable<unknown>,
 ): ProviderAudioVariantInput[] {

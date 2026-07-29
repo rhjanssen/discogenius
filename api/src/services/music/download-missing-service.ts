@@ -135,16 +135,16 @@ export class DownloadMissingService {
                     artist.name as artist_name,
                     pi.provider,
                     pi.provider_id,
-                    pi.quality as quality
+                    pi.video_quality as quality
                 FROM Recordings r
                 LEFT JOIN ArtistMetadata artist ON artist.mbid = r.artist_mbid
                 LEFT JOIN Artists managed_artist ON managed_artist.mbid = r.artist_mbid
+                JOIN ProviderVideoMatches video_match
+                  ON video_match.recording_id = r.id
+                 AND video_match.match_state = 'accepted'
                 JOIN ProviderItems pi
-                  ON pi.entity_type = 'video'
-                 AND (
-                    pi.recording_id = r.id
-                    OR (r.mbid IS NOT NULL AND pi.recording_mbid = r.mbid)
-                 )
+                  ON pi.id = video_match.provider_video_item_id
+                 AND pi.entity_type = 'video'
                 WHERE r.is_video = 1
                   AND r.monitored = 1
                   AND pi.provider_id IS NOT NULL
@@ -160,8 +160,8 @@ export class DownloadMissingService {
             videosQuery += `
                 ORDER BY
                   r.title ASC,
-                  COALESCE(pi.match_confidence, 0) DESC,
-                  CASE COALESCE(pi.match_status, '') WHEN 'verified' THEN 0 WHEN 'matched' THEN 1 ELSE 2 END,
+                  CASE WHEN video_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+                  video_match.confidence DESC,
                   pi.updated_at DESC
                 ${Number.isFinite(maxToQueue) ? "LIMIT ?" : ""}
             `;
@@ -219,14 +219,17 @@ export class DownloadMissingService {
                     COALESCE(r.title, '') AS video_title,
                     r.video_variant AS video_variant
                 FROM TrackFiles lf
-                LEFT JOIN ProviderItems pi
-                  ON pi.entity_type = 'video'
-                 AND pi.provider = lf.provider
-                 AND CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+                LEFT JOIN ProviderItems provider_item
+                  ON provider_item.entity_type = 'video'
+                 AND provider_item.provider = lf.provider
+                 AND CAST(provider_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+                LEFT JOIN ProviderVideoMatches video_match
+                  ON video_match.provider_video_item_id = provider_item.id
+                 AND video_match.match_state = 'accepted'
                 LEFT JOIN Recordings r
-                  ON r.id = COALESCE(lf.recording_id, pi.recording_id)
+                  ON r.id = COALESCE(lf.recording_id, video_match.recording_id)
                 JOIN RecordingRelations rr
-                  ON CAST(rr.source_recording_id AS TEXT) = CAST(COALESCE(lf.recording_id, pi.recording_id) AS TEXT)
+                  ON CAST(rr.source_recording_id AS TEXT) = CAST(COALESCE(lf.recording_id, video_match.recording_id) AS TEXT)
                  AND rr.relation_type = 'provider_video_for'
                 WHERE lf.file_type = 'video'
                   AND CAST(rr.target_recording_id AS TEXT) = ?

@@ -166,17 +166,17 @@ function loadAlbumProviderItem(albumId: string, provider?: string | null): Album
         SELECT
             pi.provider,
             pi.provider_id,
-            pi.artist_mbid,
-            pi.release_group_mbid,
-            pi.release_mbid,
+            artist_metadata.mbid AS artist_mbid,
+            rg.mbid AS release_group_mbid,
+            release.mbid AS release_mbid,
             pi.title AS provider_title,
             pi.version AS provider_version,
-            pi.quality AS provider_quality,
+            COALESCE(variant.provider_quality_label, variant.quality_class) AS provider_quality,
             pi.explicit AS provider_explicit,
-            pi.duration AS provider_duration,
+            pi.duration_ms / 1000.0 AS provider_duration,
             pi.release_date AS provider_release_date,
             pi.upc AS provider_upc,
-            pi.asset_id AS provider_asset_id,
+            pi.cover_id AS provider_asset_id,
 
             rg.title AS release_group_title,
             rg.primary_type AS primary_type,
@@ -199,12 +199,24 @@ function loadAlbumProviderItem(albumId: string, provider?: string | null): Album
             artist.id AS artist_id,
             COALESCE(artist.name, artist_metadata.name) AS artist_name
         FROM ProviderItems pi
-        LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
-        LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
-        LEFT JOIN ArtistMetadata artist_metadata
-          ON artist_metadata.mbid = COALESCE(pi.artist_mbid, rg.artist_mbid, release.artist_mbid)
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.provider_release_item_id = pi.id
+         AND release_match.match_state = 'accepted'
+        JOIN AlbumReleases release ON release.id = release_match.release_id
+        JOIN Albums rg ON rg.id = release.release_group_id
+        LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.id = rg.artist_metadata_id
         LEFT JOIN Artists artist ON artist.mbid = artist_metadata.mbid
-        WHERE pi.entity_type = 'album'
+        LEFT JOIN ProviderItemAudioVariants variant
+          ON variant.id = (
+            SELECT candidate.id
+            FROM ProviderItemAudioVariants candidate
+            WHERE candidate.provider_item_id = pi.id
+            ORDER BY
+              CASE candidate.availability WHEN 'available' THEN 0 ELSE 1 END,
+              candidate.id
+            LIMIT 1
+          )
+        WHERE pi.entity_type = 'release'
           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
           AND (? = '' OR pi.provider = ?)
         ORDER BY pi.updated_at DESC
@@ -217,17 +229,17 @@ function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
         SELECT
             pi.provider,
             pi.provider_id,
-            pi.artist_mbid,
-            pi.release_group_mbid,
-            pi.release_mbid,
-            pi.recording_mbid,
-            CAST(pi.album_id AS TEXT) AS album_id,
+            artist_metadata.mbid AS artist_mbid,
+            album.mbid AS release_group_mbid,
+            release.mbid AS release_mbid,
+            recording.mbid AS recording_mbid,
+            CAST(album.id AS TEXT) AS album_id,
             pi.title AS provider_title,
-            pi.quality AS provider_quality,
+            pi.video_quality AS provider_quality,
             pi.explicit AS provider_explicit,
-            pi.duration AS provider_duration,
+            pi.duration_ms / 1000.0 AS provider_duration,
             pi.release_date AS provider_release_date,
-            pi.asset_id AS provider_asset_id,
+            pi.cover_id AS provider_asset_id,
 
             recording.title AS recording_title,
             recording.release_date AS recording_release_date,
@@ -240,14 +252,18 @@ function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
             album.title AS album_title,
             release.mbid AS album_mbid
         FROM ProviderItems pi
-        LEFT JOIN Recordings recording
-          ON recording.id = pi.recording_id
-          OR (pi.recording_mbid IS NOT NULL AND recording.mbid = pi.recording_mbid)
-        LEFT JOIN ArtistMetadata artist_metadata
-          ON artist_metadata.mbid = COALESCE(pi.artist_mbid, recording.artist_mbid)
+        JOIN ProviderVideoMatches video_match
+          ON video_match.provider_video_item_id = pi.id
+         AND video_match.match_state = 'accepted'
+        JOIN Recordings recording ON recording.id = video_match.recording_id
+        LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.id = recording.artist_metadata_id
         LEFT JOIN Artists artist ON artist.mbid = artist_metadata.mbid
-        LEFT JOIN Albums album ON album.mbid = pi.release_group_mbid
-        LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
+        LEFT JOIN RecordingRelations relation
+          ON relation.source_recording_id = recording.id
+         AND relation.relation_type IN ('provider_video_for', 'music_video_for')
+        LEFT JOIN Tracks related_track ON related_track.recording_id = relation.target_recording_id
+        LEFT JOIN AlbumReleases release ON release.id = related_track.album_release_id
+        LEFT JOIN Albums album ON album.id = release.release_group_id
         WHERE pi.entity_type = 'video'
           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
         ORDER BY pi.updated_at DESC

@@ -386,7 +386,7 @@ router.get("/", async (req, res) => {
                 selected_variant.quality_class
               ) AS quality,
               COALESCE(provider_track.explicit, 0) AS explicit,
-              COALESCE(ROUND(COALESCE(t.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0), 0) AS duration,
+              COALESCE(ROUND(COALESCE(t.length_ms, recording.length_ms, provider_track.duration_ms, 0) / 1000.0), 0) AS duration,
               COALESCE(release.date, rg.first_release_date) AS release_date,
               rg.mbid AS release_group_mbid,
               rg.images AS rg_images,
@@ -506,7 +506,7 @@ router.get("/", async (req, res) => {
               recording.title,
               artist.name AS artist_name,
               recording.monitored AS monitored,
-              COALESCE(recording.cover_image_id, provider_video.cover_id, provider_video.asset_id) AS cover,
+              COALESCE(recording.cover_image_id, provider_video.cover_id) AS cover,
               recording.cover_image_url AS cover_url,
               COALESCE(recording.release_date, provider_video.release_date) AS release_date,
               COALESCE((
@@ -516,7 +516,7 @@ router.get("/", async (req, res) => {
                   AND lf.recording_id = recording.id
                 ORDER BY lf.verified_at DESC, lf.id DESC
                 LIMIT 1
-              ), provider_video.quality) AS current_quality
+              ), provider_video.video_quality) AS current_quality
             FROM Recordings recording
             LEFT JOIN ArtistMetadata artist ON artist.id = recording.artist_metadata_id
             LEFT JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid

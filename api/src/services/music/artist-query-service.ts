@@ -531,9 +531,7 @@ const artistReleaseGroupLibraryStateCte = `
       COALESCE(provider_item.provider, plan.provider) AS selected_provider,
       provider_item.provider_id AS selected_provider_id,
       provider_item.provider_url,
-      COALESCE(
-        provider_item.quality,
-        (
+      (
           SELECT COALESCE(
             NULLIF(TRIM(CASE
               WHEN json_valid(plan_track.source_quality_snapshot)
@@ -549,12 +547,11 @@ const artistReleaseGroupLibraryStateCte = `
           WHERE plan_track.plan_id = plan.id
           ORDER BY plan_track.id
           LIMIT 1
-        )
       ) AS quality,
       release_match.match_state AS match_status,
       release_match.method AS match_method,
-      COALESCE(provider_item.cover_id, provider_item.cover, provider_item.artwork_url) AS cover,
-      provider_item.asset_id,
+      COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,
+      provider_item.cover_id AS asset_id,
       provider_item.explicit,
       ROW_NUMBER() OVER (
         PARTITION BY
@@ -1015,56 +1012,39 @@ export class ArtistQueryService {
            UNION
            SELECT id FROM Recordings WHERE is_video = 1 AND artist_mbid = @artistMbid
          ),
-         provider_video_candidate_ids(recording_id, provider_rowid) AS MATERIALIZED (
-           SELECT artist_videos.id, provider_item.rowid
-           FROM artist_videos
-           CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_recording_id
-           WHERE provider_item.recording_id = artist_videos.id
-             AND provider_item.entity_type = 'video'
-
-           UNION
-
-           SELECT artist_videos.id, provider_item.rowid
-           FROM artist_videos
-           JOIN Recordings recording ON recording.id = artist_videos.id
-           CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_entity_recording
-           WHERE recording.mbid IS NOT NULL
-             AND provider_item.entity_type = 'video'
-             AND provider_item.recording_mbid = recording.mbid
-         ),
          provider_videos AS (
            SELECT
-             candidates.recording_id,
+             video_match.recording_id,
              provider_item.provider,
              provider_item.provider_id,
              provider_item.title,
-             provider_item.duration,
+             provider_item.duration_ms / 1000.0 AS duration,
              provider_item.release_date,
              provider_item.version,
              provider_item.explicit,
-             provider_item.quality,
-             provider_item.asset_id,
+             provider_item.video_quality AS quality,
+             provider_item.cover_id AS asset_id,
              provider_item.provider_url,
              provider_item.popularity,
              ROW_NUMBER() OVER (
-               PARTITION BY candidates.recording_id
+               PARTITION BY video_match.recording_id
                ORDER BY
                  CASE
-                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%2160%'
-                     OR UPPER(COALESCE(provider_item.quality, '')) LIKE '%4K%'
-                     OR UPPER(COALESCE(provider_item.quality, '')) = 'UHD'
+                   WHEN UPPER(COALESCE(provider_item.video_quality, '')) LIKE '%2160%'
+                     OR UPPER(COALESCE(provider_item.video_quality, '')) LIKE '%4K%'
+                     OR UPPER(COALESCE(provider_item.video_quality, '')) = 'UHD'
                    THEN 5
-                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%1440%'
-                     OR UPPER(COALESCE(provider_item.quality, '')) LIKE '%QHD%'
+                   WHEN UPPER(COALESCE(provider_item.video_quality, '')) LIKE '%1440%'
+                     OR UPPER(COALESCE(provider_item.video_quality, '')) LIKE '%QHD%'
                    THEN 4
-                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%1080%'
-                     OR UPPER(COALESCE(provider_item.quality, '')) = 'FHD'
+                   WHEN UPPER(COALESCE(provider_item.video_quality, '')) LIKE '%1080%'
+                     OR UPPER(COALESCE(provider_item.video_quality, '')) = 'FHD'
                    THEN 3
-                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%720%'
-                     OR UPPER(COALESCE(provider_item.quality, '')) = 'HD'
+                   WHEN UPPER(COALESCE(provider_item.video_quality, '')) LIKE '%720%'
+                     OR UPPER(COALESCE(provider_item.video_quality, '')) = 'HD'
                    THEN 2
-                   WHEN UPPER(COALESCE(provider_item.quality, '')) LIKE '%480%'
-                     OR UPPER(COALESCE(provider_item.quality, '')) = 'SD'
+                   WHEN UPPER(COALESCE(provider_item.video_quality, '')) LIKE '%480%'
+                     OR UPPER(COALESCE(provider_item.video_quality, '')) = 'SD'
                    THEN 1
                    ELSE 0
                  END DESC,
@@ -1075,13 +1055,17 @@ export class ArtistQueryService {
                    WHEN 'tidal' THEN 100
                    ELSE 0
                  END DESC,
-                 COALESCE(provider_item.match_confidence, 0) DESC,
+                 video_match.confidence DESC,
                  provider_item.updated_at DESC,
                  provider_item.provider_id ASC
              ) AS rank
-           FROM provider_video_candidate_ids candidates
-           CROSS JOIN ProviderItems provider_item
-           WHERE provider_item.rowid = candidates.provider_rowid
+           FROM artist_videos
+           JOIN ProviderVideoMatches video_match
+             ON video_match.recording_id = artist_videos.id
+            AND video_match.match_state = 'accepted'
+           JOIN ProviderItems provider_item
+             ON provider_item.id = video_match.provider_video_item_id
+            AND provider_item.entity_type = 'video'
          ),
          downloaded_videos(recording_id) AS (
            SELECT DISTINCT artist_videos.id
@@ -1229,7 +1213,7 @@ export class ArtistQueryService {
           top_tracks.id AS track_id,
           provider_item.provider,
           provider_item.provider_id,
-          provider_item.duration,
+          provider_item.duration_ms AS duration,
           provider_item.explicit,
           COALESCE(
             NULLIF(TRIM(CASE
@@ -1238,8 +1222,7 @@ export class ArtistQueryService {
               ELSE plan_track.source_quality_snapshot
             END), ''),
             NULLIF(TRIM(variant.provider_quality_label), ''),
-            variant.quality_class,
-            provider_item.quality
+            variant.quality_class
           ) AS quality,
           ROW_NUMBER() OVER (
             PARTITION BY top_tracks.id
@@ -1280,7 +1263,7 @@ export class ArtistQueryService {
       provider_albums AS (
         SELECT
           top_tracks.id AS track_id,
-          provider_item.asset_id,
+          provider_item.cover_id AS asset_id,
           ROW_NUMBER() OVER (
             PARTITION BY top_tracks.id
             ORDER BY

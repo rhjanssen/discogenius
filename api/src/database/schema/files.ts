@@ -9,12 +9,15 @@ export function createTrackFileForeignKeyTriggers(db: Database.Database): void {
       recording_id = COALESCE(
         recording_id,
         (SELECT id FROM Recordings WHERE mbid = NEW.canonical_recording_mbid),
-        (SELECT pi.recording_id FROM ProviderItems pi
+        (SELECT video_match.recording_id
+           FROM ProviderItems pi
+           JOIN ProviderVideoMatches video_match
+             ON video_match.provider_video_item_id = pi.id
+            AND video_match.match_state = 'accepted'
            WHERE pi.entity_type = 'video'
              AND NEW.file_type = 'video'
              AND pi.provider = NEW.provider
              AND CAST(pi.provider_id AS TEXT) = CAST(NEW.provider_id AS TEXT)
-             AND pi.recording_id IS NOT NULL
            LIMIT 1)
       )
     WHERE id = NEW.id;

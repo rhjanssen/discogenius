@@ -26,6 +26,8 @@ export interface ProviderItemFacts {
   peak?: number | null;
   bpm?: number | null;
   musicalKey?: string | null;
+  popularity?: number | null;
+  videoQuality?: string | null;
   copyright?: string | null;
 }
 
@@ -84,34 +86,36 @@ export class ProviderCatalogRepository {
         provider, entity_type, provider_id, title, version, provider_type, upc, isrc,
         duration_ms, release_date, explicit, availability, availability_reason,
         checked_at, provider_url, cover_id, artwork_url, volume_count, replay_gain,
-        peak, bpm, musical_key, copyright, updated_at
+        peak, bpm, musical_key, popularity, video_quality, copyright, updated_at
       ) VALUES (
         @provider, @entityType, @providerId, @title, @version, @providerType, @upc, @isrc,
         @durationMs, @releaseDate, @explicit, @availability, @availabilityReason,
         @checkedAt, @providerUrl, @coverId, @artworkUrl, @volumeCount, @replayGain,
-        @peak, @bpm, @musicalKey, @copyright, CURRENT_TIMESTAMP
+        @peak, @bpm, @musicalKey, @popularity, @videoQuality, @copyright, CURRENT_TIMESTAMP
       )
       ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-        title = excluded.title,
-        version = excluded.version,
-        provider_type = excluded.provider_type,
-        upc = excluded.upc,
-        isrc = excluded.isrc,
-        duration_ms = excluded.duration_ms,
-        release_date = excluded.release_date,
-        explicit = excluded.explicit,
+        title = COALESCE(excluded.title, ProviderItems.title),
+        version = COALESCE(excluded.version, ProviderItems.version),
+        provider_type = COALESCE(excluded.provider_type, ProviderItems.provider_type),
+        upc = COALESCE(excluded.upc, ProviderItems.upc),
+        isrc = COALESCE(excluded.isrc, ProviderItems.isrc),
+        duration_ms = COALESCE(excluded.duration_ms, ProviderItems.duration_ms),
+        release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
+        explicit = COALESCE(excluded.explicit, ProviderItems.explicit),
         availability = excluded.availability,
         availability_reason = excluded.availability_reason,
         checked_at = excluded.checked_at,
-        provider_url = excluded.provider_url,
-        cover_id = excluded.cover_id,
-        artwork_url = excluded.artwork_url,
-        volume_count = excluded.volume_count,
-        replay_gain = excluded.replay_gain,
-        peak = excluded.peak,
-        bpm = excluded.bpm,
-        musical_key = excluded.musical_key,
-        copyright = excluded.copyright,
+        provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
+        cover_id = COALESCE(excluded.cover_id, ProviderItems.cover_id),
+        artwork_url = COALESCE(excluded.artwork_url, ProviderItems.artwork_url),
+        volume_count = COALESCE(excluded.volume_count, ProviderItems.volume_count),
+        replay_gain = COALESCE(excluded.replay_gain, ProviderItems.replay_gain),
+        peak = COALESCE(excluded.peak, ProviderItems.peak),
+        bpm = COALESCE(excluded.bpm, ProviderItems.bpm),
+        musical_key = COALESCE(excluded.musical_key, ProviderItems.musical_key),
+        popularity = COALESCE(excluded.popularity, ProviderItems.popularity),
+        video_quality = COALESCE(excluded.video_quality, ProviderItems.video_quality),
+        copyright = COALESCE(excluded.copyright, ProviderItems.copyright),
         updated_at = CURRENT_TIMESTAMP
       RETURNING id
     `).get({
@@ -137,6 +141,8 @@ export class ProviderCatalogRepository {
       peak: facts.peak ?? null,
       bpm: facts.bpm ?? null,
       musicalKey: text(facts.musicalKey),
+      popularity: facts.popularity ?? null,
+      videoQuality: text(facts.videoQuality),
       copyright: text(facts.copyright),
     }) as { id: number };
     return row.id;

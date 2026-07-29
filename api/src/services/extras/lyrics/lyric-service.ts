@@ -135,36 +135,90 @@ function lyricFileToResolved(
   };
 }
 
+function providerTrackProjectionJoins(itemAlias: string): string {
+  const matchAlias = `${itemAlias}_match`;
+  const memberAlias = `${itemAlias}_member`;
+  const releaseMatchAlias = `${itemAlias}_release_match`;
+  const trackAlias = `${itemAlias}_track`;
+  const recordingAlias = `${itemAlias}_recording`;
+  const releaseAlias = `${itemAlias}_release`;
+  const groupAlias = `${itemAlias}_group`;
+  const artistAlias = `${itemAlias}_artist`;
+  const variantAlias = `${itemAlias}_variant`;
+  return `
+    LEFT JOIN ProviderTrackMatches ${matchAlias}
+      ON ${matchAlias}.id = (
+        SELECT candidate_match.id
+        FROM ProviderTrackMatches candidate_match
+        JOIN ProviderReleaseMembers candidate_member
+          ON candidate_member.id = candidate_match.provider_release_member_id
+        JOIN ProviderReleaseMatches candidate_release_match
+          ON candidate_release_match.id = candidate_match.provider_release_match_id
+         AND candidate_release_match.match_state = 'accepted'
+        WHERE candidate_member.member_item_id = ${itemAlias}.id
+          AND candidate_match.match_state = 'accepted'
+        ORDER BY
+          CASE WHEN candidate_match.track_id IS NULL THEN 1 ELSE 0 END,
+          CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+          candidate_match.confidence DESC,
+          candidate_match.updated_at DESC
+        LIMIT 1
+      )
+    LEFT JOIN ProviderReleaseMembers ${memberAlias}
+      ON ${memberAlias}.id = ${matchAlias}.provider_release_member_id
+    LEFT JOIN ProviderReleaseMatches ${releaseMatchAlias}
+      ON ${releaseMatchAlias}.id = ${matchAlias}.provider_release_match_id
+     AND ${releaseMatchAlias}.match_state = 'accepted'
+    LEFT JOIN Tracks ${trackAlias} ON ${trackAlias}.id = ${matchAlias}.track_id
+    LEFT JOIN Recordings ${recordingAlias} ON ${recordingAlias}.id = ${matchAlias}.recording_id
+    LEFT JOIN AlbumReleases ${releaseAlias} ON ${releaseAlias}.id = ${releaseMatchAlias}.release_id
+    LEFT JOIN Albums ${groupAlias} ON ${groupAlias}.id = ${releaseAlias}.release_group_id
+    LEFT JOIN ArtistMetadata ${artistAlias}
+      ON ${artistAlias}.id = COALESCE(
+        ${groupAlias}.artist_metadata_id,
+        ${recordingAlias}.artist_metadata_id
+      )
+    LEFT JOIN ProviderItemAudioVariants ${variantAlias}
+      ON ${variantAlias}.id = (
+        SELECT candidate_variant.id
+        FROM ProviderItemAudioVariants candidate_variant
+        WHERE candidate_variant.provider_item_id = ${itemAlias}.id
+          AND LOWER(COALESCE(candidate_variant.availability, 'unknown')) != 'unavailable'
+        ORDER BY
+          CASE candidate_variant.quality_class
+            WHEN 'lossless' THEN 0
+            WHEN 'hires-lossless' THEN 1
+            WHEN 'lossy' THEN 2
+            WHEN 'spatial' THEN 3
+            ELSE 4
+          END,
+          candidate_variant.id
+        LIMIT 1
+      )
+  `;
+}
+
 function loadProviderTrack(provider: string, providerMediaId: string | number): ProviderTrackLyricsRow | null {
   const row = db.prepare(`
     SELECT
       pi.provider,
       CAST(pi.provider_id AS TEXT) AS id,
-      CAST(pi.artist_mbid AS TEXT) AS artist_id,
-      CAST(pi.album_id AS TEXT) AS album_id,
-      COALESCE(t.title, r.title, pi.title) AS title,
-      t.position AS track_number,
-      t.medium_position AS volume_number,
-      COALESCE(pi.duration, ROUND(r.length_ms / 1000.0)) AS duration,
-      pi.quality,
-      COALESCE(r.mbid, pi.recording_mbid) AS mbid,
+      CAST(pi_artist.mbid AS TEXT) AS artist_id,
+      CAST(pi_group.mbid AS TEXT) AS album_id,
+      COALESCE(pi_track.title, pi_recording.title, pi.title) AS title,
+      pi_track.position AS track_number,
+      pi_track.medium_position AS volume_number,
+      COALESCE(ROUND(pi.duration_ms / 1000.0), ROUND(pi_recording.length_ms / 1000.0)) AS duration,
+      COALESCE(pi_variant.provider_quality_label, pi_variant.quality_class) AS quality,
+      pi_recording.mbid AS mbid,
       pi.entity_type AS type,
-      pi.release_group_mbid,
-      pi.release_mbid,
-      pi.track_mbid,
-      pi.recording_mbid,
-      pi.recording_id
+      pi_group.mbid AS release_group_mbid,
+      pi_release.mbid AS release_mbid,
+      pi_track.mbid AS track_mbid,
+      pi_recording.mbid AS recording_mbid,
+      pi_match.recording_id
     FROM ProviderItems pi
-    LEFT JOIN Tracks t
-      ON (pi.track_mbid IS NOT NULL AND t.mbid = pi.track_mbid)
-      OR (pi.track_mbid IS NULL
-          AND pi.release_mbid IS NOT NULL
-          AND pi.recording_mbid IS NOT NULL
-          AND t.release_mbid = pi.release_mbid
-          AND t.recording_mbid = pi.recording_mbid)
-    LEFT JOIN Recordings r
-      ON (pi.recording_id IS NOT NULL AND r.id = pi.recording_id)
-      OR (pi.recording_mbid IS NOT NULL AND r.mbid = pi.recording_mbid)
+    ${providerTrackProjectionJoins("pi")}
     WHERE pi.provider = ?
       AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
       AND pi.entity_type = 'track'
@@ -177,11 +231,21 @@ function loadProviderTrack(provider: string, providerMediaId: string | number): 
 
 function getProviderItemRecordingId(provider: string, providerMediaId: string): number | null {
   const row = db.prepare(`
-    SELECT recording_id
-    FROM ProviderItems
-    WHERE provider = ?
-      AND entity_type = 'track'
-      AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+    SELECT track_match.recording_id
+    FROM ProviderItems item
+    JOIN ProviderReleaseMembers member ON member.member_item_id = item.id
+    JOIN ProviderTrackMatches track_match
+      ON track_match.provider_release_member_id = member.id
+     AND track_match.match_state = 'accepted'
+    JOIN ProviderReleaseMatches release_match
+      ON release_match.id = track_match.provider_release_match_id
+     AND release_match.match_state = 'accepted'
+    WHERE item.provider = ?
+      AND item.entity_type = 'track'
+      AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+    ORDER BY
+      CASE track_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+      track_match.confidence DESC
     LIMIT 1
   `).get(provider, providerMediaId) as { recording_id?: number | null } | undefined;
 
@@ -285,22 +349,22 @@ function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow
     SELECT
       candidate.provider,
       CAST(candidate.provider_id AS TEXT) AS id,
-      CAST(candidate.artist_mbid AS TEXT) AS artist_id,
-      CAST(candidate.album_id AS TEXT) AS album_id,
-      COALESCE(t.title, r.title, candidate.title) AS title,
-      t.position AS track_number,
-      t.medium_position AS volume_number,
-      COALESCE(candidate.duration, ROUND(r.length_ms / 1000.0)) AS duration,
-      candidate.quality,
-      COALESCE(r.mbid, candidate.recording_mbid) AS mbid,
+      CAST(candidate_artist.mbid AS TEXT) AS artist_id,
+      CAST(candidate_group.mbid AS TEXT) AS album_id,
+      COALESCE(candidate_track.title, candidate_recording.title, candidate.title) AS title,
+      candidate_track.position AS track_number,
+      candidate_track.medium_position AS volume_number,
+      COALESCE(ROUND(candidate.duration_ms / 1000.0), ROUND(candidate_recording.length_ms / 1000.0)) AS duration,
+      COALESCE(candidate_variant.provider_quality_label, candidate_variant.quality_class) AS quality,
+      candidate_recording.mbid AS mbid,
       candidate.entity_type AS type,
       ? AS source_release_group_mbid,
-      candidate.release_group_mbid AS candidate_release_group_mbid,
-      candidate.release_group_mbid,
-      candidate.release_mbid,
-      candidate.track_mbid,
-      candidate.recording_mbid,
-      candidate.recording_id,
+      candidate_group.mbid AS candidate_release_group_mbid,
+      candidate_group.mbid AS release_group_mbid,
+      candidate_release.mbid AS release_mbid,
+      candidate_track.mbid AS track_mbid,
+      candidate_recording.mbid AS recording_mbid,
+      candidate_match.recording_id,
       lf.id AS lyric_file_id,
       lf.file_path AS lyric_file_path,
       lf.relative_path AS lyric_relative_path,
@@ -310,32 +374,23 @@ function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow
       lf.provider_id AS lyric_provider_id,
       lf.canonical_recording_mbid AS lyric_recording_mbid
     FROM ProviderItems candidate
-    LEFT JOIN Tracks t
-      ON (candidate.track_mbid IS NOT NULL AND t.mbid = candidate.track_mbid)
-      OR (candidate.track_mbid IS NULL
-          AND candidate.release_mbid IS NOT NULL
-          AND candidate.recording_mbid IS NOT NULL
-          AND t.release_mbid = candidate.release_mbid
-          AND t.recording_mbid = candidate.recording_mbid)
-    LEFT JOIN Recordings r
-      ON (candidate.recording_id IS NOT NULL AND r.id = candidate.recording_id)
-      OR (candidate.recording_mbid IS NOT NULL AND r.mbid = candidate.recording_mbid)
+    ${providerTrackProjectionJoins("candidate")}
     JOIN LyricFiles lf
       ON (
         (lf.provider = candidate.provider
           AND lf.provider_entity_type = 'track'
           AND CAST(lf.provider_id AS TEXT) = CAST(candidate.provider_id AS TEXT))
-        OR (candidate.track_mbid IS NOT NULL AND lf.canonical_track_mbid = candidate.track_mbid)
-        OR (candidate.recording_mbid IS NOT NULL AND lf.canonical_recording_mbid = candidate.recording_mbid)
+        OR (candidate_track.mbid IS NOT NULL AND lf.canonical_track_mbid = candidate_track.mbid)
+        OR (candidate_recording.mbid IS NOT NULL AND lf.canonical_recording_mbid = candidate_recording.mbid)
       )
     WHERE candidate.provider IN (${providerPlaceholders})
-      AND CAST(candidate.artist_mbid AS TEXT) = CAST(? AS TEXT)
+      AND CAST(candidate_artist.mbid AS TEXT) = CAST(? AS TEXT)
       AND NOT (
         candidate.provider = ?
         AND CAST(candidate.provider_id AS TEXT) = CAST(? AS TEXT)
       )
       AND candidate.entity_type = 'track'
-      AND COALESCE(t.title, r.title, candidate.title) IS NOT NULL
+      AND COALESCE(candidate_track.title, candidate_recording.title, candidate.title) IS NOT NULL
   `).all(
     media.release_group_mbid,
     ...candidateProviders,
@@ -371,41 +426,32 @@ function findSourceCandidates(media: ProviderTrackLyricsRow): CandidateRow[] {
     SELECT
       candidate.provider,
       CAST(candidate.provider_id AS TEXT) AS id,
-      CAST(candidate.artist_mbid AS TEXT) AS artist_id,
-      CAST(candidate.album_id AS TEXT) AS album_id,
-      COALESCE(t.title, r.title, candidate.title) AS title,
-      t.position AS track_number,
-      t.medium_position AS volume_number,
-      COALESCE(candidate.duration, ROUND(r.length_ms / 1000.0)) AS duration,
-      candidate.quality,
-      COALESCE(r.mbid, candidate.recording_mbid) AS mbid,
+      CAST(candidate_artist.mbid AS TEXT) AS artist_id,
+      CAST(candidate_group.mbid AS TEXT) AS album_id,
+      COALESCE(candidate_track.title, candidate_recording.title, candidate.title) AS title,
+      candidate_track.position AS track_number,
+      candidate_track.medium_position AS volume_number,
+      COALESCE(ROUND(candidate.duration_ms / 1000.0), ROUND(candidate_recording.length_ms / 1000.0)) AS duration,
+      COALESCE(candidate_variant.provider_quality_label, candidate_variant.quality_class) AS quality,
+      candidate_recording.mbid AS mbid,
       candidate.entity_type AS type,
       ? AS source_release_group_mbid,
-      candidate.release_group_mbid AS candidate_release_group_mbid,
-      candidate.release_group_mbid,
-      candidate.release_mbid,
-      candidate.track_mbid,
-      candidate.recording_mbid,
-      candidate.recording_id
+      candidate_group.mbid AS candidate_release_group_mbid,
+      candidate_group.mbid AS release_group_mbid,
+      candidate_release.mbid AS release_mbid,
+      candidate_track.mbid AS track_mbid,
+      candidate_recording.mbid AS recording_mbid,
+      candidate_match.recording_id
     FROM ProviderItems candidate
-    LEFT JOIN Tracks t
-      ON (candidate.track_mbid IS NOT NULL AND t.mbid = candidate.track_mbid)
-      OR (candidate.track_mbid IS NULL
-          AND candidate.release_mbid IS NOT NULL
-          AND candidate.recording_mbid IS NOT NULL
-          AND t.release_mbid = candidate.release_mbid
-          AND t.recording_mbid = candidate.recording_mbid)
-    LEFT JOIN Recordings r
-      ON (candidate.recording_id IS NOT NULL AND r.id = candidate.recording_id)
-      OR (candidate.recording_mbid IS NOT NULL AND r.mbid = candidate.recording_mbid)
+    ${providerTrackProjectionJoins("candidate")}
     WHERE candidate.provider IN (${providerPlaceholders})
-      AND CAST(candidate.artist_mbid AS TEXT) = CAST(? AS TEXT)
+      AND CAST(candidate_artist.mbid AS TEXT) = CAST(? AS TEXT)
       AND NOT (
         candidate.provider = ?
         AND CAST(candidate.provider_id AS TEXT) = CAST(? AS TEXT)
       )
       AND candidate.entity_type = 'track'
-      AND COALESCE(t.title, r.title, candidate.title) IS NOT NULL
+      AND COALESCE(candidate_track.title, candidate_recording.title, candidate.title) IS NOT NULL
   `).all(media.release_group_mbid, ...lyricProviders, media.artist_id, media.provider, media.id) as CandidateRow[];
 
   return rows

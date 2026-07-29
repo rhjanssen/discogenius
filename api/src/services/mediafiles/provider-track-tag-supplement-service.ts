@@ -48,11 +48,21 @@ export class ProviderTrackTagSupplementService {
 
     const albumNeedsRefresh = db.prepare(`
       SELECT COUNT(*) AS total,
-             SUM(CASE WHEN replay_gain IS NULL OR peak IS NULL OR copyright IS NULL THEN 1 ELSE 0 END) AS missing
-      FROM ProviderItems
-      WHERE provider = ?
-        AND entity_type = 'track'
-        AND CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
+             SUM(CASE
+               WHEN track_item.replay_gain IS NULL
+                 OR track_item.peak IS NULL
+                 OR track_item.copyright IS NULL
+               THEN 1 ELSE 0
+             END) AS missing
+      FROM ProviderItems release_item
+      JOIN ProviderReleaseMembers member
+        ON member.provider_release_item_id = release_item.id
+      JOIN ProviderItems track_item
+        ON track_item.id = member.member_item_id
+       AND track_item.entity_type = 'track'
+      WHERE release_item.provider = ?
+        AND release_item.entity_type = 'release'
+        AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
     `);
     const trackNeedsRefresh = db.prepare(`
       SELECT replay_gain, peak, copyright

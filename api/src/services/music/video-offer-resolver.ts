@@ -17,15 +17,20 @@ function findDirectProviderVideoOffer(
         return null;
     }
     const row = db.prepare(`
-        SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality,
-               CAST(recording_id AS TEXT) AS recording_id, recording_mbid
-        FROM ProviderItems
-        WHERE entity_type = 'video'
-          AND provider = ?
-          AND CAST(provider_id AS TEXT) = ?
-          AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
-          AND (availability IS NULL
-               OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
+        SELECT item.provider,
+               CAST(item.provider_id AS TEXT) AS provider_id,
+               item.video_quality AS quality,
+               CAST(match.recording_id AS TEXT) AS recording_id,
+               recording.mbid AS recording_mbid
+        FROM ProviderItems item
+        JOIN ProviderVideoMatches match
+          ON match.provider_video_item_id = item.id
+         AND match.match_state = 'accepted'
+        JOIN Recordings recording ON recording.id = match.recording_id
+        WHERE item.entity_type = 'video'
+          AND item.provider = ?
+          AND CAST(item.provider_id AS TEXT) = ?
+          AND LOWER(CAST(item.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
         LIMIT 1
     `).get(String(provider), String(providerId)) as {
         provider: string;
@@ -57,14 +62,20 @@ export function resolveVideoOfferForProvider(provider: string, recordingRef: str
         return null;
     }
     const row = db.prepare(`
-        SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality,
-               CAST(recording_id AS TEXT) AS recording_id, recording_mbid
-        FROM ProviderItems
-        WHERE entity_type = 'video' AND provider = ?
-          AND (CAST(recording_id AS TEXT) = ? OR recording_mbid = ?)
-          AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
-          AND (availability IS NULL
-               OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
+        SELECT item.provider,
+               CAST(item.provider_id AS TEXT) AS provider_id,
+               item.video_quality AS quality,
+               CAST(match.recording_id AS TEXT) AS recording_id,
+               recording.mbid AS recording_mbid
+        FROM ProviderItems item
+        JOIN ProviderVideoMatches match
+          ON match.provider_video_item_id = item.id
+         AND match.match_state = 'accepted'
+        JOIN Recordings recording ON recording.id = match.recording_id
+        WHERE item.entity_type = 'video'
+          AND item.provider = ?
+          AND (CAST(match.recording_id AS TEXT) = ? OR recording.mbid = ?)
+          AND LOWER(CAST(item.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
     `).all(String(provider), key, key) as Array<{
         provider: string;
         provider_id: string;
@@ -202,14 +213,19 @@ export function resolvePreferredVideoOffer(recordingRef: string | null | undefin
         return null;
     }
     const offers = db.prepare(`
-        SELECT provider, CAST(provider_id AS TEXT) AS provider_id, quality,
-               CAST(recording_id AS TEXT) AS recording_id, recording_mbid
-        FROM ProviderItems
-        WHERE entity_type = 'video'
-          AND (CAST(recording_id AS TEXT) = ? OR recording_mbid = ?)
-          AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
-          AND (availability IS NULL
-               OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
+        SELECT item.provider,
+               CAST(item.provider_id AS TEXT) AS provider_id,
+               item.video_quality AS quality,
+               CAST(match.recording_id AS TEXT) AS recording_id,
+               recording.mbid AS recording_mbid
+        FROM ProviderItems item
+        JOIN ProviderVideoMatches match
+          ON match.provider_video_item_id = item.id
+         AND match.match_state = 'accepted'
+        JOIN Recordings recording ON recording.id = match.recording_id
+        WHERE item.entity_type = 'video'
+          AND (CAST(match.recording_id AS TEXT) = ? OR recording.mbid = ?)
+          AND LOWER(CAST(item.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
     `).all(key, key) as Array<{
         provider: string;
         provider_id: string;

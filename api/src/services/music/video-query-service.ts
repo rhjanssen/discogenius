@@ -180,18 +180,18 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
           THEN CAST(ROUND(recording.length_ms / 1000.0) AS INT)
           ELSE NULL
         END,
-        provider_item.duration,
+        CAST(ROUND(provider_item.duration_ms / 1000.0) AS INT),
         0
       ) AS duration,
       COALESCE(recording.release_date, provider_item.release_date) AS release_date,
       provider_item.version AS version,
       recording.video_variant AS video_variant,
       provider_item.explicit AS explicit,
-      provider_item.quality AS quality,
-      provider_item.quality AS current_quality,
+      provider_item.video_quality AS quality,
+      provider_item.video_quality AS current_quality,
       provider_item.provider AS provider,
       CAST(provider_item.provider_id AS TEXT) AS provider_id,
-      COALESCE(recording.cover_image_id, provider_item.asset_id) AS cover,
+      COALESCE(recording.cover_image_id, provider_item.cover_id) AS cover,
       recording.cover_image_url AS cover_art_url,
       provider_item.provider_url AS url,
       NULL AS path,
@@ -229,21 +229,23 @@ function getCanonicalVideoSelectSql(whereClause: string): string {
       ON recording.artist_mbid IS NOT NULL
       AND managed_artist.mbid = recording.artist_mbid
     LEFT JOIN ProviderItems provider_item
-      ON provider_item.rowid = (
-        SELECT candidate.rowid
-        FROM ProviderItems candidate
-        WHERE candidate.entity_type = 'video'
-          AND (candidate.match_status IS NULL OR LOWER(candidate.match_status) <> 'rejected')
+      ON provider_item.id = (
+        SELECT candidate.id
+        FROM ProviderVideoMatches candidate_match
+        JOIN ProviderItems candidate
+          ON candidate.id = candidate_match.provider_video_item_id
+        WHERE candidate_match.recording_id = recording.id
+          AND candidate_match.match_state = 'accepted'
+          AND candidate.entity_type = 'video'
           AND (
             candidate.availability IS NULL
             OR LOWER(CAST(candidate.availability AS TEXT))
                NOT IN ('0', 'false', 'unavailable', 'no', '')
           )
-          AND (
-            candidate.recording_id = recording.id
-            OR (recording.mbid IS NOT NULL AND candidate.recording_mbid = recording.mbid)
-          )
-        ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
+        ORDER BY
+          CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+          candidate_match.confidence DESC,
+          candidate_match.updated_at DESC
         LIMIT 1
       )
     ${whereClause}
@@ -281,16 +283,13 @@ function buildCanonicalVideoWhere(input: ListVideosQuery): {
   const providerFilter = String(input.provider || "").trim();
   if (providerFilter) {
     where.push(`recording.id IN (
-      SELECT COALESCE(provider_filter.recording_id, provider_recording.id)
+      SELECT provider_match.recording_id
       FROM ProviderItems provider_filter
-      LEFT JOIN Recordings provider_recording
-        ON provider_filter.recording_id IS NULL
-       AND provider_filter.recording_mbid IS NOT NULL
-       AND provider_recording.mbid = provider_filter.recording_mbid
+      JOIN ProviderVideoMatches provider_match
+        ON provider_match.provider_video_item_id = provider_filter.id
+       AND provider_match.match_state = 'accepted'
       WHERE provider_filter.entity_type = 'video'
         AND provider_filter.provider = ?
-        AND (provider_filter.match_status IS NULL
-             OR LOWER(provider_filter.match_status) <> 'rejected')
         AND (provider_filter.availability IS NULL
              OR LOWER(CAST(provider_filter.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
     )`);
@@ -384,30 +383,18 @@ function getGroupedVideoOfferRows(recordingIds: string[]): Map<string, GroupedVi
 
   const marks = recordingIds.map(() => "?").join(", ");
   const rows = db.prepare(`
-    SELECT CAST(pi.recording_id AS TEXT) AS recording_id,
-           pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality,
+    SELECT CAST(video_match.recording_id AS TEXT) AS recording_id,
+           pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.video_quality AS quality,
            pi.provider_url AS url
     FROM ProviderItems pi
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = pi.id
+     AND video_match.match_state = 'accepted'
     WHERE pi.entity_type = 'video'
-      AND pi.recording_id IN (${marks})
-      AND (pi.match_status IS NULL OR LOWER(pi.match_status) <> 'rejected')
+      AND video_match.recording_id IN (${marks})
       AND (pi.availability IS NULL
            OR LOWER(CAST(pi.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
-
-    UNION ALL
-
-    SELECT CAST(recording.id AS TEXT) AS recording_id,
-           pi.provider, CAST(pi.provider_id AS TEXT) AS provider_id, pi.quality,
-           pi.provider_url AS url
-    FROM ProviderItems pi
-    JOIN Recordings recording ON recording.mbid = pi.recording_mbid
-    WHERE pi.entity_type = 'video'
-      AND pi.recording_id IS NULL
-      AND recording.id IN (${marks})
-      AND (pi.match_status IS NULL OR LOWER(pi.match_status) <> 'rejected')
-      AND (pi.availability IS NULL
-           OR LOWER(CAST(pi.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
-  `).all(...recordingIds, ...recordingIds) as GroupedVideoOfferRow[];
+  `).all(...recordingIds) as GroupedVideoOfferRow[];
 
   const seen = new Set<string>();
   for (const row of rows) {
@@ -534,7 +521,7 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       video.monitored_lock AS monitored_lock,
       CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
       pi.provider AS provider,
-      pi.quality AS quality,
+      pi.video_quality AS quality,
       CAST(pi.provider_id AS TEXT) AS provider_id,
       pi.provider_url AS provider_url,
       CASE WHEN EXISTS (
@@ -611,21 +598,23 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
     JOIN Recordings video ON video.id = rr.source_recording_id AND video.is_video = 1
     JOIN Recordings audio ON audio.id = rr.target_recording_id
     LEFT JOIN ProviderItems pi
-      ON pi.rowid = (
-        SELECT candidate.rowid
-        FROM ProviderItems candidate
-        WHERE candidate.entity_type = 'video'
-          AND (candidate.match_status IS NULL OR LOWER(candidate.match_status) <> 'rejected')
+      ON pi.id = (
+        SELECT candidate.id
+        FROM ProviderVideoMatches candidate_match
+        JOIN ProviderItems candidate
+          ON candidate.id = candidate_match.provider_video_item_id
+        WHERE candidate_match.recording_id = video.id
+          AND candidate_match.match_state = 'accepted'
+          AND candidate.entity_type = 'video'
           AND (
             candidate.availability IS NULL
             OR LOWER(CAST(candidate.availability AS TEXT))
                NOT IN ('0', 'false', 'unavailable', 'no', '')
           )
-          AND (
-            candidate.recording_id = video.id
-            OR (video.mbid IS NOT NULL AND candidate.recording_mbid = video.mbid)
-          )
-        ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
+        ORDER BY
+          CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+          candidate_match.confidence DESC,
+          candidate_match.updated_at DESC
         LIMIT 1
       )
     WHERE rr.relation_type IN ('provider_video_for', 'music_video_for')
@@ -681,7 +670,7 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       video.monitored_lock AS monitored_lock,
       CASE WHEN pi.explicit IS NULL THEN NULL ELSE pi.explicit END AS explicit,
       pi.provider AS provider,
-      pi.quality AS quality,
+      pi.video_quality AS quality,
       CAST(pi.provider_id AS TEXT) AS provider_id,
       pi.provider_url AS provider_url,
       CASE WHEN EXISTS (
@@ -756,21 +745,23 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       CAST(NULL AS TEXT) AS audio_recording_mbid
     FROM Recordings video
     LEFT JOIN ProviderItems pi
-      ON pi.rowid = (
-        SELECT candidate.rowid
-        FROM ProviderItems candidate
-        WHERE candidate.entity_type = 'video'
-          AND (candidate.match_status IS NULL OR LOWER(candidate.match_status) <> 'rejected')
+      ON pi.id = (
+        SELECT candidate.id
+        FROM ProviderVideoMatches candidate_match
+        JOIN ProviderItems candidate
+          ON candidate.id = candidate_match.provider_video_item_id
+        WHERE candidate_match.recording_id = video.id
+          AND candidate_match.match_state = 'accepted'
+          AND candidate.entity_type = 'video'
           AND (
             candidate.availability IS NULL
             OR LOWER(CAST(candidate.availability AS TEXT))
                NOT IN ('0', 'false', 'unavailable', 'no', '')
           )
-          AND (
-            candidate.recording_id = video.id
-            OR (video.mbid IS NOT NULL AND candidate.recording_mbid = video.mbid)
-          )
-        ORDER BY COALESCE(candidate.match_confidence, 0) DESC, candidate.updated_at DESC
+        ORDER BY
+          CASE candidate_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+          candidate_match.confidence DESC,
+          candidate_match.updated_at DESC
         LIMIT 1
       )
     WHERE video.is_video = 1
@@ -894,12 +885,14 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
           ORDER BY tf.modified_at DESC
           LIMIT 1
         ),
-        NULLIF(TRIM(pi.quality), '')
+        NULLIF(TRIM(pi.video_quality), '')
       ) AS quality,
       pi.provider_url AS url
     FROM ProviderItems pi
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = pi.id
+     AND video_match.match_state = 'accepted'
     WHERE pi.entity_type = 'video'
-      AND (pi.match_status IS NULL OR LOWER(pi.match_status) <> 'rejected')
       -- availability is stored as text ('available') or NULL for live offers,
       -- never the integer 1 — testing it against 1 silently dropped every video
       -- offer and broke both preview and download (the TIDAL-only regression).
@@ -907,11 +900,8 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
       -- string and any legacy truthy value survive.
       AND (pi.availability IS NULL
            OR LOWER(CAST(pi.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
-      AND (
-        CAST(pi.recording_id AS TEXT) = CAST(? AS TEXT)
-        OR pi.recording_mbid = (SELECT mbid FROM Recordings WHERE CAST(id AS TEXT) = CAST(? AS TEXT) AND mbid IS NOT NULL)
-      )
-  `).all(recordingId, recordingId) as Array<{ provider: string; provider_id: string; quality: string | null; url: string | null }>;
+      AND CAST(video_match.recording_id AS TEXT) = CAST(? AS TEXT)
+  `).all(recordingId) as Array<{ provider: string; provider_id: string; quality: string | null; url: string | null }>;
   rows.sort((a, b) => compareVideoOffersByQualityThenProvider(
     { provider: a.provider, quality: a.quality, provider_id: a.provider_id },
     { provider: b.provider, quality: b.quality, provider_id: b.provider_id },
@@ -1180,15 +1170,16 @@ function resolveVideoRecordingId(videoId: string): string | null {
   }
 
   const viaProvider = db.prepare(`
-    SELECT recording_id
-    FROM ProviderItems
-    WHERE entity_type = 'video'
-      AND recording_id IS NOT NULL
-      AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-      AND (match_status IS NULL OR LOWER(match_status) <> 'rejected')
-      AND (availability IS NULL
-           OR LOWER(CAST(availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', ''))
-    ORDER BY updated_at DESC
+    SELECT video_match.recording_id
+    FROM ProviderItems provider_item
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = provider_item.id
+     AND video_match.match_state = 'accepted'
+    WHERE provider_item.entity_type = 'video'
+      AND CAST(provider_item.provider_id AS TEXT) = CAST(? AS TEXT)
+      AND LOWER(CAST(provider_item.availability AS TEXT))
+          NOT IN ('0', 'false', 'unavailable', 'no', '')
+    ORDER BY video_match.updated_at DESC
     LIMIT 1
   `).get(videoId) as { recording_id?: number | string | null } | undefined;
   return viaProvider?.recording_id != null ? String(viaProvider.recording_id) : null;

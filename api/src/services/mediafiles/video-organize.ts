@@ -25,15 +25,19 @@ export function loadBundledVideoTrackCandidates(
   const placeholders = albumIds.map(() => "?").join(", ");
   return db.prepare(`
     SELECT
-      CAST(provider_id AS TEXT) AS provider_id,
-      COALESCE(title, '') AS title,
-      track_number
-    FROM ProviderItems
-    WHERE provider = ?
-      AND entity_type = 'track'
-      AND library_slot = 'video'
-      AND provider_album_id IN (${placeholders})
-    ORDER BY volume_number ASC, track_number ASC, provider_id ASC
+      CAST(member_item.provider_id AS TEXT) AS provider_id,
+      COALESCE(member.contextual_title, member_item.title, '') AS title,
+      member.position AS track_number
+    FROM ProviderItems provider_release
+    JOIN ProviderReleaseMembers member
+      ON member.provider_release_item_id = provider_release.id
+    JOIN ProviderItems member_item
+      ON member_item.id = member.member_item_id
+     AND member_item.entity_type = 'track'
+    WHERE provider_release.provider = ?
+      AND provider_release.entity_type = 'release'
+      AND provider_release.provider_id IN (${placeholders})
+    ORDER BY member.medium_position ASC, member.position ASC, member_item.provider_id ASC
   `).all(provider, ...albumIds) as Array<{ provider_id: string; title: string; track_number: number | null }>;
 }
 
@@ -41,7 +45,10 @@ export function resolveCanonicalVideoArtistId(provider: string, providerId: stri
   const row = db.prepare(`
     SELECT managed_artist.id
     FROM ProviderItems provider_item
-    JOIN Recordings recording ON recording.id = provider_item.recording_id
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = provider_item.id
+     AND video_match.match_state = 'accepted'
+    JOIN Recordings recording ON recording.id = video_match.recording_id
     JOIN Artists managed_artist ON managed_artist.mbid = recording.artist_mbid
     WHERE provider_item.provider = ?
       AND provider_item.entity_type = 'video'
@@ -66,7 +73,10 @@ export function resolveOrganizeVideoTitle(
     (db.prepare(`
       SELECT recording.title AS title
       FROM ProviderItems provider_item
-      JOIN Recordings recording ON recording.id = provider_item.recording_id
+      JOIN ProviderVideoMatches video_match
+        ON video_match.provider_video_item_id = provider_item.id
+       AND video_match.match_state = 'accepted'
+      JOIN Recordings recording ON recording.id = video_match.recording_id
       WHERE provider_item.provider = ?
         AND provider_item.entity_type = 'video'
         AND CAST(provider_item.provider_id AS TEXT) = CAST(? AS TEXT)
@@ -97,7 +107,10 @@ export function lookupCatalogVideoAfterUpsert(
   return db.prepare(`
     SELECT recording.title, recording.video_variant
     FROM ProviderItems pi
-    JOIN Recordings recording ON recording.id = pi.recording_id
+    JOIN ProviderVideoMatches video_match
+      ON video_match.provider_video_item_id = pi.id
+     AND video_match.match_state = 'accepted'
+    JOIN Recordings recording ON recording.id = video_match.recording_id
     WHERE pi.provider = ? AND pi.entity_type = 'video'
       AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
     LIMIT 1

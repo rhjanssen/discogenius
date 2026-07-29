@@ -142,10 +142,13 @@ function loadMissingAlbums(ids: readonly string[], context: DescriptionLookupCon
                 pi.version AS version,
                 artist.name AS artist_name
             FROM ProviderItems pi
-            LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
-            LEFT JOIN Albums album ON album.mbid = COALESCE(pi.release_group_mbid, release.release_group_mbid)
-            LEFT JOIN ArtistMetadata artist ON artist.mbid = COALESCE(pi.artist_mbid, release.artist_mbid, album.artist_mbid)
-            WHERE pi.entity_type = 'album'
+            LEFT JOIN ProviderReleaseMatches provider_match
+              ON provider_match.provider_release_item_id = pi.id
+             AND provider_match.match_state = 'accepted'
+            LEFT JOIN AlbumReleases release ON release.id = provider_match.release_id
+            LEFT JOIN Albums album ON album.id = release.release_group_id
+            LEFT JOIN ArtistMetadata artist ON artist.id = album.artist_metadata_id
+            WHERE pi.entity_type = 'release'
               AND pi.provider_id IN (${placeholders})
         `).all(...chunk) as Array<{
             id: string;
@@ -190,12 +193,20 @@ function loadMissingTracks(ids: readonly string[], context: DescriptionLookupCon
                 release.disambiguation AS album_version,
                 artist.name AS artist_name
             FROM ProviderItems pi
-            LEFT JOIN Tracks track ON track.mbid = pi.track_mbid OR track.id = pi.track_id
-            LEFT JOIN Recordings recording ON recording.mbid = COALESCE(pi.recording_mbid, track.recording_mbid)
-                OR recording.id = pi.recording_id
-            LEFT JOIN AlbumReleases release ON release.mbid = COALESCE(pi.release_mbid, track.release_mbid)
-            LEFT JOIN Albums album ON album.mbid = COALESCE(pi.release_group_mbid, release.release_group_mbid)
-            LEFT JOIN ArtistMetadata artist ON artist.mbid = COALESCE(pi.artist_mbid, recording.artist_mbid, release.artist_mbid, album.artist_mbid)
+            LEFT JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+            LEFT JOIN ProviderTrackMatches provider_match
+              ON provider_match.provider_release_member_id = member.id
+             AND provider_match.match_state = 'accepted'
+             AND provider_match.track_id IS NOT NULL
+            LEFT JOIN Tracks track ON track.id = provider_match.track_id
+            LEFT JOIN Recordings recording ON recording.id = provider_match.recording_id
+            LEFT JOIN AlbumReleases release ON release.id = track.album_release_id
+            LEFT JOIN Albums album ON album.id = release.release_group_id
+            LEFT JOIN ArtistMetadata artist ON artist.id = COALESCE(
+              recording.artist_metadata_id,
+              release.artist_metadata_id,
+              album.artist_metadata_id
+            )
             WHERE pi.entity_type = 'track'
               AND pi.provider_id IN (${placeholders})
         `).all(...chunk) as Array<{
@@ -242,9 +253,11 @@ function loadMissingVideos(ids: readonly string[], context: DescriptionLookupCon
                 COALESCE(recording.title, pi.title) AS title,
                 artist.name AS artist_name
             FROM ProviderItems pi
-            LEFT JOIN Recordings recording ON recording.mbid = pi.recording_mbid
-                OR recording.id = pi.recording_id
-            LEFT JOIN ArtistMetadata artist ON artist.mbid = COALESCE(pi.artist_mbid, recording.artist_mbid)
+            LEFT JOIN ProviderVideoMatches provider_match
+              ON provider_match.provider_video_item_id = pi.id
+             AND provider_match.match_state = 'accepted'
+            LEFT JOIN Recordings recording ON recording.id = provider_match.recording_id
+            LEFT JOIN ArtistMetadata artist ON artist.id = recording.artist_metadata_id
             WHERE pi.entity_type = 'video'
               AND pi.provider_id IN (${placeholders})
         `).all(...chunk) as Array<{

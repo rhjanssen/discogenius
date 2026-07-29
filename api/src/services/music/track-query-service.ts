@@ -283,7 +283,7 @@ function getTrackFromSql(selectClause: string, whereClause: string, candidateSco
 function planTrackQualitySql(
   planTrackAlias: string,
   variantAlias: string,
-  providerItemAlias?: string,
+  _providerItemAlias?: string,
 ): string {
   return `COALESCE(
     NULLIF(TRIM(CASE
@@ -293,7 +293,6 @@ function planTrackQualitySql(
     END), ''),
     NULLIF(TRIM(${variantAlias}.provider_quality_label), ''),
     ${variantAlias}.quality_class
-    ${providerItemAlias ? `, ${providerItemAlias}.quality` : ""}
   )`;
 }
 
@@ -312,7 +311,7 @@ function getTrackSelectSql(whereClause: string): string {
         ELSE NULL
       END AS version,
       COALESCE(
-        ROUND(COALESCE(track.length_ms, recording.length_ms, provider_track.duration, 0) / 1000.0),
+        ROUND(COALESCE(track.length_ms, recording.length_ms, provider_track.duration_ms, 0) / 1000.0),
         0
       ) AS duration,
       track.position AS track_number,
@@ -466,7 +465,7 @@ function getTrackSelectSql(whereClause: string): string {
       artist.mbid AS artist_id,
       release_group.title AS album_title,
       release_group.images AS album_images,
-      provider_album.asset_id AS album_cover,
+      provider_album.cover_id AS album_cover,
       recording.credits AS recording_credits,
       provider_track.provider AS preview_provider,
       provider_track.provider_id AS preview_provider_track_id,

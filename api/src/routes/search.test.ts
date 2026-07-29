@@ -139,9 +139,9 @@ test("local search returns canonical tracks", async () => {
   `).get() as { id: number };
   const providerTrack = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, explicit, duration
+      provider, entity_type, provider_id, title, explicit, duration_ms
     )
-    VALUES ('tidal', 'track', 'provider-track-1', 'Canonical Search Track', 1, 181)
+    VALUES ('tidal', 'track', 'provider-track-1', 'Canonical Search Track', 1, 181000)
     RETURNING id
   `).get() as { id: number };
   const member = dbModule.db.prepare(`
@@ -239,12 +239,12 @@ test("local search returns canonical videos", async () => {
 
   const providerVideo = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, quality, duration,
+      provider, entity_type, provider_id, title, video_quality, duration_ms,
       release_date, cover_id
     )
     VALUES (
       'tidal', 'video', 'provider-video-1',
-      'Canonical Search Video', 'FHD', 201, '2023-02-03', 'provider-cover'
+      'Canonical Search Video', 'FHD', 201000, '2023-02-03', 'provider-cover'
     )
     RETURNING id
   `).get() as { id: number };

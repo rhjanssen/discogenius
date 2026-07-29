@@ -173,38 +173,127 @@ function getJobArtistId(job: QueueJobRow): string | null {
 }
 
 function getProviderItemEntityTypes(contentType: QueueItemContract["type"]): string[] {
-  if (contentType === "album") return ["album"];
+  if (contentType === "album") return ["release"];
   if (contentType === "video") return ["video"];
   return ["track"];
 }
 
 function getProviderItemAlbumId(contentType: QueueItemContract["type"], providerId: string): string | null {
-  const entityTypes = getProviderItemEntityTypes(contentType);
-  const row = db.prepare(`
-    SELECT release_group_mbid, release_mbid
-    FROM ProviderItems
-    WHERE provider_id = ?
-      AND entity_type IN (${placeholders(entityTypes)})
-    ORDER BY updated_at DESC
-    LIMIT 1
-  `).get(providerId, ...entityTypes) as {
+  const row = contentType === "album"
+    ? db.prepare(`
+        SELECT release_group.mbid AS release_group_mbid,
+               release.mbid AS release_mbid
+        FROM ProviderItems provider_item
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.provider_release_item_id = provider_item.id
+         AND release_match.match_state = 'accepted'
+        JOIN AlbumReleases release ON release.id = release_match.release_id
+        JOIN Albums release_group ON release_group.id = release.release_group_id
+        WHERE provider_item.provider_id = ?
+          AND provider_item.entity_type = 'release'
+        ORDER BY
+          CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+          release_match.confidence DESC,
+          release_match.id
+        LIMIT 1
+      `).get(providerId)
+    : contentType === "track"
+      ? db.prepare(`
+          SELECT release_group.mbid AS release_group_mbid,
+                 release.mbid AS release_mbid
+          FROM ProviderItems provider_item
+          JOIN ProviderReleaseMembers member
+            ON member.member_item_id = provider_item.id
+          JOIN ProviderTrackMatches track_match
+            ON track_match.provider_release_member_id = member.id
+           AND track_match.match_state = 'accepted'
+          JOIN Tracks track ON track.id = track_match.track_id
+          JOIN AlbumReleases release ON release.id = track.album_release_id
+          JOIN Albums release_group ON release_group.id = release.release_group_id
+          WHERE provider_item.provider_id = ?
+            AND provider_item.entity_type = 'track'
+          ORDER BY
+            CASE WHEN track_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+            track_match.confidence DESC,
+            track_match.id
+          LIMIT 1
+        `).get(providerId)
+      : db.prepare(`
+          SELECT release_group.mbid AS release_group_mbid,
+                 release.mbid AS release_mbid
+          FROM ProviderItems provider_item
+          JOIN ProviderVideoMatches video_match
+            ON video_match.provider_video_item_id = provider_item.id
+           AND video_match.match_state = 'accepted'
+          JOIN RecordingRelations relation
+            ON relation.source_recording_id = video_match.recording_id
+           AND relation.relation_type IN ('provider_video_for', 'music_video_for')
+          JOIN Tracks track ON track.recording_id = relation.target_recording_id
+          JOIN AlbumReleases release ON release.id = track.album_release_id
+          JOIN Albums release_group ON release_group.id = release.release_group_id
+          WHERE provider_item.provider_id = ?
+            AND provider_item.entity_type = 'video'
+          ORDER BY video_match.confidence DESC, release.date, release.id
+          LIMIT 1
+        `).get(providerId);
+  const scope = row as {
     release_group_mbid?: string | null;
     release_mbid?: string | null;
   } | undefined;
 
-  return getOptionalString(row?.release_group_mbid) ?? getOptionalString(row?.release_mbid);
+  return getOptionalString(scope?.release_group_mbid) ?? getOptionalString(scope?.release_mbid);
 }
 
 function getProviderItemArtistId(contentType: QueueItemContract["type"], providerId: string): string | null {
-  const entityTypes = getProviderItemEntityTypes(contentType);
+  const entityType = getProviderItemEntityTypes(contentType)[0];
   const row = db.prepare(`
-    SELECT artist_mbid
-    FROM ProviderItems
-    WHERE provider_id = ?
-      AND entity_type IN (${placeholders(entityTypes)})
-    ORDER BY updated_at DESC
+    SELECT artist.mbid AS artist_mbid
+    FROM ProviderItems provider_item
+    LEFT JOIN ProviderReleaseMatches release_match
+      ON provider_item.entity_type = 'release'
+     AND release_match.provider_release_item_id = provider_item.id
+     AND release_match.match_state = 'accepted'
+    LEFT JOIN AlbumReleases direct_release ON direct_release.id = release_match.release_id
+    LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
+    LEFT JOIN ProviderReleaseMembers member
+      ON provider_item.entity_type = 'track'
+     AND member.member_item_id = provider_item.id
+    LEFT JOIN ProviderTrackMatches track_match
+      ON track_match.provider_release_member_id = member.id
+     AND track_match.match_state = 'accepted'
+    LEFT JOIN Tracks track ON track.id = track_match.track_id
+    LEFT JOIN AlbumReleases track_release ON track_release.id = track.album_release_id
+    LEFT JOIN Albums track_group ON track_group.id = track_release.release_group_id
+    LEFT JOIN ProviderVideoMatches video_match
+      ON provider_item.entity_type = 'video'
+     AND video_match.provider_video_item_id = provider_item.id
+     AND video_match.match_state = 'accepted'
+    LEFT JOIN Recordings recording
+      ON recording.id = COALESCE(video_match.recording_id, track_match.recording_id)
+    LEFT JOIN ArtistMetadata artist
+      ON artist.id = COALESCE(
+        direct_group.artist_metadata_id,
+        track_group.artist_metadata_id,
+        recording.artist_metadata_id
+      )
+    WHERE provider_item.provider_id = ?
+      AND provider_item.entity_type = ?
+      AND artist.mbid IS NOT NULL
+    ORDER BY
+      CASE WHEN COALESCE(
+        release_match.decision_source,
+        track_match.decision_source,
+        video_match.decision_source
+      ) = 'manual' THEN 0 ELSE 1 END,
+      COALESCE(
+        release_match.confidence,
+        track_match.confidence,
+        video_match.confidence,
+        0
+      ) DESC,
+      provider_item.updated_at DESC
     LIMIT 1
-  `).get(providerId, ...entityTypes) as { artist_mbid?: string | null } | undefined;
+  `).get(providerId, entityType) as { artist_mbid?: string | null } | undefined;
 
   return getOptionalString(row?.artist_mbid);
 }
@@ -338,8 +427,8 @@ function resolveCanonicalAlbumMetadata(input: {
       ) AS selected_quality,
       provider_artist.title AS provider_artist_name,
       provider_item.title AS provider_title,
-      COALESCE(provider_item.artwork_url, provider_item.cover) AS provider_cover,
-      COALESCE(provider_item.asset_id, provider_item.cover_id) AS provider_asset_id
+      COALESCE(provider_item.artwork_url, provider_item.cover_id) AS provider_cover,
+      provider_item.cover_id AS provider_asset_id
     FROM ProviderReleaseMatches release_match
     JOIN ProviderItems provider_item
       ON provider_item.id = release_match.provider_release_item_id
@@ -438,29 +527,80 @@ function resolveProviderItemMetadata(input: {
       provider_item.entity_type,
       provider_item.provider,
       provider_item.title,
-      provider_item.provider_artist_name,
-      provider_item.quality,
-      provider_item.asset_id,
-      provider_item.cover,
-      provider_item.release_group_mbid,
-      provider_item.release_mbid,
-      release_group.title AS release_group_title,
-      release_group.images AS release_group_images,
-      COALESCE(artist.name, local_artist.name) AS artist_name,
+      provider_artist.title AS provider_artist_name,
+      COALESCE(
+        provider_item.video_quality,
+        provider_variant.provider_quality_label,
+        provider_variant.quality_class
+      ) AS quality,
+      provider_item.cover_id AS asset_id,
+      COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,
+      COALESCE(direct_group.mbid, track_group.mbid) AS release_group_mbid,
+      COALESCE(direct_release.mbid, track_release.mbid) AS release_mbid,
+      COALESCE(direct_group.title, track_group.title) AS release_group_title,
+      COALESCE(direct_group.images, track_group.images) AS release_group_images,
+      artist.name AS artist_name,
       recording.id AS recording_id,
       track.title AS track_title,
       recording.title AS recording_title
     FROM ProviderItems provider_item
-    LEFT JOIN Albums release_group ON release_group.mbid = provider_item.release_group_mbid
-    LEFT JOIN ArtistMetadata artist ON artist.mbid = provider_item.artist_mbid
-    LEFT JOIN Artists local_artist ON local_artist.mbid = provider_item.artist_mbid
-    LEFT JOIN Tracks track ON track.mbid = provider_item.track_mbid
+    LEFT JOIN ProviderReleaseMatches release_match
+      ON provider_item.entity_type = 'release'
+     AND release_match.provider_release_item_id = provider_item.id
+     AND release_match.match_state = 'accepted'
+    LEFT JOIN AlbumReleases direct_release ON direct_release.id = release_match.release_id
+    LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
+    LEFT JOIN ProviderReleaseMembers member
+      ON provider_item.entity_type = 'track'
+     AND member.member_item_id = provider_item.id
+    LEFT JOIN ProviderTrackMatches track_match
+      ON track_match.provider_release_member_id = member.id
+     AND track_match.match_state = 'accepted'
+    LEFT JOIN Tracks track ON track.id = track_match.track_id
+    LEFT JOIN AlbumReleases track_release ON track_release.id = track.album_release_id
+    LEFT JOIN Albums track_group ON track_group.id = track_release.release_group_id
+    LEFT JOIN ProviderVideoMatches video_match
+      ON provider_item.entity_type = 'video'
+     AND video_match.provider_video_item_id = provider_item.id
+     AND video_match.match_state = 'accepted'
     LEFT JOIN Recordings recording
-      ON recording.id = provider_item.recording_id
-       OR recording.mbid = provider_item.recording_mbid
+      ON recording.id = COALESCE(video_match.recording_id, track_match.recording_id)
+    LEFT JOIN ArtistMetadata artist
+      ON artist.id = COALESCE(
+        direct_group.artist_metadata_id,
+        track_group.artist_metadata_id,
+        recording.artist_metadata_id
+      )
+    LEFT JOIN ProviderItemCredits provider_credit
+      ON provider_credit.item_id = provider_item.id
+     AND provider_credit.ordinal = 0
+    LEFT JOIN ProviderItems provider_artist
+      ON provider_artist.id = provider_credit.artist_item_id
+    LEFT JOIN ProviderItemAudioVariants provider_variant
+      ON provider_variant.id = (
+        SELECT candidate.id
+        FROM ProviderItemAudioVariants candidate
+        WHERE candidate.provider_item_id = provider_item.id
+        ORDER BY
+          CASE candidate.availability WHEN 'available' THEN 0 ELSE 1 END,
+          candidate.id
+        LIMIT 1
+      )
     WHERE provider_item.provider_id = ?
       AND provider_item.entity_type IN (${placeholders(entityTypes)})
-    ORDER BY provider_item.updated_at DESC
+    ORDER BY
+      CASE WHEN COALESCE(
+        release_match.decision_source,
+        track_match.decision_source,
+        video_match.decision_source
+      ) = 'manual' THEN 0 ELSE 1 END,
+      COALESCE(
+        release_match.confidence,
+        track_match.confidence,
+        video_match.confidence,
+        0
+      ) DESC,
+      provider_item.updated_at DESC
     LIMIT 1
   `).get(providerId, ...entityTypes) as {
     entity_type?: string | null;
