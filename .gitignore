@@ -63,3 +63,7 @@ pnpm-lock.yaml
 *.db
 *.db-wal
 *.db-shm
+
+# Generated audit/debug dumps (write these outside the repo or to ignored paths)
+provider_refs.txt
+provider-test-failures.log
