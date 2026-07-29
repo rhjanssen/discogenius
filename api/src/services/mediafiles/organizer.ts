@@ -451,25 +451,44 @@ export class OrganizerService {
 
   private static resolveCanonicalAlbumImportContext(raw: OrganizeRequest, providerAlbumId: string): CanonicalAlbumImportContext | null {
     const provider = String(raw.provider || getDefaultStreamingSource()).trim() || getDefaultStreamingSource();
-    // Job acquisition-plan identity outranks slot/ProviderItems. Hybrid tips
-    // (e.g. BTB hires core 77661290) can also be exact selected_provider_id for
-    // an unrelated single (Rehab); without a job-RG constraint that single wins.
+    // Job acquisition-plan identity is exact. Provider IDs are never parsed as
+    // composites or position-mapped to a canonical release.
     const releaseGroupMbid = String(raw.releaseGroupMbid || raw.albumId || "").trim();
     const releaseMbid = String(raw.releaseMbid || "").trim();
     const requestedSlot = String(raw.slot || "").trim().toLowerCase();
-    const compositeProviderId = String(raw.providerId || providerAlbumId || "").trim();
     const row = db.prepare(`
       SELECT
-        COALESCE(rgs.selected_provider, pi.provider, ?) AS provider,
-        COALESCE(rgs.selected_provider_id, pi.provider_id, ?) AS providerAlbumId,
-        COALESCE(NULLIF(?, ''), rgs.release_group_mbid, pi.release_group_mbid, rg.mbid) AS releaseGroupMbid,
-        COALESCE(NULLIF(?, ''), rgs.selected_release_mbid, pi.release_mbid) AS releaseMbid,
-        COALESCE(rgs.slot, pi.library_slot, ?) AS slot,
-        COALESCE(rgs.quality, pi.quality) AS quality,
+        pi.provider AS provider,
+        pi.provider_id AS providerAlbumId,
+        rg.mbid AS releaseGroupMbid,
+        selected_release.mbid AS releaseMbid,
+        COALESCE(
+          NULLIF(?, ''),
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END
+        ) AS slot,
+        COALESCE(
+          (
+            SELECT COALESCE(
+              NULLIF(variant.provider_quality_label, ''),
+              variant.quality_class
+            )
+            FROM AcquisitionPlanTracks plan_track
+            JOIN ProviderItemAudioVariants variant
+              ON variant.id = plan_track.provider_audio_variant_id
+            WHERE plan_track.plan_id = plan.id
+            ORDER BY plan_track.id
+            LIMIT 1
+          ),
+          pi.quality
+        ) AS quality,
         rg.title,
         rg.artist_mbid AS artistMbid,
         am.name AS artistName,
-        COALESCE(rgs.cover, pi.cover) AS providerCover,
+        COALESCE(pi.cover_id, pi.artwork_url, pi.cover) AS providerCover,
         rg.video_cover AS videoCover,
         selected_release.date AS releaseDate,
         rg.primary_type AS albumType,
@@ -491,55 +510,51 @@ export class OrganizerService {
           1
         ) AS volumeCount
       FROM ProviderItems pi
-      LEFT JOIN ReleaseGroupSlots rgs
-        ON rgs.selected_provider = pi.provider
-       AND (
-          rgs.selected_provider_id = pi.provider_id
-          OR rgs.selected_provider_id LIKE pi.provider_id || ';%'
-          OR rgs.selected_provider_id LIKE '%;' || pi.provider_id || ';%'
-          OR rgs.selected_provider_id LIKE '%;' || pi.provider_id
-       )
-       AND (? = '' OR rgs.slot = ?)
-       AND (? = '' OR rgs.release_group_mbid = ?)
-      LEFT JOIN Albums rg ON rg.mbid = COALESCE(NULLIF(?, ''), rgs.release_group_mbid, pi.release_group_mbid)
+      JOIN ProviderReleaseMatches release_match
+        ON release_match.provider_release_item_id = pi.id
+       AND release_match.match_state = 'accepted'
+      JOIN AlbumReleases selected_release
+        ON selected_release.id = release_match.release_id
+      JOIN Albums rg
+        ON rg.id = selected_release.release_group_id
       LEFT JOIN ArtistMetadata am ON am.mbid = rg.artist_mbid
-      LEFT JOIN AlbumReleases selected_release ON selected_release.mbid = COALESCE(NULLIF(?, ''), rgs.selected_release_mbid, pi.release_mbid)
+      LEFT JOIN AcquisitionPlanSources plan_source
+        ON plan_source.provider_release_match_id = release_match.id
+      LEFT JOIN AcquisitionPlans plan
+        ON plan.id = plan_source.plan_id
+       AND plan.state = 'current'
+      LEFT JOIN LibraryReleases library_release
+        ON library_release.id = plan.library_release_id
+       AND library_release.release_id = selected_release.id
+      LEFT JOIN Libraries library
+        ON library.id = library_release.library_id
+      LEFT JOIN quality_profiles quality_profile
+        ON quality_profile.id = library.quality_profile_id
       WHERE pi.provider = ?
-        AND pi.entity_type = 'album'
+        AND pi.entity_type IN ('release', 'album')
         AND pi.provider_id = ?
-        AND (? = '' OR pi.release_group_mbid = ? OR rgs.release_group_mbid = ?)
+        AND (? = '' OR rg.mbid = ?)
+        AND (? = '' OR selected_release.mbid = ?)
       ORDER BY
-        CASE
-          WHEN ? != '' AND rgs.selected_provider_id = ? THEN 0
-          WHEN ? != '' AND rgs.release_group_mbid = ? THEN 1
-          WHEN INSTR(COALESCE(rgs.selected_provider_id, ''), ';') > 0 THEN 2
-          WHEN rgs.slot = ? THEN 3
-          ELSE 4
-        END,
-        LENGTH(COALESCE(rgs.selected_provider_id, '')) DESC,
+        CASE WHEN plan.id IS NOT NULL THEN 0 ELSE 1 END,
+        CASE WHEN (
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END
+        ) = ? THEN 0 ELSE 1 END,
+        release_match.confidence DESC,
         pi.updated_at DESC
       LIMIT 1
     `).get(
-      provider,
-      providerAlbumId,
-      releaseGroupMbid || null,
-      releaseMbid || null,
       requestedSlot || "stereo",
-      requestedSlot,
-      requestedSlot,
-      releaseGroupMbid,
-      releaseGroupMbid,
-      releaseGroupMbid || null,
-      releaseMbid || null,
       provider,
       providerAlbumId,
       releaseGroupMbid,
       releaseGroupMbid,
-      releaseGroupMbid,
-      compositeProviderId,
-      compositeProviderId,
-      releaseGroupMbid,
-      releaseGroupMbid,
+      releaseMbid,
+      releaseMbid,
       requestedSlot || "stereo",
     ) as any;
 

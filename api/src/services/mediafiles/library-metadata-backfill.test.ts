@@ -126,8 +126,17 @@ beforeEach(() => {
         "MetadataFiles",
         "ExtraFiles",
         "TrackFiles",
+        "AcquisitionPlanTracks",
+        "AcquisitionPlanSources",
+        "AcquisitionPlans",
+        "LibraryReleases",
+        "LibraryReleaseGroups",
+        "Libraries",
+        "ProviderTrackMatches",
+        "ProviderReleaseMatches",
+        "ProviderReleaseMembers",
+        "ProviderItemAudioVariants",
         "ProviderItems",
-        "ReleaseGroupSlots",
         "Tracks",
         "AlbumReleases",
         "Albums",
@@ -184,6 +193,67 @@ function seedCanonicalLibraryFiles() {
         INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-mbid-300", "release-mbid-200", "recording-mbid-300", 1, 1, "Canonical Track", 180000);
+    const artistMetadata = dbModule.db.prepare(`
+        SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid-100'
+    `).get() as { id: number };
+    const releaseGroup = dbModule.db.prepare(`
+        SELECT id FROM Albums WHERE mbid = 'release-group-mbid-200'
+    `).get() as { id: number };
+    const release = dbModule.db.prepare(`
+        SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid-200'
+    `).get() as { id: number };
+    const recording = dbModule.db.prepare(`
+        SELECT id FROM Recordings WHERE mbid = 'recording-mbid-300'
+    `).get() as { id: number };
+    const canonicalTrack = dbModule.db.prepare(`
+        SELECT id FROM Tracks WHERE mbid = 'track-mbid-300'
+    `).get() as { id: number };
+    dbModule.db.prepare(`
+        UPDATE Albums SET artist_metadata_id = ? WHERE id = ?
+    `).run(artistMetadata.id, releaseGroup.id);
+    dbModule.db.prepare(`
+        UPDATE AlbumReleases
+        SET release_group_id = ?, artist_metadata_id = ?
+        WHERE id = ?
+    `).run(releaseGroup.id, artistMetadata.id, release.id);
+    dbModule.db.prepare(`
+        UPDATE Tracks SET album_release_id = ?, recording_id = ? WHERE id = ?
+    `).run(release.id, recording.id, canonicalTrack.id);
+    dbModule.db.prepare(`
+        INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+        VALUES ('Metadata Backfill Test', '{}')
+    `).run();
+    dbModule.db.prepare(`
+        INSERT INTO Libraries (
+          name, root_path, metadata_profile_id, quality_profile_id
+        )
+        SELECT
+          'Metadata Backfill Stereo',
+          ?,
+          metadata_profile.id,
+          quality_profile.id
+        FROM MetadataProfiles metadata_profile
+        JOIN quality_profiles quality_profile
+          ON COALESCE(quality_profile.allowed_source_formats, '[]') NOT LIKE '%spatial%'
+        WHERE metadata_profile.name = 'Metadata Backfill Test'
+        ORDER BY quality_profile.id
+        LIMIT 1
+    `).run(configModule.Config.getMusicPath());
+    const library = dbModule.db.prepare(`
+        SELECT id FROM Libraries WHERE name = 'Metadata Backfill Stereo'
+    `).get() as { id: number };
+    dbModule.db.prepare(`
+        INSERT INTO LibraryReleaseGroups (
+          library_id, release_group_id, monitored, selection_mode, locked,
+          reason, curation_version
+        ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+    `).run(library.id, releaseGroup.id);
+    const libraryRelease = dbModule.db.prepare(`
+        INSERT INTO LibraryReleases (
+          library_id, release_id, selection_mode, locked, reason, curation_version
+        ) VALUES (?, ?, 'auto', 0, 'test', 1)
+        RETURNING id
+    `).get(library.id, release.id) as { id: number };
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
           provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
@@ -201,6 +271,30 @@ function seedCanonicalLibraryFiles() {
         "LOSSLESS",
         "stereo"
     );
+    const providerRelease = dbModule.db.prepare(`
+        SELECT id
+        FROM ProviderItems
+        WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = '200'
+    `).get() as { id: number };
+    const releaseMatch = dbModule.db.prepare(`
+        INSERT INTO ProviderReleaseMatches (
+          provider_release_item_id, release_id, relation, match_state,
+          decision_source, confidence, method, matcher_version
+        ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+        RETURNING id
+    `).get(providerRelease.id, release.id) as { id: number };
+    const plan = dbModule.db.prepare(`
+        INSERT INTO AcquisitionPlans (
+          library_release_id, provider, composition, download_mode, state,
+          planner_version, policy_hash, computed_at
+        ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
+        RETURNING id
+    `).get(libraryRelease.id) as { id: number };
+    dbModule.db.prepare(`
+        INSERT INTO AcquisitionPlanSources (
+          plan_id, provider_release_match_id, role, sort_order
+        ) VALUES (?, ?, 'primary', 0)
+    `).run(plan.id, releaseMatch.id);
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
           provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
@@ -220,12 +314,6 @@ function seedCanonicalLibraryFiles() {
         "LOSSLESS",
         "stereo"
     );
-    dbModule.db.prepare(`
-        INSERT INTO ReleaseGroupSlots(
-          artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, selected_release_mbid
-        ) VALUES(?, ?, ?, ?, ?, ?, ?)
-    `).run("artist-mbid-100", "release-group-mbid-200", "stereo", 1, "tidal", "200", "release-mbid-200");
-
     const musicRoot = configModule.Config.getMusicPath();
     const albumNfoPath = libraryFilesModule.LibraryFilesService.computeExpectedPath({
         id: -1,
@@ -247,9 +335,10 @@ function seedCanonicalLibraryFiles() {
         INSERT INTO TrackFiles (
           artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
           canonical_track_mbid, canonical_recording_mbid,
+          release_group_id, album_release_id, track_id, recording_id, library_id,
           provider, provider_entity_type, provider_id, library_slot,
           file_path, relative_path, library_root, filename, extension, file_type, quality
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         "100",
         "artist-mbid-100",
@@ -257,6 +346,11 @@ function seedCanonicalLibraryFiles() {
         "release-mbid-200",
         "track-mbid-300",
         "recording-mbid-300",
+        releaseGroup.id,
+        release.id,
+        canonicalTrack.id,
+        recording.id,
+        library.id,
         "tidal",
         "track",
         "300",
@@ -496,7 +590,7 @@ test("metadata backfill records existing artist, album, and lyric sidecars", asy
 
 test("canonical albums without any provider match still regenerate album.nfo", async () => {
     seedCanonicalLibraryFiles();
-    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
+    dbModule.db.prepare("DELETE FROM AcquisitionPlanSources").run();
     dbModule.db.prepare("DELETE FROM ProviderItems").run();
 
     const result = await backfillModule.libraryMetadataBackfillService.fillMissingMetadataFiles("100");

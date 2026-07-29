@@ -47,14 +47,32 @@ function releaseGroupForRelease(releaseMbid: string): string | null {
 }
 
 function selectedReleaseForGroup(releaseGroupMbid: string, preferredSlot: string): string | null {
+    const preferredClass = preferredSlot === "spatial" ? "spatial" : "stereo";
     const row = db.prepare(`
-        SELECT selected_release_mbid
-        FROM ReleaseGroupSlots
-        WHERE release_group_mbid = ?
-          AND selected_release_mbid IS NOT NULL
-        ORDER BY CASE WHEN slot = ? THEN 0 ELSE 1 END
+        SELECT release.mbid AS selected_release_mbid
+        FROM Albums release_group
+        JOIN AlbumReleases release
+          ON release.release_group_id = release_group.id
+        JOIN LibraryReleases library_release
+          ON library_release.release_id = release.id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        WHERE release_group.mbid = ?
+        ORDER BY
+          CASE WHEN (
+            CASE WHEN EXISTS (
+              SELECT 1
+              FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+              WHERE allowed.value = 'spatial'
+            ) THEN 'spatial' ELSE 'stereo' END
+          ) = ? THEN 0 ELSE 1 END,
+          library_release.updated_at DESC,
+          library_release.id DESC
         LIMIT 1
-    `).get(releaseGroupMbid, preferredSlot) as { selected_release_mbid: string | null } | undefined;
+    `).get(releaseGroupMbid, preferredClass) as { selected_release_mbid: string | null } | undefined;
     return row?.selected_release_mbid ? String(row.selected_release_mbid) : null;
 }
 
@@ -63,8 +81,8 @@ function selectedReleaseForGroup(releaseGroupMbid: string, preferredSlot: string
  * Lidarr-style path. The release-track MBID (Tracks.mbid) is globally unique and
  * needs no provider offer; the recording MBID + release MBID pair is the
  * fallback. When the resolved track sits on a non-selected release of the group,
- * re-anchor to the selected release's track (same recording) so the linkage
- * matches how download status is scoped (ReleaseGroupSlots.selected_release_mbid).
+ * re-anchor to the selected LibraryRelease track (same recording) so the
+ * linkage matches how library-specific completion is scoped.
  */
 export function resolveCatalogTrackFromEmbeddedMbids(
     tags: ParsedAudioTags,

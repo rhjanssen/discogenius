@@ -20,9 +20,11 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM LibraryReleases").run();
+  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM Libraries").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM AlbumReleases").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Recordings").run();
@@ -97,10 +99,74 @@ function seedCatalogTrack(params: {
     INSERT OR IGNORE INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, title)
     VALUES (?, ?, ?, 1, 1, ?)
   `).run(params.trackMbid, params.releaseMbid, params.recordingMbid, params.title);
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")
+    .get() as { id: number };
+  const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
+    .get(params.releaseGroupMbid) as { id: number };
+  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?")
+    .get(params.releaseMbid) as { id: number };
+  const recording = db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
+    .get(params.recordingMbid) as { id: number };
+  const track = db.prepare("SELECT id FROM Tracks WHERE mbid = ?")
+    .get(params.trackMbid) as { id: number };
   db.prepare(`
-    INSERT OR IGNORE INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, selected_release_mbid)
-    VALUES ('artist-mbid', ?, ?, ?)
-  `).run(params.releaseGroupMbid, slot, params.releaseMbid);
+    UPDATE Albums SET artist_metadata_id = ? WHERE id = ?
+  `).run(artist.id, releaseGroup.id);
+  db.prepare(`
+    UPDATE AlbumReleases
+    SET release_group_id = ?, artist_metadata_id = ?
+    WHERE id = ?
+  `).run(releaseGroup.id, artist.id, release.id);
+  db.prepare(`
+    UPDATE Tracks SET album_release_id = ?, recording_id = ? WHERE id = ?
+  `).run(release.id, recording.id, track.id);
+  db.prepare(`
+    INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+    VALUES ('Scan Metadata Test', '{}')
+  `).run();
+  if (slot === "spatial") {
+    db.prepare(`
+      INSERT OR IGNORE INTO quality_profiles (
+        name, cutoff, items, allowed_source_formats, preference_order
+      ) VALUES ('Scan Metadata Spatial', 'DOLBY_ATMOS', '["DOLBY_ATMOS"]', '["spatial"]', '["spatial"]')
+    `).run();
+  }
+  const metadataProfile = db.prepare(`
+    SELECT id FROM MetadataProfiles WHERE name = 'Scan Metadata Test'
+  `).get() as { id: number };
+  const qualityProfile = db.prepare(`
+    SELECT id
+    FROM quality_profiles
+    WHERE ${slot === "spatial"
+      ? "name = 'Scan Metadata Spatial'"
+      : "COALESCE(allowed_source_formats, '[]') NOT LIKE '%spatial%'"}
+    ORDER BY id
+    LIMIT 1
+  `).get() as { id: number };
+  const libraryName = `Scan ${slot} ${params.releaseGroupMbid}`;
+  db.prepare(`
+    INSERT INTO Libraries (
+      name, root_path, metadata_profile_id, quality_profile_id
+    ) VALUES (?, ?, ?, ?)
+  `).run(
+    libraryName,
+    path.join(tempDir, "libraries", slot, params.releaseGroupMbid),
+    metadataProfile.id,
+    qualityProfile.id,
+  );
+  const library = db.prepare("SELECT id FROM Libraries WHERE name = ?")
+    .get(libraryName) as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      reason, curation_version
+    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+  `).run(library.id, releaseGroup.id);
+  db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, release.id);
 }
 
 test("catalog-direct link resolves from embedded release-track MBID with no provider offer", () => {

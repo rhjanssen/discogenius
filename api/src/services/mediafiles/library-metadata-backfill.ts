@@ -38,13 +38,6 @@ type ProviderAlbumOfferRow = {
     cover?: string | null;
 };
 
-function firstProviderIdFromSlot(value: string | null | undefined): string | null {
-    return String(value || "")
-        .split(";")
-        .map((id) => id.trim())
-        .find(Boolean) || null;
-}
-
 export interface MetadataFillResult {
     downloaded: number;
     failed: number;
@@ -189,77 +182,112 @@ class LibraryMetadataBackfillService {
         naming: ReturnType<typeof getNamingConfig>,
         result: MetadataFillResult,
     ) {
-        // Canonical-first: the set of album slots to backfill is the distinct
-        // (release group, library slot) pairs of this artist's tracked audio files.
+        // Canonical-first: backfill each selected release group independently in
+        // every library that owns imported audio for it.
         const albums = db.prepare(`
       SELECT
-        lf.canonical_release_group_mbid AS canonical_release_group_mbid,
-        lf.library_slot,
-        MIN(NULLIF(TRIM(lf.canonical_release_mbid), '')) AS canonical_release_mbid
+        lf.release_group_id,
+        lf.library_id,
+        release_group.mbid AS canonical_release_group_mbid,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+          WHERE allowed.value = 'spatial'
+        ) THEN 'spatial' ELSE 'stereo' END AS library_class,
+        MIN(lf.album_release_id) AS album_release_id
       FROM TrackFiles lf
+      JOIN Albums release_group
+        ON release_group.id = lf.release_group_id
+      JOIN Libraries library
+        ON library.id = lf.library_id
+      JOIN quality_profiles quality_profile
+        ON quality_profile.id = library.quality_profile_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
-        AND lf.canonical_release_group_mbid IS NOT NULL
-      GROUP BY lf.canonical_release_group_mbid, lf.library_slot
+        AND lf.release_group_id IS NOT NULL
+        AND lf.library_id IS NOT NULL
+      GROUP BY lf.release_group_id, lf.library_id
     `).all(artistId) as any[];
-        const processedAlbumSlots = new Set<string>();
+        const processedLibraryAlbums = new Set<string>();
 
         for (const sourceAlbum of albums) {
             const canonicalReleaseGroupMbid = String(sourceAlbum.canonical_release_group_mbid || "").trim();
-            const librarySlot = String(sourceAlbum.library_slot || "stereo");
-            const albumSlotKey = `${librarySlot}:${canonicalReleaseGroupMbid || sourceAlbum.id}`;
-            if (processedAlbumSlots.has(albumSlotKey)) {
+            const librarySlot = String(sourceAlbum.library_class || "stereo");
+            const libraryAlbumKey = `${sourceAlbum.library_id}:${sourceAlbum.release_group_id}`;
+            if (processedLibraryAlbums.has(libraryAlbumKey)) {
                 continue;
             }
-            processedAlbumSlots.add(albumSlotKey);
+            processedLibraryAlbums.add(libraryAlbumKey);
 
-            const selectedSlot = canonicalReleaseGroupMbid
+            const selectedPlan = canonicalReleaseGroupMbid
                 ? db.prepare(`
-                    SELECT selected_provider, selected_provider_id, selected_release_mbid
-                    FROM ReleaseGroupSlots
-                    WHERE release_group_mbid = ?
-                      AND slot = ?
-                      AND selected_provider_id IS NOT NULL
+                    SELECT
+                      plan.provider AS selected_provider,
+                      provider_release.provider_id AS selected_provider_id,
+                      selected_release.mbid AS selected_release_mbid,
+                      provider_release.quality,
+                      provider_release.title,
+                      provider_release.version,
+                      provider_release.release_date,
+                      COALESCE(
+                        provider_release.cover_id,
+                        provider_release.artwork_url,
+                        provider_release.cover
+                      ) AS cover
+                    FROM LibraryReleases library_release
+                    JOIN AlbumReleases selected_release
+                      ON selected_release.id = library_release.release_id
+                    JOIN AcquisitionPlans plan
+                      ON plan.library_release_id = library_release.id
+                     AND plan.state = 'current'
+                    JOIN AcquisitionPlanSources plan_source
+                      ON plan_source.plan_id = plan.id
+                     AND plan_source.role = 'primary'
+                    JOIN ProviderReleaseMatches release_match
+                      ON release_match.id = plan_source.provider_release_match_id
+                     AND release_match.match_state = 'accepted'
+                    JOIN ProviderItems provider_release
+                      ON provider_release.id = release_match.provider_release_item_id
+                    WHERE library_release.library_id = ?
+                      AND selected_release.release_group_id = ?
+                    ORDER BY plan_source.sort_order, plan_source.id
                     LIMIT 1
-                `).get(canonicalReleaseGroupMbid, librarySlot) as {
+                `).get(sourceAlbum.library_id, sourceAlbum.release_group_id) as {
                     selected_provider?: string | null;
                     selected_provider_id?: string | null;
                     selected_release_mbid?: string | null;
+                    quality?: string | null;
+                    title?: string | null;
+                    version?: string | null;
+                    release_date?: string | null;
+                    cover?: string | null;
                 } | undefined
                 : undefined;
-            const selectedProviderAlbumId = firstProviderIdFromSlot(selectedSlot?.selected_provider_id);
-            // Album metadata for sidecar generation comes from the canonical graph
-            // plus the album's ProviderItems offer (provider asset ids/quality/cover
-            // live in explicit ProviderItems columns), not ProviderAlbums.
-            const albumProviderItem = selectedProviderAlbumId
-                ? db.prepare(`
-                    SELECT provider, provider_id, release_mbid, quality, title, version, release_date, cover
-                    FROM ProviderItems
-                    WHERE provider = ?
-                      AND entity_type = 'album'
-                      AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                `).get(selectedSlot?.selected_provider, selectedProviderAlbumId) as ProviderAlbumOfferRow | undefined
-                : db.prepare(`
-                    SELECT provider, provider_id, release_mbid, quality, title, version, release_date, cover
-                    FROM ProviderItems
-                    WHERE entity_type = 'album'
-                      AND release_group_mbid = ?
-                      AND library_slot = ?
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                `).get(canonicalReleaseGroupMbid, librarySlot) as ProviderAlbumOfferRow | undefined;
+            const albumProviderItem = selectedPlan
+                ? {
+                    provider: selectedPlan.selected_provider,
+                    provider_id: selectedPlan.selected_provider_id,
+                    release_mbid: selectedPlan.selected_release_mbid,
+                    quality: selectedPlan.quality,
+                    title: selectedPlan.title,
+                    version: selectedPlan.version,
+                    release_date: selectedPlan.release_date,
+                    cover: selectedPlan.cover,
+                } satisfies ProviderAlbumOfferRow
+                : undefined;
+            const selectedProviderAlbumId = String(selectedPlan?.selected_provider_id || "").trim() || null;
             const representativeAlbumId = String(albumProviderItem?.provider_id || selectedProviderAlbumId || "").trim() || null;
-            const canonicalReleaseMbid = selectedSlot?.selected_release_mbid
-                || sourceAlbum.canonical_release_mbid
-                || albumProviderItem?.release_mbid
+            const canonicalReleaseMbid = selectedPlan?.selected_release_mbid
+                || (sourceAlbum.album_release_id
+                    ? (db.prepare("SELECT mbid FROM AlbumReleases WHERE id = ?")
+                        .get(sourceAlbum.album_release_id) as { mbid?: string | null } | undefined)?.mbid
+                    : null)
                 || null;
             const canonicalAlbum = getCanonicalAlbumMetadata({
                 canonicalReleaseGroupMbid,
                 canonicalReleaseMbid,
             });
-            const albumData = albumProviderItem || {};
+            const albumData: ProviderAlbumOfferRow = albumProviderItem || {};
             const album = {
                 id: representativeAlbumId,
                 title: canonicalAlbum?.title || albumData.title || null,
@@ -270,7 +298,7 @@ class LibraryMetadataBackfillService {
                 quality: albumProviderItem?.quality || albumData.quality || null,
                 mbid: canonicalAlbum?.albumMbid || null,
                 mb_release_group_id: canonicalReleaseGroupMbid,
-                provider: albumProviderItem?.provider || selectedSlot?.selected_provider || null,
+                provider: albumProviderItem?.provider || selectedPlan?.selected_provider || null,
             };
             // Fetch a representative ON-DISK track per library root so sidecars are
             // written into the album's ACTUAL folder. Using only the expected folder
@@ -283,11 +311,11 @@ class LibraryMetadataBackfillService {
       WHERE lf.artist_id = ?
         AND lf.file_type = 'track'
         AND lf.library_root IS NOT NULL
-        AND lf.canonical_release_group_mbid = ?
-        AND lf.library_slot IS ?
+        AND lf.release_group_id = ?
+        AND lf.library_id = ?
       GROUP BY lf.library_root
       ORDER BY lf.library_root ASC
-    `).all(artistId, canonicalReleaseGroupMbid, sourceAlbum.library_slot ?? null) as Array<{ library_root: string | null; file_path: string | null; relative_path: string | null }>)
+    `).all(artistId, sourceAlbum.release_group_id, sourceAlbum.library_id) as Array<{ library_root: string | null; file_path: string | null; relative_path: string | null }>)
                 .filter((row) => String(row.library_root || "").trim());
 
             for (const libraryRootRow of libraryRootRows) {
@@ -356,15 +384,15 @@ class LibraryMetadataBackfillService {
                                 FROM TrackFiles
                                 WHERE artist_id = ?
                                   AND file_type = 'track'
-                                  AND canonical_release_group_mbid = ?
+                                  AND release_group_id = ?
+                                  AND library_id = ?
                                   AND library_root = ?
-                                  AND library_slot IS ?
                                 ORDER BY id ASC
                             `).all(
                                 artistId,
-                                canonicalReleaseGroupMbid,
+                                sourceAlbum.release_group_id,
+                                sourceAlbum.library_id,
                                 libraryRoot,
-                                sourceAlbum.library_slot ?? null,
                             ) as Array<{ id: number }>).map((row) => row.id);
                             await AudioTagService.syncEmbeddedCovers(trackFileIds);
                         }

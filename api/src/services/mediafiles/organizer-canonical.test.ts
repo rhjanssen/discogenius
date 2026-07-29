@@ -23,6 +23,16 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM MetadataFiles").run();
+  dbModule.db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+  dbModule.db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  dbModule.db.prepare("DELETE FROM AcquisitionPlans").run();
+  dbModule.db.prepare("DELETE FROM LibraryReleases").run();
+  dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  dbModule.db.prepare("DELETE FROM Libraries").run();
+  dbModule.db.prepare("DELETE FROM ProviderTrackMatches").run();
+  dbModule.db.prepare("DELETE FROM ProviderReleaseMatches").run();
+  dbModule.db.prepare("DELETE FROM ProviderReleaseMembers").run();
+  dbModule.db.prepare("DELETE FROM ProviderItemAudioVariants").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
@@ -773,10 +783,7 @@ test("hybrid tips with providerAlbumId on secondary albums match organize scope"
   assert.equal(secondaryRow?.track_number, 2);
 });
 
-test("hybrid tip shared with a single/EP organizes under the job release, not the single (BTB Rehab)", async () => {
-  // Live failure: tip album 77661290 is both BTB hybrid core and Rehab single's
-  // selected_provider_id. Context JOIN used to pick the single LIMIT 1 and rebind
-  // Rehab.flac onto RG aea5b8c0 instead of Back to Black deluxe.
+test("an exact plan source organizes under the job release, not a same-recording single", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-amy", "Amy Winehouse");
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
@@ -816,29 +823,111 @@ test("hybrid tip shared with a single/EP organizes under the job release, not th
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-rehab-single", "rel-rehab-single", "rec-rehab", "Rehab", 1, 1);
 
-  // Hybrid composite + exact-id single sharing tip 77661290.
+  const artistMetadata = dbModule.db.prepare(`
+    SELECT id FROM ArtistMetadata WHERE mbid = 'artist-amy'
+  `).get() as { id: number };
+  const btbGroup = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-btb'")
+    .get() as { id: number };
+  const singleGroup = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-rehab-single'")
+    .get() as { id: number };
+  const btbRelease = dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-btb-deluxe'")
+    .get() as { id: number };
+  const singleRelease = dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-rehab-single'")
+    .get() as { id: number };
+  dbModule.db.prepare("UPDATE Albums SET artist_metadata_id = ? WHERE id IN (?, ?)")
+    .run(artistMetadata.id, btbGroup.id, singleGroup.id);
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, selected_release_mbid
-    ) VALUES (?, ?, 'stereo', 1, 'tidal', ?, ?)
-  `).run("artist-amy", "rg-btb", "77661290;77555663;22888255", "rel-btb-deluxe");
+    UPDATE AlbumReleases
+    SET
+      release_group_id = CASE mbid
+        WHEN 'rel-btb-deluxe' THEN ?
+        ELSE ?
+      END,
+      artist_metadata_id = ?
+    WHERE id IN (?, ?)
+  `).run(
+    btbGroup.id,
+    singleGroup.id,
+    artistMetadata.id,
+    btbRelease.id,
+    singleRelease.id,
+  );
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, selected_release_mbid
-    ) VALUES (?, ?, 'stereo', 1, 'tidal', ?, ?)
-  `).run("artist-amy", "rg-rehab-single", "77661290", "rel-rehab-single");
+    UPDATE Tracks
+    SET
+      album_release_id = (
+        SELECT id FROM AlbumReleases WHERE mbid = Tracks.release_mbid
+      ),
+      recording_id = (
+        SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
+      )
+    WHERE release_mbid IN ('rel-btb-deluxe', 'rel-rehab-single')
+  `).run();
 
-  // Tip album offer points at BTB (provider-native for the hires core).
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid,
-      release_group_mbid, release_mbid, title, quality, library_slot, match_status
-    ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, 'stereo', 'matched')
-  `).run("tidal", "77661290", "artist-amy", "rg-btb", "rel-btb-deluxe", "Back to Black", "HIRES_LOSSLESS");
-  // Track tip: provider album is the BTB tip, but a naive slot JOIN can still
-  // land on the Rehab single via selected_provider_id = 77661290.
+      provider, entity_type, provider_id, title, quality
+    ) VALUES (?, 'release', ?, ?, ?)
+  `).run("tidal", "77661290", "Back to Black", "HIRES_LOSSLESS");
+  const providerRelease = dbModule.db.prepare(`
+    SELECT id
+    FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = '77661290'
+  `).get() as { id: number };
+  const releaseMatch = dbModule.db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(providerRelease.id, btbRelease.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+    VALUES ('Organizer Test', '{}')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Libraries (
+      name, root_path, metadata_profile_id, quality_profile_id
+    )
+    SELECT
+      'Organizer Stereo',
+      ?,
+      metadata_profile.id,
+      quality_profile.id
+    FROM MetadataProfiles metadata_profile
+    JOIN quality_profiles quality_profile
+      ON COALESCE(quality_profile.allowed_source_formats, '[]') NOT LIKE '%spatial%'
+    WHERE metadata_profile.name = 'Organizer Test'
+    ORDER BY quality_profile.id
+    LIMIT 1
+  `).run(path.join(tempDir, "organizer-stereo"));
+  const library = dbModule.db.prepare("SELECT id FROM Libraries WHERE name = 'Organizer Stereo'")
+    .get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      reason, curation_version
+    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+  `).run(library.id, btbGroup.id);
+  const libraryRelease = dbModule.db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+    RETURNING id
+  `).get(library.id, btbRelease.id) as { id: number };
+  const plan = dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlans (
+      library_release_id, provider, composition, download_mode, state,
+      planner_version, policy_hash, computed_at
+    ) VALUES (?, 'tidal', 'single_source', 'tracks', 'current', 1, 'test', CURRENT_TIMESTAMP)
+    RETURNING id
+  `).get(libraryRelease.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlanSources (
+      plan_id, provider_release_match_id, role, sort_order
+    ) VALUES (?, ?, 'primary', 0)
+  `).run(plan.id, releaseMatch.id);
+
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, provider_album_id, artist_mbid,
@@ -862,7 +951,7 @@ test("hybrid tip shared with a single/EP organizes under the job release, not th
     {
       type: "album",
       provider: "tidal",
-      providerId: "77661290;77555663;22888255",
+      providerId: "77661290",
       releaseGroupMbid: "rg-btb",
       releaseMbid: "rel-btb-deluxe",
       slot: "stereo",
@@ -905,12 +994,12 @@ test("hybrid tip shared with a single/EP organizes under the job release, not th
   assert.equal(getCanonicalTrackPosition("t-rehab-btb")?.trackNumber, 7);
   assert.equal(getCanonicalTrackPosition("t-rehab-single")?.trackNumber, 1);
 
-  // Without an explicit job RG, prefer the longer hybrid composite over the exact single.
+  // Without an explicit job RG, the current plan still provides the authority.
   const contextNoJobRg = (organizerModule.OrganizerService as any).resolveCanonicalAlbumImportContext(
     {
       type: "album",
       provider: "tidal",
-      providerId: "77661290;77555663;22888255",
+      providerId: "77661290",
       slot: "stereo",
     },
     "77661290",

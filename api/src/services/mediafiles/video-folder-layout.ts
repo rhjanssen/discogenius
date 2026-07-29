@@ -38,7 +38,7 @@ export function requiresAlbumLinkedVideosOnly(
 
 /**
  * Whether a video recording can place inline today: provider_video_for → audio
- * on a release group whose stereo slot is monitored (same gate as path compute).
+ * on a release group monitored by an enabled nonspatial library.
  */
 export function canVideoPlaceInline(videoRecordingId: string | number | null | undefined): boolean {
   const recordingId = String(videoRecordingId ?? "").trim();
@@ -71,10 +71,19 @@ export function canVideoPlaceInline(videoRecordingId: string | number | null | u
       AND ${mayFollowAudio}
       AND EXISTS (
         SELECT 1
-        FROM ReleaseGroupSlots rgs
-        WHERE rgs.release_group_mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
-          AND rgs.slot = 'stereo'
-          AND rgs.monitored = 1
+        FROM LibraryReleaseGroups library_group
+        JOIN Libraries library
+          ON library.id = library_group.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        WHERE library_group.release_group_id = album.id
+          AND library_group.monitored = 1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          )
       )
     ORDER BY
       ${VIDEO_ALBUM_ASSOCIATION_KIND_SQL.replace(/\ba\./g, "album.")} ASC,

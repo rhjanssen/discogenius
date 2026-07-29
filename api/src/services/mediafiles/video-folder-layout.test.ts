@@ -20,7 +20,9 @@ before(async () => {
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM RecordingRelations").run();
-  dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
+  dbModule.db.prepare("DELETE FROM LibraryReleases").run();
+  dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  dbModule.db.prepare("DELETE FROM Libraries").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM AlbumReleases").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
@@ -55,12 +57,22 @@ test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", 
     VALUES ('artist-mbid', 'artist-mbid', 'Layout Artist')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
-    VALUES ('rg-inline', 'artist-mbid', 'Inline Album', 'album')
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title, primary_type)
+    SELECT 'rg-inline', id, 'artist-mbid', 'Inline Album', 'album'
+    FROM ArtistMetadata
+    WHERE mbid = 'artist-mbid'
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count)
-    VALUES ('rel-inline', 'rg-inline', 'artist-mbid', 'Inline Album', '2024-01-01', 1)
+    INSERT INTO AlbumReleases (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id,
+      artist_mbid, title, date, track_count
+    )
+    SELECT
+      'rel-inline', release_group.id, 'rg-inline', artist.id,
+      'artist-mbid', 'Inline Album', '2024-01-01', 1
+    FROM Albums release_group
+    JOIN ArtistMetadata artist ON artist.mbid = 'artist-mbid'
+    WHERE release_group.mbid = 'rg-inline'
   `).run();
 
   const audio = dbModule.db.prepare(`
@@ -75,8 +87,12 @@ test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", 
   `).get() as { id: number };
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, recording_id, medium_position, position, number, title
-    ) VALUES ('track-inline', 'rel-inline', 'audio-inline', ?, 1, 1, '1', 'Song')
+      mbid, album_release_id, release_mbid, recording_mbid, recording_id,
+      medium_position, position, number, title
+    )
+    SELECT 'track-inline', release.id, 'rel-inline', 'audio-inline', ?, 1, 1, '1', 'Song'
+    FROM AlbumReleases release
+    WHERE release.mbid = 'rel-inline'
   `).run(audio.id);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (
@@ -87,9 +103,34 @@ test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", 
   assert.equal(layoutModule.canVideoPlaceInline(video.id), false);
 
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES ('artist-mbid', 'rg-inline', 'stereo', 1, 'rel-inline')
+    INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+    VALUES ('Video Layout Test', '{}')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Libraries (
+      name, root_path, metadata_profile_id, quality_profile_id
+    )
+    SELECT
+      'Video Layout Stereo',
+      ?,
+      metadata_profile.id,
+      quality_profile.id
+    FROM MetadataProfiles metadata_profile
+    JOIN quality_profiles quality_profile
+      ON COALESCE(quality_profile.allowed_source_formats, '[]') NOT LIKE '%spatial%'
+    WHERE metadata_profile.name = 'Video Layout Test'
+    ORDER BY quality_profile.id
+    LIMIT 1
+  `).run(path.join(tempDir, "video-layout-stereo"));
+  dbModule.db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      reason, curation_version
+    )
+    SELECT library.id, release_group.id, 1, 'auto', 0, 'test', 1
+    FROM Libraries library
+    JOIN Albums release_group ON release_group.mbid = 'rg-inline'
+    WHERE library.name = 'Video Layout Stereo'
   `).run();
 
   assert.equal(layoutModule.canVideoPlaceInline(video.id), true);
