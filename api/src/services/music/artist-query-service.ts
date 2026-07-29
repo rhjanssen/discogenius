@@ -1402,6 +1402,7 @@ export class ArtistQueryService {
       )
       SELECT
         top_tracks.id,
+        top_tracks.track_row_id,
         top_tracks.release_group_mbid AS album_id,
         top_tracks.title,
         NULL AS version,
