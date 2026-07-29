@@ -9,7 +9,6 @@ import type { ProviderAlbum, ProviderTrack } from "../providers/streaming-provid
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { ProviderArtistIdentityService, type ProviderArtistIdentityInput } from "../metadata/provider-artist-identity-service.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
-import { upsertProviderReleaseMatch } from "./provider-matches.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
 import { RefreshVideoService } from "./refresh-video-service.js";
 import {
@@ -1599,27 +1598,6 @@ export class RefreshAlbumService {
                     providerRole: credit.providerRole,
                 })),
             );
-        }
-
-        // Additive: also persist the provider album -> MB release match into the
-        // ProviderItemMatches candidate graph (powers the release-availability switcher).
-        // The ProviderItems offer write above is unchanged.
-        if (matchedReleaseMbid) {
-            upsertProviderReleaseMatch({
-                provider: providerId,
-                providerId: String(album.provider_id),
-                providerAlbumId: String(album.provider_id),
-                releaseMbid: matchedReleaseMbid,
-                status: releaseGroupMatch?.status ?? null,
-                confidence: releaseGroupMatch?.confidence ?? null,
-                method: releaseGroupMatch?.method ?? null,
-                evidence: releaseGroupMatch
-                    ? JSON.stringify({
-                        ...releaseGroupMatch.evidence,
-                        providerQualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
-                    })
-                    : null,
-            });
         }
 
         this.storeCanonicalAlbumSupplements({

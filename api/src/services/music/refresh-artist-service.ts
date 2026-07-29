@@ -34,7 +34,7 @@ import {
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
 import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
-import { upsertProviderReleaseMatch, persistCompositeReleaseMatchesForArtist } from "./provider-matches.js";
+import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
 import {
     completeBulkTrackList,
@@ -649,6 +649,39 @@ export class RefreshArtistService {
         reason: "missing" | "empty" | "coverage-changed" | "drm-only",
     ): void {
         db.transaction(() => {
+            const existing = db.prepare(`
+                SELECT title, version, type, upc, duration, release_date, explicit,
+                       provider_url, cover, volume_count, copyright
+                FROM ProviderItems
+                WHERE provider = 'soundcloud'
+                  AND entity_type = 'album'
+                  AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+                LIMIT 1
+            `).get(providerAlbumId) as Record<string, unknown> | undefined;
+            if (existing) {
+                const durationSeconds = Number(existing.duration);
+                new ProviderCatalogRepository(db).upsertItem({
+                    provider: "soundcloud",
+                    entityType: "release",
+                    providerId: providerAlbumId,
+                    title: String(existing.title || "") || null,
+                    version: String(existing.version || "") || null,
+                    providerType: String(existing.type || "") || null,
+                    upc: String(existing.upc || "") || null,
+                    durationMs: Number.isFinite(durationSeconds) && durationSeconds > 0
+                        ? Math.round(durationSeconds * 1000)
+                        : null,
+                    releaseDate: String(existing.release_date || "") || null,
+                    explicit: existing.explicit == null ? null : Boolean(existing.explicit),
+                    availability: "unavailable",
+                    availabilityReason: reason,
+                    checkedAt: new Date().toISOString(),
+                    providerUrl: String(existing.provider_url || "") || null,
+                    coverId: String(existing.cover || "") || null,
+                    volumeCount: existing.volume_count == null ? null : Number(existing.volume_count),
+                    copyright: String(existing.copyright || "") || null,
+                });
+            }
             db.prepare(`
                 UPDATE ProviderItems
                 SET availability = 'unavailable',
@@ -668,14 +701,14 @@ export class RefreshArtistService {
                   AND CAST(provider_album_id AS TEXT) = CAST(? AS TEXT)
             `).run(providerAlbumId);
             db.prepare(`
-                UPDATE ProviderItemMatches
-                SET status = 'rejected',
-                    method = ?,
+                UPDATE ProviderItems
+                SET availability = 'unavailable',
+                    availability_reason = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE provider = 'soundcloud'
-                  AND provider_item_type = 'album'
-                  AND CAST(provider_item_id AS TEXT) = CAST(? AS TEXT)
-            `).run(`${PLAYLIST_TRACKLIST_COVERAGE_METHOD}-${reason}`, providerAlbumId);
+                  AND entity_type = 'release'
+                  AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            `).run(reason, providerAlbumId);
         })();
     }
 
@@ -995,6 +1028,7 @@ export class RefreshArtistService {
         `);
 
         const selectCanonicalOwner = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?");
+        const normalizedCatalog = new ProviderCatalogRepository(db);
 
         // Chunk the per-album upserts so a prolific artist's provider catalog
         // doesn't hold the write lock for the whole batch and starve peers.
@@ -1038,22 +1072,27 @@ export class RefreshArtistService {
                     // and workspace identity.
                     album.url || null,
                 );
-
-                // Candidate-only edges remain available to strict hybrid
-                // coverage, but are not advertised as direct release
-                // availability until slot selection validates the track set.
-                if (matchedReleaseMbid && match && match.status !== "unmatched" && match.status !== "candidate") {
-                    upsertProviderReleaseMatch({
-                        provider: providerId,
-                        providerId: providerAlbumId,
-                        providerAlbumId,
-                        releaseMbid: matchedReleaseMbid,
-                        status: match.status,
-                        confidence: match.confidence,
-                        method: match.method,
-                        evidence: JSON.stringify(match.evidence),
-                    });
-                }
+                const durationSeconds = Number(album.duration);
+                normalizedCatalog.upsertItem({
+                    provider: providerId,
+                    entityType: "release",
+                    providerId: providerAlbumId,
+                    title: album.title || null,
+                    version: album.version || null,
+                    providerType: album.type || null,
+                    upc: album.upc || null,
+                    durationMs: Number.isFinite(durationSeconds) && durationSeconds > 0
+                        ? Math.round(durationSeconds * 1000)
+                        : null,
+                    releaseDate: album.release_date || null,
+                    explicit: album.explicit == null ? null : Boolean(album.explicit),
+                    availability: "available",
+                    checkedAt: new Date().toISOString(),
+                    providerUrl: album.url || null,
+                    coverId: album.cover || null,
+                    volumeCount: album.num_volumes ?? null,
+                    copyright: album.copyright || null,
+                });
         });
         // Acquire artwork after slot selection in precacheArtistMediaCovers().
         // Provisional matches can point several provider albums at one canonical
@@ -1061,7 +1100,6 @@ export class RefreshArtistService {
     }
 
     static syncProviderSelectionsFromStoredOffers(artistMbid: string | null): { stereo: number; spatial: number } {
-        persistCompositeReleaseMatchesForArtist(artistMbid);
         const candidates = buildStoredProviderAlbumSelections(artistMbid);
         if (candidates.length === 0) {
             return { stereo: 0, spatial: 0 };
@@ -1815,11 +1853,6 @@ export class RefreshArtistService {
             .all()
             .map((row) => String((row as { providerId: string }).providerId))
             .filter((providerId) => !registeredProviderIds.has(providerId));
-
-        // Artist-wide composite graph first: exact-cover hybrids across provider
-        // albums matched to different release groups (Bastille Unplugged case).
-        // Slot selection then consumes the same artist-wide track pool.
-        persistCompositeReleaseMatchesForArtist(artistMbid);
 
         const slotCounts = ReleaseGroupSlotService.syncProviderAlbumSelections({
             artistMbid,

@@ -487,11 +487,11 @@ test("empty stored SoundCloud playlist is rejected and a covering replacement is
     FROM ProviderItems
     WHERE provider = 'soundcloud' AND entity_type = 'album' AND provider_id = ?
   `).get(staleId) as { availability: string | null; match_status: string };
-  const staleEdge = dbModule.db.prepare(`
-    SELECT status
-    FROM ProviderItemMatches
-    WHERE provider = 'soundcloud' AND provider_item_type = 'album' AND provider_item_id = ?
-  `).get(staleId) as { status: string };
+  const normalizedStale = dbModule.db.prepare(`
+    SELECT availability, availability_reason AS availabilityReason
+    FROM ProviderItems
+    WHERE provider = 'soundcloud' AND entity_type = 'release' AND provider_id = ?
+  `).get(staleId) as { availability: string; availabilityReason: string };
   const staleChild = dbModule.db.prepare(`
     SELECT availability, match_status
     FROM ProviderItems
@@ -501,7 +501,7 @@ test("empty stored SoundCloud playlist is rejected and a covering replacement is
   `).get() as { availability: string | null; match_status: string };
   assert.deepEqual(stale, { availability: "unavailable", match_status: "rejected" });
   assert.deepEqual(staleChild, { availability: "unavailable", match_status: "rejected" });
-  assert.equal(staleEdge.status, "rejected");
+  assert.deepEqual(normalizedStale, { availability: "unavailable", availabilityReason: "empty" });
   assert.equal(
     refreshMatchModule.buildStoredProviderAlbumSelections(artistMbid)
       .some((candidate) => candidate.album.providerId === staleId),
@@ -555,7 +555,7 @@ test("provider release-group matching passes spatial quality and release disambi
   assert.equal(match?.releaseMbid, "dolby-atmos-release");
 });
 
-test("matched provider offers attach to the canonical MusicBrainz artist and release group", () => {
+test("matched provider release discovery stores normalized facts without publishing a trackless typed edge", () => {
   const artistMbid = "artist-mbid-bastille";
   const album = {
     provider_id: "provider-album-1",
@@ -602,27 +602,21 @@ test("matched provider offers attach to the canonical MusicBrainz artist and rel
   assert.equal(row.release_mbid, "release-mbid-1");
   assert.equal(row.match_status, "verified");
 
-  const providerMatch = dbModule.db.prepare(`
-    SELECT provider, provider_item_id, musicbrainz_release_mbid, status, confidence, method
-    FROM ProviderItemMatches
-    WHERE provider = 'tidal'
-      AND provider_item_type = 'album'
-      AND provider_item_id = ?
-      AND musicbrainz_release_mbid = ?
-  `).get(album.provider_id, "release-mbid-1") as {
-    provider: string;
-    provider_item_id: string;
-    musicbrainz_release_mbid: string;
-    status: string;
-    confidence: number;
-    method: string;
-  } | undefined;
-
-  assert.ok(providerMatch);
-  assert.equal(providerMatch.provider, "tidal");
-  assert.equal(providerMatch.status, "verified");
-  assert.equal(providerMatch.confidence, 1);
-  assert.equal(providerMatch.method, "musicbrainz-release-upc");
+  const normalized = dbModule.db.prepare(`
+    SELECT id, title, availability
+    FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = ?
+  `).get(album.provider_id) as { id: number; title: string; availability: string };
+  assert.deepEqual(
+    { title: normalized.title, availability: normalized.availability },
+    { title: "Doom Days", availability: "available" },
+  );
+  const typedMatchCount = dbModule.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM ProviderReleaseMatches
+    WHERE provider_release_item_id = ?
+  `).get(normalized.id) as { count: number };
+  assert.equal(typedMatchCount.count, 0);
 });
 
 test("matched provider offers persist the best compatible MusicBrainz release version", () => {
