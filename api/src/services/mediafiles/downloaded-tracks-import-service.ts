@@ -278,8 +278,7 @@ function resolveImportHistoryContext(
     providerId: string,
     provider?: string | null,
 ): ImportHistoryContext {
-    const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
-    const firstProviderId = providerId.split(";").filter(Boolean)[0] || providerId;
+    const entityType = type === "album" ? "release" : type === "video" ? "video" : "track";
     const row = db.prepare(`
         SELECT
             COALESCE(CAST(artist.id AS TEXT), pi.artist_mbid) AS artist_id,
@@ -294,7 +293,7 @@ function resolveImportHistoryContext(
         ORDER BY pi.updated_at DESC
         LIMIT 1
     `).get(
-        firstProviderId,
+        providerId,
         entityType,
         provider || null,
         provider || null,
@@ -309,8 +308,7 @@ function resolveImportHistoryContext(
 }
 
 function resolveAffectedArtistId(type: string, providerId: string, provider?: string | null): string | null {
-    const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
-    const firstProviderId = providerId.split(";").filter(Boolean)[0] || providerId;
+    const entityType = type === "album" ? "release" : type === "video" ? "video" : "track";
     const row = db.prepare(`
         SELECT COALESCE(CAST(artist.id AS TEXT), pi.artist_mbid) AS artist_id
         FROM ProviderItems pi
@@ -321,7 +319,7 @@ function resolveAffectedArtistId(type: string, providerId: string, provider?: st
         ORDER BY pi.updated_at DESC
         LIMIT 1
     `).get(
-        firstProviderId,
+        providerId,
         entityType,
         provider || null,
         provider || null,
@@ -339,42 +337,27 @@ function resolveExpectedRecoveredTracks(
         return Math.max(1, fallbackCount);
     }
 
-    const albumIds = providerId.split(";").filter(Boolean);
-    if (albumIds.length === 0) {
+    const normalizedProviderId = String(providerId || "").trim();
+    if (!normalizedProviderId) {
         return fallbackCount;
     }
 
     const row = db.prepare(`
-        WITH provider_albums(provider_id) AS (
-            VALUES ${albumIds.map(() => "(?)").join(", ")}
-        ),
-        selected_releases AS (
-            SELECT DISTINCT COALESCE(pi.release_mbid, rgs.selected_release_mbid) AS release_mbid
-            FROM provider_albums input
-            LEFT JOIN ProviderItems pi
-              ON pi.provider_id = input.provider_id
-             AND pi.entity_type = 'album'
-             AND (? IS NULL OR pi.provider = ?)
-            LEFT JOIN ReleaseGroupSlots rgs
-              ON (
-                rgs.selected_provider_id = input.provider_id
-                OR (
-                  pi.release_group_mbid IS NOT NULL
-                  AND rgs.release_group_mbid = pi.release_group_mbid
-                )
-              )
-             AND (? IS NULL OR rgs.selected_provider = ?)
-            WHERE COALESCE(pi.release_mbid, rgs.selected_release_mbid) IS NOT NULL
-        )
-        SELECT COUNT(DISTINCT track.mbid) AS count
-        FROM selected_releases sr
-        JOIN Tracks track ON track.release_mbid = sr.release_mbid
-        LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
-        WHERE (recording.is_video IS NULL OR recording.is_video = 0)
+        SELECT COUNT(DISTINCT track.id) AS count
+        FROM ProviderItems provider_release
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.provider_release_item_id = provider_release.id
+         AND release_match.match_state = 'accepted'
+        JOIN Tracks track
+          ON track.album_release_id = release_match.release_id
+        JOIN Recordings recording
+          ON recording.id = track.recording_id
+        WHERE provider_release.provider_id = ?
+          AND provider_release.entity_type IN ('release', 'album')
+          AND (? IS NULL OR provider_release.provider = ?)
+          AND recording.is_video = 0
     `).get(
-        ...albumIds,
-        provider || null,
-        provider || null,
+        normalizedProviderId,
         provider || null,
         provider || null,
     ) as { count?: number } | undefined;
@@ -399,21 +382,28 @@ function reconcileImportedDownload(
             console.warn(`[ImportDownload] Album ${providerId}: only ${processedIds.length}/${expected} tracks were imported. Partial download.`);
         }
 
-        const albumIds = providerId.split(";").filter(Boolean);
-        for (const albumId of albumIds) {
-            const row = db.prepare(`
-                SELECT release_group_mbid
-                FROM ProviderItems
-                WHERE entity_type = 'album'
-                  AND provider_id = ?
-                  AND (? IS NULL OR provider = ?)
-                ORDER BY updated_at DESC
-                LIMIT 1
-            `).get(albumId, provider || null, provider || null) as {
-                release_group_mbid?: string | null;
-            } | undefined;
-            updateAlbumDownloadStatus(String(row?.release_group_mbid || albumId));
-        }
+        const row = db.prepare(`
+            SELECT release_group.mbid AS release_group_mbid
+            FROM ProviderItems provider_release
+            JOIN ProviderReleaseMatches release_match
+              ON release_match.provider_release_item_id = provider_release.id
+             AND release_match.match_state = 'accepted'
+            JOIN AlbumReleases release
+              ON release.id = release_match.release_id
+            JOIN Albums release_group
+              ON release_group.id = release.release_group_id
+            WHERE provider_release.entity_type IN ('release', 'album')
+              AND provider_release.provider_id = ?
+              AND (? IS NULL OR provider_release.provider = ?)
+            ORDER BY
+              CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+              release_match.confidence DESC,
+              release_match.id
+            LIMIT 1
+        `).get(providerId, provider || null, provider || null) as {
+            release_group_mbid?: string | null;
+        } | undefined;
+        updateAlbumDownloadStatus(String(row?.release_group_mbid || providerId));
         return;
     }
 
@@ -638,18 +628,15 @@ export class DownloadedTracksImportService {
 
             try {
                 if (type === "album") {
-                    const albumIds = providerId.split(";").filter(Boolean);
-                    for (const albumId of albumIds) {
-                        cancellationCheckpoint(`before resolving album identity ${albumId}`);
-                        try {
-                            await MetadataIdentityService.resolveAlbum(albumId, { provider });
-                            const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
-                            await RefreshAlbumService.refreshMetadata(albumId, { provider: provider || undefined });
-                        } catch (err) {
-                            console.warn(`[ImportDownload] Metadata identity resolution failed for album ${albumId}:`, err);
-                        }
-                        cancellationCheckpoint(`after resolving album identity ${albumId}`);
+                    cancellationCheckpoint(`before resolving album identity ${providerId}`);
+                    try {
+                        await MetadataIdentityService.resolveAlbum(providerId, { provider });
+                        const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
+                        await RefreshAlbumService.refreshMetadata(providerId, { provider: provider || undefined });
+                    } catch (err) {
+                        console.warn(`[ImportDownload] Metadata identity resolution failed for album ${providerId}:`, err);
                     }
+                    cancellationCheckpoint(`after resolving album identity ${providerId}`);
                 } else {
                     await MetadataIdentityService.resolveTrack(providerId, { provider });
                     cancellationCheckpoint("after resolving track identity");
@@ -663,7 +650,7 @@ export class DownloadedTracksImportService {
             try {
                 await ProviderTrackTagSupplementService.refresh({
                     providerId: job.payload.provider || null,
-                    albumProviderIds: type === "album" ? providerId.split(";").filter(Boolean) : [],
+                    albumProviderIds: type === "album" ? [providerId] : [],
                     trackProviderIds: type === "track" ? [providerId] : [],
                 });
             } catch (error) {

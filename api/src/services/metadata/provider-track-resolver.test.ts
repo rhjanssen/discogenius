@@ -10,13 +10,11 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let resolverModule: typeof import("./provider-track-resolver.js");
-let providersModule: typeof import("../providers/index.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   resolverModule = await import("./provider-track-resolver.js");
-  providersModule = await import("../providers/index.js");
 });
 
 after(() => {
@@ -24,160 +22,148 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("canonical provider track resolution splits combined provider album selections", async () => {
+test("canonical provider track resolution follows the current normalized plan", async () => {
   const { db } = dbModule;
-  const providerCalls: string[] = [];
-  const artist = { providerId: "artist-1", name: "Test Artist" };
-  const album = {
-    providerId: "album-b",
-    title: "Split Release",
-    artist,
-    trackCount: 1,
-    volumeCount: 1,
-  };
+  const artist = db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES ('artist-1', 'Test Artist')
+    RETURNING id
+  `).get() as { id: number };
+  const releaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title)
+    VALUES ('group-1', ?, 'artist-1', 'Test Album')
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const release = db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id,
+      artist_mbid, title
+    ) VALUES ('release-1', ?, 'group-1', ?, 'artist-1', 'Test Album')
+    RETURNING id
+  `).get(releaseGroup.id, artist.id) as { id: number };
+  const recording = db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video
+    ) VALUES ('recording-1', ?, 'artist-1', 'Target Track', 0)
+    RETURNING id
+  `).get(artist.id) as { id: number };
+  const track = db.prepare(`
+    INSERT INTO Tracks (
+      mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      title, medium_position, position
+    ) VALUES ('track-1', ?, 'release-1', ?, 'recording-1', 'Target Track', 1, 2)
+    RETURNING id
+  `).get(release.id, recording.id) as { id: number };
+  const providerRelease = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES ('test-provider', 'release', 'provider-release-1', 'Test Album')
+    RETURNING id
+  `).get() as { id: number };
+  const providerTrack = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES ('test-provider', 'track', 'provider-track-1', 'Target Track')
+    RETURNING id
+  `).get() as { id: number };
+  const member = db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 2)
+    RETURNING id
+  `).get(providerRelease.id, providerTrack.id) as { id: number };
+  const releaseMatch = db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 0.99, 'test', 1)
+    RETURNING id
+  `).get(providerRelease.id, release.id) as { id: number };
+  const trackMatch = db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_release_member_id, provider_release_match_id, track_id,
+      recording_id, match_state, decision_source, confidence, method,
+      matcher_version
+    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 0.98, 'test', 1)
+    RETURNING id
+  `).get(member.id, releaseMatch.id, track.id, recording.id) as { id: number };
+  const stereoVariant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label,
+      availability
+    ) VALUES (?, 'lossless', 'lossless', 'LOSSLESS', 'available')
+    RETURNING id
+  `).get(providerTrack.id) as { id: number };
+  const spatialVariant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label,
+      availability
+    ) VALUES (?, 'atmos', 'spatial', 'DOLBY_ATMOS', 'available')
+    RETURNING id
+  `).get(providerTrack.id) as { id: number };
 
-  providersModule.streamingProviderManager.registerStreamingProvider({
-    id: "test-provider",
-    name: "Test provider",
-    capabilities: {},
-    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
-    getArtist: async () => artist,
-    getArtistAlbums: async () => [],
-    getAlbum: async () => album,
-    getTrack: async (id: string | number) => ({
-      providerId: String(id),
-      title: "Target Track",
-      artist,
-      album,
-      duration: 180,
-      trackNumber: 2,
-      volumeNumber: 1,
-    }),
-    getAlbumTracks: async (id: string | number) => {
-      providerCalls.push(String(id));
-      if (String(id) === "album-b") {
-        return [{
-          providerId: "track-b",
-          title: "Target Track",
-          artist,
-          album: { ...album, providerId: "album-b" },
-          duration: 180,
-          trackNumber: 2,
-          volumeNumber: 1,
-          quality: "LOSSLESS",
-        }];
-      }
+  const libraries = db.prepare(`
+    SELECT id, name FROM Libraries WHERE name IN ('Stereo', 'Spatial')
+  `).all() as Array<{ id: number; name: string }>;
+  for (const library of libraries) {
+    db.prepare(`
+      INSERT INTO LibraryReleaseGroups (
+        library_id, release_group_id, monitored, selection_mode, locked,
+        reason, curation_version
+      ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+    `).run(library.id, releaseGroup.id);
+    const libraryRelease = db.prepare(`
+      INSERT INTO LibraryReleases (
+        library_id, release_id, selection_mode, locked, reason, curation_version
+      ) VALUES (?, ?, 'auto', 0, 'test', 1)
+      RETURNING id
+    `).get(library.id, release.id) as { id: number };
+    const plan = db.prepare(`
+      INSERT INTO AcquisitionPlans (
+        library_release_id, provider, composition, download_mode, state,
+        planner_version, policy_hash, computed_at
+      ) VALUES (?, 'test-provider', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
+      RETURNING id
+    `).get(libraryRelease.id) as { id: number };
+    const source = db.prepare(`
+      INSERT INTO AcquisitionPlanSources (
+        plan_id, provider_release_match_id, role, sort_order
+      ) VALUES (?, ?, 'primary', 0)
+      RETURNING id
+    `).get(plan.id, releaseMatch.id) as { id: number };
+    db.prepare(`
+      INSERT INTO AcquisitionPlanTracks (
+        plan_id, track_id, source_id, provider_track_match_id,
+        provider_audio_variant_id
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run(
+      plan.id,
+      track.id,
+      source.id,
+      trackMatch.id,
+      library.name === "Spatial" ? spatialVariant.id : stereoVariant.id,
+    );
+  }
 
-      return [{
-        providerId: "track-a",
-        title: "Other Track",
-        artist,
-        album: { ...album, providerId: "album-a" },
-        duration: 120,
-        trackNumber: 1,
-        volumeNumber: 1,
-        quality: "LOSSLESS",
-      }];
-    },
-  } as any);
-
-  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid-1", "Test Artist");
-  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)")
-    .run("rg-mbid-1", "artist-mbid-1", "Split Release", "album");
-  db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "Split Release", "Official", "2024-01-01", 2, 1);
-  db.prepare("INSERT INTO Recordings (mbid, title, isrcs) VALUES (?, ?, ?)")
-    .run("recording-mbid-2", "Target Track", JSON.stringify(["ISRC123"]));
-  db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("track-mbid-2", "release-mbid-1", "recording-mbid-2", "Target Track", 2, 1, 180000);
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, quality, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "test-provider", "album-a;album-b", "LOSSLESS", "verified");
-
-  const resolved = await resolverModule.resolveProviderTrackForCanonicalTrack({
-    releaseGroupMbid: "rg-mbid-1",
-    canonicalTrackMbid: "track-mbid-2",
+  const stereo = await resolverModule.resolveProviderTrackForCanonicalTrack({
+    releaseGroupMbid: "group-1",
+    canonicalTrackMbid: "track-1",
+    provider: "test-provider",
+    slot: "stereo",
+  });
+  assert.deepEqual(stereo, {
+    provider: "test-provider",
+    providerTrackId: "provider-track-1",
+    providerAlbumId: "provider-release-1",
+    slot: "stereo",
+    quality: "LOSSLESS",
+    score: 98,
   });
 
-  assert.deepEqual(providerCalls, ["album-a", "album-b"]);
-  assert.equal(resolved?.providerAlbumId, "album-b");
-  assert.equal(resolved?.providerTrackId, "track-b");
-
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, quality, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid-1", "rg-mbid-1", "spatial", 1, "test-provider", "album-a;album-b", "DOLBY_ATMOS", "verified");
-  providerCalls.length = 0;
-  const spatialResolved = await resolverModule.resolveProviderTrackForCanonicalTrack({
-    releaseGroupMbid: "rg-mbid-1",
-    canonicalTrackMbid: "track-mbid-2",
+  const spatial = await resolverModule.resolveProviderTrackForCanonicalTrack({
+    releaseGroupMbid: "group-1",
+    canonicalRecordingMbid: "recording-1",
     slot: "spatial",
   });
-
-  assert.deepEqual(providerCalls, ["album-a", "album-b"]);
-  assert.equal(spatialResolved?.slot, "spatial");
-  assert.equal(spatialResolved?.quality, "DOLBY_ATMOS");
-});
-
-test("canonical provider track resolution includes provider version text while matching", async () => {
-  const { db } = dbModule;
-  const artist = { providerId: "artist-2", name: "Test Artist" };
-  const album = { providerId: "album-version", title: "Versioned Release", artist };
-
-  providersModule.streamingProviderManager.registerStreamingProvider({
-    id: "version-provider",
-    name: "Version provider",
-    capabilities: {},
-    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
-    getArtist: async () => artist,
-    getArtistAlbums: async () => [],
-    getAlbum: async () => album,
-    getTrack: async () => { throw new Error("unused"); },
-    getAlbumTracks: async () => [{
-      providerId: "track-version",
-      title: "Brave New World",
-      version: "Interlude",
-      artist,
-      album,
-      duration: 27,
-      trackNumber: 4,
-      volumeNumber: 1,
-      quality: "LOSSLESS",
-    }],
-  } as any);
-
-  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid-2", "Test Artist");
-  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)")
-    .run("rg-mbid-2", "artist-mbid-2", "Versioned Release", "album");
-  db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, track_count, media_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("release-mbid-2", "rg-mbid-2", "artist-mbid-2", "Versioned Release", "Official", "2024-01-01", 1, 1);
-  db.prepare(`
-    INSERT INTO Recordings (mbid, title, isrcs)
-    VALUES (?, ?, ?)
-  `).run("recording-mbid-version", "Brave New World (interlude)", JSON.stringify([]));
-  db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("track-mbid-version", "release-mbid-2", "recording-mbid-version", "Brave New World (interlude)", 4, 1, 27000);
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, quality, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid-2", "rg-mbid-2", "stereo", 1, "version-provider", "album-version", "LOSSLESS", "verified");
-
-  const resolved = await resolverModule.resolveProviderTrackForCanonicalTrack({
-    releaseGroupMbid: "rg-mbid-2",
-    canonicalTrackMbid: "track-mbid-version",
-  });
-
-  assert.equal(resolved?.providerTrackId, "track-version");
+  assert.equal(spatial?.providerTrackId, "provider-track-1");
+  assert.equal(spatial?.slot, "spatial");
+  assert.equal(spatial?.quality, "DOLBY_ATMOS");
 });

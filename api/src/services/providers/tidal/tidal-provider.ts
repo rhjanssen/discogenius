@@ -48,107 +48,40 @@ export function getTidalAlbumDownloadTrackInfo(providerIds: string[]): TidalAlbu
   const canonicalRows = db.prepare(`
     WITH input_albums(provider_id, ord) AS (
       VALUES ${values}
-    ),
-    matched_releases AS (
-      SELECT DISTINCT
-        input_albums.provider_id,
-        input_albums.ord,
-        COALESCE(provider_item.release_mbid, selected_slot.selected_release_mbid) AS release_mbid
-      FROM input_albums
-      LEFT JOIN ProviderItems provider_item
-        ON provider_item.provider = 'tidal'
-       AND provider_item.entity_type = 'album'
-       AND CAST(provider_item.provider_id AS TEXT) = input_albums.provider_id
-      LEFT JOIN ReleaseGroupSlots selected_slot
-        ON selected_slot.selected_provider = 'tidal'
-       AND (
-         selected_slot.selected_provider_id = input_albums.provider_id
-         OR selected_slot.selected_provider_id LIKE input_albums.provider_id || ';%'
-         OR selected_slot.selected_provider_id LIKE '%;' || input_albums.provider_id || ';%'
-         OR selected_slot.selected_provider_id LIKE '%;' || input_albums.provider_id
-       )
     )
     SELECT
       track.title,
       NULL AS version,
       track.position AS track_num,
       COALESCE(track.medium_position, 1) AS volume_num,
-      COALESCE(release_artist.name, canonical_artist.name) AS artist_name,
-      matched_releases.ord
-    FROM matched_releases
+      COALESCE(track_credit.credited_name, recording_artist.name, release_artist.name) AS artist_name,
+      input_albums.ord
+    FROM input_albums
+    JOIN ProviderItems provider_release
+      ON provider_release.provider = 'tidal'
+     AND provider_release.entity_type IN ('release', 'album')
+     AND CAST(provider_release.provider_id AS TEXT) = input_albums.provider_id
+    JOIN ProviderReleaseMatches release_match
+      ON release_match.provider_release_item_id = provider_release.id
+     AND release_match.match_state = 'accepted'
+    JOIN AlbumReleases release
+      ON release.id = release_match.release_id
     JOIN Tracks track
-      ON track.release_mbid = matched_releases.release_mbid
+      ON track.album_release_id = release.id
     LEFT JOIN Recordings recording
-      ON recording.mbid = track.recording_mbid
-    LEFT JOIN AlbumReleases release
-      ON release.mbid = track.release_mbid
+      ON recording.id = track.recording_id
+    LEFT JOIN TrackArtistCredits track_credit
+      ON track_credit.track_id = track.id
+     AND track_credit.ordinal = 0
+    LEFT JOIN ArtistMetadata recording_artist
+      ON recording_artist.id = recording.artist_metadata_id
     LEFT JOIN ArtistMetadata release_artist
-      ON release_artist.mbid = COALESCE(recording.artist_mbid, release.artist_mbid)
-    LEFT JOIN Artists canonical_artist
-      ON canonical_artist.mbid = COALESCE(recording.artist_mbid, release.artist_mbid)
-    WHERE matched_releases.release_mbid IS NOT NULL
-      AND (recording.is_video IS NULL OR recording.is_video = 0)
-    ORDER BY matched_releases.ord ASC, COALESCE(track.medium_position, 1) ASC, track.position ASC
+      ON release_artist.id = release.artist_metadata_id
+    WHERE recording.is_video = 0
+    ORDER BY input_albums.ord, track.medium_position, track.position, track.id
   `).all(...params) as Array<TidalAlbumDownloadTrackInfo & { ord: number }>;
 
-  if (canonicalRows.length > 0) {
-    return canonicalRows.map(({ ord: _ord, ...row }) => row);
-  }
-
-  const providerItemRows = db.prepare(`
-    WITH input_albums(provider_id, ord) AS (
-      VALUES ${values}
-    ),
-    album_items AS (
-      SELECT
-        input_albums.provider_id,
-        input_albums.ord,
-        provider_item.provider,
-        provider_item.artist_mbid,
-        provider_item.release_group_mbid,
-        provider_item.release_mbid
-      FROM input_albums
-      JOIN ProviderItems provider_item
-        ON provider_item.provider = 'tidal'
-       AND provider_item.entity_type = 'album'
-       AND CAST(provider_item.provider_id AS TEXT) = input_albums.provider_id
-    )
-    SELECT
-      track_item.title,
-      track_item.version,
-      track.position AS track_num,
-      track.medium_position AS volume_num,
-      COALESCE(track_artist.name, album_artist.name, canonical_artist.name) AS artist_name,
-      album_items.ord
-    FROM album_items
-    JOIN ProviderItems track_item
-      ON track_item.provider = album_items.provider
-     AND track_item.entity_type = 'track'
-     AND (
-       (album_items.release_mbid IS NOT NULL AND track_item.release_mbid = album_items.release_mbid)
-       OR (album_items.release_group_mbid IS NOT NULL AND track_item.release_group_mbid = album_items.release_group_mbid)
-     )
-    LEFT JOIN Tracks track
-      ON track.mbid = track_item.track_mbid
-      OR (track_item.track_id IS NOT NULL AND track.id = track_item.track_id)
-    LEFT JOIN Recordings recording
-      ON recording.mbid = COALESCE(track.recording_mbid, track_item.recording_mbid)
-      OR (track_item.recording_id IS NOT NULL AND recording.id = track_item.recording_id)
-    LEFT JOIN ArtistMetadata track_artist
-      ON track_artist.mbid = COALESCE(recording.artist_mbid, track_item.artist_mbid)
-    LEFT JOIN ArtistMetadata album_artist
-      ON album_artist.mbid = album_items.artist_mbid
-    LEFT JOIN Artists canonical_artist
-      ON canonical_artist.mbid = COALESCE(recording.artist_mbid, track_item.artist_mbid, album_items.artist_mbid)
-    ORDER BY
-      album_items.ord ASC,
-      COALESCE(track.medium_position, 1) ASC,
-      COALESCE(track.position, 999999) ASC,
-      track_item.updated_at ASC,
-      track_item.provider_id ASC
-  `).all(...params) as Array<TidalAlbumDownloadTrackInfo & { ord: number }>;
-
-  return providerItemRows.map(({ ord: _ord, ...row }) => row);
+  return canonicalRows.map(({ ord: _ord, ...row }) => row);
 }
 
 export class TidalProvider implements StreamingProvider {

@@ -1,9 +1,7 @@
 import { db } from "../../database.js";
-import { scoreTrackMatch as sharedScoreTrackMatch, TRACK_MATCH_THRESHOLD } from "../music/provider-track-matcher.js";
-import { streamingProviderManager } from "../providers/index.js";
-import type { ProviderTrack } from "../providers/streaming-provider.js";
 
 type CanonicalTrackCandidate = {
+    id?: number | null;
     mbid: string | null;
     recording_mbid: string | null;
     release_group_mbid: string | null;
@@ -12,13 +10,6 @@ type CanonicalTrackCandidate = {
     medium_position: number | null;
     length_ms: number | null;
     isrcs: string | null;
-};
-
-type ProviderAlbumSelection = {
-    slot: string;
-    provider: string;
-    providerAlbumId: string;
-    quality: string | null;
 };
 
 export type ResolvedProviderTrack = {
@@ -32,13 +23,6 @@ export type ResolvedProviderTrack = {
 
 export function looksLikeMusicBrainzMbid(value: unknown): boolean {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
-}
-
-function splitProviderAlbumIds(value: unknown): string[] {
-    return String(value || "")
-        .split(/[;+]/)
-        .map((part) => part.trim())
-        .filter(Boolean);
 }
 
 function getCanonicalTrack(input: {
@@ -57,6 +41,7 @@ function getCanonicalTrack(input: {
     if (canonicalTrackMbid && releaseGroupMbid) {
         const row = db.prepare(`
             SELECT
+              t.id,
               t.mbid,
               t.recording_mbid,
               r.release_group_mbid,
@@ -78,6 +63,7 @@ function getCanonicalTrack(input: {
     if (canonicalRecordingMbid && releaseGroupMbid) {
         const row = db.prepare(`
             SELECT
+              t.id,
               t.mbid,
               t.recording_mbid,
               r.release_group_mbid,
@@ -102,6 +88,7 @@ function getCanonicalTrack(input: {
     }
 
     return {
+        id: null,
         mbid: canonicalTrackMbid || null,
         recording_mbid: canonicalRecordingMbid || null,
         release_group_mbid: releaseGroupMbid || null,
@@ -111,89 +98,6 @@ function getCanonicalTrack(input: {
         length_ms: input.duration == null ? null : Number(input.duration) * 1000,
         isrcs: null,
     };
-}
-
-function getProviderAlbumSelections(
-    releaseGroupMbid: string,
-    options: { slot?: string | null; provider?: string | null },
-): ProviderAlbumSelection[] {
-    const slot = String(options.slot || "").trim().toLowerCase();
-    const provider = String(options.provider || "").trim().toLowerCase();
-    const rows = db.prepare(`
-        SELECT
-          slot,
-          selected_provider,
-          selected_provider_id,
-          quality
-        FROM ReleaseGroupSlots
-        WHERE release_group_mbid = ?
-          AND selected_provider IS NOT NULL
-          AND selected_provider_id IS NOT NULL
-          AND (? = '' OR LOWER(slot) = ?)
-          AND (? = '' OR LOWER(selected_provider) = ?)
-        ORDER BY
-          CASE
-            WHEN LOWER(slot) = 'stereo' THEN 0
-            WHEN LOWER(slot) = 'spatial' THEN 1
-            ELSE 2
-          END ASC,
-          updated_at DESC
-    `).all(releaseGroupMbid, slot, slot, provider, provider) as Array<{
-        slot?: string | null;
-        selected_provider?: string | null;
-        selected_provider_id?: string | number | null;
-        quality?: string | null;
-    }>;
-
-    return rows
-        .flatMap((row) => splitProviderAlbumIds(row.selected_provider_id).map((providerAlbumId) => ({
-            slot: String(row.slot || ""),
-            provider: String(row.selected_provider || ""),
-            providerAlbumId,
-            quality: row.quality == null ? null : String(row.quality),
-        })))
-        .filter((row) => row.slot && row.provider && row.providerAlbumId);
-}
-
-function parseCanonicalIsrcs(value: string | null): Set<string> {
-    const set = new Set<string>();
-    if (!value) return set;
-    try {
-        const parsed = JSON.parse(value) as unknown;
-        if (Array.isArray(parsed)) {
-            for (const isrc of parsed) {
-                const norm = String(isrc || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-                if (norm) set.add(norm);
-            }
-        }
-    } catch {
-        // Ignore malformed ISRC json; structural matching still applies.
-    }
-    return set;
-}
-
-// Resolve which provider track to download/preview for a canonical track —
-// same shared matcher as curation and the album page.
-function scoreProviderTrackMatch(track: CanonicalTrackCandidate, providerTrack: ProviderTrack): number {
-    return sharedScoreTrackMatch(
-        {
-            recordingMbid: track.recording_mbid ?? null,
-            isrcs: parseCanonicalIsrcs(track.isrcs),
-            title: track.title || "",
-            trackNumber: Number(track.position || 0),
-            volumeNumber: Number(track.medium_position || 1),
-            durationSec: track.length_ms == null ? null : Number(track.length_ms) / 1000,
-        },
-        {
-            mbid: null,
-            isrc: providerTrack.isrc ?? null,
-            title: providerTrack.title,
-            version: (providerTrack as { version?: string | null }).version ?? null,
-            trackNumber: providerTrack.trackNumber ?? null,
-            volumeNumber: providerTrack.volumeNumber ?? null,
-            durationSec: providerTrack.duration == null ? null : Number(providerTrack.duration),
-        },
-    );
 }
 
 export async function resolveProviderTrackForCanonicalTrack(input: {
@@ -213,38 +117,90 @@ export async function resolveProviderTrackForCanonicalTrack(input: {
         return null;
     }
 
-    const selections = getProviderAlbumSelections(releaseGroupMbid, {
-        slot: input.slot,
-        provider: input.provider,
-    });
-    if (selections.length === 0) {
-        return null;
-    }
+    const requestedSlot = String(input.slot || "").trim().toLowerCase();
+    const requestedProvider = String(input.provider || "").trim().toLowerCase();
+    const row = db.prepare(`
+        SELECT
+          plan.provider,
+          provider_track.provider_id AS provider_track_id,
+          provider_release.provider_id AS provider_album_id,
+          CASE
+            WHEN variant.quality_class = 'spatial' THEN 'spatial'
+            ELSE 'stereo'
+          END AS slot,
+          COALESCE(variant.provider_quality_label, variant.quality_class) AS quality,
+          track_match.confidence * 100 AS score
+        FROM AcquisitionPlanTracks plan_track
+        JOIN AcquisitionPlans plan
+          ON plan.id = plan_track.plan_id
+         AND plan.state = 'current'
+        JOIN LibraryReleases library_release
+          ON library_release.id = plan.library_release_id
+        JOIN AlbumReleases release
+          ON release.id = library_release.release_id
+        JOIN Albums release_group
+          ON release_group.id = release.release_group_id
+        JOIN ProviderTrackMatches track_match
+          ON track_match.id = plan_track.provider_track_match_id
+         AND track_match.match_state = 'accepted'
+        JOIN Recordings canonical_recording
+          ON canonical_recording.id = track_match.recording_id
+        JOIN ProviderReleaseMembers release_member
+          ON release_member.id = track_match.provider_release_member_id
+        JOIN ProviderItems provider_track
+          ON provider_track.id = release_member.member_item_id
+        JOIN AcquisitionPlanSources source
+          ON source.id = plan_track.source_id
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.id = source.provider_release_match_id
+        JOIN ProviderItems provider_release
+          ON provider_release.id = release_match.provider_release_item_id
+        JOIN ProviderItemAudioVariants variant
+          ON variant.id = plan_track.provider_audio_variant_id
+        WHERE release_group.mbid = ?
+          AND (
+            (? IS NOT NULL AND plan_track.track_id = ?)
+            OR (? IS NOT NULL AND canonical_recording.mbid = ?)
+          )
+          AND (? = '' OR LOWER(plan.provider) = ?)
+          AND (
+            ? = ''
+            OR (? = 'spatial' AND variant.quality_class = 'spatial')
+            OR (? = 'stereo' AND variant.quality_class <> 'spatial')
+          )
+        ORDER BY
+          CASE WHEN track_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+          track_match.confidence DESC,
+          plan.computed_at DESC,
+          plan_track.id
+        LIMIT 1
+    `).get(
+        releaseGroupMbid,
+        canonicalTrack.id ?? null,
+        canonicalTrack.id ?? null,
+        canonicalTrack.recording_mbid,
+        canonicalTrack.recording_mbid,
+        requestedProvider,
+        requestedProvider,
+        requestedSlot,
+        requestedSlot,
+        requestedSlot,
+    ) as {
+        provider: string;
+        provider_track_id: string;
+        provider_album_id: string;
+        slot: string;
+        quality: string | null;
+        score: number;
+    } | undefined;
 
-    let best: ResolvedProviderTrack | null = null;
-    for (const selection of selections) {
-        const provider = streamingProviderManager.getStreamingProvider(selection.provider);
-        const providerTracks = await provider.getAlbumTracks(selection.providerAlbumId);
-        for (const providerTrack of providerTracks) {
-            const score = scoreProviderTrackMatch(canonicalTrack, providerTrack);
-            if (!best || score > best.score) {
-                best = {
-                    provider: selection.provider,
-                    providerTrackId: String(providerTrack.providerId),
-                    providerAlbumId: selection.providerAlbumId,
-                    slot: selection.slot,
-                    // Apple exposes stereo and Atmos as variants of one track
-                    // resource, whose catalog scalar quality describes stereo.
-                    // The selected release-group slot is authoritative for the
-                    // acquisition mode.
-                    quality: selection.slot.toLowerCase() === "spatial"
-                        ? selection.quality || "DOLBY_ATMOS"
-                        : providerTrack.quality || selection.quality,
-                    score,
-                };
-            }
-        }
-    }
-
-    return best && best.score >= TRACK_MATCH_THRESHOLD ? best : null;
+    if (!row) return null;
+    return {
+        provider: row.provider,
+        providerTrackId: String(row.provider_track_id),
+        providerAlbumId: String(row.provider_album_id),
+        slot: row.slot,
+        quality: row.quality,
+        score: Number(row.score),
+    };
 }

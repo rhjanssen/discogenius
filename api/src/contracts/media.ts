@@ -94,7 +94,7 @@ export interface TrackRemoteOfferContract {
   /** Human-facing permalink for the provider album/playlist. */
   providerUrl?: string | null;
   quality: string | null;
-  /** Slot match conviction from ReleaseGroupSlots (verified / probable / …). */
+  /** Typed provider-match conviction (verified / probable / …). */
   matchStatus?: string | null;
   selectedReleaseMbid?: string | null;
   /** Provider track id when known for this slot. */

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { after, before, beforeEach, test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { after, before, test } from "node:test";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-tidal-provider-canonical-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -11,33 +11,10 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 let dbModule: typeof import("../../../database.js");
 let tidalProviderModule: typeof import("./tidal-provider.js");
 
-function assertRetiredProviderCatalogTablesAbsent() {
-  const rows = dbModule.db.prepare(`
-    SELECT name
-    FROM sqlite_master
-    WHERE type = 'table'
-      AND name IN ('ProviderAlbums', 'ProviderMedia', 'ProviderAlbumArtists', 'ProviderMediaArtists')
-  `).all() as Array<{ name: string }>;
-  assert.deepEqual(rows, []);
-}
-
 before(async () => {
   dbModule = await import("../../../database.js");
   dbModule.initDatabase();
   tidalProviderModule = await import("./tidal-provider.js");
-});
-
-beforeEach(() => {
-  dbModule.db.prepare("DELETE FROM TrackFiles").run();
-  dbModule.db.prepare("DELETE FROM ProviderItems").run();
-  dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
-  dbModule.db.prepare("DELETE FROM Tracks").run();
-  dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
-  dbModule.db.prepare("DELETE FROM ArtistReleaseGroups").run();
-  dbModule.db.prepare("DELETE FROM Albums").run();
-  dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
-  dbModule.db.prepare("DELETE FROM Artists").run();
 });
 
 after(() => {
@@ -45,53 +22,113 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-function seedCanonicalRelease() {
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run("artist-mbid", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid");
-  dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
-    .run("release-group-1", "artist-mbid", "Canonical Album");
-  dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run("release-1", "release-group-1", "artist-mbid", "Canonical Album", 2, 2);
-  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
-    .run("recording-1", "Track One", "artist-mbid", 0);
-  dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
-    .run("recording-2", "Track Two", "artist-mbid", 0);
-  dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run("track-1", "release-1", "recording-1", "Track One", 1, 1);
-  dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run("track-2", "release-1", "recording-2", "Track Two", 2, 1);
+function seedMatchedRelease(input: {
+  suffix: string;
+  providerReleaseId: string;
+  title: string;
+  trackTitles: string[];
+}): void {
+  const { db } = dbModule;
+  const artist = db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name)
+    VALUES (?, 'Canonical Artist')
+    RETURNING id
+  `).get(`artist-${input.suffix}`) as { id: number };
+  const releaseGroup = db.prepare(`
+    INSERT INTO Albums (mbid, artist_metadata_id, artist_mbid, title)
+    VALUES (?, ?, ?, ?)
+    RETURNING id
+  `).get(
+    `group-${input.suffix}`,
+    artist.id,
+    `artist-${input.suffix}`,
+    input.title,
+  ) as { id: number };
+  const release = db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id,
+      artist_mbid, title, media_count, track_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING id
+  `).get(
+    `release-${input.suffix}`,
+    releaseGroup.id,
+    `group-${input.suffix}`,
+    artist.id,
+    `artist-${input.suffix}`,
+    input.title,
+    input.trackTitles.length,
+    input.trackTitles.length,
+  ) as { id: number };
+
+  input.trackTitles.forEach((title, index) => {
+    const recording = db.prepare(`
+      INSERT INTO Recordings (
+        mbid, artist_metadata_id, artist_mbid, title, is_video
+      ) VALUES (?, ?, ?, ?, 0)
+      RETURNING id
+    `).get(
+      `recording-${input.suffix}-${index + 1}`,
+      artist.id,
+      `artist-${input.suffix}`,
+      title,
+    ) as { id: number };
+    db.prepare(`
+      INSERT INTO Tracks (
+        mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+        title, medium_position, position
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(
+      `track-${input.suffix}-${index + 1}`,
+      release.id,
+      `release-${input.suffix}`,
+      recording.id,
+      `recording-${input.suffix}-${index + 1}`,
+      title,
+      index + 1,
+    );
+  });
+
+  const providerRelease = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES ('tidal', 'release', ?, ?)
+    RETURNING id
+  `).get(input.providerReleaseId, input.title) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(providerRelease.id, release.id);
 }
 
-test("TIDAL album download progress tracks are built from canonical release tracks", () => {
-  seedCanonicalRelease();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      title, match_status, match_confidence
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "album",
-    "provider-album-1",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
-    "Canonical Album",
-    "verified",
-    1,
-  );
+test("TIDAL album progress uses accepted release matches and preserves request order", () => {
+  seedMatchedRelease({
+    suffix: "first",
+    providerReleaseId: "provider-album-1",
+    title: "First Album",
+    trackTitles: ["Track One", "Track Two"],
+  });
+  seedMatchedRelease({
+    suffix: "second",
+    providerReleaseId: "provider-album-2",
+    title: "Second Album",
+    trackTitles: ["Track Three"],
+  });
 
-  const rows = tidalProviderModule.getTidalAlbumDownloadTrackInfo(["provider-album-1"]);
+  const rows = tidalProviderModule.getTidalAlbumDownloadTrackInfo([
+    "provider-album-2",
+    "provider-album-1",
+  ]);
 
   assert.deepEqual(rows, [
+    {
+      title: "Track Three",
+      version: null,
+      track_num: 1,
+      volume_num: 1,
+      artist_name: "Canonical Artist",
+    },
     {
       title: "Track One",
       version: null,
@@ -107,122 +144,12 @@ test("TIDAL album download progress tracks are built from canonical release trac
       artist_name: "Canonical Artist",
     },
   ]);
-  assertRetiredProviderCatalogTablesAbsent();
-});
 
-test("TIDAL album download progress can resolve combined selected provider offers via slots", () => {
-  seedCanonicalRelease();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      title, match_status, match_confidence
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "album",
-    "provider-album-part",
-    "artist-mbid",
-    "release-group-1",
-    "Canonical Album Part",
-    "probable",
-    0.9,
-  );
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, selected_provider, selected_provider_id,
-      selected_release_mbid, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "artist-mbid",
-    "release-group-1",
-    "stereo",
-    "tidal",
-    "provider-album-part;provider-album-extra",
-    "release-1",
-    "probable",
-  );
-
-  const rows = tidalProviderModule.getTidalAlbumDownloadTrackInfo(["provider-album-part"]);
-
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0]?.title, "Track One");
-  assert.equal(rows[1]?.title, "Track Two");
-});
-
-test("TIDAL album download progress falls back to canonical provider items without legacy media rows", () => {
-  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run("artist-mbid", "Canonical Artist");
-  dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
-    .run("artist-local", "Canonical Artist", "artist-mbid");
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      title, quality, library_slot, match_status, match_confidence
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "album",
-    "provider-album-unreleased",
-    "artist-mbid",
-    "release-group-unreleased",
-    "Provider-Only Album",
-    "LOSSLESS",
-    "stereo",
-    "probable",
-    0.8,
-  );
-  const insertTrackProviderItem = dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      title, version, quality, library_slot, match_status, match_confidence, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  insertTrackProviderItem.run(
-    "tidal",
-    "track",
-    "provider-track-b",
-    "artist-mbid",
-    "release-group-unreleased",
-    "Provider Track B",
-    null,
-    "LOSSLESS",
-    "stereo",
-    "probable",
-    0.8,
-    "2026-01-02T00:00:00.000Z",
-  );
-  insertTrackProviderItem.run(
-    "tidal",
-    "track",
-    "provider-track-a",
-    "artist-mbid",
-    "release-group-unreleased",
-    "Provider Track A",
-    "Radio Edit",
-    "LOSSLESS",
-    "stereo",
-    "probable",
-    0.8,
-    "2026-01-01T00:00:00.000Z",
-  );
-
-  const rows = tidalProviderModule.getTidalAlbumDownloadTrackInfo(["provider-album-unreleased"]);
-
-  assert.deepEqual(rows, [
-    {
-      title: "Provider Track A",
-      version: "Radio Edit",
-      track_num: null,
-      volume_num: null,
-      artist_name: "Canonical Artist",
-    },
-    {
-      title: "Provider Track B",
-      version: null,
-      track_num: null,
-      volume_num: null,
-      artist_name: "Canonical Artist",
-    },
-  ]);
-  assertRetiredProviderCatalogTablesAbsent();
+  const retired = dbModule.db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN ('ProviderAlbums', 'ProviderMedia')
+  `).all();
+  assert.deepEqual(retired, []);
 });

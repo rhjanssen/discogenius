@@ -200,25 +200,38 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
       }
 
       // Try resolving provider ID fallback
-      const slot = db.prepare(`
-        SELECT selected_provider_id FROM ReleaseGroupSlots
-        WHERE release_group_mbid = ? AND selected_provider_id IS NOT NULL AND selected_provider_id != ''
-        ORDER BY CASE slot WHEN 'stereo' THEN 0 ELSE 1 END
+      const item = db.prepare(`
+        SELECT provider_release.provider_id
+        FROM ProviderItems provider_release
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.provider_release_item_id = provider_release.id
+         AND release_match.match_state = 'accepted'
+        JOIN AlbumReleases release
+          ON release.id = release_match.release_id
+        JOIN Albums release_group
+          ON release_group.id = release.release_group_id
+        LEFT JOIN AcquisitionPlanSources source
+          ON source.provider_release_match_id = release_match.id
+        LEFT JOIN AcquisitionPlans plan
+          ON plan.id = source.plan_id
+         AND plan.state = 'current'
+        WHERE provider_release.provider = ?
+          AND provider_release.entity_type IN ('release', 'album')
+          AND (release_group.mbid = ? OR release.mbid = ?)
+        ORDER BY
+          CASE WHEN plan.id IS NOT NULL THEN 0 ELSE 1 END,
+          CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+          release_match.confidence DESC,
+          release_match.id
         LIMIT 1
-      `).get(cleanMbid) as { selected_provider_id: string } | undefined;
+      `).get(
+        req.params.providerId,
+        cleanMbid,
+        cleanMbid,
+      ) as { provider_id: string } | undefined;
 
-      if (slot?.selected_provider_id) {
-        albumId = slot.selected_provider_id;
-      } else {
-        const item = db.prepare(`
-          SELECT provider_id FROM ProviderItems
-          WHERE entity_type = 'album' AND (release_group_mbid = ? OR provider_id = ?)
-          LIMIT 1
-        `).get(cleanMbid, cleanMbid) as { provider_id: string } | undefined;
-
-        if (item?.provider_id) {
-          albumId = item.provider_id;
-        }
+      if (item?.provider_id) {
+        albumId = item.provider_id;
       }
     }
 
