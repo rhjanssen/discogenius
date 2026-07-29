@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-rename-track-file-service-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -62,11 +63,6 @@ function seedTrackedFile() {
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("trk-one", "rel-one", "rec-one", 1, 1, "1", "Track One");
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, selected_provider, selected_provider_id, selected_release_mbid, quality, match_status
-    ) VALUES (?, ?, 'stereo', 'tidal', '10', 'rel-one', 'LOSSLESS', 'verified')
-  `).run("artist-one-mbid", "rg-one");
-  dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'album', '10', 'artist-one-mbid', 'rg-one', 'rel-one', '10', 'Album One', 'LOSSLESS', 'stereo')
   `).run();
@@ -74,6 +70,13 @@ function seedTrackedFile() {
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'track', '100', 'artist-one-mbid', 'rg-one', 'rel-one', 'trk-one', 'rec-one', '10', 'Track One', 'LOSSLESS', 'stereo')
   `).run();
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "10",
+    providerTrackId: "100",
+    releaseMbid: "rel-one",
+    trackMbid: "trk-one",
+  });
 
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
@@ -180,7 +183,6 @@ beforeEach(() => {
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM RecordingRelations").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -438,6 +440,32 @@ test("rename preload follows the selected-release track identity for hybrid sour
 
   seedCanonicalGraph({ albumTitle: "Hybrid Album", trackTitle: "Selected Track" });
   dbModule.db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
+    )
+    SELECT library.id, album.id, 1, 'manual', 0, 'hybrid_rename_test', 1
+    FROM Libraries library
+    JOIN quality_profiles profile ON profile.id = library.quality_profile_id
+    JOIN Albums album ON album.mbid = 'release-group-mbid-1'
+    WHERE library.enabled = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(COALESCE(profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'spatial'
+      )
+    ORDER BY library.id
+    LIMIT 1
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    )
+    SELECT library_group.library_id, release.id, 'manual', 0, 'hybrid_rename_test', 1
+    FROM LibraryReleaseGroups library_group
+    JOIN Albums album ON album.id = library_group.release_group_id
+    JOIN AlbumReleases release ON release.mbid = 'release-mbid-1'
+    WHERE album.mbid = 'release-group-mbid-1'
+  `).run();
+  dbModule.db.prepare(`
     UPDATE Tracks
     SET position = 2, number = '2', title = 'Selected Track'
     WHERE mbid = 'track-mbid-1'
@@ -462,15 +490,6 @@ test("rename preload follows the selected-release track identity for hybrid sour
     ) VALUES (
       'source-track', 'source-track', 'source-release', 'recording-mbid-1',
       1, 1, '1', 'Source Track'
-    )
-  `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, selected_provider,
-      selected_provider_id, selected_release_mbid, monitored, quality, match_status
-    ) VALUES (
-      'artist-mbid-1', 'release-group-mbid-1', 'stereo', 'tidal',
-      'hybrid-album', 'release-mbid-1', 1, 'LOSSLESS', 'verified'
     )
   `).run();
   dbModule.db.prepare(`
@@ -504,7 +523,7 @@ test("rename preload follows the selected-release track identity for hybrid sour
   });
 
   // Reproduce a pre-remap row from a source provider album. Preview must resolve
-  // it through the monitored slot before bulk-loading canonical track metadata.
+  // it through the selected LibraryRelease before bulk-loading canonical metadata.
   dbModule.db.prepare(`
     UPDATE TrackFiles
     SET canonical_release_mbid = 'source-release',
@@ -652,16 +671,6 @@ test("rename preview batches canonical metadata and collision-owner lookups", ()
 
 test("benchmark: 200-row rename preview statement shape", () => {
   seedCanonicalGraph();
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, selected_provider,
-      selected_provider_id, selected_release_mbid, quality, match_status
-    ) VALUES (
-      'artist-mbid-1', 'release-group-mbid-1', 'stereo', 'tidal',
-      'album-1', 'release-mbid-1', 'LOSSLESS', 'verified'
-    )
-  `).run();
-
   const insertRecording = dbModule.db.prepare(`
     INSERT INTO Recordings (foreign_recording_id, mbid, artist_mbid, title)
     VALUES (?, ?, 'artist-mbid-1', ?)
@@ -1041,10 +1050,13 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
 
   seedCanonicalGraph({ albumTitle: "Bad Blood", trackTitle: "Pompeii" });
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES (?, ?, 'stereo', ?, ?)
-  `).run("artist-mbid-1", "release-group-mbid-1", stereoMonitored ? 1 : 0, "release-mbid-1");
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
+    )
+    SELECT id, (SELECT id FROM Albums WHERE mbid = 'release-group-mbid-1'), ?, 'manual', 0, 'inline_video_test', 1
+    FROM Libraries
+    WHERE enabled = 1
+  `).run(stereoMonitored ? 1 : 0);
 
   const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("recording-mbid-1") as { id: number }).id;

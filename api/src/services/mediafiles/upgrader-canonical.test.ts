@@ -27,7 +27,6 @@ afterEach(() => {
     "commands",
     "TrackFiles",
     "ProviderItems",
-    "ReleaseGroupSlots",
     "Tracks",
     "Recordings",
     "AlbumReleases",

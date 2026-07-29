@@ -33,7 +33,6 @@ beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM ArtistReleaseGroups").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();

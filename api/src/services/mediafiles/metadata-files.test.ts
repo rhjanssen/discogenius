@@ -26,7 +26,6 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM TrackFiles").run();
     dbModule.db.prepare("DELETE FROM ProviderItems").run();
     dbModule.db.prepare("DELETE FROM RecordingRelations").run();
-    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
     dbModule.db.prepare("DELETE FROM Tracks").run();
     dbModule.db.prepare("DELETE FROM AlbumReleases").run();
     dbModule.db.prepare("DELETE FROM Albums").run();

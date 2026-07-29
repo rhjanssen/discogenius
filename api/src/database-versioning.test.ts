@@ -48,8 +48,7 @@ test("fresh database initializes the current development baseline", () => {
     "LibraryReleaseGroups", "LibraryReleases", "LibraryReleaseScopes",
     "AcquisitionPlans", "AcquisitionPlanSources", "AcquisitionPlanTracks",
     "MediaCoverSelections",
-    "RecordingRelations", "ReleaseGroupSlots",
-    "ReleaseGroupSlotTargets", "ReleaseGroupSlotSources", "ReleaseGroupSlotTrackAssignments",
+    "RecordingRelations",
     "TrackFiles", "MetadataFiles", "LyricFiles", "ExtraFiles", "UnmappedFiles",
     "commands", "scheduled_tasks", "quality_profiles",
     "history_events", "MediaCoverProxyCache",
@@ -86,7 +85,7 @@ test("re-initializing an existing schema-41 database opens it without a wipe", (
     .get("baseline.open_only_probe") as { value?: string } | undefined;
   assert.equal(probe?.value, "kept", "Re-init must not wipe existing data");
 
-  for (const tableName of ["TrackSearch", "CatalogSearch", "RecordingRelations", "metadata_identity_status", "ReleaseGroupSlotTargets"]) {
+  for (const tableName of ["TrackSearch", "CatalogSearch", "RecordingRelations", "metadata_identity_status", "AcquisitionPlanTracks"]) {
     const row = dbModule.db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
       .get(tableName) as { name: string } | undefined;
@@ -129,10 +128,10 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
     ["ArtistReleaseGroups", ["artist_metadata_id", "release_group_id", "artist_mbid", "release_group_mbid"]],
     ["ArtistReleaseGroupCuration", ["source_artist_metadata_id", "release_group_id", "redundant_to_release_group_id", "source_artist_mbid", "release_group_mbid"]],
     ["Tracks", ["id", "album_release_id", "recording_id", "release_mbid", "recording_mbid"]],
-    ["ReleaseGroupSlots", ["id", "artist_metadata_id", "release_group_id", "selected_album_release_id", "artist_mbid", "release_group_mbid", "selected_release_mbid", "plan_status", "plan_matcher_version"]],
-    ["ReleaseGroupSlotTargets", ["id", "slot_id", "target_track_id", "target_recording_id", "target_track_mbid", "target_recording_mbid", "recording_equivalence_key", "is_wanted", "is_attainable", "status", "wanted_reason", "created_at", "updated_at"]],
-    ["ReleaseGroupSlotSources", ["id", "slot_id", "provider", "provider_album_id", "quality", "role", "release_relation", "explicit", "sort_order", "matcher_version", "created_at", "updated_at"]],
-    ["ReleaseGroupSlotTrackAssignments", ["id", "slot_id", "target_id", "slot_source_id", "target_track_id", "target_recording_id", "target_track_mbid", "target_recording_mbid", "provider", "provider_track_id", "provider_album_id", "status", "match_score", "match_method", "matcher_version", "match_evidence", "created_at", "updated_at"]],
+    ["LibraryReleaseGroups", ["id", "library_id", "release_group_id", "monitored", "selection_mode", "locked", "reason", "curation_version", "updated_at"]],
+    ["LibraryReleases", ["id", "library_id", "release_id", "selection_mode", "locked", "reason", "curation_version", "selected_at", "updated_at"]],
+    ["AcquisitionPlans", ["id", "library_release_id", "provider", "composition", "download_mode", "state", "planner_version", "policy_hash", "computed_at", "updated_at"]],
+    ["AcquisitionPlanTracks", ["id", "plan_id", "track_id", "source_id", "provider_track_match_id", "provider_audio_variant_id", "source_quality_snapshot", "created_at", "updated_at"]],
     ["TrackFiles", ["release_group_id", "album_release_id", "track_id", "recording_id", "library_id", "source_audio_variant_id", "file_class", "source_quality", "imported_quality", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id", "codec", "video_codec", "width", "height"]],
     ["quality_profiles", ["allowed_source_formats", "preference_order", "continue_upgrades", "fallback_policy", "output_format", "transcode_policy"]],
     ["MetadataFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],

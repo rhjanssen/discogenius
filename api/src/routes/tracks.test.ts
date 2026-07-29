@@ -19,9 +19,13 @@ before(async () => {
 
 beforeEach(() => {
   const { db } = dbModule;
+  db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+  db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  db.prepare("DELETE FROM AcquisitionPlans").run();
+  db.prepare("DELETE FROM LibraryReleases").run();
+  db.prepare("DELETE FROM LibraryReleaseGroups").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -90,7 +94,102 @@ function insertCanonicalTrackFixture() {
   `).run();
 }
 
-test("POST track monitor creates canonical release-group slot", async () => {
+function insertLibrarySelection(): { libraryId: number; libraryReleaseId: number } {
+  const { db } = dbModule;
+  const library = db.prepare("SELECT id FROM Libraries WHERE enabled = 1 ORDER BY id LIMIT 1")
+    .get() as { id: number };
+  const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-mbid'")
+    .get() as { id: number };
+  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid'")
+    .get() as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 1, 'manual', 0, 'route_test', 1)
+  `).run(library.id, releaseGroup.id);
+  const libraryRelease = db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'manual', 0, 'route_test', 1)
+    RETURNING id
+  `).get(library.id, release.id) as { id: number };
+  return { libraryId: library.id, libraryReleaseId: libraryRelease.id };
+}
+
+function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: number; releaseGroupId: number; releaseId: number } {
+  const { db } = dbModule;
+  const selection = insertLibrarySelection();
+  const release = db.prepare(`
+    SELECT id, release_group_id FROM AlbumReleases WHERE mbid = 'release-mbid'
+  `).get() as { id: number; release_group_id: number };
+  const track = db.prepare(`
+    SELECT id, recording_id FROM Tracks WHERE mbid = 'track-mbid'
+  `).get() as { id: number; recording_id: number };
+  const providerRelease = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES ('tidal', 'release', 'tidal-album', 'Track Album')
+    RETURNING id
+  `).get() as { id: number };
+  const providerTrack = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, popularity)
+    VALUES ('tidal', 'track', 'tidal-track', 'Canonical Track', 90)
+    RETURNING id
+  `).get() as { id: number };
+  const member = db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+    RETURNING id
+  `).get(providerRelease.id, providerTrack.id) as { id: number };
+  const releaseMatch = db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(providerRelease.id, release.id) as { id: number };
+  const trackMatch = db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_release_member_id, provider_release_match_id, track_id, recording_id,
+      match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(member.id, releaseMatch.id, track.id, track.recording_id) as { id: number };
+  const variant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label, availability
+    ) VALUES (?, 'hires-lossless', 'hires-lossless', 'HIRES_LOSSLESS', 'available')
+    RETURNING id
+  `).get(providerTrack.id) as { id: number };
+  const plan = db.prepare(`
+    INSERT INTO AcquisitionPlans (
+      library_release_id, provider, composition, download_mode, state,
+      planner_version, policy_hash, computed_at
+    ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
+    RETURNING id
+  `).get(selection.libraryReleaseId) as { id: number };
+  const source = db.prepare(`
+    INSERT INTO AcquisitionPlanSources (
+      plan_id, provider_release_match_id, role, sort_order
+    ) VALUES (?, ?, 'primary', 0)
+    RETURNING id
+  `).get(plan.id, releaseMatch.id) as { id: number };
+  db.prepare(`
+    INSERT INTO AcquisitionPlanTracks (
+      plan_id, track_id, source_id, provider_track_match_id,
+      provider_audio_variant_id, source_quality_snapshot
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(plan.id, track.id, source.id, trackMatch.id, variant.id, JSON.stringify({ quality: "HIRES_LOSSLESS" }));
+  return {
+    libraryId: selection.libraryId,
+    trackId: track.id,
+    recordingId: track.recording_id,
+    releaseGroupId: release.release_group_id,
+    releaseId: release.id,
+  };
+}
+
+test("POST track monitor creates normalized library release-group selections", async () => {
   insertCanonicalTrackFixture();
 
   const res = createMockResponse();
@@ -99,14 +198,17 @@ test("POST track monitor creates canonical release-group slot", async () => {
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.success, true);
 
-  const slot = dbModule.db.prepare(`
-    SELECT artist_mbid, release_group_mbid, slot, monitored AS wanted
-    FROM ReleaseGroupSlots
-    WHERE release_group_mbid = 'rg-mbid'
-  `).get() as { artist_mbid: string; release_group_mbid: string; slot: string; wanted: number };
-  assert.equal(slot.artist_mbid, "artist-mbid");
-  assert.equal(slot.slot, "stereo");
-  assert.equal(slot.wanted, 1);
+  const selections = dbModule.db.prepare(`
+    SELECT lrg.monitored AS wanted, lrg.selection_mode, lrg.reason
+    FROM LibraryReleaseGroups lrg
+    JOIN Albums a ON a.id = lrg.release_group_id
+    WHERE a.mbid = 'rg-mbid'
+    ORDER BY lrg.library_id
+  `).all() as Array<{ wanted: number; selection_mode: string; reason: string }>;
+  assert.ok(selections.length > 0);
+  assert.ok(selections.every((selection) => selection.wanted === 1));
+  assert.ok(selections.every((selection) => selection.selection_mode === "manual"));
+  assert.ok(selections.every((selection) => selection.reason === "track_monitor_action"));
 
   const legacyProviderMedia = dbModule.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'")
     .get();
@@ -123,11 +225,15 @@ test("track monitor route rejects provider-only track IDs", async () => {
   assert.equal(res.statusCode, 404);
 });
 
-test("PATCH track updates canonical release-group wanted state", () => {
+test("PATCH track updates normalized library release-group wanted state", () => {
   insertCanonicalTrackFixture();
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored)
-    VALUES ('artist-mbid', 'rg-mbid', 'stereo', 1)
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
+    )
+    SELECT id, (SELECT id FROM Albums WHERE mbid = 'rg-mbid'), 1, 'manual', 0, 'test', 1
+    FROM Libraries
+    WHERE enabled = 1
   `).run();
 
   const res = createMockResponse();
@@ -138,9 +244,13 @@ test("PATCH track updates canonical release-group wanted state", () => {
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.success, true);
-  const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = 'rg-mbid'")
-    .get() as { wanted: number };
-  assert.equal(slot.wanted, 0);
+  const selections = dbModule.db.prepare(`
+    SELECT monitored AS wanted
+    FROM LibraryReleaseGroups
+    WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'rg-mbid')
+  `).all() as Array<{ wanted: number }>;
+  assert.ok(selections.length > 0);
+  assert.ok(selections.every((selection) => selection.wanted === 0));
 });
 
 test("GET tracks sorts popularity by track evidence instead of artist popularity", () => {
@@ -161,12 +271,7 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
     INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, country, date)
     VALUES ('release-mbid', 'rg-mbid', 'artist-mbid', 'Track Album', 'Official', 'XW', '2024-01-01')
   `).run();
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, selected_release_mbid, selected_provider_id, monitored
-    )
-    VALUES ('artist-mbid', 'rg-mbid', 'stereo', 'release-mbid', 'provider-album', 1)
-  `).run();
+  const selection = insertLibrarySelection();
   db.prepare(`
     INSERT INTO Recordings (mbid, artist_mbid, title, length_ms, is_video, popularity)
     VALUES
@@ -180,14 +285,18 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
       ('track-high', 'release-mbid', 'recording-high', 1, 2, '2', 'High Track', 180000)
   `).run();
   db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, quality, library_slot, popularity
+    INSERT INTO TrackFiles (
+      artist_id, library_id, release_group_id, album_release_id, track_id, recording_id,
+      file_path, relative_path, library_root, filename, extension, file_type, file_class
     )
-    VALUES
-      ('tidal', 'track', 'provider-low', 'artist-mbid', 'rg-mbid', 'release-mbid', 'track-low', 'recording-low', 'Low Track', 'LOSSLESS', 'stereo', 10),
-      ('tidal', 'track', 'provider-high', 'artist-mbid', 'rg-mbid', 'release-mbid', 'track-high', 'recording-high', 'High Track', 'LOSSLESS', 'stereo', 90)
-  `).run();
+    SELECT
+      'artist-id', ?, release.release_group_id, release.id, track.id, track.recording_id,
+      '/music/' || track.mbid || '.flac', track.mbid || '.flac', '/music',
+      track.mbid || '.flac', '.flac', 'track', 'audio'
+    FROM Tracks track
+    JOIN AlbumReleases release ON release.id = track.album_release_id
+    WHERE track.mbid IN ('track-low', 'track-high')
+  `).run(selection.libraryId);
 
   const res = createMockResponse();
   getRouteHandler("/", "get")({
@@ -199,39 +308,24 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
     res.body.items.map((track: { id: string }) => track.id),
     ["track-high", "track-low"],
   );
-  assert.equal(res.body.items[0].popularity, 90);
+  assert.equal(res.body.items[0].popularity, 80);
 });
 
 test("GET tracks filters selected offers and keeps remote quality separate from local files", () => {
   insertCanonicalTrackFixture();
   const { db } = dbModule;
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider,
-      selected_provider_id, selected_release_mbid, quality, match_status
-    ) VALUES ('artist-mbid', 'rg-mbid', 'stereo', 1, 'tidal', 'tidal-album', 'release-mbid', 'HIRES_LOSSLESS', 'verified')
-  `).run();
-  db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, quality, library_slot
-    ) VALUES
-      ('deezer', 'track', 'deezer-track', 'deezer-album', 'artist-mbid', 'rg-mbid',
-       'release-mbid', 'track-mbid', 'recording-mbid', 'Canonical Track', 'FLAC', 'stereo'),
-      ('tidal', 'track', 'tidal-track', 'tidal-album', 'artist-mbid', 'rg-mbid',
-       'release-mbid', 'track-mbid', 'recording-mbid', 'Canonical Track', 'HIRES_LOSSLESS', 'stereo')
-  `).run();
+  const plan = insertTidalPlan();
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
-      canonical_track_mbid, canonical_recording_mbid, library_slot, file_path,
+      artist_id, library_id, release_group_id, album_release_id, track_id, recording_id,
+      provider, provider_entity_type, provider_id, file_path,
       relative_path, library_root, filename, extension, file_type, quality
     ) VALUES (
-      'artist-id', 'artist-mbid', 'rg-mbid', 'release-mbid', 'track-mbid', 'recording-mbid',
-      'stereo', '/music/Canonical Track.flac', 'Canonical Track.flac', '/music',
+      'artist-id', ?, ?, ?, ?, ?, 'tidal', 'track', 'tidal-track',
+      '/music/Canonical Track.flac', 'Canonical Track.flac', '/music',
       'Canonical Track.flac', '.flac', 'track', 'LOSSLESS'
     )
-  `).run();
+  `).run(plan.libraryId, plan.releaseGroupId, plan.releaseId, plan.trackId, plan.recordingId);
 
   const selected = createMockResponse();
   getRouteHandler("/", "get")({
@@ -240,13 +334,13 @@ test("GET tracks filters selected offers and keeps remote quality separate from 
 
   assert.equal(selected.statusCode, 200);
   assert.equal(selected.body.total, 1);
-  assert.deepEqual(selected.body.items[0].qualityTags, ["HIRES_LOSSLESS"]);
+  assert.deepEqual(selected.body.items[0].qualityTags, ["HIRES_LOSSLESS", "LOSSLESS"]);
   assert.deepEqual(selected.body.items[0].remoteOffers, [{
     slot: "stereo",
     provider: "tidal",
     providerAlbumId: "tidal-album",
     quality: "HIRES_LOSSLESS",
-    matchStatus: "verified",
+    matchStatus: "accepted",
     selectedReleaseMbid: "release-mbid",
     providerTrackId: "tidal-track",
   }]);

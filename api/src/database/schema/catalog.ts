@@ -16,16 +16,6 @@ export function createCatalogForeignKeyIndexes(db: Database.Database): void {
   db.exec("CREATE INDEX idx_tracks_recording_release ON Tracks(recording_id, album_release_id)");
   db.exec("CREATE INDEX idx_tracks_album_release_position ON Tracks(album_release_id, medium_position, position)");
   db.exec("CREATE INDEX idx_recordings_library_popularity ON Recordings(COALESCE(popularity, 0) DESC, id ASC)");
-  db.exec("CREATE INDEX idx_release_group_slots_artist_metadata_id ON ReleaseGroupSlots(artist_metadata_id, slot)");
-  db.exec("CREATE INDEX idx_release_group_slots_release_group_id ON ReleaseGroupSlots(release_group_id, slot)");
-  db.exec("CREATE INDEX idx_release_group_slots_selected_album_monitor ON ReleaseGroupSlots(selected_album_release_id, monitored, selected_provider_id)");
-  db.exec("CREATE INDEX idx_rg_slot_targets_slot_id ON ReleaseGroupSlotTargets(slot_id)");
-  db.exec("CREATE INDEX idx_rg_slot_targets_track_id ON ReleaseGroupSlotTargets(target_track_id)");
-  db.exec("CREATE INDEX idx_rg_slot_sources_slot_id ON ReleaseGroupSlotSources(slot_id)");
-  db.exec("CREATE INDEX idx_rg_slot_assignments_slot_id ON ReleaseGroupSlotTrackAssignments(slot_id)");
-  db.exec("CREATE INDEX idx_rg_slot_assignments_target_id ON ReleaseGroupSlotTrackAssignments(target_id)");
-  db.exec("CREATE INDEX idx_rg_slot_assignments_source_id ON ReleaseGroupSlotTrackAssignments(slot_source_id)");
-  db.exec("CREATE INDEX idx_rg_slot_assignments_track_id ON ReleaseGroupSlotTrackAssignments(target_track_id)");
 }
 
 export function createCatalogForeignKeyTriggers(db: Database.Database): void {
@@ -133,70 +123,6 @@ export function createCatalogForeignKeyTriggers(db: Database.Database): void {
     END;
   `);
 
-  db.exec(`
-    CREATE TRIGGER trg_release_group_slots_catalog_fks_ai
-    AFTER INSERT ON ReleaseGroupSlots
-    BEGIN
-      UPDATE ReleaseGroupSlots SET
-        artist_metadata_id = COALESCE(NEW.artist_metadata_id, (SELECT id FROM ArtistMetadata WHERE mbid = NEW.artist_mbid)),
-        release_group_id = COALESCE(NEW.release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid)),
-        selected_album_release_id = COALESCE(NEW.selected_album_release_id, (SELECT id FROM AlbumReleases WHERE mbid = NEW.selected_release_mbid))
-      WHERE id = NEW.id;
-    END;
-  `);
-  db.exec(`
-    CREATE TRIGGER trg_release_group_slots_catalog_fks_au
-    AFTER UPDATE OF artist_mbid, release_group_mbid, selected_release_mbid ON ReleaseGroupSlots
-    BEGIN
-      UPDATE ReleaseGroupSlots SET
-        artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = NEW.artist_mbid),
-        release_group_id = (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid),
-        selected_album_release_id = (SELECT id FROM AlbumReleases WHERE mbid = NEW.selected_release_mbid)
-      WHERE id = NEW.id;
-    END;
-
-    CREATE TRIGGER trg_rg_slot_targets_fks_ai
-    AFTER INSERT ON ReleaseGroupSlotTargets
-    BEGIN
-      UPDATE ReleaseGroupSlotTargets SET
-        target_track_mbid = COALESCE(NEW.target_track_mbid, (SELECT mbid FROM Tracks WHERE id = NEW.target_track_id)),
-        target_recording_mbid = COALESCE(NEW.target_recording_mbid, (SELECT mbid FROM Recordings WHERE id = NEW.target_recording_id))
-      WHERE id = NEW.id;
-    END;
-
-    CREATE TRIGGER trg_rg_slot_targets_fks_au
-    AFTER UPDATE OF target_track_id, target_recording_id ON ReleaseGroupSlotTargets
-    BEGIN
-      UPDATE ReleaseGroupSlotTargets SET
-        target_track_mbid = (SELECT mbid FROM Tracks WHERE id = NEW.target_track_id),
-        target_recording_mbid = (SELECT mbid FROM Recordings WHERE id = NEW.target_recording_id)
-      WHERE id = NEW.id;
-    END;
-
-    CREATE TRIGGER trg_rg_slot_assignments_derive_ai
-    AFTER INSERT ON ReleaseGroupSlotTrackAssignments
-    BEGIN
-      UPDATE ReleaseGroupSlotTrackAssignments SET
-        target_track_id = COALESCE(NEW.target_track_id, (SELECT target_track_id FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id)),
-        target_recording_id = COALESCE(NEW.target_recording_id, (SELECT target_recording_id FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id)),
-        target_track_mbid = COALESCE(NEW.target_track_mbid, (SELECT target_track_mbid FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id)),
-        target_recording_mbid = COALESCE(NEW.target_recording_mbid, (SELECT target_recording_mbid FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id)),
-        provider_album_id = COALESCE(NEW.provider_album_id, (SELECT provider_album_id FROM ReleaseGroupSlotSources WHERE id = NEW.slot_source_id))
-      WHERE id = NEW.id;
-    END;
-
-    CREATE TRIGGER trg_rg_slot_assignments_derive_au
-    AFTER UPDATE OF target_id, slot_source_id ON ReleaseGroupSlotTrackAssignments
-    BEGIN
-      UPDATE ReleaseGroupSlotTrackAssignments SET
-        target_track_id = (SELECT target_track_id FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id),
-        target_recording_id = (SELECT target_recording_id FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id),
-        target_track_mbid = (SELECT target_track_mbid FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id),
-        target_recording_mbid = (SELECT target_recording_mbid FROM ReleaseGroupSlotTargets WHERE id = NEW.target_id),
-        provider_album_id = (SELECT provider_album_id FROM ReleaseGroupSlotSources WHERE id = NEW.slot_source_id)
-      WHERE id = NEW.id;
-    END;
-  `);
 }
 
 export function createCatalogSchema(db: Database.Database): void {
@@ -486,113 +412,6 @@ export function createCatalogSchema(db: Database.Database): void {
       FOREIGN KEY(target_recording_id) REFERENCES Recordings(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE ReleaseGroupSlots (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      artist_metadata_id INTEGER,
-      artist_mbid TEXT NOT NULL,
-      release_group_id INTEGER,
-      release_group_mbid TEXT NOT NULL,
-      slot TEXT NOT NULL,
-      monitored BOOLEAN NOT NULL DEFAULT 0,
-      selected_provider TEXT,
-      selected_provider_id TEXT,
-      selected_album_release_id INTEGER,
-      selected_release_mbid TEXT,
-      quality TEXT,
-      match_status TEXT,
-      match_confidence REAL,
-      match_method TEXT,
-      match_evidence TEXT,
-      provider_artist_name TEXT,
-      provider_title TEXT,
-      cover TEXT,
-      popularity INTEGER,
-      monitored_lock BOOLEAN NOT NULL DEFAULT 0,
-      locked_at DATETIME,
-      checked_at DATETIME,
-      plan_status TEXT NOT NULL DEFAULT 'current',
-      plan_matcher_version INTEGER NOT NULL DEFAULT 1,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(release_group_mbid, slot),
-      FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE,
-      FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE,
-      FOREIGN KEY(release_group_id) REFERENCES Albums(id) ON DELETE CASCADE,
-      FOREIGN KEY(release_group_mbid) REFERENCES Albums(mbid) ON DELETE CASCADE,
-      FOREIGN KEY(selected_album_release_id) REFERENCES AlbumReleases(id) ON DELETE SET NULL,
-      FOREIGN KEY(selected_release_mbid) REFERENCES AlbumReleases(mbid) ON DELETE SET NULL
-    );
-
-    CREATE TABLE ReleaseGroupSlotTargets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      slot_id INTEGER NOT NULL,
-      target_track_id INTEGER NOT NULL,
-      target_recording_id INTEGER,
-      target_track_mbid TEXT NOT NULL,
-      target_recording_mbid TEXT,
-      recording_equivalence_key TEXT,
-      is_wanted BOOLEAN NOT NULL DEFAULT 1,
-      is_attainable BOOLEAN NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'unmatched',
-      wanted_reason TEXT,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(slot_id, target_track_id),
-      UNIQUE(id, slot_id),
-      FOREIGN KEY(slot_id) REFERENCES ReleaseGroupSlots(id) ON DELETE CASCADE,
-      FOREIGN KEY(target_track_id) REFERENCES Tracks(id) ON DELETE CASCADE,
-      FOREIGN KEY(target_recording_id) REFERENCES Recordings(id) ON DELETE SET NULL,
-      CHECK (status IN ('unmatched', 'pending', 'assigned', 'ambiguous', 'queued', 'downloaded', 'imported', 'failed', 'unavailable', 'complete'))
-    );
-
-    CREATE TABLE ReleaseGroupSlotSources (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      slot_id INTEGER NOT NULL,
-      provider TEXT NOT NULL,
-      provider_album_id TEXT NOT NULL,
-      quality TEXT,
-      role TEXT NOT NULL DEFAULT 'primary',
-      release_relation TEXT NOT NULL DEFAULT 'exact',
-      explicit BOOLEAN,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      matcher_version INTEGER NOT NULL DEFAULT 1,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(slot_id, provider, provider_album_id),
-      UNIQUE(id, slot_id),
-      FOREIGN KEY(slot_id) REFERENCES ReleaseGroupSlots(id) ON DELETE CASCADE,
-      CHECK (role IN ('primary', 'supplement')),
-      CHECK (release_relation IN ('exact', 'provider_subset', 'provider_superset', 'overlap', 'unknown'))
-    );
-
-    CREATE TABLE ReleaseGroupSlotTrackAssignments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      slot_id INTEGER NOT NULL,
-      target_id INTEGER NOT NULL,
-      slot_source_id INTEGER NOT NULL,
-      target_track_id INTEGER NOT NULL,
-      target_recording_id INTEGER,
-      target_track_mbid TEXT NOT NULL,
-      target_recording_mbid TEXT,
-      provider TEXT NOT NULL,
-      provider_track_id TEXT NOT NULL,
-      provider_album_id TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'assigned',
-      match_score REAL NOT NULL,
-      match_method TEXT NOT NULL,
-      matcher_version INTEGER NOT NULL DEFAULT 1,
-      match_evidence TEXT,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(slot_id, target_track_id),
-      UNIQUE(slot_id, provider, provider_track_id),
-      FOREIGN KEY(slot_id) REFERENCES ReleaseGroupSlots(id) ON DELETE CASCADE,
-      FOREIGN KEY(target_id, slot_id) REFERENCES ReleaseGroupSlotTargets(id, slot_id) ON DELETE CASCADE,
-      FOREIGN KEY(slot_source_id, slot_id) REFERENCES ReleaseGroupSlotSources(id, slot_id) ON DELETE CASCADE,
-      FOREIGN KEY(target_track_id) REFERENCES Tracks(id) ON DELETE CASCADE,
-      FOREIGN KEY(target_recording_id) REFERENCES Recordings(id) ON DELETE SET NULL,
-      CHECK (status IN ('assigned', 'imported', 'rejected', 'failed', 'unmatched'))
-    );
-
   `);
 
   db.exec(`
@@ -825,9 +644,6 @@ export function createCatalogSchema(db: Database.Database): void {
   db.exec("CREATE INDEX idx_recording_relations_target ON RecordingRelations(target_recording_id, relation_type)");
   db.exec("CREATE INDEX idx_recording_relations_foreign_source ON RecordingRelations(source_foreign_recording_id, relation_type)");
   db.exec("CREATE INDEX idx_recording_relations_foreign_target ON RecordingRelations(target_foreign_recording_id, relation_type)");
-  db.exec("CREATE INDEX idx_release_group_slots_artist ON ReleaseGroupSlots(artist_mbid, slot)");
-  db.exec("CREATE INDEX idx_release_group_slots_provider ON ReleaseGroupSlots(selected_provider, selected_provider_id)");
-  db.exec("CREATE INDEX idx_release_group_slots_group_release_slot ON ReleaseGroupSlots(release_group_mbid, selected_release_mbid, slot)");
   db.exec("CREATE INDEX idx_track_files_canonical_track_type ON TrackFiles(canonical_track_mbid, file_type)");
   db.exec("CREATE INDEX idx_track_files_canonical_recording_type ON TrackFiles(canonical_recording_mbid, file_type)");
   db.exec("CREATE INDEX idx_track_files_recording_id ON TrackFiles(recording_id)");

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-files-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -53,6 +54,7 @@ function seedLibraryReleaseSelection(options: {
   releaseMbid: string;
   monitored: boolean;
   spatial?: boolean;
+  rootPath?: string;
 }): number {
   const { db } = dbModule;
   const metadataProfileName = `Library Files ${options.key}`;
@@ -92,7 +94,7 @@ function seedLibraryReleaseSelection(options: {
     `).get() as { id: number };
   }
 
-  const rootPath = path.join(tempDir, "normalized-libraries", options.key);
+  const rootPath = options.rootPath ?? path.join(tempDir, "normalized-libraries", options.key);
   db.prepare(`
     INSERT OR IGNORE INTO Libraries (
       name, root_path, metadata_profile_id, quality_profile_id, enabled
@@ -152,7 +154,6 @@ beforeEach(() => {
   db.prepare("DELETE FROM LibraryReleaseGroups").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Artists").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -196,12 +197,6 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, selected_provider,
-      selected_provider_id, selected_release_mbid, quality, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid-1", "rg-mbid-1", "stereo", "tidal", "10", "release-mbid-1", "LOSSLESS", "verified");
   // Provider availability mapped to the canonical ids (no legacy ProviderAlbums/ProviderMedia rows).
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
@@ -211,6 +206,13 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Bohemian Rhapsody', 'LOSSLESS', 'stereo')
   `).run();
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "10",
+    providerTrackId: "100",
+    releaseMbid: "release-mbid-1",
+    trackMbid: "track-mbid-1",
+  });
 
   const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
     id: 500,
@@ -260,12 +262,6 @@ test("computeExpectedPath prefers canonical release-group and track metadata ove
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 7, "7", "Canonical Track Title");
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, selected_provider,
-      selected_provider_id, selected_release_mbid, quality, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid-1", "rg-mbid-1", "stereo", "tidal", "10", "release-mbid-1", "LOSSLESS", "verified");
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'provider Album Title', 'LOSSLESS', 'stereo')
@@ -539,12 +535,6 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
       mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider,
-      selected_provider_id, selected_release_mbid, quality, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "10", "release-mbid-1", "LOSSLESS", "verified");
 
   dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, path, monitored)
@@ -561,10 +551,25 @@ dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Bohemian Rhapsody', 'LOSSLESS', 'stereo')
   `).run();
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "10",
+    providerTrackId: "100",
+    releaseMbid: "release-mbid-1",
+    trackMbid: "track-mbid-1",
+  });
+  const libraryId = seedLibraryReleaseSelection({
+    key: "identity-stereo",
+    releaseGroupMbid: "rg-mbid-1",
+    releaseMbid: "release-mbid-1",
+    monitored: true,
+    rootPath: configModule.Config.getMusicPath(),
+  });
 
   const filePath = path.join(configModule.Config.getMusicPath(), "Queen", "01 - Bohemian Rhapsody.flac");
   const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
+    libraryId,
     albumId: "10",
     mediaId: "100",
     filePath,
@@ -606,63 +611,7 @@ dbModule.db.prepare(`
   assert.equal(stats?.isDownloaded, true);
 });
 
-test("upsertLibraryFile resolves canonical release group from provider item mapping", () => {
-  dbModule.db.prepare(`
-    INSERT INTO Artists (id, name, mbid, path, monitored)
-    VALUES (?, ?, ?, ?, ?)
-  `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
-
-dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, title, quality, library_slot, match_status, match_confidence, match_method
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "album",
-    "provider-album-1",
-    "artist-mbid-1",
-    "release-group-mbid-1",
-    "release-mbid-1",
-    "provider Album",
-    "HIRES_LOSSLESS",
-    "stereo",
-    "verified",
-    1,
-    "test",
-  );
-
-  const root = configModule.Config.getMusicPath();
-  const filePath = path.join(root, "Bastille {mbid-artist-mbid-1}", "provider Album", "01 - provider Track.flac");
-  const id = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
-    artistId: "artist-local",
-    albumId: "provider-album-1",
-    mediaId: "provider-track-1",
-    filePath,
-    libraryRoot: root,
-    fileType: "track",
-    quality: "HIRES_LOSSLESS",
-  });
-
-  const row = dbModule.db.prepare(`
-    SELECT canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
-           provider, provider_entity_type, provider_id, library_slot
-    FROM TrackFiles
-    WHERE id = ?
-  `).get(id) as Record<string, string | null>;
-
-  assert.deepEqual(row, {
-    canonical_artist_mbid: "artist-mbid-1",
-    canonical_release_group_mbid: "release-group-mbid-1",
-    canonical_release_mbid: "release-mbid-1",
-    provider: "tidal",
-    provider_entity_type: "track",
-    provider_id: "provider-track-1",
-    library_slot: "stereo",
-  });
-});
-
-test("upsertLibraryFile prefers selected release-group slot identity over legacy provider album identity", () => {
+test("upsertLibraryFile uses accepted typed matches instead of provider shadow identity", () => {
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
     VALUES (?, ?)
@@ -734,12 +683,13 @@ dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'track', 'provider-track-1', 'artist-mbid-1', 'recording-mbid-1', 'provider-album-1', 'Shut Off The Lights', 'LOSSLESS', 'stereo')
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider,
-      selected_provider_id, selected_release_mbid, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid-1", "release-group-mbid-1", "stereo", 1, "tidal", "provider-album-1", "selected-release-mbid", "matched");
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "provider-album-1",
+    providerTrackId: "provider-track-1",
+    releaseMbid: "selected-release-mbid",
+    trackMbid: "selected-track-mbid",
+  });
 
   const root = configModule.Config.getMusicPath();
   const filePath = path.join(root, "Bastille {mbid-artist-mbid-1}", "Give Me The Future", "01 - Shut Off The Lights.flac");
@@ -978,15 +928,6 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider,
-      selected_provider_id, selected_release_mbid, quality, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "artist-mbid-1", "rg-mbid-1", "stereo", 1, "tidal", "10", "release-mbid-1", "LOSSLESS", "verified",
-    "artist-mbid-1", "rg-mbid-1", "spatial", 1, "tidal", "10", "release-mbid-1", "DOLBY_ATMOS", "verified",
-  );
-  dbModule.db.prepare(`
     INSERT INTO Artists (id, name, mbid, path, monitored)
     VALUES (?, ?, ?, ?, ?)
   `).run("1", "Queen", "artist-mbid-1", "Queen", 1);
@@ -1000,9 +941,31 @@ dbModule.db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Bohemian Rhapsody', 'LOSSLESS', 'stereo')
   `).run();
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "10",
+    providerTrackId: "100",
+    releaseMbid: "release-mbid-1",
+    trackMbid: "track-mbid-1",
+  });
 
   const stereoRoot = configModule.Config.getMusicPath();
   const spatialRoot = configModule.Config.getSpatialPath();
+  const stereoLibraryId = seedLibraryReleaseSelection({
+    key: "dual-stereo",
+    releaseGroupMbid: "rg-mbid-1",
+    releaseMbid: "release-mbid-1",
+    monitored: true,
+    rootPath: stereoRoot,
+  });
+  const spatialLibraryId = seedLibraryReleaseSelection({
+    key: "dual-spatial",
+    releaseGroupMbid: "rg-mbid-1",
+    releaseMbid: "release-mbid-1",
+    monitored: true,
+    spatial: true,
+    rootPath: spatialRoot,
+  });
   const stereoPath = path.join(stereoRoot, "Queen", "A Night at the Opera", "01 - Bohemian Rhapsody.flac");
   const spatialPath = path.join(spatialRoot, "Queen", "A Night at the Opera", "01 - Bohemian Rhapsody.flac");
   fs.mkdirSync(path.dirname(stereoPath), { recursive: true });
@@ -1012,6 +975,7 @@ dbModule.db.prepare(`
 
   const stereoId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
+    libraryId: stereoLibraryId,
     albumId: "10",
     mediaId: "100",
     filePath: stereoPath,
@@ -1022,6 +986,7 @@ dbModule.db.prepare(`
   });
   const spatialId = libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
+    libraryId: spatialLibraryId,
     albumId: "10",
     mediaId: "100",
     filePath: spatialPath,
@@ -1517,7 +1482,7 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
 
   assert.equal(
     expected.expectedPath,
-    path.join(tempDir, "library", "music", "Bastille", "Bad Blood (2013)", "01 - Pompeii-video.mp4"),
+    path.join(tempDir, "library", "music", "Bastille", "Bad Blood", "01 - Pompeii-video.mp4"),
   );
   assert.ok(!String(expected.expectedPath || "").includes(`${path.sep}spatial${path.sep}`));
 });

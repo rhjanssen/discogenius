@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-import-finalize-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -48,12 +49,17 @@ function seedImportedTrack(fileName = "track-one.flac") {
     .run("rec-one", "Track One", "artist-one-mbid", 180000);
   dbModule.db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)`).run("trk-one", "rel-one", "rec-one", 1, 1, "1", "Track One");
-  dbModule.db.prepare(`INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, selected_provider, selected_provider_id, selected_release_mbid, quality, match_status)
-    VALUES (?, ?, 'stereo', 'tidal', '10', 'rel-one', 'LOSSLESS', 'verified')`).run("artist-one-mbid", "rg-one");
   dbModule.db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'album', '10', 'artist-one-mbid', 'rg-one', 'rel-one', '10', 'Album One', 'LOSSLESS', 'stereo')`).run();
   dbModule.db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'track', '100', 'artist-one-mbid', 'rg-one', 'rel-one', 'trk-one', 'rec-one', '10', 'Track One', 'LOSSLESS', 'stereo')`).run();
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "10",
+    providerTrackId: "100",
+    releaseMbid: "rel-one",
+    trackMbid: "trk-one",
+  });
 
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
@@ -95,7 +101,6 @@ beforeEach(() => {
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM RecordingRelations").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -145,9 +150,14 @@ test("finalizeImportedDirectories relocates linked separated videos inline after
   configModule.writeConfig(config);
 
   const { libraryFileId } = seedImportedTrack();
-  // seedImportedTrack leaves RG slot unmonitored by default — enable for inline gate.
   dbModule.db.prepare(`
-    UPDATE ReleaseGroupSlots SET monitored = 1 WHERE release_group_mbid = 'rg-one' AND slot = 'stereo'
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
+    )
+    SELECT id, (SELECT id FROM Albums WHERE mbid = 'rg-one'), 1, 'manual', 0, 'inline_video_test', 1
+    FROM Libraries
+    WHERE enabled = 1
+    ON CONFLICT(library_id, release_group_id) DO UPDATE SET monitored = 1
   `).run();
 
   const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")

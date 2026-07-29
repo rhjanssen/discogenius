@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedAcceptedProviderReleaseMatch } from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-yt-counterpart-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -24,7 +25,6 @@ beforeEach(() => {
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -57,13 +57,13 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
   db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, title, quality, library_slot
-    ) VALUES ('youtube-music', 'album', 'MPREb_yt_cp', 'artist-yt-cp', 'rg-yt-cp', 'release-yt-cp', 'Bad Blood', 'YOUTUBE_LOSSY', 'stereo')
+    ) VALUES ('youtube-music', 'release', 'MPREb_yt_cp', 'artist-yt-cp', 'rg-yt-cp', 'release-yt-cp', 'Bad Blood', 'YOUTUBE_LOSSY', 'stereo')
   `).run();
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, selected_provider, selected_provider_id, selected_release_mbid, quality, monitored
-    ) VALUES ('artist-yt-cp', 'rg-yt-cp', 'stereo', 'youtube-music', 'MPREb_yt_cp', 'release-yt-cp', 'YOUTUBE_LOSSY', 1)
-  `).run();
+  seedAcceptedProviderReleaseMatch(db, {
+    provider: "youtube-music",
+    providerReleaseId: "MPREb_yt_cp",
+    releaseMbid: "release-yt-cp",
+  });
 
   const providerTrack = {
     providerId: "atv-pompeii",
@@ -88,38 +88,26 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
     "artist-yt-cp",
   );
 
-  const audioOffer = db.prepare(`
-    SELECT match_evidence FROM ProviderItems
-    WHERE provider = 'youtube-music' AND entity_type = 'track' AND provider_id = 'atv-pompeii'
-  `).get() as { match_evidence: string };
-  const evidence = JSON.parse(audioOffer.match_evidence) as { counterpartVideoId?: string; counterpartKind?: string };
-  assert.equal(evidence.counterpartVideoId, "omv-pompeii");
-  assert.equal(evidence.counterpartKind, "yt-atv-omv");
-
-  const videoTrackOffer = db.prepare(`
-    SELECT library_slot, provider_album_id, match_method
-    FROM ProviderItems
-    WHERE provider = 'youtube-music' AND entity_type = 'track' AND provider_id = 'omv-pompeii'
-  `).get() as { library_slot: string; provider_album_id: string; match_method: string };
-  assert.equal(videoTrackOffer.library_slot, "video");
-  assert.equal(videoTrackOffer.provider_album_id, "MPREb_yt_cp");
-  assert.equal(videoTrackOffer.match_method, "yt-atv-omv-counterpart-track");
+  const audioMatch = db.prepare(`
+    SELECT match.match_state
+    FROM ProviderTrackMatches match
+    JOIN ProviderReleaseMembers member ON member.id = match.provider_release_member_id
+    JOIN ProviderItems item ON item.id = member.member_item_id
+    WHERE item.provider = 'youtube-music'
+      AND item.entity_type = 'track'
+      AND item.provider_id = 'atv-pompeii'
+  `).get() as { match_state: string };
+  assert.equal(audioMatch.match_state, "accepted");
 
   const videoOffer = db.prepare(`
-    SELECT provider_album_id, release_group_mbid, recording_id, match_method
+    SELECT id, recording_id
     FROM ProviderItems
     WHERE provider = 'youtube-music' AND entity_type = 'video' AND provider_id = 'omv-pompeii'
   `).get() as {
-    provider_album_id: string;
-    release_group_mbid: string;
+    id: number;
     recording_id: number;
-    match_method: string;
   };
-  assert.equal(videoOffer.provider_album_id, "MPREb_yt_cp");
-  assert.equal(videoOffer.release_group_mbid, "rg-yt-cp");
-  assert.equal(videoOffer.match_method, "yt-atv-omv-counterpart");
   assert.ok(videoOffer.recording_id);
-
   const relation = db.prepare(`
     SELECT target_recording_id, confidence, data
     FROM RecordingRelations
@@ -152,13 +140,13 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
   db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, title, quality, library_slot
-    ) VALUES ('youtube-music', 'album', 'MPREb_yt_self', 'artist-yt-self', 'rg-yt-self', 'release-yt-self', 'SAVE MY SOUL', 'YOUTUBE_LOSSY', 'stereo')
+    ) VALUES ('youtube-music', 'release', 'MPREb_yt_self', 'artist-yt-self', 'rg-yt-self', 'release-yt-self', 'SAVE MY SOUL', 'YOUTUBE_LOSSY', 'stereo')
   `).run();
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, selected_provider, selected_provider_id, selected_release_mbid, quality, monitored
-    ) VALUES ('artist-yt-self', 'rg-yt-self', 'stereo', 'youtube-music', 'MPREb_yt_self', 'release-yt-self', 'YOUTUBE_LOSSY', 1)
-  `).run();
+  seedAcceptedProviderReleaseMatch(db, {
+    provider: "youtube-music",
+    providerReleaseId: "MPREb_yt_self",
+    releaseMbid: "release-yt-self",
+  });
 
   const providerTrack = {
     providerId: "ktWGvv6yHeU",
@@ -185,26 +173,17 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
   );
 
   const stereoOffer = db.prepare(`
-    SELECT library_slot, match_evidence FROM ProviderItems
+    SELECT id FROM ProviderItems
     WHERE provider = 'youtube-music' AND entity_type = 'track' AND provider_id = 'ktWGvv6yHeU'
-  `).get() as { library_slot: string; match_evidence: string };
-  assert.equal(stereoOffer.library_slot, "stereo");
-  const evidence = JSON.parse(stereoOffer.match_evidence) as { counterpartKind?: string };
-  assert.equal(evidence.counterpartKind, "yt-self-omv");
-
-  const videoTrackOverwrite = db.prepare(`
-    SELECT 1 AS ok FROM ProviderItems
-    WHERE provider = 'youtube-music' AND entity_type = 'track' AND provider_id = 'ktWGvv6yHeU' AND library_slot = 'video'
-  `).get();
-  assert.equal(videoTrackOverwrite, undefined, "self-OMV must not overwrite the stereo track row");
+  `).get() as { id: number };
+  assert.ok(stereoOffer.id);
 
   const videoOffer = db.prepare(`
-    SELECT recording_id, match_method FROM ProviderItems
+    SELECT id, recording_id FROM ProviderItems
     WHERE provider = 'youtube-music' AND entity_type = 'video' AND provider_id = 'ktWGvv6yHeU'
-  `).get() as { recording_id: number; match_method: string };
+  `).get() as { id: number; recording_id: number };
   assert.ok(videoOffer.recording_id);
-  assert.equal(videoOffer.match_method, "yt-atv-omv-counterpart");
-
+  assert.notEqual(videoOffer.id, stereoOffer.id, "self-OMV keeps distinct provider track and video facts");
   const relation = db.prepare(`
     SELECT target_recording_id FROM RecordingRelations
     WHERE source_recording_id = ? AND relation_type = 'provider_video_for'

@@ -24,6 +24,7 @@ import {
     ProviderReleaseIngestionService,
     type ProviderArtistCreditFacts,
 } from "../providers/provider-release-ingestion-service.js";
+import { RefreshVideoService } from "./refresh-video-service.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAME_RELEASE_SUPERSET_TRACKLIST_METHOD = "same-release-superset-track-coverage";
@@ -754,7 +755,7 @@ export class RefreshAlbumService {
         providerId: string,
         albumId: string,
         tracks: any[],
-        _fallbackArtistId?: string | null,
+        fallbackArtistId?: string | null,
         canonicalReleaseMbid?: string | null,
     ): Promise<void> {
         if (!Array.isArray(tracks) || tracks.length === 0) {
@@ -843,15 +844,21 @@ export class RefreshAlbumService {
         }
 
         const canonicalRelease = canonicalReleaseMbid
-            ? db.prepare("SELECT id, mbid FROM AlbumReleases WHERE mbid = ? LIMIT 1")
-                .get(canonicalReleaseMbid) as { id: number; mbid: string } | undefined
+            ? db.prepare(`
+                SELECT release.id, release.mbid, release_group.mbid AS release_group_mbid
+                FROM AlbumReleases release
+                JOIN Albums release_group ON release_group.id = release.release_group_id
+                WHERE release.mbid = ?
+                LIMIT 1
+              `).get(canonicalReleaseMbid) as { id: number; mbid: string; release_group_mbid: string } | undefined
             : db.prepare(`
-                SELECT release.id, release.mbid
+                SELECT release.id, release.mbid, release_group.mbid AS release_group_mbid
                 FROM ProviderItems item
                 JOIN ProviderReleaseMatches match
                   ON match.provider_release_item_id = item.id
                  AND match.match_state = 'accepted'
                 JOIN AlbumReleases release ON release.id = match.release_id
+                JOIN Albums release_group ON release_group.id = release.release_group_id
                 WHERE item.provider = ?
                   AND item.entity_type = 'release'
                   AND item.provider_id = ?
@@ -860,7 +867,7 @@ export class RefreshAlbumService {
                   match.confidence DESC,
                   match.id
                 LIMIT 1
-            `).get(providerId, albumId) as { id: number; mbid: string } | undefined;
+            `).get(providerId, albumId) as { id: number; mbid: string; release_group_mbid: string } | undefined;
 
         if (canonicalRelease) {
             const ingested = new ProviderReleaseIngestionService(db).ingest({
@@ -890,6 +897,43 @@ export class RefreshAlbumService {
                         match.recording_id,
                         trackByProviderId.get(String(match.provider_id)),
                     );
+                }
+                const recordingByProviderTrack = new Map(
+                    accepted.map((match) => [String(match.provider_id), Number(match.recording_id)] as const),
+                );
+                const counterparts = tracks.flatMap((track) => {
+                    const counterpartId = textOrNull(track.counterpart_video_id);
+                    const audioProviderTrackId = textOrNull(track.provider_id);
+                    const audioRecordingId = audioProviderTrackId
+                        ? recordingByProviderTrack.get(audioProviderTrackId) ?? null
+                        : null;
+                    if (!counterpartId || !audioProviderTrackId || !audioRecordingId) {
+                        return [];
+                    }
+                    return [{
+                        providerId: counterpartId,
+                        albumId: String(albumId),
+                        title: textOrNull(track.title) || "Unknown video",
+                        duration: positiveNumberOrNull(track.duration),
+                        releaseDate: textOrNull(track.release_date),
+                        quality: textOrNull(track.quality),
+                        cover: textOrNull(track.cover, track.image_id, track.imageId),
+                        url: textOrNull(track.url),
+                        audioRecordingId,
+                        audioRecordingMbid: null,
+                        audioProviderTrackId,
+                        artistName: textOrNull(track.artist_name),
+                    }];
+                });
+                if (counterparts.length > 0 && fallbackArtistId) {
+                    RefreshVideoService.upsertAlbumTrackCounterpartVideos({
+                        artistId: fallbackArtistId,
+                        provider: providerId,
+                        albumId: String(albumId),
+                        releaseGroupMbid: canonicalRelease.release_group_mbid,
+                        releaseMbid: canonicalRelease.mbid,
+                        counterparts,
+                    });
                 }
             }
             return;

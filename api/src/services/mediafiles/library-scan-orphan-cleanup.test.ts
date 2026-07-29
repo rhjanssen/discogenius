@@ -17,7 +17,6 @@ const { DiskScanService } = await import("./library-scan.js");
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -56,11 +55,29 @@ function seedCanonicalArtistGraph() {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-2", "release-1", "recording-2", "Track Two", 1, 2);
   db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, selected_release_mbid, quality
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid", "release-group-1", "stereo", 1, "tidal", "provider-album-1", "release-1", "LOSSLESS");
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
+    )
+    SELECT library.id, (SELECT id FROM Albums WHERE mbid = 'release-group-1'), 1, 'manual', 0, 'orphan_cleanup_test', 1
+    FROM Libraries library
+    JOIN quality_profiles profile ON profile.id = library.quality_profile_id
+    WHERE library.enabled = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(COALESCE(profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'spatial'
+      )
+    ORDER BY library.id
+    LIMIT 1
+  `).run();
+  db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    )
+    SELECT library_group.library_id, release.id, 'manual', 0, 'orphan_cleanup_test', 1
+    FROM LibraryReleaseGroups library_group
+    JOIN AlbumReleases release ON release.mbid = 'release-1'
+    WHERE library_group.release_group_id = release.release_group_id
+  `).run();
 }
 
 /**
@@ -77,10 +94,14 @@ function insertMissingTrackFile(
 ) {
   db.prepare(`
     INSERT INTO TrackFiles (
+      library_id,
       artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id,
-      library_slot, file_path, relative_path, library_root, filename, extension, file_type
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      library_slot, file_path, relative_path, library_root, filename, extension, file_type, file_class
+    ) VALUES (
+      (SELECT library_id FROM LibraryReleaseGroups WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'release-group-1') ORDER BY library_id LIMIT 1),
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'audio'
+    )
   `).run(
     "artist-local",
     "artist-mbid",

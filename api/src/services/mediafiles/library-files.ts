@@ -392,6 +392,7 @@ type LibraryFileEventInput = {
 
 export type LibraryFileUpsertParams = {
   artistId: string;
+  libraryId?: number | null;
   albumId?: string | null;
   mediaId?: string | null;
   trackFileId?: number | null;
@@ -421,6 +422,10 @@ export type LibraryFileUpsertParams = {
   providerEntityType?: string | null;
   providerId?: string | null;
   librarySlot?: library_slot | string | null;
+  sourceAudioVariantId?: number | null;
+  fileClass?: "audio" | "video" | string | null;
+  sourceQuality?: string | null;
+  importedQuality?: string | null;
 };
 
 type ResolvableLibraryFileRow = {
@@ -1837,6 +1842,37 @@ export class LibraryFilesService {
 
     const expectedPath = params.expectedPath || params.filePath;
     const canonicalIdentity = resolveLibraryFileIdentity(params);
+    const catalogIds = db.prepare(`
+      SELECT
+        (SELECT id FROM Albums WHERE mbid = ?) AS release_group_id,
+        (SELECT id FROM AlbumReleases WHERE mbid = ?) AS album_release_id,
+        (SELECT id FROM Tracks WHERE mbid = ?) AS track_id,
+        (SELECT id FROM Recordings WHERE mbid = ?) AS recording_id
+    `).get(
+      canonicalIdentity.canonicalReleaseGroupMbid,
+      canonicalIdentity.canonicalReleaseMbid,
+      canonicalIdentity.canonicalTrackMbid,
+      canonicalIdentity.canonicalRecordingMbid,
+    ) as {
+      release_group_id: number | null;
+      album_release_id: number | null;
+      track_id: number | null;
+      recording_id: number | null;
+    };
+    const libraryId = params.libraryId ?? (() => {
+      const targetRoot = normalizeComparablePath(params.libraryRoot);
+      const libraries = db.prepare(`
+        SELECT id, root_path
+        FROM Libraries
+        WHERE enabled = 1
+        ORDER BY id
+      `).all() as Array<{ id: number; root_path: string }>;
+      return libraries.find((library) =>
+        normalizeComparablePath(library.root_path) === targetRoot
+      )?.id ?? null;
+    })();
+    const fileClass = params.fileClass
+      ?? (params.fileType === "track" ? "audio" : params.fileType === "video" ? "video" : null);
 
     if (this.isTrackedAssetFileType(params.fileType)) {
       const tableName = isLyricExtraFileType(params.fileType) ? "LyricFiles" :
@@ -2200,6 +2236,8 @@ export class LibraryFilesService {
     const insert = db.prepare(`
       INSERT INTO TrackFiles (
         artist_id,
+        library_id, release_group_id, album_release_id, track_id, recording_id,
+        source_audio_variant_id, file_class, source_quality, imported_quality,
         canonical_artist_mbid, canonical_release_group_mbid,
         canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
         provider, provider_entity_type, provider_id, library_slot,
@@ -2212,6 +2250,8 @@ export class LibraryFilesService {
         duration, fingerprint
       ) VALUES (
         ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
         ?, ?,
         ?, ?, ?,
         ?, ?, ?, ?,
@@ -2224,6 +2264,15 @@ export class LibraryFilesService {
       )
       ON CONFLICT(file_path) DO UPDATE SET
         artist_id = excluded.artist_id,
+        library_id = COALESCE(excluded.library_id, TrackFiles.library_id),
+        release_group_id = COALESCE(excluded.release_group_id, TrackFiles.release_group_id),
+        album_release_id = COALESCE(excluded.album_release_id, TrackFiles.album_release_id),
+        track_id = COALESCE(excluded.track_id, TrackFiles.track_id),
+        recording_id = COALESCE(excluded.recording_id, TrackFiles.recording_id),
+        source_audio_variant_id = COALESCE(excluded.source_audio_variant_id, TrackFiles.source_audio_variant_id),
+        file_class = COALESCE(excluded.file_class, TrackFiles.file_class),
+        source_quality = COALESCE(excluded.source_quality, TrackFiles.source_quality),
+        imported_quality = COALESCE(excluded.imported_quality, TrackFiles.imported_quality),
         canonical_artist_mbid = COALESCE(excluded.canonical_artist_mbid, TrackFiles.canonical_artist_mbid),
         canonical_release_group_mbid = COALESCE(excluded.canonical_release_group_mbid, TrackFiles.canonical_release_group_mbid),
         canonical_release_mbid = COALESCE(excluded.canonical_release_mbid, TrackFiles.canonical_release_mbid),
@@ -2259,6 +2308,15 @@ export class LibraryFilesService {
 
     const info = insert.run(
       params.artistId,
+      libraryId,
+      catalogIds.release_group_id,
+      catalogIds.album_release_id,
+      catalogIds.track_id,
+      catalogIds.recording_id,
+      params.sourceAudioVariantId ?? null,
+      fileClass,
+      params.sourceQuality ?? params.quality ?? null,
+      params.importedQuality ?? params.quality ?? null,
       canonicalIdentity.canonicalArtistMbid,
       canonicalIdentity.canonicalReleaseGroupMbid,
       canonicalIdentity.canonicalReleaseMbid,

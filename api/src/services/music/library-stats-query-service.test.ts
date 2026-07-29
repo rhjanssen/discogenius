@@ -62,12 +62,12 @@ dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, canonical_artist_mbid, canonical_recording_mbid,
       provider, provider_entity_type, provider_id, library_slot,
-      file_path, relative_path, library_root, filename, extension, file_type, quality
+      file_path, relative_path, library_root, filename, extension, file_type, file_class, quality
     )
     VALUES (
       'artist-id', 'artist-mbid', 'provider-video-1',
       'tidal', 'video', 'provider-video-1', 'video',
-      ?, 'Video Artist/Canonical Video.mp4', ?, 'Canonical Video.mp4', 'mp4', 'video', 'FHD'
+      ?, 'Video Artist/Canonical Video.mp4', ?, 'Canonical Video.mp4', 'mp4', 'video', 'video', 'FHD'
     )
   `).run(
     path.join(tempDir, "library", "videos", "Video Artist", "Canonical Video.mp4"),

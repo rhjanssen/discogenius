@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-move-artist-service-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -51,12 +52,17 @@ function seedArtistTrack(params?: { artistPath?: string; fileName?: string }) {
     .run("rec-one", "Track One", "artist-one-mbid", 180000);
   dbModule.db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)`).run("trk-one", "rel-one", "rec-one", 1, 1, "1", "Track One");
-  dbModule.db.prepare(`INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, selected_provider, selected_provider_id, selected_release_mbid, quality, match_status)
-    VALUES (?, ?, 'stereo', 'tidal', '10', 'rel-one', 'LOSSLESS', 'verified')`).run("artist-one-mbid", "rg-one");
   dbModule.db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'album', '10', 'artist-one-mbid', 'rg-one', 'rel-one', '10', 'Album One', 'LOSSLESS', 'stereo')`).run();
   dbModule.db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
     VALUES ('tidal', 'track', '100', 'artist-one-mbid', 'rg-one', 'rel-one', 'trk-one', 'rec-one', '10', 'Track One', 'LOSSLESS', 'stereo')`).run();
+  seedAcceptedProviderTrackMatch(dbModule.db, {
+    provider: "tidal",
+    providerReleaseId: "10",
+    providerTrackId: "100",
+    releaseMbid: "rel-one",
+    trackMbid: "trk-one",
+  });
 
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
@@ -92,7 +98,6 @@ beforeEach(() => {
   db.prepare("DELETE FROM commands").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();

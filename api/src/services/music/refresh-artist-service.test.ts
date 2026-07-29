@@ -23,7 +23,6 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
-  dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM AlbumReleases").run();

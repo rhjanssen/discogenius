@@ -22,7 +22,6 @@ before(async () => {
 beforeEach(() => {
     dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM ProviderItems").run();
-    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
     dbModule.db.prepare("DELETE FROM Tracks").run();
     dbModule.db.prepare("DELETE FROM Recordings").run();
     dbModule.db.prepare("DELETE FROM AlbumReleases").run();
@@ -415,24 +414,6 @@ test("download queue query resolves canonical release-group provider offers with
         "Give Me The Future + Dreams Of The Past",
         "HIRES_LOSSLESS",
         "provider-cover",
-        "probable",
-        0.9,
-    );
-    db.prepare(`
-        INSERT INTO ReleaseGroupSlots (
-            artist_mbid, release_group_mbid, slot, monitored,
-            selected_provider, selected_provider_id, selected_release_mbid, quality,
-            match_status, match_confidence
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        "artist-bastille",
-        "rg-gmtf",
-        "stereo",
-        1,
-        "tidal",
-        "tidal-gmtf-expanded",
-        "release-gmtf",
-        "HIRES_LOSSLESS",
         "probable",
         0.9,
     );

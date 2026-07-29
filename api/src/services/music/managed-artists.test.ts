@@ -19,7 +19,6 @@ before(async () => {
 });
 
 beforeEach(() => {
-    dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
     dbModule.db.prepare("DELETE FROM Recordings").run();
     dbModule.db.prepare("DELETE FROM Albums").run();
     dbModule.db.prepare("DELETE FROM ArtistMetadata").run();

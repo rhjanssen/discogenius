@@ -723,7 +723,6 @@ function createBaselineSchemaV41(): void {
   // Foreign key and lookup performance indexes
   db.exec("CREATE INDEX idx_mb_releases_artist_mbid ON AlbumReleases(artist_mbid)");
   db.exec("CREATE INDEX idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
-  db.exec("CREATE INDEX idx_release_group_slots_selected_release ON ReleaseGroupSlots(selected_release_mbid)");
   db.exec("CREATE INDEX idx_artists_path ON Artists(path)");
 }
 
