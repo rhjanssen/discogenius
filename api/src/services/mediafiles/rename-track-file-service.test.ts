@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
-import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
+import {
+  seedAcceptedProviderTrackMatch,
+  seedAcceptedProviderVideoMatch,
+} from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-rename-track-file-service-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -674,15 +677,21 @@ test("benchmark: 200-row rename preview statement shape", () => {
       medium_position, position, number, title
     ) VALUES (?, ?, 'release-mbid-1', ?, 1, ?, ?, ?)
   `);
-  const insertOffer = dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot
-    ) VALUES (
-      'tidal', 'track', ?, 'artist-mbid-1', 'release-group-mbid-1',
-      'release-mbid-1', ?, ?, 'album-1', ?, 'LOSSLESS', 'stereo'
-    )
-  `);
+  const insertOffer = {
+    run: (providerTrackId: string, trackMbid: string, _recordingMbid: string, title: string) => {
+      seedAcceptedProviderTrackMatch(dbModule.db, {
+        provider: "tidal",
+        providerReleaseId: "album-1",
+        providerTrackId,
+        releaseMbid: "release-mbid-1",
+        trackMbid,
+      });
+      dbModule.db.prepare(`
+        UPDATE ProviderItems SET title = ?
+        WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = ?
+      `).run(title, providerTrackId);
+    },
+  };
   const insertFile = dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, canonical_artist_mbid, canonical_release_group_mbid,
@@ -819,11 +828,10 @@ test("RenameTrackFileService derives video paths from canonical provider-only re
     RETURNING Id
   `).get("tidal:video:123", "artist-mbid-1", "Canonical Video") as { id: number };
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)
-  `).run( "tidal", "video", "tidal-video-123", "provider Video Title" );
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal", providerVideoId: "tidal-video-123",
+    recordingId: recording.id, title: "provider Video Title",
+  });
 
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
@@ -953,18 +961,18 @@ test("RenameTrackFileService replicates album sidecars by ProviderItems release 
   // Legacy rows exist only for TrackFiles foreign keys and deliberately have
   // different titles. Replication should use ProviderItems release-group links.
 
-dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES ('tidal', 'release', '10', 'Canonical Album'),
-    ('tidal', 'release', '20', 'Canonical Album')
-  `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES ('tidal', 'track', '100', 'Canonical Song'),
-    ('tidal', 'track', '200', 'Canonical Song')
-  `).run();
+  // Both provider releases resolve to the SAME canonical release through accepted
+  // release matches — that shared canonical identity, not the provider titles, is
+  // what makes the cover replicable across the stereo and spatial copies.
+  for (const [providerReleaseId, providerTrackId] of [["10", "100"], ["20", "200"]]) {
+    seedAcceptedProviderTrackMatch(dbModule.db, {
+      provider: "tidal",
+      providerReleaseId,
+      providerTrackId,
+      releaseMbid: "release-mbid-1",
+      trackMbid: "track-mbid-1",
+    });
+  }
 
   upsertCanonicalAudioFile({
     filePath: sourceTrackPath,
@@ -1058,11 +1066,10 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
   `).run("video-rec-pompeii", "Pompeii", "artist-mbid-1");
   const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-rec-pompeii") as { id: number }).id;
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES ('tidal', 'video', 'video-pompeii', 'Pompeii')
-  `).run();
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal", providerVideoId: "video-pompeii",
+    recordingId: videoRecId, title: "Pompeii",
+  });
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title

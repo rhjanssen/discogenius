@@ -803,8 +803,11 @@ export class RenameTrackFileService {
     const relatedVideoFileIds = (db.prepare(`
       SELECT DISTINCT tf.id AS id
       FROM RecordingRelations rr
+      JOIN ProviderVideoMatches video_match
+        ON video_match.recording_id = rr.source_recording_id
+       AND video_match.match_state = 'accepted'
       JOIN ProviderItems pi
-        ON pi.recording_id = rr.source_recording_id
+        ON pi.id = video_match.provider_video_item_id
        AND pi.entity_type = 'video'
       JOIN TrackFiles tf
         ON tf.file_type IN ('video', 'video_thumbnail', 'nfo')
@@ -833,7 +836,19 @@ export class RenameTrackFileService {
     }
 
     const tracks = db.prepare(`
-      SELECT tf.id, tf.artist_id, COALESCE(provider_track.provider_album_id, provider_track.album_id) AS album_id,
+      SELECT tf.id, tf.artist_id,
+             (
+               SELECT CAST(release_item.provider_id AS TEXT)
+               FROM ProviderReleaseMembers member
+               JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+               WHERE member.member_item_id = provider_track.id
+                 AND (
+                   SELECT COUNT(DISTINCT sibling.provider_release_item_id)
+                   FROM ProviderReleaseMembers sibling
+                   WHERE sibling.member_item_id = provider_track.id
+                 ) = 1
+               LIMIT 1
+             ) AS album_id,
              tf.provider_id AS media_id, tf.library_slot, tf.quality, tf.file_type,
              tf.canonical_artist_mbid, tf.canonical_release_group_mbid, tf.canonical_release_mbid,
              tf.canonical_track_mbid, tf.canonical_recording_mbid,
@@ -963,17 +978,22 @@ export class RenameTrackFileService {
         SELECT mf.*
         FROM MetadataFiles mf
         LEFT JOIN ProviderItems album_item
-          ON album_item.entity_type = 'album'
+          ON album_item.entity_type = 'release'
          AND (mf.provider IS NULL OR album_item.provider = mf.provider)
          AND CAST(album_item.provider_id AS TEXT) = CAST(mf.provider_id AS TEXT)
+        LEFT JOIN ProviderReleaseMatches album_match
+          ON album_match.provider_release_item_id = album_item.id
+         AND album_match.match_state = 'accepted'
+        LEFT JOIN AlbumReleases album_release ON album_release.id = album_match.release_id
+        LEFT JOIN Albums album_group ON album_group.id = album_release.release_group_id
         WHERE mf.artist_id = ?
           AND (mf.canonical_release_group_mbid IS NOT NULL OR mf.canonical_release_mbid IS NOT NULL OR mf.provider_id IS NOT NULL)
           AND mf.canonical_track_mbid IS NULL
           AND mf.canonical_recording_mbid IS NULL
           AND mf.file_type IN ('cover', 'nfo')
           AND (
-            (? IS NOT NULL AND (mf.canonical_release_group_mbid = ? OR album_item.release_group_mbid = ?))
-            OR (? IS NOT NULL AND (mf.canonical_release_mbid = ? OR album_item.release_mbid = ?))
+            (? IS NOT NULL AND (mf.canonical_release_group_mbid = ? OR album_group.mbid = ?))
+            OR (? IS NOT NULL AND (mf.canonical_release_mbid = ? OR album_release.mbid = ?))
             OR (? IS NULL AND ? IS NULL AND ? IS NOT NULL AND CAST(mf.provider_id AS TEXT) = CAST(? AS TEXT))
           )
       `).all(
@@ -1012,12 +1032,19 @@ export class RenameTrackFileService {
           ON lyric_item.entity_type = 'track'
          AND (lf.provider IS NULL OR lyric_item.provider = lf.provider)
          AND CAST(lyric_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+        LEFT JOIN ProviderReleaseMembers lyric_member
+          ON lyric_member.member_item_id = lyric_item.id
+        LEFT JOIN ProviderTrackMatches lyric_match
+          ON lyric_match.provider_release_member_id = lyric_member.id
+         AND lyric_match.match_state = 'accepted'
+        LEFT JOIN Recordings lyric_recording ON lyric_recording.id = lyric_match.recording_id
+        LEFT JOIN Tracks lyric_track ON lyric_track.id = lyric_match.track_id
         WHERE lf.artist_id = ?
           AND (
             (? IS NOT NULL AND lf.canonical_recording_mbid = ?)
             OR (? IS NOT NULL AND lf.canonical_track_mbid = ?)
-            OR (? IS NOT NULL AND lyric_item.recording_mbid = ?)
-            OR (? IS NOT NULL AND lyric_item.track_mbid = ?)
+            OR (? IS NOT NULL AND lyric_recording.mbid = ?)
+            OR (? IS NOT NULL AND lyric_track.mbid = ?)
             OR (? IS NULL AND ? IS NULL AND ? IS NOT NULL AND CAST(lf.provider_id AS TEXT) = CAST(? AS TEXT))
           )
       `).all(
