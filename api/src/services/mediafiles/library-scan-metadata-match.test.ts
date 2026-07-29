@@ -10,11 +10,13 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let matchModule: typeof import("./library-scan-metadata-match.js");
+let providerScope: typeof import("../providers/provider-item-artist-scope.js");
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   matchModule = await import("./library-scan-metadata-match.js");
+  providerScope = await import("../providers/provider-item-artist-scope.js");
 });
 
 beforeEach(() => {
@@ -223,9 +225,11 @@ function seedCatalogTrack(params: {
     ORDER BY id
     LIMIT 1
   `).get() as { id: number };
+  // One library per (slot, release group) so a group whose releases are seeded
+  // twice keeps BOTH selections inside the same library.
   const libraryName = `Scan ${slot} ${params.releaseGroupMbid}`;
   db.prepare(`
-    INSERT INTO Libraries (
+    INSERT OR IGNORE INTO Libraries (
       name, root_path, metadata_profile_id, quality_profile_id
     ) VALUES (?, ?, ?, ?)
   `).run(
@@ -237,13 +241,13 @@ function seedCatalogTrack(params: {
   const library = db.prepare("SELECT id FROM Libraries WHERE name = ?")
     .get(libraryName) as { id: number };
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT OR IGNORE INTO LibraryReleaseGroups (
       library_id, release_group_id, monitored, selection_mode, locked,
       reason, curation_version
     ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
   `).run(library.id, releaseGroup.id);
   db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT OR IGNORE INTO LibraryReleases (
       library_id, release_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, release.id);
@@ -423,4 +427,65 @@ test("metadata rematch does not equate studio tracks with remix variants", () =>
   assert.ok(match);
   assert.equal(match!.mediaId, "3001");
   assert.equal(match!.duplicateOfExisting, false);
+});
+
+test("a provider track on several releases yields no invented album context", () => {
+  const { db } = dbModule;
+  seedArtist();
+  seedOffer({ providerId: "4001", title: "Pompeii", albumId: "album-standard", duration: 214 });
+  // The SAME provider track also appears on a deluxe edition (Apple/TIDAL model).
+  const trackItem = db.prepare(`
+    SELECT id FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = '4001'
+  `).get() as { id: number };
+  const deluxe = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES ('tidal', 'release', 'album-deluxe', 'Bad Blood (Deluxe)')
+    RETURNING id
+  `).get() as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 5)
+  `).run(deluxe.id, trackItem.id);
+
+  const resolved = db.prepare(`
+    SELECT ${providerScope.PROVIDER_RESOLVED_ALBUM_ID_SQL} AS album_id
+    FROM ProviderItems pi
+    WHERE pi.id = ?
+  `).get(trackItem.id) as { album_id: string | null };
+
+  // No acquisition plan chose a release and membership is ambiguous, so the
+  // release context must be NULL rather than the lowest member id.
+  assert.equal(resolved.album_id, null);
+});
+
+test("embedded release identity survives when it is itself selected in the library", () => {
+  seedArtist();
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-multi",
+    releaseMbid: "rel-standard",
+    trackMbid: "trk-standard",
+    recordingMbid: "rec-shared",
+    title: "Pompeii",
+  });
+  // A second release of the same group is ALSO selected into the same library.
+  seedCatalogTrack({
+    releaseGroupMbid: "rg-multi",
+    releaseMbid: "rel-deluxe",
+    trackMbid: "trk-deluxe",
+    recordingMbid: "rec-shared",
+    title: "Pompeii",
+  });
+
+  const link = matchModule.resolveCatalogTrackFromEmbeddedMbids(
+    { musicbrainzTrackId: "trk-deluxe" },
+    "stereo",
+  );
+
+  assert.ok(link);
+  // The file's own embedded release is selected, so it is never relocated onto
+  // the other selected release of the group.
+  assert.equal(link!.releaseMbid, "rel-deluxe");
+  assert.equal(link!.trackMbid, "trk-deluxe");
 });

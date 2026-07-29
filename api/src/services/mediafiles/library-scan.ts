@@ -11,10 +11,21 @@ import { clearRootFolderReviewEntries, persistRootReviewCandidates } from "./lib
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
 import { matchAudioFileByMetadata, resolveCatalogTrackFromEmbeddedMbids } from "./library-scan-metadata-match.js";
 import {
-    PROVIDER_MEMBER_ALBUM_ID_SQL,
-    PROVIDER_MEMBER_ARTIST_SCOPE_SQL,
-    PROVIDER_RELEASE_ARTIST_SCOPE_SQL,
+    PROVIDER_RESOLVED_ALBUM_ID_SQL,
+    LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL,
+    LEGACY_FOLDER_SCAN_RELEASE_ARTIST_SCOPE_SQL,
 } from "../providers/provider-item-artist-scope.js";
+
+/**
+ * Internal identity of a provider resource. `provider_id` is only unique WITHIN
+ * a (provider, entity_type) pair, so it is never an identity on its own.
+ */
+type ProviderItemIdentity = {
+    itemId: number;
+    provider: string;
+    entityType: string;
+    providerId: string;
+};
 import { resolveLibraryRootKey, resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import {
     updateAlbumDownloadStatus,
@@ -1506,8 +1517,12 @@ export class DiskScanService {
     private static matchFileToMedia(
         filePath: string,
         artistId: string,
-        _libraryRoot: LibraryRootKey,
+        libraryRoot: LibraryRootKey,
     ): { albumId: string | null; mediaId: string | null; fileType: string; quality: string | null } | null {
+        // The scanned root is the only trustworthy statement about which library
+        // this file belongs to; provider audio variants describe source
+        // capability, not what is on disk, so they never decide it.
+        const scanningVideoRoot = libraryRoot === "videos";
         const ext = path.extname(filePath).toLowerCase();
         const basename = path.basename(filePath);
         const stem = path.parse(filePath).name;
@@ -1547,52 +1562,32 @@ export class DiskScanService {
 
         if (isLyricSidecarExtension(ext)) {
             // Try to match to a track by looking for an audio file with same stem
-            const mediaId = this.findMediaIdByStem(stem, artistId)
-                || this.findMediaIdByTrackedSibling(filePath, artistId);
-            if (!mediaId) return null;
-            const albumIdFromTrack = mediaId
-                ? (db.prepare(`
-                    SELECT ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id
-                    FROM ProviderItems pi
-                    WHERE pi.entity_type = 'track' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY pi.updated_at DESC
-                    LIMIT 1
-                  `).get(mediaId) as any)?.album_id?.toString() || null
-                : null;
-            // A lyric sidecar lives in its album folder; when the track has no
-            // release membership, resolve the album from the path just like the
-            // cover does, so the lyric still relinks to the right album.
-            const albumId = albumIdFromTrack || this.findAlbumIdFromPath(filePath, artistId);
-            return { albumId, mediaId, fileType: "lyrics", quality: null };
+            const identity = this.findTrackIdentityByStem(stem, artistId)
+                || this.findTrackIdentityByTrackedSibling(filePath, artistId);
+            if (!identity) return null;
+            // A lyric sidecar lives in its album folder; when the track's release
+            // context is ambiguous (one provider track on several releases), fall
+            // back to the folder just like the cover does rather than guessing.
+            const albumId = this.resolveAlbumIdForItem(identity.itemId)
+                || this.findAlbumIdFromPath(filePath, artistId);
+            return { albumId, mediaId: identity.providerId, fileType: "lyrics", quality: null };
         }
 
         // Audio files
         const audioExtensions = new Set([".flac", ".m4a", ".mp3", ".aac", ".wav", ".ogg", ".opus", ".aif", ".aiff", ".wma", ".ape", ".mp2"]);
         if (audioExtensions.has(ext)) {
             // Try to match by provider ID in filename
-            const mediaId = this.findMediaIdByStem(stem, artistId);
-            if (mediaId) {
-                const media = db.prepare(`
-                    SELECT
-                      ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id,
-                      (
-                        SELECT COALESCE(NULLIF(TRIM(variant.provider_quality_label), ''), variant.quality_class)
-                        FROM ProviderItemAudioVariants variant
-                        WHERE variant.provider_item_id = pi.id
-                        ORDER BY CASE WHEN variant.quality_class = 'spatial' THEN 1 ELSE 0 END, variant.id
-                        LIMIT 1
-                      ) AS quality,
-                      pi.provider
-                    FROM ProviderItems pi
-                    WHERE pi.entity_type = 'track' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY pi.updated_at DESC
-                    LIMIT 1
-                `).get(mediaId) as any;
+            const identity = this.findTrackIdentityByStem(stem, artistId);
+            if (identity) {
                 return {
-                    albumId: media?.album_id?.toString() || null,
-                    mediaId,
+                    albumId: this.resolveAlbumIdForItem(identity.itemId),
+                    mediaId: identity.providerId,
                     fileType: "track",
-                    quality: media?.quality || null,
+                    // Provider audio variants describe what the SOURCE can offer,
+                    // not what this file on disk actually is. Imported quality is
+                    // read from the file's own tracked technical facts; the media
+                    // probe fills it in when this row is new.
+                    quality: this.importedQualityForFile(filePath),
                 };
             }
 
@@ -1610,47 +1605,34 @@ export class DiskScanService {
             return null; // Unmatched audio file — skip for now
         }
 
-        // Video files
+        // Video files. Outside the video root a container like .mp4 is only a
+        // music video when a video resource actually claims it, so the same
+        // identity check applies — but we never let a music-root .mp4 fall
+        // through to the video-thumbnail branch below.
         const videoExtensions = new Set([".mp4", ".ts", ".mkv", ".webm"]);
         if (videoExtensions.has(ext)) {
-            const mediaId = this.findMediaIdByStem(stem, artistId);
-            if (mediaId) {
-                const media = db.prepare(`
-                    SELECT
-                      ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id,
-                      pi.video_quality AS quality
-                    FROM ProviderItems pi
-                    WHERE pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY pi.updated_at DESC
-                    LIMIT 1
-                `).get(mediaId) as any;
-                if (media) {
-                    return {
-                        albumId: media.album_id?.toString() || null,
-                        mediaId,
-                        fileType: "video",
-                        quality: media.quality || null,
-                    };
-                }
+            const identity = this.findVideoIdentityByStem(stem, artistId);
+            if (identity) {
+                return {
+                    albumId: this.resolveAlbumIdForItem(identity.itemId),
+                    mediaId: identity.providerId,
+                    fileType: "video",
+                    quality: this.importedQualityForFile(filePath),
+                };
             }
 
             return null;
         }
 
-        // Image files that match a known video stem (video thumbnails)
-        if (ext === ".jpg" || ext === ".png") {
-            const videoMediaId = this.findVideoIdByStem(stem, artistId);
-            if (videoMediaId) {
-                const media = db.prepare(`
-                    SELECT ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id
-                    FROM ProviderItems pi
-                    WHERE pi.entity_type = 'video' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY pi.updated_at DESC
-                    LIMIT 1
-                `).get(videoMediaId) as any;
+        // Image files that match a known video stem (video thumbnails). Only the
+        // video root produces those; an image beside audio is album art, which
+        // the cover branches above already claimed.
+        if (scanningVideoRoot && (ext === ".jpg" || ext === ".png")) {
+            const identity = this.findVideoIdentityByStem(stem, artistId);
+            if (identity) {
                 return {
-                    albumId: media?.album_id?.toString() || null,
-                    mediaId: videoMediaId,
+                    albumId: this.resolveAlbumIdForItem(identity.itemId),
+                    mediaId: identity.providerId,
                     fileType: "video_thumbnail",
                     quality: null,
                 };
@@ -1660,96 +1642,170 @@ export class DiskScanService {
         return null;
     }
 
+    /**
+     * A provider resource's internal identity. `provider_id` alone is NOT an
+     * identity — the same id occurs across providers and entity types (an Apple
+     * album id can equal a TIDAL track id), so every lookup resolves and carries
+     * `ProviderItems.id` plus the (provider, entity_type, provider_id) triple.
+     */
+    private static resolveProviderIdentity(row: {
+        id?: number | null;
+        provider?: string | null;
+        entity_type?: string | null;
+        provider_id?: string | number | null;
+    } | undefined): ProviderItemIdentity | null {
+        if (!row || row.id == null) return null;
+        return {
+            itemId: Number(row.id),
+            provider: String(row.provider || ""),
+            entityType: String(row.entity_type || ""),
+            providerId: String(row.provider_id ?? ""),
+        };
+    }
+
+    /**
+     * The unambiguous provider release context for a provider item, or null.
+     * Keyed on ProviderItems.id, never on a bare provider_id.
+     */
+    private static resolveAlbumIdForItem(itemId: number): string | null {
+        const row = db.prepare(`
+            SELECT ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS album_id
+            FROM ProviderItems pi
+            WHERE pi.id = ?
+        `).get(itemId) as { album_id?: string | null } | undefined;
+        return row?.album_id ? String(row.album_id) : null;
+    }
+
+    /**
+     * Actual imported quality for a file already tracked on disk. Provider
+     * capability never stands in for it: an offer may advertise Atmos while the
+     * file present is the stereo rendition. Returns null for a file we have not
+     * probed yet, letting the import/probe path fill it in.
+     */
+    private static importedQualityForFile(filePath: string): string | null {
+        const row = db.prepare(`
+            SELECT COALESCE(NULLIF(TRIM(imported_quality), ''), NULLIF(TRIM(quality), '')) AS quality
+            FROM TrackFiles
+            WHERE file_path = ?
+            LIMIT 1
+        `).get(path.resolve(filePath)) as { quality?: string | null } | undefined;
+        return row?.quality ? String(row.quality) : null;
+    }
+
     // ==========================================================================
     // Private: Lookup helpers
     // ==========================================================================
 
     /**
-     * Try to find a media ID by checking if the file stem contains a known TIDAL track/media ID.
+     * Resolve a provider TRACK/VIDEO identity from a filename stem that embeds a
+     * provider id. Returns the full identity (ProviderItems.id + provider +
+     * entity_type + provider_id): a bare provider id is ambiguous across
+     * providers and entity types, so a stem match that hits more than one
+     * provider resource is rejected rather than resolved arbitrarily.
      */
-    private static findMediaIdByStem(stem: string, artistId: string): string | null {
-        // Check if stem is directly a provider ID (numeric)
-        if (/^\d+$/.test(stem)) {
-            const media = db.prepare(`
-                SELECT pi.provider_id
-                FROM ProviderItems pi
-                WHERE pi.entity_type IN ('track', 'video')
-                  AND CAST(pi.provider_id AS TEXT) = @providerId
-                  AND ${PROVIDER_MEMBER_ARTIST_SCOPE_SQL}
-                ORDER BY pi.updated_at DESC
-                LIMIT 1
-            `).get({ providerId: stem, artistId }) as any;
-            if (media) return String(media.provider_id);
-        }
-
-        // Check if stem contains a provider ID (e.g. "01 - 12345678 - Song Title")
+    private static findTrackIdentityByStem(stem: string, artistId: string): ProviderItemIdentity | null {
+        const candidateIds: string[] = [];
+        if (/^\d+$/.test(stem)) candidateIds.push(stem);
         const idMatch = stem.match(/\b(\d{6,})\b/);
-        if (idMatch) {
-            const media = db.prepare(`
-                SELECT pi.provider_id
+        if (idMatch) candidateIds.push(idMatch[1]);
+
+        for (const providerId of candidateIds) {
+            const rows = db.prepare(`
+                SELECT pi.id, pi.provider, pi.entity_type, pi.provider_id
                 FROM ProviderItems pi
                 WHERE pi.entity_type IN ('track', 'video')
                   AND CAST(pi.provider_id AS TEXT) = @providerId
-                  AND ${PROVIDER_MEMBER_ARTIST_SCOPE_SQL}
+                  AND ${LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL}
                 ORDER BY pi.updated_at DESC
-                LIMIT 1
-            `).get({ providerId: idMatch[1], artistId }) as any;
-            if (media) return String(media.provider_id);
+            `).all({ providerId, artistId }) as Array<any>;
+            // Same id under two providers (or as both a track and a video) is not
+            // an identity — refuse instead of picking the most recently updated.
+            if (rows.length === 1) {
+                const identity = this.resolveProviderIdentity(rows[0]);
+                if (identity) return identity;
+            }
         }
 
         return null;
     }
 
-    private static findMediaIdByTrackedSibling(filePath: string, artistId: string): string | null {
+    private static findTrackIdentityByTrackedSibling(filePath: string, artistId: string): ProviderItemIdentity | null {
         const stem = path.parse(filePath).name;
         const rows = db.prepare(`
-          SELECT provider_id AS media_id, file_path
-          FROM TrackFiles
-          WHERE artist_id = ?
-            AND provider_id IS NOT NULL
-            AND file_type = 'track'
-        `).all(artistId) as Array<{ media_id: string; file_path: string }>;
+          SELECT lf.provider, lf.provider_entity_type, lf.provider_id, lf.file_path
+          FROM TrackFiles lf
+          WHERE lf.artist_id = ?
+            AND lf.provider_id IS NOT NULL
+            AND lf.file_type = 'track'
+        `).all(artistId) as Array<{
+            provider: string | null;
+            provider_entity_type: string | null;
+            provider_id: string;
+            file_path: string;
+        }>;
 
         const sibling = rows.find((row) =>
             path.dirname(row.file_path) === path.dirname(filePath)
             && path.parse(row.file_path).name === stem
         );
+        if (!sibling?.provider_id) return null;
 
-        return sibling?.media_id ? String(sibling.media_id) : null;
+        // Re-resolve the sibling's stored triple to a real ProviderItems row so
+        // callers get an internal id, never a bare provider_id.
+        const item = db.prepare(`
+            SELECT pi.id, pi.provider, pi.entity_type, pi.provider_id
+            FROM ProviderItems pi
+            WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+              AND (? IS NULL OR pi.provider = ?)
+              AND pi.entity_type = COALESCE(?, 'track')
+            LIMIT 1
+        `).get(
+            sibling.provider_id,
+            sibling.provider,
+            sibling.provider,
+            sibling.provider_entity_type,
+        ) as any;
+        return this.resolveProviderIdentity(item);
     }
 
     /**
-     * Try to find a video ID where the title matches the stem.
+     * Try to find a provider VIDEO identity whose canonical title matches the stem.
      */
-    private static findVideoIdByStem(stem: string, artistId: string): string | null {
-        const embeddedMediaId = this.findMediaIdByStem(stem, artistId);
-        if (embeddedMediaId) {
+    private static findVideoIdentityByStem(stem: string, artistId: string): ProviderItemIdentity | null {
+        const embedded = this.findTrackIdentityByStem(stem, artistId);
+        if (embedded?.entityType === "video") {
+            return embedded;
+        }
+        if (embedded) {
+            // The stem's id resolved to a non-video resource; look for the video
+            // sharing that provider's id within the same provider only.
             const exactVideo = db.prepare(`
-              SELECT pi.provider_id AS id
+              SELECT pi.id, pi.provider, pi.entity_type, pi.provider_id
               FROM ProviderItems pi
               WHERE pi.entity_type = 'video'
+                AND pi.provider = @provider
                 AND CAST(pi.provider_id AS TEXT) = @providerId
-                AND ${PROVIDER_MEMBER_ARTIST_SCOPE_SQL}
+                AND ${LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL}
               LIMIT 1
-            `).get({ providerId: embeddedMediaId, artistId }) as { id: string } | undefined;
-            if (exactVideo) {
-                return exactVideo.id;
-            }
+            `).get({ provider: embedded.provider, providerId: embedded.providerId, artistId }) as any;
+            const identity = this.resolveProviderIdentity(exactVideo);
+            if (identity) return identity;
         }
 
         const videos = db.prepare(`
-            SELECT pi.provider_id AS id, r.title
+            SELECT pi.id, pi.provider, pi.entity_type, pi.provider_id, r.title
             FROM ProviderItems pi
             JOIN ProviderVideoMatches video_match
               ON video_match.provider_video_item_id = pi.id
              AND video_match.match_state = 'accepted'
             JOIN Recordings r ON r.id = video_match.recording_id
             WHERE pi.entity_type = 'video'
-              AND ${PROVIDER_MEMBER_ARTIST_SCOPE_SQL}
-        `).all({ artistId }) as Array<{ id: string; title: string }>;
+              AND ${LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL}
+        `).all({ artistId }) as Array<any>;
 
-        const titleMatches = videos.filter((video) => stem.includes(video.title) || video.title.includes(stem));
-        return titleMatches.length === 1 ? titleMatches[0].id : null;
+        const titleMatches = videos.filter((video) =>
+            stem.includes(video.title) || String(video.title).includes(stem));
+        return titleMatches.length === 1 ? this.resolveProviderIdentity(titleMatches[0]) : null;
     }
 
     /**
@@ -1763,7 +1819,7 @@ export class DiskScanService {
             SELECT DISTINCT pi.provider_id AS id, pi.title
             FROM ProviderItems pi
             WHERE pi.entity_type = 'release'
-              AND ${PROVIDER_RELEASE_ARTIST_SCOPE_SQL}
+              AND ${LEGACY_FOLDER_SCAN_RELEASE_ARTIST_SCOPE_SQL}
         `).all({ artistId }) as Array<{ id: string; title: string }>;
 
         for (const album of albums) {
@@ -1781,13 +1837,22 @@ export class DiskScanService {
     private static findMediaByExpectedPath(filePath: string, artistId: string): { albumId: string | null; mediaId: string; quality: string | null } | null {
         const resolved = path.resolve(filePath);
 
-        // Check if any track's expected path matches this file. Quality comes
-        // from the tracked file itself (its actual imported quality), not the
-        // retired ProviderItems scalar.
+        // Check if any track's expected path matches this file. The provider join
+        // carries the FULL identity triple (provider + entity_type + provider_id):
+        // matching on provider_id alone would attach an Apple offer to a TIDAL
+        // file whenever the two ids collide. Quality is the file's own imported
+        // quality, never a provider capability.
         const match = db.prepare(`
-            SELECT lf.provider_id AS media_id, ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS album_id, lf.quality
+            SELECT
+              lf.provider_id AS media_id,
+              ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS album_id,
+              COALESCE(NULLIF(TRIM(lf.imported_quality), ''), NULLIF(TRIM(lf.quality), '')) AS quality
             FROM TrackFiles lf
-            JOIN ProviderItems pi ON pi.provider_id = lf.provider_id AND pi.entity_type IN ('track', 'video')
+            JOIN ProviderItems pi
+              ON CAST(pi.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
+             AND pi.entity_type = COALESCE(lf.provider_entity_type, pi.entity_type)
+             AND pi.entity_type IN ('track', 'video')
+             AND (lf.provider IS NULL OR pi.provider = lf.provider)
             WHERE lf.artist_id = ? AND lf.expected_path = ?
             LIMIT 1
         `).get(artistId, resolved) as any;

@@ -784,15 +784,17 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
     : "";
   const candidateScope = `
     WITH candidate_track_ids(id) AS MATERIALIZED (
-      SELECT plan_track.track_id
-      FROM AcquisitionPlanTracks plan_track
-      JOIN AcquisitionPlans plan
-        ON plan.id = plan_track.plan_id
-       AND plan.state = 'current'
-      JOIN LibraryReleases library_release
-        ON library_release.id = plan.library_release_id
+      -- Every canonical track of a release this library has selected. Acquisition
+      -- is NOT a precondition for visibility: a selected release's tracks stay
+      -- listed while still unavailable/unplanned, and only then can the UI show
+      -- them as missing. This is the same scope TrackLibraryIndex projects, so
+      -- the fast COUNT path and the listed items always describe one set.
+      SELECT selected_track.id
+      FROM LibraryReleases library_release
       JOIN AlbumReleases release
         ON release.id = library_release.release_id
+      JOIN Tracks selected_track
+        ON selected_track.album_release_id = library_release.release_id
       JOIN LibraryReleaseGroups library_group
         ON library_group.library_id = library_release.library_id
        AND library_group.release_group_id = release.release_group_id

@@ -5,8 +5,8 @@ import {
     sameRecordingTitle,
 } from "./import-matching-utils.js";
 import {
-    PROVIDER_MEMBER_ALBUM_ID_SQL,
-    PROVIDER_MEMBER_ARTIST_SCOPE_SQL,
+    PROVIDER_RESOLVED_ALBUM_ID_SQL,
+    LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL,
 } from "../providers/provider-item-artist-scope.js";
 import type { LibraryRootKey } from "./library-scan-relink.js";
 
@@ -50,10 +50,15 @@ function releaseGroupForRelease(releaseMbid: string): string | null {
     return row?.release_group_mbid ? String(row.release_group_mbid) : null;
 }
 
-function selectedReleaseForGroup(releaseGroupMbid: string, preferredSlot: string): string | null {
+/**
+ * Every release of this group that is selected into a library matching the
+ * scanned root's class. A library may legitimately select SEVERAL releases of
+ * one group, so this returns a set — never one winner.
+ */
+function selectedReleasesForGroup(releaseGroupMbid: string, preferredSlot: string): Set<string> {
     const preferredClass = preferredSlot === "spatial" ? "spatial" : "stereo";
-    const row = db.prepare(`
-        SELECT release.mbid AS selected_release_mbid
+    const rows = db.prepare(`
+        SELECT DISTINCT release.mbid AS selected_release_mbid
         FROM Albums release_group
         JOIN AlbumReleases release
           ON release.release_group_id = release_group.id
@@ -65,28 +70,31 @@ function selectedReleaseForGroup(releaseGroupMbid: string, preferredSlot: string
         JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
         WHERE release_group.mbid = ?
-        ORDER BY
-          CASE WHEN (
+          AND (
             CASE WHEN EXISTS (
               SELECT 1
               FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
               WHERE allowed.value = 'spatial'
             ) THEN 'spatial' ELSE 'stereo' END
-          ) = ? THEN 0 ELSE 1 END,
-          library_release.updated_at DESC,
-          library_release.id DESC
-        LIMIT 1
-    `).get(releaseGroupMbid, preferredClass) as { selected_release_mbid: string | null } | undefined;
-    return row?.selected_release_mbid ? String(row.selected_release_mbid) : null;
+          ) = ?
+    `).all(releaseGroupMbid, preferredClass) as Array<{ selected_release_mbid: string | null }>;
+    return new Set(
+        rows.map((row) => String(row.selected_release_mbid || "")).filter(Boolean),
+    );
 }
 
 /**
  * Resolve a file's catalog track purely from its embedded MusicBrainz IDs — the
  * Lidarr-style path. The release-track MBID (Tracks.mbid) is globally unique and
  * needs no provider offer; the recording MBID + release MBID pair is the
- * fallback. When the resolved track sits on a non-selected release of the group,
- * re-anchor to the selected LibraryRelease track (same recording) so the
- * linkage matches how library-specific completion is scoped.
+ * fallback.
+ *
+ * Re-anchoring is deliberately conservative: the embedded release is preserved
+ * whenever it is itself selected in a library of this class (a library may
+ * select several releases of one group), and a move only happens when exactly
+ * one other release is selected AND it carries exactly one track for the
+ * recording. Anything else keeps the file's own embedded identity rather than
+ * silently relocating it onto an assumed single release.
  */
 export function resolveCatalogTrackFromEmbeddedMbids(
     tags: ParsedAudioTags,
@@ -117,24 +125,30 @@ export function resolveCatalogTrackFromEmbeddedMbids(
 
     const releaseGroupMbid = releaseGroupForRelease(anchor.release_mbid);
 
-    // Re-anchor onto the selected release when the embedded tags reference a
-    // different release of the same group, so canonical_track_mbid lines up with
-    // the release the download-status query counts against.
+    // The file's own embedded release wins whenever that release is itself
+    // selected in a library of this class — a library may select several
+    // releases of a group, so "not the one I picked" is not a reason to move.
+    // Only when the embedded release is NOT selected do we re-anchor, and then
+    // only onto a single selected release carrying exactly one track for this
+    // recording. Anything ambiguous keeps the embedded anchor untouched.
     if (releaseGroupMbid && anchor.recording_mbid) {
-        const selectedRelease = selectedReleaseForGroup(releaseGroupMbid, preferredSlot);
-        if (selectedRelease && selectedRelease !== anchor.release_mbid) {
+        const selectedReleases = selectedReleasesForGroup(releaseGroupMbid, preferredSlot);
+        const embeddedIsSelected = selectedReleases.has(anchor.release_mbid);
+        if (!embeddedIsSelected && selectedReleases.size === 1) {
+            const [selectedRelease] = [...selectedReleases];
             const onSelected = db.prepare(`
                 SELECT mbid, recording_mbid, release_mbid
                 FROM Tracks
                 WHERE release_mbid = ? AND recording_mbid = ?
                 ORDER BY medium_position, position
-                LIMIT 1
-            `).get(selectedRelease, anchor.recording_mbid) as AnchorRow | undefined;
-            if (onSelected) {
+            `).all(selectedRelease, anchor.recording_mbid) as AnchorRow[];
+            // A recording appearing twice on the target release (e.g. a reprise)
+            // gives no unambiguous mapping — keep the embedded identity.
+            if (onSelected.length === 1) {
                 return {
-                    trackMbid: onSelected.mbid,
-                    recordingMbid: onSelected.recording_mbid,
-                    releaseMbid: onSelected.release_mbid,
+                    trackMbid: onSelected[0].mbid,
+                    recordingMbid: onSelected[0].recording_mbid,
+                    releaseMbid: onSelected[0].release_mbid,
                     releaseGroupMbid,
                 };
             }
@@ -161,7 +175,10 @@ export type ParsedAudioTags = {
 };
 
 type ProviderOfferRow = {
+    /** Internal provider identity; provider_id alone is not unique. */
+    provider_item_id: number;
     provider: string;
+    entity_type: string;
     provider_id: string;
     title: string;
     provider_album_id: string | null;
@@ -169,7 +186,6 @@ type ProviderOfferRow = {
     isrc: string | null;
     /** Seconds (ProviderItems stores duration_ms). */
     duration: number | null;
-    quality: string | null;
 };
 
 const DURATION_TOLERANCE_SECONDS = 3;
@@ -197,18 +213,23 @@ function durationClose(left: number | null | undefined, right: number | null | u
 
 /**
  * Shared SELECT list for provider track offers, resolved entirely through the
- * typed authority: the parent release comes from ProviderReleaseMembers, the
- * canonical recording from an accepted ProviderTrackMatches edge, and quality
- * from the normalized audio-variant boundary (spatial variants preferred when
- * scanning the spatial root). Scalar subqueries keep one row per provider item
- * even when a track appears on several provider releases.
+ * typed authority: the release context comes from the selected acquisition
+ * source (or a single unambiguous membership), and the canonical recording from
+ * an accepted ProviderTrackMatches edge.
+ *
+ * There is deliberately NO quality column here. An offer's audio variants state
+ * what the source *could* deliver; they say nothing about the file already on
+ * disk, which may be the stereo rendition of an Atmos-capable offer. Imported
+ * quality is read from the matched file's own technical facts by the caller.
  */
 const OFFER_SELECT = `
     SELECT
+      pi.id AS provider_item_id,
       pi.provider,
+      pi.entity_type,
       CAST(pi.provider_id AS TEXT) AS provider_id,
       pi.title,
-      ${PROVIDER_MEMBER_ALBUM_ID_SQL} AS provider_album_id,
+      ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS provider_album_id,
       (
         SELECT recording.mbid
         FROM ProviderReleaseMembers member
@@ -221,20 +242,11 @@ const OFFER_SELECT = `
         LIMIT 1
       ) AS recording_mbid,
       pi.isrc,
-      pi.duration_ms / 1000.0 AS duration,
-      (
-        SELECT COALESCE(NULLIF(TRIM(variant.provider_quality_label), ''), variant.quality_class)
-        FROM ProviderItemAudioVariants variant
-        WHERE variant.provider_item_id = pi.id
-        ORDER BY
-          CASE WHEN (variant.quality_class = 'spatial') = (@preferredSlot = 'spatial') THEN 0 ELSE 1 END,
-          variant.id
-        LIMIT 1
-      ) AS quality
+      pi.duration_ms / 1000.0 AS duration
     FROM ProviderItems pi
 `;
 
-const OFFER_ARTIST_SCOPE = PROVIDER_MEMBER_ARTIST_SCOPE_SQL;
+const OFFER_ARTIST_SCOPE = LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL;
 
 function scoreOffer(
     offer: ProviderOfferRow,
@@ -365,6 +377,20 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
     }
 
     return albumIds;
+}
+
+/**
+ * The imported quality already recorded for this exact path, or null. Provider
+ * audio variants are source capabilities and must never stand in for it.
+ */
+function importedQualityForTrackedFile(filePath: string): string | null {
+    const row = db.prepare(`
+        SELECT COALESCE(NULLIF(TRIM(imported_quality), ''), NULLIF(TRIM(quality), '')) AS quality
+        FROM TrackFiles
+        WHERE file_path = ?
+        LIMIT 1
+    `).get(path.resolve(filePath)) as { quality?: string | null } | undefined;
+    return row?.quality ? String(row.quality) : null;
 }
 
 function existingTrackFileForOffer(
@@ -690,7 +716,10 @@ export function matchAudioFileByMetadata(
         mediaId: String(best.provider_id),
         provider: best.provider,
         fileType: "track",
-        quality: best.quality || null,
+        // Imported quality belongs to the file, not the offer. If this exact
+        // path is already tracked, reuse its recorded quality; otherwise leave
+        // it null so the import/probe path establishes it from the file itself.
+        quality: importedQualityForTrackedFile(filePath),
         librarySlot,
         duplicateOfExisting,
         existingFilePath: duplicateOfExisting ? resolvedExisting : null,
