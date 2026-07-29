@@ -28,14 +28,20 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM AcquisitionPlanTracks").run();
+  db.prepare("DELETE FROM AcquisitionPlanSources").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryReleases").run();
   db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM ProviderTrackMatches").run();
+  db.prepare("DELETE FROM ProviderVideoMatches").run();
+  db.prepare("DELETE FROM ProviderReleaseMatches").run();
+  db.prepare("DELETE FROM ProviderReleaseMembers").run();
+  db.prepare("DELETE FROM ProviderItemAudioVariants").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM ArtistReleaseGroups").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
@@ -79,16 +85,6 @@ function seedCanonicalArtistPage() {
     )
   `).run();
 
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, selected_release_mbid, quality, monitored_lock
-    )
-    VALUES (
-      'artist-mbid-1', 'release-group-mbid-1', 'stereo', 1,
-      'tidal', 'provider-album-1', 'release-mbid-1', 'LOSSLESS', 1
-    )
-  `).run();
   const releaseGroup = db.prepare(`
     SELECT id FROM Albums WHERE mbid = 'release-group-mbid-1'
   `).get() as { id: number };
@@ -156,6 +152,65 @@ function seedCanonicalArtistPage() {
     )
   `).run();
 
+  const providerTrack = db.prepare(`
+    SELECT id FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = 'provider-track-1'
+  `).get() as { id: number };
+  const providerRelease = db.prepare(`
+    SELECT id FROM ProviderItems
+    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = 'provider-album-1'
+  `).get() as { id: number };
+  const releaseMember = db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+    RETURNING id
+  `).get(providerRelease.id, providerTrack.id) as { id: number };
+  const releaseMatch = db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, 201, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(providerRelease.id) as { id: number };
+  const trackMatch = db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_release_member_id, provider_release_match_id, track_id,
+      recording_id, match_state, decision_source, confidence, method,
+      matcher_version
+    ) VALUES (?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(releaseMember.id, releaseMatch.id) as { id: number };
+  const variant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label,
+      availability
+    ) VALUES (?, 'lossless', 'lossless', 'LOSSLESS', 'available')
+    RETURNING id
+  `).get(providerTrack.id) as { id: number };
+  const libraryRelease = db.prepare(`
+    SELECT id FROM LibraryReleases WHERE library_id = ? AND release_id = 201
+  `).get(library.id) as { id: number };
+  const plan = db.prepare(`
+    INSERT INTO AcquisitionPlans (
+      library_release_id, provider, composition, download_mode, state,
+      planner_version, policy_hash, computed_at
+    ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
+    RETURNING id
+  `).get(libraryRelease.id) as { id: number };
+  const source = db.prepare(`
+    INSERT INTO AcquisitionPlanSources (
+      plan_id, provider_release_match_id, role, sort_order
+    ) VALUES (?, ?, 'primary', 0)
+    RETURNING id
+  `).get(plan.id, releaseMatch.id) as { id: number };
+  db.prepare(`
+    INSERT INTO AcquisitionPlanTracks (
+      plan_id, track_id, source_id, provider_track_match_id,
+      provider_audio_variant_id, source_quality_snapshot
+    ) VALUES (?, 401, ?, ?, ?, '{"quality":"LOSSLESS"}')
+  `).run(plan.id, source.id, trackMatch.id, variant.id);
+
   db.prepare(`
     INSERT INTO Recordings (
       id, foreign_recording_id, mbid, artist_metadata_id, artist_mbid,
@@ -167,7 +222,7 @@ function seedCanonicalArtistPage() {
     )
   `).run(artistMetadata.id);
 
-  db.prepare(`
+  const providerVideo = db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, artist_mbid, recording_id,
       title, quality, duration, release_date, asset_id, provider_url,
@@ -178,7 +233,14 @@ function seedCanonicalArtistPage() {
       'Canonical Video', 'FHD', 210, '2024-02-01', 'video-offer-cover',
       'https://tidal.com/browse/video/provider-video-1', 'verified', 0.99
     )
-  `).run();
+    RETURNING id
+  `).get() as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, 501, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(providerVideo.id);
 
 
 return { artistId: "artist-1" };
@@ -325,7 +387,7 @@ test("artist page top tracks ignore unselected alternate editions", async () => 
   assert.deepEqual(topTracks[0].qualityTags, ["LOSSLESS"]);
 });
 
-test("artist page top tracks resolve provider previews through canonical MBIDs", async () => {
+test("artist page top tracks resolve provider previews through typed plan matches", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
 
@@ -348,7 +410,7 @@ test("artist page top tracks resolve provider previews through canonical MBIDs",
   assert.equal(topTracks[0].preview_provider_track_id, "provider-track-1");
 });
 
-test("artist page top tracks prefer the selected slot provider for preview over a newer alternate offer", async () => {
+test("artist page top tracks prefer the selected plan provider over a newer alternate offer", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
 

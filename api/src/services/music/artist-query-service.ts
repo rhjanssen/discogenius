@@ -105,18 +105,22 @@ function buildArtistReleaseGroupCountMap(artistMbids: string[]): Map<string, Art
             FROM ArtistReleaseGroups
             WHERE artist_mbid IN (${placeholders})
         ),
-        slot_state AS (
-            SELECT release_group_mbid,
-                   MAX(CASE WHEN monitored = 1 THEN 1 ELSE 0 END) AS monitored
-            FROM ReleaseGroupSlots
-            WHERE slot IN ('stereo', 'spatial')
-            GROUP BY release_group_mbid
+        library_state AS (
+            SELECT release_group.mbid AS release_group_mbid,
+                   MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored
+            FROM LibraryReleaseGroups library_group
+            JOIN Libraries library
+              ON library.id = library_group.library_id
+             AND library.enabled = 1
+            JOIN Albums release_group
+              ON release_group.id = library_group.release_group_id
+            GROUP BY release_group.id
         )
         SELECT scope.artist_mbid AS artist_id,
                COUNT(*) AS cnt,
-               SUM(CASE WHEN slot_state.monitored = 1 THEN 1 ELSE 0 END) AS monitored_cnt
+               SUM(CASE WHEN library_state.monitored = 1 THEN 1 ELSE 0 END) AS monitored_cnt
         FROM artist_scope scope
-        LEFT JOIN slot_state ON slot_state.release_group_mbid = scope.release_group_mbid
+        LEFT JOIN library_state ON library_state.release_group_mbid = scope.release_group_mbid
         GROUP BY scope.artist_mbid
     `).all(...distinctMbids, ...distinctMbids) as ArtistCountRow[];
 
@@ -151,21 +155,25 @@ function buildArtistTrackCountMap(artistMbids: string[]): Map<string, ArtistCoun
             FROM ArtistReleaseGroups
             WHERE artist_mbid IN (${placeholders})
         ),
-        slot_state AS (
-            SELECT release_group_mbid,
-                   MAX(CASE WHEN monitored = 1 THEN 1 ELSE 0 END) AS monitored
-            FROM ReleaseGroupSlots
-            WHERE slot IN ('stereo', 'spatial')
-            GROUP BY release_group_mbid
+        library_state AS (
+            SELECT release_group.mbid AS release_group_mbid,
+                   MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored
+            FROM LibraryReleaseGroups library_group
+            JOIN Libraries library
+              ON library.id = library_group.library_id
+             AND library.enabled = 1
+            JOIN Albums release_group
+              ON release_group.id = library_group.release_group_id
+            GROUP BY release_group.id
         ),
         artist_tracks AS (
             SELECT DISTINCT scope.artist_mbid,
                    track.mbid,
-                   COALESCE(slot_state.monitored, 0) AS monitored
+                   COALESCE(library_state.monitored, 0) AS monitored
             FROM artist_scope scope
             JOIN AlbumReleases release ON release.release_group_mbid = scope.release_group_mbid
             JOIN Tracks track ON track.release_mbid = release.mbid
-            LEFT JOIN slot_state ON slot_state.release_group_mbid = scope.release_group_mbid
+            LEFT JOIN library_state ON library_state.release_group_mbid = scope.release_group_mbid
         )
         SELECT artist_mbid AS artist_id,
                COUNT(*) AS cnt,
@@ -491,6 +499,180 @@ function mapReleaseGroupCardForArtistPage(row: Record<string, any>, options: {
     };
 }
 
+const artistReleaseGroupLibraryStateCte = `
+  WITH ranked_library_state AS MATERIALIZED (
+    SELECT
+      library_group.release_group_id,
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'spatial'
+      ) THEN 'spatial' ELSE 'stereo' END AS library_class,
+      MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) OVER (
+        PARTITION BY
+          library_group.release_group_id,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END
+      ) AS monitored,
+      MAX(CASE WHEN library_group.locked = 1 THEN 1 ELSE 0 END) OVER (
+        PARTITION BY
+          library_group.release_group_id,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END
+      ) AS monitored_lock,
+      release.mbid AS selected_release_mbid,
+      provider_item.id AS provider_item_id,
+      COALESCE(provider_item.provider, plan.provider) AS selected_provider,
+      provider_item.provider_id AS selected_provider_id,
+      provider_item.provider_url,
+      COALESCE(
+        provider_item.quality,
+        (
+          SELECT COALESCE(
+            NULLIF(TRIM(CASE
+              WHEN json_valid(plan_track.source_quality_snapshot)
+              THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
+              ELSE plan_track.source_quality_snapshot
+            END), ''),
+            NULLIF(TRIM(variant.provider_quality_label), ''),
+            variant.quality_class
+          )
+          FROM AcquisitionPlanTracks plan_track
+          JOIN ProviderItemAudioVariants variant
+            ON variant.id = plan_track.provider_audio_variant_id
+          WHERE plan_track.plan_id = plan.id
+          ORDER BY plan_track.id
+          LIMIT 1
+        )
+      ) AS quality,
+      release_match.match_state AS match_status,
+      release_match.method AS match_method,
+      COALESCE(provider_item.cover_id, provider_item.cover, provider_item.artwork_url) AS cover,
+      provider_item.asset_id,
+      provider_item.explicit,
+      ROW_NUMBER() OVER (
+        PARTITION BY
+          library_group.release_group_id,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END
+        ORDER BY
+          CASE WHEN plan.state = 'current' AND provider_item.id IS NOT NULL THEN 0 ELSE 1 END,
+          library_release.updated_at DESC,
+          library_release.id DESC,
+          library.id ASC
+      ) AS state_rank
+    FROM LibraryReleaseGroups library_group
+    JOIN Libraries library
+      ON library.id = library_group.library_id
+     AND library.enabled = 1
+    JOIN quality_profiles quality_profile
+      ON quality_profile.id = library.quality_profile_id
+    LEFT JOIN LibraryReleases library_release
+      ON library_release.library_id = library_group.library_id
+     AND EXISTS (
+       SELECT 1
+       FROM AlbumReleases candidate_release
+       WHERE candidate_release.id = library_release.release_id
+         AND candidate_release.release_group_id = library_group.release_group_id
+     )
+    LEFT JOIN AlbumReleases release
+      ON release.id = library_release.release_id
+    LEFT JOIN AcquisitionPlans plan
+      ON plan.library_release_id = library_release.id
+     AND plan.state = 'current'
+    LEFT JOIN AcquisitionPlanSources source
+      ON source.plan_id = plan.id
+     AND source.id = (
+       SELECT preferred_source.id
+       FROM AcquisitionPlanSources preferred_source
+       WHERE preferred_source.plan_id = plan.id
+       ORDER BY
+         CASE preferred_source.role WHEN 'primary' THEN 0 ELSE 1 END,
+         preferred_source.sort_order,
+         preferred_source.id
+       LIMIT 1
+     )
+    LEFT JOIN ProviderReleaseMatches release_match
+      ON release_match.id = source.provider_release_match_id
+     AND release_match.match_state = 'accepted'
+    LEFT JOIN ProviderItems provider_item
+      ON provider_item.id = release_match.provider_release_item_id
+     AND (
+       provider_item.availability IS NULL
+       OR LOWER(CAST(provider_item.availability AS TEXT))
+          NOT IN ('0', 'false', 'unavailable', 'no', '')
+     )
+  ),
+  library_state AS MATERIALIZED (
+    SELECT *
+    FROM ranked_library_state
+    WHERE state_rank = 1
+  )
+`;
+
+function loadArtistReleaseGroupRows(artistMbid: string): any[] {
+    return db.prepare(`
+      ${artistReleaseGroupLibraryStateCte}
+      SELECT
+        release_group.*,
+        COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
+        COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
+        COALESCE(stereo.quality, spatial.quality) AS selected_quality,
+        stereo.selected_provider AS stereo_provider,
+        stereo.selected_provider_id AS stereo_provider_id,
+        stereo.provider_url AS stereo_provider_url,
+        stereo.selected_release_mbid AS stereo_release_mbid,
+        stereo.quality AS stereo_quality,
+        stereo.match_status AS stereo_match_status,
+        stereo.match_method AS stereo_match_method,
+        stereo.cover AS stereo_cover,
+        stereo.monitored_lock AS stereo_monitor_lock,
+        spatial.selected_provider AS spatial_provider,
+        spatial.selected_provider_id AS spatial_provider_id,
+        spatial.provider_url AS spatial_provider_url,
+        spatial.selected_release_mbid AS spatial_release_mbid,
+        spatial.quality AS spatial_quality,
+        spatial.match_status AS spatial_match_status,
+        spatial.match_method AS spatial_match_method,
+        spatial.cover AS spatial_cover,
+        spatial.monitored_lock AS spatial_monitor_lock,
+        COALESCE(stereo.asset_id, spatial.asset_id) AS provider_asset_id,
+        COALESCE(stereo.cover, spatial.cover) AS provider_cover,
+        COALESCE(stereo.explicit, spatial.explicit, 0) AS explicit,
+        CASE
+          WHEN stereo.release_group_id IS NULL AND spatial.release_group_id IS NULL THEN 0
+          WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1
+          ELSE 0
+        END AS wanted
+      FROM Albums release_group
+      LEFT JOIN library_state stereo
+        ON stereo.release_group_id = release_group.id
+       AND stereo.library_class = 'stereo'
+      LEFT JOIN library_state spatial
+        ON spatial.release_group_id = release_group.id
+       AND spatial.library_class = 'spatial'
+      WHERE release_group.artist_mbid = ?
+         OR release_group.mbid IN (
+           SELECT scope.release_group_mbid
+           FROM ArtistReleaseGroups scope
+           WHERE scope.artist_mbid = ?
+         )
+      ORDER BY
+        (release_group.first_release_date IS NULL) ASC,
+        release_group.first_release_date DESC,
+        release_group.title ASC
+    `).all(artistMbid, artistMbid) as any[];
+}
+
 const RELEASE_GROUP_BUCKETS = {
     ALBUM: "ARTIST_ALBUMS",
     EP: "ARTIST_EPS",
@@ -691,76 +873,7 @@ export class ArtistQueryService {
             return [];
         }
 
-        const rows = db.prepare(`
-      SELECT
-        rg.*,
-        COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
-        COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
-        COALESCE(stereo.quality, spatial.quality) AS selected_quality,
-        stereo.selected_provider AS stereo_provider,
-        stereo.selected_provider_id AS stereo_provider_id,
-        stereo_album_offer.provider_url AS stereo_provider_url,
-        stereo.selected_release_mbid AS stereo_release_mbid,
-        stereo.quality AS stereo_quality,
-        stereo.match_status AS stereo_match_status,
-        stereo.match_method AS stereo_match_method,
-        stereo.cover AS stereo_cover,
-        stereo.monitored_lock AS stereo_monitor_lock,
-        spatial.selected_provider AS spatial_provider,
-        spatial.selected_provider_id AS spatial_provider_id,
-        spatial_album_offer.provider_url AS spatial_provider_url,
-        spatial.selected_release_mbid AS spatial_release_mbid,
-        spatial.quality AS spatial_quality,
-        spatial.match_status AS spatial_match_status,
-        spatial.match_method AS spatial_match_method,
-        spatial.cover AS spatial_cover,
-        spatial.monitored_lock AS spatial_monitor_lock,
-        album_offer.asset_id AS provider_asset_id,
-        album_offer.cover AS provider_cover,
-        CASE
-          WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
-          WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1
-          ELSE 0
-        END AS wanted
-      FROM Albums rg
-      LEFT JOIN ReleaseGroupSlots stereo
-        ON stereo.release_group_mbid = rg.mbid
-       AND stereo.slot = 'stereo'
-      LEFT JOIN ReleaseGroupSlots spatial
-        ON spatial.release_group_mbid = rg.mbid
-       AND spatial.slot = 'spatial'
-      LEFT JOIN ProviderItems stereo_album_offer
-        ON stereo_album_offer.entity_type = 'album'
-       AND stereo_album_offer.provider = stereo.selected_provider
-       AND CAST(stereo_album_offer.provider_id AS TEXT) = CAST(stereo.selected_provider_id AS TEXT)
-       AND (stereo_album_offer.match_status IS NULL OR LOWER(stereo_album_offer.match_status) <> 'rejected')
-       AND (
-         stereo_album_offer.availability IS NULL
-         OR LOWER(CAST(stereo_album_offer.availability AS TEXT))
-            NOT IN ('0', 'false', 'unavailable', 'no', '')
-       )
-      LEFT JOIN ProviderItems spatial_album_offer
-        ON spatial_album_offer.entity_type = 'album'
-       AND spatial_album_offer.provider = spatial.selected_provider
-       AND CAST(spatial_album_offer.provider_id AS TEXT) = CAST(spatial.selected_provider_id AS TEXT)
-       AND (spatial_album_offer.match_status IS NULL OR LOWER(spatial_album_offer.match_status) <> 'rejected')
-       AND (
-         spatial_album_offer.availability IS NULL
-         OR LOWER(CAST(spatial_album_offer.availability AS TEXT))
-            NOT IN ('0', 'false', 'unavailable', 'no', '')
-       )
-      LEFT JOIN ProviderItems album_offer
-        ON album_offer.entity_type = 'album'
-       AND album_offer.provider = COALESCE(stereo.selected_provider, spatial.selected_provider)
-       AND CAST(album_offer.provider_id AS TEXT) = CAST(COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS TEXT)
-      WHERE rg.artist_mbid = ?
-         OR rg.mbid IN (
-           SELECT scope.release_group_mbid
-           FROM ArtistReleaseGroups scope
-           WHERE scope.artist_mbid = ?
-         )
-      ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
-    `).all(artistMbid, artistMbid) as any[];
+        const rows = loadArtistReleaseGroupRows(artistMbid);
 
         const downloadStats = getReleaseGroupDownloadStatsMap(rows.map((row) => row.mbid));
 
@@ -1062,82 +1175,7 @@ export class ArtistQueryService {
             artistName: (artist as any).name ?? null,
         }) as any[] : [];
         const musicBrainzReleaseGroups = includeReleaseGroups && artist.mbid
-            ? db.prepare(`
-         SELECT
-           rg.*,
-           COALESCE(stereo.selected_provider, spatial.selected_provider) AS selected_provider,
-           COALESCE(stereo.selected_provider_id, spatial.selected_provider_id) AS selected_provider_id,
-           COALESCE(stereo.quality, spatial.quality) AS selected_quality,
-           stereo.selected_provider AS stereo_provider,
-           stereo.selected_provider_id AS stereo_provider_id,
-           stereo_album_offer.provider_url AS stereo_provider_url,
-           stereo.selected_release_mbid AS stereo_release_mbid,
-           stereo.quality AS stereo_quality,
-           stereo.match_status AS stereo_match_status,
-           stereo.match_method AS stereo_match_method,
-           stereo.cover AS stereo_cover,
-           stereo.monitored_lock AS stereo_monitor_lock,
-           spatial.selected_provider AS spatial_provider,
-           spatial.selected_provider_id AS spatial_provider_id,
-           spatial_album_offer.provider_url AS spatial_provider_url,
-           spatial.selected_release_mbid AS spatial_release_mbid,
-           spatial.quality AS spatial_quality,
-           spatial.match_status AS spatial_match_status,
-           spatial.match_method AS spatial_match_method,
-           spatial.cover AS spatial_cover,
-           spatial.monitored_lock AS spatial_monitor_lock,
-           album_offer.asset_id AS provider_asset_id,
-           album_offer.cover AS provider_cover,
-           CASE
-             WHEN stereo.id IS NULL AND spatial.id IS NULL THEN 0
-             WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1
-             ELSE 0
-           END AS wanted,
-           rg.images
-         FROM Albums rg
-         LEFT JOIN ReleaseGroupSlots stereo
-           ON stereo.release_group_id = rg.id
-          AND stereo.slot = 'stereo'
-         LEFT JOIN ReleaseGroupSlots spatial
-           ON spatial.release_group_id = rg.id
-          AND spatial.slot = 'spatial'
-         LEFT JOIN ProviderItems stereo_album_offer
-           ON stereo_album_offer.entity_type = 'album'
-          AND stereo_album_offer.provider = stereo.selected_provider
-          AND stereo_album_offer.provider_id = stereo.selected_provider_id
-          AND (stereo_album_offer.match_status IS NULL OR LOWER(stereo_album_offer.match_status) <> 'rejected')
-          AND (
-            stereo_album_offer.availability IS NULL
-            OR LOWER(CAST(stereo_album_offer.availability AS TEXT))
-               NOT IN ('0', 'false', 'unavailable', 'no', '')
-          )
-         LEFT JOIN ProviderItems spatial_album_offer
-           ON spatial_album_offer.entity_type = 'album'
-          AND spatial_album_offer.provider = spatial.selected_provider
-          AND spatial_album_offer.provider_id = spatial.selected_provider_id
-          AND (spatial_album_offer.match_status IS NULL OR LOWER(spatial_album_offer.match_status) <> 'rejected')
-          AND (
-            spatial_album_offer.availability IS NULL
-            OR LOWER(CAST(spatial_album_offer.availability AS TEXT))
-               NOT IN ('0', 'false', 'unavailable', 'no', '')
-          )
-         -- Selected provider album offer supplies the artwork fallback
-         -- (asset_id/cover) when the slot has no cached cover yet.
-         LEFT JOIN ProviderItems album_offer
-          ON album_offer.entity_type = 'album'
-         AND album_offer.provider = COALESCE(stereo.selected_provider, spatial.selected_provider)
-          AND album_offer.provider_id = COALESCE(stereo.selected_provider_id, spatial.selected_provider_id)
-         -- OR rg.mbid IN (subquery), instead of OR EXISTS(...), keeps both
-         -- branches index-searchable so SQLite OR-optimizes rather than
-         -- scanning Albums.
-         WHERE rg.artist_mbid = ?
-            OR rg.mbid IN (
-              SELECT scope.release_group_mbid
-              FROM ArtistReleaseGroups scope
-              WHERE scope.artist_mbid = ?
-            )
-         ORDER BY (rg.first_release_date IS NULL) ASC, rg.first_release_date DESC, rg.title ASC
-       `).all(artist.mbid, artist.mbid) as any[]
+            ? loadArtistReleaseGroupRows(String(artist.mbid))
             : [];
 
         // Similar artists were a provider-exclusive feature (TIDAL's getSimilarArtists);
@@ -1158,6 +1196,7 @@ export class ArtistQueryService {
           projection.popularity,
           track.mbid AS id,
           track.id AS track_row_id,
+          track.album_release_id AS album_release_row_id,
           track.title,
           track.length_ms,
           track.position,
@@ -1166,6 +1205,7 @@ export class ArtistQueryService {
           track.release_mbid,
           track.updated_at,
           release.date AS release_date,
+          release_group.id AS release_group_row_id,
           release_group.mbid AS release_group_mbid,
           release_group.title AS release_group_title,
           release_group.first_release_date,
@@ -1184,67 +1224,58 @@ export class ArtistQueryService {
         ORDER BY projection.rank
         LIMIT ?
       ),
-      provider_track_candidate_ids(track_id, provider_rowid) AS MATERIALIZED (
-        SELECT top_tracks.id, provider_item.rowid
-        FROM top_tracks
-        CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_recording_id
-        WHERE top_tracks.recording_row_id IS NOT NULL
-          AND provider_item.recording_id = top_tracks.recording_row_id
-          AND provider_item.entity_type = 'track'
-        UNION
-        SELECT top_tracks.id, provider_item.rowid
-        FROM top_tracks
-        CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_entity_track
-        WHERE provider_item.entity_type = 'track'
-          AND provider_item.track_mbid = top_tracks.id
-        UNION
-        SELECT top_tracks.id, provider_item.rowid
-        FROM top_tracks
-        CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_entity_recording
-        WHERE provider_item.entity_type = 'track'
-          AND provider_item.recording_mbid = top_tracks.recording_mbid
-      ),
       provider_tracks AS (
         SELECT
-          candidates.track_id,
+          top_tracks.id AS track_id,
           provider_item.provider,
           provider_item.provider_id,
           provider_item.duration,
           provider_item.explicit,
-          provider_item.quality,
+          COALESCE(
+            NULLIF(TRIM(CASE
+              WHEN json_valid(plan_track.source_quality_snapshot)
+              THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
+              ELSE plan_track.source_quality_snapshot
+            END), ''),
+            NULLIF(TRIM(variant.provider_quality_label), ''),
+            variant.quality_class,
+            provider_item.quality
+          ) AS quality,
           ROW_NUMBER() OVER (
-            PARTITION BY candidates.track_id
+            PARTITION BY top_tracks.id
             ORDER BY
-              -- Prefer the release-group's selected stereo/spatial offer provider
-              -- (same rule as album tracklists). Otherwise top tracks pick the
-              -- newest stereo ProviderItems row — often Apple — and preview fails
-              -- while the album page still plays via the selected TIDAL offer.
-              CASE
-                WHEN EXISTS (
-                  SELECT 1
-                  FROM top_tracks tt
-                  JOIN ReleaseGroupSlots slot
-                    ON slot.release_group_mbid = tt.release_group_mbid
-                   AND slot.selected_release_mbid = tt.release_mbid
-                   AND slot.selected_provider = provider_item.provider
-                   AND slot.selected_provider IS NOT NULL
-                  WHERE tt.id = candidates.track_id
-                    AND (
-                      provider_item.provider_album_id IS NULL
-                      OR slot.selected_provider_id IS NULL
-                      OR (';' || REPLACE(REPLACE(slot.selected_provider_id, '+', ';'), ' ', '') || ';')
-                         LIKE ('%;' || provider_item.provider_album_id || ';%')
-                    )
-                ) THEN 0 ELSE 1
-              END,
-              CASE provider_item.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE allowed.value = 'spatial'
+              ) THEN 1 ELSE 0 END,
               ${providerPreferenceOrderSql},
-              provider_item.updated_at DESC,
-              provider_item.provider_id ASC
+              library_release.updated_at DESC,
+              plan_track.id DESC
           ) AS rank
-        FROM provider_track_candidate_ids candidates
-        CROSS JOIN ProviderItems provider_item
-        WHERE provider_item.rowid = candidates.provider_rowid
+        FROM top_tracks
+        JOIN AcquisitionPlanTracks plan_track
+          ON plan_track.track_id = top_tracks.track_row_id
+        JOIN AcquisitionPlans plan
+          ON plan.id = plan_track.plan_id
+         AND plan.state = 'current'
+        JOIN LibraryReleases library_release
+          ON library_release.id = plan.library_release_id
+         AND library_release.release_id = top_tracks.album_release_row_id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        JOIN ProviderTrackMatches track_match
+          ON track_match.id = plan_track.provider_track_match_id
+         AND track_match.match_state = 'accepted'
+        JOIN ProviderReleaseMembers member
+          ON member.id = track_match.provider_release_member_id
+        JOIN ProviderItems provider_item
+          ON provider_item.id = member.member_item_id
+        JOIN ProviderItemAudioVariants variant
+          ON variant.id = plan_track.provider_audio_variant_id
       ),
       provider_albums AS (
         SELECT
@@ -1253,39 +1284,61 @@ export class ArtistQueryService {
           ROW_NUMBER() OVER (
             PARTITION BY top_tracks.id
             ORDER BY
-              CASE
-                WHEN EXISTS (
-                  SELECT 1
-                  FROM ReleaseGroupSlots slot
-                  WHERE slot.release_group_mbid = top_tracks.release_group_mbid
-                    AND slot.selected_release_mbid = top_tracks.release_mbid
-                    AND slot.selected_provider = provider_item.provider
-                    AND slot.selected_provider IS NOT NULL
-                ) THEN 0 ELSE 1
-              END,
-              CASE provider_item.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE allowed.value = 'spatial'
+              ) THEN 1 ELSE 0 END,
               ${providerPreferenceOrderSql},
-              provider_item.updated_at DESC,
-              provider_item.provider_id ASC
+              library_release.updated_at DESC,
+              source.sort_order,
+              source.id
         ) AS rank
         FROM top_tracks
-        CROSS JOIN ProviderItems provider_item INDEXED BY idx_provider_items_entity_release_group
-        WHERE provider_item.entity_type = 'album'
-          AND provider_item.release_group_mbid = top_tracks.release_group_mbid
+        JOIN LibraryReleases library_release
+          ON library_release.release_id = top_tracks.album_release_row_id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        JOIN AcquisitionPlans plan
+          ON plan.library_release_id = library_release.id
+         AND plan.state = 'current'
+        JOIN AcquisitionPlanSources source
+          ON source.plan_id = plan.id
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.id = source.provider_release_match_id
+         AND release_match.match_state = 'accepted'
+        JOIN ProviderItems provider_item
+          ON provider_item.id = release_match.provider_release_item_id
       ),
-      selected_slots AS (
+      selected_libraries AS (
         SELECT
           top_tracks.id AS track_id,
-          slot.quality,
-          slot.monitored_lock,
+          library_group.locked AS monitored_lock,
           ROW_NUMBER() OVER (
             PARTITION BY top_tracks.id
-            ORDER BY CASE slot.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+            ORDER BY
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE allowed.value = 'spatial'
+              ) THEN 1 ELSE 0 END,
+              library_release.updated_at DESC,
+              library_release.id DESC
         ) AS rank
         FROM top_tracks
-        CROSS JOIN ReleaseGroupSlots slot INDEXED BY idx_release_group_slots_group_release_slot
-        WHERE slot.release_group_mbid = top_tracks.release_group_mbid
-          AND slot.selected_release_mbid = top_tracks.release_mbid
+        JOIN LibraryReleases library_release
+          ON library_release.release_id = top_tracks.album_release_row_id
+        JOIN LibraryReleaseGroups library_group
+          ON library_group.library_id = library_release.library_id
+         AND library_group.release_group_id = top_tracks.release_group_row_id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
       ),
       primary_files AS (
         SELECT
@@ -1293,31 +1346,32 @@ export class ArtistQueryService {
           file.quality,
           ROW_NUMBER() OVER (
             PARTITION BY top_tracks.id
-            ORDER BY CASE file.library_slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END, file.id ASC
+            ORDER BY
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE allowed.value = 'spatial'
+              ) THEN 1 ELSE 0 END,
+              file.id ASC
           ) AS rank
         FROM top_tracks
-        CROSS JOIN TrackFiles file INDEXED BY idx_track_files_canonical_track_type
-        WHERE file.canonical_track_mbid = top_tracks.id
-          AND file.file_type = 'track'
+        JOIN TrackFiles file
+          ON file.track_id = top_tracks.track_row_id
+         AND (file.file_class = 'audio' OR file.file_type = 'track')
+        JOIN Libraries library ON library.id = file.library_id
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
       ),
       quality_values(track_id, quality) AS (
-        SELECT top_tracks.id, slot.quality
-        FROM top_tracks
-        CROSS JOIN ReleaseGroupSlots slot INDEXED BY idx_release_group_slots_group_release_slot
-        WHERE slot.release_group_mbid = top_tracks.release_group_mbid
-          AND slot.selected_release_mbid = top_tracks.release_mbid
-          AND slot.quality IS NOT NULL AND TRIM(slot.quality) != ''
-        UNION
-        SELECT candidates.track_id, provider_item.quality
-        FROM provider_track_candidate_ids candidates
-        CROSS JOIN ProviderItems provider_item
-        WHERE provider_item.quality IS NOT NULL AND TRIM(provider_item.quality) != ''
-          AND provider_item.rowid = candidates.provider_rowid
+        SELECT provider_track.track_id, provider_track.quality
+        FROM provider_tracks provider_track
+        WHERE provider_track.quality IS NOT NULL
+          AND TRIM(provider_track.quality) != ''
         UNION
         SELECT top_tracks.id, file.quality
         FROM top_tracks
-        CROSS JOIN TrackFiles file INDEXED BY idx_track_files_canonical_track_type
-        WHERE file.canonical_track_mbid = top_tracks.id
+        JOIN TrackFiles file ON file.track_id = top_tracks.track_row_id
+        WHERE (file.file_class = 'audio' OR file.file_type = 'track')
           AND file.quality IS NOT NULL AND TRIM(file.quality) != ''
       ),
       quality_tags AS (
@@ -1326,25 +1380,25 @@ export class ArtistQueryService {
         GROUP BY track_id
       ),
       monitored_groups AS (
-        SELECT DISTINCT top_tracks.release_group_mbid
+        SELECT DISTINCT top_tracks.release_group_row_id
         FROM top_tracks
-        CROSS JOIN ReleaseGroupSlots slot INDEXED BY idx_release_group_slots_group_release_slot
-        WHERE slot.release_group_mbid = top_tracks.release_group_mbid
-          AND slot.monitored = 1
+        JOIN LibraryReleaseGroups library_group
+          ON library_group.release_group_id = top_tracks.release_group_row_id
+         AND library_group.monitored = 1
+        JOIN Libraries library
+          ON library.id = library_group.library_id
+         AND library.enabled = 1
       ),
       downloaded_tracks(track_id) AS (
         SELECT DISTINCT top_tracks.id
         FROM top_tracks
-        CROSS JOIN TrackFiles file INDEXED BY idx_track_files_canonical_track_type
-        WHERE file.file_type = 'track'
-          AND file.canonical_track_mbid = top_tracks.id
+        JOIN TrackFiles file ON file.track_id = top_tracks.track_row_id
+        WHERE file.file_class = 'audio' OR file.file_type = 'track'
         UNION
         SELECT DISTINCT top_tracks.id
         FROM top_tracks
-        CROSS JOIN TrackFiles file INDEXED BY idx_track_files_canonical_recording_type
-        WHERE top_tracks.recording_mbid IS NOT NULL
-          AND file.file_type = 'track'
-          AND file.canonical_recording_mbid = top_tracks.recording_mbid
+        JOIN TrackFiles file ON file.recording_id = top_tracks.recording_row_id
+        WHERE file.file_class = 'audio' OR file.file_type = 'track'
       )
       SELECT
         top_tracks.id,
@@ -1358,10 +1412,10 @@ export class ArtistQueryService {
         top_tracks.position AS track_number,
         top_tracks.medium_position AS volume_number,
         COALESCE(provider_track.explicit, 0) AS explicit,
-        COALESCE(provider_track.quality, selected_slot.quality, primary_file.quality, '') AS quality,
+        COALESCE(provider_track.quality, primary_file.quality, '') AS quality,
         quality_tags.tags AS quality_tags,
-        CASE WHEN monitored_groups.release_group_mbid IS NOT NULL THEN 1 ELSE 0 END AS is_monitored,
-        COALESCE(selected_slot.monitored_lock, 0) AS monitored_lock,
+        CASE WHEN monitored_groups.release_group_row_id IS NOT NULL THEN 1 ELSE 0 END AS is_monitored,
+        COALESCE(selected_library.monitored_lock, 0) AS monitored_lock,
         top_tracks.popularity AS popularity,
         top_tracks.release_group_title AS album_title,
         provider_album.asset_id AS album_cover,
@@ -1381,10 +1435,10 @@ export class ArtistQueryService {
       FROM top_tracks
       LEFT JOIN provider_tracks provider_track ON provider_track.track_id = top_tracks.id AND provider_track.rank = 1
       LEFT JOIN provider_albums provider_album ON provider_album.track_id = top_tracks.id AND provider_album.rank = 1
-      LEFT JOIN selected_slots selected_slot ON selected_slot.track_id = top_tracks.id AND selected_slot.rank = 1
+      LEFT JOIN selected_libraries selected_library ON selected_library.track_id = top_tracks.id AND selected_library.rank = 1
       LEFT JOIN primary_files primary_file ON primary_file.track_id = top_tracks.id AND primary_file.rank = 1
       LEFT JOIN quality_tags ON quality_tags.track_id = top_tracks.id
-      LEFT JOIN monitored_groups ON monitored_groups.release_group_mbid = top_tracks.release_group_mbid
+      LEFT JOIN monitored_groups ON monitored_groups.release_group_row_id = top_tracks.release_group_row_id
       LEFT JOIN downloaded_tracks ON downloaded_tracks.track_id = top_tracks.id
       ORDER BY popularity DESC, release_date DESC, id ASC
     `).all(topTrackIdentity.artistMetadataId, ARTIST_TOP_TRACK_LIMIT) as any[] : [];
