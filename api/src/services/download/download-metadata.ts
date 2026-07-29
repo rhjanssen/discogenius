@@ -38,6 +38,8 @@ export type CanonicalProviderOffer = {
     selected_release_mbid?: string | null;
     canonical_album_title?: string | null;
     canonical_track_title?: string | null;
+    canonical_track_id?: number | null;
+    canonical_release_id?: number | null;
     canonical_recording_title?: string | null;
     canonical_recording_id?: number | null;
     artist_name?: string | null;
@@ -68,116 +70,240 @@ export function resolveCanonicalProviderOffer(
     type: DownloadJobType,
     payload?: DownloadCommand,
 ): CanonicalProviderOffer | null {
-    const entityType = type === 'album' ? 'album' : type === 'video' ? 'video' : 'track';
     const provider = resolvePayloadProvider(payload);
     const releaseGroupMbid = pickString(payload?.releaseGroupMbid);
-    const slot = pickString(payload?.slot) || 'stereo';
+    const acquisitionPlanId = Number.isInteger(payload?.acquisitionPlanId)
+        ? Number(payload?.acquisitionPlanId)
+        : null;
 
     if (type === 'album') {
         const row = db.prepare(`
             SELECT
-                pi.provider,
-                pi.provider_id,
-                pi.entity_type,
-                pi.artist_mbid,
-                pi.release_group_mbid,
-                pi.release_mbid,
-                pi.title AS provider_title,
-                pi.quality AS provider_quality,
-                pi.asset_id,
-                pi.provider_artist_name AS provider_artist_name,
-                rgs.provider_artist_name AS slot_provider_artist_name,
-                rgs.provider_title AS slot_provider_title,
-                rgs.cover AS slot_cover,
-                rgs.quality AS slot_quality,
-                rgs.selected_release_mbid,
-                rg.title AS canonical_album_title,
-                am.name AS artist_name
-            FROM ProviderItems pi
-            LEFT JOIN ReleaseGroupSlots rgs
-              ON rgs.selected_provider = pi.provider
-             AND rgs.selected_provider_id = pi.provider_id
-             AND rgs.release_group_mbid = pi.release_group_mbid
-             AND (? IS NULL OR rgs.slot = ?)
-            LEFT JOIN Albums rg
-              ON rg.mbid = COALESCE(pi.release_group_mbid, rgs.release_group_mbid)
-            LEFT JOIN ArtistMetadata am
-              ON am.mbid = COALESCE(pi.artist_mbid, rgs.artist_mbid, rg.artist_mbid)
-            WHERE pi.provider = ?
-              AND pi.provider_id = ?
-              AND pi.entity_type = 'album'
-              AND (? IS NULL OR pi.release_group_mbid = ?)
-            ORDER BY CASE WHEN rgs.slot = ? THEN 0 ELSE 1 END, pi.updated_at DESC
+                provider_release.provider,
+                provider_release.provider_id,
+                provider_release.entity_type,
+                release_group.artist_mbid,
+                release_group.mbid AS release_group_mbid,
+                release.mbid AS release_mbid,
+                provider_release.title AS provider_title,
+                COALESCE(
+                  (
+                    SELECT variant.provider_quality_label
+                    FROM AcquisitionPlanTracks plan_track
+                    JOIN ProviderItemAudioVariants variant
+                      ON variant.id = plan_track.provider_audio_variant_id
+                    WHERE plan_track.plan_id = ?
+                    ORDER BY plan_track.id
+                    LIMIT 1
+                  ),
+                  (
+                    SELECT variant.quality_class
+                    FROM AcquisitionPlanTracks plan_track
+                    JOIN ProviderItemAudioVariants variant
+                      ON variant.id = plan_track.provider_audio_variant_id
+                    WHERE plan_track.plan_id = ?
+                    ORDER BY plan_track.id
+                    LIMIT 1
+                  )
+                ) AS provider_quality,
+                COALESCE(provider_release.asset_id, provider_release.cover_id) AS asset_id,
+                COALESCE(provider_artist.title, provider_release.provider_artist_name) AS provider_artist_name,
+                provider_release.title AS slot_provider_title,
+                COALESCE(provider_release.artwork_url, provider_release.cover) AS slot_cover,
+                COALESCE(
+                  (
+                    SELECT variant.provider_quality_label
+                    FROM AcquisitionPlanTracks plan_track
+                    JOIN ProviderItemAudioVariants variant
+                      ON variant.id = plan_track.provider_audio_variant_id
+                    WHERE plan_track.plan_id = ?
+                    ORDER BY plan_track.id
+                    LIMIT 1
+                  ),
+                  (
+                    SELECT variant.quality_class
+                    FROM AcquisitionPlanTracks plan_track
+                    JOIN ProviderItemAudioVariants variant
+                      ON variant.id = plan_track.provider_audio_variant_id
+                    WHERE plan_track.plan_id = ?
+                    ORDER BY plan_track.id
+                    LIMIT 1
+                  )
+                ) AS slot_quality,
+                release.mbid AS selected_release_mbid,
+                release.id AS canonical_release_id,
+                release_group.title AS canonical_album_title,
+                COALESCE(canonical_credit.credited_name, artist.name) AS artist_name
+            FROM ProviderItems provider_release
+            JOIN ProviderReleaseMatches release_match
+              ON release_match.provider_release_item_id = provider_release.id
+             AND release_match.match_state = 'accepted'
+            JOIN AlbumReleases release
+              ON release.id = release_match.release_id
+            JOIN Albums release_group
+              ON release_group.id = release.release_group_id
+            LEFT JOIN ReleaseGroupArtistCredits canonical_credit
+              ON canonical_credit.release_group_id = release_group.id
+             AND canonical_credit.ordinal = 0
+            LEFT JOIN ArtistMetadata artist
+              ON artist.id = release_group.artist_metadata_id
+            LEFT JOIN ProviderItemCredits provider_credit
+              ON provider_credit.item_id = provider_release.id
+             AND provider_credit.ordinal = 0
+            LEFT JOIN ProviderItems provider_artist
+              ON provider_artist.id = provider_credit.artist_item_id
+            WHERE provider_release.provider = ?
+              AND provider_release.provider_id = ?
+              AND provider_release.entity_type IN ('release', 'album')
+              AND (? IS NULL OR release_group.mbid = ?)
+              AND (
+                ? IS NULL
+                OR EXISTS (
+                  SELECT 1
+                  FROM AcquisitionPlanSources source
+                  WHERE source.plan_id = ?
+                    AND source.provider_release_match_id = release_match.id
+                )
+              )
+            ORDER BY
+              CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+              release_match.confidence DESC,
+              release_match.id
             LIMIT 1
-        `).get(slot, slot, provider, providerId, releaseGroupMbid, releaseGroupMbid, slot) as CanonicalProviderOffer | undefined;
+        `).get(
+            acquisitionPlanId,
+            acquisitionPlanId,
+            acquisitionPlanId,
+            acquisitionPlanId,
+            provider,
+            providerId,
+            releaseGroupMbid,
+            releaseGroupMbid,
+            acquisitionPlanId,
+            acquisitionPlanId,
+        ) as CanonicalProviderOffer | undefined;
+        return row ?? null;
+    }
 
-        if (row) return row;
-
-        if (releaseGroupMbid) {
-            const slotRow = db.prepare(`
-                SELECT
-                    rgs.selected_provider AS provider,
-                    rgs.selected_provider_id AS provider_id,
-                    'album' AS entity_type,
-                    rgs.artist_mbid,
-                    rgs.release_group_mbid,
-                    rgs.selected_release_mbid AS release_mbid,
-                    rgs.provider_artist_name AS slot_provider_artist_name,
-                    rgs.provider_title AS slot_provider_title,
-                    rgs.cover AS slot_cover,
-                    rgs.quality AS slot_quality,
-                    rgs.selected_release_mbid,
-                    rg.title AS canonical_album_title,
-                    am.name AS artist_name
-                FROM ReleaseGroupSlots rgs
-                LEFT JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
-                LEFT JOIN ArtistMetadata am ON am.mbid = COALESCE(rgs.artist_mbid, rg.artist_mbid)
-                WHERE rgs.release_group_mbid = ?
-                  AND rgs.selected_provider = ?
-                  AND rgs.selected_provider_id = ?
-                  AND rgs.slot = ?
-                LIMIT 1
-            `).get(releaseGroupMbid, provider, providerId, slot) as CanonicalProviderOffer | undefined;
-            return slotRow ?? null;
-        }
-
-        return null;
+    if (type === 'video') {
+        const row = db.prepare(`
+            SELECT
+                provider_video.provider,
+                provider_video.provider_id,
+                provider_video.entity_type,
+                artist.mbid AS artist_mbid,
+                provider_video.title AS provider_title,
+                COALESCE(provider_video.asset_id, provider_video.cover_id) AS asset_id,
+                COALESCE(provider_video.artwork_url, provider_video.cover) AS provider_cover,
+                COALESCE(provider_artist.title, provider_video.provider_artist_name) AS provider_artist_name,
+                recording.mbid AS recording_mbid,
+                recording.title AS canonical_recording_title,
+                recording.id AS canonical_recording_id,
+                artist.name AS artist_name
+            FROM ProviderItems provider_video
+            JOIN ProviderVideoMatches video_match
+              ON video_match.provider_video_item_id = provider_video.id
+             AND video_match.match_state = 'accepted'
+            JOIN Recordings recording
+              ON recording.id = video_match.recording_id
+            LEFT JOIN ArtistMetadata artist
+              ON artist.id = recording.artist_metadata_id
+            LEFT JOIN ProviderItemCredits provider_credit
+              ON provider_credit.item_id = provider_video.id
+             AND provider_credit.ordinal = 0
+            LEFT JOIN ProviderItems provider_artist
+              ON provider_artist.id = provider_credit.artist_item_id
+            WHERE provider_video.provider = ?
+              AND provider_video.provider_id = ?
+              AND provider_video.entity_type = 'video'
+            ORDER BY
+              CASE WHEN video_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+              video_match.confidence DESC,
+              video_match.id
+            LIMIT 1
+        `).get(provider, providerId) as CanonicalProviderOffer | undefined;
+        return row ?? null;
     }
 
     const row = db.prepare(`
         SELECT
-            pi.provider,
-            pi.provider_id,
-            pi.entity_type,
-            pi.artist_mbid,
-            pi.release_group_mbid,
-            pi.release_mbid,
-            pi.track_mbid,
-            pi.recording_mbid,
-            pi.title AS provider_title,
-            pi.quality AS provider_quality,
-            pi.asset_id,
-            pi.cover AS provider_cover,
-            pi.provider_artist_name AS provider_artist_name,
-            rg.title AS canonical_album_title,
-            t.title AS canonical_track_title,
-            r.title AS canonical_recording_title,
-            r.id AS canonical_recording_id,
-            am.name AS artist_name
-        FROM ProviderItems pi
-        LEFT JOIN Albums rg ON rg.mbid = pi.release_group_mbid
-        LEFT JOIN Tracks t ON t.mbid = pi.track_mbid
-        LEFT JOIN Recordings r ON (
-          (pi.recording_id IS NOT NULL AND r.id = pi.recording_id)
-          OR (pi.recording_id IS NULL AND pi.recording_mbid IS NOT NULL AND r.mbid = pi.recording_mbid)
-        )
-        LEFT JOIN ArtistMetadata am ON am.mbid = pi.artist_mbid
-        WHERE pi.provider = ?
-          AND pi.provider_id = ?
-          AND pi.entity_type = ?
-        ORDER BY pi.updated_at DESC
+            provider_track.provider,
+            provider_track.provider_id,
+            provider_track.entity_type,
+            release_group.artist_mbid,
+            release_group.mbid AS release_group_mbid,
+            release.mbid AS release_mbid,
+            track.mbid AS track_mbid,
+            recording.mbid AS recording_mbid,
+            provider_track.title AS provider_title,
+            COALESCE(variant.provider_quality_label, variant.quality_class) AS provider_quality,
+            COALESCE(provider_track.asset_id, provider_track.cover_id) AS asset_id,
+            COALESCE(provider_track.artwork_url, provider_track.cover) AS provider_cover,
+            COALESCE(provider_artist.title, provider_track.provider_artist_name) AS provider_artist_name,
+            release_group.title AS canonical_album_title,
+            track.title AS canonical_track_title,
+            track.id AS canonical_track_id,
+            release.id AS canonical_release_id,
+            recording.title AS canonical_recording_title,
+            recording.id AS canonical_recording_id,
+            COALESCE(track_credit.credited_name, artist.name) AS artist_name
+        FROM ProviderItems provider_track
+        JOIN ProviderReleaseMembers release_member
+          ON release_member.member_item_id = provider_track.id
+        JOIN ProviderTrackMatches track_match
+          ON track_match.provider_release_member_id = release_member.id
+         AND track_match.match_state = 'accepted'
+        JOIN Tracks track
+          ON track.id = track_match.track_id
+        JOIN Recordings recording
+          ON recording.id = track_match.recording_id
+        JOIN AlbumReleases release
+          ON release.id = track.album_release_id
+        JOIN Albums release_group
+          ON release_group.id = release.release_group_id
+        LEFT JOIN ProviderItemAudioVariants variant
+          ON variant.id = (
+            SELECT candidate.id
+            FROM ProviderItemAudioVariants candidate
+            WHERE candidate.provider_item_id = provider_track.id
+            ORDER BY
+              CASE candidate.availability WHEN 'available' THEN 0 ELSE 1 END,
+              candidate.id
+            LIMIT 1
+          )
+        LEFT JOIN TrackArtistCredits track_credit
+          ON track_credit.track_id = track.id
+         AND track_credit.ordinal = 0
+        LEFT JOIN ArtistMetadata artist
+          ON artist.id = release_group.artist_metadata_id
+        LEFT JOIN ProviderItemCredits provider_credit
+          ON provider_credit.item_id = provider_track.id
+         AND provider_credit.ordinal = 0
+        LEFT JOIN ProviderItems provider_artist
+          ON provider_artist.id = provider_credit.artist_item_id
+        WHERE provider_track.provider = ?
+          AND provider_track.provider_id = ?
+          AND provider_track.entity_type = 'track'
+          AND (
+            ? IS NULL
+            OR EXISTS (
+              SELECT 1
+              FROM AcquisitionPlanTracks plan_track
+              WHERE plan_track.plan_id = ?
+                AND plan_track.provider_track_match_id = track_match.id
+            )
+          )
+        ORDER BY
+          CASE WHEN track_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+          track_match.confidence DESC,
+          track_match.id
         LIMIT 1
-    `).get(provider, providerId, entityType) as CanonicalProviderOffer | undefined;
+    `).get(
+        provider,
+        providerId,
+        acquisitionPlanId,
+        acquisitionPlanId,
+    ) as CanonicalProviderOffer | undefined;
     return row ?? null;
 }
 
@@ -219,14 +345,11 @@ export async function ensureMetadataReady(
 ): Promise<void> {
     switch (type) {
         case 'album': {
-            const albumIds = providerId.split(";").filter(Boolean);
-            for (const subAlbumId of albumIds) {
-                if (!hasAlbumMetadataReady(subAlbumId, payload)) {
-                    console.log(`[DOWNLOAD-PROCESSOR] Album ${subAlbumId} is missing complete metadata; refreshing album metadata before download`);
-                    await RefreshAlbumService.refreshMetadata(subAlbumId, {
-                        provider: (payload as any)?.streamingSource || payload?.provider,
-                    });
-                }
+            if (!hasAlbumMetadataReady(providerId, payload)) {
+                console.log(`[DOWNLOAD-PROCESSOR] Album ${providerId} is missing complete metadata; refreshing album metadata before download`);
+                await RefreshAlbumService.refreshMetadata(providerId, {
+                    provider: (payload as any)?.streamingSource || payload?.provider,
+                });
             }
             return;
         }
@@ -354,47 +477,56 @@ export function getCanonicalAlbumDownloadProgress(
     const releaseMbid = pickString(payload?.releaseMbid)
         || canonicalOffer?.selected_release_mbid
         || canonicalOffer?.release_mbid;
-    const slot = pickString(payload?.slot) || 'stereo';
+    const acquisitionPlanId = Number.isInteger(payload?.acquisitionPlanId)
+        ? Number(payload.acquisitionPlanId)
+        : null;
+    const libraryId = Number.isInteger(payload?.libraryId)
+        ? Number(payload.libraryId)
+        : null;
 
     if (!releaseGroupMbid && !releaseMbid) {
         return null;
     }
 
-    const row = releaseMbid
+    const row = acquisitionPlanId != null
         ? db.prepare(`
             SELECT
-                COUNT(DISTINCT t.mbid) AS total,
-                COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN t.mbid END) AS done
-            FROM Tracks t
-            LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-            LEFT JOIN TrackFiles lf
-              ON (
-                lf.canonical_track_mbid = t.mbid
-                OR (
-                  lf.canonical_track_mbid IS NULL
-                  AND lf.canonical_recording_mbid = t.recording_mbid
-                )
-              )
-             AND lf.file_type = 'track'
-             AND lf.library_slot = ?
-            WHERE t.release_mbid = ?
-              AND (r.is_video IS NULL OR r.is_video = 0)
-        `).get(slot, releaseMbid) as { total?: number; done?: number } | undefined
+                COUNT(DISTINCT plan_track.track_id) AS total,
+                COUNT(DISTINCT CASE
+                  WHEN EXISTS (
+                    SELECT 1
+                    FROM TrackFiles file
+                    JOIN AcquisitionPlans file_plan
+                      ON file_plan.id = plan_track.plan_id
+                    JOIN LibraryReleases file_library_release
+                      ON file_library_release.id = file_plan.library_release_id
+                    WHERE file.library_id = file_library_release.library_id
+                      AND file.album_release_id = file_library_release.release_id
+                      AND file.track_id = plan_track.track_id
+                      AND file.file_class = 'audio'
+                  )
+                  THEN plan_track.track_id
+                END) AS done
+            FROM AcquisitionPlanTracks plan_track
+            WHERE plan_track.plan_id = ?
+        `).get(acquisitionPlanId) as { total?: number; done?: number } | undefined
         : db.prepare(`
             SELECT
-                COUNT(DISTINCT pi.provider_id) AS total,
-                COUNT(DISTINCT CASE WHEN lf.id IS NOT NULL THEN pi.provider_id END) AS done
-            FROM ProviderItems pi
-            LEFT JOIN TrackFiles lf
-              ON lf.provider = pi.provider
-             AND lf.provider_entity_type = pi.entity_type
-             AND lf.provider_id = pi.provider_id
-             AND lf.file_type = 'track'
-             AND lf.library_slot = pi.library_slot
-            WHERE pi.release_group_mbid = ?
-              AND pi.entity_type = 'track'
-              AND pi.library_slot = ?
-        `).get(releaseGroupMbid, slot) as { total?: number; done?: number } | undefined;
+                COUNT(DISTINCT track.id) AS total,
+                COUNT(DISTINCT CASE WHEN file.id IS NOT NULL THEN track.id END) AS done
+            FROM Tracks track
+            JOIN Recordings recording ON recording.id = track.recording_id
+            LEFT JOIN TrackFiles file
+              ON file.library_id = ?
+             AND file.album_release_id = track.album_release_id
+             AND file.track_id = track.id
+             AND file.file_class = 'audio'
+            WHERE track.album_release_id = ?
+              AND recording.is_video = 0
+        `).get(
+            libraryId,
+            canonicalOffer?.canonical_release_id ?? null,
+        ) as { total?: number; done?: number } | undefined;
 
     if (!row) return null;
     return {
@@ -413,27 +545,29 @@ export function isCanonicalProviderItemDownloaded(
         return false;
     }
 
-    const fileType = type === 'video' ? 'video' : 'track';
-    const row = db.prepare(`
-        SELECT 1
-        FROM TrackFiles lf
-        WHERE lf.file_type = ?
-          AND (
-            (lf.provider = ? AND lf.provider_entity_type = ? AND lf.provider_id = ?)
-            OR (? IS NOT NULL AND lf.canonical_track_mbid = ?)
-            OR (? IS NOT NULL AND lf.canonical_recording_mbid = ?)
-          )
-        LIMIT 1
-    `).get(
-        fileType,
-        canonicalOffer.provider,
-        canonicalOffer.entity_type,
-        providerId,
-        canonicalOffer.track_mbid,
-        canonicalOffer.track_mbid,
-        canonicalOffer.recording_mbid,
-        canonicalOffer.recording_mbid,
-    ) as { 1?: number } | undefined;
+    const libraryId = Number.isInteger(payload?.libraryId)
+        ? Number(payload.libraryId)
+        : null;
+    const row = type === 'video'
+        ? db.prepare(`
+            SELECT 1
+            FROM TrackFiles file
+            WHERE file.recording_id = ?
+              AND file.file_class = 'video'
+            LIMIT 1
+        `).get(canonicalOffer.canonical_recording_id) as { 1?: number } | undefined
+        : db.prepare(`
+            SELECT 1
+            FROM TrackFiles file
+            WHERE file.track_id = ?
+              AND file.file_class = 'audio'
+              AND (? IS NULL OR file.library_id = ?)
+            LIMIT 1
+        `).get(
+            canonicalOffer.canonical_track_id,
+            libraryId,
+            libraryId,
+        ) as { 1?: number } | undefined;
 
     return Boolean(row);
 }
