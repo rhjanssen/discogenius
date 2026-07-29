@@ -21,7 +21,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM RecordingRelations").run();
-  dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
+  dbModule.db.prepare("DELETE FROM LibraryReleases").run();
+  dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM AlbumReleases").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
@@ -34,6 +35,33 @@ after(() => {
   dbModule.closeDatabase();
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
+
+function seedLibrarySelection(
+  releaseGroupMbid: string,
+  releaseMbid: string,
+  monitored: boolean,
+): void {
+  const library = dbModule.db.prepare(`
+    SELECT id FROM Libraries WHERE name = 'Stereo'
+  `).get() as { id: number };
+  const releaseGroup = dbModule.db.prepare(`
+    SELECT id FROM Albums WHERE mbid = ?
+  `).get(releaseGroupMbid) as { id: number };
+  const release = dbModule.db.prepare(`
+    SELECT id FROM AlbumReleases WHERE mbid = ?
+  `).get(releaseMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      curation_version
+    ) VALUES (?, ?, ?, 'auto', 0, 1)
+  `).run(library.id, releaseGroup.id, monitored ? 1 : 0);
+  dbModule.db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, curation_version
+    ) VALUES (?, ?, 'auto', 0, 1)
+  `).run(library.id, release.id);
+}
 
 test("video list and detail use canonical video recordings with provider offers", () => {
   const artist = dbModule.db.prepare(`
@@ -427,14 +455,9 @@ test("video detail appears-on follows related audio recordings and prefers monit
       ('rel-affil-single', 'rg-affil-single', 'artist-affil', 'Part Two', '2024-01-01', 3, 1),
       ('rel-affil-album', 'rg-affil-album', 'artist-affil', 'Ampersand', '2024-06-01', 12, 1)
   `).run();
-  // Wanted state lives on ReleaseGroupSlots, not Albums.monitored.
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES
-      ('artist-affil', 'rg-affil-album', 'stereo', 1, 'rel-affil-album'),
-      ('artist-affil', 'rg-affil-single', 'stereo', 0, 'rel-affil-single')
-  `).run();
+  // Wanted state lives on library release-group selections, not Albums.monitored.
+  seedLibrarySelection("rg-affil-album", "rel-affil-album", true);
+  seedLibrarySelection("rg-affil-single", "rel-affil-single", false);
 
   const audio = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -507,13 +530,8 @@ test("video detail appears-on prefers studio album over larger monitored live co
       ('rel-studio-pref', 'rg-studio-pref', 'artist-studio-pref', 'Back to Black', '2006-01-01', 11, 1),
       ('rel-live-comp', 'rg-live-comp', 'artist-studio-pref', 'At the BBC', '2012-01-01', 52, 4)
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES
-      ('artist-studio-pref', 'rg-studio-pref', 'stereo', 0, 'rel-studio-pref'),
-      ('artist-studio-pref', 'rg-live-comp', 'stereo', 1, 'rel-live-comp')
-  `).run();
+  seedLibrarySelection("rg-studio-pref", "rel-studio-pref", false);
+  seedLibrarySelection("rg-live-comp", "rel-live-comp", true);
 
   const audio = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -577,11 +595,7 @@ test("video detail appears-on prefers selected multi-disc release over earliest 
       ('rel-multivol-single', 'rg-multivol', 'artist-multivol', 'GMTF Single', '2021-01-01', 13, 1),
       ('rel-multivol-full', 'rg-multivol', 'artist-multivol', 'GMTF 3CD', '2022-06-01', 27, 3)
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES ('artist-multivol', 'rg-multivol', 'stereo', 1, 'rel-multivol-full')
-  `).run();
+  seedLibrarySelection("rg-multivol", "rel-multivol-full", true);
 
   const recording = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -661,11 +675,7 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
     INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
     VALUES ('rel-assoc', 'rg-assoc', 'artist-mbid', 'Associated Album', '2024-01-01', 2, 1)
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid
-    ) VALUES ('artist-mbid', 'rg-assoc', 'stereo', 1, 'rel-assoc')
-  `).run();
+  seedLibrarySelection("rg-assoc", "rel-assoc", true);
 
   const audio = dbModule.db.prepare(`
     INSERT INTO Recordings (
@@ -754,10 +764,7 @@ test("album associated videos honor monitored state and music-video type filters
     INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
     VALUES ('rel-filter', 'rg-filter', 'artist-mbid', 'Filter Album', '2024-01-01', 1, 1)
   `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, selected_release_mbid)
-    VALUES ('artist-mbid', 'rg-filter', 'stereo', 1, 'rel-filter')
-  `).run();
+  seedLibrarySelection("rg-filter", "rel-filter", true);
   const audio = dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, artist_metadata_id, artist_mbid, title, is_video, metadata_status)
     VALUES ('rec-audio-filter', ?, 'artist-mbid', 'Anchor', 0, 'complete')

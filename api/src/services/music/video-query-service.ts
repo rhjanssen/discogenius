@@ -456,6 +456,34 @@ export function getVideoDetail(videoId: string): VideoDetailContract | null {
   return null;
 }
 
+function preferredLibraryReleaseMbidSql(releaseGroupIdExpression: string): string {
+  return `(
+    SELECT selected_release.mbid
+    FROM LibraryReleases library_release
+    JOIN AlbumReleases selected_release
+      ON selected_release.id = library_release.release_id
+    JOIN LibraryReleaseGroups library_group
+      ON library_group.library_id = library_release.library_id
+     AND library_group.release_group_id = selected_release.release_group_id
+    JOIN Libraries library
+      ON library.id = library_release.library_id
+     AND library.enabled = 1
+    JOIN quality_profiles quality_profile
+      ON quality_profile.id = library.quality_profile_id
+    WHERE selected_release.release_group_id = ${releaseGroupIdExpression}
+    ORDER BY
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'spatial'
+      ) THEN 1 ELSE 0 END,
+      library_group.monitored DESC,
+      library_release.updated_at DESC,
+      library_release.id DESC
+    LIMIT 1
+  )`;
+}
+
 /**
  * Videos associated with an album (release group) for album-page UX.
  *
@@ -464,27 +492,18 @@ export function getVideoDetail(videoId: string): VideoDetailContract | null {
  *     that appears on this RG
  *  2. Video recordings that themselves appear as tracks on this RG
  *
- * Track position prefers the stereo-selected / richest edition (same idea as
- * Appears On), then earliest date.
+ * Track position prefers the selected nonspatial library edition (then any
+ * selected spatial edition), followed by the richest and earliest edition.
  */
 export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssociatedVideoContract[] {
   const rgMbid = String(releaseGroupMbid || "").trim();
   if (!rgMbid) return [];
 
-  // Prefer slot-selected release, then richest tracklist, then earliest date —
-  // mirrors Appears On track pick order for a stable album-page track label.
+  // Prefer the selected library release, then richest tracklist, then earliest
+  // date — mirrors Appears On track pick order for a stable album-page label.
   const trackPickOrder = `
     CASE
-      WHEN ar.mbid = (
-        SELECT rgs.selected_release_mbid
-        FROM ReleaseGroupSlots rgs
-        WHERE rgs.release_group_mbid = ar.release_group_mbid
-          AND rgs.selected_release_mbid IS NOT NULL
-        ORDER BY
-          CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-          rgs.monitored DESC
-        LIMIT 1
-      ) THEN 0
+      WHEN ar.mbid = ${preferredLibraryReleaseMbidSql("ar.release_group_id")} THEN 0
       ELSE 1
     END ASC,
     COALESCE(ar.track_count, 0) DESC,
@@ -941,7 +960,7 @@ function getVideoProviderOffers(recordingId: string): VideoProviderOfferContract
  * not native provider MB identity — Appears On follows catalog Tracks + the
  * audio relation instead.
  *
- * Track/disc position prefers the monitored/selected release when present,
+ * Track/disc position prefers the monitored/selected library release when present,
  * then richer multi-disc editions, then earliest date. Preferred album order:
  * studio Album/EP/Single > other > compilation > live; then wanted/monitored;
  * then largest track count (never let a larger compilation beat a studio album).
@@ -976,7 +995,7 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
   `;
   // Prefer a track row that belongs to the video recording itself; fall back to
   // the related audio recording's position on the same release group. Prefer
-  // the slot-selected / richest edition over the earliest-dated single.
+  // the selected-library / richest edition over the earliest-dated single.
   const trackPickOrder = `
     CASE
       WHEN CAST(t.recording_id AS TEXT) = CAST(? AS TEXT) THEN 0
@@ -989,16 +1008,7 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
     COALESCE(ar.track_count, 0) DESC,
     COALESCE(ar.media_count, 0) DESC,
     CASE
-      WHEN ar.mbid = (
-        SELECT rgs.selected_release_mbid
-        FROM ReleaseGroupSlots rgs
-        WHERE rgs.release_group_mbid = ar.release_group_mbid
-          AND rgs.selected_release_mbid IS NOT NULL
-        ORDER BY
-          CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-          rgs.monitored DESC
-        LIMIT 1
-      ) THEN 0
+      WHEN ar.mbid = ${preferredLibraryReleaseMbidSql("ar.release_group_id")} THEN 0
       ELSE 1
     END ASC,
     CASE WHEN ar.date IS NULL THEN 1 ELSE 0 END,
@@ -1012,8 +1022,13 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       a.title,
       a.images AS album_images,
       CASE WHEN EXISTS (
-        SELECT 1 FROM ReleaseGroupSlots rgs
-        WHERE rgs.release_group_mbid = a.mbid AND rgs.monitored = 1
+        SELECT 1
+        FROM LibraryReleaseGroups library_group
+        JOIN Libraries library
+          ON library.id = library_group.library_id
+         AND library.enabled = 1
+        WHERE library_group.release_group_id = a.id
+          AND library_group.monitored = 1
       ) THEN 1 ELSE 0 END AS wanted,
       (
         SELECT t.mbid
