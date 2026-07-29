@@ -269,6 +269,39 @@ dbModule.db.prepare(`
   assert.equal(recording.copyright, "(P) 2024 Track");
   assert.equal(recording.popularity, 56);
   assert.equal(recording.isrcs, null);
+
+  assert.deepEqual(
+    dbModule.db.prepare(`
+      SELECT
+        release_item.provider_id AS provider_release_id,
+        release_match.relation,
+        release_match.match_state,
+        track_item.provider_id AS provider_track_id,
+        track_match.track_id,
+        track_match.recording_id
+      FROM ProviderReleaseMatches release_match
+      JOIN ProviderItems release_item
+        ON release_item.id = release_match.provider_release_item_id
+      JOIN ProviderTrackMatches track_match
+        ON track_match.provider_release_match_id = release_match.id
+       AND track_match.match_state = 'accepted'
+      JOIN ProviderReleaseMembers member
+        ON member.id = track_match.provider_release_member_id
+      JOIN ProviderItems track_item ON track_item.id = member.member_item_id
+      WHERE release_item.provider = 'fake'
+        AND release_item.entity_type = 'release'
+        AND release_item.provider_id = 'provider-album-1'
+    `).get(),
+    {
+      provider_release_id: "provider-album-1",
+      relation: "exact",
+      match_state: "accepted",
+      provider_track_id: "provider-track-1",
+      track_id: (dbModule.db.prepare("SELECT id FROM Tracks WHERE mbid = ?").get(trackMbid) as { id: number }).id,
+      recording_id: (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(recordingMbid) as { id: number }).id,
+    },
+    "Live refresh must materialize normalized membership and typed match edges",
+  );
 });
 
 test("SoundCloud playlist tracks map to canonical identity by title and duration, not playlist order", async () => {

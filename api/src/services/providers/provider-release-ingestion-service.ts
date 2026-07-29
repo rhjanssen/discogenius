@@ -135,22 +135,30 @@ export class ProviderReleaseIngestionService {
 
     return this.db.transaction(() => {
       const providerReleaseItemId = this.catalog.upsertItem(input.release);
-      this.catalog.replaceAudioVariants(providerReleaseItemId, input.releaseAudioVariants || []);
-      this.catalog.replaceCredits(
-        providerReleaseItemId,
-        this.materializeCredits(input.release.provider, input.releaseCredits || []),
-      );
+      if (input.releaseAudioVariants) {
+        this.catalog.replaceAudioVariants(providerReleaseItemId, input.releaseAudioVariants);
+      }
+      if (input.releaseCredits) {
+        this.catalog.replaceCredits(
+          providerReleaseItemId,
+          this.materializeCredits(input.release.provider, input.releaseCredits),
+        );
+      }
 
       const memberRows = input.members.map((member) => {
         const memberItemId = this.catalog.upsertItem({
           ...member.item,
           provider: input.release.provider,
         });
-        this.catalog.replaceCredits(
-          memberItemId,
-          this.materializeCredits(input.release.provider, member.credits || []),
-        );
-        this.catalog.replaceAudioVariants(memberItemId, member.audioVariants || []);
+        if (member.credits) {
+          this.catalog.replaceCredits(
+            memberItemId,
+            this.materializeCredits(input.release.provider, member.credits),
+          );
+        }
+        if (member.audioVariants) {
+          this.catalog.replaceAudioVariants(memberItemId, member.audioVariants);
+        }
         return { member, memberItemId };
       });
       const memberIds = this.catalog.replaceReleaseMembers(

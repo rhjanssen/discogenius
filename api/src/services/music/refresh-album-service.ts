@@ -28,6 +28,14 @@ import {
     type MatchTargetTrack,
 } from "./provider-track-matcher.js";
 import { normalizeIsrc } from "../mediafiles/import-matching-utils.js";
+import {
+    ProviderCatalogRepository,
+    type ProviderAudioVariantInput,
+} from "../providers/provider-catalog-repository.js";
+import {
+    ProviderReleaseIngestionService,
+    type ProviderArtistCreditFacts,
+} from "../providers/provider-release-ingestion-service.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAME_RELEASE_SUPERSET_TRACKLIST_METHOD = "same-release-superset-track-coverage";
@@ -146,6 +154,61 @@ function finiteNumberOrNull(value: unknown): number | null {
     }
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
+}
+
+function providerCredits(value: unknown): ProviderArtistCreditFacts[] | undefined {
+    if (!Array.isArray(value) || value.length === 0) return undefined;
+    const credits: ProviderArtistCreditFacts[] = [];
+    value.forEach((artist, ordinal) => {
+        const providerId = textOrNull(artist?.providerId, artist?.provider_id, artist?.id);
+        const name = textOrNull(artist?.name);
+        if (!providerId || !name) return;
+        credits.push({
+            providerId,
+            name,
+            ordinal,
+            joinPhrase: textOrNull(artist?.joinPhrase, artist?.join_phrase) || "",
+            normalizedRole: "other",
+            providerRole: textOrNull(artist?.role),
+        });
+    });
+    return credits.length > 0 ? credits : undefined;
+}
+
+function providerAudioVariants(
+    providerId: string,
+    rawValues: Iterable<unknown>,
+): ProviderAudioVariantInput[] {
+    const tags = [...rawValues].map((value) => textOrNull(value)).filter((value): value is string => Boolean(value));
+    if (tags.length === 0) return [];
+    let mapping;
+    try {
+        mapping = streamingProviderManager.getStreamingProvider(providerId).qualityMapping;
+    } catch {
+        return [];
+    }
+    const neutral = mapping?.toNeutral(tags);
+    if (!neutral) return [];
+    const variants: ProviderAudioVariantInput[] = [];
+    if (neutral.audio) {
+        variants.push({
+            variantKey: `stereo:${neutral.audio}`,
+            qualityClass: neutral.audio,
+            lossless: neutral.audio !== "lossy",
+            providerQualityLabel: tags.join(","),
+            availability: "available",
+        });
+    }
+    for (const spatial of neutral.spatial || []) {
+        variants.push({
+            variantKey: `spatial:${spatial}`,
+            qualityClass: "spatial",
+            spatialFormat: spatial,
+            providerQualityLabel: tags.join(","),
+            availability: "available",
+        });
+    }
+    return variants;
 }
 
 function getAlbumIdentityStatusFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
@@ -1222,6 +1285,101 @@ export class RefreshAlbumService {
             }
         }
 
+        if (releaseMbid) {
+            const canonicalRelease = db.prepare(`
+                SELECT id FROM AlbumReleases WHERE mbid = ? LIMIT 1
+            `).get(releaseMbid) as { id: number } | undefined;
+            const providerRelease = db.prepare(`
+                SELECT
+                  title, version, type, upc, duration, release_date, explicit,
+                  availability, provider_url, cover, volume_count, copyright
+                FROM ProviderItems
+                WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
+                LIMIT 1
+            `).get(providerId, albumId) as Record<string, any> | undefined;
+            if (canonicalRelease && providerRelease) {
+                new ProviderReleaseIngestionService(db).ingest({
+                    canonicalReleaseId: canonicalRelease.id,
+                    matcherVersion: 1,
+                    release: {
+                        provider: providerId,
+                        entityType: "release",
+                        providerId: String(albumId),
+                        title: textOrNull(providerRelease.title),
+                        version: textOrNull(providerRelease.version),
+                        providerType: textOrNull(providerRelease.type),
+                        upc: textOrNull(providerRelease.upc),
+                        durationMs: positiveNumberOrNull(providerRelease.duration) == null
+                            ? null
+                            : Math.round(Number(providerRelease.duration) * 1000),
+                        releaseDate: textOrNull(providerRelease.release_date),
+                        explicit: providerRelease.explicit == null
+                            ? null
+                            : Boolean(providerRelease.explicit),
+                        availability: textOrNull(providerRelease.availability) || "available",
+                        checkedAt: new Date().toISOString(),
+                        providerUrl: textOrNull(providerRelease.provider_url),
+                        coverId: /^https?:\/\//i.test(String(providerRelease.cover || ""))
+                            ? null
+                            : textOrNull(providerRelease.cover),
+                        artworkUrl: /^https?:\/\//i.test(String(providerRelease.cover || ""))
+                            ? textOrNull(providerRelease.cover)
+                            : null,
+                        volumeCount: positiveNumberOrNull(providerRelease.volume_count),
+                        copyright: textOrNull(providerRelease.copyright),
+                    },
+                    members: tracks.map((currentTrack) => {
+                        const qualityTags = [
+                            ...(Array.isArray(currentTrack.qualityTags) ? currentTrack.qualityTags : []),
+                            currentTrack.quality,
+                        ];
+                        return {
+                            item: {
+                                provider: providerId,
+                                entityType: currentTrack.is_video ? "video" as const : "track" as const,
+                                providerId: String(currentTrack.provider_id),
+                                title: textOrNull(currentTrack.title),
+                                version: textOrNull(currentTrack.version),
+                                isrc: textOrNull(currentTrack.isrc),
+                                durationMs: positiveNumberOrNull(currentTrack.duration) == null
+                                    ? null
+                                    : Math.round(Number(currentTrack.duration) * 1000),
+                                releaseDate: textOrNull(currentTrack.release_date),
+                                explicit: currentTrack.explicit == null
+                                    ? null
+                                    : Boolean(currentTrack.explicit),
+                                availability: "available",
+                                checkedAt: new Date().toISOString(),
+                                providerUrl: textOrNull(currentTrack.url),
+                                coverId: /^https?:\/\//i.test(String(currentTrack.cover || ""))
+                                    ? null
+                                    : textOrNull(currentTrack.cover, currentTrack.image_id, currentTrack.imageId),
+                                artworkUrl: /^https?:\/\//i.test(String(currentTrack.cover || ""))
+                                    ? textOrNull(currentTrack.cover)
+                                    : null,
+                                replayGain: finiteNumberOrNull(currentTrack.replay_gain),
+                                peak: finiteNumberOrNull(currentTrack.peak),
+                                bpm: finiteNumberOrNull(currentTrack.bpm),
+                                musicalKey: textOrNull(currentTrack.musical_key),
+                                copyright: textOrNull(currentTrack.copyright),
+                            },
+                            mediumPosition: Number(currentTrack.volume_number || 1),
+                            position: Number(currentTrack.track_number || 0),
+                            number: textOrNull(currentTrack.track_number),
+                            contextualTitle: textOrNull(currentTrack.title),
+                            contextualDurationMs: positiveNumberOrNull(currentTrack.duration) == null
+                                ? null
+                                : Math.round(Number(currentTrack.duration) * 1000),
+                            credits: providerCredits(currentTrack.artists),
+                            audioVariants: currentTrack.is_video
+                                ? undefined
+                                : providerAudioVariants(providerId, qualityTags),
+                        };
+                    }),
+                });
+            }
+        }
+
         if (counterpartLinks.length > 0) {
             const counterparts = await RefreshVideoService.enrichVideoFactsFromProvider(
                 providerId,
@@ -1381,6 +1539,67 @@ export class RefreshAlbumService {
                 : null,
             textOrNull(album.url),
         );
+
+        const normalizedCatalog = new ProviderCatalogRepository(db);
+        const normalizedReleaseItemId = normalizedCatalog.upsertItem({
+            provider: providerId,
+            entityType: "release",
+            providerId: String(album.provider_id),
+            title: textOrNull(album.title),
+            version: textOrNull(album.version),
+            providerType: textOrNull(album.type),
+            upc: textOrNull(album.upc),
+            durationMs: positiveNumberOrNull(album.duration) == null
+                ? null
+                : Math.round(Number(album.duration) * 1000),
+            releaseDate: textOrNull(album.release_date),
+            explicit: album.explicit == null ? null : Boolean(album.explicit),
+            availability: "available",
+            checkedAt: new Date().toISOString(),
+            providerUrl: textOrNull(album.url),
+            coverId: /^https?:\/\//i.test(String(album.cover || ""))
+                ? null
+                : textOrNull(album.cover, album.image_id, album.imageId),
+            artworkUrl: /^https?:\/\//i.test(String(album.cover || ""))
+                ? textOrNull(album.cover)
+                : null,
+            volumeCount: positiveNumberOrNull(album.num_volumes),
+            copyright: textOrNull(album.copyright),
+        });
+        const releaseVariants = providerAudioVariants(providerId, [
+            ...(Array.isArray(album.qualityTags) ? album.qualityTags : []),
+            album.quality,
+        ]);
+        if (releaseVariants.length > 0) {
+            normalizedCatalog.replaceAudioVariants(normalizedReleaseItemId, releaseVariants);
+        }
+        const releaseCredits = providerCredits(
+            Array.isArray(album.artists) && album.artists.length > 0
+                ? album.artists
+                : (album.artist_id && album.artist_name
+                    ? [{ id: album.artist_id, name: album.artist_name }]
+                    : []),
+        );
+        if (releaseCredits) {
+            const artistIds = releaseCredits.map((credit) => normalizedCatalog.upsertItem({
+                provider: providerId,
+                entityType: "artist",
+                providerId: credit.providerId,
+                title: credit.name,
+                availability: "unknown",
+            }));
+            normalizedCatalog.replaceCredits(
+                normalizedReleaseItemId,
+                releaseCredits.map((credit, index) => ({
+                    artistItemId: artistIds[index],
+                    ordinal: credit.ordinal,
+                    creditedName: credit.name,
+                    joinPhrase: credit.joinPhrase || "",
+                    normalizedRole: credit.normalizedRole,
+                    providerRole: credit.providerRole,
+                })),
+            );
+        }
 
         // Additive: also persist the provider album -> MB release match into the
         // ProviderItemMatches candidate graph (powers the release-availability switcher).
