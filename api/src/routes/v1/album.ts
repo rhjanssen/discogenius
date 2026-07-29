@@ -2,7 +2,6 @@ import { Router } from "express";
 import { AlbumQueryService } from "../../services/music/album-query-service.js";
 import { AlbumCommandService } from "../../services/music/album-command-service.js";
 import { deleteReleaseGroupLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
-import { getReleaseGroupAvailability, setSlotSelection } from "../../services/music/provider-matches.js";
 import { LibraryReleaseSelectionService } from "../../services/music/library-release-selection-service.js";
 import { db } from "../../database.js";
 import {
@@ -135,16 +134,6 @@ router.get("/:albumId/versions", async (req, res) => {
   }
 });
 
-// Per-release streaming availability for a release group (release-group MBID),
-// powering the release switcher. Read-only.
-router.get("/:albumId/release-availability", (req, res) => {
-  try {
-    res.json(getReleaseGroupAvailability(req.params.albumId));
-  } catch (error: any) {
-    res.status(500).json({ detail: error.message });
-  }
-});
-
 router.get("/:albumId/library-availability", (req, res) => {
   try {
     res.json(new LibraryReleaseSelectionService(db).getAvailability(req.params.albumId));
@@ -168,26 +157,6 @@ router.patch("/:albumId/libraries/:libraryId/selection", (req, res) => {
       return res.status(400).json({ detail: error.message });
     }
     res.status(400).json({ detail: error.message });
-  }
-});
-
-// Switch which MB release fills a slot for this release group (the switcher write).
-router.patch("/:albumId/slots/:slot/selection", (req, res) => {
-  try {
-    const body = getObjectBody(req.body);
-    const releaseMbid = getRequiredIdentifier(body, "releaseMbid");
-    res.json(setSlotSelection({
-      releaseGroupMbid: req.params.albumId,
-      slot: req.params.slot,
-      releaseMbid,
-      provider: getOptionalString(body, "provider"),
-      providerAlbumId: getOptionalString(body, "providerAlbumId"),
-    }));
-  } catch (error: any) {
-    if (isRequestValidationError(error)) {
-      return res.status(400).json({ detail: error.message });
-    }
-    res.status(500).json({ detail: error.message });
   }
 });
 

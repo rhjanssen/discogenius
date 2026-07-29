@@ -74,7 +74,6 @@ import {
   type AlbumAssociatedVideo,
   type AlbumPageData,
   type AlbumTrack,
-  type ReleaseGroupAvailability,
 } from "@/hooks/useAlbumPage";
 import { useMonitoring } from "@/hooks/useMonitoring";
 import { useTrackQueueActions } from "@/hooks/useTrackQueueActions";
@@ -104,9 +103,6 @@ import {
 } from "@/components/mediafiles/FileMaintenanceDialogs";
 import {
   ReleaseSwitcher,
-  selectedOfferExplicitForSlot,
-  selectedProviderOfferForSlot,
-  type SwitchableSlot,
 } from "@/pages/album/ReleaseSwitcher";
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
@@ -647,14 +643,6 @@ const AlbumPage = () => {
   const album = pageData?.album ?? null;
   const tracks = pageData?.tracks ?? EMPTY_ALBUM_TRACKS;
   const associatedVideos = pageData?.associatedVideos ?? EMPTY_ASSOCIATED_VIDEOS;
-  const { data: curationConfig } = useQuery({
-    queryKey: ["config", "curation"],
-    queryFn: () => api.getCurationConfig(),
-    refetchOnWindowFocus: false,
-    staleTime: 30_000,
-  });
-  const includeSpatial = curationConfig?.include_spatial === true;
-
   const { data: activity } = useQuery({
     queryKey: ['artist-activity', album?.artist_id],
     queryFn: ({ signal }) => album?.artist_id
@@ -743,52 +731,11 @@ const AlbumPage = () => {
   const hasStereoOffer = Boolean(album?.stereo_provider_id);
   const hasSpatialOffer = Boolean(album?.spatial_provider_id);
   const hasAnyProviderOffer = hasStereoOffer || hasSpatialOffer;
-  const selectedOfferExplicitBySlot = useMemo(() => ({
-    stereo: selectedOfferExplicitForSlot(releaseAvailability, "stereo", {
-      provider: album?.stereo_provider || album?.selected_provider,
-      providerAlbumId: album?.stereo_provider_id,
-      releaseMbid: album?.stereo_release_mbid || album?.selected_release_mbid,
-    }),
-    spatial: selectedOfferExplicitForSlot(releaseAvailability, "spatial", {
-      provider: album?.spatial_provider || album?.selected_provider,
-      providerAlbumId: album?.spatial_provider_id,
-      releaseMbid: album?.spatial_release_mbid || album?.selected_release_mbid,
-    }),
-  }), [
-    album?.selected_provider,
-    album?.selected_release_mbid,
-    album?.spatial_provider,
-    album?.spatial_provider_id,
-    album?.spatial_release_mbid,
-    album?.stereo_provider,
-    album?.stereo_provider_id,
-    album?.stereo_release_mbid,
-    releaseAvailability,
-  ]);
-  const selectedProviderUrlBySlot = useMemo(() => ({
-    stereo: selectedProviderOfferForSlot(releaseAvailability, "stereo", {
-      provider: album?.stereo_provider || album?.selected_provider,
-      providerAlbumId: album?.stereo_provider_id,
-      releaseMbid: album?.stereo_release_mbid || album?.selected_release_mbid,
-    })?.providerUrl ?? album?.stereo_provider_url ?? null,
-    spatial: selectedProviderOfferForSlot(releaseAvailability, "spatial", {
-      provider: album?.spatial_provider || album?.selected_provider,
-      providerAlbumId: album?.spatial_provider_id,
-      releaseMbid: album?.spatial_release_mbid || album?.selected_release_mbid,
-    })?.providerUrl ?? album?.spatial_provider_url ?? null,
-  }), [
-    album?.selected_provider,
-    album?.selected_release_mbid,
-    album?.spatial_provider,
-    album?.spatial_provider_id,
-    album?.spatial_provider_url,
-    album?.spatial_release_mbid,
-    album?.stereo_provider,
-    album?.stereo_provider_id,
-    album?.stereo_provider_url,
-    album?.stereo_release_mbid,
-    releaseAvailability,
-  ]);
+  const selectedOfferExplicitBySlot = { stereo: null, spatial: null };
+  const selectedProviderUrlBySlot = {
+    stereo: album?.stereo_provider_url ?? null,
+    spatial: album?.spatial_provider_url ?? null,
+  };
   const headerQualityBadges = useMemo(() => {
     const badges: Array<{ key: string; quality: string }> = [];
 
@@ -963,18 +910,14 @@ const AlbumPage = () => {
     dispatchLibraryUpdated();
   };
 
-  const slotSelectionMutation = useMutation({
+  const librarySelectionMutation = useMutation({
     mutationFn: async ({
-      slot,
-      releaseMbid,
-      provider,
-      providerAlbumId,
+      libraryId,
+      releaseId,
     }: {
-      slot: SwitchableSlot;
-      releaseMbid: string;
-      provider: string;
-      providerAlbumId: string;
-    }) => api.setAlbumSlotSelection(albumId!, slot, { releaseMbid, provider, providerAlbumId }),
+      libraryId: number;
+      releaseId: number;
+    }) => api.setAlbumLibraryRelease(albumId!, libraryId, releaseId),
     onSuccess: async (releaseAvailability) => {
       queryClient.setQueryData(
         albumReleaseAvailabilityQueryKey(albumId),
@@ -1002,23 +945,20 @@ const AlbumPage = () => {
     },
   });
 
-  const handleSelectReleaseForSlot = useCallback((
-    slot: SwitchableSlot,
-    releaseMbid: string,
-    offer: ReleaseGroupAvailability["releases"][number]["availability"][number],
+  const handleSelectReleaseForLibrary = useCallback((
+    libraryId: number,
+    releaseId: number,
   ) => {
-    if (!albumId || !offer.providerAlbumId) {
+    if (!albumId) {
       return;
     }
 
-    setPendingSelectionKey(`${slot}:${releaseMbid}`);
-    slotSelectionMutation.mutate({
-      slot,
-      releaseMbid,
-      provider: offer.provider,
-      providerAlbumId: offer.providerAlbumId,
+    setPendingSelectionKey(`${libraryId}:${releaseId}`);
+    librarySelectionMutation.mutate({
+      libraryId,
+      releaseId,
     });
-  }, [albumId, slotSelectionMutation]);
+  }, [albumId, librarySelectionMutation]);
 
   const handleDownloadAlbum = async (slot?: 'stereo' | 'spatial') => {
     if (!album || !hasAnyProviderOffer) return;
@@ -1765,9 +1705,8 @@ const AlbumPage = () => {
             <ReleaseSwitcher
               availability={releaseAvailability}
               currentReleaseMbid={album.selected_release_mbid || album.stereo_release_mbid || album.spatial_release_mbid}
-              includeSpatial={includeSpatial}
               pendingSelectionKey={pendingSelectionKey}
-              onSelect={handleSelectReleaseForSlot}
+              onSelect={handleSelectReleaseForLibrary}
             />
           </div>
         ) : otherVersions.length > 0 ? (

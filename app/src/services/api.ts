@@ -44,13 +44,13 @@ import {
 } from '@contracts/catalog';
 import type {
   LibraryFilesListResponseContract,
-  ReleaseGroupAvailabilityContract,
+  LibraryReleaseGroupAvailabilityContract,
   VideoDetailContract,
   VideoUpdateContract,
 } from '@contracts/media';
 import {
   parseLibraryFilesListResponseContract,
-  parseReleaseGroupAvailabilityContract,
+  parseLibraryReleaseGroupAvailabilityContract,
   parseVideoDetailContract,
 } from '@contracts/media';
 import type { AlbumPageContract } from '@contracts/pages';
@@ -848,21 +848,6 @@ class ApiClient {
     return this.request(`/v1/video/${videoId}/files`, { method: 'DELETE' });
   }
 
-  async getAlbumReleaseAvailability(albumId: string, options: RequestControlOptions = {}): Promise<ReleaseGroupAvailabilityContract> {
-    return this.request(`/v1/album/${albumId}/release-availability`, options, parseReleaseGroupAvailabilityContract);
-  }
-
-  async setAlbumSlotSelection(albumId: string, slot: string, input: {
-    releaseMbid: string;
-    provider?: string | null;
-    providerAlbumId?: string | null;
-  }): Promise<ReleaseGroupAvailabilityContract> {
-    return this.request(`/v1/album/${albumId}/slots/${slot}/selection`, {
-      method: 'PATCH',
-      body: JSON.stringify(input),
-    }, parseReleaseGroupAvailabilityContract);
-  }
-
   async getTracks(params?: {
     limit?: number;
     offset?: number;
@@ -1168,6 +1153,29 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ items }),
     });
+  }
+
+  async getAlbumLibraryAvailability(
+    albumId: string,
+    options: RequestControlOptions = {},
+  ): Promise<LibraryReleaseGroupAvailabilityContract> {
+    return this.request(
+      `/v1/album/${albumId}/library-availability`,
+      options,
+      parseLibraryReleaseGroupAvailabilityContract,
+    );
+  }
+
+  async setAlbumLibraryRelease(
+    albumId: string,
+    libraryId: number,
+    releaseId: number,
+  ): Promise<LibraryReleaseGroupAvailabilityContract> {
+    return this.request(`/v1/album/${albumId}/libraries/${libraryId}/selection`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ releaseId }),
+    }, parseLibraryReleaseGroupAvailabilityContract);
   }
 
   async getManualImportLibraries() {

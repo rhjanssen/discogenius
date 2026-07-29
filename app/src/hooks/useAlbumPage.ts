@@ -10,14 +10,14 @@ import type {
     AlbumAssociatedVideoContract as AlbumAssociatedVideo,
     AlbumTrackContract as AlbumTrack,
     AlbumVersionContract as AlbumVersion,
-    ReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
+    LibraryReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
 } from '@contracts/media';
 
 export type {
     AlbumAssociatedVideoContract as AlbumAssociatedVideo,
     AlbumTrackContract as AlbumTrack,
     AlbumVersionContract as AlbumVersion,
-    ReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
+    LibraryReleaseGroupAvailabilityContract as ReleaseGroupAvailability,
 } from '@contracts/media';
 
 export interface AlbumPageData {
@@ -84,7 +84,7 @@ export function useAlbumPage(albumId: string | undefined) {
             if (!albumId) {
                 throw new Error('Album ID is required');
             }
-            return api.getAlbumReleaseAvailability(albumId, {
+            return api.getAlbumLibraryAvailability(albumId, {
                 signal,
                 timeoutMs: 15_000,
             });

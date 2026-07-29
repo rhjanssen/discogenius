@@ -124,41 +124,58 @@ export interface AlbumVersionContract extends AlbumCardContract {
   spatial_quality?: string | null;
 }
 
-export interface ReleaseAvailabilityProviderContract {
-  provider: string;
-  providerAlbumId: string | null;
-  providerAlbumIds?: string[];
-  providerUrl?: string | null;
-  quality: string | null;
-  librarySlot: string | null;
-  status: string | null;
-  confidence: number | null;
-  matchKind?: "direct" | "composite";
-  coverageSummary?: string | null;
-  /** Whether this provider edition is the explicit cut (null when unknown/composite). */
-  explicit?: boolean | null;
-}
-
-export interface ReleaseAvailabilityContract {
-  releaseMbid: string;
-  title: string | null;
-  disambiguation: string | null;
-  status: string | null;
-  date: string | null;
-  country: string | null;
-  format: string | null;
-  mediumCount: number | null;
-  trackCount: number | null;
-  duration: number | null;
-  availability: ReleaseAvailabilityProviderContract[];
-}
-
-export interface ReleaseGroupAvailabilityContract {
+export interface LibraryReleaseGroupAvailabilityContract {
+  releaseGroupId: number;
   releaseGroupMbid: string;
-  selectedReleaseBySlot: Record<string, string | null>;
-  /** slot name -> the provider offer that currently fills the slot. */
-  selectedOfferBySlot?: Record<string, { provider: string | null; providerAlbumId: string | null }>;
-  releases: ReleaseAvailabilityContract[];
+  libraries: Array<{
+    id: number;
+    name: string;
+    qualityProfile: string;
+    selections: Array<{
+      libraryReleaseId: number;
+      releaseId: number;
+      releaseMbid: string;
+      selectionMode: "auto" | "manual";
+      locked: boolean;
+      plan: {
+        id: number;
+        provider: string;
+        composition: "single_source" | "composite";
+        downloadMode: "album" | "tracks";
+        state: "current" | "stale" | "unavailable" | "failed";
+      } | null;
+    }>;
+  }>;
+  releases: Array<{
+    id: number;
+    mbid: string;
+    title: string;
+    disambiguation: string | null;
+    status: string | null;
+    date: string | null;
+    country: string | null;
+    mediumCount: number | null;
+    trackCount: number | null;
+    offers: Array<{
+      providerReleaseMatchId: number;
+      providerItemId: number;
+      provider: string;
+      providerId: string;
+      providerUrl: string | null;
+      availability: string;
+      relation: "exact" | "source_superset" | "source_subset" | "overlap";
+      matchState: "candidate" | "accepted" | "ambiguous" | "rejected";
+      confidence: number;
+      variants: Array<{
+        id: number;
+        qualityClass: "lossy" | "lossless" | "hires-lossless" | "spatial";
+        availability: string;
+        codec: string | null;
+        container: string | null;
+        spatialFormat: string | null;
+      }>;
+    }>;
+  }>;
 }
 
 export interface VideoProviderOfferContract {
@@ -437,70 +454,89 @@ export function parseAlbumVersionsContract(value: unknown): AlbumVersionContract
   return expectArray(value, "Album versions", (item, index) => parseAlbumListItemContract<AlbumVersionContract>(item, index));
 }
 
-function parseReleaseAvailabilityProviderContract(value: unknown, indexLabel: string): ReleaseAvailabilityProviderContract {
-  const record = expectRecord(value, indexLabel);
+export function parseLibraryReleaseGroupAvailabilityContract(
+  value: unknown,
+): LibraryReleaseGroupAvailabilityContract {
+  const record = expectRecord(value, "libraryReleaseAvailability");
   return {
-    provider: expectString(record.provider, `${indexLabel}.provider`),
-    providerAlbumId: expectNullableString(record.providerAlbumId, `${indexLabel}.providerAlbumId`) ?? null,
-    providerAlbumIds: record.providerAlbumIds === undefined
-      ? undefined
-      : expectArray(record.providerAlbumIds, `${indexLabel}.providerAlbumIds`, (item) => String(item)),
-    providerUrl: expectNullableString(record.providerUrl, `${indexLabel}.providerUrl`) ?? null,
-    quality: expectNullableString(record.quality, `${indexLabel}.quality`) ?? null,
-    librarySlot: expectNullableString(record.librarySlot, `${indexLabel}.librarySlot`) ?? null,
-    status: expectNullableString(record.status, `${indexLabel}.status`) ?? null,
-    confidence: expectOptionalNumber(record.confidence, `${indexLabel}.confidence`) ?? null,
-    matchKind: record.matchKind === undefined ? undefined : record.matchKind === "composite" ? "composite" : "direct",
-    coverageSummary: expectNullableString(record.coverageSummary, `${indexLabel}.coverageSummary`) ?? null,
-    explicit: record.explicit == null ? null : Boolean(record.explicit),
-  };
-}
-
-function parseReleaseAvailabilityContract(value: unknown, index: number): ReleaseAvailabilityContract {
-  const label = `releaseAvailability.releases[${index}]`;
-  const record = expectRecord(value, label);
-  return {
-    releaseMbid: expectString(record.releaseMbid, `${label}.releaseMbid`),
-    title: expectNullableString(record.title, `${label}.title`) ?? null,
-    disambiguation: expectNullableString(record.disambiguation, `${label}.disambiguation`) ?? null,
-    status: expectNullableString(record.status, `${label}.status`) ?? null,
-    date: expectNullableString(record.date, `${label}.date`) ?? null,
-    country: expectNullableString(record.country, `${label}.country`) ?? null,
-    format: expectNullableString(record.format, `${label}.format`) ?? null,
-    mediumCount: expectOptionalNumber(record.mediumCount, `${label}.mediumCount`) ?? null,
-    trackCount: expectOptionalNumber(record.trackCount, `${label}.trackCount`) ?? null,
-    duration: expectOptionalNumber(record.duration, `${label}.duration`) ?? null,
-    availability: expectArray(record.availability, `${label}.availability`, (item, providerIndex) =>
-      parseReleaseAvailabilityProviderContract(item, `${label}.availability[${providerIndex}]`)),
-  };
-}
-
-export function parseReleaseGroupAvailabilityContract(value: unknown): ReleaseGroupAvailabilityContract {
-  const record = expectRecord(value, "releaseAvailability");
-  const selectedRecord = expectRecord(record.selectedReleaseBySlot, "releaseAvailability.selectedReleaseBySlot");
-  const selectedReleaseBySlot: Record<string, string | null> = {};
-  for (const [slot, releaseMbid] of Object.entries(selectedRecord)) {
-    selectedReleaseBySlot[slot] = releaseMbid === null ? null : String(releaseMbid);
-  }
-
-  let selectedOfferBySlot: ReleaseGroupAvailabilityContract["selectedOfferBySlot"];
-  if (record.selectedOfferBySlot !== undefined && record.selectedOfferBySlot !== null) {
-    const offerRecord = expectRecord(record.selectedOfferBySlot, "releaseAvailability.selectedOfferBySlot");
-    selectedOfferBySlot = {};
-    for (const [slot, offer] of Object.entries(offerRecord)) {
-      const parsed = expectRecord(offer, `releaseAvailability.selectedOfferBySlot.${slot}`);
-      selectedOfferBySlot[slot] = {
-        provider: parsed.provider == null ? null : String(parsed.provider),
-        providerAlbumId: parsed.providerAlbumId == null ? null : String(parsed.providerAlbumId),
+    releaseGroupId: expectNumber(record.releaseGroupId, "libraryReleaseAvailability.releaseGroupId"),
+    releaseGroupMbid: expectString(record.releaseGroupMbid, "libraryReleaseAvailability.releaseGroupMbid"),
+    libraries: expectArray(record.libraries, "libraryReleaseAvailability.libraries", (item, libraryIndex) => {
+      const library = expectRecord(item, `libraryReleaseAvailability.libraries[${libraryIndex}]`);
+      return {
+        id: expectNumber(library.id, `libraryReleaseAvailability.libraries[${libraryIndex}].id`),
+        name: expectString(library.name, `libraryReleaseAvailability.libraries[${libraryIndex}].name`),
+        qualityProfile: expectString(
+          library.qualityProfile,
+          `libraryReleaseAvailability.libraries[${libraryIndex}].qualityProfile`,
+        ),
+        selections: expectArray(
+          library.selections,
+          `libraryReleaseAvailability.libraries[${libraryIndex}].selections`,
+          (selectionItem, selectionIndex) => {
+            const label = `libraryReleaseAvailability.libraries[${libraryIndex}].selections[${selectionIndex}]`;
+            const selection = expectRecord(selectionItem, label);
+            const plan = selection.plan == null ? null : expectRecord(selection.plan, `${label}.plan`);
+            return {
+              libraryReleaseId: expectNumber(selection.libraryReleaseId, `${label}.libraryReleaseId`),
+              releaseId: expectNumber(selection.releaseId, `${label}.releaseId`),
+              releaseMbid: expectString(selection.releaseMbid, `${label}.releaseMbid`),
+              selectionMode: expectString(selection.selectionMode, `${label}.selectionMode`) as "auto" | "manual",
+              locked: expectBoolean(selection.locked, `${label}.locked`),
+              plan: plan == null ? null : {
+                id: expectNumber(plan.id, `${label}.plan.id`),
+                provider: expectString(plan.provider, `${label}.plan.provider`),
+                composition: expectString(plan.composition, `${label}.plan.composition`) as "single_source" | "composite",
+                downloadMode: expectString(plan.downloadMode, `${label}.plan.downloadMode`) as "album" | "tracks",
+                state: expectString(plan.state, `${label}.plan.state`) as "current" | "stale" | "unavailable" | "failed",
+              },
+            };
+          },
+        ),
       };
-    }
-  }
-
-  return {
-    releaseGroupMbid: expectString(record.releaseGroupMbid, "releaseAvailability.releaseGroupMbid"),
-    selectedReleaseBySlot,
-    selectedOfferBySlot,
-    releases: expectArray(record.releases, "releaseAvailability.releases", parseReleaseAvailabilityContract),
+    }),
+    releases: expectArray(record.releases, "libraryReleaseAvailability.releases", (item, releaseIndex) => {
+      const label = `libraryReleaseAvailability.releases[${releaseIndex}]`;
+      const release = expectRecord(item, label);
+      return {
+        id: expectNumber(release.id, `${label}.id`),
+        mbid: expectString(release.mbid, `${label}.mbid`),
+        title: expectString(release.title, `${label}.title`),
+        disambiguation: expectNullableString(release.disambiguation, `${label}.disambiguation`) ?? null,
+        status: expectNullableString(release.status, `${label}.status`) ?? null,
+        date: expectNullableString(release.date, `${label}.date`) ?? null,
+        country: expectNullableString(release.country, `${label}.country`) ?? null,
+        mediumCount: expectOptionalNumber(release.mediumCount, `${label}.mediumCount`) ?? null,
+        trackCount: expectOptionalNumber(release.trackCount, `${label}.trackCount`) ?? null,
+        offers: expectArray(release.offers, `${label}.offers`, (offerItem, offerIndex) => {
+          const offerLabel = `${label}.offers[${offerIndex}]`;
+          const offer = expectRecord(offerItem, offerLabel);
+          return {
+            providerReleaseMatchId: expectNumber(offer.providerReleaseMatchId, `${offerLabel}.providerReleaseMatchId`),
+            providerItemId: expectNumber(offer.providerItemId, `${offerLabel}.providerItemId`),
+            provider: expectString(offer.provider, `${offerLabel}.provider`),
+            providerId: expectString(offer.providerId, `${offerLabel}.providerId`),
+            providerUrl: expectNullableString(offer.providerUrl, `${offerLabel}.providerUrl`) ?? null,
+            availability: expectString(offer.availability, `${offerLabel}.availability`),
+            relation: expectString(offer.relation, `${offerLabel}.relation`) as "exact" | "source_superset" | "source_subset" | "overlap",
+            matchState: expectString(offer.matchState, `${offerLabel}.matchState`) as "candidate" | "accepted" | "ambiguous" | "rejected",
+            confidence: expectNumber(offer.confidence, `${offerLabel}.confidence`),
+            variants: expectArray(offer.variants, `${offerLabel}.variants`, (variantItem, variantIndex) => {
+              const variantLabel = `${offerLabel}.variants[${variantIndex}]`;
+              const variant = expectRecord(variantItem, variantLabel);
+              return {
+                id: expectNumber(variant.id, `${variantLabel}.id`),
+                qualityClass: expectString(variant.qualityClass, `${variantLabel}.qualityClass`) as "lossy" | "lossless" | "hires-lossless" | "spatial",
+                availability: expectString(variant.availability, `${variantLabel}.availability`),
+                codec: expectNullableString(variant.codec, `${variantLabel}.codec`) ?? null,
+                container: expectNullableString(variant.container, `${variantLabel}.container`) ?? null,
+                spatialFormat: expectNullableString(variant.spatialFormat, `${variantLabel}.spatialFormat`) ?? null,
+              };
+            }),
+          };
+        }),
+      };
+    }),
   };
 }
 
