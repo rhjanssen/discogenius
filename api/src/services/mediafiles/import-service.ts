@@ -575,7 +575,10 @@ export class ImportService {
                 const catalogVideo = db.prepare(`
                     SELECT recording.title, recording.video_variant
                     FROM ProviderItems pi
-                    JOIN Recordings recording ON recording.id = pi.recording_id
+                    JOIN ProviderVideoMatches video_match
+                      ON video_match.provider_video_item_id = pi.id
+                     AND video_match.match_state = 'accepted'
+                    JOIN Recordings recording ON recording.id = video_match.recording_id
                     WHERE pi.entity_type = 'video'
                       AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
                     LIMIT 1

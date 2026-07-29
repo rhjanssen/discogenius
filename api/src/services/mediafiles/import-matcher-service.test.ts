@@ -41,12 +41,24 @@ function seedCanonicalFingerprintMatch() {
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, updated_at
     ) VALUES (?, ?, ?, ?, ?)
-  `).run( "tidal", "album", "provider-album", "Canonical Album", "2026-01-01T00:00:00.000Z" );
+  `).run( "tidal", "release", "provider-album", "Canonical Album", "2026-01-01T00:00:00.000Z" );
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, updated_at
     ) VALUES (?, ?, ?, ?, ?)
   `).run( "tidal", "track", "provider-track", "Canonical Track", "2026-01-01T00:00:00.000Z" );
+  // The track's album context is its release OCCURRENCE, not a scalar column.
+  const albumItemId = (dbModule.db.prepare(`
+    SELECT id FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = 'provider-album'
+  `).get() as { id: number }).id;
+  const trackItemId = (dbModule.db.prepare(`
+    SELECT id FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = 'provider-track'
+  `).get() as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+  `).run(albumItemId, trackItemId);
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, canonical_artist_mbid, canonical_release_group_mbid,

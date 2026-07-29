@@ -259,12 +259,24 @@ export class ManualImportService {
                 }
 
                 // Read album offer for naming (created by RefreshAlbumService.refreshMetadata)
+                // Optional provider provenance for naming. Canonical identity comes
+                // from the selected Release/Track; this only fills provider-native
+                // extras, and stays null for a manual import with no provider item.
                 const albumRow = albumId ? db.prepare(`
-                    SELECT release_group_mbid AS mb_release_group_id, release_mbid AS mbid,
-                           release_date, version, explicit, NULL AS num_volumes
-                    FROM ProviderItems
-                    WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                    ORDER BY updated_at DESC
+                    SELECT release_group.mbid AS mb_release_group_id,
+                           canonical_release.mbid AS mbid,
+                           COALESCE(canonical_release.date, pi.release_date) AS release_date,
+                           pi.version,
+                           pi.explicit,
+                           canonical_release.media_count AS num_volumes
+                    FROM ProviderItems pi
+                    LEFT JOIN ProviderReleaseMatches release_match
+                      ON release_match.provider_release_item_id = pi.id
+                     AND release_match.match_state = 'accepted'
+                    LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+                    LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
+                    WHERE pi.entity_type = 'release' AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
+                    ORDER BY pi.updated_at DESC
                     LIMIT 1
                 `).get(albumId) as any : null;
 
@@ -327,8 +339,10 @@ export class ManualImportService {
                     ? (db.prepare(`
                         SELECT recording.video_variant AS video_variant, recording.title AS recording_title
                         FROM ProviderItems pi
-                        LEFT JOIN Recordings recording ON recording.id = pi.recording_id
-                          OR recording.mbid = pi.recording_mbid
+                        LEFT JOIN ProviderVideoMatches video_match
+                          ON video_match.provider_video_item_id = pi.id
+                         AND video_match.match_state = 'accepted'
+                        LEFT JOIN Recordings recording ON recording.id = video_match.recording_id
                         WHERE pi.entity_type = 'video'
                           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
                         ORDER BY pi.updated_at DESC

@@ -416,36 +416,46 @@ export class ImportMatcherService {
             SELECT album_id, COUNT(*) AS matched_files
             FROM (
                 SELECT COALESCE(
+                    -- The provider release accepted-matched to this file's canonical
+                    -- release (or release group), or named directly by the file.
                     (
                         SELECT album_item.provider_id
                         FROM ProviderItems album_item
-                        WHERE album_item.entity_type = 'album'
+                        LEFT JOIN ProviderReleaseMatches album_match
+                          ON album_match.provider_release_item_id = album_item.id
+                         AND album_match.match_state = 'accepted'
+                        LEFT JOIN AlbumReleases album_release ON album_release.id = album_match.release_id
+                        LEFT JOIN Albums album_group ON album_group.id = album_release.release_group_id
+                        WHERE album_item.entity_type = 'release'
                           AND (lf.provider IS NULL OR album_item.provider = lf.provider)
                           AND (
-                            (lf.provider_entity_type = 'album' AND lf.provider_id IS NOT NULL AND album_item.provider_id = lf.provider_id)
-                            OR (lf.canonical_release_mbid IS NOT NULL AND album_item.release_mbid = lf.canonical_release_mbid)
-                            OR (lf.canonical_release_group_mbid IS NOT NULL AND album_item.release_group_mbid = lf.canonical_release_group_mbid)
+                            (lf.provider_entity_type IN ('album', 'release') AND lf.provider_id IS NOT NULL AND album_item.provider_id = lf.provider_id)
+                            OR (lf.canonical_release_mbid IS NOT NULL AND album_release.mbid = lf.canonical_release_mbid)
+                            OR (lf.canonical_release_group_mbid IS NOT NULL AND album_group.mbid = lf.canonical_release_group_mbid)
                           )
                         ORDER BY
                           album_item.updated_at DESC
                         LIMIT 1
                     ),
+                    -- Else the release a matching provider TRACK actually occurs on.
                     (
                         SELECT album_item.provider_id
                         FROM ProviderItems track_item
+                        JOIN ProviderReleaseMembers track_member
+                          ON track_member.member_item_id = track_item.id
                         JOIN ProviderItems album_item
-                          ON album_item.provider = track_item.provider
-                         AND album_item.entity_type = 'album'
-                         AND (
-                           (track_item.release_mbid IS NOT NULL AND album_item.release_mbid = track_item.release_mbid)
-                           OR (track_item.release_group_mbid IS NOT NULL AND album_item.release_group_mbid = track_item.release_group_mbid)
-                         )
+                          ON album_item.id = track_member.provider_release_item_id
+                        LEFT JOIN ProviderTrackMatches track_match
+                          ON track_match.provider_release_member_id = track_member.id
+                         AND track_match.match_state = 'accepted'
+                        LEFT JOIN Tracks canonical_track ON canonical_track.id = track_match.track_id
+                        LEFT JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id
                         WHERE track_item.entity_type = 'track'
                           AND (lf.provider IS NULL OR track_item.provider = lf.provider)
                           AND (
                             (lf.provider_entity_type = 'track' AND lf.provider_id IS NOT NULL AND track_item.provider_id = lf.provider_id)
-                            OR (lf.canonical_track_mbid IS NOT NULL AND track_item.track_mbid = lf.canonical_track_mbid)
-                            OR (lf.canonical_recording_mbid IS NOT NULL AND track_item.recording_mbid = lf.canonical_recording_mbid)
+                            OR (lf.canonical_track_mbid IS NOT NULL AND canonical_track.mbid = lf.canonical_track_mbid)
+                            OR (lf.canonical_recording_mbid IS NOT NULL AND canonical_recording.mbid = lf.canonical_recording_mbid)
                           )
                         ORDER BY
                           track_item.updated_at DESC

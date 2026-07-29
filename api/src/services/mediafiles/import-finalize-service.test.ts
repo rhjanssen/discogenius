@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
-import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
+import {
+  seedAcceptedProviderTrackMatch,
+  seedAcceptedProviderVideoMatch,
+} from "../../test-support/normalized-provider-fixtures.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-import-finalize-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -170,18 +173,16 @@ test("finalizeImportedDirectories relocates linked separated videos inline after
   `).run("video-rec-one", "Track One", "artist-one-mbid");
   const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-rec-one") as { id: number }).id;
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES ('tidal', 'video', 'video-100', 'Track One')
-  `).run();
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal", providerVideoId: "video-100",
+    recordingId: videoRecId, title: "Track One",
+  });
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)
   `).run(videoRecId, audioRecId);
-  dbModule.db.prepare(`
-    UPDATE ProviderItems SET recording_id = ? WHERE entity_type = 'track' AND provider_id = '100'
-  `).run(audioRecId);
+  // The audio track offer already reaches its recording through the typed match
+  // seeded above; ProviderItems carries no canonical recording id.
 
   const videoRoot = configModule.Config.getVideoPath();
   const separatedVideoPath = path.join(videoRoot, "Artist One", "Track One.mp4");

@@ -148,3 +148,180 @@ test("changing release rejects stale track assignments before importing", async 
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("manual import needs no acquisition plan and no provider item at all", async () => {
+  const { db, folder } = fixture();
+  try {
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
+    // The whole point of manual import: a user maps files onto canonical
+    // Library/Release/Track identity with nothing provider-side in the database.
+    assert.equal((db.prepare("SELECT COUNT(*) c FROM AcquisitionPlans").get() as { c: number }).c, 0);
+    assert.equal((db.prepare("SELECT COUNT(*) c FROM ProviderItems").get() as { c: number }).c, 0);
+
+    const service = new CanonicalManualImportService(db, async () => {
+      db.prepare(`
+        INSERT INTO TrackFiles (
+          id, library_id, album_release_id, track_id, recording_id,
+          file_path, relative_path, filename, extension, file_class
+        ) VALUES (
+          1, 1, 10, 1000, 100,
+          '/library/stereo/Artist/Release A/01 Track A.flac',
+          'Artist/Release A/01 Track A.flac',
+          '01 Track A.flac', 'flac', 'audio'
+        )
+      `).run();
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0 };
+    });
+
+    const summary = await service.import({
+      libraryId: 1,
+      releaseId: 10,
+      mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+    });
+
+    assert.equal(summary.imported, 1);
+    assert.deepEqual(db.prepare(`
+      SELECT library_id, album_release_id, track_id, recording_id, provider_item_id
+      FROM TrackFiles WHERE id = 1
+    `).get(), {
+      library_id: 1,
+      album_release_id: 10,
+      track_id: 1000,
+      recording_id: 100,
+      provider_item_id: null,
+    });
+    // Still no acquisition plan was invented on the way through.
+    assert.equal((db.prepare("SELECT COUNT(*) c FROM AcquisitionPlans").get() as { c: number }).c, 0);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("optional provider provenance attaches without becoming canonical identity", async () => {
+  const { db, folder } = fixture();
+  try {
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
+    const providerItem = db.prepare(`
+      INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+      VALUES ('tidal', 'track', 'tidal-track-1', 'Provider Track Title')
+      RETURNING id
+    `).get() as { id: number };
+
+    const service = new CanonicalManualImportService(db, async () => {
+      db.prepare(`
+        INSERT INTO TrackFiles (
+          id, library_id, album_release_id, track_id, recording_id,
+          canonical_track_mbid,
+          file_path, relative_path, filename, extension, file_class
+        ) VALUES (
+          1, 1, 10, 1000, 100,
+          'track-a',
+          '/library/stereo/Artist/Release A/01 Track A.flac',
+          'Artist/Release A/01 Track A.flac',
+          '01 Track A.flac', 'flac', 'audio'
+        )
+      `).run();
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0 };
+    });
+
+    await service.import({
+      libraryId: 1,
+      releaseId: 10,
+      mappings: [{ unmappedFileId: 1, trackId: 1000, providerItemId: providerItem.id }],
+    });
+
+    const row = db.prepare(`
+      SELECT track_id, recording_id, album_release_id, provider, provider_entity_type, provider_id
+      FROM TrackFiles WHERE id = 1
+    `).get() as Record<string, unknown>;
+    // Provenance is recorded as the provider identity triple, while canonical
+    // identity still comes from the selected Release/Track — never from the
+    // provider row's own title.
+    assert.equal(row.provider, "tidal");
+    assert.equal(row.provider_entity_type, "track");
+    assert.equal(row.provider_id, "tidal-track-1");
+    assert.equal(row.track_id, 1000);
+    assert.equal(row.recording_id, 100);
+    assert.equal(row.album_release_id, 10);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("a recording shared by two selected releases keeps the release-track the user chose", async () => {
+  const { db, folder } = fixture();
+  try {
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
+    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
+    // Release B also carries recording 100 — the SAME recording as Release A's
+    // track 1000 — as its own release-track occurrence.
+    db.prepare(`
+      INSERT INTO Tracks (id, mbid, album_release_id, recording_id, medium_position, position, title)
+      VALUES (2100, 'track-b-shared', 20, 100, 1, 2, 'Track A')
+    `).run();
+    // Both releases are selected into the library.
+    db.prepare(`
+      INSERT INTO LibraryReleaseGroups (
+        library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
+      ) VALUES (1, 1, 1, 'auto', 0, 'test', 1)
+    `).run();
+    for (const releaseId of [10, 20]) {
+      db.prepare(`
+        INSERT INTO LibraryReleases (
+          library_id, release_id, selection_mode, locked, reason, curation_version
+        ) VALUES (1, ?, 'auto', 0, 'test', 1)
+      `).run(releaseId);
+    }
+
+    const service = new CanonicalManualImportService(db, async () => {
+      db.prepare(`
+        INSERT INTO TrackFiles (
+          id, library_id, album_release_id, track_id, recording_id,
+          file_path, relative_path, filename, extension, file_class
+        ) VALUES (
+          1, 1, 20, 2100, 100,
+          '/library/stereo/Artist/Release B/02 Track A.flac',
+          'Artist/Release B/02 Track A.flac',
+          '02 Track A.flac', 'flac', 'audio'
+        )
+      `).run();
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0 };
+    });
+
+    // The user explicitly imports onto Release B's occurrence of the recording.
+    await service.import({
+      libraryId: 1,
+      releaseId: 20,
+      mappings: [{ unmappedFileId: 1, trackId: 2100 }],
+    });
+
+    const row = db.prepare(`
+      SELECT album_release_id, track_id, recording_id FROM TrackFiles WHERE id = 1
+    `).get() as Record<string, number>;
+    // The explicitly chosen release-track occurrence survives; it is NOT
+    // re-anchored to Release A's sibling track just because both selected
+    // releases share recording 100.
+    assert.equal(row.album_release_id, 20);
+    assert.equal(row.track_id, 2100);
+    assert.equal(row.recording_id, 100);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
