@@ -385,6 +385,19 @@ test("video file identity inherits canonical recording and artist from the recor
       match_status, match_confidence
     ) VALUES ('tidal', 'video', ?, ?, ?, 'video', 'verified', 1)
   `).run("provider-video-1", Number(recording.lastInsertRowid), "Canonical Video");
+  const providerVideo = dbModule.db.prepare(`
+    SELECT id
+    FROM ProviderItems
+    WHERE provider = 'tidal'
+      AND entity_type = 'video'
+      AND provider_id = 'provider-video-1'
+  `).get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(providerVideo.id, Number(recording.lastInsertRowid));
 
   const identity = identityModule.resolveLibraryFileIdentity({
     provider: "tidal",
@@ -515,7 +528,7 @@ test("singleton sidecar relocation uses clean metadata identity columns", () => 
   assert.equal(rows[0].file_path, newPath);
 });
 
-test("hybrid composite identity prefers monitored hybrid over native provider albums", async () => {
+test("typed plan identity maps a provider source track onto the selected canonical release", async () => {
   const { getCanonicalTrackPosition, resolveCanonicalTrackPosition } = await import("../metadata/canonical-track-position.js");
   const { getCanonicalAlbumMetadata } = await import("../metadata/canonical-album-metadata.js");
 
@@ -524,12 +537,13 @@ test("hybrid composite identity prefers monitored hybrid over native provider al
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
     .run("artist-local", "Bastille", "artist-mbid");
 
-  // Native source albums (what ProviderItems point at).
+  // Native source albums remain canonical catalog entities, but provider
+  // availability is linked to the selected target release through typed edges.
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-pompeii", "artist-mbid", "Pompeii");
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-come", "artist-mbid", "Come as You Are");
-  // Monitored hybrid composite.
+  // Selected compilation release.
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-hybrid", "artist-mbid", "Killing Me Softly");
 
@@ -576,44 +590,118 @@ test("hybrid composite identity prefers monitored hybrid over native provider al
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-come-hybrid", "rel-hybrid", "rec-come", "Come as You Are", 1, 3);
 
+  const artistMetadata = dbModule.db.prepare(`
+    SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'
+  `).get() as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, selected_release_mbid
-    ) VALUES (?, ?, 'stereo', 1, 'tidal', ?, ?)
-  `).run("artist-mbid", "rg-hybrid", "album-softly;album-pompeii;album-come", "rel-hybrid");
-
-  // Native Pompeii offer — what a DownloadTrack job would resolve from provider id alone.
+    UPDATE Albums SET artist_metadata_id = ? WHERE artist_mbid = 'artist-mbid'
+  `).run(artistMetadata.id);
   dbModule.db.prepare(`
+    UPDATE AlbumReleases
+    SET
+      release_group_id = (
+        SELECT id FROM Albums WHERE mbid = AlbumReleases.release_group_mbid
+      ),
+      artist_metadata_id = ?
+    WHERE artist_mbid = 'artist-mbid'
+  `).run(artistMetadata.id);
+  dbModule.db.prepare(`
+    UPDATE Tracks
+    SET
+      album_release_id = (
+        SELECT id FROM AlbumReleases WHERE mbid = Tracks.release_mbid
+      ),
+      recording_id = (
+        SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
+      )
+  `).run();
+  const hybridGroup = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-hybrid'")
+    .get() as { id: number };
+  const hybridRelease = dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-hybrid'")
+    .get() as { id: number };
+  const hybridTrack = dbModule.db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = 't-pompeii-hybrid'")
+    .get() as { id: number; recording_id: number };
+  const providerRelease = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, artist_mbid,
-      release_group_mbid, release_mbid, track_mbid, recording_mbid,
-      title, quality, library_slot, match_status, match_confidence,
-      match_evidence
-    ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'stereo', 'matched', 1, ?)
-  `).run(
-    "tidal",
-    "provider-pompeii",
-    "album-pompeii",
-    "artist-mbid",
-    "rg-pompeii",
-    "rel-pompeii",
-    "t-pompeii-native",
-    "rec-pompeii",
-    "Pompeii",
-    "LOSSLESS",
-    // Counterpart/album linkage only — provider-native positions must not bind.
-    JSON.stringify({ albumProviderId: "album-pompeii" }),
-  );
-  dbModule.db.prepare(`
+      provider, entity_type, provider_id, title, quality
+    ) VALUES ('tidal', 'release', 'album-pompeii', 'Pompeii', 'LOSSLESS')
+    RETURNING id
+  `).get() as { id: number };
+  const providerTrack = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid,
-      release_group_mbid, release_mbid, title, quality, library_slot, match_status
-    ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, 'stereo', 'matched')
-  `).run("tidal", "album-pompeii", "artist-mbid", "rg-pompeii", "rel-pompeii", "Pompeii", "LOSSLESS");
+      provider, entity_type, provider_id, title, quality
+    ) VALUES ('tidal', 'track', 'provider-pompeii', 'Pompeii', 'LOSSLESS')
+    RETURNING id
+  `).get() as { id: number };
+  const member = dbModule.db.prepare(`
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+    RETURNING id
+  `).get(providerRelease.id, providerTrack.id) as { id: number };
+  const releaseMatch = dbModule.db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'source_subset', 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(providerRelease.id, hybridRelease.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_release_member_id, provider_release_match_id, track_id,
+      recording_id, match_state, decision_source, confidence, method,
+      matcher_version
+    ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(member.id, releaseMatch.id, hybridTrack.id, hybridTrack.recording_id);
+  dbModule.db.prepare(`
+    INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+    VALUES ('Identity Test', '{}')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO Libraries (
+      name, root_path, metadata_profile_id, quality_profile_id
+    )
+    SELECT
+      'Identity Stereo',
+      ?,
+      metadata_profile.id,
+      quality_profile.id
+    FROM MetadataProfiles metadata_profile
+    JOIN quality_profiles quality_profile
+      ON COALESCE(quality_profile.allowed_source_formats, '[]') NOT LIKE '%spatial%'
+    WHERE metadata_profile.name = 'Identity Test'
+    ORDER BY quality_profile.id
+    LIMIT 1
+  `).run(path.join(tempDir, "identity-stereo"));
+  const library = dbModule.db.prepare("SELECT id FROM Libraries WHERE name = 'Identity Stereo'")
+    .get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      reason, curation_version
+    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+  `).run(library.id, hybridGroup.id);
+  const libraryRelease = dbModule.db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+    RETURNING id
+  `).get(library.id, hybridRelease.id) as { id: number };
+  const plan = dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlans (
+      library_release_id, provider, composition, download_mode, state,
+      planner_version, policy_hash, computed_at
+    ) VALUES (?, 'tidal', 'single_source', 'tracks', 'current', 1, 'test', CURRENT_TIMESTAMP)
+    RETURNING id
+  `).get(libraryRelease.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AcquisitionPlanSources (
+      plan_id, provider_release_match_id, role, sort_order
+    ) VALUES (?, ?, 'primary', 0)
+  `).run(plan.id, releaseMatch.id);
 
-  // Without job hybrid fields, slot remapping via composite selected_provider_id
-  // must still win over native ProviderItems RG/track MBIDs.
+  // Without explicit job fields, typed track and release matches resolve the
+  // selected canonical target.
   const fromSlot = identityModule.resolveLibraryFileIdentity({
     provider: "tidal",
     providerEntityType: "track",
@@ -649,8 +737,8 @@ test("hybrid composite identity prefers monitored hybrid over native provider al
   assert.equal(fromJob?.trackNumber, 3);
   assert.equal(fromJob?.title, "Come as You Are");
 
-  // Native track MBID must not win when the monitored slot remaps via recording
-  // (the Softly/Pompeii bug: hybrid RG + native Pompeii track ⇒ filename 01).
+  // A native catalog track MBID must not override the explicitly selected
+  // release when the same recording has a target track there.
   const fromNativeTrackOnHybrid = identityModule.resolveLibraryFileIdentity({
     provider: "tidal",
     providerEntityType: "track",

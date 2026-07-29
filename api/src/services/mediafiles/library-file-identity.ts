@@ -34,27 +34,39 @@ export type LibraryFileIdentity = {
 };
 
 type ArtistRow = { id: string; mbid: string | null };
-type MbTrackRow = { mbid: string; release_mbid: string; recording_mbid: string };
 type ProviderItemRow = {
+  id: number;
   provider: string;
   entity_type: string;
   provider_id: string;
-  artist_mbid: string | null;
-  release_group_mbid: string | null;
-  release_mbid: string | null;
-  track_mbid: string | null;
-  recording_mbid: string | null;
-  library_slot: library_slot | string | null;
-  updated_at: string | null;
 };
-type ReleaseGroupSlotRow = {
-  id: number;
-  artist_mbid: string;
-  release_group_mbid: string;
-  selected_provider_id: string | null;
-  selected_release_mbid: string | null;
-  selected_provider: string | null;
-  slot: library_slot | string | null;
+type CanonicalMatch = {
+  providerItemId: number;
+  providerReleaseItemId: number | null;
+  artistMbid: string | null;
+  releaseGroupMbid: string | null;
+  releaseMbid: string | null;
+  trackMbid: string | null;
+  recordingMbid: string | null;
+  confidence: number;
+};
+type CanonicalReleaseRow = {
+  mbid: string;
+  releaseGroupMbid: string;
+  artistMbid: string;
+};
+type CanonicalTrackRow = {
+  mbid: string;
+  releaseMbid: string;
+  releaseGroupMbid: string;
+  recordingMbid: string;
+  artistMbid: string | null;
+};
+type LibrarySelection = {
+  releaseGroupMbid: string;
+  releaseMbid: string;
+  libraryClass: "stereo" | "spatial";
+  providerReleaseItemId: number | null;
 };
 
 type PreparedIdentityInput = {
@@ -64,17 +76,22 @@ type PreparedIdentityInput = {
   provider: string | null;
   providerEntityType: string | null;
   providerId: string | null;
+  preferredSlot: library_slot;
 };
 
-type PreparedIdentityEvidence = {
+type IdentityEvidence = {
   prepared: PreparedIdentityInput;
   artist: ArtistRow | null;
   providerAlbum: ProviderItemRow | null;
   providerMedia: ProviderItemRow | null;
-  preferredSlot: library_slot;
-  releaseGroupSlot: ReleaseGroupSlotRow | null;
-  selectedTrack: MbTrackRow | null;
-  inputTrack: MbTrackRow | null;
+  inputRelease: CanonicalReleaseRow | null;
+  inputTrack: CanonicalTrackRow | null;
+  albumMatches: CanonicalMatch[];
+  mediaMatches: CanonicalMatch[];
+  releaseGroupMbid: string | null;
+  releaseMbid: string | null;
+  recordingMbid: string | null;
+  selectedTrack: CanonicalTrackRow | null;
 };
 
 const BULK_QUERY_CHUNK_SIZE = 350;
@@ -106,58 +123,35 @@ function inferLibrarySlot(input: LibraryFileIdentityInput): library_slot {
   const root = nullableText(input.libraryRoot)?.toLowerCase() ?? "";
   const quality = nullableText(input.quality);
 
-  if (fileType.includes("video") || root.includes("video")) {
-    return "video";
-  }
-
+  if (fileType.includes("video") || root.includes("video")) return "video";
   if (isSpatialAudioQuality(quality) || root.includes("spatial") || root.includes("atmos")) {
     return "spatial";
   }
-
-  if (["track", "cover", "nfo", "lyrics", "bio", "review"].includes(fileType)) {
-    return "stereo";
-  }
-
   return "stereo";
 }
 
 function inferProviderEntityType(input: LibraryFileIdentityInput): string | null {
   const explicit = nullableText(input.providerEntityType);
-  if (explicit) {
-    return explicit;
-  }
+  if (explicit) return explicit;
 
   const fileType = nullableText(input.fileType)?.toLowerCase() ?? "";
-  if (fileType.includes("video")) {
-    return "video";
-  }
-  if (nullableText(input.mediaId)) {
-    return "track";
-  }
-  if (nullableText(input.albumId)) {
-    return "album";
-  }
-  if (nullableText(input.artistId)) {
-    return "artist";
-  }
+  if (fileType.includes("video")) return "video";
+  if (nullableText(input.mediaId)) return "track";
+  if (nullableText(input.albumId)) return "album";
+  if (nullableText(input.artistId)) return "artist";
   return null;
 }
 
 function inferProviderId(input: LibraryFileIdentityInput, providerEntityType: string | null): string | null {
   const explicit = nullableText(input.providerId);
-  if (explicit) {
-    return explicit;
-  }
-
+  if (explicit) return explicit;
   if (providerEntityType === "track" || providerEntityType === "video") {
     return nullableText(input.mediaId);
   }
-  if (providerEntityType === "album") {
+  if (providerEntityType === "album" || providerEntityType === "release") {
     return nullableText(input.albumId);
   }
-  if (providerEntityType === "artist") {
-    return null;
-  }
+  if (providerEntityType === "artist") return null;
   return nullableText(input.mediaId) ?? nullableText(input.albumId) ?? nullableText(input.artistId);
 }
 
@@ -170,6 +164,7 @@ function prepareIdentityInput(input: LibraryFileIdentityInput): PreparedIdentity
     provider: nullableText(input.provider),
     providerEntityType,
     providerId: inferProviderId(input, providerEntityType),
+    preferredSlot: inferLibrarySlot(input),
   };
 }
 
@@ -179,6 +174,10 @@ function providerItemKey(entityType: string, providerId: string): string {
 
 function trackPairKey(releaseMbid: string, recordingMbid: string): string {
   return `${releaseMbid}\u0000${recordingMbid}`;
+}
+
+function selectionKey(releaseGroupMbid: string, libraryClass: "stereo" | "spatial"): string {
+  return `${releaseGroupMbid}\u0000${libraryClass}`;
 }
 
 function loadArtists(prepared: PreparedIdentityInput[]): Map<string, ArtistRow> {
@@ -195,43 +194,40 @@ function loadArtists(prepared: PreparedIdentityInput[]): Map<string, ArtistRow> 
   return byId;
 }
 
-function loadProviderItems(prepared: PreparedIdentityInput[]): Map<string, ProviderItemRow[]> {
-  const idsByEntityType = new Map<string, Set<string>>();
-  const addRequest = (entityType: string | null, providerId: string | null) => {
-    if (!entityType || !providerId) return;
-    const ids = idsByEntityType.get(entityType) ?? new Set<string>();
+function requestedProviderItemIds(prepared: PreparedIdentityInput[]): Map<string, Set<string>> {
+  const requested = new Map<string, Set<string>>();
+  const add = (entityType: string, providerId: string | null) => {
+    if (!providerId) return;
+    const ids = requested.get(entityType) ?? new Set<string>();
     ids.add(providerId);
-    idsByEntityType.set(entityType, ids);
+    requested.set(entityType, ids);
   };
   for (const entry of prepared) {
-    addRequest("album", entry.albumId);
-    addRequest(entry.providerEntityType, entry.providerId);
+    add("release", entry.albumId);
+    add("album", entry.albumId);
+    const mediaType = entry.providerEntityType === "album"
+      ? "release"
+      : entry.providerEntityType;
+    if (mediaType) add(mediaType, entry.providerId);
+    if (entry.providerEntityType === "album") add("album", entry.providerId);
   }
+  return requested;
+}
 
+function loadProviderItems(prepared: PreparedIdentityInput[]): Map<string, ProviderItemRow[]> {
   const byEntityAndId = new Map<string, ProviderItemRow[]>();
-  for (const [entityType, requestedIds] of idsByEntityType) {
+  for (const [entityType, requestedIds] of requestedProviderItemIds(prepared)) {
     for (const ids of chunks(Array.from(requestedIds))) {
       const marks = ids.map(() => "?").join(",");
       const rows = db.prepare(`
-        SELECT
-          provider_item.provider,
-          provider_item.entity_type,
-          provider_item.provider_id,
-          COALESCE(provider_item.artist_mbid, recording.artist_mbid) AS artist_mbid,
-          provider_item.release_group_mbid,
-          provider_item.release_mbid,
-          provider_item.track_mbid,
-          COALESCE(provider_item.recording_mbid, recording.mbid) AS recording_mbid,
-          provider_item.library_slot,
-          provider_item.updated_at
-        FROM ProviderItems provider_item
-        LEFT JOIN Recordings recording ON recording.id = provider_item.recording_id
-        WHERE provider_item.entity_type = ?
-          AND provider_item.provider_id IN (${marks})
-        ORDER BY provider_item.updated_at DESC, provider_item.provider ASC
+        SELECT id, provider, entity_type, provider_id
+        FROM ProviderItems
+        WHERE entity_type = ?
+          AND provider_id IN (${marks})
+        ORDER BY updated_at DESC, provider ASC, id DESC
       `).all(entityType, ...ids) as ProviderItemRow[];
       for (const row of rows) {
-        const key = providerItemKey(String(row.entity_type), String(row.provider_id));
+        const key = providerItemKey(row.entity_type, row.provider_id);
         const candidates = byEntityAndId.get(key) ?? [];
         candidates.push(row);
         byEntityAndId.set(key, candidates);
@@ -243,208 +239,443 @@ function loadProviderItems(prepared: PreparedIdentityInput[]): Map<string, Provi
 
 function pickProviderItem(
   providerItems: Map<string, ProviderItemRow[]>,
-  entityType: string | null,
+  entityTypes: string[],
   providerId: string | null,
   provider: string | null,
 ): ProviderItemRow | null {
-  if (!entityType || !providerId) return null;
-  const candidates = providerItems.get(providerItemKey(entityType, providerId)) ?? [];
-  if (!provider) return candidates[0] ?? null;
-  return candidates.find((candidate) => candidate.provider === provider) ?? null;
-}
-
-function selectedProviderContainsId(selectedProviderId: string | null, providerId: string): boolean {
-  return String(selectedProviderId || "")
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .includes(providerId);
-}
-
-function loadReleaseGroupSlots(evidence: PreparedIdentityEvidence[]): ReleaseGroupSlotRow[] {
-  const rowsById = new Map<number, ReleaseGroupSlotRow>();
-  const releaseGroupMbids = uniqueTexts(
-    evidence.map((entry) => nullableText(entry.prepared.input.canonicalReleaseGroupMbid)),
+  if (!providerId) return null;
+  const candidates = entityTypes.flatMap(
+    (entityType) => providerItems.get(providerItemKey(entityType, providerId)) ?? [],
   );
-  for (const mbids of chunks(releaseGroupMbids)) {
-    const marks = mbids.map(() => "?").join(",");
-    const rows = db.prepare(`
-      SELECT id, artist_mbid, release_group_mbid, selected_provider_id,
-             selected_release_mbid, selected_provider, slot
-      FROM ReleaseGroupSlots
-      WHERE release_group_mbid IN (${marks})
-      ORDER BY id ASC
-    `).all(...mbids) as ReleaseGroupSlotRow[];
-    for (const row of rows) rowsById.set(Number(row.id), row);
+  if (provider) {
+    return candidates.find((candidate) => candidate.provider === provider) ?? null;
   }
-
-  // Rows without an RG hint can point at one native provider album inside a
-  // semicolon-delimited hybrid. Keep the old exact/boundary semantics, but load
-  // every requested album in bounded batches instead of probing once per file.
-  const fallbackAlbumIds = uniqueTexts(
-    evidence
-      .filter((entry) => !nullableText(entry.prepared.input.canonicalReleaseGroupMbid))
-      .map((entry) => entry.prepared.albumId),
-  );
-  for (const albumIds of chunks(fallbackAlbumIds, 80)) {
-    const exactMarks = albumIds.map(() => "?").join(",");
-    const likeClauses = albumIds
-      .map(() => "(selected_provider_id LIKE ? OR selected_provider_id LIKE ? OR selected_provider_id LIKE ?)")
-      .join(" OR ");
-    const likeParams = albumIds.flatMap((albumId) => [
-      `${albumId};%`,
-      `%;${albumId};%`,
-      `%;${albumId}`,
-    ]);
-    const rows = db.prepare(`
-      SELECT id, artist_mbid, release_group_mbid, selected_provider_id,
-             selected_release_mbid, selected_provider, slot
-      FROM ReleaseGroupSlots
-      WHERE selected_provider_id IN (${exactMarks})
-         OR ${likeClauses}
-      ORDER BY id ASC
-    `).all(...albumIds, ...likeParams) as ReleaseGroupSlotRow[];
-    for (const row of rows) rowsById.set(Number(row.id), row);
-  }
-  return Array.from(rowsById.values()).sort((left, right) => Number(left.id) - Number(right.id));
+  const providers = new Set(candidates.map((candidate) => candidate.provider));
+  return providers.size <= 1 ? candidates[0] ?? null : null;
 }
 
-function pickReleaseGroupSlot(
-  rows: ReleaseGroupSlotRow[],
-  prepared: PreparedIdentityInput,
-  preferredSlot: library_slot,
-): ReleaseGroupSlotRow | null {
-  const releaseGroupMbid = nullableText(prepared.input.canonicalReleaseGroupMbid);
-  const candidates = releaseGroupMbid
-    ? rows.filter((row) => row.release_group_mbid === releaseGroupMbid)
-    : prepared.albumId
-      ? rows.filter((row) => selectedProviderContainsId(row.selected_provider_id, prepared.albumId!))
-      : [];
-  return candidates.find((row) => nullableText(row.slot)?.toLowerCase() === preferredSlot)
-    ?? candidates[0]
-    ?? null;
+function addCanonicalMatch(
+  byProviderItem: Map<number, CanonicalMatch[]>,
+  match: CanonicalMatch,
+): void {
+  const matches = byProviderItem.get(match.providerItemId) ?? [];
+  matches.push(match);
+  matches.sort((left, right) => right.confidence - left.confidence);
+  byProviderItem.set(match.providerItemId, matches);
 }
 
-function loadSelectedTracks(evidence: PreparedIdentityEvidence[]): Map<string, MbTrackRow> {
-  const pairs = new Map<string, [string, string]>();
-  for (const entry of evidence) {
-    const releaseMbid = nullableText(entry.releaseGroupSlot?.selected_release_mbid);
-    const recordingMbid = nullableText(entry.prepared.input.canonicalRecordingMbid)
-      ?? nullableText(entry.providerMedia?.recording_mbid);
-    if (releaseMbid && recordingMbid) {
-      pairs.set(trackPairKey(releaseMbid, recordingMbid), [releaseMbid, recordingMbid]);
+function loadCanonicalMatches(providerItems: ProviderItemRow[]): Map<number, CanonicalMatch[]> {
+  const byProviderItem = new Map<number, CanonicalMatch[]>();
+  const ids = Array.from(new Set(providerItems.map((item) => item.id)));
+  for (const itemIds of chunks(ids)) {
+    const marks = itemIds.map(() => "?").join(",");
+
+    const releases = db.prepare(`
+      SELECT
+        release_match.provider_release_item_id AS provider_item_id,
+        release_match.provider_release_item_id AS provider_release_item_id,
+        release_group.artist_mbid,
+        release_group.mbid AS release_group_mbid,
+        release.mbid AS release_mbid,
+        NULL AS track_mbid,
+        NULL AS recording_mbid,
+        release_match.confidence
+      FROM ProviderReleaseMatches release_match
+      JOIN AlbumReleases release ON release.id = release_match.release_id
+      JOIN Albums release_group ON release_group.id = release.release_group_id
+      WHERE release_match.provider_release_item_id IN (${marks})
+        AND release_match.match_state = 'accepted'
+      ORDER BY release_match.confidence DESC, release_match.id
+    `).all(...itemIds) as Array<Record<string, unknown>>;
+    for (const row of releases) {
+      addCanonicalMatch(byProviderItem, {
+        providerItemId: Number(row.provider_item_id),
+        providerReleaseItemId: Number(row.provider_release_item_id),
+        artistMbid: nullableText(row.artist_mbid),
+        releaseGroupMbid: nullableText(row.release_group_mbid),
+        releaseMbid: nullableText(row.release_mbid),
+        trackMbid: null,
+        recordingMbid: null,
+        confidence: Number(row.confidence || 0),
+      });
+    }
+
+    const tracks = db.prepare(`
+      SELECT
+        member.member_item_id AS provider_item_id,
+        release_match.provider_release_item_id AS provider_release_item_id,
+        release_group.artist_mbid,
+        release_group.mbid AS release_group_mbid,
+        release.mbid AS release_mbid,
+        track.mbid AS track_mbid,
+        recording.mbid AS recording_mbid,
+        track_match.confidence
+      FROM ProviderTrackMatches track_match
+      JOIN ProviderReleaseMembers member
+        ON member.id = track_match.provider_release_member_id
+      JOIN ProviderReleaseMatches release_match
+        ON release_match.id = track_match.provider_release_match_id
+       AND release_match.match_state = 'accepted'
+      JOIN AlbumReleases release ON release.id = release_match.release_id
+      JOIN Albums release_group ON release_group.id = release.release_group_id
+      JOIN Tracks track ON track.id = track_match.track_id
+      JOIN Recordings recording ON recording.id = track_match.recording_id
+      WHERE member.member_item_id IN (${marks})
+        AND track_match.match_state = 'accepted'
+      ORDER BY track_match.confidence DESC, track_match.id
+    `).all(...itemIds) as Array<Record<string, unknown>>;
+    for (const row of tracks) {
+      addCanonicalMatch(byProviderItem, {
+        providerItemId: Number(row.provider_item_id),
+        providerReleaseItemId: Number(row.provider_release_item_id),
+        artistMbid: nullableText(row.artist_mbid),
+        releaseGroupMbid: nullableText(row.release_group_mbid),
+        releaseMbid: nullableText(row.release_mbid),
+        trackMbid: nullableText(row.track_mbid),
+        recordingMbid: nullableText(row.recording_mbid),
+        confidence: Number(row.confidence || 0),
+      });
+    }
+
+    const videos = db.prepare(`
+      SELECT
+        video_match.provider_video_item_id AS provider_item_id,
+        NULL AS provider_release_item_id,
+        recording.artist_mbid,
+        NULL AS release_group_mbid,
+        NULL AS release_mbid,
+        NULL AS track_mbid,
+        recording.mbid AS recording_mbid,
+        video_match.confidence
+      FROM ProviderVideoMatches video_match
+      JOIN Recordings recording ON recording.id = video_match.recording_id
+      WHERE video_match.provider_video_item_id IN (${marks})
+        AND video_match.match_state = 'accepted'
+      ORDER BY video_match.confidence DESC, video_match.id
+    `).all(...itemIds) as Array<Record<string, unknown>>;
+    for (const row of videos) {
+      addCanonicalMatch(byProviderItem, {
+        providerItemId: Number(row.provider_item_id),
+        providerReleaseItemId: null,
+        artistMbid: nullableText(row.artist_mbid),
+        releaseGroupMbid: null,
+        releaseMbid: null,
+        trackMbid: null,
+        recordingMbid: nullableText(row.recording_mbid),
+        confidence: Number(row.confidence || 0),
+      });
+    }
+
+    const artists = db.prepare(`
+      SELECT
+        artist_match.provider_artist_item_id AS provider_item_id,
+        artist.mbid AS artist_mbid,
+        artist_match.confidence
+      FROM ProviderArtistMatches artist_match
+      JOIN ArtistMetadata artist ON artist.id = artist_match.artist_id
+      WHERE artist_match.provider_artist_item_id IN (${marks})
+        AND artist_match.match_state = 'accepted'
+      ORDER BY artist_match.confidence DESC, artist_match.id
+    `).all(...itemIds) as Array<Record<string, unknown>>;
+    for (const row of artists) {
+      addCanonicalMatch(byProviderItem, {
+        providerItemId: Number(row.provider_item_id),
+        providerReleaseItemId: null,
+        artistMbid: nullableText(row.artist_mbid),
+        releaseGroupMbid: null,
+        releaseMbid: null,
+        trackMbid: null,
+        recordingMbid: null,
+        confidence: Number(row.confidence || 0),
+      });
     }
   }
+  return byProviderItem;
+}
 
-  const byPair = new Map<string, MbTrackRow>();
-  for (const requestedPairs of chunks(Array.from(pairs.values()), 250)) {
+function loadCanonicalReleases(mbids: string[]): Map<string, CanonicalReleaseRow> {
+  const byMbid = new Map<string, CanonicalReleaseRow>();
+  for (const releaseMbids of chunks(uniqueTexts(mbids))) {
+    const marks = releaseMbids.map(() => "?").join(",");
+    const rows = db.prepare(`
+      SELECT
+        release.mbid,
+        release_group.mbid AS release_group_mbid,
+        release_group.artist_mbid
+      FROM AlbumReleases release
+      JOIN Albums release_group ON release_group.id = release.release_group_id
+      WHERE release.mbid IN (${marks})
+    `).all(...releaseMbids) as Array<{
+      mbid: string;
+      release_group_mbid: string;
+      artist_mbid: string;
+    }>;
+    for (const row of rows) {
+      byMbid.set(row.mbid, {
+        mbid: row.mbid,
+        releaseGroupMbid: row.release_group_mbid,
+        artistMbid: row.artist_mbid,
+      });
+    }
+  }
+  return byMbid;
+}
+
+function loadCanonicalTracks(mbids: string[]): Map<string, CanonicalTrackRow> {
+  const byMbid = new Map<string, CanonicalTrackRow>();
+  for (const trackMbids of chunks(uniqueTexts(mbids))) {
+    const marks = trackMbids.map(() => "?").join(",");
+    const rows = db.prepare(`
+      SELECT
+        track.mbid,
+        release.mbid AS release_mbid,
+        release_group.mbid AS release_group_mbid,
+        recording.mbid AS recording_mbid,
+        release_group.artist_mbid
+      FROM Tracks track
+      JOIN AlbumReleases release ON release.id = track.album_release_id
+      JOIN Albums release_group ON release_group.id = release.release_group_id
+      JOIN Recordings recording ON recording.id = track.recording_id
+      WHERE track.mbid IN (${marks})
+    `).all(...trackMbids) as Array<{
+      mbid: string;
+      release_mbid: string;
+      release_group_mbid: string;
+      recording_mbid: string;
+      artist_mbid: string | null;
+    }>;
+    for (const row of rows) {
+      byMbid.set(row.mbid, {
+        mbid: row.mbid,
+        releaseMbid: row.release_mbid,
+        releaseGroupMbid: row.release_group_mbid,
+        recordingMbid: row.recording_mbid,
+        artistMbid: row.artist_mbid,
+      });
+    }
+  }
+  return byMbid;
+}
+
+function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, LibrarySelection> {
+  const byGroupAndClass = new Map<string, LibrarySelection>();
+  for (const groupMbids of chunks(uniqueTexts(releaseGroupMbids))) {
+    const marks = groupMbids.map(() => "?").join(",");
+    const rows = db.prepare(`
+      WITH ranked AS (
+        SELECT
+          release_group.mbid AS release_group_mbid,
+          release.mbid AS release_mbid,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END AS library_class,
+          provider_match.provider_release_item_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              release_group.id,
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE allowed.value = 'spatial'
+              ) THEN 'spatial' ELSE 'stereo' END
+            ORDER BY library_release.updated_at DESC, library_release.id DESC
+          ) AS selection_rank
+        FROM LibraryReleases library_release
+        JOIN AlbumReleases release ON release.id = library_release.release_id
+        JOIN Albums release_group ON release_group.id = release.release_group_id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
+        LEFT JOIN AcquisitionPlans plan
+          ON plan.library_release_id = library_release.id
+         AND plan.state = 'current'
+        LEFT JOIN AcquisitionPlanSources source
+          ON source.plan_id = plan.id
+         AND source.role = 'primary'
+        LEFT JOIN ProviderReleaseMatches provider_match
+          ON provider_match.id = source.provider_release_match_id
+         AND provider_match.match_state = 'accepted'
+        WHERE release_group.mbid IN (${marks})
+      )
+      SELECT
+        release_group_mbid,
+        release_mbid,
+        library_class,
+        provider_release_item_id
+      FROM ranked
+      WHERE selection_rank = 1
+    `).all(...groupMbids) as Array<{
+      release_group_mbid: string;
+      release_mbid: string;
+      library_class: "stereo" | "spatial";
+      provider_release_item_id: number | null;
+    }>;
+    for (const row of rows) {
+      byGroupAndClass.set(selectionKey(row.release_group_mbid, row.library_class), {
+        releaseGroupMbid: row.release_group_mbid,
+        releaseMbid: row.release_mbid,
+        libraryClass: row.library_class,
+        providerReleaseItemId: row.provider_release_item_id,
+      });
+    }
+  }
+  return byGroupAndClass;
+}
+
+function chooseMatch(
+  matches: CanonicalMatch[],
+  releaseGroupHint: string | null,
+  selection: LibrarySelection | null,
+): CanonicalMatch | null {
+  const candidates = releaseGroupHint
+    ? matches.filter((match) => match.releaseGroupMbid === releaseGroupHint)
+    : matches;
+  return candidates.find((match) =>
+    Boolean(
+      selection
+      && match.releaseMbid === selection.releaseMbid
+      && (
+        !selection.providerReleaseItemId
+        || match.providerReleaseItemId === selection.providerReleaseItemId
+      )
+    ),
+  ) ?? candidates[0] ?? null;
+}
+
+function loadTracksForReleaseRecording(
+  pairs: Array<[string, string]>,
+): Map<string, CanonicalTrackRow> {
+  const byPair = new Map<string, CanonicalTrackRow>();
+  const uniquePairs = Array.from(new Map(
+    pairs.map((pair) => [trackPairKey(pair[0], pair[1]), pair]),
+  ).values());
+  for (const requestedPairs of chunks(uniquePairs, 250)) {
     const valuesSql = requestedPairs.map(() => "(?, ?)").join(",");
-    const params = requestedPairs.flatMap(([releaseMbid, recordingMbid]) => [releaseMbid, recordingMbid]);
+    const params = requestedPairs.flatMap((pair) => pair);
     const rows = db.prepare(`
       WITH requested(release_mbid, recording_mbid) AS (
         VALUES ${valuesSql}
       )
-      SELECT track.mbid, track.release_mbid, track.recording_mbid
-      FROM Tracks track
-      JOIN requested
-        ON requested.release_mbid = track.release_mbid
-       AND requested.recording_mbid = track.recording_mbid
-      ORDER BY track.mbid ASC
-    `).all(...params) as MbTrackRow[];
+      SELECT
+        track.mbid,
+        release.mbid AS release_mbid,
+        release_group.mbid AS release_group_mbid,
+        recording.mbid AS recording_mbid,
+        release_group.artist_mbid
+      FROM requested
+      JOIN AlbumReleases release ON release.mbid = requested.release_mbid
+      JOIN Albums release_group ON release_group.id = release.release_group_id
+      JOIN Tracks track ON track.album_release_id = release.id
+      JOIN Recordings recording
+        ON recording.id = track.recording_id
+       AND recording.mbid = requested.recording_mbid
+      ORDER BY track.medium_position, track.position, track.id
+    `).all(...params) as Array<{
+      mbid: string;
+      release_mbid: string;
+      release_group_mbid: string;
+      recording_mbid: string;
+      artist_mbid: string | null;
+    }>;
     for (const row of rows) {
       const key = trackPairKey(row.release_mbid, row.recording_mbid);
-      if (!byPair.has(key)) byPair.set(key, row);
+      if (!byPair.has(key)) {
+        byPair.set(key, {
+          mbid: row.mbid,
+          releaseMbid: row.release_mbid,
+          releaseGroupMbid: row.release_group_mbid,
+          recordingMbid: row.recording_mbid,
+          artistMbid: row.artist_mbid,
+        });
+      }
     }
   }
   return byPair;
 }
 
-function loadInputTracks(prepared: PreparedIdentityInput[]): Map<string, MbTrackRow> {
-  const byMbid = new Map<string, MbTrackRow>();
-  const trackMbids = uniqueTexts(prepared.map((entry) => nullableText(entry.input.canonicalTrackMbid)));
-  for (const mbids of chunks(trackMbids)) {
-    const marks = mbids.map(() => "?").join(",");
-    const rows = db.prepare(`
-      SELECT mbid, release_mbid, recording_mbid
-      FROM Tracks
-      WHERE mbid IN (${marks})
-    `).all(...mbids) as MbTrackRow[];
-    for (const row of rows) byMbid.set(row.mbid, row);
-  }
-  return byMbid;
-}
-
-function resolveLibraryFileIdentityFromEvidence(evidence: PreparedIdentityEvidence): LibraryFileIdentity {
+function resolveEvidence(
+  evidence: IdentityEvidence,
+  selectedTracks: Map<string, CanonicalTrackRow>,
+  selections: Map<string, LibrarySelection>,
+): LibraryFileIdentity {
   const {
     prepared,
     artist,
     providerAlbum,
     providerMedia,
-    preferredSlot,
-    releaseGroupSlot,
-    selectedTrack,
+    inputRelease,
     inputTrack,
+    albumMatches,
+    mediaMatches,
   } = evidence;
   const { input } = prepared;
-  // When a ReleaseGroupSlot is bound (especially composite hybrids), slot /
-  // remapped track identity outranks native ProviderItems RG/track MBIDs so
-  // organize/naming/tags follow the monitored hybrid, not the source albums.
-  const slotReleaseGroupMbid = nullableText(releaseGroupSlot?.release_group_mbid);
-  const slotReleaseMbid = nullableText(releaseGroupSlot?.selected_release_mbid);
-  const slotTrackMbid = nullableText(selectedTrack?.mbid);
-  const inputTrackMbid = nullableText(input.canonicalTrackMbid);
-  // Explicit job track MBIDs win only when they belong on the selected
-  // release. Hybrid downloads often carry the *native* source-album track
-  // MBID (Pompeii=1 on its single); keeping that here produced `01 - Pompeii`
-  // on Killing Me Softly instead of hybrid track 2.
-  const inputTrackOnSelectedRelease = Boolean(
-    inputTrackMbid && slotReleaseMbid && inputTrack?.release_mbid === slotReleaseMbid,
+  const libraryClass = prepared.preferredSlot === "spatial" ? "spatial" : "stereo";
+  const selection = evidence.releaseGroupMbid
+    ? selections.get(selectionKey(evidence.releaseGroupMbid, libraryClass)) ?? null
+    : null;
+  const albumMatch = chooseMatch(albumMatches, evidence.releaseGroupMbid, selection);
+  const mediaMatch = chooseMatch(mediaMatches, evidence.releaseGroupMbid, selection);
+  const selectedTrack = evidence.releaseMbid && evidence.recordingMbid
+    ? selectedTracks.get(trackPairKey(evidence.releaseMbid, evidence.recordingMbid)) ?? null
+    : null;
+  const inputTrackOnRelease = Boolean(
+    inputTrack
+    && evidence.releaseMbid
+    && inputTrack.releaseMbid === evidence.releaseMbid,
   );
-  const resolvedTrackMbid = inputTrackOnSelectedRelease
-    ? inputTrackMbid
-    : (slotTrackMbid
-      ?? (slotReleaseMbid ? null : inputTrackMbid)
-      ?? nullableText(providerMedia?.track_mbid)
-      ?? null);
+  const mediaTrackOnRelease = Boolean(
+    mediaMatch?.trackMbid
+    && evidence.releaseMbid
+    && mediaMatch.releaseMbid === evidence.releaseMbid,
+  );
+  const resolvedTrack = inputTrackOnRelease
+    ? inputTrack
+    : selectedTrack
+      ?? (mediaTrackOnRelease ? {
+        mbid: mediaMatch!.trackMbid!,
+        releaseMbid: mediaMatch!.releaseMbid!,
+        releaseGroupMbid: mediaMatch!.releaseGroupMbid!,
+        recordingMbid: mediaMatch!.recordingMbid!,
+        artistMbid: mediaMatch!.artistMbid,
+      } : null)
+      ?? (!evidence.releaseMbid ? inputTrack : null);
 
   return {
     canonicalArtistMbid:
       nullableText(input.canonicalArtistMbid)
-      ?? nullableText(providerMedia?.artist_mbid)
-      ?? nullableText(providerAlbum?.artist_mbid)
-      ?? nullableText(artist?.mbid)
+      ?? resolvedTrack?.artistMbid
+      ?? mediaMatch?.artistMbid
+      ?? albumMatch?.artistMbid
+      ?? inputRelease?.artistMbid
+      ?? artist?.mbid
       ?? null,
     canonicalReleaseGroupMbid:
-      nullableText(input.canonicalReleaseGroupMbid)
-      ?? slotReleaseGroupMbid
-      // Prefer the album offer's RG over the track row's. Hybrid source tracks
-      // are often mis-matched onto unrelated singles (Rehab vs Back to Black).
-      ?? nullableText(providerAlbum?.release_group_mbid)
-      ?? nullableText(providerMedia?.release_group_mbid)
-      ?? null,
+      evidence.releaseGroupMbid,
     canonicalReleaseMbid:
-      nullableText(input.canonicalReleaseMbid)
-      ?? slotReleaseMbid
-      ?? nullableText(providerMedia?.release_mbid)
-      ?? nullableText(providerAlbum?.release_mbid)
-      ?? null,
-    canonicalTrackMbid: resolvedTrackMbid,
+      evidence.releaseMbid,
+    canonicalTrackMbid:
+      resolvedTrack?.mbid ?? null,
     canonicalRecordingMbid:
       nullableText(input.canonicalRecordingMbid)
-      ?? nullableText(selectedTrack?.recording_mbid)
-      ?? nullableText(providerMedia?.recording_mbid)
+      ?? resolvedTrack?.recordingMbid
+      ?? mediaMatch?.recordingMbid
+      ?? inputTrack?.recordingMbid
       ?? null,
     provider: providerMedia?.provider ?? providerAlbum?.provider ?? prepared.provider ?? null,
     providerEntityType: prepared.providerEntityType,
     providerId: prepared.providerId,
-    librarySlot: preferredSlot,
+    librarySlot: prepared.preferredSlot,
   };
 }
 
 /**
- * Resolve a rename/import batch against one shared evidence snapshot. The
- * single-row API below is intentionally a wrapper over this path so hybrid-slot
- * precedence cannot drift between normal imports and Lidarr-style bulk renames.
+ * Resolve a rename/import batch from explicit canonical choices, typed provider
+ * matches, and selected LibraryReleases. Provider shadow MBIDs and positional
+ * reconstruction are intentionally excluded.
  */
 export function resolveLibraryFileIdentities(
   inputs: LibraryFileIdentityInput[],
@@ -454,56 +685,118 @@ export function resolveLibraryFileIdentities(
   const prepared = inputs.map(prepareIdentityInput);
   const artists = loadArtists(prepared);
   const providerItems = loadProviderItems(prepared);
-  const evidence: PreparedIdentityEvidence[] = prepared.map((entry) => {
-    const providerAlbum = pickProviderItem(providerItems, "album", entry.albumId, entry.provider);
+  const allProviderItems = Array.from(providerItems.values()).flat();
+  const canonicalMatches = loadCanonicalMatches(allProviderItems);
+  const releases = loadCanonicalReleases(
+    prepared.map((entry) => nullableText(entry.input.canonicalReleaseMbid)).filter(
+      (value): value is string => Boolean(value),
+    ),
+  );
+  const inputTracks = loadCanonicalTracks(
+    prepared.map((entry) => nullableText(entry.input.canonicalTrackMbid)).filter(
+      (value): value is string => Boolean(value),
+    ),
+  );
+
+  const evidence = prepared.map((entry): IdentityEvidence => {
+    const providerAlbum = pickProviderItem(
+      providerItems,
+      ["release", "album"],
+      entry.albumId,
+      entry.provider,
+    );
+    const mediaEntityTypes = entry.providerEntityType === "album"
+      ? ["release", "album"]
+      : entry.providerEntityType ? [entry.providerEntityType] : [];
     const providerMedia = pickProviderItem(
       providerItems,
-      entry.providerEntityType,
+      mediaEntityTypes,
       entry.providerId,
       entry.provider,
     );
+    const inputReleaseMbid = nullableText(entry.input.canonicalReleaseMbid);
+    const inputRelease = inputReleaseMbid ? releases.get(inputReleaseMbid) ?? null : null;
+    const inputTrackMbid = nullableText(entry.input.canonicalTrackMbid);
+    const inputTrack = inputTrackMbid ? inputTracks.get(inputTrackMbid) ?? null : null;
+    const albumMatches = providerAlbum ? canonicalMatches.get(providerAlbum.id) ?? [] : [];
+    const mediaMatches = providerMedia ? canonicalMatches.get(providerMedia.id) ?? [] : [];
+    const explicitGroup = nullableText(entry.input.canonicalReleaseGroupMbid);
+    const provisionalGroup = explicitGroup
+      ?? inputRelease?.releaseGroupMbid
+      ?? inputTrack?.releaseGroupMbid
+      ?? albumMatches[0]?.releaseGroupMbid
+      ?? mediaMatches[0]?.releaseGroupMbid
+      ?? null;
+
     return {
       prepared: entry,
       artist: entry.artistId ? artists.get(entry.artistId) ?? null : null,
       providerAlbum,
       providerMedia,
-      preferredSlot: inferLibrarySlot({
-        ...entry.input,
-        librarySlot:
-          entry.input.librarySlot
-          ?? providerMedia?.library_slot
-          ?? providerAlbum?.library_slot,
-        quality: entry.input.quality,
-      }),
-      releaseGroupSlot: null,
+      inputRelease,
+      inputTrack,
+      albumMatches,
+      mediaMatches,
+      releaseGroupMbid: provisionalGroup,
+      releaseMbid: null,
+      recordingMbid:
+        nullableText(entry.input.canonicalRecordingMbid)
+        ?? inputTrack?.recordingMbid
+        ?? mediaMatches[0]?.recordingMbid
+        ?? null,
       selectedTrack: null,
-      inputTrack: null,
     };
   });
 
-  const slots = loadReleaseGroupSlots(evidence);
+  const releaseGroupMbids = uniqueTexts(
+    evidence.flatMap((entry) => [
+      entry.releaseGroupMbid,
+      ...entry.albumMatches.map((match) => match.releaseGroupMbid),
+      ...entry.mediaMatches.map((match) => match.releaseGroupMbid),
+    ]),
+  );
+  const selections = loadLibrarySelections(releaseGroupMbids);
   for (const entry of evidence) {
-    entry.releaseGroupSlot = pickReleaseGroupSlot(
-      slots,
-      entry.prepared,
-      entry.preferredSlot,
-    );
+      const libraryClass = entry.prepared.preferredSlot === "spatial" ? "spatial" : "stereo";
+      const selection = entry.releaseGroupMbid
+        ? selections.get(selectionKey(entry.releaseGroupMbid, libraryClass)) ?? null
+        : null;
+      const albumMatch = chooseMatch(entry.albumMatches, entry.releaseGroupMbid, selection);
+      const mediaMatch = chooseMatch(entry.mediaMatches, entry.releaseGroupMbid, selection);
+      const explicitRelease = entry.inputRelease
+        && (
+          !entry.releaseGroupMbid
+          || entry.inputRelease.releaseGroupMbid === entry.releaseGroupMbid
+        )
+        ? entry.inputRelease
+        : null;
+      entry.releaseGroupMbid = entry.releaseGroupMbid
+        ?? albumMatch?.releaseGroupMbid
+        ?? mediaMatch?.releaseGroupMbid
+        ?? null;
+      const selectedForResolvedGroup = entry.releaseGroupMbid
+        ? selections.get(selectionKey(entry.releaseGroupMbid, libraryClass)) ?? null
+        : null;
+      entry.releaseMbid =
+        explicitRelease?.mbid
+        ?? selectedForResolvedGroup?.releaseMbid
+        ?? albumMatch?.releaseMbid
+        ?? mediaMatch?.releaseMbid
+        ?? entry.inputTrack?.releaseMbid
+        ?? null;
+      entry.recordingMbid =
+        nullableText(entry.prepared.input.canonicalRecordingMbid)
+        ?? entry.inputTrack?.recordingMbid
+        ?? mediaMatch?.recordingMbid
+        ?? null;
   }
 
-  const selectedTracks = loadSelectedTracks(evidence);
-  const inputTracks = loadInputTracks(prepared);
-  for (const entry of evidence) {
-    const releaseMbid = nullableText(entry.releaseGroupSlot?.selected_release_mbid);
-    const recordingMbid = nullableText(entry.prepared.input.canonicalRecordingMbid)
-      ?? nullableText(entry.providerMedia?.recording_mbid);
-    entry.selectedTrack = releaseMbid && recordingMbid
-      ? selectedTracks.get(trackPairKey(releaseMbid, recordingMbid)) ?? null
-      : null;
-    const inputTrackMbid = nullableText(entry.prepared.input.canonicalTrackMbid);
-    entry.inputTrack = inputTrackMbid ? inputTracks.get(inputTrackMbid) ?? null : null;
-  }
-
-  return evidence.map(resolveLibraryFileIdentityFromEvidence);
+  const selectedTracks = loadTracksForReleaseRecording(
+    evidence
+      .filter((entry) => entry.releaseMbid && entry.recordingMbid)
+      .map((entry) => [entry.releaseMbid!, entry.recordingMbid!]),
+  );
+  return evidence.map((entry) => resolveEvidence(entry, selectedTracks, selections));
 }
 
 export function resolveLibraryFileIdentity(input: LibraryFileIdentityInput): LibraryFileIdentity {
