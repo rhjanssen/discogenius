@@ -21,79 +21,76 @@ export function getExistingLibraryMediaIds(
     providerId: string,
     provider?: string | null,
 ): string[] {
-    const albumIds = providerId.split(";").filter(Boolean);
     const normalizedProvider = String(provider || "").trim() || null;
     const rows = type === 'album'
-        ? (albumIds.length > 0
-            ? db.prepare(`
-                WITH provider_albums(provider_id) AS (
-                    VALUES ${albumIds.map(() => "(?)").join(", ")}
-                ),
-                selected_releases AS (
-                    SELECT DISTINCT
-                        COALESCE(pi.release_mbid, rgs.selected_release_mbid) AS release_mbid,
-                        COALESCE(rgs.slot, pi.library_slot, 'stereo') AS library_slot
-                    FROM provider_albums input
-                    LEFT JOIN ProviderItems pi
-                      ON pi.provider_id = input.provider_id
-                     AND pi.entity_type = 'album'
-                     AND (? IS NULL OR pi.provider = ?)
-                    LEFT JOIN ReleaseGroupSlots rgs
-                      ON (
-                        rgs.selected_provider_id = input.provider_id
-                        OR (
-                          pi.release_group_mbid IS NOT NULL
-                          AND rgs.release_group_mbid = pi.release_group_mbid
-                        )
-                      )
-                     AND (? IS NULL OR rgs.selected_provider = ?)
-                    WHERE COALESCE(pi.release_mbid, rgs.selected_release_mbid) IS NOT NULL
-                )
+        ? db.prepare(`
                 SELECT
                     lf.file_path,
                     lf.library_root,
-                    COALESCE(lf.canonical_track_mbid, lf.canonical_recording_mbid, lf.provider_id) AS media_id
-                FROM selected_releases sr
-                JOIN Tracks track ON track.release_mbid = sr.release_mbid
+                    CAST(lf.track_id AS TEXT) AS media_id
+                FROM ProviderItems provider_release
+                JOIN ProviderReleaseMatches release_match
+                  ON release_match.provider_release_item_id = provider_release.id
+                 AND release_match.match_state = 'accepted'
+                JOIN LibraryReleases library_release
+                  ON library_release.release_id = release_match.release_id
+                JOIN Tracks track
+                  ON track.album_release_id = library_release.release_id
                 JOIN TrackFiles lf
-                  ON (
-                    lf.canonical_track_mbid = track.mbid
-                    OR (
-                      lf.canonical_track_mbid IS NULL
-                      AND lf.canonical_recording_mbid = track.recording_mbid
-                    )
-                  )
-                 AND lf.file_type = 'track'
-                 AND lf.library_slot = sr.library_slot
+                  ON lf.library_id = library_release.library_id
+                 AND lf.track_id = track.id
+                 AND lf.file_class = 'audio'
+                WHERE provider_release.provider_id = ?
+                  AND provider_release.entity_type IN ('release', 'album')
+                  AND (? IS NULL OR provider_release.provider = ?)
             `).all(
-                ...albumIds,
-                normalizedProvider,
-                normalizedProvider,
+                providerId,
                 normalizedProvider,
                 normalizedProvider,
             ) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>
-            : [])
-        : db.prepare(`
+        : type === 'track'
+          ? db.prepare(`
                 SELECT
                     lf.file_path,
                     lf.library_root,
-                    COALESCE(lf.canonical_track_mbid, lf.canonical_recording_mbid, lf.provider_id) AS media_id
-                FROM ProviderItems pi
+                    CAST(lf.track_id AS TEXT) AS media_id
+                FROM ProviderItems provider_track
+                JOIN ProviderReleaseMembers release_member
+                  ON release_member.member_item_id = provider_track.id
+                JOIN ProviderTrackMatches track_match
+                  ON track_match.provider_release_member_id = release_member.id
+                 AND track_match.match_state = 'accepted'
                 JOIN TrackFiles lf
-                  ON lf.provider = pi.provider
-                 AND lf.provider_entity_type = pi.entity_type
-                 AND lf.provider_id = pi.provider_id
-                 AND lf.file_type = ?
-                WHERE pi.provider_id = ?
-                  AND pi.entity_type = ?
-                  AND (? IS NULL OR pi.provider = ?)
+                  ON lf.track_id = track_match.track_id
+                 AND lf.file_class = 'audio'
+                WHERE provider_track.provider_id = ?
+                  AND provider_track.entity_type = 'track'
+                  AND (? IS NULL OR provider_track.provider = ?)
             `).all(
-            type === 'video' ? 'video' : 'track',
-            providerId,
-            type === 'video' ? 'video' : 'track',
-            normalizedProvider,
-            normalizedProvider,
-        ) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>;
+                providerId,
+                normalizedProvider,
+                normalizedProvider,
+            ) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>
+          : db.prepare(`
+                SELECT
+                    lf.file_path,
+                    lf.library_root,
+                    CAST(lf.recording_id AS TEXT) AS media_id
+                FROM ProviderItems provider_video
+                JOIN ProviderVideoMatches video_match
+                  ON video_match.provider_video_item_id = provider_video.id
+                 AND video_match.match_state = 'accepted'
+                JOIN TrackFiles lf
+                  ON lf.recording_id = video_match.recording_id
+                 AND lf.file_class = 'video'
+                WHERE provider_video.provider_id = ?
+                  AND provider_video.entity_type = 'video'
+                  AND (? IS NULL OR provider_video.provider = ?)
+            `).all(
+                providerId,
+                normalizedProvider,
+                normalizedProvider,
+            ) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>;
 
     return rows
         .filter((row) => {

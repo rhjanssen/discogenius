@@ -15,8 +15,10 @@ const { getExistingLibraryMediaIds, shouldQueueRedownloadForFailedImport } = awa
 
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM AcquisitionPlans").run();
+  db.prepare("DELETE FROM LibraryReleases").run();
+  db.prepare("DELETE FROM LibraryReleaseGroups").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -36,40 +38,87 @@ test("download recovery resolves existing album files through canonical provider
 
   db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
     .run("artist-local", "Artist", "artist-mbid");
-  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run("artist-mbid", "Artist");
-  db.prepare(`
+  const artist = db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+    RETURNING id
+  `).get("artist-mbid", "Artist") as { id: number };
+  const releaseGroup = db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
     VALUES (?, ?, ?, ?)
-  `).run("rg-mbid", "artist-mbid", "Album", "album");
-  db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run("release-mbid", "rg-mbid", "artist-mbid", "Album", 1, 1);
-  db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title, is_video) VALUES (?, ?, ?, ?)")
-    .run("recording-mbid", "artist-mbid", "Track", 0);
-  db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run("track-mbid", "release-mbid", "recording-mbid", "Track", 1, 1);
-  db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      title, library_slot
+    RETURNING id
+  `).get("rg-mbid", "artist-mbid", "Album", "album") as { id: number };
+  const release = db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_id, release_group_mbid, artist_metadata_id,
+      artist_mbid, title, track_count, media_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("tidal", "album", "provider-album", "artist-mbid", "rg-mbid", "release-mbid", "Album", "stereo");
+    RETURNING id
+  `).get(
+    "release-mbid",
+    releaseGroup.id,
+    "rg-mbid",
+    artist.id,
+    "artist-mbid",
+    "Album",
+    1,
+    1,
+  ) as { id: number };
+  const recording = db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_metadata_id, artist_mbid, title, is_video
+    ) VALUES (?, ?, ?, ?, ?)
+    RETURNING id
+  `).get("recording-mbid", artist.id, "artist-mbid", "Track", 0) as { id: number };
+  const track = db.prepare(`
+    INSERT INTO Tracks (
+      mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      title, medium_position, position
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING id
+  `).get(
+    "track-mbid",
+    release.id,
+    "release-mbid",
+    recording.id,
+    "recording-mbid",
+    "Track",
+    1,
+    1,
+  ) as { id: number };
+  const providerRelease = db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
+    RETURNING id
+  `).get("tidal", "release", "provider-album", "Album") as { id: number };
   db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, selected_release_mbid
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid", "rg-mbid", "stereo", 1, "tidal", "provider-album", "release-mbid");
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(providerRelease.id, release.id);
+  const library = db.prepare(`
+    SELECT id, root_path FROM Libraries WHERE name = 'Stereo'
+  `).get() as { id: number; root_path: string };
+  db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      reason, curation_version
+    ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+  `).run(library.id, releaseGroup.id);
+  db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(library.id, release.id);
   db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type,
-      provider_id, library_slot, file_path, relative_path, library_root, filename, extension, file_type
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider_id, release_group_id, album_release_id, track_id, recording_id,
+      library_slot, library_id, file_path, relative_path, library_root, filename,
+      extension, file_type, file_class
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "artist-local",
     "artist-mbid",
@@ -80,18 +129,24 @@ test("download recovery resolves existing album files through canonical provider
     "tidal",
     "track",
     "provider-track",
+    releaseGroup.id,
+    release.id,
+    track.id,
+    recording.id,
     "stereo",
+    library.id,
     filePath,
-    path.relative(path.join(tempDir, "library", "music"), filePath),
-    path.join(tempDir, "library", "music"),
+    path.relative(library.root_path, filePath),
+    library.root_path,
     "01 - Track.flac",
     "flac",
     "track",
+    "audio",
   );
 
   const recovered = getExistingLibraryMediaIds("album", "provider-album");
 
-  assert.deepEqual(recovered, ["track-mbid"]);
+  assert.deepEqual(recovered, [String(track.id)]);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderMedia'").get(), undefined);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ProviderAlbums'").get(), undefined);
 });
@@ -124,31 +179,66 @@ test("download recovery scopes equal video IDs to the command provider", () => {
 
   db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)")
     .run("artist-local", "Artist", "artist-mbid");
-  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
-    .run("artist-mbid", "Artist");
-  db.prepare(`
-    INSERT INTO Recordings (mbid, artist_mbid, title, is_video)
+  const artist = db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+    RETURNING id
+  `).get("artist-mbid", "Artist") as { id: number };
+  const recordings = db.prepare(`
+    INSERT INTO Recordings (mbid, artist_metadata_id, artist_mbid, title, is_video)
     VALUES
-      ('tidal-recording', 'artist-mbid', 'Tidal video', 1),
-      ('apple-recording', 'artist-mbid', 'Apple video', 1)
-  `).run();
-  db.prepare(`
+      ('tidal-recording', ?, 'artist-mbid', 'Tidal video', 1),
+      ('apple-recording', ?, 'artist-mbid', 'Apple video', 1)
+    RETURNING id, mbid
+  `).all(artist.id, artist.id) as Array<{ id: number; mbid: string }>;
+  const recordingByMbid = new Map(recordings.map((recording) => [recording.mbid, recording.id]));
+  const providerVideos = db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_mbid, title, library_slot
+      provider, entity_type, provider_id, title
     ) VALUES
-      ('tidal', 'video', '99', 'artist-mbid', 'tidal-recording', 'Tidal video', 'video'),
-      ('apple-music', 'video', '99', 'artist-mbid', 'apple-recording', 'Apple video', 'video')
-  `).run();
+      ('tidal', 'video', '99', 'Tidal video'),
+      ('apple-music', 'video', '99', 'Apple video')
+    RETURNING id, provider
+  `).all() as Array<{ id: number; provider: string }>;
+  const providerVideoByProvider = new Map(
+    providerVideos.map((item) => [item.provider, item.id]),
+  );
+  db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES
+      (?, ?, 'accepted', 'automatic', 1, 'test', 1),
+      (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(
+    providerVideoByProvider.get("tidal"),
+    recordingByMbid.get("tidal-recording"),
+    providerVideoByProvider.get("apple-music"),
+    recordingByMbid.get("apple-recording"),
+  );
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, canonical_artist_mbid, canonical_recording_mbid,
+      artist_id, canonical_artist_mbid, canonical_recording_mbid, recording_id,
       provider, provider_entity_type, provider_id, library_slot,
-      file_path, relative_path, library_root, filename, extension, file_type
+      file_path, relative_path, library_root, filename, extension, file_type,
+      file_class
     ) VALUES
-      ('artist-local', 'artist-mbid', 'tidal-recording', 'tidal', 'video', '99', 'video', ?, 'tidal.mp4', ?, 'tidal.mp4', 'mp4', 'video'),
-      ('artist-local', 'artist-mbid', 'apple-recording', 'apple-music', 'video', '99', 'video', ?, 'apple.mp4', ?, 'apple.mp4', 'mp4', 'video')
-  `).run(tidalPath, path.dirname(tidalPath), applePath, path.dirname(applePath));
+      ('artist-local', 'artist-mbid', 'tidal-recording', ?, 'tidal', 'video', '99', 'video', ?, 'tidal.mp4', ?, 'tidal.mp4', 'mp4', 'video', 'video'),
+      ('artist-local', 'artist-mbid', 'apple-recording', ?, 'apple-music', 'video', '99', 'video', ?, 'apple.mp4', ?, 'apple.mp4', 'mp4', 'video', 'video')
+  `).run(
+    recordingByMbid.get("tidal-recording"),
+    tidalPath,
+    path.dirname(tidalPath),
+    recordingByMbid.get("apple-recording"),
+    applePath,
+    path.dirname(applePath),
+  );
 
-  assert.deepEqual(getExistingLibraryMediaIds("video", "99", "tidal"), ["tidal-recording"]);
-  assert.deepEqual(getExistingLibraryMediaIds("video", "99", "apple-music"), ["apple-recording"]);
+  assert.deepEqual(
+    getExistingLibraryMediaIds("video", "99", "tidal"),
+    [String(recordingByMbid.get("tidal-recording"))],
+  );
+  assert.deepEqual(
+    getExistingLibraryMediaIds("video", "99", "apple-music"),
+    [String(recordingByMbid.get("apple-recording"))],
+  );
 });
