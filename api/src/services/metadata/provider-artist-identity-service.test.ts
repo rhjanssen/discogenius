@@ -108,6 +108,51 @@ function albumSearchRow(input: {
   };
 }
 
+test("stored provider artist identity writes normalized facts and an accepted typed edge", () => {
+  const mbid = "11111111-1111-4111-8111-111111111111";
+  dbModule.db.prepare(`
+    INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES (?, 'Typed Artist')
+  `).run(mbid);
+  serviceModule.ProviderArtistIdentityService.store("tidal", {
+    providerId: "typed-provider-artist",
+    name: "Typed Artist",
+    picture: "https://images.example/artist.jpg",
+    providerUrl: "https://tidal.com/artist/typed-provider-artist",
+  }, {
+    mbid,
+    status: "verified",
+    confidence: 1,
+    method: "external-id",
+  });
+  assert.deepEqual(
+    dbModule.db.prepare(`
+      SELECT
+        item.entity_type,
+        item.provider_id,
+        item.artwork_url,
+        match.match_state,
+        match.decision_source,
+        match.confidence,
+        canonical.mbid
+      FROM ProviderItems item
+      JOIN ProviderArtistMatches match ON match.provider_artist_item_id = item.id
+      JOIN ArtistMetadata canonical ON canonical.id = match.artist_id
+      WHERE item.provider = 'tidal'
+        AND item.entity_type = 'artist'
+        AND item.provider_id = 'typed-provider-artist'
+    `).get(),
+    {
+      entity_type: "artist",
+      provider_id: "typed-provider-artist",
+      artwork_url: "https://images.example/artist.jpg",
+      match_state: "accepted",
+      decision_source: "automatic",
+      confidence: 1,
+      mbid,
+    },
+  );
+});
+
 test("provider artist matching uses MusicBrainz aliases, not only canonical artist names", () => {
   const match = serviceModule.bestCanonicalArtistMatch(
     { providerId: "3712029", name: "Concertgebouworkest" },

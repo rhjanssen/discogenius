@@ -44,6 +44,90 @@ function boundedEvidence(value: Record<string, unknown> | null | undefined): str
 export class ProviderMatchRepository {
   constructor(private readonly db: Database.Database) {}
 
+  upsertArtistMatch(input: {
+    providerArtistItemId: number;
+    artistId: number;
+    decision: ProviderMatchDecision;
+  }): number {
+    validateDecision(input.decision);
+    if (input.decision.matchState === "accepted") {
+      this.db.prepare(`
+        UPDATE ProviderArtistMatches
+        SET match_state = 'rejected',
+            decision_source = ?,
+            method = 'superseded',
+            matcher_version = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE provider_artist_item_id = ?
+          AND artist_id != ?
+          AND match_state = 'accepted'
+      `).run(
+        input.decision.decisionSource,
+        input.decision.matcherVersion,
+        input.providerArtistItemId,
+        input.artistId,
+      );
+    }
+    const row = this.db.prepare(`
+      INSERT INTO ProviderArtistMatches (
+        provider_artist_item_id, artist_id, match_state, decision_source,
+        confidence, method, evidence, matcher_version, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(provider_artist_item_id, artist_id) DO UPDATE SET
+        match_state = excluded.match_state,
+        decision_source = excluded.decision_source,
+        confidence = excluded.confidence,
+        method = excluded.method,
+        evidence = excluded.evidence,
+        matcher_version = excluded.matcher_version,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id
+    `).get(
+      input.providerArtistItemId,
+      input.artistId,
+      input.decision.matchState,
+      input.decision.decisionSource,
+      input.decision.confidence,
+      input.decision.method,
+      boundedEvidence(input.decision.evidence),
+      input.decision.matcherVersion,
+    ) as { id: number };
+    return row.id;
+  }
+
+  upsertVideoMatch(input: {
+    providerVideoItemId: number;
+    recordingId: number;
+    decision: ProviderMatchDecision;
+  }): number {
+    validateDecision(input.decision);
+    const row = this.db.prepare(`
+      INSERT INTO ProviderVideoMatches (
+        provider_video_item_id, recording_id, match_state, decision_source,
+        confidence, method, evidence, matcher_version, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(provider_video_item_id, recording_id) DO UPDATE SET
+        match_state = excluded.match_state,
+        decision_source = excluded.decision_source,
+        confidence = excluded.confidence,
+        method = excluded.method,
+        evidence = excluded.evidence,
+        matcher_version = excluded.matcher_version,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id
+    `).get(
+      input.providerVideoItemId,
+      input.recordingId,
+      input.decision.matchState,
+      input.decision.decisionSource,
+      input.decision.confidence,
+      input.decision.method,
+      boundedEvidence(input.decision.evidence),
+      input.decision.matcherVersion,
+    ) as { id: number };
+    return row.id;
+  }
+
   replaceReleaseMatch(input: {
     providerReleaseItemId: number;
     releaseId: number;

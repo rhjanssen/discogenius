@@ -1,4 +1,6 @@
 import { db } from "../../database.js";
+import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
+import { ProviderMatchRepository } from "../music/provider-match-repository.js";
 import type { LidarrArtist } from "./servarr-metadata.js";
 import { catalogProviderRegistry } from "../catalog/index.js";
 import type { ProviderArtist } from "../providers/streaming-provider.js";
@@ -802,6 +804,37 @@ export class ProviderArtistIdentityService {
       artist.popularity ?? null,
       artist.providerUrl || artist.providerUrls?.[0] || null,
     );
+
+    const providerItemId = new ProviderCatalogRepository(db).upsertItem({
+      provider,
+      entityType: "artist",
+      providerId: artist.providerId,
+      title: artist.name,
+      availability: "unknown",
+      checkedAt: new Date().toISOString(),
+      providerUrl: artist.providerUrl || artist.providerUrls?.[0] || null,
+      coverId: /^https?:\/\//i.test(String(artist.picture || "")) ? null : artist.picture || null,
+      artworkUrl: /^https?:\/\//i.test(String(artist.picture || "")) ? artist.picture || null : null,
+    });
+    if (resolution.mbid) {
+      const canonicalArtist = db.prepare(`
+        SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1
+      `).get(resolution.mbid) as { id: number } | undefined;
+      if (canonicalArtist) {
+        new ProviderMatchRepository(db).upsertArtistMatch({
+          providerArtistItemId: providerItemId,
+          artistId: canonicalArtist.id,
+          decision: {
+            matchState: resolution.status === "ambiguous" ? "ambiguous" : "accepted",
+            decisionSource: resolution.method === "manual" ? "manual" : "automatic",
+            confidence: Math.max(0, Math.min(1, resolution.confidence)),
+            method: resolution.method,
+            evidence: { source: "provider-artist-identity" },
+            matcherVersion: 1,
+          },
+        });
+      }
+    }
   }
 
   /**
