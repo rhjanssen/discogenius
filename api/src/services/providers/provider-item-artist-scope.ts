@@ -136,42 +136,94 @@ export const PROVIDER_MEMBER_ALBUM_ID_SQL = `
 `;
 
 /**
- * Scalar subquery: the provider release actually selected for this provider
- * track by a current acquisition plan — the authoritative release context when
- * one exists, because the plan records which provider release the library chose
- * to acquire the canonical track from. Falls back to NULL (never a guess).
+ * Which acquisition context a caller can prove. One provider track can be
+ * planned in SEVERAL libraries at once, each selecting a different provider
+ * release for a different canonical release — so "the plan" is only meaningful
+ * once one of these narrows it to a single plan.
  *
- * Expects the provider track item aliased as `pi`.
+ * Bind the corresponding named parameters alongside the query.
  */
-export const PROVIDER_SELECTED_PLAN_ALBUM_ID_SQL = `
+export interface ProviderAlbumContext {
+  /** Narrow to one plan: binds @planId. */
+  planId?: boolean;
+  /** Narrow to one selected library release: binds @libraryReleaseId. */
+  libraryReleaseId?: boolean;
+  /** Narrow to one library: binds @libraryId. */
+  libraryId?: boolean;
+  /** Narrow to the plan row for one canonical track: binds @canonicalTrackId. */
+  canonicalTrackId?: boolean;
+  /** Narrow to plans for one canonical release: binds @canonicalReleaseId. */
+  canonicalReleaseId?: boolean;
+}
+
+/**
+ * Scalar subquery: the provider release a current acquisition plan selected for
+ * this provider track (`pi`).
+ *
+ * A bare `LIMIT 1` over every current plan containing the track is wrong — the
+ * same provider track may be planned in a stereo and a spatial library from two
+ * different provider releases, and the winner would be arbitrary. So:
+ *
+ * - with context (plan / library release / library / canonical track / canonical
+ *   release) the answer is scoped to that context;
+ * - with no context the answer is returned ONLY when every relevant current plan
+ *   agrees on the same provider release; disagreement yields NULL and the caller
+ *   falls back to something it can justify.
+ */
+export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {}): string {
+  const filters: string[] = [];
+  if (context.planId) filters.push("AND acquisition_plan.id = @planId");
+  if (context.libraryReleaseId) filters.push("AND acquisition_plan.library_release_id = @libraryReleaseId");
+  if (context.libraryId) filters.push("AND plan_library_release.library_id = @libraryId");
+  if (context.canonicalTrackId) filters.push("AND plan_track.track_id = @canonicalTrackId");
+  if (context.canonicalReleaseId) filters.push("AND plan_library_release.release_id = @canonicalReleaseId");
+
+  return `
     (
-      SELECT CAST(plan_release_item.provider_id AS TEXT)
-      FROM ProviderReleaseMembers plan_member
-      JOIN ProviderTrackMatches plan_match
-        ON plan_match.provider_release_member_id = plan_member.id
-       AND plan_match.match_state = 'accepted'
-      JOIN AcquisitionPlanTracks plan_track
-        ON plan_track.provider_track_match_id = plan_match.id
-      JOIN AcquisitionPlans acquisition_plan
-        ON acquisition_plan.id = plan_track.plan_id
-       AND acquisition_plan.state = 'current'
-      JOIN AcquisitionPlanSources plan_source
-        ON plan_source.id = plan_track.source_id
-      JOIN ProviderReleaseMatches plan_release_match
-        ON plan_release_match.id = plan_source.provider_release_match_id
-      JOIN ProviderItems plan_release_item
-        ON plan_release_item.id = plan_release_match.provider_release_item_id
-      WHERE plan_member.member_item_id = pi.id
-      ORDER BY plan_source.sort_order, plan_source.id
-      LIMIT 1
+      SELECT CASE
+        WHEN COUNT(DISTINCT plan_choice.release_item_id) = 1
+        THEN MAX(plan_choice.release_provider_id)
+      END
+      FROM (
+        SELECT
+          plan_release_item.id AS release_item_id,
+          CAST(plan_release_item.provider_id AS TEXT) AS release_provider_id
+        FROM ProviderReleaseMembers plan_member
+        JOIN ProviderTrackMatches plan_match
+          ON plan_match.provider_release_member_id = plan_member.id
+         AND plan_match.match_state = 'accepted'
+        JOIN AcquisitionPlanTracks plan_track
+          ON plan_track.provider_track_match_id = plan_match.id
+        JOIN AcquisitionPlans acquisition_plan
+          ON acquisition_plan.id = plan_track.plan_id
+         AND acquisition_plan.state = 'current'
+        JOIN LibraryReleases plan_library_release
+          ON plan_library_release.id = acquisition_plan.library_release_id
+        JOIN AcquisitionPlanSources plan_source
+          ON plan_source.id = plan_track.source_id
+        JOIN ProviderReleaseMatches plan_release_match
+          ON plan_release_match.id = plan_source.provider_release_match_id
+        JOIN ProviderItems plan_release_item
+          ON plan_release_item.id = plan_release_match.provider_release_item_id
+        WHERE plan_member.member_item_id = pi.id
+          ${filters.join("\n          ")}
+      ) plan_choice
     )
-`;
+  `;
+}
 
 /**
  * The release context a caller should use for a provider track: the release the
- * library actually selected via its acquisition plan, else the item's single
- * unambiguous release membership, else NULL.
+ * library actually selected via its acquisition plan (scoped by whatever context
+ * the caller can prove), else the item's single unambiguous release membership,
+ * else NULL.
  */
-export const PROVIDER_RESOLVED_ALBUM_ID_SQL = `
-    COALESCE(${PROVIDER_SELECTED_PLAN_ALBUM_ID_SQL}, ${PROVIDER_MEMBER_ALBUM_ID_SQL})
-`;
+export function providerResolvedAlbumIdSql(context: ProviderAlbumContext = {}): string {
+  return `COALESCE(${providerSelectedPlanAlbumIdSql(context)}, ${PROVIDER_MEMBER_ALBUM_ID_SQL})`;
+}
+
+/**
+ * Context-free resolution, for callers (the artist-folder scan) that genuinely
+ * have no library, plan or canonical target in hand. Plans must agree.
+ */
+export const PROVIDER_RESOLVED_ALBUM_ID_SQL = providerResolvedAlbumIdSql();
