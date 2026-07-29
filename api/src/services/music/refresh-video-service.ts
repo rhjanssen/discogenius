@@ -28,6 +28,74 @@ import {
     type VideoVariant,
 } from "./video-variant.js";
 import type { ProviderVideo } from "../providers/streaming-provider.js";
+import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
+import { ProviderMatchRepository } from "./provider-match-repository.js";
+
+const VIDEO_MATCHER_VERSION = 1;
+
+function persistNormalizedProviderVideo(input: {
+    video: any;
+    provider: string;
+    recordingId: number | null;
+    identity: ReturnType<typeof buildVideoIdentity>;
+}): void {
+    const providerId = nullableText(input.video.provider_id) ?? nullableText(input.video.providerId);
+    if (!providerId) {
+        return;
+    }
+    const catalog = new ProviderCatalogRepository(db);
+    const providerVideoItemId = catalog.upsertItem({
+        provider: input.provider,
+        entityType: "video",
+        providerId,
+        title: nullableText(input.video.title),
+        isrc: nullableText(input.video.isrc),
+        durationMs: durationMs(input.video.duration),
+        releaseDate: nullableText(input.video.release_date),
+        availability: nullableText(input.video.availability) ?? "available",
+        availabilityReason: nullableText(input.video.availability_reason),
+        checkedAt: new Date().toISOString(),
+        providerUrl: nullableText(input.video.url),
+        coverId: nullableText(input.video.cover)
+            ?? nullableText(input.video.image_id)
+            ?? nullableText(input.video.imageId),
+    });
+    if (input.recordingId == null) {
+        return;
+    }
+    const canonical = db.prepare(`
+        SELECT mbid, foreign_recording_id, metadata_status
+        FROM Recordings
+        WHERE id = ? AND is_video = 1
+        LIMIT 1
+    `).get(input.recordingId) as {
+        mbid: string | null;
+        foreign_recording_id: string | null;
+        metadata_status: string | null;
+    } | undefined;
+    const canonicalMbid = nullableText(canonical?.mbid) ?? nullableText(canonical?.foreign_recording_id);
+    if (!canonicalMbid || canonical?.metadata_status !== "musicbrainz") {
+        return;
+    }
+    const suppliedMbid = nullableText(input.video.mbid) ?? nullableText(input.video.recording_mbid);
+    new ProviderMatchRepository(db).upsertVideoMatch({
+        providerVideoItemId,
+        recordingId: input.recordingId,
+        decision: {
+            matchState: "accepted",
+            decisionSource: "automatic",
+            confidence: input.identity.confidence,
+            method: suppliedMbid === canonicalMbid ? "external_id" : "title_artist_duration",
+            matcherVersion: VIDEO_MATCHER_VERSION,
+            evidence: {
+                identityKey: input.identity.key,
+                identityMethod: input.identity.method,
+                canonicalRecordingMbid: canonicalMbid,
+                ...input.identity.evidence,
+            },
+        },
+    });
+}
 
 /** Fill Recordings.title when it is still the placeholder and a real title arrived. */
 function backfillPlaceholderVideoTitle(recordingId: number, title: string): void {
@@ -1206,6 +1274,24 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         inheritMonitoredState.run(row.recording_id, targetRecordingId);
         updateProviderItem.run(targetRecordingId, row.provider, row.provider_id);
         updateTrackFiles.run(targetRecordingId, targetRecordingId, row.provider, row.provider_id);
+        const repairedVideo = {
+            provider: row.provider,
+            provider_id: row.provider_id,
+            album_id: row.provider_album_id,
+            recording_mbid: row.recording_mbid,
+            artist_mbid: row.artist_mbid,
+            title: row.title,
+            duration: row.duration,
+            release_date: row.release_date,
+            url: row.provider_url,
+            image_id: row.asset_id,
+        };
+        persistNormalizedProviderVideo({
+            video: repairedVideo,
+            provider: row.provider,
+            recordingId: targetRecordingId,
+            identity: buildVideoIdentity(repairedVideo),
+        });
         repaired += 1;
     }
     return repaired;
@@ -1755,6 +1841,12 @@ export class RefreshVideoService {
                     video._explicitAudioMatch?.method ?? "yt-atv-omv-counterpart",
                     JSON.stringify(video._explicitAudioMatch?.evidence ?? { counterpartKind: "yt-atv-omv" }),
                 );
+                persistNormalizedProviderVideo({
+                    video,
+                    provider: video.provider,
+                    recordingId,
+                    identity: buildVideoIdentity(video),
+                });
             }
 
             if (artistMbid) {
@@ -1883,6 +1975,12 @@ export class RefreshVideoService {
                     identity.method,
                     JSON.stringify(identity.evidence)
                 );
+                persistNormalizedProviderVideo({
+                    video,
+                    provider,
+                    recordingId,
+                    identity,
+                });
             }
 
             const sweptArtists = new Set<string>();

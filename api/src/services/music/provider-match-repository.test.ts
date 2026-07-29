@@ -102,3 +102,42 @@ test("Laura Palmer provider release persists one safe assignment and no position
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("an accepted video match supersedes the provider video's previous accepted identity", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-provider-video-match-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createDomainSchemaV41(db);
+    db.prepare("INSERT INTO Recordings (id, mbid, title, is_video) VALUES (1, 'video-1', 'Pompeii', 1)").run();
+    db.prepare("INSERT INTO Recordings (id, mbid, title, is_video) VALUES (2, 'video-2', 'Pompeii', 1)").run();
+    const itemId = new ProviderCatalogRepository(db).upsertItem({
+      provider: "tidal",
+      entityType: "video",
+      providerId: "provider-video",
+      title: "Pompeii",
+    });
+    const repository = new ProviderMatchRepository(db);
+    const decision = {
+      matchState: "accepted" as const,
+      decisionSource: "automatic" as const,
+      confidence: 0.92,
+      method: "title_artist_duration",
+      matcherVersion: 1,
+    };
+    repository.upsertVideoMatch({ providerVideoItemId: itemId, recordingId: 1, decision });
+    repository.upsertVideoMatch({ providerVideoItemId: itemId, recordingId: 2, decision });
+
+    assert.deepEqual(db.prepare(`
+      SELECT recording_id, match_state, method
+      FROM ProviderVideoMatches
+      ORDER BY recording_id
+    `).all(), [
+      { recording_id: 1, match_state: "rejected", method: "superseded" },
+      { recording_id: 2, match_state: "accepted", method: "title_artist_duration" },
+    ]);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

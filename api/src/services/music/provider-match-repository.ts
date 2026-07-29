@@ -101,6 +101,24 @@ export class ProviderMatchRepository {
     decision: ProviderMatchDecision;
   }): number {
     validateDecision(input.decision);
+    if (input.decision.matchState === "accepted") {
+      this.db.prepare(`
+        UPDATE ProviderVideoMatches
+        SET match_state = 'rejected',
+            decision_source = ?,
+            method = 'superseded',
+            matcher_version = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE provider_video_item_id = ?
+          AND recording_id != ?
+          AND match_state = 'accepted'
+      `).run(
+        input.decision.decisionSource,
+        input.decision.matcherVersion,
+        input.providerVideoItemId,
+        input.recordingId,
+      );
+    }
     const row = this.db.prepare(`
       INSERT INTO ProviderVideoMatches (
         provider_video_item_id, recording_id, match_state, decision_source,

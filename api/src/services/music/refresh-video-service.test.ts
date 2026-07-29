@@ -202,6 +202,31 @@ test("canonical MusicBrainz video matching keeps official, lyric, and live asset
 
   const recordings = dbModule.db.prepare("SELECT id FROM Recordings WHERE is_video = 1").all();
   assert.equal(recordings.length, 3);
+
+  const normalizedOffers = dbModule.db.prepare(`
+    SELECT provider_id AS providerId, duration_ms AS durationMs, availability
+    FROM ProviderItems
+    WHERE entity_type = 'video'
+    ORDER BY provider_id
+  `).all() as Array<{ providerId: string; durationMs: number | null; availability: string }>;
+  assert.equal(
+    normalizedOffers.find((offer) => offer.providerId === "tidal-pompeii-official")?.durationMs,
+    232000,
+  );
+  assert.ok(normalizedOffers.every((offer) => offer.availability === "available"));
+
+  assert.deepEqual(dbModule.db.prepare(`
+    SELECT item.provider_id AS providerId, match.recording_id AS recordingId,
+           match.match_state AS matchState, match.method
+    FROM ProviderVideoMatches match
+    JOIN ProviderItems item ON item.id = match.provider_video_item_id
+    ORDER BY item.provider_id
+  `).all(), [{
+    providerId: "tidal-pompeii-official",
+    recordingId: canonical.id,
+    matchState: "accepted",
+    method: "title_artist_duration",
+  }], "provider-only identities must remain unmatched provider facts");
 });
 
 test("named venue live attaches to unlabeled MusicBrainz video at exact duration", () => {
