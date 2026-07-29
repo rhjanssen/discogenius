@@ -13,6 +13,126 @@ import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { AlbumLibraryIndexService } from "./album-library-index-service.js";
 import { MusicBrainzArtistCreditService, type CanonicalAlbumArtist } from "../metadata/musicbrainz-artist-credit-service.js";
 import { qualityTierSqlCondition } from "../../utils/quality-tier-sql.js";
+
+const releaseGroupLibraryStateCte = `
+  WITH ranked_library_state AS MATERIALIZED (
+    SELECT
+      library_group.release_group_id,
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value = 'spatial'
+      ) THEN 'spatial' ELSE 'stereo' END AS library_class,
+      MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) OVER (
+        PARTITION BY
+          library_group.release_group_id,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END
+      ) AS monitored,
+      MAX(CASE WHEN library_group.locked = 1 THEN 1 ELSE 0 END) OVER (
+        PARTITION BY
+          library_group.release_group_id,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END
+      ) AS monitored_lock,
+      release.id AS selected_album_release_id,
+      release.mbid AS selected_release_mbid,
+      COALESCE(provider_item.provider, plan.provider) AS selected_provider,
+      provider_item.id AS selected_provider_item_id,
+      provider_item.provider_id AS selected_provider_id,
+      provider_item.provider_url,
+      COALESCE(
+        provider_item.quality,
+        (
+          SELECT COALESCE(
+            NULLIF(TRIM(CASE
+              WHEN json_valid(plan_track.source_quality_snapshot)
+              THEN json_extract(plan_track.source_quality_snapshot, '$.quality')
+              ELSE plan_track.source_quality_snapshot
+            END), ''),
+            NULLIF(TRIM(variant.provider_quality_label), ''),
+            variant.quality_class
+          )
+          FROM AcquisitionPlanTracks plan_track
+          JOIN ProviderItemAudioVariants variant
+            ON variant.id = plan_track.provider_audio_variant_id
+          WHERE plan_track.plan_id = plan.id
+          ORDER BY plan_track.id
+          LIMIT 1
+        )
+      ) AS quality,
+      release_match.match_state AS match_status,
+      COALESCE(provider_item.cover_id, provider_item.cover, provider_item.artwork_url) AS cover,
+      COALESCE(CAST(provider_item.popularity AS REAL), 0) AS popularity,
+      ROW_NUMBER() OVER (
+        PARTITION BY
+          library_group.release_group_id,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          ) THEN 'spatial' ELSE 'stereo' END
+        ORDER BY
+          CASE WHEN plan.state = 'current' AND provider_item.id IS NOT NULL THEN 0 ELSE 1 END,
+          library_release.updated_at DESC,
+          library_release.id DESC,
+          library.id ASC
+      ) AS state_rank
+    FROM LibraryReleaseGroups library_group
+    JOIN Libraries library
+      ON library.id = library_group.library_id
+     AND library.enabled = 1
+    JOIN quality_profiles quality_profile
+      ON quality_profile.id = library.quality_profile_id
+    LEFT JOIN LibraryReleases library_release
+      ON library_release.library_id = library_group.library_id
+     AND EXISTS (
+       SELECT 1
+       FROM AlbumReleases selected_release
+       WHERE selected_release.id = library_release.release_id
+         AND selected_release.release_group_id = library_group.release_group_id
+     )
+    LEFT JOIN AlbumReleases release
+      ON release.id = library_release.release_id
+    LEFT JOIN AcquisitionPlans plan
+      ON plan.library_release_id = library_release.id
+     AND plan.state = 'current'
+    LEFT JOIN AcquisitionPlanSources plan_source
+      ON plan_source.plan_id = plan.id
+     AND plan_source.id = (
+       SELECT preferred_source.id
+       FROM AcquisitionPlanSources preferred_source
+       WHERE preferred_source.plan_id = plan.id
+       ORDER BY
+         CASE preferred_source.role WHEN 'primary' THEN 0 ELSE 1 END,
+         preferred_source.sort_order,
+         preferred_source.id
+       LIMIT 1
+     )
+    LEFT JOIN ProviderReleaseMatches release_match
+      ON release_match.id = plan_source.provider_release_match_id
+     AND release_match.match_state = 'accepted'
+    LEFT JOIN ProviderItems provider_item
+      ON provider_item.id = release_match.provider_release_item_id
+     AND (
+       provider_item.availability IS NULL
+       OR LOWER(CAST(provider_item.availability AS TEXT))
+          NOT IN ('0', 'false', 'unavailable', 'no', '')
+     )
+  ),
+  library_state AS MATERIALIZED (
+    SELECT *
+    FROM ranked_library_state
+    WHERE state_rank = 1
+  )
+`;
+
 const releaseGroupMonitoredExpression = `
         CASE WHEN stereo.monitored = 1 OR spatial.monitored = 1 THEN 1 ELSE 0 END
 `;
@@ -31,44 +151,36 @@ function getFullyDownloadedReleaseGroupMbids(libraryFilter: string): string[] {
     // The former stays proportional to the user's library; the old nested
     // NOT-EXISTS predicate walked millions of Tracks once per candidate album
     // and could wedge the API for minutes when filtering for Not Downloaded.
-    const slotPredicate = libraryFilter === "spatial"
-        ? "AND rgs.slot = 'spatial'"
+    const libraryClassPredicate = libraryFilter === "spatial"
+        ? `AND EXISTS (
+            SELECT 1
+            FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+            WHERE allowed.value = 'spatial'
+          )`
         : libraryFilter === "stereo"
-            ? "AND rgs.slot = 'stereo'"
-            : "AND rgs.slot IN ('stereo', 'spatial')";
+            ? `AND NOT EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE allowed.value = 'spatial'
+              )`
+            : "";
     const candidates = db.prepare(`
-      WITH file_releases(library_slot, release_mbid) AS (
-        SELECT lf.library_slot, track.release_mbid
-        FROM TrackFiles lf
-        JOIN Tracks track ON track.id = lf.track_id
-        WHERE lf.file_type = 'track' AND lf.track_id IS NOT NULL
-
-        UNION
-
-        SELECT lf.library_slot, track.release_mbid
-        FROM TrackFiles lf
-        JOIN Tracks track ON track.mbid = lf.canonical_track_mbid
-        WHERE lf.file_type = 'track'
-          AND lf.track_id IS NULL
-          AND lf.canonical_track_mbid IS NOT NULL
-
-        UNION
-
-        SELECT lf.library_slot, track.release_mbid
-        FROM TrackFiles lf
-        JOIN Tracks track ON track.recording_mbid = lf.canonical_recording_mbid
-        WHERE lf.file_type = 'track'
-          AND lf.track_id IS NULL
-          AND lf.canonical_track_mbid IS NULL
-          AND lf.canonical_recording_mbid IS NOT NULL
-      )
-      SELECT DISTINCT rgs.release_group_mbid
-      FROM file_releases file_release
-      JOIN ReleaseGroupSlots rgs
-        ON rgs.selected_release_mbid = file_release.release_mbid
-       AND rgs.slot = file_release.library_slot
-      WHERE rgs.selected_release_mbid IS NOT NULL
-        ${slotPredicate}
+      SELECT DISTINCT release_group.mbid AS release_group_mbid
+      FROM TrackFiles library_file
+      JOIN Libraries library
+        ON library.id = library_file.library_id
+       AND library.enabled = 1
+      JOIN quality_profiles quality_profile
+        ON quality_profile.id = library.quality_profile_id
+      JOIN LibraryReleases library_release
+        ON library_release.library_id = library_file.library_id
+       AND library_release.release_id = library_file.album_release_id
+      JOIN AlbumReleases release
+        ON release.id = library_release.release_id
+      JOIN Albums release_group
+        ON release_group.id = release.release_group_id
+      WHERE library_file.file_type = 'track'
+        ${libraryClassPredicate}
     `).all() as Array<{ release_group_mbid: string }>;
     if (candidates.length === 0) return [];
 
@@ -187,8 +299,8 @@ export interface AlbumListQuery {
     dir?: string;
 }
 
-/** Slot aliases (ReleaseGroupSlots) the provider/quality filter should test for a given library filter. */
-function filterSlotAliases(libraryFilter: string): string[] {
+/** Library-class aliases the provider/quality filter should test. */
+function filterLibraryStateAliases(libraryFilter: string): string[] {
     if (libraryFilter === "spatial") return ["spatial"];
     if (libraryFilter === "stereo") return ["stereo"];
     return ["stereo", "spatial"];
@@ -196,6 +308,7 @@ function filterSlotAliases(libraryFilter: string): string[] {
 
 function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlbumExpression: string): string {
     return `
+      ${releaseGroupLibraryStateCte}
       SELECT
         rg.id,
         rg.mbid,
@@ -236,32 +349,16 @@ function buildReleaseGroupDetailsSelect(whereClause: string, selectedProviderAlb
         ${releaseGroupPopularityExpression} AS popularity
       FROM Albums rg
       LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-      LEFT JOIN ReleaseGroupSlots stereo
+      LEFT JOIN library_state stereo
         ON stereo.release_group_id = rg.id
-       AND stereo.slot = 'stereo'
-      LEFT JOIN ReleaseGroupSlots spatial
+       AND stereo.library_class = 'stereo'
+      LEFT JOIN library_state spatial
         ON spatial.release_group_id = rg.id
-       AND spatial.slot = 'spatial'
+       AND spatial.library_class = 'spatial'
       LEFT JOIN ProviderItems stereo_provider_item
-        ON stereo_provider_item.provider = stereo.selected_provider
-       AND stereo_provider_item.entity_type = 'album'
-       AND stereo_provider_item.provider_id = stereo.selected_provider_id
-       AND (stereo_provider_item.match_status IS NULL OR LOWER(stereo_provider_item.match_status) <> 'rejected')
-       AND (
-         stereo_provider_item.availability IS NULL
-         OR LOWER(CAST(stereo_provider_item.availability AS TEXT))
-            NOT IN ('0', 'false', 'unavailable', 'no', '')
-       )
+        ON stereo_provider_item.id = stereo.selected_provider_item_id
       LEFT JOIN ProviderItems spatial_provider_item
-        ON spatial_provider_item.provider = spatial.selected_provider
-       AND spatial_provider_item.entity_type = 'album'
-       AND spatial_provider_item.provider_id = spatial.selected_provider_id
-       AND (spatial_provider_item.match_status IS NULL OR LOWER(spatial_provider_item.match_status) <> 'rejected')
-       AND (
-         spatial_provider_item.availability IS NULL
-         OR LOWER(CAST(spatial_provider_item.availability AS TEXT))
-            NOT IN ('0', 'false', 'unavailable', 'no', '')
-       )
+        ON spatial_provider_item.id = spatial.selected_provider_item_id
       ${whereClause}
     `;
 }
@@ -339,7 +436,7 @@ export class AlbumQueryService {
     static listAlbums(input: AlbumListQuery): AlbumsListResponseContract {
         // The materialized index has no provider/quality columns, so provider- or
         // quality-tier-filtered queries (the less common case) use the direct
-        // ReleaseGroupSlots query below, which already joins those rows.
+        // normalized library-state query below.
         const hasProviderQualityFilter = Boolean(String(input.provider || "").trim() || String(input.qualityTier || "").trim());
         if (AlbumLibraryIndexService.isReady() && !hasProviderQualityFilter) {
             return this.listAlbumsFromIndex(input);
@@ -407,7 +504,7 @@ export class AlbumQueryService {
 
         const providerFilter = String(input.provider || "").trim();
         const qualityTierFilter = String(input.qualityTier || "").trim();
-        const slotAliases = filterSlotAliases(libraryFilter);
+        const slotAliases = filterLibraryStateAliases(libraryFilter);
         const tierConditions = qualityTierFilter
             ? slotAliases
                 .map((alias) => ({
@@ -453,13 +550,14 @@ export class AlbumQueryService {
           COALESCE(spatial.popularity, 0)
         )`;
         const candidateQuery = `
+          ${releaseGroupLibraryStateCte}
           SELECT rg.id, rg.mbid, ${candidatePopularityExpression} AS popularity
           FROM Albums rg
           LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-          LEFT JOIN ReleaseGroupSlots stereo
-            ON stereo.release_group_id = rg.id AND stereo.slot = 'stereo'
-          LEFT JOIN ReleaseGroupSlots spatial
-            ON spatial.release_group_id = rg.id AND spatial.slot = 'spatial'
+          LEFT JOIN library_state stereo
+            ON stereo.release_group_id = rg.id AND stereo.library_class = 'stereo'
+          LEFT JOIN library_state spatial
+            ON spatial.release_group_id = rg.id AND spatial.library_class = 'spatial'
           ${whereClause}
           ${getReleaseGroupOrderBy(input.sort, sortDir)}
           LIMIT ? OFFSET ?
@@ -487,15 +585,16 @@ export class AlbumQueryService {
         const localQualitiesMap = getAlbumLocalQualitiesMap(releaseGroupMbids);
 
         const countQuery = `
+          ${releaseGroupLibraryStateCte}
           SELECT COUNT(*) AS count
           FROM Albums rg
           LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-          LEFT JOIN ReleaseGroupSlots stereo
+          LEFT JOIN library_state stereo
             ON stereo.release_group_id = rg.id
-           AND stereo.slot = 'stereo'
-          LEFT JOIN ReleaseGroupSlots spatial
+           AND stereo.library_class = 'stereo'
+          LEFT JOIN library_state spatial
             ON spatial.release_group_id = rg.id
-           AND spatial.slot = 'spatial'
+           AND spatial.library_class = 'spatial'
           ${whereClause}
         `;
         const { count } = db.prepare(countQuery).get(...countParams) as { count: number };

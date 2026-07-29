@@ -44,12 +44,22 @@ export class TrackLibraryIndexService {
           ),
           MAX(CASE
             WHEN plan.state = 'current'
-             AND variant.quality_class <> 'spatial'
+             AND plan_track.id IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1
+               FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+               WHERE allowed.value = 'spatial'
+             )
             THEN 1 ELSE 0
           END),
           MAX(CASE
             WHEN plan.state = 'current'
-             AND variant.quality_class = 'spatial'
+             AND plan_track.id IS NOT NULL
+             AND EXISTS (
+               SELECT 1
+               FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+               WHERE allowed.value = 'spatial'
+             )
             THEN 1 ELSE 0
           END),
           CURRENT_TIMESTAMP
@@ -57,6 +67,11 @@ export class TrackLibraryIndexService {
         LEFT JOIN Recordings recording ON recording.id = track.recording_id
         JOIN LibraryReleases library_release
           ON library_release.release_id = track.album_release_id
+        JOIN Libraries library
+          ON library.id = library_release.library_id
+         AND library.enabled = 1
+        JOIN quality_profiles quality_profile
+          ON quality_profile.id = library.quality_profile_id
         JOIN AlbumReleases release
           ON release.id = library_release.release_id
         JOIN LibraryReleaseGroups library_group
@@ -68,8 +83,6 @@ export class TrackLibraryIndexService {
         LEFT JOIN AcquisitionPlanTracks plan_track
           ON plan_track.plan_id = plan.id
          AND plan_track.track_id = track.id
-        LEFT JOIN ProviderItemAudioVariants variant
-          ON variant.id = plan_track.provider_audio_variant_id
         GROUP BY track.id
       `).run();
 

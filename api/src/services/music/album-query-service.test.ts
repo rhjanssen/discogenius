@@ -21,8 +21,12 @@ beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM AlbumLibraryProjectionState").run();
   db.prepare("DELETE FROM AlbumLibraryIndex").run();
+  db.prepare("DELETE FROM AcquisitionPlanSources").run();
+  db.prepare("DELETE FROM AcquisitionPlans").run();
+  db.prepare("DELETE FROM LibraryReleases").run();
+  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM ProviderReleaseMatches").run();
   db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
   db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
   db.prepare("DELETE FROM AlbumReleases").run();
   db.prepare("DELETE FROM Albums").run();
@@ -66,53 +70,133 @@ function seedAlbum(options: {
     ) VALUES (?, ?, ?, 1)
   `).run(artistMbid, album.id, options.mbid);
 
-  const insertSlot = db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_id, release_group_mbid, slot, monitored,
-      selected_provider, selected_provider_id, quality, match_status
-    ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, 'verified')
-  `);
-  insertSlot.run(
-    artistMbid,
+  const release = db.prepare(`
+    INSERT INTO AlbumReleases (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
+    ) VALUES (?, ?, ?, ?, ?, 1)
+    RETURNING id
+  `).get(
+    `${options.mbid}-release`,
     album.id,
     options.mbid,
-    "stereo",
-    options.stereoProvider,
-    `${options.mbid}-stereo`,
-    options.stereoQuality,
-  );
-  insertSlot.run(
     artistMbid,
-    album.id,
-    options.mbid,
-    "spatial",
-    options.spatialProvider,
-    `${options.mbid}-spatial`,
-    options.spatialQuality,
-  );
+    options.title,
+  ) as { id: number };
 
   const insertOffer = db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, release_group_mbid,
-      library_slot, quality, provider_url
-    ) VALUES (?, 'album', ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, quality, provider_url
+    ) VALUES (?, 'release', ?, ?, ?)
+    RETURNING id
   `);
-  insertOffer.run(
+  const stereoOffer = insertOffer.get(
     options.stereoProvider,
     `${options.mbid}-stereo`,
-    options.mbid,
-    "stereo",
     options.stereoQuality,
     `https://example.test/${options.stereoProvider}/albums/${options.mbid}-stereo`,
-  );
-  insertOffer.run(
+  ) as { id: number };
+  const spatialOffer = insertOffer.get(
     options.spatialProvider,
     `${options.mbid}-spatial`,
-    options.mbid,
-    "spatial",
     options.spatialQuality,
     `https://example.test/${options.spatialProvider}/albums/${options.mbid}-spatial`,
+  ) as { id: number };
+
+  const insertMatch = db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `);
+  const stereoMatch = insertMatch.get(stereoOffer.id, release.id) as { id: number };
+  const spatialMatch = insertMatch.get(spatialOffer.id, release.id) as { id: number };
+
+  db.prepare(`
+    INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
+    VALUES ('Album Query Test', '{}')
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO quality_profiles (
+      name, upgrade_allowed, cutoff, items, allowed_source_formats,
+      preference_order, continue_upgrades, fallback_policy,
+      output_format, transcode_policy
+    ) VALUES (
+      'Album Query Spatial', 0, 'DOLBY_ATMOS', '["DOLBY_ATMOS"]',
+      '["spatial"]', '["spatial"]', 0, 'best_allowed',
+      '{"codec":"preserve"}', 'preserve'
+    )
+  `).run();
+  const metadataProfile = db.prepare(`
+    SELECT id FROM MetadataProfiles WHERE name = 'Album Query Test'
+  `).get() as { id: number };
+  const nonspatialQualityProfile = db.prepare(`
+    SELECT id
+    FROM quality_profiles
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM json_each(COALESCE(quality_profiles.allowed_source_formats, '[]')) allowed
+      WHERE allowed.value = 'spatial'
+    )
+    ORDER BY id
+    LIMIT 1
+  `).get() as { id: number };
+  const spatialQualityProfile = db.prepare(`
+    SELECT id FROM quality_profiles WHERE name = 'Album Query Spatial'
+  `).get() as { id: number };
+  const insertLibrary = db.prepare(`
+    INSERT OR IGNORE INTO Libraries (
+      name, root_path, metadata_profile_id, quality_profile_id, enabled
+    ) VALUES (?, ?, ?, ?, 1)
+  `);
+  insertLibrary.run(
+    "Album Query Nonspatial",
+    path.join(tempDir, "libraries", "nonspatial"),
+    metadataProfile.id,
+    nonspatialQualityProfile.id,
   );
+  insertLibrary.run(
+    "Album Query Spatial",
+    path.join(tempDir, "libraries", "spatial"),
+    metadataProfile.id,
+    spatialQualityProfile.id,
+  );
+
+  const libraries = db.prepare(`
+    SELECT id, name
+    FROM Libraries
+    WHERE name IN ('Album Query Nonspatial', 'Album Query Spatial')
+  `).all() as Array<{ id: number; name: string }>;
+  for (const library of libraries) {
+    db.prepare(`
+      INSERT INTO LibraryReleaseGroups (
+        library_id, release_group_id, monitored, selection_mode, locked,
+        curation_version
+      ) VALUES (?, ?, 1, 'auto', 0, 1)
+    `).run(library.id, album.id);
+    const libraryRelease = db.prepare(`
+      INSERT INTO LibraryReleases (
+        library_id, release_id, selection_mode, locked, curation_version
+      ) VALUES (?, ?, 'auto', 0, 1)
+      RETURNING id
+    `).get(library.id, release.id) as { id: number };
+    const spatial = library.name === "Album Query Spatial";
+    const plan = db.prepare(`
+      INSERT INTO AcquisitionPlans (
+        library_release_id, provider, composition, download_mode, state,
+        planner_version, policy_hash, computed_at
+      ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
+      RETURNING id
+    `).get(
+      libraryRelease.id,
+      spatial ? options.spatialProvider : options.stereoProvider,
+    ) as { id: number };
+    db.prepare(`
+      INSERT INTO AcquisitionPlanSources (
+        plan_id, provider_release_match_id, role, sort_order
+      ) VALUES (?, ?, 'primary', 0)
+    `).run(plan.id, spatial ? spatialMatch.id : stereoMatch.id);
+  }
 }
 
 test("album list carries selected provider permalinks through the indexed detail path", async () => {
@@ -138,7 +222,7 @@ test("album list carries selected provider permalinks through the indexed detail
   );
 });
 
-test("provider and quality filters must be satisfied by the same selected slot", () => {
+test("provider and quality filters must be satisfied by the same selected library", () => {
   seedAlbum({
     mbid: "cross-slot-album",
     title: "Cross Slot",

@@ -49,15 +49,30 @@ export class AlbumLibraryIndexService {
             MAX(CASE WHEN library_group.locked = 1 THEN 1 ELSE 0 END) AS monitored_lock,
             MAX(CASE
               WHEN plan.state = 'current'
-               AND variant.quality_class <> 'spatial'
+               AND release_match.match_state = 'accepted'
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                 WHERE allowed.value = 'spatial'
+               )
               THEN 1 ELSE 0
             END) AS has_stereo_provider,
             MAX(CASE
               WHEN plan.state = 'current'
-               AND variant.quality_class = 'spatial'
+               AND release_match.match_state = 'accepted'
+               AND EXISTS (
+                 SELECT 1
+                 FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                 WHERE allowed.value = 'spatial'
+               )
               THEN 1 ELSE 0
             END) AS has_spatial_provider
           FROM LibraryReleaseGroups library_group
+          JOIN Libraries library
+            ON library.id = library_group.library_id
+           AND library.enabled = 1
+          JOIN quality_profiles quality_profile
+            ON quality_profile.id = library.quality_profile_id
           LEFT JOIN LibraryReleases library_release
             ON library_release.library_id = library_group.library_id
           LEFT JOIN AlbumReleases release
@@ -65,10 +80,20 @@ export class AlbumLibraryIndexService {
            AND release.release_group_id = library_group.release_group_id
           LEFT JOIN AcquisitionPlans plan
             ON plan.library_release_id = library_release.id
-          LEFT JOIN AcquisitionPlanTracks plan_track
-            ON plan_track.plan_id = plan.id
-          LEFT JOIN ProviderItemAudioVariants variant
-            ON variant.id = plan_track.provider_audio_variant_id
+          LEFT JOIN AcquisitionPlanSources plan_source
+            ON plan_source.plan_id = plan.id
+           AND plan_source.id = (
+             SELECT preferred_source.id
+             FROM AcquisitionPlanSources preferred_source
+             WHERE preferred_source.plan_id = plan.id
+             ORDER BY
+               CASE preferred_source.role WHEN 'primary' THEN 0 ELSE 1 END,
+               preferred_source.sort_order,
+               preferred_source.id
+             LIMIT 1
+           )
+          LEFT JOIN ProviderReleaseMatches release_match
+            ON release_match.id = plan_source.provider_release_match_id
           GROUP BY library_group.release_group_id
         )
         SELECT

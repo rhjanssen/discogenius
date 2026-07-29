@@ -177,6 +177,42 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
       FROM AlbumLibraryIndex
       WHERE release_group_id = ?
     `).get(releaseGroup.id),
+    { has_stereo_provider: 1, has_spatial_provider: 0 },
+  );
+  assert.deepEqual(
+    db.prepare(`
+      SELECT has_stereo, has_spatial
+      FROM TrackLibraryIndex
+      WHERE track_id = ?
+    `).get(track.id),
+    { has_stereo: 1, has_spatial: 0 },
+  );
+
+  // The library profile, not an individual source variant, classifies the
+  // selected media as nonspatial or spatial.
+  const spatialProfile = db.prepare(`
+    INSERT INTO quality_profiles (
+      name, upgrade_allowed, cutoff, items, allowed_source_formats,
+      preference_order, continue_upgrades, fallback_policy,
+      output_format, transcode_policy
+    ) VALUES (
+      'Index Spatial', 0, 'DOLBY_ATMOS', '["DOLBY_ATMOS"]',
+      '["spatial"]', '["spatial"]', 0, 'best_allowed',
+      '{"codec":"preserve"}', 'preserve'
+    )
+    RETURNING id
+  `).get() as { id: number };
+  db.prepare(`
+    UPDATE Libraries SET quality_profile_id = ? WHERE id = ?
+  `).run(spatialProfile.id, library.id);
+  AlbumLibraryIndexService.rebuild();
+  TrackLibraryIndexService.rebuild();
+  assert.deepEqual(
+    db.prepare(`
+      SELECT has_stereo_provider, has_spatial_provider
+      FROM AlbumLibraryIndex
+      WHERE release_group_id = ?
+    `).get(releaseGroup.id),
     { has_stereo_provider: 0, has_spatial_provider: 1 },
   );
   assert.deepEqual(
