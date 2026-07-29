@@ -9,7 +9,6 @@ import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-f
 import { normalizeComparablePath } from "../mediafiles/path-utils.js";
 import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
-import { pruneRelationalOrphans } from "./relational-orphan-housekeeping.js";
 
 interface LibraryFileRow {
   id: number;
@@ -43,12 +42,6 @@ export interface RuntimeMaintenanceSummary {
   staleTempDirsRemoved: number;
   /** Video files whose quality tag was corrected from stored dimensions */
   videoQualitiesCorrected: number;
-  /** Orphaned ReleaseGroupSlotTargets removed */
-  orphanReleaseGroupSlotTargetsRemoved: number;
-  /** Orphaned ReleaseGroupSlotSources removed */
-  orphanReleaseGroupSlotSourcesRemoved: number;
-  /** Orphaned ReleaseGroupSlotTrackAssignments removed */
-  orphanReleaseGroupSlotTrackAssignmentsRemoved: number;
 }
 
 function toTimestamp(value: string | null | undefined): number {
@@ -331,9 +324,6 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
     orphanDownloadFoldersRemoved: 0,
     staleTempDirsRemoved: 0,
     videoQualitiesCorrected: 0,
-    orphanReleaseGroupSlotTargetsRemoved: 0,
-    orphanReleaseGroupSlotSourcesRemoved: 0,
-    orphanReleaseGroupSlotTrackAssignmentsRemoved: 0,
   };
 
   summary.staleTrackedAssetsRemoved = LibraryFilesService.pruneStaleTrackedAssets().removed;
@@ -344,10 +334,6 @@ export function runRuntimeMaintenance(): RuntimeMaintenanceSummary {
 
   db.transaction(() => {
     dedupeLibraryFiles(summary);
-    const orphanSummary = pruneRelationalOrphans();
-    summary.orphanReleaseGroupSlotTargetsRemoved = orphanSummary.releaseGroupSlotTargetsRemoved;
-    summary.orphanReleaseGroupSlotSourcesRemoved = orphanSummary.releaseGroupSlotSourcesRemoved;
-    summary.orphanReleaseGroupSlotTrackAssignmentsRemoved = orphanSummary.releaseGroupSlotTrackAssignmentsRemoved;
   })();
 
   refreshDownloadState(summary);
