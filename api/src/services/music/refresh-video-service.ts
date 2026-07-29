@@ -1394,12 +1394,18 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         if (!nullableText(row.title)) {
             continue;
         }
+        // Deliberately do NOT pass the currently attached recording's MBID as
+        // the offer's own claim. `row.recording_mbid` is the attachment under
+        // review, and feeding it back in takes ensureProviderVideoRecording's
+        // MusicBrainz short-circuit, which returns that same recording and skips
+        // revalidation entirely — so an overmerged lyric/live cut could never be
+        // split off. The offer is re-evaluated on its provider-native facts, with
+        // the current attachment supplied only as `existingRecordingId` evidence.
         const targetRecordingId = ensureProviderVideoRecording({
             video: {
                 provider: row.provider,
                 provider_id: row.provider_id,
                 album_id: row.provider_album_id,
-                recording_mbid: row.recording_mbid,
                 artist_mbid: row.artist_mbid,
                 title: row.title,
                 duration: row.duration,
