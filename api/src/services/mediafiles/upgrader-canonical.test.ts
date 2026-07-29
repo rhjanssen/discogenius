@@ -117,20 +117,10 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
   seedArtistAndRelease();
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)`).run(
-    "tidal",
-    "release",
-    "album-provider-1",
-    "Canonical Album",
-  );
+    ) VALUES (?, ?, ?, ?)`).run( "tidal", "album", "album-provider-1", "Canonical Album" );
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)`).run(
-    "tidal",
-    "track",
-    "track-provider-1",
-    "Track One",
-  );
+    ) VALUES (?, ?, ?, ?)`).run( "tidal", "track", "track-provider-1", "Track One" );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
     canonical_release_group_mbid: "release-group-1",
@@ -172,12 +162,7 @@ test("checkUpgrades queues canonical video upgrades without provider catalog row
     VALUES (?, ?, ?, ?, ?)`).run("video-recording-1", "Video One", "artist-mbid", 1, 1);
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)`).run(
-    "tidal",
-    "video",
-    "video-provider-1",
-    "Video One",
-  );
+    ) VALUES (?, ?, ?, ?)`).run( "tidal", "video", "video-provider-1", "Video One" );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
     canonical_recording_mbid: "video-recording-1",
@@ -223,20 +208,10 @@ test("checkUpgrades does not queue Apple Music album ids as TIDAL (Grace Note)",
   const appleAlbumId = "1776562088";
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)`).run(
-    "apple-music",
-    "release",
-    appleAlbumId,
-    "Grace Note",
-  );
+    ) VALUES (?, ?, ?, ?)`).run( "apple-music", "album", appleAlbumId, "Grace Note" );
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)`).run(
-    "apple-music",
-    "track",
-    "apple-track-1",
-    "Grace Note",
-  );
+    ) VALUES (?, ?, ?, ?)`).run( "apple-music", "track", "apple-track-1", "Grace Note" );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
     canonical_release_group_mbid: "release-group-1",
@@ -280,20 +255,10 @@ test("checkUpgrades skips album-level upgrade when provider has zero album track
   // must not enqueue DownloadAlbum (old bug: 1/0 always passed the ≥50% check).
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)`).run(
-    "apple-music",
-    "release",
-    "1776562088",
-    "Grace Note",
-  );
+    ) VALUES (?, ?, ?, ?)`).run( "apple-music", "album", "1776562088", "Grace Note" );
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)`).run(
-    "apple-music",
-    "track",
-    "apple-track-orphan",
-    "Grace Note",
-  );
+    ) VALUES (?, ?, ?, ?)`).run( "apple-music", "track", "apple-track-orphan", "Grace Note" );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
     canonical_release_group_mbid: "release-group-1",
@@ -329,20 +294,10 @@ test("checkUpgrades does not immediately requeue a recent completed no-improveme
   seedArtistAndRelease();
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)`).run(
-    "tidal",
-    "release",
-    "album-provider-1",
-    "Canonical Album",
-  );
+    ) VALUES (?, ?, ?, ?)`).run( "tidal", "album", "album-provider-1", "Canonical Album" );
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES (?, ?, ?, ?)`).run(
-    "tidal",
-    "track",
-    "track-provider-1",
-    "Track One",
-  );
+    ) VALUES (?, ?, ?, ?)`).run( "tidal", "track", "track-provider-1", "Track One" );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
     canonical_release_group_mbid: "release-group-1",

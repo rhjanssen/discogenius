@@ -403,13 +403,7 @@ test("download queue query resolves canonical release-group provider offers with
         INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, cover_id
     ) VALUES (?, ?, ?, ?, ?)
-    `).run(
-    "tidal",
-    "release",
-    "tidal-gmtf-expanded",
-    "Give Me The Future + Dreams Of The Past",
-    "provider-cover",
-  );
+    `).run( "tidal", "album", "tidal-gmtf-expanded", "Give Me The Future + Dreams Of The Past", "provider-cover" );
 
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
@@ -464,18 +458,9 @@ test("download queue prefers video poster over stamped album cover for DownloadV
     `).get("artist-video-cover", "Pompeii") as { id: number };
     db.prepare(`
         INSERT INTO ProviderItems (
-          provider, entity_type, provider_id, artist_mbid, recording_id,
-          release_group_mbid, title, cover
-        ) VALUES (?, 'video', ?, ?, ?, ?, ?, ?)
-    `).run(
-        "tidal",
-        "tidal-video-cover-1",
-        "artist-video-cover",
-        recording.id,
-        "rg-video-cover",
-        "Pompeii",
-        "provider-video-asset",
-    );
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'video', ?, ?)
+    `).run( "tidal", "tidal-video-cover-1", "Pompeii" );
 
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadVideo,
@@ -542,14 +527,7 @@ test("download queue query resolves canonical track provider offers without Prov
         INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, version, cover_id
     ) VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-    "tidal",
-    "track",
-    "tidal-track-1",
-    "Canonical Track",
-    "Dolby Atmos",
-    "track-cover",
-  );
+    `).run( "tidal", "track", "tidal-track-1", "Canonical Track", "Dolby Atmos", "track-cover" );
 
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadTrack,

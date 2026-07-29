@@ -95,30 +95,13 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, upc, release_date
     ) VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "release",
-    "provider-album-1",
-    "Soundtrack Album From Wrong Provider",
-    "987654321000",
-    "2024-03-01",
-  );
+  `).run( "tidal", "album", "provider-album-1", "Soundtrack Album From Wrong Provider", "987654321000", "2024-03-01" );
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, explicit, isrc, duration_ms, replay_gain, peak
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "track",
-    "provider-track-1",
-    "Canonical Song",
-    1,
-    "TESTISRC1234",
-    181,
-    -7.31,
-    0.967717,
-  );
+  `).run( "tidal", "track", "provider-track-1", "Canonical Song", 1, "TESTISRC1234", 181, -7.31, 0.967717 );
 
   const inserted = dbModule.db.prepare(`
     INSERT INTO TrackFiles (

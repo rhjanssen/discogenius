@@ -70,26 +70,12 @@ function seedMusicBrainzMetadata() {
           INSERT INTO ProviderItems(
       provider, entity_type, provider_id, title, upc, duration_ms, release_date
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(
-    "tidal",
-    "release",
-    "200",
-    "Example Album",
-    "123456789012",
-    180,
-    "2024-02-03",
-  );
+      `).run( "tidal", "album", "200", "Example Album", "123456789012", 180, "2024-02-03" );
     dbModule.db.prepare(`
         INSERT INTO ProviderItems(
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES (?, ?, ?, ?, ?)
-    `).run(
-    "tidal",
-    "track",
-    "300",
-    "Example Track",
-    180,
-  );
+    `).run( "tidal", "track", "300", "Example Track", 180 );
       dbModule.db.prepare(`
           INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date, length_ms, credits)
           VALUES(?, ?, ?, ?, ?, ?, ?)
@@ -99,14 +85,7 @@ function seedMusicBrainzMetadata() {
           INSERT INTO ProviderItems(
       provider, entity_type, provider_id, title, duration_ms, release_date
     ) VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-    "tidal",
-    "video",
-    "400",
-    "Example Video",
-    210,
-    "2024-02-03",
-  );
+      `).run( "tidal", "video", "400", "Example Video", 210, "2024-02-03" );
 }
 
 test("Jellyfin NFO files use canonical local metadata and include MusicBrainz IDs", async () => {
@@ -206,25 +185,13 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
         INSERT INTO ProviderItems(
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES (?, ?, ?, ?, ?)
-    `).run(
-    "tidal",
-    "track",
-    "stereo-track",
-    "Example Track",
-    180,
-  );
+    `).run( "tidal", "track", "stereo-track", "Example Track", 180 );
 
     dbModule.db.prepare(`
         INSERT INTO ProviderItems(
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES (?, ?, ?, ?, ?)
-    `).run(
-    "tidal",
-    "track",
-    "spatial-track",
-    "Example Track",
-    181,
-  );
+    `).run( "tidal", "track", "spatial-track", "Example Track", 181 );
 
     const stereoLyricsPath = path.join(tempDir, "stereo-track.lrc");
     fs.writeFileSync(stereoLyricsPath, "[00:01.00]plain lyric", "utf-8");
@@ -282,13 +249,7 @@ test("lyrics fall back across providers for the same canonical recording", async
         INSERT INTO ProviderItems(
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES (?, ?, ?, ?, ?)
-    `).run(
-    "apple-music",
-    "track",
-    "apple-track-300",
-    "Example Track",
-    180,
-  );
+    `).run( "apple-music", "track", "apple-track-300", "Example Track", 180 );
 
     const providersModule = await import("../providers/index.js");
     const tidal = providersModule.streamingProviderManager.getStreamingProvider("tidal") as any;
@@ -545,46 +506,19 @@ test("Bad Blood NFO cannot cross providers when Apple and TIDAL IDs collide", as
         .run("Bad Blood", "release-group-mbid-200");
     dbModule.db.prepare(`
         INSERT INTO ProviderItems(
-          provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-          release_mbid, album_id, title, library_slot
-        ) VALUES(?, 'album', ?, ?, ?, ?, ?, ?, 'stereo')
-    `).run(
-        "apple-music",
-        "1705033078",
-        "artist-mbid-100",
-        "release-group-mbid-200",
-        "album-mbid-200",
-        "1705033078",
-        "Pompeii MMXXIII",
-    );
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'release', ?, ?)
+    `).run( "apple-music", "1705033078", "Pompeii MMXXIII" );
     dbModule.db.prepare(`
         INSERT INTO ProviderItems(
-          provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-          release_mbid, album_id, title, library_slot
-        ) VALUES(?, 'album', ?, ?, ?, ?, ?, ?, 'stereo')
-    `).run(
-        "apple-music",
-        "1710633308",
-        "artist-mbid-100",
-        "release-group-mbid-200",
-        "album-mbid-200",
-        "1710633308",
-        "Bad Blood X (10th Anniversary Edition)",
-    );
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'release', ?, ?)
+    `).run( "apple-music", "1710633308", "Bad Blood X (10th Anniversary Edition)" );
     dbModule.db.prepare(`
         INSERT INTO ProviderItems(
-          provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-          release_mbid, album_id, title, library_slot
-        ) VALUES(?, 'album', ?, ?, ?, ?, ?, ?, 'stereo')
-    `).run(
-        "tidal",
-        "1705033078",
-        "artist-mbid-100",
-        "release-group-mbid-200",
-        "album-mbid-200",
-        "1705033078",
-        "Wrong TIDAL Collision",
-    );
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'release', ?, ?)
+    `).run( "tidal", "1705033078", "Wrong TIDAL Collision" );
     const nfoPath = path.join(tempDir, "bad-blood.nfo");
     await metadataFilesModule.saveAlbumNfoFile("release-group-mbid-200", nfoPath, {
         releaseGroupMbid: "release-group-mbid-200",

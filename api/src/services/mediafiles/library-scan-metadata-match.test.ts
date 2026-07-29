@@ -59,13 +59,7 @@ function seedOffer(params: {
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES ('tidal', 'track', ?, ?, ?)
-  `).run(
-    params.providerId,
-    params.title,
-    params.duration,
-    params.albumId,
-    params.recordingId ?? null,
-  );
+  `).run( params.providerId, params.title, params.duration );
 }
 
 /**

@@ -15,8 +15,9 @@ function seedProviderExactMatch(
   const providerReleaseItemId = 10_000 + releaseId;
   const releaseMatchId = 20_000 + releaseId;
   db.prepare(`
-    INSERT INTO ProviderItems (id, provider, entity_type, provider_id, availability)
-    VALUES (?, 'tidal', 'release', ?, 'available')
+    INSERT INTO ProviderItems (
+      id, provider, entity_type, provider_id, availability
+    ) VALUES (?, 'tidal', 'release', ?, 'available')
   `).run(providerReleaseItemId, `release-${releaseId}`);
   db.prepare(`
     INSERT INTO ProviderReleaseMatches (
@@ -40,8 +41,9 @@ function seedProviderExactMatch(
     const recordingId = (db.prepare("SELECT recording_id FROM Tracks WHERE id = ?")
       .get(trackId) as { recording_id: number }).recording_id;
     db.prepare(`
-      INSERT INTO ProviderItems (id, provider, entity_type, provider_id, availability)
-      VALUES (?, 'tidal', 'track', ?, 'available')
+      INSERT INTO ProviderItems (
+      id, provider, entity_type, provider_id, availability
+    ) VALUES (?, 'tidal', 'track', ?, 'available')
     `).run(providerTrackItemId, `track-${releaseId}-${index + 1}`);
     db.prepare(`
       INSERT INTO ProviderReleaseMembers (

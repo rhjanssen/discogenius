@@ -141,22 +141,12 @@ function seedCanonicalArtistGraph() {
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "track",
-    "provider-track-1",
-    "Track One",
-  );
+  `).run( "tidal", "track", "provider-track-1", "Track One" );
   db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "video",
-    "provider-video-1",
-    "Track One",
-  );
+  `).run( "tidal", "video", "provider-video-1", "Track One" );
 
   return {
     releaseGroupId: releaseGroup.id,

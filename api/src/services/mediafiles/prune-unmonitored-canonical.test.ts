@@ -76,7 +76,7 @@ function seedVideoRecording(monitored: number, providerId: string) {
     .run(null, "A Video", "artist-mbid", monitored);
   db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES ('tidal', 'video', ?, 'A Video')`).run(providerId, Number(info.lastInsertRowid));
+    ) VALUES ('tidal', 'video', ?, 'A Video')`).run( providerId );
 }
 
 let tfId = 0;

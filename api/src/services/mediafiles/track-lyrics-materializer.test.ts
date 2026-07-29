@@ -122,15 +122,7 @@ test("import lyric materializer saves provider plain lyrics as txt and reuses th
     INSERT INTO ProviderItems(
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES ('tidal', 'track', ?, ?, 180)
-  `).run(
-    "provider-track-301",
-    "artist-mbid-101",
-    "release-group-mbid-201",
-    "release-mbid-201",
-    "track-mbid-301",
-    "recording-mbid-301",
-    "Baiana",
-  );
+  `).run( "provider-track-301", "Baiana" );
 
   const providersModule = await import("../providers/index.js");
   const tidal = providersModule.streamingProviderManager.getStreamingProvider("tidal") as any;

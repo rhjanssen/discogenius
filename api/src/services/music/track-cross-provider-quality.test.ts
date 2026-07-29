@@ -149,13 +149,15 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     const track = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = ?")
       .get(options.trackMbid) as { id: number; recording_id: number };
     const providerRelease = db.prepare(`
-      INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-      VALUES (?, 'release', ?, 'Album')
+      INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'release', ?, 'Album')
       RETURNING id
     `).get(options.provider, options.providerReleaseId) as { id: number };
     const providerTrack = db.prepare(`
-      INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-      VALUES (?, 'track', ?, 'Song')
+      INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'track', ?, 'Song')
       RETURNING id
     `).get(options.provider, options.providerTrackId) as { id: number };
     const member = db.prepare(`

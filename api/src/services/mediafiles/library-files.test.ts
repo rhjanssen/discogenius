@@ -668,12 +668,7 @@ dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "release",
-    "provider-album-1",
-    "Give Me The Future",
-  );
+  `).run( "tidal", "album", "provider-album-1", "Give Me The Future" );
   // Track offer carries the recording mbid; the selected slot resolves the exact
   // release/track (preferring the selected-release over the offer's legacy release).
   dbModule.db.prepare(`
@@ -755,22 +750,12 @@ dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "release",
-    "provider-album-1",
-    "SAVE MY SOUL",
-  );
+  `).run( "tidal", "album", "provider-album-1", "SAVE MY SOUL" );
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "track",
-    "provider-track-1",
-    "SAVE MY SOUL",
-  );
+  `).run( "tidal", "track", "provider-track-1", "SAVE MY SOUL" );
 
   const root = configModule.Config.getMusicPath();
   const albumDir = path.join(root, "Bastille {mbid-artist-mbid-1}", "SAVE MY SOUL (2025)");
@@ -1151,7 +1136,7 @@ dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-inline-test', 'Pompeii Video')
-  `).run(videoRecId);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)
@@ -1273,7 +1258,7 @@ dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-inline-duplicate', 'Pompeii (Official Video)')
-  `).run(dupVideoRecId);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.9)
@@ -1361,7 +1346,7 @@ test("computeExpectedPath inline requires a monitored nonspatial library release
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-inline-gate', 'Pompeii')
-  `).run(videoRecId);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)
@@ -1438,7 +1423,7 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-stereo-pref', 'Pompeii')
-  `).run(videoRecId);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)

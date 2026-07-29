@@ -104,13 +104,15 @@ function seedTypedRelease(input: {
     input.trackTitle,
   ) as { id: number };
   const providerRelease = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES (?, 'release', ?, ?)
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'release', ?, ?)
     RETURNING id
   `).get(input.provider, input.providerReleaseId, input.albumTitle) as { id: number };
   const providerTrack = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES (?, 'track', ?, ?)
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'track', ?, ?)
     RETURNING id
   `).get(input.provider, input.providerTrackId, input.trackTitle) as { id: number };
   const member = db.prepare(`
@@ -228,8 +230,9 @@ function seedTypedVideo(input: {
     input.title,
   ) as { id: number };
   const providerVideo = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES (?, 'video', ?, ?)
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'video', ?, ?)
     RETURNING id
   `).get(input.provider, input.providerVideoId, input.title) as { id: number };
   db.prepare(`

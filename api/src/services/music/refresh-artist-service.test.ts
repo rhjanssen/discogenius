@@ -257,14 +257,7 @@ test("stored SoundCloud playlist coverage is revalidated and its permalink is ba
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('soundcloud', 'release', ?, ?)
-  `).run(
-    providerAlbumId,
-    "Other People's Heartache part 1",
-    artistMbid,
-    releaseGroupMbid,
-    releaseMbid,
-    JSON.stringify({ providerTrackCount: 2, targetTrackCount: 2 }),
-  );
+  `).run( providerAlbumId, "Other People's Heartache part 1" );
 
   const artist = { providerId: "sc-user", name: "Nafissa_" };
   const album = {
@@ -331,8 +324,13 @@ test("all durable SoundCloud playlist offers are revalidated after the first val
   const staleId = "220003151";
   const insertOffer = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, availability, updated_at
-    ) VALUES ('soundcloud', 'release', ?, ?, 'available', ?)
+      provider, entity_type, provider_id, title, quality, artist_mbid,
+      release_group_mbid, release_mbid, match_status, match_confidence,
+      match_method, availability, updated_at
+    ) VALUES (
+      'soundcloud', 'album', ?, ?, 'SOUNDCLOUD_LOSSY', ?, ?, ?,
+      'probable', 0.85, 'playlist-tracklist-coverage', 'available', ?
+    )
   `);
   insertOffer.run(
     validId,
@@ -409,12 +407,12 @@ test("empty stored SoundCloud playlist is rejected and a covering replacement is
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('soundcloud', 'release', ?, ?)
-  `).run(staleId, "Other People's Heartache", artistMbid, releaseGroupMbid, releaseMbid);
+  `).run( staleId, "Other People's Heartache" );
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, availability
     ) VALUES ('soundcloud', 'track', 'stale-child-track', 'Stale Track', 'available')
-  `).run(staleId);
+  `).run();
   const artist = { providerId: "sc-user", name: "Fan uploader" };
   const makeAlbum = (providerId: string) => ({
     providerId,
@@ -739,9 +737,10 @@ test("public remote catalog hydrates missing video offers without provider authe
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored, last_scanned) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)")
     .run("artist-local", "Video Artist", artistMbid, 1);
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, match_status, match_confidence, match_method)
-    VALUES (?, 'artist', ?, ?, ?, 'verified', 1, 'test')
-  `).run("fake-video-provider", providerArtistId, artistMbid, "Video Artist");
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'artist', ?, ?)
+  `).run( "fake-video-provider", providerArtistId, "Video Artist" );
 
   try {
     await refreshServiceModule.RefreshArtistService.matchArtistProviders(

@@ -235,16 +235,9 @@ test("followed artist import reports added when metadata sync creates the artist
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, title,
-      match_status, match_confidence, match_method
-    )
-    VALUES (?, 'artist', ?, ?, ?, 'verified', 1, 'test-cache')
-  `).run(
-    "followed-status-test-provider",
-    "artist-added-after-sync",
-    "artist-added-after-sync-mbid",
-    "Artist Added After Sync",
-  );
+      provider, entity_type, provider_id, title
+    ) VALUES (?, 'artist', ?, ?)
+  `).run( "followed-status-test-provider", "artist-added-after-sync", "Artist Added After Sync" );
 
   servarrMetadata.syncArtist = (async (mbid: string) => {
     dbModule.db.prepare(`

@@ -174,7 +174,7 @@ test("finalizeImportedDirectories relocates linked separated videos inline after
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-100', 'Track One')
-  `).run(videoRecId);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)

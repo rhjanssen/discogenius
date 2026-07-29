@@ -606,7 +606,7 @@ test("rename preview batches canonical metadata and collision-owner lookups", ()
       INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'track', ?, ?)
-    `).run(providerId, trackMbid, recordingMbid, trackTitle);
+    `).run( providerId, trackTitle );
     libraryFilesModule.LibraryFilesService.upsertLibraryFile({
       artistId: "1",
       albumId: "10",
@@ -676,8 +676,12 @@ test("benchmark: 200-row rename preview statement shape", () => {
   `);
   const insertOffer = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES ('tidal', 'track', ?, ?)
+      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
+      release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot
+    ) VALUES (
+      'tidal', 'track', ?, 'artist-mbid-1', 'release-group-mbid-1',
+      'release-mbid-1', ?, ?, 'album-1', ?, 'LOSSLESS', 'stereo'
+    )
   `);
   const insertFile = dbModule.db.prepare(`
     INSERT INTO TrackFiles (
@@ -819,12 +823,7 @@ test("RenameTrackFileService derives video paths from canonical provider-only re
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "video",
-    "tidal-video-123",
-    "provider Video Title",
-  );
+  `).run( "tidal", "video", "tidal-video-123", "provider Video Title" );
 
   libraryFilesModule.LibraryFilesService.upsertLibraryFile({
     artistId: "1",
@@ -1063,12 +1062,12 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'video', 'video-pompeii', 'Pompeii')
-  `).run(videoRecId);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('tidal', 'track', 'track-pompeii', 'Pompeii')
-  `).run(audioRecId);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)

@@ -65,8 +65,9 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   `).run();
   for (let trackId = 1; trackId <= 4; trackId += 1) {
     db.prepare(`
-      INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
-      VALUES (?, 'tidal', 'track', ?, ?, 'available')
+      INSERT INTO ProviderItems (
+      id, provider, entity_type, provider_id, title, availability
+    ) VALUES (?, 'tidal', 'track', ?, ?, 'available')
     `).run(100 + trackId, `standard-${trackId}`, `Standard ${trackId}`);
     db.prepare(`
       INSERT INTO ProviderReleaseMembers (
@@ -81,8 +82,9 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   }
   for (let trackId = 1; trackId <= 3; trackId += 1) {
     db.prepare(`
-      INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
-      VALUES (?, 'tidal', 'track', ?, ?, 'available')
+      INSERT INTO ProviderItems (
+      id, provider, entity_type, provider_id, title, availability
+    ) VALUES (?, 'tidal', 'track', ?, ?, 'available')
     `).run(200 + trackId, `deluxe-${trackId}`, `Deluxe ${trackId}`);
     db.prepare(`
       INSERT INTO ProviderReleaseMembers (

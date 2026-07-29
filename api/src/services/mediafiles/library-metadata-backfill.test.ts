@@ -258,12 +258,7 @@ function seedCanonicalLibraryFiles() {
         INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-    `).run(
-    "tidal",
-    "release",
-    "200",
-    "Provider Album",
-  );
+    `).run( "tidal", "album", "200", "Provider Album" );
     const providerRelease = dbModule.db.prepare(`
         SELECT id
         FROM ProviderItems
@@ -292,12 +287,7 @@ function seedCanonicalLibraryFiles() {
         INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-    `).run(
-    "tidal",
-    "track",
-    "300",
-    "Provider Track",
-  );
+    `).run( "tidal", "track", "300", "Provider Track" );
     const musicRoot = configModule.Config.getMusicPath();
     const albumNfoPath = libraryFilesModule.LibraryFilesService.computeExpectedPath({
         id: -1,
@@ -356,12 +346,7 @@ function seedCanonicalLibraryFiles() {
         INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-    `).run(
-    "tidal",
-    "video",
-    "400",
-    "Provider Video",
-  );
+    `).run( "tidal", "video", "400", "Provider Video" );
 
     const videoRoot = configModule.Config.getVideoPath();
     const videoDir = path.join(videoRoot, "The Example Artist");

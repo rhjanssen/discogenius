@@ -50,12 +50,7 @@ function seedCanonicalTrackFileOnly() {
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES (?, ?, ?, ?)
-  `).run(
-    "tidal",
-    "track",
-    "provider-track",
-    "Only High Quality Track",
-  );
+  `).run( "tidal", "track", "provider-track", "Only High Quality Track" );
 
   db.prepare(`
     INSERT INTO TrackFiles (

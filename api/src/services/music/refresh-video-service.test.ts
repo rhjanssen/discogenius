@@ -269,7 +269,7 @@ test("named venue live attaches to unlabeled MusicBrainz video at exact duration
       INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms, release_date
     ) VALUES ('tidal', 'video', ?, ?, ?, ?)
-    `).run(sample.tidalId, sample.title, sample.duration, sample.date, canonical.id);
+    `).run( sample.tidalId, sample.title, sample.duration, sample.date );
 
     refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
       provider: "apple-music",
@@ -335,12 +335,12 @@ test("refresh promotes legacy provider-only venue live onto MusicBrainz twin", (
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms, release_date
     ) VALUES ('tidal', 'video', 'tidal-mej', 'Me & Mr. Jones', 203, '2024-09-02')
-  `).run(canonical.id);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms, release_date
     ) VALUES ('apple-music', 'video', 'apple-mej-live', 'Me & Mr. Jones (Live at Other Voices, 2006)', 203, '2024-09-02')
-  `).run(legacyLive.id);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, recording_id, provider, provider_entity_type, provider_id,
@@ -692,12 +692,12 @@ test("refresh retro-merges pre-existing duplicate provider-only video recordings
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES ('tidal', 'video', 'tidal-video-sms', 'SAVE MY SOUL', 256)
-  `).run(tidalRec.id);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES ('apple-music', 'video', 'apple-video-sms', 'SAVE MY SOUL ("FROM ALL SIDES" Tour)', 256)
-  `).run(appleRec.id);
+  `).run();
 
   // Any video refresh for the artist sweeps and heals the duplicates.
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
@@ -898,12 +898,12 @@ test("refresh splits a live offer wrongly glued onto a studio recording", () => 
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES ('youtube-music', 'video', 'yt-oblivion-studio', 'Oblivion', 197)
-  `).run(studio.id);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES ('youtube-music', 'video', 'yt-oblivion-live', 'Oblivion (Live From Capitol Studios, USA / 2013)', 187)
-  `).run(studio.id);
+  `).run();
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "youtube-music",
@@ -938,7 +938,7 @@ test("provider video related_track_id links directly to the matched audio record
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms
     ) VALUES ('apple-music', 'track', 'apple-song-1', 'Pompeii', 214)
-  `).run(audio.id);
+  `).run();
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "apple-music",
@@ -984,9 +984,10 @@ test("provider video album_id scopes title matching to that album's tracks", () 
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES ('tidal', 'track', 'tidal-track-on', 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457),
-    ('tidal', 'track', 'tidal-track-off', 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457)
+      provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_id, title, duration
+    ) VALUES
+      ('tidal', 'track', 'tidal-track-on', 'tidal-album-42', 'artist-mbid', ?, 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457),
+      ('tidal', 'track', 'tidal-track-off', 'tidal-album-99', 'artist-mbid', ?, 'Romeo & Juliet (Live At The Hammersmith Odeon)', 457)
   `).run(onAlbum.id, offAlbum.id);
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
@@ -1026,9 +1027,10 @@ test("album-linked video does not fall back to artist-wide audio when in-album t
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES ('tidal', 'track', 'tidal-track-miss', 'Other Song', 200),
-    ('tidal', 'track', 'tidal-track-wide', 'Romeo & Juliet', 457)
+      provider, entity_type, provider_id, provider_album_id, artist_mbid, recording_id, title, duration
+    ) VALUES
+      ('tidal', 'track', 'tidal-track-miss', 'tidal-album-miss', 'artist-mbid', ?, 'Other Song', 200),
+      ('tidal', 'track', 'tidal-track-wide', 'tidal-album-other', 'artist-mbid', ?, 'Romeo & Juliet', 457)
   `).run(onAlbum.id, artistWide.id);
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
@@ -1093,12 +1095,12 @@ test("backfillMissingVideoOfferQuality fills null quality from the provider getV
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('youtube-music', 'video', 'H5uf6fhbRek', 'Pompeii')
-  `).run(nullQualityVideo.id);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('youtube-music', 'video', 'alreadyTagged', 'Things We Lost')
-  `).run(taggedVideo.id);
+  `).run();
 
   const probed: string[] = [];
   manager.getStreamingProvider = (id: string) => {

@@ -90,15 +90,21 @@ test("video list and detail use canonical video recordings with provider offers"
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms, release_date, provider_url, availability
     ) VALUES ('tidal', 'video', 'provider-video-1', 'Canonical Video', 215, '2024-01-02', 'https://tidal.com/browse/video/provider-video-1', 1)
-  `).run(recording.id);
+  `).run();
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms, availability
-    ) VALUES ('youtube-music', 'video', 'yt-video-01', 'Canonical Video', 215, 1),
-    ('apple-music', 'video', 'apple-video-4k', 'Canonical Video', 215, 1),
-    ('apple-music', 'video', 'unavailable-video', 'Canonical Video', 215, 0),
-    ('deezer', 'video', 'rejected-video', 'Canonical Video', 215, 1)
+      provider, entity_type, provider_id, artist_mbid, recording_id,
+      title, quality, duration, availability, match_status
+    ) VALUES
+      ('youtube-music', 'video', 'yt-video-01', 'artist-mbid', ?,
+       'Canonical Video', NULL, 215, 1, NULL),
+      ('apple-music', 'video', 'apple-video-4k', 'artist-mbid', ?,
+       'Canonical Video', 'MP4_2160P', 215, 1, NULL),
+      ('apple-music', 'video', 'unavailable-video', 'artist-mbid', ?,
+       'Canonical Video', '4K', 215, 0, NULL),
+      ('deezer', 'video', 'rejected-video', 'artist-mbid', ?,
+       'Canonical Video', '8K', 215, 1, 'rejected')
   `).run(recording.id, recording.id, recording.id, recording.id);
 
   dbModule.db.prepare(`
@@ -222,7 +228,7 @@ test("video detail backfills null offer quality from TrackFiles", () => {
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms, availability
     ) VALUES ('tidal', 'video', '25704375', 'Pompeii', 233, 'available')
-  `).run(recording.id);
+  `).run();
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
@@ -272,7 +278,7 @@ test("video downloaded state treats provider ids as provider-scoped", () => {
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('apple-music', 'video', '42', 'Apple Video')
-  `).run(recording.id);
+  `).run();
 
   // A legacy TIDAL file with the same service-local numeric id must not mark
   // Apple's canonical video as downloaded.
@@ -341,7 +347,7 @@ test("video detail appears-on follows related audio via provider_video_for, not 
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('apple-music', 'video', '99', 'Canonical Video')
-  `).run(recording.id);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (
       source_recording_id, target_recording_id, relation_type, source, confidence
@@ -476,7 +482,7 @@ test("video detail appears-on follows related audio recordings and prefers monit
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
     ) VALUES ('youtube-music', 'video', 'yt-affil-omv', 'Song')
-  `).run(video.id);
+  `).run();
 
   const detail = videoQueryModule.getVideoDetail(String(video.id));
   assert.equal(detail?.albums?.length, 2);
@@ -623,7 +629,7 @@ test("video detail prefers provider title when recording title is Unknown Video"
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, duration_ms, availability
     ) VALUES ('tidal', 'video', 'prov-title-1', 'Happy Endings', 307, 1)
-  `).run(recording.id);
+  `).run();
 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
   assert.equal(detail?.title, "Happy Endings");
@@ -675,7 +681,7 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, provider_url
     ) VALUES ('tidal', 'video', 'assoc-video-1', 'Oblivion', 'https://tidal.com/browse/video/assoc-video-1')
-  `).run(video.id);
+  `).run();
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (
       source_recording_id, target_recording_id, relation_type, source, confidence
