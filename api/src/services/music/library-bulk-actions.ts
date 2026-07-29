@@ -10,8 +10,8 @@ import { CurationService } from "./curation-service.js";
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
-import { getConfigSection } from "../config/config.js";
 import { videoCoverLocalUrl } from "../metadata/media-cover-service.js";
+import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 
 export const LIBRARY_BULK_ENTITIES = ["artist", "album", "track", "video"] as const;
 export const LIBRARY_BULK_ACTIONS = ["monitor", "unmonitor", "lock", "unlock", "download"] as const;
@@ -135,25 +135,36 @@ function applyReleaseGroupWantedState(releaseGroupMbids: string[], monitored: bo
         return;
     }
 
-    const includeSpatial = getConfigSection("filtering").include_spatial === true;
-    const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
     const wanted = monitored ? 1 : 0;
     const upsert = db.prepare(`
-        INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, updated_at)
-        SELECT artist_mbid, mbid, ?, ?, CURRENT_TIMESTAMP
-        FROM Albums
-        WHERE mbid = ?
-        ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
-          artist_mbid = excluded.artist_mbid,
-          monitored = excluded.monitored,
+        INSERT INTO LibraryReleaseGroups (
+          library_id, release_group_id, monitored, selection_mode, locked,
+          reason, curation_version, updated_at
+        )
+        SELECT library.id, release_group.id, ?, 'manual', 0,
+               'bulk_monitor_action', 1, CURRENT_TIMESTAMP
+        FROM Libraries library
+        CROSS JOIN Albums release_group
+        WHERE library.enabled = 1 AND release_group.mbid = ?
+        ON CONFLICT(library_id, release_group_id) DO UPDATE SET
+          monitored = CASE
+            WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.monitored
+            ELSE excluded.monitored
+          END,
+          selection_mode = CASE
+            WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.selection_mode
+            ELSE 'manual'
+          END,
+          reason = CASE
+            WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.reason
+            ELSE excluded.reason
+          END,
           updated_at = CURRENT_TIMESTAMP
     `);
 
     const tx = db.transaction(() => {
         for (const releaseGroupMbid of normalizedReleaseGroupMbids) {
-            for (const slot of slots) {
-                upsert.run(slot, wanted, releaseGroupMbid);
-            }
+            upsert.run(wanted, releaseGroupMbid);
         }
     });
 
@@ -174,12 +185,15 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
 
         if (!monitored) {
             db.prepare(`
-                UPDATE ReleaseGroupSlots
-                SET monitored = 0, updated_at = CURRENT_TIMESTAMP
-                WHERE artist_mbid IN (
-                    SELECT mbid FROM Artists WHERE id IN (${artistPlaceholders})
-                )
-                  AND monitored_lock = 0
+            UPDATE LibraryReleaseGroups
+            SET monitored = 0, updated_at = CURRENT_TIMESTAMP
+            WHERE release_group_id IN (
+                SELECT release_group.id
+                FROM Albums release_group
+                JOIN Artists artist ON artist.mbid = release_group.artist_mbid
+                WHERE artist.id IN (${artistPlaceholders})
+            )
+              AND locked = 0
             `).run(...artistIds);
 
             db.prepare(`
@@ -203,9 +217,10 @@ function applyAlbumMonitorState(releaseGroupMbids: string[], monitored: boolean)
 
 function applyTrackMonitorState(trackIds: string[], monitored: boolean): void {
     const rows = fetchRows(`
-        SELECT DISTINCT ar.release_group_mbid AS id
+        SELECT DISTINCT release_group.mbid AS id
         FROM Tracks t
-        JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
+        JOIN AlbumReleases release ON release.id = t.album_release_id
+        JOIN Albums release_group ON release_group.id = release.release_group_id
         WHERE CAST(t.id AS TEXT) IN (${buildPlaceholders(trackIds.length)})
            OR t.mbid IN (${buildPlaceholders(trackIds.length)})
     `, [...trackIds, ...trackIds]);
@@ -236,10 +251,13 @@ function applyAlbumLockState(releaseGroupMbids: string[], locked: boolean): void
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE ReleaseGroupSlots
-            SET monitored_lock = ?,
-                locked_at = CASE WHEN ? = 1 THEN COALESCE(locked_at, CURRENT_TIMESTAMP) ELSE NULL END
-            WHERE release_group_mbid IN (${albumPlaceholders})
+            UPDATE LibraryReleaseGroups
+            SET locked = ?,
+                selection_mode = CASE WHEN ? = 1 THEN 'manual' ELSE selection_mode END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE release_group_id IN (
+              SELECT id FROM Albums WHERE mbid IN (${albumPlaceholders})
+            )
         `).run(nextStatus, nextStatus, ...releaseGroupMbids);
     });
 
@@ -267,71 +285,23 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
     const queuedJobIds: number[] = [];
 
     for (const releaseGroupMbid of releaseGroupMbids) {
-        const selections = db.prepare(`
-            SELECT
-                rgs.slot,
-                rgs.selected_provider,
-                rgs.selected_provider_id,
-                rgs.quality,
-                pi.cover AS provider_cover,
-                pi.title AS provider_title,
-                pi.provider_artist_name AS provider_artist_name,
-                rg.title,
-                artist.name AS artist_name
-            FROM ReleaseGroupSlots rgs
-            JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
-            LEFT JOIN ArtistMetadata artist ON artist.mbid = rg.artist_mbid
-            LEFT JOIN ProviderItems pi ON pi.provider_id = rgs.selected_provider_id AND pi.entity_type = 'album'
-            WHERE rgs.release_group_mbid = ?
-              AND rgs.monitored = 1
-              AND rgs.selected_provider IS NOT NULL
-              AND rgs.selected_provider_id IS NOT NULL
-            ORDER BY CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
-        `).all(releaseGroupMbid) as Array<EntityRow & {
-            slot?: string | null;
-            selected_provider?: string | null;
-            selected_provider_id?: string | number | null;
-            provider_cover?: string | null;
-            provider_title?: string | null;
-            provider_artist_name?: string | null;
-        }>;
-
-        for (const album of selections) {
-            if (album.selected_provider_id == null) {
-                continue;
-            }
-
-            const providerAlbumId = String(album.selected_provider_id);
-            const provider = album.selected_provider || "tidal";
-            const slot = String(album.slot || "stereo");
-            const artistNames = [String(album.artist_name || album.provider_artist_name || "").trim()].filter(Boolean);
-            const title = String(album.title || album.provider_title || "Unknown Album").trim();
-            const version = String(album.version || "").trim();
-            const displayTitle = version && !title.toLowerCase().includes(version.toLowerCase())
-                ? `${title} (${version})`
-                : title;
-            const primaryArtist = String(album.artist_name || artistNames[0] || "Unknown").trim() || "Unknown";
-
-            const commandId = CommandQueueManager.push(CommandNames.DownloadAlbum, {
-                url: buildStreamingMediaUrl("album", providerAlbumId, provider as any),
-                type: 'album',
-                provider,
-                providerId: providerAlbumId,
-                releaseGroupMbid,
-                albumId: releaseGroupMbid,
-                libraryRoot: slot === "spatial" ? "spatial" : "music",
-                slot,
-                title: displayTitle,
-                artist: primaryArtist,
-                artists: artistNames,
-                cover: album.provider_cover || album.cover || null,
-                quality: album.quality || null,
-                description: `${displayTitle} by ${primaryArtist} (${slot})`,
-            }, `${releaseGroupMbid}:${slot}`);
-
-            if (commandId > 0) {
-                queuedJobIds.push(commandId);
-            }
+        const plans = db.prepare(`
+          SELECT plan.id
+          FROM AcquisitionPlans plan
+          JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
+          JOIN AlbumReleases release ON release.id = library_release.release_id
+          JOIN Albums release_group ON release_group.id = release.release_group_id
+          JOIN LibraryReleaseGroups library_release_group
+            ON library_release_group.library_id = library_release.library_id
+           AND library_release_group.release_group_id = release.release_group_id
+          WHERE release_group.mbid = ?
+            AND plan.state = 'current'
+            AND library_release_group.monitored = 1
+          ORDER BY library_release.library_id, plan.id
+        `).all(releaseGroupMbid) as Array<{ id: number }>;
+        for (const plan of plans) {
+            const queued = queueAcquisitionPlan(db, plan.id);
+            if (queued.commandId != null) queuedJobIds.push(queued.commandId);
         }
     }
 
@@ -342,75 +312,25 @@ function queueTrackDownloads(trackIds: string[]): number[] {
     const queuedJobIds: number[] = [];
 
     for (const trackId of trackIds) {
-        const track = db.prepare(`
-            SELECT
-                CAST(t.id AS TEXT) AS id,
-                t.mbid,
-                t.title,
-                t.release_mbid,
-                t.recording_mbid,
-                ar.release_group_mbid,
-                album.title AS album_title,
-                artist.name AS artist_name,
-                pi.provider,
-                pi.provider_id,
-                pi.title AS provider_title,
-                pi.version,
-                pi.quality,
-                pi.cover AS provider_cover
-            FROM Tracks t
-            JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
-            JOIN Albums album ON album.mbid = ar.release_group_mbid
-            LEFT JOIN ArtistMetadata artist ON artist.mbid = ar.artist_mbid
-            LEFT JOIN ProviderItems pi
-              ON pi.entity_type IN ('track', 'recording')
-             AND (
-                pi.track_id = t.id
-                OR pi.track_mbid = t.mbid
-                OR pi.recording_mbid = t.recording_mbid
-             )
-            WHERE (CAST(t.id AS TEXT) = ? OR t.mbid = ?)
-            ORDER BY
-              CASE WHEN pi.provider_id IS NULL THEN 1 ELSE 0 END,
-              COALESCE(pi.match_confidence, 0) DESC,
-              CASE COALESCE(pi.match_status, '') WHEN 'verified' THEN 0 WHEN 'matched' THEN 1 ELSE 2 END,
-              pi.updated_at DESC
-            LIMIT 1
-        `).get(trackId, trackId) as EntityRow | undefined;
-
-        if (!track?.provider_id) {
-            continue;
-        }
-
-        const title = String(track.title || track.provider_title || "Unknown Track").trim();
-        const version = String(track.version || "").trim();
-        const displayTitle = version && !title.toLowerCase().includes(version.toLowerCase())
-            ? `${title} (${version})`
-            : title;
-        const albumTitle = String(track.album_title || "Unknown Album").trim();
-        const artistName = String(track.artist_name || "Unknown").trim() || "Unknown";
-
-        const commandId = CommandQueueManager.push(CommandNames.DownloadTrack, {
-            url: buildStreamingMediaUrl("track", String(track.provider_id)),
-            type: "track",
-            provider: track.provider || "tidal",
-            canonicalTrackId: String(track.id),
-            canonicalTrackMbid: track.mbid || null,
-            canonicalRecordingMbid: track.recording_mbid || null,
-            providerId: String(track.provider_id),
-            title: displayTitle,
-            artist: artistName,
-            cover: track.album_cover || null,
-            quality: track.quality || track.album_quality || null,
-            artists: [artistName],
-            releaseGroupMbid: track.release_group_mbid || undefined,
-            releaseMbid: track.release_mbid || null,
-            albumTitle,
-            description: `${displayTitle} on ${albumTitle} by ${artistName}`,
-        }, String(track.id || trackId));
-
-        if (commandId > 0) {
-            queuedJobIds.push(commandId);
+        const assignments = db.prepare(`
+          SELECT DISTINCT plan.id AS plan_id, track.id AS track_id
+          FROM Tracks track
+          JOIN AcquisitionPlanTracks plan_track ON plan_track.track_id = track.id
+          JOIN AcquisitionPlans plan ON plan.id = plan_track.plan_id AND plan.state = 'current'
+          JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
+          JOIN AlbumReleases release ON release.id = library_release.release_id
+          JOIN LibraryReleaseGroups release_group
+            ON release_group.library_id = library_release.library_id
+           AND release_group.release_group_id = release.release_group_id
+           AND release_group.monitored = 1
+          WHERE CAST(track.id AS TEXT) = ? OR track.mbid = ?
+          ORDER BY plan.id
+        `).all(trackId, trackId) as Array<{ plan_id: number; track_id: number }>;
+        for (const assignment of assignments) {
+            const queued = queueAcquisitionPlan(db, assignment.plan_id, {
+                trackIds: [assignment.track_id],
+            });
+            if (queued.commandId != null) queuedJobIds.push(queued.commandId);
         }
     }
 
@@ -427,24 +347,24 @@ function queueVideoDownloads(videoIds: string[]): number[] {
                 r.mbid,
                 r.title,
                 r.artist_mbid,
-                artist.name as artist_name,
+                COALESCE(credit.credited_name, artist.name) as artist_name,
                 pi.provider,
                 pi.provider_id,
-                pi.quality,
+                pi.provider_type AS quality,
                 pi.title AS provider_title
             FROM Recordings r
-            LEFT JOIN ArtistMetadata artist ON artist.mbid = r.artist_mbid
-            LEFT JOIN ProviderItems pi
-              ON pi.entity_type = 'video'
-             AND (
-                pi.recording_id = r.id
-                OR (r.mbid IS NOT NULL AND pi.recording_mbid = r.mbid)
-             )
+            LEFT JOIN RecordingArtistCredits credit
+              ON credit.recording_id = r.id AND credit.ordinal = 0
+            LEFT JOIN ArtistMetadata artist ON artist.id = credit.artist_id
+            LEFT JOIN ProviderVideoMatches video_match
+              ON video_match.recording_id = r.id
+             AND video_match.match_state = 'accepted'
+            LEFT JOIN ProviderItems pi ON pi.id = video_match.provider_video_item_id
             WHERE CAST(r.id AS TEXT) = ? AND r.is_video = 1
             ORDER BY
               CASE WHEN pi.provider_id IS NULL THEN 1 ELSE 0 END,
-              COALESCE(pi.match_confidence, 0) DESC,
-              CASE COALESCE(pi.match_status, '') WHEN 'verified' THEN 0 WHEN 'matched' THEN 1 ELSE 2 END,
+              CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+              video_match.confidence DESC,
               pi.updated_at DESC
             LIMIT 1
         `).get(videoId) as EntityRow | undefined;

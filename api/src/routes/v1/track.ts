@@ -41,22 +41,23 @@ function parseOptionalQueryBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
-function getCanonicalTrackReleaseGroup(trackId: string): { release_group_mbid: string; artist_mbid: string } | null {
+function getCanonicalTrackReleaseGroup(trackId: string): { release_group_id: number; release_group_mbid: string } | null {
   const row = db.prepare(`
-    SELECT release.release_group_mbid, release.artist_mbid
+    SELECT release_group.id AS release_group_id, release_group.mbid AS release_group_mbid
     FROM Tracks track
-    JOIN AlbumReleases release ON release.mbid = track.release_mbid
+    JOIN AlbumReleases release ON release.id = track.album_release_id
+    JOIN Albums release_group ON release_group.id = release.release_group_id
     WHERE track.mbid = ?
     LIMIT 1
-  `).get(trackId) as { release_group_mbid?: string | null; artist_mbid?: string | null } | undefined;
+  `).get(trackId) as { release_group_id?: number | null; release_group_mbid?: string | null } | undefined;
 
-  if (!row?.release_group_mbid || !row.artist_mbid) {
+  if (row?.release_group_id == null || !row.release_group_mbid) {
     return null;
   }
 
   return {
+    release_group_id: Number(row.release_group_id),
     release_group_mbid: String(row.release_group_mbid),
-    artist_mbid: String(row.artist_mbid),
   };
 }
 
@@ -67,22 +68,29 @@ function setCanonicalTrackMonitoring(trackId: string, monitored: boolean): boole
   }
 
   const wanted = monitored ? 1 : 0;
-  const result = db.prepare(`
-    UPDATE ReleaseGroupSlots
-    SET monitored = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE release_group_mbid = ?
-  `).run(wanted, canonicalTrack.release_group_mbid);
-
-  if (result.changes === 0) {
-    db.prepare(`
-      INSERT INTO ReleaseGroupSlots (
-        artist_mbid, release_group_mbid, slot, monitored, match_status, updated_at
-      ) VALUES (?, ?, 'stereo', ?, 'unmatched', CURRENT_TIMESTAMP)
-      ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
-        monitored = excluded.monitored,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(canonicalTrack.artist_mbid, canonicalTrack.release_group_mbid, wanted);
-  }
+  db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      reason, curation_version, updated_at
+    )
+    SELECT id, ?, ?, 'manual', 0, 'track_monitor_action', 1, CURRENT_TIMESTAMP
+    FROM Libraries
+    WHERE enabled = 1
+    ON CONFLICT(library_id, release_group_id) DO UPDATE SET
+      monitored = CASE
+        WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.monitored
+        ELSE excluded.monitored
+      END,
+      selection_mode = CASE
+        WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.selection_mode
+        ELSE 'manual'
+      END,
+      reason = CASE
+        WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.reason
+        ELSE excluded.reason
+      END,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(canonicalTrack.release_group_id, wanted);
 
   invalidateReleaseGroupDownloadStatus(canonicalTrack.release_group_mbid);
   return true;

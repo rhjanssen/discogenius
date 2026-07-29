@@ -67,6 +67,7 @@ function displaySlot(libraryName: string): "stereo" | "spatial" {
 export function buildAcquisitionDownloadCommand(
   db: Database.Database,
   planId: number,
+  options: { trackIds?: readonly number[] } = {},
 ): AcquisitionDownloadCommand | null {
   const header = db.prepare(`
     SELECT
@@ -112,7 +113,7 @@ export function buildAcquisitionDownloadCommand(
   const primarySource = sources[0];
   if (!primarySource) return null;
 
-  const tracks = db.prepare(`
+  let tracks = db.prepare(`
     SELECT
       plan_track.track_id,
       track.mbid AS track_mbid,
@@ -148,9 +149,15 @@ export function buildAcquisitionDownloadCommand(
     WHERE plan_track.plan_id = ?
     ORDER BY track.medium_position, track.position, track.id
   `).all(header.library_id, header.release_id, planId) as PlanTrack[];
+  const requestedTrackIds = new Set(options.trackIds || []);
+  if (requestedTrackIds.size > 0) {
+    tracks = tracks.filter((track) => requestedTrackIds.has(track.track_id));
+  }
   if (tracks.length === 0 || tracks.every((track) => Boolean(track.complete))) return null;
 
-  const forceTracks = header.download_mode === "tracks" || tracks.some((track) => Boolean(track.complete));
+  const forceTracks = requestedTrackIds.size > 0
+    || header.download_mode === "tracks"
+    || tracks.some((track) => Boolean(track.complete));
   const acquisitionMode: DownloadAlbumAcquisitionMode = forceTracks ? "trackOffers" : "album";
   const missingTracks = tracks.filter((track) => !track.complete);
   const trackOffers: DownloadTrackOffer[] = missingTracks.map((track) => ({
@@ -180,7 +187,9 @@ export function buildAcquisitionDownloadCommand(
 
   return {
     name: CommandNames.DownloadAlbum,
-    refId: `acquisition-plan:${planId}`,
+    refId: requestedTrackIds.size > 0
+      ? `acquisition-plan:${planId}:tracks:${[...requestedTrackIds].sort((a, b) => a - b).join(",")}`
+      : `acquisition-plan:${planId}`,
     body: {
       url: acquisitionMode === "album"
         ? buildStreamingMediaUrl("album", primarySource.provider_release_id, header.provider as any)
@@ -218,9 +227,10 @@ export function queueAcquisitionPlan(
   options: {
     canQueue?: () => boolean;
     onQueued?: (commandId: number) => void;
+    trackIds?: readonly number[];
   } = {},
 ): { queued: boolean; commandId: number | null } {
-  const command = buildAcquisitionDownloadCommand(db, planId);
+  const command = buildAcquisitionDownloadCommand(db, planId, { trackIds: options.trackIds });
   if (!command || options.canQueue?.() === false) {
     return { queued: false, commandId: null };
   }

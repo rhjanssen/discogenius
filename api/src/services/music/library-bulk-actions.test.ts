@@ -33,8 +33,18 @@ before(async () => {
 beforeEach(() => {
     const { db } = dbModule;
     db.prepare("DELETE FROM commands").run();
-    db.prepare("DELETE FROM ProviderItems").run();
     db.prepare("DELETE FROM TrackFiles").run();
+    db.prepare("DELETE FROM LibraryReleaseScopes").run();
+    db.prepare("DELETE FROM LibraryReleases").run();
+    db.prepare("DELETE FROM LibraryReleaseGroups").run();
+    db.prepare("DELETE FROM LibraryArtists").run();
+    db.prepare("DELETE FROM ManagedArtists").run();
+    db.prepare("DELETE FROM ProviderTrackMatches").run();
+    db.prepare("DELETE FROM ProviderVideoMatches").run();
+    db.prepare("DELETE FROM ProviderReleaseMatches").run();
+    db.prepare("DELETE FROM ProviderReleaseMembers").run();
+    db.prepare("DELETE FROM ProviderItemAudioVariants").run();
+    db.prepare("DELETE FROM ProviderItems").run();
     db.prepare("DELETE FROM Tracks").run();
     db.prepare("DELETE FROM RecordingRelations").run();
     db.prepare("DELETE FROM Recordings").run();
@@ -42,7 +52,6 @@ beforeEach(() => {
     db.prepare("DELETE FROM AlbumArtists").run();
     db.prepare("DELETE FROM ArtistReleaseGroups").run();
     db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
-    db.prepare("DELETE FROM ReleaseGroupSlots").run();
     db.prepare("DELETE FROM Albums").run();
     db.prepare("DELETE FROM Artists").run();
     db.prepare("DELETE FROM ArtistMetadata").run();
@@ -95,56 +104,106 @@ dbModule.db.prepare(`
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(501, "video-recording-mbid-1", "video-recording-mbid-1", 101, "artist-mbid-1", "Video One", 200000, 1, "provider_only", 0, 0);
 
+    const releaseGroupId = (dbModule.db.prepare(`
+        SELECT id FROM Albums WHERE mbid = 'release-group-mbid-1'
+    `).get() as { id: number }).id;
+    const libraryId = (dbModule.db.prepare(`
+        SELECT id FROM Libraries WHERE name = 'Stereo'
+    `).get() as { id: number }).id;
+    const managedArtistId = (dbModule.db.prepare(`
+        INSERT INTO ManagedArtists (artist_id) VALUES (101) RETURNING id
+    `).get() as { id: number }).id;
+    const libraryArtistId = (dbModule.db.prepare(`
+        INSERT INTO LibraryArtists (library_id, managed_artist_id, monitored, credited_scope)
+        VALUES (?, ?, 1, 'release_and_track_credit') RETURNING id
+    `).get(libraryId, managedArtistId) as { id: number }).id;
     dbModule.db.prepare(`
-        INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, title, quality,
-            artist_metadata_id, album_id, album_release_id, match_status, match_confidence, match_method
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        "tidal", "album", "10", "artist-mbid-1", "release-group-mbid-1", "release-mbid-1", "Album One", "LOSSLESS",
-        101, null, 201, "verified", 1, "test",
-    );
+        INSERT INTO LibraryReleaseGroups (
+            library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
+        ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
+    `).run(libraryId, releaseGroupId);
+    const libraryReleaseId = (dbModule.db.prepare(`
+        INSERT INTO LibraryReleases (
+            library_id, release_id, selection_mode, locked, reason, curation_version
+        ) VALUES (?, 201, 'auto', 0, 'test', 1)
+        RETURNING id
+    `).get(libraryId) as { id: number }).id;
+    dbModule.db.prepare(`
+        INSERT INTO LibraryReleaseScopes (library_release_id, library_artist_id, scope_type)
+        VALUES (?, ?, 'primary')
+    `).run(libraryReleaseId, libraryArtistId);
 
-    dbModule.db.prepare(`
+    const releaseItemId = (dbModule.db.prepare(`
         INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid,
-            recording_mbid, title, quality, artist_metadata_id, album_id, album_release_id, track_id, recording_id,
-            match_status, match_confidence, match_method
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        "tidal", "track", "100", "artist-mbid-1", "release-group-mbid-1", "release-mbid-1", "track-mbid-1",
-        "recording-mbid-1", "Track One", "LOSSLESS", 101, null, 201, 401, 301, "verified", 1, "test",
-    );
-
-    dbModule.db.prepare(`
+            provider, entity_type, provider_id, title, provider_type,
+            availability, artwork_url
+        ) VALUES ('tidal', 'release', '10', 'Album One', 'ALBUM', 'available', 'cover-10')
+        RETURNING id
+    `).get() as { id: number }).id;
+    const trackItemId = (dbModule.db.prepare(`
         INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, artist_mbid, recording_mbid, title, quality,
-            artist_metadata_id, recording_id, match_status, match_confidence, match_method
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        "tidal", "video", "200", "artist-mbid-1", "video-recording-mbid-1", "Video One", "DOLBY_ATMOS",
-        101, 501, "verified", 1, "test",
-    );
-
+            provider, entity_type, provider_id, title, duration_ms, availability
+        ) VALUES ('tidal', 'track', '100', 'Track One', 180000, 'available')
+        RETURNING id
+    `).get() as { id: number }).id;
+    const videoItemId = (dbModule.db.prepare(`
+        INSERT INTO ProviderItems (
+            provider, entity_type, provider_id, title, provider_type, availability
+        ) VALUES ('tidal', 'video', '200', 'Video One', 'MUSIC_VIDEO', 'available')
+        RETURNING id
+    `).get() as { id: number }).id;
+    const memberId = (dbModule.db.prepare(`
+        INSERT INTO ProviderReleaseMembers (
+            provider_release_item_id, member_item_id, medium_position, position
+        ) VALUES (?, ?, 1, 1)
+        RETURNING id
+    `).get(releaseItemId, trackItemId) as { id: number }).id;
+    const variantId = (dbModule.db.prepare(`
+        INSERT INTO ProviderItemAudioVariants (
+            provider_item_id, variant_key, quality_class, lossless, availability
+        ) VALUES (?, 'lossless', 'lossless', 1, 'available')
+        RETURNING id
+    `).get(trackItemId) as { id: number }).id;
+    const releaseMatchId = (dbModule.db.prepare(`
+        INSERT INTO ProviderReleaseMatches (
+            provider_release_item_id, release_id, relation, match_state, decision_source,
+            confidence, method, matcher_version, matched_track_count,
+            source_track_count, target_track_count, source_coverage, target_coverage
+        ) VALUES (?, 201, 'exact', 'accepted', 'automatic', 1, 'test', 1, 1, 1, 1, 1, 1)
+        RETURNING id
+    `).get(releaseItemId) as { id: number }).id;
+    const trackMatchId = (dbModule.db.prepare(`
+        INSERT INTO ProviderTrackMatches (
+            provider_release_member_id, provider_release_match_id, track_id, recording_id,
+            match_state, decision_source, confidence, method, matcher_version
+        ) VALUES (?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', 1)
+        RETURNING id
+    `).get(memberId, releaseMatchId) as { id: number }).id;
     dbModule.db.prepare(`
-        INSERT INTO ReleaseGroupSlots (
-            artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id,
-            selected_release_mbid, quality, match_status, match_confidence, match_method
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        "artist-mbid-1",
-        "release-group-mbid-1",
-        "stereo",
-        1,
-        "tidal",
-        "10",
-        "release-mbid-1",
-        "LOSSLESS",
-        "verified",
-        1,
-        "test-provider-slot"
-    );
+        INSERT INTO ProviderVideoMatches (
+            provider_video_item_id, recording_id, match_state, decision_source,
+            confidence, method, matcher_version
+        ) VALUES (?, 501, 'accepted', 'automatic', 1, 'test', 1)
+    `).run(videoItemId);
+    const planId = (dbModule.db.prepare(`
+        INSERT INTO AcquisitionPlans (
+            library_release_id, provider, composition, download_mode, state,
+            planner_version, policy_hash, computed_at
+        ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
+        RETURNING id
+    `).get(libraryReleaseId) as { id: number }).id;
+    const sourceId = (dbModule.db.prepare(`
+        INSERT INTO AcquisitionPlanSources (
+            plan_id, provider_release_match_id, role, sort_order
+        ) VALUES (?, ?, 'primary', 0)
+        RETURNING id
+    `).get(planId, releaseMatchId) as { id: number }).id;
+    dbModule.db.prepare(`
+        INSERT INTO AcquisitionPlanTracks (
+            plan_id, track_id, source_id, provider_track_match_id,
+            provider_audio_variant_id, source_quality_snapshot
+        ) VALUES (?, 401, ?, ?, ?, '{"quality":"LOSSLESS"}')
+    `).run(planId, sourceId, trackMatchId, variantId);
 
     return {
         albumId: "release-group-mbid-1",
@@ -200,7 +259,11 @@ test("album and video lock bulk actions write canonical state", async () => {
     assert.equal(trackLock.unsupported, 1);
     assert.equal(videoLock.matched, 1);
 
-    const album = dbModule.db.prepare("SELECT monitored_lock AS monitor_lock FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get(seeded.albumId) as { monitor_lock: number };
+    const album = dbModule.db.prepare(`
+        SELECT locked AS monitor_lock
+        FROM LibraryReleaseGroups
+        WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
+    `).get(seeded.albumId) as { monitor_lock: number };
     const video = dbModule.db.prepare("SELECT monitored_lock FROM Recordings WHERE id = ?").get(seeded.videoId) as { monitored_lock: number };
 
     assert.equal(album.monitor_lock, 1);
@@ -210,7 +273,11 @@ test("album and video lock bulk actions write canonical state", async () => {
     await serviceModule.LibraryBulkActionService.apply("album", "unlock", [seeded.albumId]);
     await serviceModule.LibraryBulkActionService.apply("video", "unlock", [seeded.videoId]);
 
-    const unlockedAlbum = dbModule.db.prepare("SELECT monitored_lock AS monitor_lock FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get(seeded.albumId) as { monitor_lock: number };
+    const unlockedAlbum = dbModule.db.prepare(`
+        SELECT locked AS monitor_lock
+        FROM LibraryReleaseGroups
+        WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
+    `).get(seeded.albumId) as { monitor_lock: number };
     const unlockedVideo = dbModule.db.prepare("SELECT monitored_lock FROM Recordings WHERE id = ?").get(seeded.videoId) as { monitored_lock: number };
 
     assert.equal(unlockedAlbum.monitor_lock, 0);
@@ -225,7 +292,11 @@ test("album bulk actions reject provider album IDs as catalog identity", async (
     assert.equal(result.matched, 0);
     assert.equal(result.missing, 1);
 
-    const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'").get(seeded.albumId) as { wanted: number };
+    const slot = dbModule.db.prepare(`
+        SELECT monitored AS wanted
+        FROM LibraryReleaseGroups
+        WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
+    `).get(seeded.albumId) as { wanted: number };
 
     assert.equal(slot.wanted, 1);
     assertRetiredProviderCatalogTablesAbsent();
@@ -239,8 +310,8 @@ test("track and video monitor bulk actions write canonical state only", async ()
 
     const slot = dbModule.db.prepare(`
         SELECT monitored AS wanted
-        FROM ReleaseGroupSlots
-        WHERE release_group_mbid = ? AND slot = 'stereo'
+        FROM LibraryReleaseGroups
+        WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
     `).get("release-group-mbid-1") as { wanted: number };
     const video = dbModule.db.prepare("SELECT monitored AS Monitor FROM Recordings WHERE id = ?").get(seeded.videoId) as { Monitor: number };
 
@@ -275,7 +346,7 @@ test("bulk download queues the selected media jobs", async () => {
     `).all() as Array<{ name: string }>;
 
     assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadAlbum));
-    assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadTrack));
+    assert.ok(jobTypes.filter((row) => row.name === queueModule.CommandNames.DownloadAlbum).length >= 2);
     assert.ok(jobTypes.some((row) => row.name === queueModule.CommandNames.DownloadVideo));
 });
 

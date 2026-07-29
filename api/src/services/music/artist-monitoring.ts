@@ -66,17 +66,40 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
         }
 
         db.prepare(`
-            UPDATE ReleaseGroupSlots
+            UPDATE LibraryArtists
             SET monitored = 0,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE (monitored_lock = 0 OR monitored_lock IS NULL)
-              AND release_group_mbid IN (
-                SELECT rg.mbid
-                FROM Albums rg
-                LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
-                WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+            WHERE managed_artist_id IN (
+              SELECT managed.id
+              FROM ManagedArtists managed
+              JOIN ArtistMetadata canonical ON canonical.id = managed.artist_id
+              JOIN Artists local ON local.mbid = canonical.mbid
+              WHERE CAST(local.id AS TEXT) = ?
+            )
+        `).run(artistId);
+
+        db.prepare(`
+            UPDATE LibraryReleaseGroups
+            SET monitored = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE locked = 0
+              AND EXISTS (
+                SELECT 1
+                FROM LibraryReleases library_release
+                JOIN AlbumReleases release ON release.id = library_release.release_id
+                JOIN LibraryReleaseScopes scope
+                  ON scope.library_release_id = library_release.id
+                JOIN LibraryArtists library_artist
+                  ON library_artist.id = scope.library_artist_id
+                JOIN ManagedArtists managed
+                  ON managed.id = library_artist.managed_artist_id
+                JOIN ArtistMetadata canonical ON canonical.id = managed.artist_id
+                JOIN Artists local ON local.mbid = canonical.mbid
+                WHERE library_release.library_id = LibraryReleaseGroups.library_id
+                  AND release.release_group_id = LibraryReleaseGroups.release_group_id
+                  AND CAST(local.id AS TEXT) = ?
               )
-        `).run(artistId, artistId);
+        `).run(artistId);
 
         db.prepare(`
             UPDATE Recordings
