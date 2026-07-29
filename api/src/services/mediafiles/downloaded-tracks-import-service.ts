@@ -273,20 +273,63 @@ function recoverExistingLibraryImport(
     } as OrganizeResult;
 }
 
+function providerImportEntityType(type: string): "release" | "track" | "video" {
+    return type === "album" ? "release" : type === "video" ? "video" : "track";
+}
+
+/**
+ * Resolve the canonical identity a provider download maps to, entirely through
+ * the typed match authority (ProviderReleaseMatches / ProviderReleaseMembers →
+ * ProviderTrackMatches / ProviderVideoMatches → canonical rows). ProviderItems
+ * no longer stores canonical MBIDs or scalar quality, so nothing here reads a
+ * provider-shadow column; quality is best-effort from the normalized audio
+ * variant boundary. Values feed diagnostic import-history events only.
+ */
 function resolveImportHistoryContext(
     type: string,
     providerId: string,
     provider?: string | null,
 ): ImportHistoryContext {
-    const entityType = type === "album" ? "release" : type === "video" ? "video" : "track";
+    const entityType = providerImportEntityType(type);
     const row = db.prepare(`
         SELECT
-            COALESCE(CAST(artist.id AS TEXT), pi.artist_mbid) AS artist_id,
-            COALESCE(pi.release_group_mbid, pi.release_mbid) AS album_id,
-            COALESCE(CAST(pi.track_id AS TEXT), pi.track_mbid, CAST(pi.recording_id AS TEXT), pi.recording_mbid, pi.provider_id) AS media_id,
-            pi.quality
+            COALESCE(managed_artist.id, artist.mbid) AS artist_id,
+            COALESCE(direct_group.mbid, track_group.mbid) AS album_id,
+            COALESCE(track_recording.mbid, video_recording.mbid) AS media_id,
+            COALESCE(variant.provider_quality_label, variant.quality_class) AS quality
         FROM ProviderItems pi
-        LEFT JOIN Artists artist ON artist.mbid = pi.artist_mbid
+        LEFT JOIN ProviderReleaseMatches release_match
+          ON pi.entity_type = 'release'
+         AND release_match.provider_release_item_id = pi.id
+         AND release_match.match_state = 'accepted'
+        LEFT JOIN AlbumReleases direct_release ON direct_release.id = release_match.release_id
+        LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
+        LEFT JOIN ProviderReleaseMembers member
+          ON pi.entity_type = 'track'
+         AND member.member_item_id = pi.id
+        LEFT JOIN ProviderTrackMatches track_match
+          ON track_match.provider_release_member_id = member.id
+         AND track_match.match_state = 'accepted'
+        LEFT JOIN Tracks track ON track.id = track_match.track_id
+        LEFT JOIN Recordings track_recording ON track_recording.id = track_match.recording_id
+        LEFT JOIN AlbumReleases track_release ON track_release.id = track.album_release_id
+        LEFT JOIN Albums track_group ON track_group.id = track_release.release_group_id
+        LEFT JOIN ProviderVideoMatches video_match
+          ON pi.entity_type = 'video'
+         AND video_match.provider_video_item_id = pi.id
+         AND video_match.match_state = 'accepted'
+        LEFT JOIN Recordings video_recording ON video_recording.id = video_match.recording_id
+        LEFT JOIN ArtistMetadata artist
+          ON artist.id = COALESCE(
+            direct_group.artist_metadata_id,
+            track_group.artist_metadata_id,
+            track_recording.artist_metadata_id,
+            video_recording.artist_metadata_id
+          )
+        LEFT JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
+        LEFT JOIN ProviderItemAudioVariants variant
+          ON variant.provider_item_id = pi.id
+         AND variant.availability = 'available'
         WHERE pi.provider_id = ?
           AND pi.entity_type = ?
           AND (? IS NULL OR pi.provider = ?)
@@ -300,7 +343,7 @@ function resolveImportHistoryContext(
     ) as ImportHistoryContextRow | undefined;
 
     return {
-        artistId: row?.artist_id ?? null,
+        artistId: row?.artist_id != null ? String(row.artist_id) : null,
         albumId: row?.album_id ?? null,
         mediaId: type === "album" ? null : row?.media_id ?? null,
         quality: row?.quality || null,
@@ -308,23 +351,7 @@ function resolveImportHistoryContext(
 }
 
 function resolveAffectedArtistId(type: string, providerId: string, provider?: string | null): string | null {
-    const entityType = type === "album" ? "release" : type === "video" ? "video" : "track";
-    const row = db.prepare(`
-        SELECT COALESCE(CAST(artist.id AS TEXT), pi.artist_mbid) AS artist_id
-        FROM ProviderItems pi
-        LEFT JOIN Artists artist ON artist.mbid = pi.artist_mbid
-        WHERE pi.provider_id = ?
-          AND pi.entity_type = ?
-          AND (? IS NULL OR pi.provider = ?)
-        ORDER BY pi.updated_at DESC
-        LIMIT 1
-    `).get(
-        providerId,
-        entityType,
-        provider || null,
-        provider || null,
-    ) as { artist_id?: string | null } | undefined;
-    return row?.artist_id ?? null;
+    return resolveImportHistoryContext(type, providerId, provider).artistId;
 }
 
 function resolveExpectedRecoveredTracks(
@@ -353,7 +380,7 @@ function resolveExpectedRecoveredTracks(
         JOIN Recordings recording
           ON recording.id = track.recording_id
         WHERE provider_release.provider_id = ?
-          AND provider_release.entity_type IN ('release', 'album')
+          AND provider_release.entity_type = 'release'
           AND (? IS NULL OR provider_release.provider = ?)
           AND recording.is_video = 0
     `).get(
@@ -413,12 +440,23 @@ function reconcileImportedDownload(
     }
 
     const row = db.prepare(`
-        SELECT release_group_mbid
-        FROM ProviderItems
-        WHERE provider_id = ?
-          AND entity_type = 'track'
-          AND (? IS NULL OR provider = ?)
-        ORDER BY updated_at DESC
+        SELECT release_group.mbid AS release_group_mbid
+        FROM ProviderItems provider_track
+        JOIN ProviderReleaseMembers member
+          ON member.member_item_id = provider_track.id
+        JOIN ProviderTrackMatches track_match
+          ON track_match.provider_release_member_id = member.id
+         AND track_match.match_state = 'accepted'
+        JOIN Tracks track ON track.id = track_match.track_id
+        JOIN AlbumReleases release ON release.id = track.album_release_id
+        JOIN Albums release_group ON release_group.id = release.release_group_id
+        WHERE provider_track.provider_id = ?
+          AND provider_track.entity_type = 'track'
+          AND (? IS NULL OR provider_track.provider = ?)
+        ORDER BY
+          CASE WHEN track_match.decision_source = 'manual' THEN 0 ELSE 1 END,
+          track_match.confidence DESC,
+          track_match.id
         LIMIT 1
     `).get(providerId, provider || null, provider || null) as { release_group_mbid?: string | null } | undefined;
     if (row?.release_group_mbid) {
