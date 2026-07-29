@@ -50,7 +50,26 @@ export class ProviderMatchRepository {
     decision: ProviderMatchDecision;
   }): number {
     validateDecision(input.decision);
-    if (input.decision.matchState === "accepted") {
+    const manualAccepted = input.decision.decisionSource === "automatic"
+      && input.decision.matchState === "accepted"
+      ? this.db.prepare(`
+          SELECT id
+          FROM ProviderArtistMatches
+          WHERE provider_artist_item_id = ?
+            AND artist_id != ?
+            AND match_state = 'accepted'
+            AND decision_source = 'manual'
+          LIMIT 1
+        `).get(input.providerArtistItemId, input.artistId) as { id: number } | undefined
+      : undefined;
+    const decision = manualAccepted
+      ? {
+          ...input.decision,
+          matchState: "candidate" as const,
+          method: `${input.decision.method}:blocked_by_manual`,
+        }
+      : input.decision;
+    if (decision.matchState === "accepted") {
       this.db.prepare(`
         UPDATE ProviderArtistMatches
         SET match_state = 'rejected',
@@ -61,11 +80,13 @@ export class ProviderMatchRepository {
         WHERE provider_artist_item_id = ?
           AND artist_id != ?
           AND match_state = 'accepted'
+          AND (? = 'manual' OR decision_source != 'manual')
       `).run(
-        input.decision.decisionSource,
-        input.decision.matcherVersion,
+        decision.decisionSource,
+        decision.matcherVersion,
         input.providerArtistItemId,
         input.artistId,
+        decision.decisionSource,
       );
     }
     const row = this.db.prepare(`
@@ -74,23 +95,35 @@ export class ProviderMatchRepository {
         confidence, method, evidence, matcher_version, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(provider_artist_item_id, artist_id) DO UPDATE SET
-        match_state = excluded.match_state,
-        decision_source = excluded.decision_source,
-        confidence = excluded.confidence,
-        method = excluded.method,
-        evidence = excluded.evidence,
-        matcher_version = excluded.matcher_version,
+        match_state = CASE WHEN ProviderArtistMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderArtistMatches.match_state ELSE excluded.match_state END,
+        decision_source = CASE WHEN ProviderArtistMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderArtistMatches.decision_source ELSE excluded.decision_source END,
+        confidence = CASE WHEN ProviderArtistMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderArtistMatches.confidence ELSE excluded.confidence END,
+        method = CASE WHEN ProviderArtistMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderArtistMatches.method ELSE excluded.method END,
+        evidence = CASE WHEN ProviderArtistMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderArtistMatches.evidence ELSE excluded.evidence END,
+        matcher_version = CASE WHEN ProviderArtistMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderArtistMatches.matcher_version ELSE excluded.matcher_version END,
         updated_at = CURRENT_TIMESTAMP
       RETURNING id
     `).get(
       input.providerArtistItemId,
       input.artistId,
-      input.decision.matchState,
-      input.decision.decisionSource,
-      input.decision.confidence,
-      input.decision.method,
-      boundedEvidence(input.decision.evidence),
-      input.decision.matcherVersion,
+      decision.matchState,
+      decision.decisionSource,
+      decision.confidence,
+      decision.method,
+      boundedEvidence(decision.evidence),
+      decision.matcherVersion,
     ) as { id: number };
     return row.id;
   }
@@ -101,7 +134,26 @@ export class ProviderMatchRepository {
     decision: ProviderMatchDecision;
   }): number {
     validateDecision(input.decision);
-    if (input.decision.matchState === "accepted") {
+    const manualAccepted = input.decision.decisionSource === "automatic"
+      && input.decision.matchState === "accepted"
+      ? this.db.prepare(`
+          SELECT id
+          FROM ProviderVideoMatches
+          WHERE provider_video_item_id = ?
+            AND recording_id != ?
+            AND match_state = 'accepted'
+            AND decision_source = 'manual'
+          LIMIT 1
+        `).get(input.providerVideoItemId, input.recordingId) as { id: number } | undefined
+      : undefined;
+    const decision = manualAccepted
+      ? {
+          ...input.decision,
+          matchState: "candidate" as const,
+          method: `${input.decision.method}:blocked_by_manual`,
+        }
+      : input.decision;
+    if (decision.matchState === "accepted") {
       this.db.prepare(`
         UPDATE ProviderVideoMatches
         SET match_state = 'rejected',
@@ -112,11 +164,13 @@ export class ProviderMatchRepository {
         WHERE provider_video_item_id = ?
           AND recording_id != ?
           AND match_state = 'accepted'
+          AND (? = 'manual' OR decision_source != 'manual')
       `).run(
-        input.decision.decisionSource,
-        input.decision.matcherVersion,
+        decision.decisionSource,
+        decision.matcherVersion,
         input.providerVideoItemId,
         input.recordingId,
+        decision.decisionSource,
       );
     }
     const row = this.db.prepare(`
@@ -125,23 +179,35 @@ export class ProviderMatchRepository {
         confidence, method, evidence, matcher_version, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(provider_video_item_id, recording_id) DO UPDATE SET
-        match_state = excluded.match_state,
-        decision_source = excluded.decision_source,
-        confidence = excluded.confidence,
-        method = excluded.method,
-        evidence = excluded.evidence,
-        matcher_version = excluded.matcher_version,
+        match_state = CASE WHEN ProviderVideoMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderVideoMatches.match_state ELSE excluded.match_state END,
+        decision_source = CASE WHEN ProviderVideoMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderVideoMatches.decision_source ELSE excluded.decision_source END,
+        confidence = CASE WHEN ProviderVideoMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderVideoMatches.confidence ELSE excluded.confidence END,
+        method = CASE WHEN ProviderVideoMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderVideoMatches.method ELSE excluded.method END,
+        evidence = CASE WHEN ProviderVideoMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderVideoMatches.evidence ELSE excluded.evidence END,
+        matcher_version = CASE WHEN ProviderVideoMatches.decision_source = 'manual'
+          AND excluded.decision_source = 'automatic'
+          THEN ProviderVideoMatches.matcher_version ELSE excluded.matcher_version END,
         updated_at = CURRENT_TIMESTAMP
       RETURNING id
     `).get(
       input.providerVideoItemId,
       input.recordingId,
-      input.decision.matchState,
-      input.decision.decisionSource,
-      input.decision.confidence,
-      input.decision.method,
-      boundedEvidence(input.decision.evidence),
-      input.decision.matcherVersion,
+      decision.matchState,
+      decision.decisionSource,
+      decision.confidence,
+      decision.method,
+      boundedEvidence(decision.evidence),
+      decision.matcherVersion,
     ) as { id: number };
     return row.id;
   }
@@ -180,12 +246,42 @@ export class ProviderMatchRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(provider_release_item_id, release_id) DO UPDATE SET
           relation = excluded.relation,
-          match_state = excluded.match_state,
-          decision_source = excluded.decision_source,
-          confidence = excluded.confidence,
-          method = excluded.method,
-          evidence = excluded.evidence,
-          matcher_version = excluded.matcher_version,
+          match_state = CASE
+            WHEN ProviderReleaseMatches.decision_source = 'manual'
+             AND excluded.decision_source = 'automatic'
+              THEN ProviderReleaseMatches.match_state
+            ELSE excluded.match_state
+          END,
+          decision_source = CASE
+            WHEN ProviderReleaseMatches.decision_source = 'manual'
+             AND excluded.decision_source = 'automatic'
+              THEN ProviderReleaseMatches.decision_source
+            ELSE excluded.decision_source
+          END,
+          confidence = CASE
+            WHEN ProviderReleaseMatches.decision_source = 'manual'
+             AND excluded.decision_source = 'automatic'
+              THEN ProviderReleaseMatches.confidence
+            ELSE excluded.confidence
+          END,
+          method = CASE
+            WHEN ProviderReleaseMatches.decision_source = 'manual'
+             AND excluded.decision_source = 'automatic'
+              THEN ProviderReleaseMatches.method
+            ELSE excluded.method
+          END,
+          evidence = CASE
+            WHEN ProviderReleaseMatches.decision_source = 'manual'
+             AND excluded.decision_source = 'automatic'
+              THEN ProviderReleaseMatches.evidence
+            ELSE excluded.evidence
+          END,
+          matcher_version = CASE
+            WHEN ProviderReleaseMatches.decision_source = 'manual'
+             AND excluded.decision_source = 'automatic'
+              THEN ProviderReleaseMatches.matcher_version
+            ELSE excluded.matcher_version
+          END,
           matched_track_count = excluded.matched_track_count,
           source_track_count = excluded.source_track_count,
           target_track_count = excluded.target_track_count,
@@ -210,8 +306,40 @@ export class ProviderMatchRepository {
         relation.targetCoverage,
       ) as { id: number };
 
-      this.db.prepare("DELETE FROM ProviderTrackMatches WHERE provider_release_match_id = ?")
-        .run(releaseMatch.id);
+      const preservedManual = input.decision.decisionSource === "automatic"
+        ? this.db.prepare(`
+            SELECT provider_release_member_id, track_id, recording_id, match_state
+            FROM ProviderTrackMatches
+            WHERE provider_release_match_id = ? AND decision_source = 'manual'
+          `).all(releaseMatch.id) as Array<{
+            provider_release_member_id: number;
+            track_id: number | null;
+            recording_id: number;
+            match_state: ProviderMatchState;
+          }>
+        : [];
+      if (input.decision.decisionSource === "automatic") {
+        this.db.prepare(`
+          DELETE FROM ProviderTrackMatches
+          WHERE provider_release_match_id = ? AND decision_source != 'manual'
+        `).run(releaseMatch.id);
+      } else {
+        this.db.prepare("DELETE FROM ProviderTrackMatches WHERE provider_release_match_id = ?")
+          .run(releaseMatch.id);
+      }
+      const manualSourceIds = new Set(
+        preservedManual.map((match) => match.provider_release_member_id),
+      );
+      const manualTargetTrackIds = new Set(
+        preservedManual
+          .filter((match) => match.match_state === "accepted" && match.track_id != null)
+          .map((match) => match.track_id as number),
+      );
+      const manualRecordingIds = new Set(
+        preservedManual
+          .filter((match) => match.match_state === "accepted")
+          .map((match) => match.recording_id),
+      );
       const insertTrackMatch = this.db.prepare(`
         INSERT INTO ProviderTrackMatches (
           provider_release_member_id, provider_release_match_id, track_id,
@@ -221,6 +349,16 @@ export class ProviderMatchRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       `);
       for (const match of input.trackMatches) {
+        if (
+          match.decisionSource === "automatic"
+          && (
+            manualSourceIds.has(match.providerReleaseMemberId)
+            || (match.trackId != null && manualTargetTrackIds.has(match.trackId))
+            || manualRecordingIds.has(match.recordingId)
+          )
+        ) {
+          continue;
+        }
         insertTrackMatch.run(
           match.providerReleaseMemberId,
           releaseMatch.id,

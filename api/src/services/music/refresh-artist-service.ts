@@ -1638,11 +1638,15 @@ export class RefreshArtistService {
                         continue;
                     }
                     try {
+                        const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
+                            providerReleaseGroupMatches.get(String(album.provider_id)) || null,
+                        );
                         await RefreshAlbumSvc.storeProviderTrackOffers(
                             provider.id,
                             String(album.provider_id),
                             rawTracks.map(toTrackRow),
                             artistMbid,
+                            matchedReleaseMbid,
                         );
                     } catch (error) {
                         console.warn(`[RefreshArtistService] Failed to persist track offers for album ${album.provider_id}:`, error);
@@ -1746,11 +1750,15 @@ export class RefreshArtistService {
                         const rawTracks = album._provider_raw_tracks;
                         if (!Array.isArray(rawTracks) || rawTracks.length === 0) continue;
                         try {
+                            const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
+                                widePlaylistOffers.matches.get(String(album.provider_id)) || null,
+                            );
                             await RefreshAlbumSvcWide.storeProviderTrackOffers(
                                 provider.id,
                                 String(album.provider_id),
                                 rawTracks.map(toTrackRowWide),
                                 artistMbid,
+                                matchedReleaseMbid,
                             );
                         } catch (error) {
                             console.warn(

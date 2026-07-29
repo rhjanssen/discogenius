@@ -160,17 +160,59 @@ export class ProviderCatalogRepository {
       RETURNING id
     `);
     return this.db.transaction(() => {
-      this.db.prepare("DELETE FROM ProviderReleaseMembers WHERE provider_release_item_id = ?")
-        .run(providerReleaseItemId);
-      return members.map((member) => (insert.get(
-        providerReleaseItemId,
-        member.memberItemId,
-        member.mediumPosition,
-        member.position,
-        text(member.number),
-        text(member.contextualTitle),
-        member.contextualDurationMs ?? null,
-      ) as { id: number }).id);
+      const existing = this.db.prepare(`
+        SELECT id, member_item_id, medium_position, position
+        FROM ProviderReleaseMembers
+        WHERE provider_release_item_id = ?
+      `).all(providerReleaseItemId) as Array<{
+        id: number;
+        member_item_id: number;
+        medium_position: number;
+        position: number;
+      }>;
+      const existingByPosition = new Map<string, (typeof existing)[number]>(
+        existing.map((row) => [`${row.medium_position}:${row.position}`, row] as const),
+      );
+      const retainedIds = new Set<number>();
+      const update = this.db.prepare(`
+        UPDATE ProviderReleaseMembers
+        SET number = ?,
+            contextual_title = ?,
+            contextual_duration_ms = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      const remove = this.db.prepare("DELETE FROM ProviderReleaseMembers WHERE id = ?");
+      const ids = members.map((member) => {
+        const key = `${member.mediumPosition}:${member.position}`;
+        const current = existingByPosition.get(key);
+        if (current && current.member_item_id === member.memberItemId) {
+          update.run(
+            text(member.number),
+            text(member.contextualTitle),
+            member.contextualDurationMs ?? null,
+            current.id,
+          );
+          retainedIds.add(current.id);
+          return current.id;
+        }
+        if (current) remove.run(current.id);
+        const id = (insert.get(
+          providerReleaseItemId,
+          member.memberItemId,
+          member.mediumPosition,
+          member.position,
+          text(member.number),
+          text(member.contextualTitle),
+          member.contextualDurationMs ?? null,
+        ) as { id: number }).id;
+        retainedIds.add(id);
+        return id;
+      });
+      for (const row of existing) {
+        if (!retainedIds.has(row.id)) remove.run(row.id);
+      }
+      return ids;
     })();
   }
 

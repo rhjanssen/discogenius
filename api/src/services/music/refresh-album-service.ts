@@ -1,16 +1,13 @@
 import { db } from "../../database.js";
-import { createCooperativeBatcher } from "../../utils/concurrent.js";
 import { AlbumRefreshLevel, type RefreshOptions } from "./scan-types.js";
 import { shouldRefreshAlbum as shouldRefreshAlbumPolicy, shouldRefreshTrackSet } from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import type { ProviderReleaseGroupMatch } from "../metadata/provider-release-group-matcher.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderAlbum, ProviderTrack } from "../providers/streaming-provider.js";
-import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { ProviderArtistIdentityService, type ProviderArtistIdentityInput } from "../metadata/provider-artist-identity-service.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
-import { RefreshVideoService } from "./refresh-video-service.js";
 import {
     firstProviderEditorialText,
     listReleaseGroupAlbumOfferCandidates,
@@ -19,14 +16,6 @@ import {
     matchPlaylistTracksToCanonical,
     PLAYLIST_TRACKLIST_COVERAGE_METHOD,
 } from "../providers/soundcloud/soundcloud-playlist-match.js";
-import {
-    assignRankedTrackMatches,
-    scoreTrackMatch,
-    TRACK_MATCH_THRESHOLD,
-    type MatchProviderTrack,
-    type MatchTargetTrack,
-} from "./provider-track-matcher.js";
-import { normalizeIsrc } from "../mediafiles/import-matching-utils.js";
 import {
     ProviderCatalogRepository,
     type ProviderAudioVariantInput,
@@ -123,10 +112,6 @@ export function providerTrackToTrackMetadataRow(providerTrack: ProviderTrack): a
         // YouTube Music ATV→OMV counterpart (persisted as album-scoped video offer).
         counterpart_video_id: providerTrack.counterpartVideoId || null,
     };
-}
-
-function getProviderLibrarySlot(quality?: string | null): string {
-    return isSpatialAudioQuality(quality) ? "spatial" : "stereo";
 }
 
 function textOrNull(...values: unknown[]): string | null {
@@ -232,12 +217,20 @@ export class RefreshAlbumService {
         releaseMbid: string | null;
     } {
         const providerItem = db.prepare(`
-            SELECT release_group_mbid, release_mbid
-            FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = 'album'
-              AND provider_id = ?
-            ORDER BY updated_at DESC
+            SELECT release_group.mbid AS release_group_mbid, release.mbid AS release_mbid
+            FROM ProviderItems item
+            JOIN ProviderReleaseMatches match
+              ON match.provider_release_item_id = item.id
+             AND match.match_state = 'accepted'
+            JOIN AlbumReleases release ON release.id = match.release_id
+            JOIN Albums release_group ON release_group.id = release.release_group_id
+            WHERE item.provider = ?
+              AND item.entity_type = 'release'
+              AND item.provider_id = ?
+            ORDER BY
+              CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+              match.confidence DESC,
+              match.id
             LIMIT 1
         `).get(providerId, albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
 
@@ -337,25 +330,18 @@ export class RefreshAlbumService {
             UPDATE Recordings SET
                 credits = ?,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = (
-                SELECT recording_id
-                FROM ProviderItems
-                WHERE provider = ?
-                  AND entity_type = 'track'
-                  AND provider_id = ?
-                  AND recording_id IS NOT NULL
-                LIMIT 1
+            WHERE id IN (
+                SELECT DISTINCT match.recording_id
+                FROM ProviderItems item
+                JOIN ProviderReleaseMembers member ON member.member_item_id = item.id
+                JOIN ProviderTrackMatches match
+                  ON match.provider_release_member_id = member.id
+                 AND match.match_state = 'accepted'
+                WHERE item.provider = ?
+                  AND item.entity_type = 'track'
+                  AND item.provider_id = ?
             )
-               OR mbid = (
-                SELECT recording_mbid
-                FROM ProviderItems
-                WHERE provider = ?
-                  AND entity_type = 'track'
-                  AND provider_id = ?
-                  AND recording_mbid IS NOT NULL
-                LIMIT 1
-            )
-        `).run(serializedCredits, providerId, trackProviderId, providerId, trackProviderId);
+        `).run(serializedCredits, providerId, trackProviderId);
     }
 
     private static resolveProviderForAlbum(albumId: string, requestedProviderId?: string | null): any {
@@ -367,25 +353,12 @@ export class RefreshAlbumService {
         const itemRow = db.prepare(`
             SELECT provider
             FROM ProviderItems
-            WHERE entity_type = 'album' AND provider_id = ?
+            WHERE entity_type = 'release' AND provider_id = ?
             ORDER BY updated_at DESC
             LIMIT 1
         `).get(albumId) as { provider?: string } | undefined;
         if (itemRow?.provider) {
             return streamingProviderManager.getStreamingProvider(itemRow.provider);
-        }
-
-        const slotRow = db.prepare(`
-            SELECT selected_provider
-            FROM ReleaseGroupSlots
-            WHERE selected_provider_id = ?
-               OR selected_provider_id LIKE ?
-               OR selected_provider_id LIKE ?
-               OR selected_provider_id LIKE ?
-            LIMIT 1
-        `).get(albumId, `${albumId};%`, `%;${albumId}`, `%;${albumId};%`) as { selected_provider?: string } | undefined;
-        if (slotRow?.selected_provider) {
-            return streamingProviderManager.getStreamingProvider(slotRow.selected_provider);
         }
 
         return streamingProviderManager.getDefaultStreamingProvider();
@@ -395,9 +368,16 @@ export class RefreshAlbumService {
             return null;
         }
 
-        const row = db.prepare("SELECT artist_mbid FROM Albums WHERE mbid = ?")
-            .get(releaseGroupMbid) as { artist_mbid?: string | null } | undefined;
-        return row?.artist_mbid ? String(row.artist_mbid) : null;
+        const row = db.prepare(`
+            SELECT artist.mbid
+            FROM Albums release_group
+            LEFT JOIN ReleaseGroupArtistCredits credit
+              ON credit.release_group_id = release_group.id AND credit.ordinal = 0
+            JOIN ArtistMetadata artist
+              ON artist.id = COALESCE(credit.artist_id, release_group.artist_metadata_id)
+            WHERE release_group.mbid = ?
+        `).get(releaseGroupMbid) as { mbid?: string | null } | undefined;
+        return row?.mbid ? String(row.mbid) : null;
     }
 
     private static async ensureMusicBrainzArtist(artistMbid: string, monitorArtist = false): Promise<string> {
@@ -417,17 +397,8 @@ export class RefreshAlbumService {
             return this.ensureMusicBrainzArtist(requestedArtistId, false);
         }
 
-        const providerItem = db.prepare(`
-            SELECT artist_mbid, release_group_mbid
-            FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = 'album'
-              AND provider_id = ?
-            ORDER BY updated_at DESC
-            LIMIT 1
-        `).get(providerId, albumId) as { artist_mbid?: string | null; release_group_mbid?: string | null } | undefined;
-
-        const providerItemArtistMbid = providerItem?.artist_mbid || this.getArtistMbidForReleaseGroup(providerItem?.release_group_mbid);
+        const canonicalLink = this.getCanonicalAlbumLink(providerId, albumId);
+        const providerItemArtistMbid = this.getArtistMbidForReleaseGroup(canonicalLink.releaseGroupMbid);
         if (providerItemArtistMbid) {
             return this.ensureMusicBrainzArtist(providerItemArtistMbid, false);
         }
@@ -439,17 +410,23 @@ export class RefreshAlbumService {
         }
 
         const cachedProviderArtist = db.prepare(`
-            SELECT artist_mbid
-            FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = 'artist'
-              AND provider_id = ?
-              AND artist_mbid IS NOT NULL
-            ORDER BY updated_at DESC
+            SELECT artist.mbid
+            FROM ProviderItems item
+            JOIN ProviderArtistMatches match
+              ON match.provider_artist_item_id = item.id
+             AND match.match_state = 'accepted'
+            JOIN ArtistMetadata artist ON artist.id = match.artist_id
+            WHERE item.provider = ?
+              AND item.entity_type = 'artist'
+              AND item.provider_id = ?
+            ORDER BY
+              CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+              match.confidence DESC,
+              match.id
             LIMIT 1
-        `).get(providerId, providerArtistId) as { artist_mbid?: string | null } | undefined;
-        if (cachedProviderArtist?.artist_mbid) {
-            return this.ensureMusicBrainzArtist(cachedProviderArtist.artist_mbid, false);
+        `).get(providerId, providerArtistId) as { mbid?: string | null } | undefined;
+        if (cachedProviderArtist?.mbid) {
+            return this.ensureMusicBrainzArtist(cachedProviderArtist.mbid, false);
         }
 
         const artistIdentity: ProviderArtistIdentityInput = {
@@ -477,38 +454,40 @@ export class RefreshAlbumService {
         // per-track credits homed onto Recordings = DETAILS.
         const provider = this.resolveProviderForAlbum(albumId, requestedProviderId);
         const offer = db.prepare(`
-            SELECT release_group_mbid, release_mbid
+            SELECT id
             FROM ProviderItems
             WHERE provider = ?
-              AND entity_type = 'album'
+              AND entity_type = 'release'
               AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-            ORDER BY updated_at DESC
             LIMIT 1
-        `).get(provider.id, albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
+        `).get(provider.id, albumId) as { id: number } | undefined;
 
         if (!offer) {
             return AlbumRefreshLevel.NONE;
         }
+        const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
 
-        const hasCredits = offer.release_mbid
+        const hasCredits = canonicalLink.releaseMbid
             ? db.prepare(`
                 SELECT 1 FROM Tracks t
-                JOIN Recordings r ON r.mbid = t.recording_mbid
-                WHERE t.release_mbid = ? AND r.credits IS NOT NULL
+                JOIN Recordings r ON r.id = t.recording_id
+                JOIN AlbumReleases release ON release.id = t.album_release_id
+                WHERE release.mbid = ? AND r.credits IS NOT NULL
                 LIMIT 1
-            `).get(offer.release_mbid)
+            `).get(canonicalLink.releaseMbid)
             : null;
         if (hasCredits) {
             return AlbumRefreshLevel.DETAILS;
         }
 
-        const reviewText = offer.release_group_mbid
-            ? (db.prepare("SELECT review_text FROM Albums WHERE mbid = ?").get(offer.release_group_mbid) as { review_text?: string | null } | undefined)?.review_text
+        const reviewText = canonicalLink.releaseGroupMbid
+            ? (db.prepare("SELECT review_text FROM Albums WHERE mbid = ?").get(canonicalLink.releaseGroupMbid) as { review_text?: string | null } | undefined)?.review_text
             : null;
         const trackCount = Number((db.prepare(`
-            SELECT COUNT(*) AS c FROM ProviderItems
-            WHERE provider = ? AND entity_type = 'track' AND provider_album_id = ?
-        `).get(provider.id, albumId) as { c?: number } | undefined)?.c || 0);
+            SELECT COUNT(*) AS c
+            FROM ProviderReleaseMembers
+            WHERE provider_release_item_id = ?
+        `).get(offer.id) as { c?: number } | undefined)?.c || 0);
         if (reviewText !== null && reviewText !== undefined && trackCount > 0) {
             return AlbumRefreshLevel.METADATA;
         }
@@ -529,15 +508,27 @@ export class RefreshAlbumService {
         // catalog now); the canonical link comes from release_(group_)mbid on it.
         const existingRow = db.prepare(`
             SELECT
-                pi.release_mbid AS mbid,
-                pi.release_group_mbid AS mb_release_group_id,
+                release.mbid,
+                album.mbid AS mb_release_group_id,
                 pi.updated_at AS last_scanned,
                 COALESCE(release.date, album.first_release_date, pi.release_date) AS album_release_date
             FROM ProviderItems pi
-            LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
-            LEFT JOIN Albums album ON album.mbid = COALESCE(pi.release_group_mbid, release.release_group_mbid)
+            LEFT JOIN ProviderReleaseMatches match
+              ON match.id = (
+                SELECT preferred.id
+                FROM ProviderReleaseMatches preferred
+                WHERE preferred.provider_release_item_id = pi.id
+                  AND preferred.match_state = 'accepted'
+                ORDER BY
+                  CASE preferred.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                  preferred.confidence DESC,
+                  preferred.id
+                LIMIT 1
+              )
+            LEFT JOIN AlbumReleases release ON release.id = match.release_id
+            LEFT JOIN Albums album ON album.id = release.release_group_id
             WHERE pi.provider = ?
-              AND pi.entity_type = 'album'
+              AND pi.entity_type = 'release'
               AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
             ORDER BY pi.updated_at DESC
             LIMIT 1
@@ -570,9 +561,11 @@ export class RefreshAlbumService {
             throw new Error(`provider album ${albumId} could not be linked to a MusicBrainz artist. Refresh/curate the artist before hydrating provider tracks.`);
         }
 
-        // No legacy ProviderAlbums row anymore — provider album facts live on the
-        // ProviderItems offer (written by the artist scan / upsertArtistAlbum), and
-        // allowed supplements are homed onto the canonical Albums/AlbumReleases rows.
+        await this.upsertArtistAlbum(albumData, primaryArtistId, new Map(), {
+            ...options,
+            provider: provider.id,
+            resolveMusicBrainz: false,
+        });
         await MetadataIdentityService.resolveAlbum(albumId, { force: forceUpdate, provider: provider.id });
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
         this.storeCanonicalAlbumSupplements({
@@ -584,7 +577,7 @@ export class RefreshAlbumService {
         db.prepare(`
             UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
             WHERE provider = ?
-              AND entity_type = 'album'
+              AND entity_type = 'release'
               AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
         `).run(provider.id, albumId);
 
@@ -601,10 +594,22 @@ export class RefreshAlbumService {
                 pi.updated_at AS last_scanned,
                 COALESCE(release.date, a.first_release_date, pi.release_date) AS album_release_date
             FROM ProviderItems pi
-            LEFT JOIN Albums a ON a.mbid = pi.release_group_mbid
-            LEFT JOIN AlbumReleases release ON release.mbid = pi.release_mbid
+            LEFT JOIN ProviderReleaseMatches match
+              ON match.id = (
+                SELECT preferred.id
+                FROM ProviderReleaseMatches preferred
+                WHERE preferred.provider_release_item_id = pi.id
+                  AND preferred.match_state = 'accepted'
+                ORDER BY
+                  CASE preferred.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                  preferred.confidence DESC,
+                  preferred.id
+                LIMIT 1
+              )
+            LEFT JOIN AlbumReleases release ON release.id = match.release_id
+            LEFT JOIN Albums a ON a.id = release.release_group_id
             WHERE pi.provider = ?
-              AND pi.entity_type = 'album'
+              AND pi.entity_type = 'release'
               AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
             ORDER BY pi.updated_at DESC
             LIMIT 1
@@ -675,18 +680,9 @@ export class RefreshAlbumService {
             console.log(`[RefreshAlbumService] Skipping review refresh for album ${albumId} (fresh)`);
         }
 
-        const releaseGroup = db.prepare(`
-            SELECT release_group_mbid
-            FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = 'album'
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-              AND release_group_mbid IS NOT NULL
-            ORDER BY updated_at DESC
-            LIMIT 1
-        `).get(provider.id, albumId) as { release_group_mbid?: string | null } | undefined;
-        if (releaseGroup?.release_group_mbid) {
-            ArtistTopTrackService.rebuildForReleaseGroup(String(releaseGroup.release_group_mbid));
+        const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
+        if (canonicalLink.releaseGroupMbid) {
+            ArtistTopTrackService.rebuildForReleaseGroup(canonicalLink.releaseGroupMbid);
         }
 
         console.log(`[RefreshAlbumService] refreshMetadata complete for ${albumId}`);
@@ -723,7 +719,7 @@ export class RefreshAlbumService {
         db.prepare(`
             UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
             WHERE provider = ?
-              AND entity_type = 'album'
+              AND entity_type = 'release'
               AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
         `).run(provider.id, albumId);
 
@@ -734,698 +730,210 @@ export class RefreshAlbumService {
         albumId: string,
         options: Pick<RefreshOptions, "resolveMusicBrainz" | "provider"> = {},
     ): Promise<void> {
-        // Track identity is mapped by position during this scan; `resolveMusicBrainz`
-        // is accepted but unused.
+        void options.resolveMusicBrainz;
         const provider = this.resolveProviderForAlbum(albumId, options.provider);
         const tracks = (await provider.getAlbumTracks(albumId))
             .map(providerTrackToTrackMetadataRow);
         console.log(`[RefreshAlbumService] Fetched ${tracks.length} tracks for album ${albumId}`);
-
-        const album = db.prepare(`
-            SELECT artist_mbid AS artist_id
-            FROM ProviderItems
-            WHERE provider = ?
-              AND entity_type = 'album'
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-            ORDER BY updated_at DESC
-            LIMIT 1
-        `).get(provider.id, albumId) as any;
-        if (!album) {
-            console.warn(`[RefreshAlbumService] Album offer ${albumId} not found, skipping tracks`);
-            return;
-        }
-
-        const providerId = provider.id;
-
-        // Collect all guest artists
-        const guestArtistsMap = new Map<string, { id: string, name: string }>();
-        for (const track of tracks) {
-            const trackArtistId = track.artist_id || album.artist_id;
-            if (Array.isArray(track.artists)) {
-                for (const a of track.artists) {
-                    if (a.id && a.id !== trackArtistId) {
-                        guestArtistsMap.set(a.id, a);
-                    }
-                }
-            }
-        }
-
-        // Asynchronously resolve guest artists before transaction
-        const resolvedGuestsMap = new Map<string, string>();
-        const { RefreshArtistService } = await import("./refresh-artist-service.js");
-
-        await Promise.all(
-            Array.from(guestArtistsMap.values()).map(async (guest) => {
-                try {
-                    const artistIdentity: ProviderArtistIdentityInput = {
-                        providerId: guest.id,
-                        name: guest.name,
-                        raw: {
-                            id: guest.id,
-                            name: guest.name,
-                        },
-                    };
-                    const resolution = await ProviderArtistIdentityService.resolve(providerId, artistIdentity);
-                    if (resolution.mbid) {
-                        // Check if they exist in ArtistMetadata
-                        const artistExists = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(resolution.mbid);
-                        if (!artistExists) {
-                            const pictureUrl = (guest as any).picture || (guest as any).pictureUrl || null;
-                            db.prepare(`
-                                INSERT OR IGNORE INTO ArtistMetadata (mbid, name, picture, updated_at)
-                                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                            `).run(resolution.mbid, guest.name, pictureUrl);
-                        }
-                        resolvedGuestsMap.set(guest.id, resolution.mbid);
-                    }
-                } catch (e) {
-                    console.warn(`[RefreshAlbumService] Failed to resolve guest artist ${guest.name} (${guest.id}):`, e);
-                }
-            })
+        const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
+        await this.storeProviderTrackOffers(
+            provider.id,
+            albumId,
+            tracks,
+            null,
+            canonicalLink.releaseMbid,
         );
-
-        // Materialize provider track offer rows (single source of truth for the
-        // provider tracklist; no data.tracks blob). Canonical identity is mapped by
-        // (volume, position) onto the album's selected release.
-        await RefreshAlbumService.storeProviderTrackOffers(providerId, albumId, tracks, album.artist_id);
     }
 
     /**
-     * Materialize provider track offer rows for an album from an already-fetched
-     * provider tracklist — the SINGLE materialization path for track-level
-     * ProviderItems. Rows are keyed by (provider, 'track', provider_id) with
-     * provider_album_id, and canonical identity mapped by (volume, position) off
-     * the album's selected release when known (`match_method
-     * 'selected-release-position'`), else stored pending (a later call upgrades
-     * it via COALESCE). Callers: refreshTracks (refresh/download/import) and
-     * artist-refresh disambiguation (persist what we fetch instead of re-calling
-     * the provider each cycle). `tracks` are providerTrackToTrackMetadataRow-shaped.
+     * Persist provider-native release membership and, when a canonical release
+     * is known, publish typed release/track matches through the shared matcher.
      */
+
     static async storeProviderTrackOffers(
         providerId: string,
         albumId: string,
         tracks: any[],
-        fallbackArtistId?: string | null,
+        _fallbackArtistId?: string | null,
+        canonicalReleaseMbid?: string | null,
     ): Promise<void> {
         if (!Array.isArray(tracks) || tracks.length === 0) {
             return;
         }
 
-        const selectedRelease = db.prepare(`
+        const catalog = new ProviderCatalogRepository(db);
+        const existingRelease = db.prepare(`
             SELECT
-                COALESCE(rgs.selected_release_mbid, pi.release_mbid) AS release_mbid,
-                COALESCE(rgs.release_group_mbid, pi.release_group_mbid) AS release_group_mbid,
-                COALESCE(rgs.artist_mbid, pi.artist_mbid) AS artist_mbid,
-                COALESCE(rgs.slot, pi.library_slot, 'stereo') AS library_slot,
-                COALESCE(rgs.quality, pi.quality) AS quality,
-                pi.match_method AS provider_match_method,
-                rgs.match_method AS slot_match_method,
-                COALESCE(rgs.match_status, pi.match_status) AS match_status,
-                COALESCE(rgs.match_confidence, pi.match_confidence) AS match_confidence
-            FROM ProviderItems pi
-            LEFT JOIN ReleaseGroupSlots rgs
-              ON rgs.selected_provider = pi.provider
-             AND (
-                rgs.selected_provider_id = pi.provider_id
-                OR rgs.selected_provider_id LIKE pi.provider_id || ';%'
-                OR rgs.selected_provider_id LIKE '%;' || pi.provider_id || ';%'
-                OR rgs.selected_provider_id LIKE '%;' || pi.provider_id
-             )
-            WHERE pi.entity_type = 'album'
-              AND pi.provider = ?
-              AND pi.provider_id = ?
-            ORDER BY
-              CASE WHEN rgs.selected_release_mbid IS NOT NULL THEN 0 ELSE 1 END,
-              CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END
+              title, version, provider_type, upc, duration_ms, release_date,
+              explicit, availability, checked_at, provider_url, cover_id,
+              artwork_url, volume_count, copyright
+            FROM ProviderItems
+            WHERE provider = ? AND entity_type = 'release' AND provider_id = ?
             LIMIT 1
-        `).get(providerId, albumId) as {
-            release_mbid?: string | null;
-            release_group_mbid?: string | null;
-            artist_mbid?: string | null;
-            library_slot?: string | null;
-            quality?: string | null;
-            provider_match_method?: string | null;
-            slot_match_method?: string | null;
-            match_status?: string | null;
-            match_confidence?: number | null;
-        } | undefined;
-        type CanonicalTrackRow = {
-            track_id?: number | null;
-            track_mbid?: string | null;
-            recording_mbid?: string | null;
-            recording_id?: number | null;
-            title?: string | null;
-            length_ms?: number | null;
-            position?: number | null;
-            medium_position?: number | null;
-            isrcs?: string | null;
+        `).get(providerId, albumId) as Record<string, any> | undefined;
+        const release = {
+            provider: providerId,
+            entityType: "release" as const,
+            providerId: String(albumId),
+            title: textOrNull(existingRelease?.title),
+            version: textOrNull(existingRelease?.version),
+            providerType: textOrNull(existingRelease?.provider_type),
+            upc: textOrNull(existingRelease?.upc),
+            durationMs: positiveNumberOrNull(existingRelease?.duration_ms),
+            releaseDate: textOrNull(existingRelease?.release_date),
+            explicit: existingRelease?.explicit == null ? null : Boolean(existingRelease.explicit),
+            availability: textOrNull(existingRelease?.availability) || "available",
+            checkedAt: textOrNull(existingRelease?.checked_at) || new Date().toISOString(),
+            providerUrl: textOrNull(existingRelease?.provider_url),
+            coverId: textOrNull(existingRelease?.cover_id),
+            artworkUrl: textOrNull(existingRelease?.artwork_url),
+            volumeCount: positiveNumberOrNull(existingRelease?.volume_count),
+            copyright: textOrNull(existingRelease?.copyright),
         };
-        const selectCanonicalTrackByPosition = db.prepare(`
-            SELECT
-                t.id AS track_id,
-                t.mbid AS track_mbid,
-                t.recording_mbid,
-                r.id AS recording_id
-            FROM Tracks t
-            LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-            WHERE t.release_mbid = ?
-              AND t.medium_position = ?
-              AND t.position = ?
-              AND (r.is_video IS NULL OR r.is_video = 0)
-            LIMIT 1
-        `);
-        // Album-bundled music videos map against the release's VIDEO tracks:
-        // MusicBrainz models them as regular tracklist entries whose recording
-        // is a video, so position-based identity works the same way.
-        const selectCanonicalVideoTrackByPosition = db.prepare(`
-            SELECT
-                t.id AS track_id,
-                t.mbid AS track_mbid,
-                t.recording_mbid,
-                r.id AS recording_id
-            FROM Tracks t
-            LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-            WHERE t.release_mbid = ?
-              AND t.medium_position = ?
-              AND t.position = ?
-              AND r.is_video = 1
-            LIMIT 1
-        `);
-        const releaseMbid = String(selectedRelease?.release_mbid || "").trim();
-        const usesPlaylistCoverage = providerId === "soundcloud"
-            && (
-                selectedRelease?.provider_match_method === PLAYLIST_TRACKLIST_COVERAGE_METHOD
-                || selectedRelease?.slot_match_method === PLAYLIST_TRACKLIST_COVERAGE_METHOD
-            );
-        const canonicalTracks = releaseMbid ? db.prepare(`
-            SELECT
-                t.id AS track_id,
-                t.mbid AS track_mbid,
-                t.recording_mbid,
-                r.id AS recording_id,
-                r.isrcs,
-                t.title,
-                t.length_ms,
-                t.position,
-                t.medium_position
-            FROM Tracks t
-            LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-            WHERE t.release_mbid = ?
-              AND (r.is_video IS NULL OR r.is_video = 0)
-            ORDER BY t.medium_position, t.position, t.id
-        `).all(releaseMbid) as CanonicalTrackRow[] : [];
-        const audioProviderTracks = tracks.filter((track) => !track?.is_video);
-        const matchStatus = String(selectedRelease?.match_status || "").toLowerCase();
-        const usesSameReleaseSupersetCoverage = !usesPlaylistCoverage
-            && canonicalTracks.length > 0
-            && audioProviderTracks.length > canonicalTracks.length
-            && (matchStatus === "verified" || matchStatus === "probable")
-            && Number(selectedRelease?.match_confidence || 0) >= 0.9;
-        const canonicalByTrack = new Map<any, {
-            canonicalTrack: CanonicalTrackRow;
-            score: number;
-            method: string;
-        }>();
-        if (usesPlaylistCoverage && releaseMbid) {
-            const assignments = matchPlaylistTracksToCanonical(
-                canonicalTracks.map((track) => ({
-                    title: String(track.title || ""),
-                    durationSec: track.length_ms == null ? null : Number(track.length_ms) / 1000,
-                    trackNumber: track.position ?? null,
-                })),
-                tracks.map((track) => ({
-                    title: track?.title ?? null,
-                    duration: typeof track?.duration === "number" ? track.duration : null,
-                    trackNumber: track?.track_number ?? null,
-                })),
-            );
-            for (const assignment of assignments) {
-                const providerTrack = tracks[assignment.playlistIndex];
-                const canonicalTrack = canonicalTracks[assignment.canonicalIndex];
-                if (providerTrack && canonicalTrack) {
-                    canonicalByTrack.set(providerTrack, {
-                        canonicalTrack,
-                        score: assignment.score,
-                        method: PLAYLIST_TRACKLIST_COVERAGE_METHOD,
-                    });
-                }
-            }
-        } else if (usesSameReleaseSupersetCoverage) {
-            const parseCanonicalIsrcs = (value: string | null | undefined): Set<string> => {
-                if (!value) return new Set();
-                try {
-                    const parsed = JSON.parse(value);
-                    return new Set(
-                        (Array.isArray(parsed) ? parsed : [])
-                            .map((isrc) => normalizeIsrc(isrc))
-                            .filter(Boolean),
-                    );
-                } catch {
-                    return new Set();
-                }
-            };
-            const canonicalTargets: MatchTargetTrack[] = canonicalTracks.map((track) => ({
-                recordingMbid: String(track.recording_mbid || "").trim() || null,
-                isrcs: parseCanonicalIsrcs(track.isrcs),
-                title: String(track.title || ""),
-                trackNumber: Number(track.position || 0),
-                volumeNumber: Number(track.medium_position || 1),
-                durationSec: track.length_ms == null ? null : Number(track.length_ms) / 1000,
-            }));
-            const providerSources = audioProviderTracks.map((track, index) => ({
-                key: String(track?.provider_id || "").trim() || `provider-track-index:${index}`,
-                track,
-                normalized: {
-                    mbid: String(track?.recording_mbid || "").trim() || null,
-                    isrc: String(track?.isrc || "").trim() || null,
-                    title: String(track?.title || ""),
-                    version: String(track?.version || "").trim() || null,
-                    trackNumber: Number(track?.track_number || 0) || null,
-                    volumeNumber: Number(track?.volume_number || 0) || null,
-                    durationSec: Number(track?.duration || 0) || null,
-                } satisfies MatchProviderTrack,
-            }));
-            const edges = canonicalTargets.map((target) => providerSources
-                .map((source) => ({
-                    sourceKey: source.key,
-                    source,
-                    matchScore: scoreTrackMatch(target, source.normalized, {
-                        allowSameReleaseSupersetPositionMismatch: true,
-                    }),
-                }))
-                .filter((edge) => edge.matchScore >= TRACK_MATCH_THRESHOLD)
-                .sort((left, right) =>
-                    right.matchScore - left.matchScore
-                    || left.sourceKey.localeCompare(right.sourceKey)));
-            const assignments = assignRankedTrackMatches(edges);
-            for (const [canonicalIndex, assignment] of assignments) {
-                const canonicalTrack = canonicalTracks[canonicalIndex];
-                if (canonicalTrack) {
-                    canonicalByTrack.set(assignment.source.track, {
-                        canonicalTrack,
-                        score: assignment.matchScore,
-                        method: SAME_RELEASE_SUPERSET_TRACKLIST_METHOD,
-                    });
-                }
-            }
-        }
-
-        if (usesPlaylistCoverage || usesSameReleaseSupersetCoverage) {
-            // Treat verified tracklist coverage refreshes as complete snapshots.
-            // Old children must not remain selectable if the provider reordered
-            // or edited the set; current tracks are restored by the upsert below.
-            db.prepare(`
-                UPDATE ProviderItems
-                SET availability = 'unavailable',
-                    match_status = 'rejected',
-                    match_confidence = NULL,
-                    track_mbid = NULL,
-                    recording_mbid = NULL,
-                    track_id = NULL,
-                    recording_id = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE provider = ?
-                  AND entity_type = 'track'
-                  AND provider_album_id = ?
-            `).run(providerId, albumId);
-        }
-        const upsertProviderTrackOffer = db.prepare(`
-            INSERT INTO ProviderItems (
-                provider, entity_type, provider_id, provider_album_id, title, version, explicit, quality,
-                isrc, duration, track_number, volume_number, release_date, artist_mbid, release_group_mbid, release_mbid,
-                track_mbid, recording_mbid, library_slot, track_id, recording_id,
-                match_status, match_confidence, match_method, match_evidence, provider_artist_name, cover,
-                copyright, popularity, replay_gain, peak, bpm, musical_key, provider_url, availability, updated_at
-            ) VALUES (?, 'track', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', CURRENT_TIMESTAMP)
-            ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-                provider_album_id = COALESCE(excluded.provider_album_id, ProviderItems.provider_album_id),
-                title = excluded.title,
-                version = COALESCE(excluded.version, ProviderItems.version),
-                explicit = COALESCE(excluded.explicit, ProviderItems.explicit),
-                quality = COALESCE(excluded.quality, ProviderItems.quality),
-                isrc = COALESCE(excluded.isrc, ProviderItems.isrc),
-                duration = COALESCE(excluded.duration, ProviderItems.duration),
-                track_number = COALESCE(excluded.track_number, ProviderItems.track_number),
-                volume_number = COALESCE(excluded.volume_number, ProviderItems.volume_number),
-                release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
-                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
-                release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
-                release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
-                track_mbid = COALESCE(excluded.track_mbid, ProviderItems.track_mbid),
-                recording_mbid = COALESCE(excluded.recording_mbid, ProviderItems.recording_mbid),
-                library_slot = excluded.library_slot,
-                track_id = COALESCE(excluded.track_id, ProviderItems.track_id),
-                recording_id = COALESCE(excluded.recording_id, ProviderItems.recording_id),
-                match_status = excluded.match_status,
-                match_confidence = COALESCE(excluded.match_confidence, ProviderItems.match_confidence),
-                match_method = COALESCE(excluded.match_method, ProviderItems.match_method),
-                match_evidence = COALESCE(excluded.match_evidence, ProviderItems.match_evidence),
-                provider_artist_name = COALESCE(excluded.provider_artist_name, ProviderItems.provider_artist_name),
-                cover = COALESCE(excluded.cover, ProviderItems.cover),
-                copyright = COALESCE(excluded.copyright, ProviderItems.copyright),
-                popularity = COALESCE(excluded.popularity, ProviderItems.popularity),
-                replay_gain = COALESCE(excluded.replay_gain, ProviderItems.replay_gain),
-                peak = COALESCE(excluded.peak, ProviderItems.peak),
-                bpm = COALESCE(excluded.bpm, ProviderItems.bpm),
-                musical_key = COALESCE(excluded.musical_key, ProviderItems.musical_key),
-                provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
-                availability = excluded.availability,
-                updated_at = CURRENT_TIMESTAMP
-        `);
-
-        const cooperateTrackStore = createCooperativeBatcher(25);
-        const trackBatch: any[] = [];
-        const counterpartLinks: Array<{
-            audioProviderTrackId: string;
-            counterpartVideoId: string;
-            title: string;
-            duration: number | null;
-            cover: string | null;
-            url: string | null;
-            audioRecordingId: number | null;
-            audioRecordingMbid: string | null;
-            trackNumber: number;
-            volumeNumber: number;
-            artistName: string | null;
-        }> = [];
-        for (const track of tracks) {
-            const trackArtistId = track.artist_id || fallbackArtistId;
-            track.artist_id = trackArtistId;
-            trackBatch.push(track);
-
-            if (trackBatch.length >= 25 || track === tracks[tracks.length - 1]) {
-                db.transaction(() => {
-                    for (const currentTrack of trackBatch) {
-                        const selectByPosition = currentTrack.is_video
-                            ? selectCanonicalVideoTrackByPosition
-                            : selectCanonicalTrackByPosition;
-                        const tracklistAssignment = !currentTrack.is_video
-                            ? canonicalByTrack.get(currentTrack)
-                            : undefined;
-                        const usesTracklistAssignment = (
-                            usesPlaylistCoverage
-                            || usesSameReleaseSupersetCoverage
-                        ) && !currentTrack.is_video;
-                        const canonicalTrack = usesTracklistAssignment
-                            ? tracklistAssignment?.canonicalTrack ?? null
-                            : (releaseMbid
-                                ? selectByPosition.get(
-                                releaseMbid,
-                                Number(currentTrack.volume_number || 1),
-                                Number(currentTrack.track_number || 0),
-                            ) as CanonicalTrackRow | undefined
-                                : null);
-                        const counterpartVideoId = textOrNull(currentTrack.counterpart_video_id);
-                        // Provider-native disc/track numbers live on ProviderItems columns.
-                        // match_evidence is for counterpart / album linkage only — never for
-                        // catalog filename, tags, or slot binding.
-                        const evidence: Record<string, unknown> = {
-                            albumProviderId: albumId,
-                        };
-                        if (tracklistAssignment) {
-                            if (tracklistAssignment.method === PLAYLIST_TRACKLIST_COVERAGE_METHOD) {
-                                evidence.playlistTrackMatchScore = tracklistAssignment.score;
-                            } else {
-                                evidence.tracklistMatchScore = tracklistAssignment.score;
-                            }
-                        }
-                        if (counterpartVideoId) {
-                            evidence.counterpartVideoId = counterpartVideoId;
-                            evidence.counterpartKind = counterpartVideoId === String(currentTrack.provider_id)
-                                ? "yt-self-omv"
-                                : "yt-atv-omv";
-                        }
-                        upsertProviderTrackOffer.run(
-                            providerId,
-                            String(currentTrack.provider_id),
-                            String(albumId),
-                            currentTrack.title || null,
-                            currentTrack.version || null,
-                            currentTrack.explicit == null ? null : (currentTrack.explicit ? 1 : 0),
-                            currentTrack.quality || selectedRelease?.quality || null,
-                            currentTrack.isrc || null,
-                            currentTrack.duration || null,
-                            currentTrack.track_number ?? null,
-                            currentTrack.volume_number ?? null,
-                            currentTrack.release_date || null,
-                            selectedRelease?.artist_mbid || null,
-                            selectedRelease?.release_group_mbid || null,
-                            releaseMbid || null,
-                            canonicalTrack?.track_mbid || null,
-                            canonicalTrack?.recording_mbid || null,
-                            currentTrack.is_video
-                                ? "video"
-                                : selectedRelease?.library_slot || getProviderLibrarySlot(currentTrack.quality || selectedRelease?.quality),
-                            canonicalTrack?.track_id || null,
-                            canonicalTrack?.recording_id || null,
-                            canonicalTrack?.track_mbid ? "matched" : "pending",
-                            canonicalTrack?.track_mbid
-                                ? tracklistAssignment?.score ?? 0.9
-                                : null,
-                            canonicalTrack?.track_mbid
-                                ? (tracklistAssignment
-                                    ? tracklistAssignment.method
-                                    : "selected-release-position")
-                                : "provider-album-tracklist",
-                            JSON.stringify(evidence),
-                            currentTrack.artist?.name || currentTrack.artist_name || null,
-                            textOrNull(currentTrack.cover, currentTrack.image_id, currentTrack.imageId),
-                            textOrNull(currentTrack.copyright),
-                            positiveNumberOrNull(currentTrack.popularity),
-                            finiteNumberOrNull(currentTrack.replay_gain),
-                            finiteNumberOrNull(currentTrack.peak),
-                            finiteNumberOrNull(currentTrack.bpm),
-                            textOrNull(currentTrack.musical_key),
-                            textOrNull(currentTrack.url),
-                        );
-                        this.storeCanonicalTrackSupplements(canonicalTrack?.recording_id || null, currentTrack);
-
-                        if (counterpartVideoId && !currentTrack.is_video) {
-                            const isSelfOmv = counterpartVideoId === String(currentTrack.provider_id);
-                            const counterpartKind = isSelfOmv ? "yt-self-omv" : "yt-atv-omv";
-                            // Distinct OMV ids also get a track-row with library_slot=video
-                            // (Apple-parity album-track video offer). Self-OMV reuses the
-                            // same provider id as the stereo track, so only the video-entity
-                            // upsert below may run — otherwise ON CONFLICT would overwrite
-                            // the stereo offer.
-                            if (!isSelfOmv) {
-                                const videoCanonical = releaseMbid
-                                    ? selectCanonicalVideoTrackByPosition.get(
-                                        releaseMbid,
-                                        Number(currentTrack.volume_number || 1),
-                                        Number(currentTrack.track_number || 0),
-                                    ) as {
-                                        track_id?: number | null;
-                                        track_mbid?: string | null;
-                                        recording_mbid?: string | null;
-                                        recording_id?: number | null;
-                                    } | undefined
-                                    : null;
-                                upsertProviderTrackOffer.run(
-                                    providerId,
-                                    counterpartVideoId,
-                                    String(albumId),
-                                    currentTrack.title || null,
-                                    currentTrack.version || null,
-                                    currentTrack.explicit == null ? null : (currentTrack.explicit ? 1 : 0),
-                                    null,
-                                    currentTrack.isrc || null,
-                                    currentTrack.duration || null,
-                                    currentTrack.track_number ?? null,
-                                    currentTrack.volume_number ?? null,
-                                    currentTrack.release_date || null,
-                                    selectedRelease?.artist_mbid || null,
-                                    selectedRelease?.release_group_mbid || null,
-                                    releaseMbid || null,
-                                    videoCanonical?.track_mbid || null,
-                                    videoCanonical?.recording_mbid || null,
-                                    "video",
-                                    videoCanonical?.track_id || null,
-                                    videoCanonical?.recording_id || null,
-                                    videoCanonical?.track_mbid ? "matched" : "pending",
-                                    videoCanonical?.track_mbid ? 0.9 : null,
-                                    videoCanonical?.track_mbid
-                                        ? "selected-release-position"
-                                        : "yt-atv-omv-counterpart-track",
-                                    JSON.stringify({
-                                        ...evidence,
-                                        audioProviderTrackId: String(currentTrack.provider_id),
-                                        counterpartKind,
-                                    }),
-                                    currentTrack.artist?.name || currentTrack.artist_name || null,
-                                    textOrNull(currentTrack.cover, currentTrack.image_id, currentTrack.imageId),
-                                    textOrNull(currentTrack.copyright),
-                                    positiveNumberOrNull(currentTrack.popularity),
-                                    null,
-                                    null,
-                                    finiteNumberOrNull(currentTrack.bpm),
-                                    textOrNull(currentTrack.musical_key),
-                                    null,
-                                );
-                            }
-                            counterpartLinks.push({
-                                audioProviderTrackId: String(currentTrack.provider_id),
-                                counterpartVideoId,
-                                title: String(currentTrack.title || "Unknown Video"),
-                                duration: currentTrack.duration == null ? null : Number(currentTrack.duration),
-                                cover: null,
-                                url: `https://www.youtube.com/watch?v=${encodeURIComponent(counterpartVideoId)}`,
-                                audioRecordingId: canonicalTrack?.recording_id ?? null,
-                                audioRecordingMbid: canonicalTrack?.recording_mbid ?? null,
-                                trackNumber: Number(currentTrack.track_number || 0),
-                                volumeNumber: Number(currentTrack.volume_number || 1),
-                                artistName: currentTrack.artist?.name || currentTrack.artist_name || null,
-                            });
-                        }
-                    }
-                })();
-                trackBatch.length = 0;
-                await cooperateTrackStore();
-            }
-        }
-
-        if (releaseMbid) {
-            const canonicalRelease = db.prepare(`
-                SELECT id FROM AlbumReleases WHERE mbid = ? LIMIT 1
-            `).get(releaseMbid) as { id: number } | undefined;
-            const providerRelease = db.prepare(`
-                SELECT
-                  title, version, type, upc, duration, release_date, explicit,
-                  availability, provider_url, cover, volume_count, copyright
-                FROM ProviderItems
-                WHERE provider = ? AND entity_type = 'album' AND provider_id = ?
-                LIMIT 1
-            `).get(providerId, albumId) as Record<string, any> | undefined;
-            if (canonicalRelease && providerRelease) {
-                new ProviderReleaseIngestionService(db).ingest({
-                    canonicalReleaseId: canonicalRelease.id,
-                    matcherVersion: 1,
-                    release: {
+        const members = tracks
+            .filter((track) => track?.provider_id != null)
+            .map((currentTrack) => {
+                const qualityTags = [
+                    ...(Array.isArray(currentTrack.qualityTags) ? currentTrack.qualityTags : []),
+                    currentTrack.quality,
+                ];
+                return {
+                    item: {
                         provider: providerId,
-                        entityType: "release",
-                        providerId: String(albumId),
-                        title: textOrNull(providerRelease.title),
-                        version: textOrNull(providerRelease.version),
-                        providerType: textOrNull(providerRelease.type),
-                        upc: textOrNull(providerRelease.upc),
-                        durationMs: positiveNumberOrNull(providerRelease.duration) == null
+                        entityType: currentTrack.is_video ? "video" as const : "track" as const,
+                        providerId: String(currentTrack.provider_id),
+                        title: textOrNull(currentTrack.title),
+                        version: textOrNull(currentTrack.version),
+                        isrc: textOrNull(currentTrack.isrc),
+                        durationMs: positiveNumberOrNull(currentTrack.duration) == null
                             ? null
-                            : Math.round(Number(providerRelease.duration) * 1000),
-                        releaseDate: textOrNull(providerRelease.release_date),
-                        explicit: providerRelease.explicit == null
-                            ? null
-                            : Boolean(providerRelease.explicit),
-                        availability: textOrNull(providerRelease.availability) || "available",
+                            : Math.round(Number(currentTrack.duration) * 1000),
+                        releaseDate: textOrNull(currentTrack.release_date),
+                        explicit: currentTrack.explicit == null ? null : Boolean(currentTrack.explicit),
+                        availability: "available",
                         checkedAt: new Date().toISOString(),
-                        providerUrl: textOrNull(providerRelease.provider_url),
-                        coverId: /^https?:\/\//i.test(String(providerRelease.cover || ""))
+                        providerUrl: textOrNull(currentTrack.url),
+                        coverId: /^https?:\/\//i.test(String(currentTrack.cover || ""))
                             ? null
-                            : textOrNull(providerRelease.cover),
-                        artworkUrl: /^https?:\/\//i.test(String(providerRelease.cover || ""))
-                            ? textOrNull(providerRelease.cover)
+                            : textOrNull(currentTrack.cover, currentTrack.image_id, currentTrack.imageId),
+                        artworkUrl: /^https?:\/\//i.test(String(currentTrack.cover || ""))
+                            ? textOrNull(currentTrack.cover)
                             : null,
-                        volumeCount: positiveNumberOrNull(providerRelease.volume_count),
-                        copyright: textOrNull(providerRelease.copyright),
+                        replayGain: finiteNumberOrNull(currentTrack.replay_gain),
+                        peak: finiteNumberOrNull(currentTrack.peak),
+                        bpm: finiteNumberOrNull(currentTrack.bpm),
+                        musicalKey: textOrNull(currentTrack.musical_key),
+                        copyright: textOrNull(currentTrack.copyright),
                     },
-                    members: tracks.map((currentTrack) => {
-                        const qualityTags = [
-                            ...(Array.isArray(currentTrack.qualityTags) ? currentTrack.qualityTags : []),
-                            currentTrack.quality,
-                        ];
-                        return {
-                            item: {
-                                provider: providerId,
-                                entityType: currentTrack.is_video ? "video" as const : "track" as const,
-                                providerId: String(currentTrack.provider_id),
-                                title: textOrNull(currentTrack.title),
-                                version: textOrNull(currentTrack.version),
-                                isrc: textOrNull(currentTrack.isrc),
-                                durationMs: positiveNumberOrNull(currentTrack.duration) == null
-                                    ? null
-                                    : Math.round(Number(currentTrack.duration) * 1000),
-                                releaseDate: textOrNull(currentTrack.release_date),
-                                explicit: currentTrack.explicit == null
-                                    ? null
-                                    : Boolean(currentTrack.explicit),
-                                availability: "available",
-                                checkedAt: new Date().toISOString(),
-                                providerUrl: textOrNull(currentTrack.url),
-                                coverId: /^https?:\/\//i.test(String(currentTrack.cover || ""))
-                                    ? null
-                                    : textOrNull(currentTrack.cover, currentTrack.image_id, currentTrack.imageId),
-                                artworkUrl: /^https?:\/\//i.test(String(currentTrack.cover || ""))
-                                    ? textOrNull(currentTrack.cover)
-                                    : null,
-                                replayGain: finiteNumberOrNull(currentTrack.replay_gain),
-                                peak: finiteNumberOrNull(currentTrack.peak),
-                                bpm: finiteNumberOrNull(currentTrack.bpm),
-                                musicalKey: textOrNull(currentTrack.musical_key),
-                                copyright: textOrNull(currentTrack.copyright),
-                            },
-                            mediumPosition: Number(currentTrack.volume_number || 1),
-                            position: Number(currentTrack.track_number || 0),
-                            number: textOrNull(currentTrack.track_number),
-                            contextualTitle: textOrNull(currentTrack.title),
-                            contextualDurationMs: positiveNumberOrNull(currentTrack.duration) == null
-                                ? null
-                                : Math.round(Number(currentTrack.duration) * 1000),
-                            credits: providerCredits(currentTrack.artists),
-                            audioVariants: currentTrack.is_video
-                                ? undefined
-                                : providerAudioVariants(providerId, qualityTags),
-                        };
-                    }),
-                });
-            }
+                    mediumPosition: Number(currentTrack.volume_number || 1),
+                    position: Number(currentTrack.track_number || 0),
+                    number: textOrNull(currentTrack.track_number),
+                    contextualTitle: textOrNull(currentTrack.title),
+                    contextualDurationMs: positiveNumberOrNull(currentTrack.duration) == null
+                        ? null
+                        : Math.round(Number(currentTrack.duration) * 1000),
+                    credits: providerCredits(currentTrack.artists),
+                    audioVariants: currentTrack.is_video
+                        ? undefined
+                        : providerAudioVariants(providerId, qualityTags),
+                };
+            });
+        if (members.length === 0) {
+            return;
         }
 
-        if (counterpartLinks.length > 0) {
-            const counterparts = await RefreshVideoService.enrichVideoFactsFromProvider(
-                providerId,
-                counterpartLinks.map((link) => ({
-                    providerId: link.counterpartVideoId,
-                    albumId: String(albumId),
-                    title: link.title,
-                    // Prefer OMV facts from getVideo; audio-track duration is only a fallback.
-                    duration: null as number | null,
-                    releaseDate: null as string | null,
-                    quality: null as string | null,
-                    cover: link.cover,
-                    url: link.url,
-                    audioRecordingId: link.audioRecordingId,
-                    audioRecordingMbid: link.audioRecordingMbid,
-                    audioProviderTrackId: link.audioProviderTrackId,
-                    artistName: link.artistName,
-                    _audioDurationFallback: link.duration == null ? null : Number(link.duration),
-                })),
-            );
-            for (const item of counterparts) {
-                if (item.duration == null && item._audioDurationFallback != null) {
-                    item.duration = item._audioDurationFallback;
+        const canonicalRelease = canonicalReleaseMbid
+            ? db.prepare("SELECT id, mbid FROM AlbumReleases WHERE mbid = ? LIMIT 1")
+                .get(canonicalReleaseMbid) as { id: number; mbid: string } | undefined
+            : db.prepare(`
+                SELECT release.id, release.mbid
+                FROM ProviderItems item
+                JOIN ProviderReleaseMatches match
+                  ON match.provider_release_item_id = item.id
+                 AND match.match_state = 'accepted'
+                JOIN AlbumReleases release ON release.id = match.release_id
+                WHERE item.provider = ?
+                  AND item.entity_type = 'release'
+                  AND item.provider_id = ?
+                ORDER BY
+                  CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                  match.confidence DESC,
+                  match.id
+                LIMIT 1
+            `).get(providerId, albumId) as { id: number; mbid: string } | undefined;
+
+        if (canonicalRelease) {
+            const ingested = new ProviderReleaseIngestionService(db).ingest({
+                canonicalReleaseId: canonicalRelease.id,
+                matcherVersion: 1,
+                release,
+                members,
+            });
+            if (ingested.releaseMatchId != null) {
+                const accepted = db.prepare(`
+                    SELECT item.provider_id, match.recording_id
+                    FROM ProviderTrackMatches match
+                    JOIN ProviderReleaseMembers member
+                      ON member.id = match.provider_release_member_id
+                    JOIN ProviderItems item ON item.id = member.member_item_id
+                    WHERE match.provider_release_match_id = ?
+                      AND match.match_state = 'accepted'
+                `).all(ingested.releaseMatchId) as Array<{
+                    provider_id: string;
+                    recording_id: number;
+                }>;
+                const trackByProviderId = new Map(
+                    tracks.map((track) => [String(track.provider_id), track] as const),
+                );
+                for (const match of accepted) {
+                    this.storeCanonicalTrackSupplements(
+                        match.recording_id,
+                        trackByProviderId.get(String(match.provider_id)),
+                    );
                 }
             }
-            RefreshVideoService.upsertAlbumTrackCounterpartVideos({
-                artistId: String(selectedRelease?.artist_mbid || fallbackArtistId || ""),
-                provider: providerId,
-                albumId: String(albumId),
-                releaseGroupMbid: selectedRelease?.release_group_mbid || null,
-                releaseMbid: selectedRelease?.release_mbid || null,
-                counterparts: counterparts.map((link) => ({
-                    providerId: link.providerId,
-                    albumId: String(albumId),
-                    title: link.title,
-                    duration: link.duration,
-                    releaseDate: link.releaseDate,
-                    quality: link.quality,
-                    cover: link.cover,
-                    url: link.url,
-                    audioRecordingId: link.audioRecordingId,
-                    audioRecordingMbid: link.audioRecordingMbid,
-                    audioProviderTrackId: link.audioProviderTrackId,
-                    artistName: link.artistName,
-                })),
-            });
+            return;
         }
+
+        db.transaction(() => {
+            const releaseItemId = catalog.upsertItem(release);
+            const materializeCredits = (
+                itemId: number,
+                credits: ProviderArtistCreditFacts[] | undefined,
+            ) => {
+                if (!credits) return;
+                catalog.replaceCredits(itemId, credits.map((credit) => ({
+                    artistItemId: catalog.upsertItem({
+                        provider: providerId,
+                        entityType: "artist",
+                        providerId: credit.providerId,
+                        title: credit.name,
+                        availability: "unknown",
+                    }),
+                    ordinal: credit.ordinal,
+                    creditedName: credit.name,
+                    joinPhrase: credit.joinPhrase || "",
+                    normalizedRole: credit.normalizedRole || "other",
+                    providerRole: credit.providerRole,
+                })));
+            };
+            const memberRows = members.map((member) => {
+                const itemId = catalog.upsertItem(member.item);
+                materializeCredits(itemId, member.credits);
+                if (member.audioVariants) {
+                    catalog.replaceAudioVariants(itemId, member.audioVariants);
+                }
+                return {
+                    memberItemId: itemId,
+                    mediumPosition: member.mediumPosition,
+                    position: member.position,
+                    number: member.number,
+                    contextualTitle: member.contextualTitle,
+                    contextualDurationMs: member.contextualDurationMs,
+                };
+            });
+            catalog.replaceReleaseMembers(releaseItemId, memberRows);
+        })();
     }
 
     static async upsertArtistAlbum(
@@ -1451,13 +959,10 @@ export class RefreshAlbumService {
             await this.ensureMusicBrainzArtist(primaryArtistId, false);
         }
 
-        // "New" = no album offer yet. The provider album's facts now live solely on
-        // the ProviderItems offer (written below) + canonical supplement homing; the
-        // legacy ProviderAlbums/ProviderAlbumArtists rows are gone. Album-artist
-        // relations are canonical (AlbumArtists, from Servarr Metadata Server).
+        // "New" means the provider-native release fact has not been seen before.
         const offerExisted = db.prepare(`
             SELECT 1 FROM ProviderItems
-            WHERE provider = ? AND entity_type = 'album'
+            WHERE provider = ? AND entity_type = 'release'
               AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
             LIMIT 1
         `).get(providerId, album.provider_id) as any;
@@ -1465,79 +970,6 @@ export class RefreshAlbumService {
         void scanningArtistId;
 
         const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(releaseGroupMatch);
-
-        db.prepare(`
-            INSERT INTO ProviderItems (
-                provider, entity_type, provider_id, title, version, explicit, quality, type,
-                upc, duration, volume_count, release_date, artist_mbid, release_group_mbid, release_mbid, library_slot,
-                match_status, match_confidence, match_method, match_evidence, cover, provider_url, availability, updated_at
-            ) VALUES (?, 'album', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', CURRENT_TIMESTAMP)
-            ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET
-                title = excluded.title,
-                version = COALESCE(excluded.version, ProviderItems.version),
-                explicit = COALESCE(excluded.explicit, ProviderItems.explicit),
-                quality = COALESCE(excluded.quality, ProviderItems.quality),
-                type = COALESCE(excluded.type, ProviderItems.type),
-                upc = COALESCE(excluded.upc, ProviderItems.upc),
-                duration = COALESCE(excluded.duration, ProviderItems.duration),
-                volume_count = COALESCE(excluded.volume_count, ProviderItems.volume_count),
-                release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
-                artist_mbid = COALESCE(excluded.artist_mbid, ProviderItems.artist_mbid),
-                release_group_mbid = COALESCE(excluded.release_group_mbid, ProviderItems.release_group_mbid),
-                release_mbid = COALESCE(excluded.release_mbid, ProviderItems.release_mbid),
-                library_slot = excluded.library_slot,
-                match_status = excluded.match_status,
-                match_confidence = COALESCE(excluded.match_confidence, ProviderItems.match_confidence),
-                match_method = COALESCE(excluded.match_method, ProviderItems.match_method),
-                match_evidence = COALESCE(excluded.match_evidence, ProviderItems.match_evidence),
-                cover = COALESCE(excluded.cover, ProviderItems.cover),
-                provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
-                availability = excluded.availability,
-                updated_at = CURRENT_TIMESTAMP
-        `).run(
-            providerId,
-            String(album.provider_id),
-            album.title || null,
-            album.version || null,
-            album.explicit == null ? null : (album.explicit ? 1 : 0),
-            album.quality || null,
-            album.type || null,
-            album.upc || null,
-            album.duration || null,
-            album.num_volumes ?? null,
-            album.release_date || null,
-            matchedArtistMbid,
-            matchedReleaseGroup?.mbid || null,
-            matchedReleaseMbid,
-            getProviderLibrarySlot(album.quality),
-            releaseGroupMatch?.status || "unmatched",
-            releaseGroupMatch?.confidence ?? null,
-            releaseGroupMatch?.method || null,
-            releaseGroupMatch
-                ? JSON.stringify({
-                    ...releaseGroupMatch.evidence,
-                    providerQualityTags: Array.isArray(album.qualityTags) ? album.qualityTags : [],
-                })
-                : (Array.isArray(album.qualityTags) && album.qualityTags.length > 0
-                    ? JSON.stringify({ providerQualityTags: album.qualityTags })
-                    : null),
-            (album.cover || album.image_id || album.imageId)
-                ? JSON.stringify({
-                    cover: album.cover || album.image_id || album.imageId || null,
-                    vibrant_color: album.vibrant_color || album.vibrantColor || null,
-                    video_cover: album.video_cover || album.videoCover || null,
-                    num_tracks: album.num_tracks || album.trackCount || null,
-                    num_volumes: album.num_volumes || album.volumeCount || null,
-                    num_videos: album.num_videos || album.videoCount || null,
-                    copyright: album.copyright || null,
-                    popularity: album.popularity || null,
-                    upc: album.upc || null,
-                    explicit: album.explicit == null ? null : Boolean(album.explicit),
-                    quality: album.quality || null,
-                })
-                : null,
-            textOrNull(album.url),
-        );
 
         const normalizedCatalog = new ProviderCatalogRepository(db);
         const normalizedReleaseItemId = normalizedCatalog.upsertItem({

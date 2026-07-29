@@ -111,7 +111,7 @@ test("artist album upsert stores allowed provider supplements on catalog album a
   assert.equal(release.barcode, null);
   assert.equal(release.copyright, "(P) 2024 Example");
 
-  const item = dbModule.db.prepare("SELECT upc FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?")
+  const item = dbModule.db.prepare("SELECT upc FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = ?")
     .get("provider-album-supplements") as { upc: string | null };
   assert.equal(item.upc, "123456789012");
   
@@ -230,34 +230,33 @@ test("album track scan stores provider track offers linked to the selected canon
     INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, 1, 1, '1', ?)
   `).run(trackMbid, releaseMbid, recordingMbid, "Track One");
-dbModule.db.prepare(`
+  const providerReleaseItemId = (dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, quality, artist_mbid, release_group_mbid, release_mbid, library_slot
-    ) VALUES ('fake', 'album', ?, ?, 'LOSSLESS', ?, ?, ?, 'stereo')
-  `).run("provider-album-1", "provider Album", artistMbid, releaseGroupMbid, releaseMbid);
+      provider, entity_type, provider_id, title, provider_type, availability
+    ) VALUES ('fake', 'release', ?, ?, 'ALBUM', 'available')
+    RETURNING id
+  `).get("provider-album-1", "Provider Album") as { id: number }).id;
+  const canonicalReleaseId = (dbModule.db.prepare(`
+    SELECT id FROM AlbumReleases WHERE mbid = ?
+  `).get(releaseMbid) as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id, selected_release_mbid, quality
-    ) VALUES (?, ?, 'stereo', 1, 'fake', ?, ?, 'LOSSLESS')
-  `).run(artistMbid, releaseGroupMbid, "provider-album-1", releaseMbid);
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1)
+  `).run(providerReleaseItemId, canonicalReleaseId);
 
   await refreshServiceModule.RefreshAlbumService.refreshTracks("provider-album-1", { resolveMusicBrainz: false });
 
   const offer = dbModule.db.prepare(`
-    SELECT provider, entity_type, provider_id, release_group_mbid, release_mbid, track_mbid, recording_mbid, library_slot, match_method, isrc, copyright, popularity, replay_gain, peak, provider_url
+    SELECT provider, entity_type, provider_id, isrc, copyright,
+           replay_gain, peak, provider_url
     FROM ProviderItems
     WHERE provider = 'fake' AND entity_type = 'track' AND provider_id = 'provider-track-1'
   `).get() as any;
 
-  assert.equal(offer.release_group_mbid, releaseGroupMbid);
-  assert.equal(offer.release_mbid, releaseMbid);
-  assert.equal(offer.track_mbid, trackMbid);
-  assert.equal(offer.recording_mbid, recordingMbid);
-  assert.equal(offer.library_slot, "stereo");
-  assert.equal(offer.match_method, "selected-release-position");
   assert.equal(offer.isrc, "USABC240001");
   assert.equal(offer.copyright, "(P) 2024 Track");
-  assert.equal(offer.popularity, 56);
   // replay_gain/peak are provider-only facts and live on the ProviderItems
   // track offer, not the canonical MusicBrainz Recording.
   assert.equal(offer.replay_gain, -8.4);
@@ -335,29 +334,6 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
       mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
     ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
   `).run(secondTrackMbid, releaseMbid, secondRecordingMbid, 2, "2", "Second Song", 200000);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, artist_mbid, release_group_mbid,
-      release_mbid, library_slot, match_status, match_method, availability
-    ) VALUES ('soundcloud', 'album', 'sc-playlist', ?, ?, ?, ?, 'stereo',
-              'probable', 'playlist-tracklist-coverage', 'available')
-  `).run("Other People's Heartache", artistMbid, releaseGroupMbid, releaseMbid);
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider,
-      selected_provider_id, selected_release_mbid, match_status, match_method
-    ) VALUES (?, ?, 'stereo', 1, 'soundcloud', 'sc-playlist', ?,
-              'probable', 'playlist-tracklist-coverage')
-  `).run(artistMbid, releaseGroupMbid, releaseMbid);
-  // Simulate children left behind by an earlier invalidation and positional map.
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, title, track_mbid,
-      recording_mbid, match_status, match_method, availability
-    ) VALUES ('soundcloud', 'track', 'sc-second', 'sc-playlist', 'Second Song',
-              ?, ?, 'rejected', 'selected-release-position', 'unavailable')
-  `).run(firstTrackMbid, firstRecordingMbid);
-
   await refreshServiceModule.RefreshAlbumService.storeProviderTrackOffers(
     "soundcloud",
     "sc-playlist",
@@ -380,31 +356,48 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
       },
     ],
     null,
+    releaseMbid,
   );
 
   const offers = dbModule.db.prepare(`
-    SELECT provider_id, track_mbid, recording_mbid, match_status, match_method, availability
-    FROM ProviderItems
-    WHERE provider = 'soundcloud'
-      AND entity_type = 'track'
-      AND provider_album_id = 'sc-playlist'
-    ORDER BY provider_id
+    SELECT
+      item.provider_id,
+      track.mbid AS track_mbid,
+      recording.mbid AS recording_mbid,
+      track_match.match_state,
+      track_match.method AS match_method,
+      item.availability
+    FROM ProviderItems release_item
+    JOIN ProviderReleaseMatches release_match
+      ON release_match.provider_release_item_id = release_item.id
+    JOIN ProviderReleaseMembers member
+      ON member.provider_release_item_id = release_item.id
+    JOIN ProviderItems item ON item.id = member.member_item_id
+    LEFT JOIN ProviderTrackMatches track_match
+      ON track_match.provider_release_match_id = release_match.id
+     AND track_match.provider_release_member_id = member.id
+    LEFT JOIN Tracks track ON track.id = track_match.track_id
+    LEFT JOIN Recordings recording ON recording.id = track_match.recording_id
+    WHERE release_item.provider = 'soundcloud'
+      AND release_item.entity_type = 'release'
+      AND release_item.provider_id = 'sc-playlist'
+    ORDER BY item.provider_id
   `).all() as Array<Record<string, string | null>>;
   assert.deepEqual(offers, [
     {
       provider_id: "sc-first",
       track_mbid: firstTrackMbid,
       recording_mbid: firstRecordingMbid,
-      match_status: "matched",
-      match_method: "playlist-tracklist-coverage",
+      match_state: "accepted",
+      match_method: "title_duration",
       availability: "available",
     },
     {
       provider_id: "sc-second",
       track_mbid: secondTrackMbid,
       recording_mbid: secondRecordingMbid,
-      match_status: "matched",
-      match_method: "playlist-tracklist-coverage",
+      match_state: "accepted",
+      match_method: "title_duration",
       availability: "available",
     },
   ]);
@@ -447,34 +440,6 @@ test("same-release provider superset maps exact-duration version tracks and clea
     return { recordingMbid, trackMbid };
   });
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, artist_mbid, release_group_mbid,
-      release_mbid, library_slot, match_status, match_confidence, match_method, availability
-    ) VALUES ('tidal', 'album', '52412070', 'Reality', ?, ?, ?, 'stereo',
-              'probable', 0.99, 'release-availability', 'available')
-  `).run(artistMbid, releaseGroupMbid, releaseMbid);
-  dbModule.db.prepare(`
-    INSERT INTO ReleaseGroupSlots (
-      artist_mbid, release_group_mbid, slot, monitored, selected_provider,
-      selected_provider_id, selected_release_mbid, match_status, match_confidence, match_method
-    ) VALUES (?, ?, 'stereo', 1, 'tidal', '52412070', ?,
-              'probable', 0.99, 'release-availability')
-  `).run(artistMbid, releaseGroupMbid, releaseMbid);
-
-  // These stale rows reproduce the former position-only materialization: the
-  // unrelated first block was incorrectly linked to the canonical remix tracks.
-  const insertStale = dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, title, track_mbid,
-      recording_mbid, match_status, match_method, availability
-    ) VALUES ('tidal', 'track', ?, '52412070', 'Reality', ?, ?,
-              'matched', 'selected-release-position', 'available')
-  `);
-  canonical.forEach((identity, index) => {
-    insertStale.run(`tidal-reality-${index + 1}`, identity.trackMbid, identity.recordingMbid);
-  });
-
   await refreshServiceModule.RefreshAlbumService.storeProviderTrackOffers(
     "tidal",
     "52412070",
@@ -484,22 +449,40 @@ test("same-release provider superset maps exact-duration version tracks and clea
       { provider_id: "tidal-reality-3", title: "Reality", duration: 220, track_number: 3, volume_number: 1 },
       ...versions.map(([, duration], index) => ({
         provider_id: `tidal-reality-${index + 4}`,
-        title: "Reality",
+        title: `Reality (${versions[index][0]})`,
         duration,
         track_number: index + 4,
         volume_number: 1,
       })),
     ],
     null,
+    releaseMbid,
   );
 
   const offers = dbModule.db.prepare(`
-    SELECT provider_id, track_mbid, recording_mbid, match_status, match_method, availability
-    FROM ProviderItems
-    WHERE provider = 'tidal'
-      AND entity_type = 'track'
-      AND provider_album_id = '52412070'
-    ORDER BY provider_id
+    SELECT
+      item.provider_id,
+      track.mbid AS track_mbid,
+      recording.mbid AS recording_mbid,
+      track_match.match_state,
+      track_match.method AS match_method,
+      item.availability
+    FROM ProviderItems release_item
+    JOIN ProviderReleaseMembers member
+      ON member.provider_release_item_id = release_item.id
+    JOIN ProviderItems item ON item.id = member.member_item_id
+    LEFT JOIN ProviderReleaseMatches release_match
+      ON release_match.provider_release_item_id = release_item.id
+     AND release_match.match_state = 'accepted'
+    LEFT JOIN ProviderTrackMatches track_match
+      ON track_match.provider_release_match_id = release_match.id
+     AND track_match.provider_release_member_id = member.id
+    LEFT JOIN Tracks track ON track.id = track_match.track_id
+    LEFT JOIN Recordings recording ON recording.id = track_match.recording_id
+    WHERE release_item.provider = 'tidal'
+      AND release_item.entity_type = 'release'
+      AND release_item.provider_id = '52412070'
+    ORDER BY item.provider_id
   `).all() as Array<Record<string, string | null>>;
 
   assert.deepEqual(offers.slice(0, 3), [
@@ -507,24 +490,24 @@ test("same-release provider superset maps exact-duration version tracks and clea
       provider_id: "tidal-reality-1",
       track_mbid: null,
       recording_mbid: null,
-      match_status: "pending",
-      match_method: "provider-album-tracklist",
+      match_state: null,
+      match_method: null,
       availability: "available",
     },
     {
       provider_id: "tidal-reality-2",
       track_mbid: null,
       recording_mbid: null,
-      match_status: "pending",
-      match_method: "provider-album-tracklist",
+      match_state: null,
+      match_method: null,
       availability: "available",
     },
     {
       provider_id: "tidal-reality-3",
       track_mbid: null,
       recording_mbid: null,
-      match_status: "pending",
-      match_method: "provider-album-tracklist",
+      match_state: null,
+      match_method: null,
       availability: "available",
     },
   ]);
@@ -532,14 +515,14 @@ test("same-release provider superset maps exact-duration version tracks and clea
     offers.slice(3).map((offer) => ({
       provider_id: offer.provider_id,
       track_mbid: offer.track_mbid,
-      match_status: offer.match_status,
+      match_state: offer.match_state,
       match_method: offer.match_method,
     })),
     canonical.map((identity, index) => ({
       provider_id: `tidal-reality-${index + 4}`,
       track_mbid: identity.trackMbid,
-      match_status: "matched",
-      match_method: "same-release-superset-track-coverage",
+      match_state: "accepted",
+      match_method: "title_duration",
     })),
   );
 });
@@ -559,18 +542,41 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
     INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status)
     VALUES (?, ?, ?, 'Canonical Album', 'Official')
   `).run(releaseMbid, releaseGroupMbid, artistMbid);
+  const tidalReleaseId = (dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('tidal', 'release', '42', 'Tidal Album', 'available')
+    RETURNING id
+  `).get() as { id: number }).id;
+  const appleReleaseId = (dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('apple-music', 'release', '42', 'Apple Album', 'available')
+    RETURNING id
+  `).get() as { id: number }).id;
+  const tidalTrackId = (dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('tidal', 'track', 'tidal-track', 'Tidal Track', 'available')
+    RETURNING id
+  `).get() as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, artist_mbid,
-      release_group_mbid, release_mbid, title, library_slot
+    INSERT INTO ProviderReleaseMembers (
+      provider_release_item_id, member_item_id, medium_position, position
+    ) VALUES (?, ?, 1, 1)
+  `).run(tidalReleaseId, tidalTrackId);
+  const canonicalReleaseId = (dbModule.db.prepare(`
+    SELECT id FROM AlbumReleases WHERE mbid = ?
+  `).get(releaseMbid) as { id: number }).id;
+  dbModule.db.prepare(`
+    INSERT INTO ProviderReleaseMatches (
+      provider_release_item_id, release_id, relation, match_state, decision_source,
+      confidence, method, matcher_version
     ) VALUES
-      ('tidal', 'album', '42', NULL, ?, ?, ?, 'Tidal Album', 'stereo'),
-      ('apple-music', 'album', '42', NULL, ?, ?, ?, 'Apple Album', 'stereo'),
-      ('tidal', 'track', 'tidal-track', '42', ?, ?, ?, 'Tidal Track', 'stereo')
+      (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1),
+      (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1)
   `).run(
-    artistMbid, releaseGroupMbid, releaseMbid,
-    artistMbid, releaseGroupMbid, releaseMbid,
-    artistMbid, releaseGroupMbid, releaseMbid,
+    tidalReleaseId,
+    canonicalReleaseId,
+    appleReleaseId,
+    canonicalReleaseId,
   );
 
   assert.equal(

@@ -41,6 +41,41 @@ test("provider track identity is reused across distinct release memberships", ()
   });
 });
 
+test("refreshing unchanged membership preserves row identity regardless of input order", () => {
+  fixture((db, repository) => {
+    const release = repository.upsertItem({
+      provider: "tidal",
+      entityType: "release",
+      providerId: "release",
+    });
+    const first = repository.upsertItem({
+      provider: "tidal",
+      entityType: "track",
+      providerId: "first",
+    });
+    const second = repository.upsertItem({
+      provider: "tidal",
+      entityType: "track",
+      providerId: "second",
+    });
+    const original = repository.replaceReleaseMembers(release, [
+      { memberItemId: first, mediumPosition: 1, position: 1 },
+      { memberItemId: second, mediumPosition: 1, position: 2 },
+    ]);
+    const refreshed = repository.replaceReleaseMembers(release, [
+      { memberItemId: second, mediumPosition: 1, position: 2 },
+      { memberItemId: first, mediumPosition: 1, position: 1 },
+    ]);
+
+    assert.deepEqual(refreshed, [original[1], original[0]]);
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS count FROM ProviderReleaseMembers")
+        .get() as { count: number }).count,
+      2,
+    );
+  });
+});
+
 test("ordered provider credits preserve supplied role and join phrase without inference", () => {
   fixture((db, repository) => {
     const release = repository.upsertItem({ provider: "apple-music", entityType: "release", providerId: "r" });

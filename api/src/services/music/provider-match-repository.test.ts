@@ -141,3 +141,67 @@ test("an accepted video match supersedes the provider video's previous accepted 
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("automatic video matching cannot supersede a manual accepted identity", () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-provider-video-manual-"));
+  const db = new Database(path.join(folder, "test.db"));
+  try {
+    db.pragma("foreign_keys = ON");
+    createDomainSchemaV41(db);
+    db.prepare(`
+      INSERT INTO Recordings (id, mbid, title, is_video)
+      VALUES (1, 'video-1', 'Pompeii', 1), (2, 'video-2', 'Pompeii', 1)
+    `).run();
+    const itemId = new ProviderCatalogRepository(db).upsertItem({
+      provider: "tidal",
+      entityType: "video",
+      providerId: "provider-video",
+      title: "Pompeii",
+    });
+    const repository = new ProviderMatchRepository(db);
+    repository.upsertVideoMatch({
+      providerVideoItemId: itemId,
+      recordingId: 1,
+      decision: {
+        matchState: "accepted",
+        decisionSource: "manual",
+        confidence: 1,
+        method: "manual",
+        matcherVersion: 1,
+      },
+    });
+    repository.upsertVideoMatch({
+      providerVideoItemId: itemId,
+      recordingId: 2,
+      decision: {
+        matchState: "accepted",
+        decisionSource: "automatic",
+        confidence: 0.99,
+        method: "title_artist_duration",
+        matcherVersion: 2,
+      },
+    });
+
+    assert.deepEqual(db.prepare(`
+      SELECT recording_id, match_state, decision_source, method
+      FROM ProviderVideoMatches
+      ORDER BY recording_id
+    `).all(), [
+      {
+        recording_id: 1,
+        match_state: "accepted",
+        decision_source: "manual",
+        method: "manual",
+      },
+      {
+        recording_id: 2,
+        match_state: "candidate",
+        decision_source: "automatic",
+        method: "title_artist_duration:blocked_by_manual",
+      },
+    ]);
+  } finally {
+    db.close();
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
