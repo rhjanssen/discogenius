@@ -147,21 +147,15 @@ export class ArtistTopTrackService {
           WHERE scope.artist_mbid = @artistMbid
         ),
         artist_releases(id) AS (
-          SELECT DISTINCT slot.selected_album_release_id
+          SELECT DISTINCT library_release.release_id
           FROM artist_rgs
-          JOIN ReleaseGroupSlots slot INDEXED BY idx_release_group_slots_release_group_id
-            ON slot.release_group_id = artist_rgs.id
-          WHERE slot.selected_album_release_id IS NOT NULL
-
-          UNION
-
-          SELECT DISTINCT provider_track.album_release_id
-          FROM artist_rgs
-          JOIN Albums scoped_group ON scoped_group.id = artist_rgs.id
-          CROSS JOIN ProviderItems provider_track INDEXED BY idx_provider_items_entity_release_group
-          WHERE provider_track.entity_type = 'track'
-            AND provider_track.release_group_mbid = scoped_group.mbid
-            AND provider_track.album_release_id IS NOT NULL
+          JOIN LibraryReleaseGroups library_group
+            ON library_group.release_group_id = artist_rgs.id
+          JOIN LibraryReleases library_release
+            ON library_release.library_id = library_group.library_id
+          JOIN AlbumReleases selected_release
+            ON selected_release.id = library_release.release_id
+           AND selected_release.release_group_id = library_group.release_group_id
         ),
         edition_tracks AS (
           SELECT

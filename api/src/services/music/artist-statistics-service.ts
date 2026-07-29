@@ -89,6 +89,7 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
     scopedArtists.map((artist) => artist.artistMetadataId).filter((id): id is number => id != null),
   ));
   const enabledAudioSlots = getEnabledDownloadLibrarySlots().audio;
+  const includeSpatial = enabledAudioSlots.includes("spatial") ? 1 : 0;
 
   // release-group scope + monitored flag, one row per (artist_mbid, release group)
   const scopeRows = scopedMbids.length === 0 ? [] : db.prepare(`
@@ -97,19 +98,31 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
       UNION
       SELECT artist_mbid, release_group_mbid FROM ArtistReleaseGroups WHERE artist_mbid IN (${scopedMbids.map(() => "?").join(",")})
     ),
-    slot_state AS (
-      SELECT release_group_mbid,
-             MAX(CASE WHEN monitored = 1 OR monitored_lock = 1 THEN 1 ELSE 0 END) AS monitored
-      FROM ReleaseGroupSlots
-      WHERE slot IN (${enabledAudioSlots.map(() => "?").join(", ")})
-      GROUP BY release_group_mbid
+    library_state AS (
+      SELECT
+        library_group.release_group_id,
+        MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored
+      FROM LibraryReleaseGroups library_group
+      JOIN Libraries library
+        ON library.id = library_group.library_id
+       AND library.enabled = 1
+      JOIN quality_profiles quality_profile
+        ON quality_profile.id = library.quality_profile_id
+      WHERE EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+        WHERE allowed.value <> 'spatial'
+           OR (? = 1 AND allowed.value = 'spatial')
+      )
+      GROUP BY library_group.release_group_id
     )
     SELECT scope.artist_mbid,
            scope.release_group_mbid,
-           COALESCE(slot_state.monitored, 0) AS monitored
+           COALESCE(library_state.monitored, 0) AS monitored
     FROM scope
-    LEFT JOIN slot_state ON slot_state.release_group_mbid = scope.release_group_mbid
-  `).all(...scopedMbids, ...scopedMbids, ...enabledAudioSlots) as Array<{
+    LEFT JOIN Albums scoped_group ON scoped_group.mbid = scope.release_group_mbid
+    LEFT JOIN library_state ON library_state.release_group_id = scoped_group.id
+  `).all(...scopedMbids, ...scopedMbids, includeSpatial) as Array<{
     artist_mbid: string;
     release_group_mbid: string;
     monitored: number;

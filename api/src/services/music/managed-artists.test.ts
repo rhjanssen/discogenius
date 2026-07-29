@@ -65,14 +65,20 @@ test("artist completion predicate uses canonical locks instead of provider catal
             ('video-locked-mbid', 'Video Locked')
     `).run();
 
-dbModule.db.prepare(`
+    const releaseGroup = dbModule.db.prepare(`
         INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
         VALUES (?, ?, ?, ?)
-    `).run("slot-rg-mbid", "slot-locked-mbid", "Slot Album", "album");
+        RETURNING id
+    `).get("slot-rg-mbid", "slot-locked-mbid", "Slot Album", "album") as { id: number };
+    const library = dbModule.db.prepare(`
+        SELECT id FROM Libraries WHERE name = 'Stereo'
+    `).get() as { id: number };
     dbModule.db.prepare(`
-        INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, monitored_lock)
-        VALUES (?, ?, ?, ?, ?)
-    `).run("slot-locked-mbid", "slot-rg-mbid", "stereo", 0, 1);
+        INSERT INTO LibraryReleaseGroups (
+          library_id, release_group_id, monitored, selection_mode, locked,
+          reason, curation_version
+        ) VALUES (?, ?, 0, 'manual', 1, 'test', 1)
+    `).run(library.id, releaseGroup.id);
     dbModule.db.prepare(`
         INSERT INTO Recordings (mbid, artist_mbid, title, is_video, monitored_lock)
         VALUES (?, ?, ?, ?, ?)

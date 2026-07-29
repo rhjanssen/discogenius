@@ -28,6 +28,9 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM TrackFiles").run();
+  db.prepare("DELETE FROM AcquisitionPlans").run();
+  db.prepare("DELETE FROM LibraryReleases").run();
+  db.prepare("DELETE FROM LibraryReleaseGroups").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
@@ -86,6 +89,23 @@ function seedCanonicalArtistPage() {
       'tidal', 'provider-album-1', 'release-mbid-1', 'LOSSLESS', 1
     )
   `).run();
+  const releaseGroup = db.prepare(`
+    SELECT id FROM Albums WHERE mbid = 'release-group-mbid-1'
+  `).get() as { id: number };
+  const library = db.prepare(`
+    SELECT id FROM Libraries WHERE name = 'Stereo'
+  `).get() as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryReleaseGroups (
+      library_id, release_group_id, monitored, selection_mode, locked,
+      reason, curation_version
+    ) VALUES (?, ?, 1, 'manual', 1, 'test', 1)
+  `).run(library.id, releaseGroup.id);
+  db.prepare(`
+    INSERT INTO LibraryReleases (
+      library_id, release_id, selection_mode, locked, reason, curation_version
+    ) VALUES (?, 201, 'manual', 1, 'test', 1)
+  `).run(library.id);
 
   db.prepare(`
     INSERT INTO Recordings (
@@ -241,7 +261,7 @@ test("artist page sections can be loaded independently", async () => {
   assert.deepEqual(moduleTypes(videos), ["VIDEO_LIST"]);
 });
 
-test("artist page top tracks collapse alternate quality rows into one provider-backed row", async () => {
+test("artist page top tracks ignore unselected alternate editions", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
   const artistMetadata = db.prepare(`
@@ -302,7 +322,7 @@ test("artist page top tracks collapse alternate quality rows into one provider-b
   assert.equal(topTracks.length, 1);
   assert.equal(topTracks[0].title, "Canonical Track");
   assert.equal(topTracks[0].preview_provider_track_id, "provider-track-1");
-  assert.deepEqual(topTracks[0].qualityTags, ["LOSSLESS", "DOLBY_ATMOS"]);
+  assert.deepEqual(topTracks[0].qualityTags, ["LOSSLESS"]);
 });
 
 test("artist page top tracks resolve provider previews through canonical MBIDs", async () => {
