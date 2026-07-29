@@ -2,31 +2,13 @@ import { db } from "../../database.js";
 import { CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { invalidateReleaseGroupDownloadStatus } from "../download/download-state.js";
-import { getConfigSection } from "../config/config.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
-import { queueCatalogAlbumDownload } from "./release-group-acquisition-plan.js";
 import { queueAcquisitionPlan } from "./acquisition-plan-executor.js";
 
-type AlbumSlotSelection = {
-    slot: "stereo" | "spatial";
-    selected_provider?: string | null;
-    selected_provider_id: string;
-    selected_release_mbid?: string | null;
-    quality?: string | null;
-    provider_cover?: string | null;
-    provider_title?: string | null;
-    provider_artist_name?: string | null;
-    title?: string | null;
-    artist_name?: string | null;
-    release_group_mbid?: string | null;
-    match_method?: string | null;
-    match_evidence?: string | null;
-};
-
 export class AlbumCommandService {
-    private static releaseGroupExists(releaseGroupMbid: string): { mbid: string; artist_mbid: string } | null {
-        return db.prepare("SELECT mbid, artist_mbid FROM Albums WHERE mbid = ?")
-            .get(releaseGroupMbid) as { mbid: string; artist_mbid: string } | null;
+    private static releaseGroupExists(releaseGroupMbid: string): { id: number; mbid: string } | null {
+        return db.prepare("SELECT id, mbid FROM Albums WHERE mbid = ?")
+            .get(releaseGroupMbid) as { id: number; mbid: string } | null;
     }
 
     private static setReleaseGroupMonitored(releaseGroupMbid: string, monitored: boolean): boolean {
@@ -35,21 +17,20 @@ export class AlbumCommandService {
             return false;
         }
 
-        const includeSpatial = getConfigSection("filtering").include_spatial === true;
-        const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
-        const monitoredInt = monitored ? 1 : 0;
-        const upsert = db.prepare(`
-            INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, updated_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
-              artist_mbid = excluded.artist_mbid,
+        db.prepare(`
+            INSERT INTO LibraryReleaseGroups (
+              library_id, release_group_id, monitored, selection_mode,
+              locked, reason, curation_version, updated_at
+            )
+            SELECT id, ?, ?, 'manual', 0, 'user', 1, CURRENT_TIMESTAMP
+            FROM Libraries
+            WHERE enabled = 1
+            ON CONFLICT(library_id, release_group_id) DO UPDATE SET
               monitored = excluded.monitored,
+              selection_mode = 'manual',
+              reason = 'user',
               updated_at = CURRENT_TIMESTAMP
-        `);
-
-        for (const slot of slots) {
-            upsert.run(releaseGroup.artist_mbid, releaseGroupMbid, slot, monitoredInt);
-        }
+        `).run(releaseGroup.id, Number(monitored));
 
         return true;
     }
@@ -60,91 +41,26 @@ export class AlbumCommandService {
             return false;
         }
 
-        const includeSpatial = getConfigSection("filtering").include_spatial === true;
-        const slots = includeSpatial ? ["stereo", "spatial"] : ["stereo"];
-        const lockedInt = locked ? 1 : 0;
-        const upsert = db.prepare(`
-            INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored_lock, locked_at, updated_at)
-            VALUES (?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
-            ON CONFLICT(release_group_mbid, slot) DO UPDATE SET
-              artist_mbid = excluded.artist_mbid,
-              monitored_lock = excluded.monitored_lock,
-              locked_at = excluded.locked_at,
+        db.prepare(`
+            INSERT INTO LibraryReleaseGroups (
+              library_id, release_group_id, monitored, selection_mode,
+              locked, reason, curation_version, updated_at
+            )
+            SELECT id, ?, 0, 'manual', ?, 'user', 1, CURRENT_TIMESTAMP
+            FROM Libraries
+            WHERE enabled = 1
+            ON CONFLICT(library_id, release_group_id) DO UPDATE SET
+              selection_mode = 'manual',
+              locked = excluded.locked,
+              reason = 'user',
               updated_at = CURRENT_TIMESTAMP
-        `);
-
-        for (const slot of slots) {
-            upsert.run(releaseGroup.artist_mbid, releaseGroupMbid, slot, lockedInt, lockedInt);
-        }
+        `).run(releaseGroup.id, Number(locked));
 
         invalidateReleaseGroupDownloadStatus(releaseGroupMbid);
         return true;
     }
 
-    private static resolveSelectedProviderAlbumSelections(
-        albumOrReleaseGroupId: string,
-        requestedSlot?: string | null,
-    ): AlbumSlotSelection[] {
-        const includeSpatial = getConfigSection("filtering").include_spatial === true;
-        const normalizedRequestedSlot = String(requestedSlot || "").trim().toLowerCase();
-        const preferredSlots = normalizedRequestedSlot === "spatial"
-            ? ["spatial"]
-            : normalizedRequestedSlot === "stereo"
-                ? ["stereo"]
-                : includeSpatial ? ["stereo", "spatial"] : ["stereo"];
-        const placeholders = preferredSlots.map(() => "?").join(",");
-        const rows = db.prepare(`
-            SELECT
-              rgs.slot,
-              rgs.selected_provider,
-              rgs.selected_provider_id,
-              rgs.selected_release_mbid,
-              rgs.quality,
-              rgs.release_group_mbid,
-              rgs.match_method,
-              rgs.match_evidence,
-              pi.cover AS provider_cover,
-              pi.title AS provider_title,
-              pi.provider_artist_name AS provider_artist_name,
-              rg.title,
-              a.name AS artist_name
-            FROM ReleaseGroupSlots
-            rgs
-            JOIN Albums rg ON rg.mbid = rgs.release_group_mbid
-            LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
-            LEFT JOIN ProviderItems pi ON pi.provider_id = rgs.selected_provider_id AND pi.entity_type = 'album'
-            WHERE rgs.release_group_mbid = ?
-              AND rgs.monitored = 1
-              AND rgs.selected_provider IS NOT NULL
-              AND rgs.selected_provider_id IS NOT NULL
-              AND rgs.slot IN (${placeholders})
-            ORDER BY
-              CASE rgs.slot WHEN 'stereo' THEN 0 WHEN 'spatial' THEN 1 ELSE 2 END,
-              rgs.updated_at DESC
-        `).all(albumOrReleaseGroupId, ...preferredSlots) as Array<Omit<AlbumSlotSelection, "selected_provider_id" | "slot"> & {
-            slot?: string | null;
-            selected_provider_id?: string | number | null;
-        }>;
-
-        const seenSlots = new Set<string>();
-        const selections: AlbumSlotSelection[] = [];
-        for (const row of rows) {
-            const slot = String(row.slot || "").toLowerCase();
-            if ((slot !== "stereo" && slot !== "spatial") || seenSlots.has(slot) || row.selected_provider_id == null) {
-                continue;
-            }
-            seenSlots.add(slot);
-            selections.push({
-                ...row,
-                slot,
-                selected_provider_id: String(row.selected_provider_id),
-            });
-        }
-
-        return selections;
-    }
-
-    /** Set release-group slot wanted state. provider albums are selected offers, not catalog identity. */
+    /** Set release-group wanted state for every enabled library. */
     static setAlbumMonitored(albumId: string, monitored: boolean): { success: boolean; albumId: string; monitored: boolean; message?: string; status?: number } {
         if (this.setReleaseGroupMonitored(albumId, monitored)) {
             invalidateReleaseGroupDownloadStatus(albumId);
@@ -270,14 +186,13 @@ export class AlbumCommandService {
             requestedSlot ?? null,
             requestedSlot ?? null,
         ) as Array<{ id: number }>).map(({ id }) => id);
-        const selections = this.resolveSelectedProviderAlbumSelections(albumId, requestedSlot);
-        if (normalizedPlanIds.length === 0 && selections.length === 0) {
+        if (shouldDownload && normalizedPlanIds.length === 0) {
             return {
                 success: false,
                 status: 409,
                 message: requestedSlot
-                    ? `No ${requestedSlot} provider offer is selected for this release group yet.`
-                    : "No provider offer is selected for this release group yet. Connect a provider and refresh the artist before downloading.",
+                    ? `No current acquisition plan exists for the ${requestedSlot} library.`
+                    : "No current acquisition plan exists for this release group. Connect a provider and refresh the artist before downloading.",
             };
         }
         const commandIds: number[] = [];
@@ -286,19 +201,7 @@ export class AlbumCommandService {
                 const queued = queueAcquisitionPlan(db, planId);
                 if (queued.commandId != null) commandIds.push(queued.commandId);
             }
-            if (normalizedPlanIds.length > 0) {
-                return { success: true, albumId, commandId: commandIds[0] ?? null, commandIds };
-            }
-
-            for (const selection of selections) {
-                const queued = queueCatalogAlbumDownload({
-                    ...selection,
-                    release_group_mbid: selection.release_group_mbid || albumId,
-                });
-                if (queued.commandId != null) {
-                    commandIds.push(queued.commandId);
-                }
-            }
+            return { success: true, albumId, commandId: commandIds[0] ?? null, commandIds };
         }
 
         return { success: true, albumId, commandId: commandIds[0] ?? null, commandIds };

@@ -10,36 +10,26 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let serviceModule: typeof import("./album-command-service.js");
-let queueModule: typeof import("../commands/command-queue-manager.js");
-
-function assertRetiredProviderCatalogTablesAbsent() {
-  const rows = dbModule.db.prepare(`
-    SELECT name
-    FROM sqlite_master
-    WHERE type = 'table'
-      AND name IN ('ProviderAlbums', 'ProviderMedia', 'ProviderAlbumArtists', 'ProviderMediaArtists')
-  `).all() as Array<{ name: string }>;
-  assert.deepEqual(rows, []);
-}
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   serviceModule = await import("./album-command-service.js");
-  queueModule = await import("../commands/command-queue-manager.js");
 });
 
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM commands").run();
-  db.prepare("DELETE FROM ProviderItems").run();
-  db.prepare("DELETE FROM Tracks").run();
-  db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
-  db.prepare("DELETE FROM ReleaseGroupSlots").run();
+  db.prepare("DELETE FROM LibraryReleaseGroups").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
+  db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-mbid-1', 'Artist One')").run();
+  db.prepare("INSERT INTO Artists (id, mbid, name, monitored) VALUES ('artist-1', 'artist-mbid-1', 'Artist One', 1)").run();
+  db.prepare(`
+    INSERT INTO Albums (id, mbid, artist_metadata_id, artist_mbid, title, primary_type)
+    VALUES (1, 'release-group-mbid-1', 1, 'artist-mbid-1', 'Album One', 'Album')
+  `).run();
 });
 
 after(() => {
@@ -47,168 +37,42 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-function seedAlbum() {
-  const { db } = dbModule;
-  db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid-1", "Artist One");
-  db.prepare("INSERT INTO Artists (id, mbid, name, monitored) VALUES (?, ?, ?, ?)").run("artist-1", "artist-mbid-1", "Artist One", 1);
-  db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)")
-    .run("release-group-mbid-1", "artist-mbid-1", "Album One", "Album");
-  db.prepare(`
-    INSERT INTO ReleaseGroupSlots (artist_mbid, release_group_mbid, slot, monitored, selected_provider, selected_provider_id)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run("artist-mbid-1", "release-group-mbid-1", "stereo", 0, "tidal", "provider-album-1");
-db.prepare(`
-    INSERT INTO AlbumReleases (id, foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, track_count, media_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(201, "release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Album One", "Official", 1, 1);
-  db.prepare(`
-    INSERT INTO Recordings (id, foreign_recording_id, mbid, artist_mbid, title, is_video)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(301, "recording-mbid-1", "recording-mbid-1", "artist-mbid-1", "Track One", 0);
-  db.prepare(`
-    INSERT INTO Tracks (id, foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(401, "track-mbid-1", "recording-mbid-1", "track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Track One");
-  db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid,
-      title, quality, album_release_id, track_id, recording_id, match_status, match_confidence, match_method
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    "tidal", "track", "provider-track-1", "artist-mbid-1", "release-group-mbid-1", "release-mbid-1", "track-mbid-1", "recording-mbid-1",
-    "Track One", "LOSSLESS", 201, 401, 301, "verified", 1, "test",
-  );
-}
-
-test("album monitor command writes release-group slots and ignores provider album IDs", () => {
-  seedAlbum();
-
+test("album monitoring is persisted independently for every enabled library", () => {
   const providerResult = serviceModule.AlbumCommandService.setAlbumMonitored("provider-album-1", true);
-  assert.equal(providerResult.success, false);
   assert.equal(providerResult.status, 404);
 
-  const canonicalResult = serviceModule.AlbumCommandService.setAlbumMonitored("release-group-mbid-1", true);
-  assert.equal(canonicalResult.success, true);
-
-  const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
-    .get("release-group-mbid-1") as { wanted: number };
-
-  assert.equal(slot.wanted, 1);
-  assertRetiredProviderCatalogTablesAbsent();
-});
-
-test("album update command stores monitor lock on release-group slots", () => {
-  seedAlbum();
-
-  const result = serviceModule.AlbumCommandService.updateAlbum("release-group-mbid-1", undefined, true);
+  const result = serviceModule.AlbumCommandService.setAlbumMonitored("release-group-mbid-1", true);
   assert.equal(result.success, true);
-
-  const slot = dbModule.db.prepare("SELECT monitored_lock FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
-    .get("release-group-mbid-1") as { monitored_lock: number };
-
-  assert.equal(slot.monitored_lock, 1);
-  assertRetiredProviderCatalogTablesAbsent();
+  const rows = dbModule.db.prepare(`
+    SELECT library_id, monitored, selection_mode
+    FROM LibraryReleaseGroups
+    WHERE release_group_id = 1
+    ORDER BY library_id
+  `).all();
+  assert.ok(rows.length >= 2);
+  assert.ok(rows.every((row: any) => row.monitored === 1 && row.selection_mode === "manual"));
 });
 
-test("track monitor command uses canonical tracks and selected provider offers", async () => {
-  seedAlbum();
-
-  const providerOnly = await serviceModule.AlbumCommandService.monitorTrack("provider-track-1", true);
-  assert.equal(providerOnly.success, false);
-  assert.equal(providerOnly.status, 404);
-
-  const result = await serviceModule.AlbumCommandService.monitorTrack("track-mbid-1", true);
-  assert.equal(result.success, true);
-  assert.equal(result.albumId, "release-group-mbid-1");
-
-  const slot = dbModule.db.prepare("SELECT monitored AS wanted FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = 'stereo'")
-    .get("release-group-mbid-1") as { wanted: number };
-  assert.equal(slot.wanted, 1);
-
-  const job = dbModule.db.prepare("SELECT name, ref_id AS refId, payload FROM commands WHERE name = ?")
-    .get(queueModule.CommandNames.DownloadTrack) as { name: string; refId: string; payload: string } | undefined;
-  assert.ok(job);
-  assert.equal(job?.refId, "401");
-  const payload = JSON.parse(job?.payload || "{}") as { providerId?: string; canonicalTrackId?: string; canonicalTrackMbid?: string };
-  assert.equal(payload.providerId, "provider-track-1");
-  assert.equal(payload.canonicalTrackId, "401");
-  assert.equal(payload.canonicalTrackMbid, "track-mbid-1");
-});
-
-test("manual album download uses the shared hybrid per-track acquisition plan", async () => {
-  seedAlbum();
-  const { db } = dbModule;
-  db.prepare(`
-    INSERT INTO Recordings (id, foreign_recording_id, mbid, artist_mbid, title, is_video)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(302, "recording-mbid-2", "recording-mbid-2", "artist-mbid-1", "Bonus Track", 0);
-  db.prepare(`
-    INSERT INTO Tracks (id, foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(402, "track-mbid-2", "recording-mbid-2", "track-mbid-2", "release-mbid-1", "recording-mbid-2", 1, 2, "2", "Bonus Track");
-
-  const evidence = JSON.stringify({
-    trackSources: [
-      {
-        canonicalTrackMbid: "track-mbid-1",
-        canonicalRecordingMbid: "recording-mbid-1",
-        providerTrackId: "provider-hires-track-1",
-        providerAlbumId: "provider-hires-album",
-        title: "Track One",
-        quality: "HI_RES_LOSSLESS",
-      },
-      {
-        canonicalTrackMbid: "track-mbid-2",
-        canonicalRecordingMbid: "recording-mbid-2",
-        providerTrackId: "provider-deluxe-track-2",
-        providerAlbumId: "provider-deluxe-album",
-        title: "Bonus Track",
-        quality: "LOSSLESS",
-      },
-    ],
-  });
-  db.prepare(`
-    UPDATE ReleaseGroupSlots
-    SET monitored = 1,
-        selected_provider = ?,
-        selected_provider_id = ?,
-        selected_release_mbid = ?,
-        match_method = ?,
-        match_evidence = ?
-    WHERE release_group_mbid = ? AND slot = 'stereo'
-  `).run(
-    "tidal",
-    "provider-hires-album;provider-deluxe-album",
-    "release-mbid-1",
-    "quality_optimized_composite_track_coverage",
-    evidence,
+test("album monitor locks are library release-group authority", () => {
+  const result = serviceModule.AlbumCommandService.updateAlbum(
     "release-group-mbid-1",
+    undefined,
+    true,
   );
-
-  const result = await serviceModule.AlbumCommandService.addAlbum("release-group-mbid-1", true, "stereo");
   assert.equal(result.success, true);
-  assert.equal(result.commandIds?.length, 1);
+  const rows = dbModule.db.prepare(`
+    SELECT locked FROM LibraryReleaseGroups WHERE release_group_id = 1
+  `).all() as Array<{ locked: number }>;
+  assert.ok(rows.length >= 2);
+  assert.ok(rows.every((row) => row.locked === 1));
+});
 
-  const jobs = db.prepare("SELECT name, ref_id AS refId, payload FROM commands ORDER BY id").all() as Array<{
-    name: string;
-    refId: string;
-    payload: string;
-  }>;
-  assert.deepEqual(jobs.map((job) => job.name), [queueModule.CommandNames.DownloadAlbum]);
-  assert.equal(jobs[0]?.refId, "release-group-mbid-1:stereo");
-  const payload = JSON.parse(jobs[0]?.payload || "{}") as {
-    acquisitionMode?: string;
-    trackOffers?: Array<{ providerTrackId?: string; quality?: string | null }>;
-  };
-  assert.equal(payload.acquisitionMode, "trackOffers");
-  assert.deepEqual(
-    (payload.trackOffers || []).map((offer) => ({
-      providerTrackId: offer.providerTrackId,
-      quality: offer.quality,
-    })),
-    [
-      { providerTrackId: "provider-hires-track-1", quality: "HI_RES_LOSSLESS" },
-      { providerTrackId: "provider-deluxe-track-2", quality: "LOSSLESS" },
-    ],
+test("monitor-only album add succeeds without reconstructing a legacy provider plan", async () => {
+  const result = await serviceModule.AlbumCommandService.addAlbum(
+    "release-group-mbid-1",
+    false,
+    "stereo",
   );
+  assert.equal(result.success, true);
+  assert.deepEqual(result.commandIds, []);
 });
