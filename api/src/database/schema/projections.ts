@@ -29,6 +29,29 @@ export function createArtistTopTrackProjectionSchema(db: Database.Database): voi
   `);
 }
 
+function createProjectionInvalidationTriggers(
+  db: Database.Database,
+  options: {
+    prefix: string;
+    stateTable: string;
+    tables: readonly string[];
+  },
+): void {
+  for (const table of options.tables) {
+    const normalizedTableName = table.replace(/[^A-Za-z0-9_]/g, "");
+    for (const operation of ["INSERT", "UPDATE", "DELETE"] as const) {
+      const suffix = operation === "INSERT" ? "ai" : operation === "UPDATE" ? "au" : "ad";
+      db.exec(`
+        CREATE TRIGGER ${options.prefix}_${normalizedTableName.toLowerCase()}_${suffix}
+        AFTER ${operation} ON ${table}
+        BEGIN
+          DELETE FROM ${options.stateTable};
+        END;
+      `);
+    }
+  }
+}
+
 export function createAlbumLibraryProjectionSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE AlbumLibraryIndex (
@@ -61,251 +84,25 @@ export function createAlbumLibraryProjectionSchema(db: Database.Database): void 
       ON AlbumLibraryIndex(included, monitored, title, release_group_id);
     CREATE INDEX idx_album_library_updated
       ON AlbumLibraryIndex(included, monitored, (album_updated_at IS NULL), album_updated_at DESC, title, release_group_id);
-
-    CREATE TRIGGER trg_album_library_album_ai
-    AFTER INSERT ON Albums
-    BEGIN
-      INSERT INTO AlbumLibraryIndex (
-        release_group_id, artist_mbid, title, popularity, first_release_date,
-        album_updated_at, included, monitored, monitored_lock,
-        has_stereo_provider, has_spatial_provider, updated_at
-      ) VALUES (
-        NEW.id, NEW.artist_mbid, NEW.title, COALESCE(NEW.popularity, 0), NEW.first_release_date,
-        NEW.updated_at,
-        CASE WHEN
-          EXISTS (SELECT 1 FROM Artists imported_artist WHERE imported_artist.mbid = NEW.artist_mbid)
-          AND EXISTS (
-            SELECT 1
-            FROM ArtistReleaseGroupCuration context
-            JOIN Artists source_artist
-              ON source_artist.mbid = context.source_artist_mbid
-             AND source_artist.monitored = 1
-            WHERE context.release_group_mbid = NEW.mbid
-              AND context.included = 1
-          ) THEN 1 ELSE 0 END,
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_mbid = NEW.mbid AND slot.monitored = 1),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_mbid = NEW.mbid AND slot.monitored_lock = 1),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_mbid = NEW.mbid AND slot.slot = 'stereo' AND slot.selected_provider_id IS NOT NULL),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_mbid = NEW.mbid AND slot.slot = 'spatial' AND slot.selected_provider_id IS NOT NULL),
-        CURRENT_TIMESTAMP
-      )
-      ON CONFLICT(release_group_id) DO UPDATE SET
-        artist_mbid = excluded.artist_mbid,
-        title = excluded.title,
-        popularity = excluded.popularity,
-        first_release_date = excluded.first_release_date,
-        album_updated_at = excluded.album_updated_at,
-        included = excluded.included,
-        monitored = excluded.monitored,
-        monitored_lock = excluded.monitored_lock,
-        has_stereo_provider = excluded.has_stereo_provider,
-        has_spatial_provider = excluded.has_spatial_provider,
-        updated_at = CURRENT_TIMESTAMP;
-    END;
-
-    CREATE TRIGGER trg_album_library_album_au
-    AFTER UPDATE OF artist_mbid, mbid, title, popularity, first_release_date, updated_at ON Albums
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET artist_mbid = NEW.artist_mbid,
-          title = NEW.title,
-          popularity = COALESCE(NEW.popularity, 0),
-          first_release_date = NEW.first_release_date,
-          album_updated_at = NEW.updated_at,
-          included = CASE WHEN
-            EXISTS (SELECT 1 FROM Artists imported_artist WHERE imported_artist.mbid = NEW.artist_mbid)
-            AND EXISTS (
-              SELECT 1
-              FROM ArtistReleaseGroupCuration context
-              JOIN Artists source_artist
-                ON source_artist.mbid = context.source_artist_mbid
-               AND source_artist.monitored = 1
-              WHERE context.release_group_mbid = NEW.mbid
-                AND context.included = 1
-            ) THEN 1 ELSE 0 END,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE release_group_id = NEW.id;
-    END;
-
-    CREATE TRIGGER trg_album_library_curation_ai
-    AFTER INSERT ON ArtistReleaseGroupCuration
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET included = CASE WHEN
-        EXISTS (
-          SELECT 1 FROM Albums album
-          JOIN Artists imported_artist ON imported_artist.mbid = album.artist_mbid
-          WHERE album.id = AlbumLibraryIndex.release_group_id
-        )
-        AND EXISTS (
-          SELECT 1
-          FROM ArtistReleaseGroupCuration context
-          JOIN Artists source_artist
-            ON source_artist.mbid = context.source_artist_mbid
-           AND source_artist.monitored = 1
-          WHERE context.release_group_id = AlbumLibraryIndex.release_group_id
-            AND context.included = 1
-        ) THEN 1 ELSE 0 END,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE release_group_id = COALESCE(NEW.release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid));
-    END;
-
-    CREATE TRIGGER trg_album_library_curation_au
-    AFTER UPDATE OF source_artist_mbid, release_group_mbid, release_group_id, included ON ArtistReleaseGroupCuration
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET included = CASE WHEN
-        EXISTS (
-          SELECT 1 FROM Albums album
-          JOIN Artists imported_artist ON imported_artist.mbid = album.artist_mbid
-          WHERE album.id = AlbumLibraryIndex.release_group_id
-        )
-        AND EXISTS (
-          SELECT 1
-          FROM ArtistReleaseGroupCuration context
-          JOIN Artists source_artist
-            ON source_artist.mbid = context.source_artist_mbid
-           AND source_artist.monitored = 1
-          WHERE context.release_group_id = AlbumLibraryIndex.release_group_id
-            AND context.included = 1
-        ) THEN 1 ELSE 0 END,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE release_group_id IN (
-        COALESCE(OLD.release_group_id, (SELECT id FROM Albums WHERE mbid = OLD.release_group_mbid)),
-        COALESCE(NEW.release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid))
-      );
-    END;
-
-    CREATE TRIGGER trg_album_library_curation_ad
-    AFTER DELETE ON ArtistReleaseGroupCuration
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET included = CASE WHEN
-        EXISTS (
-          SELECT 1 FROM Albums album
-          JOIN Artists imported_artist ON imported_artist.mbid = album.artist_mbid
-          WHERE album.id = AlbumLibraryIndex.release_group_id
-        )
-        AND EXISTS (
-          SELECT 1
-          FROM ArtistReleaseGroupCuration context
-          JOIN Artists source_artist
-            ON source_artist.mbid = context.source_artist_mbid
-           AND source_artist.monitored = 1
-          WHERE context.release_group_id = AlbumLibraryIndex.release_group_id
-            AND context.included = 1
-        ) THEN 1 ELSE 0 END,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE release_group_id = COALESCE(OLD.release_group_id, (SELECT id FROM Albums WHERE mbid = OLD.release_group_mbid));
-    END;
-
-    CREATE TRIGGER trg_album_library_slot_ai
-    AFTER INSERT ON ReleaseGroupSlots
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET monitored = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.monitored = 1),
-          monitored_lock = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.monitored_lock = 1),
-          has_stereo_provider = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.slot = 'stereo' AND slot.selected_provider_id IS NOT NULL),
-          has_spatial_provider = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.slot = 'spatial' AND slot.selected_provider_id IS NOT NULL),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE release_group_id = COALESCE(NEW.release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid));
-    END;
-
-    CREATE TRIGGER trg_album_library_slot_au
-    AFTER UPDATE OF release_group_mbid, release_group_id, slot, monitored, monitored_lock, selected_provider_id ON ReleaseGroupSlots
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET monitored = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.monitored = 1),
-          monitored_lock = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.monitored_lock = 1),
-          has_stereo_provider = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.slot = 'stereo' AND slot.selected_provider_id IS NOT NULL),
-          has_spatial_provider = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.slot = 'spatial' AND slot.selected_provider_id IS NOT NULL),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE release_group_id IN (
-        COALESCE(OLD.release_group_id, (SELECT id FROM Albums WHERE mbid = OLD.release_group_mbid)),
-        COALESCE(NEW.release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid))
-      );
-    END;
-
-    CREATE TRIGGER trg_album_library_slot_ad
-    AFTER DELETE ON ReleaseGroupSlots
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET monitored = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.monitored = 1),
-          monitored_lock = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.monitored_lock = 1),
-          has_stereo_provider = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.slot = 'stereo' AND slot.selected_provider_id IS NOT NULL),
-          has_spatial_provider = EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.release_group_id = AlbumLibraryIndex.release_group_id AND slot.slot = 'spatial' AND slot.selected_provider_id IS NOT NULL),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE release_group_id = COALESCE(OLD.release_group_id, (SELECT id FROM Albums WHERE mbid = OLD.release_group_mbid));
-    END;
-
-    CREATE TRIGGER trg_album_library_artist_ai
-    AFTER INSERT ON Artists
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET included = CASE WHEN
-        EXISTS (SELECT 1 FROM Artists imported_artist WHERE imported_artist.mbid = AlbumLibraryIndex.artist_mbid)
-        AND EXISTS (
-          SELECT 1
-          FROM ArtistReleaseGroupCuration context
-          JOIN Artists source_artist
-            ON source_artist.mbid = context.source_artist_mbid
-           AND source_artist.monitored = 1
-          WHERE context.release_group_id = AlbumLibraryIndex.release_group_id
-            AND context.included = 1
-        ) THEN 1 ELSE 0 END,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE artist_mbid = NEW.mbid
-         OR release_group_id IN (SELECT release_group_id FROM ArtistReleaseGroupCuration WHERE source_artist_mbid = NEW.mbid);
-    END;
-
-    CREATE TRIGGER trg_album_library_artist_au
-    AFTER UPDATE OF mbid, monitored ON Artists
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET included = CASE WHEN
-        EXISTS (SELECT 1 FROM Artists imported_artist WHERE imported_artist.mbid = AlbumLibraryIndex.artist_mbid)
-        AND EXISTS (
-          SELECT 1
-          FROM ArtistReleaseGroupCuration context
-          JOIN Artists source_artist
-            ON source_artist.mbid = context.source_artist_mbid
-           AND source_artist.monitored = 1
-          WHERE context.release_group_id = AlbumLibraryIndex.release_group_id
-            AND context.included = 1
-        ) THEN 1 ELSE 0 END,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE artist_mbid IN (OLD.mbid, NEW.mbid)
-         OR release_group_id IN (
-           SELECT release_group_id FROM ArtistReleaseGroupCuration
-           WHERE source_artist_mbid IN (OLD.mbid, NEW.mbid)
-         );
-    END;
-
-    CREATE TRIGGER trg_album_library_artist_ad
-    AFTER DELETE ON Artists
-    BEGIN
-      UPDATE AlbumLibraryIndex
-      SET included = CASE WHEN
-        EXISTS (SELECT 1 FROM Artists imported_artist WHERE imported_artist.mbid = AlbumLibraryIndex.artist_mbid)
-        AND EXISTS (
-          SELECT 1
-          FROM ArtistReleaseGroupCuration context
-          JOIN Artists source_artist
-            ON source_artist.mbid = context.source_artist_mbid
-           AND source_artist.monitored = 1
-          WHERE context.release_group_id = AlbumLibraryIndex.release_group_id
-            AND context.included = 1
-        ) THEN 1 ELSE 0 END,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE artist_mbid = OLD.mbid
-         OR release_group_id IN (SELECT release_group_id FROM ArtistReleaseGroupCuration WHERE source_artist_mbid = OLD.mbid);
-    END;
   `);
 
-  // A genuinely empty database is already fully projected; subsequent inserts
-  // are maintained by the triggers above. Existing installations are left
-  // unmarked so the command worker can perform the one-time set-based backfill
-  // without delaying HTTP startup.
+  createProjectionInvalidationTriggers(db, {
+    prefix: "trg_album_library_invalidate",
+    stateTable: "AlbumLibraryProjectionState",
+    tables: [
+      "Albums",
+      "AlbumReleases",
+      "LibraryReleaseGroups",
+      "LibraryReleases",
+      "AcquisitionPlans",
+      "AcquisitionPlanTracks",
+      "ProviderItemAudioVariants",
+    ],
+  });
+
+  // A genuinely empty database is already fully projected. Every authority
+  // mutation invalidates this marker so the command worker can perform the
+  // next set-based rebuild without delaying the write path.
   db.exec(`
     INSERT INTO AlbumLibraryProjectionState (singleton_id, row_count, updated_at)
     SELECT 1, 0, CURRENT_TIMESTAMP
@@ -344,167 +141,23 @@ export function createTrackLibraryProjectionSchema(db: Database.Database): void 
       ON TrackLibraryIndex(has_stereo, popularity DESC, track_id);
     CREATE INDEX idx_track_library_spatial_popularity
       ON TrackLibraryIndex(has_spatial, popularity DESC, track_id);
-
-    CREATE TRIGGER trg_track_library_track_ai
-    AFTER INSERT ON Tracks
-    BEGIN
-      INSERT INTO TrackLibraryIndex (
-        track_id, album_release_id, recording_id, popularity, downloaded,
-        has_stereo, has_spatial, updated_at
-      )
-      SELECT
-        NEW.id, NEW.album_release_id, NEW.recording_id, COALESCE(recording.popularity, 0),
-        EXISTS (SELECT 1 FROM TrackFiles file WHERE file.track_id = NEW.id AND file.file_type = 'track'),
-        EXISTS (
-          SELECT 1 FROM ReleaseGroupSlots slot
-          WHERE slot.selected_album_release_id = NEW.album_release_id
-            AND slot.slot = 'stereo' AND slot.monitored = 1
-            AND slot.selected_provider_id IS NOT NULL
-        ),
-        EXISTS (
-          SELECT 1 FROM ReleaseGroupSlots slot
-          WHERE slot.selected_album_release_id = NEW.album_release_id
-            AND slot.slot = 'spatial' AND slot.monitored = 1
-            AND slot.selected_provider_id IS NOT NULL
-        ),
-        CURRENT_TIMESTAMP
-      FROM Recordings recording
-      WHERE recording.id = NEW.recording_id
-        AND EXISTS (
-          SELECT 1 FROM ReleaseGroupSlots slot
-          WHERE slot.selected_album_release_id = NEW.album_release_id
-            AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL
-        )
-      ON CONFLICT(track_id) DO UPDATE SET
-        album_release_id = excluded.album_release_id,
-        recording_id = excluded.recording_id,
-        popularity = excluded.popularity,
-        downloaded = excluded.downloaded,
-        has_stereo = excluded.has_stereo,
-        has_spatial = excluded.has_spatial,
-        updated_at = CURRENT_TIMESTAMP;
-    END;
-
-    CREATE TRIGGER trg_track_library_track_au
-    AFTER UPDATE OF album_release_id, recording_id ON Tracks
-    BEGIN
-      DELETE FROM TrackLibraryIndex WHERE track_id = NEW.id;
-      INSERT INTO TrackLibraryIndex (
-        track_id, album_release_id, recording_id, popularity, downloaded,
-        has_stereo, has_spatial, updated_at
-      )
-      SELECT
-        NEW.id, NEW.album_release_id, NEW.recording_id, COALESCE(recording.popularity, 0),
-        EXISTS (SELECT 1 FROM TrackFiles file WHERE file.track_id = NEW.id AND file.file_type = 'track'),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = NEW.album_release_id AND slot.slot = 'stereo' AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = NEW.album_release_id AND slot.slot = 'spatial' AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL),
-        CURRENT_TIMESTAMP
-      FROM Recordings recording
-      WHERE recording.id = NEW.recording_id
-        AND EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = NEW.album_release_id AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL);
-    END;
-
-    CREATE TRIGGER trg_track_library_recording_au
-    AFTER UPDATE OF popularity ON Recordings
-    BEGIN
-      UPDATE TrackLibraryIndex
-      SET popularity = COALESCE(NEW.popularity, 0), updated_at = CURRENT_TIMESTAMP
-      WHERE recording_id = NEW.id;
-    END;
-
-    CREATE TRIGGER trg_track_library_slot_ai
-    AFTER INSERT ON ReleaseGroupSlots
-    WHEN NEW.selected_album_release_id IS NOT NULL
-    BEGIN
-      DELETE FROM TrackLibraryIndex WHERE album_release_id = NEW.selected_album_release_id;
-      INSERT INTO TrackLibraryIndex (
-        track_id, album_release_id, recording_id, popularity, downloaded,
-        has_stereo, has_spatial, updated_at
-      )
-      SELECT
-        track.id, track.album_release_id, track.recording_id, COALESCE(recording.popularity, 0),
-        EXISTS (SELECT 1 FROM TrackFiles file WHERE file.track_id = track.id AND file.file_type = 'track'),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = track.album_release_id AND slot.slot = 'stereo' AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = track.album_release_id AND slot.slot = 'spatial' AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL),
-        CURRENT_TIMESTAMP
-      FROM Tracks track
-      LEFT JOIN Recordings recording ON recording.id = track.recording_id
-      WHERE track.album_release_id = NEW.selected_album_release_id
-        AND EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = track.album_release_id AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL);
-    END;
-
-    CREATE TRIGGER trg_track_library_slot_au
-    AFTER UPDATE OF selected_album_release_id, selected_provider_id, monitored, slot ON ReleaseGroupSlots
-    BEGIN
-      DELETE FROM TrackLibraryIndex
-      WHERE album_release_id IN (OLD.selected_album_release_id, NEW.selected_album_release_id);
-      INSERT INTO TrackLibraryIndex (
-        track_id, album_release_id, recording_id, popularity, downloaded,
-        has_stereo, has_spatial, updated_at
-      )
-      SELECT
-        track.id, track.album_release_id, track.recording_id, COALESCE(recording.popularity, 0),
-        EXISTS (SELECT 1 FROM TrackFiles file WHERE file.track_id = track.id AND file.file_type = 'track'),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = track.album_release_id AND slot.slot = 'stereo' AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = track.album_release_id AND slot.slot = 'spatial' AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL),
-        CURRENT_TIMESTAMP
-      FROM Tracks track
-      LEFT JOIN Recordings recording ON recording.id = track.recording_id
-      WHERE track.album_release_id IN (OLD.selected_album_release_id, NEW.selected_album_release_id)
-        AND EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = track.album_release_id AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL);
-    END;
-
-    CREATE TRIGGER trg_track_library_slot_ad
-    AFTER DELETE ON ReleaseGroupSlots
-    WHEN OLD.selected_album_release_id IS NOT NULL
-    BEGIN
-      DELETE FROM TrackLibraryIndex WHERE album_release_id = OLD.selected_album_release_id;
-      INSERT INTO TrackLibraryIndex (
-        track_id, album_release_id, recording_id, popularity, downloaded,
-        has_stereo, has_spatial, updated_at
-      )
-      SELECT
-        track.id, track.album_release_id, track.recording_id, COALESCE(recording.popularity, 0),
-        EXISTS (SELECT 1 FROM TrackFiles file WHERE file.track_id = track.id AND file.file_type = 'track'),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = track.album_release_id AND slot.slot = 'stereo' AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL),
-        EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = track.album_release_id AND slot.slot = 'spatial' AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL),
-        CURRENT_TIMESTAMP
-      FROM Tracks track
-      LEFT JOIN Recordings recording ON recording.id = track.recording_id
-      WHERE track.album_release_id = OLD.selected_album_release_id
-        AND EXISTS (SELECT 1 FROM ReleaseGroupSlots slot WHERE slot.selected_album_release_id = track.album_release_id AND slot.monitored = 1 AND slot.selected_provider_id IS NOT NULL);
-    END;
-
-    CREATE TRIGGER trg_track_library_file_ai
-    AFTER INSERT ON TrackFiles
-    WHEN NEW.track_id IS NOT NULL AND NEW.file_type = 'track'
-    BEGIN
-      UPDATE TrackLibraryIndex SET downloaded = 1, updated_at = CURRENT_TIMESTAMP WHERE track_id = NEW.track_id;
-    END;
-
-    CREATE TRIGGER trg_track_library_file_au
-    AFTER UPDATE OF track_id, file_type ON TrackFiles
-    BEGIN
-      UPDATE TrackLibraryIndex
-      SET downloaded = EXISTS (SELECT 1 FROM TrackFiles file WHERE file.track_id = OLD.track_id AND file.file_type = 'track'),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE track_id = OLD.track_id;
-      UPDATE TrackLibraryIndex
-      SET downloaded = EXISTS (SELECT 1 FROM TrackFiles file WHERE file.track_id = NEW.track_id AND file.file_type = 'track'),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE track_id = NEW.track_id;
-    END;
-
-    CREATE TRIGGER trg_track_library_file_ad
-    AFTER DELETE ON TrackFiles
-    WHEN OLD.track_id IS NOT NULL AND OLD.file_type = 'track'
-    BEGIN
-      UPDATE TrackLibraryIndex
-      SET downloaded = EXISTS (SELECT 1 FROM TrackFiles file WHERE file.track_id = OLD.track_id AND file.file_type = 'track'),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE track_id = OLD.track_id;
-    END;
   `);
+
+  createProjectionInvalidationTriggers(db, {
+    prefix: "trg_track_library_invalidate",
+    stateTable: "TrackLibraryProjectionState",
+    tables: [
+      "Tracks",
+      "Recordings",
+      "TrackFiles",
+      "AlbumReleases",
+      "LibraryReleaseGroups",
+      "LibraryReleases",
+      "AcquisitionPlans",
+      "AcquisitionPlanTracks",
+      "ProviderItemAudioVariants",
+    ],
+  });
 
   db.exec(`
     INSERT INTO TrackLibraryProjectionState (singleton_id, row_count, updated_at)

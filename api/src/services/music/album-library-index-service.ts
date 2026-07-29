@@ -3,10 +3,11 @@ import { db } from "../../database.js";
 /**
  * Compact, album library read model.
  *
- * Canonical album metadata remains in Albums and slot state remains in
- * ReleaseGroupSlots. This projection only denormalizes the few fields needed
- * to filter, sort and page the library without joining/sorting the full
- * curation and slot graphs on every HTTP request.
+ * Canonical album metadata remains in Albums. LibraryReleaseGroups own
+ * monitoring, LibraryReleases own selected editions, and current acquisition
+ * plans own provider/quality selection. This projection only denormalizes the
+ * few fields needed to filter, sort and page the library without walking those
+ * normalized graphs on every HTTP request.
  */
 export class AlbumLibraryIndexService {
   static isReady(): boolean {
@@ -40,16 +41,35 @@ export class AlbumLibraryIndexService {
           has_spatial_provider,
           updated_at
         )
-        WITH slot_state AS MATERIALIZED (
+        WITH library_state AS MATERIALIZED (
           SELECT
-            release_group_id,
-            MAX(CASE WHEN monitored = 1 THEN 1 ELSE 0 END) AS monitored,
-            MAX(CASE WHEN monitored_lock = 1 THEN 1 ELSE 0 END) AS monitored_lock,
-            MAX(CASE WHEN slot = 'stereo' AND selected_provider_id IS NOT NULL THEN 1 ELSE 0 END) AS has_stereo_provider,
-            MAX(CASE WHEN slot = 'spatial' AND selected_provider_id IS NOT NULL THEN 1 ELSE 0 END) AS has_spatial_provider
-          FROM ReleaseGroupSlots
-          WHERE release_group_id IS NOT NULL
-          GROUP BY release_group_id
+            library_group.release_group_id,
+            1 AS included,
+            MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored,
+            MAX(CASE WHEN library_group.locked = 1 THEN 1 ELSE 0 END) AS monitored_lock,
+            MAX(CASE
+              WHEN plan.state = 'current'
+               AND variant.quality_class <> 'spatial'
+              THEN 1 ELSE 0
+            END) AS has_stereo_provider,
+            MAX(CASE
+              WHEN plan.state = 'current'
+               AND variant.quality_class = 'spatial'
+              THEN 1 ELSE 0
+            END) AS has_spatial_provider
+          FROM LibraryReleaseGroups library_group
+          LEFT JOIN LibraryReleases library_release
+            ON library_release.library_id = library_group.library_id
+          LEFT JOIN AlbumReleases release
+            ON release.id = library_release.release_id
+           AND release.release_group_id = library_group.release_group_id
+          LEFT JOIN AcquisitionPlans plan
+            ON plan.library_release_id = library_release.id
+          LEFT JOIN AcquisitionPlanTracks plan_track
+            ON plan_track.plan_id = plan.id
+          LEFT JOIN ProviderItemAudioVariants variant
+            ON variant.id = plan_track.provider_audio_variant_id
+          GROUP BY library_group.release_group_id
         )
         SELECT
           album.id,
@@ -58,28 +78,14 @@ export class AlbumLibraryIndexService {
           COALESCE(album.popularity, 0),
           album.first_release_date,
           album.updated_at,
-          CASE WHEN
-            EXISTS (
-              SELECT 1
-              FROM Artists imported_artist
-              WHERE imported_artist.mbid = album.artist_mbid
-            )
-            AND EXISTS (
-              SELECT 1
-              FROM ArtistReleaseGroupCuration context
-              JOIN Artists source_artist
-                ON source_artist.mbid = context.source_artist_mbid
-               AND source_artist.monitored = 1
-              WHERE context.release_group_id = album.id
-                AND context.included = 1
-            ) THEN 1 ELSE 0 END,
-          COALESCE(slot_state.monitored, 0),
-          COALESCE(slot_state.monitored_lock, 0),
-          COALESCE(slot_state.has_stereo_provider, 0),
-          COALESCE(slot_state.has_spatial_provider, 0),
+          COALESCE(library_state.included, 0),
+          COALESCE(library_state.monitored, 0),
+          COALESCE(library_state.monitored_lock, 0),
+          COALESCE(library_state.has_stereo_provider, 0),
+          COALESCE(library_state.has_spatial_provider, 0),
           CURRENT_TIMESTAMP
         FROM Albums album
-        LEFT JOIN slot_state ON slot_state.release_group_id = album.id
+        LEFT JOIN library_state ON library_state.release_group_id = album.id
       `).run();
 
       const rows = Number(result.changes || 0);

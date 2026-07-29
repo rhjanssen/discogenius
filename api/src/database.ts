@@ -635,6 +635,8 @@ function createBaselineSchemaV41(): void {
   createMetadataIdentitySchema(db);
   createCatalogSchema(db);
   createCanonicalCreditSchemaV41(db);
+  createCommandsSchema(db);
+  createLibrarySchemaV41(db);
   createArtistTopTrackProjectionSchema(db);
   createAlbumLibraryProjectionSchema(db);
   createTrackLibraryProjectionSchema(db);
@@ -676,10 +678,6 @@ function createBaselineSchemaV41(): void {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
-
-
-  createCommandsSchema(db);
-  createLibrarySchemaV41(db);
 
   createCatalogForeignKeyIndexes(db);
   createCatalogForeignKeyTriggers(db);

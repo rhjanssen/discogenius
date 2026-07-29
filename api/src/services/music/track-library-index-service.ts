@@ -40,32 +40,37 @@ export class TrackLibraryIndexService {
           COALESCE(recording.popularity, 0),
           EXISTS (
             SELECT 1 FROM TrackFiles file
-            WHERE file.track_id = track.id AND file.file_type = 'track'
+            WHERE file.track_id = track.id AND file.file_class = 'audio'
           ),
-          EXISTS (
-            SELECT 1 FROM ReleaseGroupSlots stereo_slot
-            WHERE stereo_slot.selected_album_release_id = track.album_release_id
-              AND stereo_slot.slot = 'stereo'
-              AND stereo_slot.monitored = 1
-              AND stereo_slot.selected_provider_id IS NOT NULL
-          ),
-          EXISTS (
-            SELECT 1 FROM ReleaseGroupSlots spatial_slot
-            WHERE spatial_slot.selected_album_release_id = track.album_release_id
-              AND spatial_slot.slot = 'spatial'
-              AND spatial_slot.monitored = 1
-              AND spatial_slot.selected_provider_id IS NOT NULL
-          ),
+          MAX(CASE
+            WHEN plan.state = 'current'
+             AND variant.quality_class <> 'spatial'
+            THEN 1 ELSE 0
+          END),
+          MAX(CASE
+            WHEN plan.state = 'current'
+             AND variant.quality_class = 'spatial'
+            THEN 1 ELSE 0
+          END),
           CURRENT_TIMESTAMP
         FROM Tracks track
         LEFT JOIN Recordings recording ON recording.id = track.recording_id
-        WHERE track.album_release_id IN (
-          SELECT selected_slot.selected_album_release_id
-          FROM ReleaseGroupSlots selected_slot
-          WHERE selected_slot.monitored = 1
-            AND selected_slot.selected_provider_id IS NOT NULL
-            AND selected_slot.selected_album_release_id IS NOT NULL
-        )
+        JOIN LibraryReleases library_release
+          ON library_release.release_id = track.album_release_id
+        JOIN AlbumReleases release
+          ON release.id = library_release.release_id
+        JOIN LibraryReleaseGroups library_group
+          ON library_group.library_id = library_release.library_id
+         AND library_group.release_group_id = release.release_group_id
+         AND library_group.monitored = 1
+        LEFT JOIN AcquisitionPlans plan
+          ON plan.library_release_id = library_release.id
+        LEFT JOIN AcquisitionPlanTracks plan_track
+          ON plan_track.plan_id = plan.id
+         AND plan_track.track_id = track.id
+        LEFT JOIN ProviderItemAudioVariants variant
+          ON variant.id = plan_track.provider_audio_variant_id
+        GROUP BY track.id
       `).run();
 
       const rows = Number(result.changes || 0);
