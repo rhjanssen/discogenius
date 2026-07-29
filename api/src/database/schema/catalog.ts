@@ -593,49 +593,6 @@ export function createCatalogSchema(db: Database.Database): void {
       CHECK (status IN ('assigned', 'imported', 'rejected', 'failed', 'unmatched'))
     );
 
-    -- Provider item -> MusicBrainz match graph. ProviderItems stores provider-native
-    -- offer facts; this table stores only the edges to MusicBrainz entities.
-    -- A provider album maps to an MB release. A provider track maps to its MB
-    -- release + track + recording. Provider videos currently map to an MB recording
-    -- and may later fill release/track when that relationship is known.
-    CREATE TABLE ProviderItemMatches (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      provider TEXT NOT NULL,
-      provider_item_type TEXT NOT NULL,   -- 'artist' | 'album' | 'track' | 'video'
-      provider_item_id TEXT NOT NULL,
-      provider_album_id TEXT,             -- owning provider album for recording matches
-      musicbrainz_artist_mbid TEXT,
-      musicbrainz_release_mbid TEXT,
-      musicbrainz_track_mbid TEXT,
-      musicbrainz_recording_mbid TEXT,
-      status TEXT,                        -- candidate | probable | verified | manual | rejected
-      confidence REAL,
-      method TEXT,
-      evidence TEXT,                      -- JSON
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CHECK (
-        musicbrainz_artist_mbid IS NOT NULL
-        OR musicbrainz_release_mbid IS NOT NULL
-        OR musicbrainz_track_mbid IS NOT NULL
-        OR musicbrainz_recording_mbid IS NOT NULL
-      )
-    );
-
-    CREATE UNIQUE INDEX idx_provider_item_matches_unique_edge
-      ON ProviderItemMatches(
-        provider,
-        provider_item_type,
-        provider_item_id,
-        COALESCE(musicbrainz_artist_mbid, ''),
-        COALESCE(musicbrainz_release_mbid, ''),
-        COALESCE(musicbrainz_track_mbid, ''),
-        COALESCE(musicbrainz_recording_mbid, '')
-      );
-    CREATE INDEX idx_provider_item_matches_artist ON ProviderItemMatches(musicbrainz_artist_mbid, provider_item_type);
-    CREATE INDEX idx_provider_item_matches_release ON ProviderItemMatches(musicbrainz_release_mbid, provider_item_type);
-    CREATE INDEX idx_provider_item_matches_track ON ProviderItemMatches(musicbrainz_track_mbid, provider_item_type);
-    CREATE INDEX idx_provider_item_matches_recording ON ProviderItemMatches(musicbrainz_recording_mbid, provider_item_type);
-    CREATE INDEX idx_provider_item_matches_source ON ProviderItemMatches(provider, provider_item_type, provider_item_id);
   `);
 
   db.exec(`

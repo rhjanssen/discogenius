@@ -15,16 +15,25 @@ import {
     providerAudioQualityRank,
 } from "../providers/provider-offer-ranking.js";
 import { normalizeIsrc } from "../mediafiles/import-matching-utils.js";
-import {
-    upsertProviderReleaseMatch,
-    aggregateExplicitFlags,
-} from "./provider-matches.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { CommandNames } from "../commands/command-names.js";
 import { CommandTrigger } from "../commands/command-trigger.js";
 import { buildMatchArtistProvidersCommand } from "./artist-workflow.js";
 
 export type ReleaseGroupLibrarySlot = "stereo" | "spatial";
+
+function aggregateExplicitFlags(
+    values: Array<boolean | number | null | undefined>,
+): boolean | null {
+    let sawFalse = false;
+    let sawUnknown = false;
+    for (const value of values) {
+        if (value === true || value === 1) return true;
+        if (value === false || value === 0) sawFalse = true;
+        else sawUnknown = true;
+    }
+    return sawFalse && !sawUnknown ? false : null;
+}
 
 export type ProviderAlbumSlotCandidate = {
     providerId: string;
@@ -1521,18 +1530,6 @@ export class ReleaseGroupSlotService {
                     selection.album.providerArtistName || (selection.album.raw as any)?.artist_name || null,
                     selection.album.title || null,
                 );
-                if (selection.match.releaseMbid) {
-                    upsertProviderReleaseMatch({
-                        provider: selection.provider,
-                        providerId: selection.album.providerId,
-                        providerAlbumId: selection.album.providerId,
-                        releaseMbid: selection.match.releaseMbid,
-                        status: selection.match.status,
-                        confidence: selection.match.confidence,
-                        method: selection.match.method,
-                        evidence: JSON.stringify({ ...selection.match.evidence, score: selection.score }),
-                    });
-                }
                 const slotRow = db.prepare("SELECT id FROM ReleaseGroupSlots WHERE release_group_mbid = ? AND slot = ?").get(selection.releaseGroupMbid, selection.slot) as { id: number } | undefined;
                 if (slotRow) {
                     syncSlotSchema40(slotRow.id, selection, candidates);

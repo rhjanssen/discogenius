@@ -22,7 +22,6 @@ before(async () => {
 });
 
 beforeEach(() => {
-  dbModule.db.prepare("DELETE FROM ProviderItemMatches").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM ReleaseGroupSlots").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
@@ -237,10 +236,11 @@ test("hybrid candidates retain discovery provenance without publishing direct av
   `).get(album.provider_id) as Record<string, string | null>;
   const directMatchCount = dbModule.db.prepare(`
     SELECT COUNT(*) AS count
-    FROM ProviderItemMatches
-    WHERE provider = 'tidal'
-      AND provider_item_type = 'album'
-      AND provider_item_id = ?
+    FROM ProviderReleaseMatches match
+    JOIN ProviderItems item ON item.id = match.provider_release_item_id
+    WHERE item.provider = 'tidal'
+      AND item.entity_type = 'release'
+      AND item.provider_id = ?
   `).get(album.provider_id) as { count: number };
 
   assert.equal(offer.artist_mbid, artistMbid);
@@ -435,15 +435,6 @@ test("empty stored SoundCloud playlist is rejected and a covering replacement is
       'matched', 'playlist-tracklist-coverage', 'available'
     )
   `).run(staleId);
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItemMatches (
-      provider, provider_item_type, provider_item_id, provider_album_id,
-      musicbrainz_release_mbid, status, confidence, method
-    ) VALUES (
-      'soundcloud', 'album', ?, ?, ?, 'verified', 0.95, 'playlist-tracklist-coverage'
-    )
-  `).run(staleId, staleId, releaseMbid);
-
   const artist = { providerId: "sc-user", name: "Fan uploader" };
   const makeAlbum = (providerId: string) => ({
     providerId,

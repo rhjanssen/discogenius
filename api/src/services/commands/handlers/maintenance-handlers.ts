@@ -28,7 +28,6 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s)`,
         `pruned ${summary.historyJobsPruned} old job(s)`,
         `${summary.orphanDownloadFoldersRemoved} orphan download folder(s)`,
-        `${summary.orphanProviderItemMatchesRemoved} orphan provider match(es)`,
         `corrected ${summary.videoQualitiesCorrected} video quality tag(s)`,
         `and optimized the database`,
     ];

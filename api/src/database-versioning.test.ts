@@ -38,7 +38,7 @@ test("fresh database initializes the current development baseline", () => {
   const coreTables = [
     "Artists", "ArtistMetadata", "Albums", "AlbumReleases",
     "AlbumArtists", "ArtistReleaseGroups", "ArtistReleaseGroupCuration",
-    "Tracks", "Recordings", "ProviderItems", "ProviderItemMatches",
+    "Tracks", "Recordings", "ProviderItems",
     "ProviderReleaseMembers", "ProviderItemCredits", "ProviderItemAudioVariants",
     "ProviderArtistMatches", "ProviderReleaseMatches", "ProviderTrackMatches",
     "ProviderVideoMatches",
@@ -86,7 +86,7 @@ test("re-initializing an existing schema-41 database opens it without a wipe", (
     .get("baseline.open_only_probe") as { value?: string } | undefined;
   assert.equal(probe?.value, "kept", "Re-init must not wipe existing data");
 
-  for (const tableName of ["TrackSearch", "CatalogSearch", "ProviderItemMatches", "RecordingRelations", "metadata_identity_status", "ReleaseGroupSlotTargets"]) {
+  for (const tableName of ["TrackSearch", "CatalogSearch", "RecordingRelations", "metadata_identity_status", "ReleaseGroupSlotTargets"]) {
     const row = dbModule.db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
       .get(tableName) as { name: string } | undefined;
@@ -183,68 +183,62 @@ test("canonical catalog tables do not store provider resource evidence", () => {
   );
 });
 
-test("provider evidence schema is provider-agnostic and match edges target MusicBrainz ids", () => {
+test("provider facts are normalized and match edges use typed integer foreign keys", () => {
   const providerItemColumns = tableColumns("ProviderItems");
-  const providerMatchColumns = tableColumns("ProviderItemMatches");
 
   for (const columnName of [
     "id",
     "provider",
     "entity_type",
     "provider_id",
-    "artist_mbid",
-    "release_group_mbid",
-    "release_mbid",
-    "track_mbid",
-    "recording_mbid",
-    "type",
+    "title",
+    "version",
+    "provider_type",
     "upc",
     "isrc",
+    "duration_ms",
+    "availability",
+    "availability_reason",
+    "checked_at",
+    "provider_url",
+    "cover_id",
+    "artwork_url",
     "volume_count",
-    "track_number",
-    "volume_number",
     "replay_gain",
     "peak",
     "bpm",
     "musical_key",
-    "provider_album_id",
-    "provider_url",
-    "asset_id",
-    "match_evidence"
   ]) {
     assert.ok(providerItemColumns.includes(columnName), `Expected ProviderItems.${columnName}`);
   }
 
-  for (const columnName of [
-    "provider_type",
-    "duration_ms",
-    "availability_reason",
-    "checked_at",
-    "cover_id",
-    "artwork_url",
-  ]) {
-    assert.ok(providerItemColumns.includes(columnName), `Expected ProviderItems.${columnName}`);
+  const typedMatches: Record<string, string[]> = {
+    ProviderArtistMatches: ["provider_artist_item_id", "artist_id"],
+    ProviderReleaseMatches: ["provider_release_item_id", "release_id", "relation"],
+    ProviderTrackMatches: ["provider_release_member_id", "track_id", "recording_id"],
+    ProviderVideoMatches: ["provider_video_item_id", "recording_id"],
+  };
+  for (const [tableName, identityColumns] of Object.entries(typedMatches)) {
+    const columns = tableColumns(tableName);
+    for (const columnName of [
+      ...identityColumns,
+      "match_state",
+      "decision_source",
+      "confidence",
+      "method",
+      "evidence",
+      "matcher_version",
+    ]) {
+      assert.ok(columns.includes(columnName), `Expected ${tableName}.${columnName}`);
+    }
   }
 
-  for (const columnName of [
-    "provider",
-    "provider_item_type",
-    "provider_item_id",
-    "provider_album_id",
-    "musicbrainz_artist_mbid",
-    "musicbrainz_release_mbid",
-    "musicbrainz_track_mbid",
-    "musicbrainz_recording_mbid",
-    "evidence",
-  ]) {
-    assert.ok(providerMatchColumns.includes(columnName), `Expected ProviderItemMatches.${columnName}`);
-  }
-
-  for (const tableName of ["ProviderItems", "ProviderItemMatches"]) {
+  for (const tableName of ["ProviderItems", ...Object.keys(typedMatches)]) {
     for (const columnName of tableColumns(tableName)) {
       assert.equal(/^tidal_|^apple_|^spotify_/i.test(columnName), false, `Expected ${tableName}.${columnName} to be provider-agnostic`);
     }
   }
+  assert.equal(tableColumns("ProviderItemMatches").length, 0);
 });
 
 test("sidecar tables do not retain legacy album or media identity shadows", () => {

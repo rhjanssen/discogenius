@@ -18,7 +18,6 @@ before(async () => {
 });
 
 beforeEach(() => {
-  dbModule.db.prepare("DELETE FROM ProviderItemMatches").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM MetadataFiles").run();
   dbModule.db.prepare("DELETE FROM LyricFiles").run();
@@ -34,21 +33,7 @@ after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("prunes stale direct provider matches while preserving composites and folder sidecars", () => {
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES ('tidal', 'album', 'live-offer', 'Live offer')
-  `).run();
-  const insertMatch = dbModule.db.prepare(`
-    INSERT INTO ProviderItemMatches (
-      provider, provider_item_type, provider_item_id,
-      musicbrainz_release_mbid, status
-    ) VALUES ('tidal', 'album', ?, 'release-mbid', 'verified')
-  `);
-  insertMatch.run("live-offer");
-  insertMatch.run("removed-offer");
-  insertMatch.run("removed-part-a;removed-part-b");
-
+test("relational orphan pruning preserves folder-scoped sidecars", () => {
   dbModule.db.prepare(`
     INSERT INTO MetadataFiles (
       artist_id, track_file_id, relative_path, file_path, library_root,
@@ -69,15 +54,7 @@ test("prunes stale direct provider matches while preserving composites and folde
 
   const summary = pruneRelationalOrphans();
 
-  assert.equal(summary.providerItemMatchesRemoved, 1);
-  assert.deepEqual(
-    (dbModule.db.prepare(`
-      SELECT provider_item_id
-      FROM ProviderItemMatches
-      ORDER BY provider_item_id
-    `).all() as Array<{ provider_item_id: string }>).map((row) => row.provider_item_id),
-    ["live-offer", "removed-part-a;removed-part-b"],
-  );
+  assert.equal(summary.releaseGroupSlotTargetsRemoved, 0);
   for (const table of ["MetadataFiles", "LyricFiles", "ExtraFiles"]) {
     const row = dbModule.db.prepare(`
       SELECT track_file_id
@@ -137,4 +114,3 @@ test("prunes orphaned relational slot targets, sources, and assignments", () => 
   assert.equal(sourcesCount, 1);
   assert.equal(assignmentsCount, 1);
 });
-

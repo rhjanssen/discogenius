@@ -585,7 +585,7 @@ function scoreAlbumAgainstReleaseGroup(
     // shape evidence that a same-titled remix, radio edit, or alternate version
     // satisfies just as well. Keep those strictly below the UPC tier (0.995) so
     // the release that actually shares the barcode always outranks a look-alike
-    // in confidence-ordered offer selection (ProviderItemMatches / slot picks).
+    // in confidence-ordered typed release-match selection.
     if (!matchedReleaseByUrl && !matchedReleaseByUpc) {
         confidence = Math.min(confidence, 0.99);
     }
