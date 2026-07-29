@@ -3,11 +3,14 @@ import { AlbumQueryService } from "../../services/music/album-query-service.js";
 import { AlbumCommandService } from "../../services/music/album-command-service.js";
 import { deleteReleaseGroupLibraryFiles } from "../../services/mediafiles/library-file-delete-service.js";
 import { getReleaseGroupAvailability, setSlotSelection } from "../../services/music/provider-matches.js";
+import { LibraryReleaseSelectionService } from "../../services/music/library-release-selection-service.js";
+import { db } from "../../database.js";
 import {
   getObjectBody,
   getOptionalBoolean,
   getOptionalString,
   getRequiredIdentifier,
+  getRequiredInteger,
   isRequestValidationError,
   rejectUnknownKeys,
 } from "../../utils/request-validation.js";
@@ -139,6 +142,32 @@ router.get("/:albumId/release-availability", (req, res) => {
     res.json(getReleaseGroupAvailability(req.params.albumId));
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
+  }
+});
+
+router.get("/:albumId/library-availability", (req, res) => {
+  try {
+    res.json(new LibraryReleaseSelectionService(db).getAvailability(req.params.albumId));
+  } catch (error: any) {
+    const status = String(error?.message || "").startsWith("Unknown release group") ? 404 : 500;
+    res.status(status).json({ detail: error.message });
+  }
+});
+
+router.patch("/:albumId/libraries/:libraryId/selection", (req, res) => {
+  try {
+    const body = getObjectBody(req.body);
+    rejectUnknownKeys(body, ["releaseId"], "Library release selection");
+    res.json(new LibraryReleaseSelectionService(db).selectRelease({
+      releaseGroupMbid: req.params.albumId,
+      libraryId: Number.parseInt(req.params.libraryId, 10),
+      releaseId: getRequiredInteger(body, "releaseId"),
+    }));
+  } catch (error: any) {
+    if (isRequestValidationError(error)) {
+      return res.status(400).json({ detail: error.message });
+    }
+    res.status(400).json({ detail: error.message });
   }
 });
 
