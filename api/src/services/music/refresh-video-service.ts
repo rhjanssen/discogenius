@@ -71,6 +71,40 @@ function persistNormalizedProviderVideo(input: {
         popularity: input.video.popularity == null ? null : Number(input.video.popularity),
         videoQuality: nullableText(input.video.quality),
     });
+
+    // A bundled video's album context is a release OCCURRENCE, not a scalar on
+    // the item (the provider_album_id shadow column is gone). Persist it as a
+    // ProviderReleaseMembers row so downstream readers resolve it the same way
+    // they resolve a track's release, and so one video can legitimately occur on
+    // several provider releases.
+    const providerAlbumId = nullableText(input.video.album_id ?? input.video.albumId);
+    if (providerAlbumId) {
+        const providerReleaseItemId = catalog.upsertItem({
+            provider: input.provider,
+            entityType: "release",
+            providerId: providerAlbumId,
+            availability: "unknown",
+        });
+        const existingMember = db.prepare(`
+            SELECT id FROM ProviderReleaseMembers
+            WHERE provider_release_item_id = ? AND member_item_id = ?
+            LIMIT 1
+        `).get(providerReleaseItemId, providerVideoItemId) as { id: number } | undefined;
+        if (!existingMember) {
+            const nextPosition = Number((db.prepare(`
+                SELECT COALESCE(MAX(position), 0) + 1 AS next
+                FROM ProviderReleaseMembers
+                WHERE provider_release_item_id = ? AND medium_position = 1
+            `).get(providerReleaseItemId) as { next: number }).next);
+            db.prepare(`
+                INSERT OR IGNORE INTO ProviderReleaseMembers (
+                    provider_release_item_id, member_item_id, medium_position, position,
+                    contextual_title
+                ) VALUES (?, ?, 1, ?, ?)
+            `).run(providerReleaseItemId, providerVideoItemId, nextPosition, nullableText(input.video.title));
+        }
+    }
+
     if (input.recordingId == null) {
         return;
     }
@@ -585,7 +619,7 @@ function ensureProviderVideoRecording(input: {
                 undefined,
                 undefined,
                 provider,
-                recordingVideoProvider(existing.id),
+                recordingVideoProvider(existing.id, sameProviderExclude),
                 !existing.mbid,
             ),
         );
@@ -735,7 +769,16 @@ function applyCatalogVideoIdentity(
     );
 }
 
-function recordingVideoProvider(recordingId: number): string | null {
+/**
+ * Which provider already owns this video recording, ignoring the offer being
+ * revalidated. The question the caller asks is "is this a same-provider twin or
+ * a cross-provider one?", so counting the candidate itself would make every
+ * offer look same-provider and suppress legitimate splits.
+ */
+function recordingVideoProvider(
+    recordingId: number,
+    exclude?: { provider: string; providerId: string } | null,
+): string | null {
     const row = db.prepare(`
         SELECT pi.provider
         FROM ProviderItems pi
@@ -743,13 +786,18 @@ function recordingVideoProvider(recordingId: number): string | null {
           ON video_match.provider_video_item_id = pi.id
          AND video_match.match_state = 'accepted'
         WHERE pi.entity_type = 'video'
-          AND video_match.recording_id = ?
-        ORDER BY
-          CASE WHEN video_match.decision_source = 'manual' THEN 0 ELSE 1 END,
-          video_match.confidence DESC,
-          pi.updated_at DESC
+          AND video_match.recording_id = @recordingId
+          AND (
+            @excludeProvider IS NULL
+            OR NOT (pi.provider = @excludeProvider AND CAST(pi.provider_id AS TEXT) = CAST(@excludeProviderId AS TEXT))
+          )
+        ORDER BY pi.updated_at DESC
         LIMIT 1
-    `).get(recordingId) as { provider?: string } | undefined;
+    `).get({
+        recordingId,
+        excludeProvider: exclude?.provider ?? null,
+        excludeProviderId: exclude?.providerId ?? null,
+    }) as { provider?: string } | undefined;
     return row?.provider ? String(row.provider) : null;
 }
 

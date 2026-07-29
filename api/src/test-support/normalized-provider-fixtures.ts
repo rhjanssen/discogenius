@@ -203,11 +203,43 @@ export function seedAcceptedProviderRecordingTrack(
     ORDER BY id LIMIT 1
   `).get(releaseItem.id, trackItem.id) as { id: number };
 
-  // A release match is required for the typed track edge; it targets whichever
-  // canonical release carries this recording, when one does.
-  const canonicalRelease = db.prepare(`
+  // A typed track edge always hangs off a release match, which needs a canonical
+  // release. Reuse the release that already carries this recording; when the
+  // fixture only seeded a bare Recording, mint the minimal canonical
+  // release-group/release/track it implies so the chain production walks
+  // (member -> track match -> release match) actually exists.
+  let canonicalRelease = db.prepare(`
     SELECT album_release_id FROM Tracks WHERE recording_id = ? ORDER BY id LIMIT 1
   `).get(fixture.recordingId) as { album_release_id: number } | undefined;
+  if (!canonicalRelease?.album_release_id) {
+    const recording = db.prepare(
+      "SELECT id, mbid, title, artist_mbid FROM Recordings WHERE id = ?",
+    ).get(fixture.recordingId) as {
+      id: number; mbid: string | null; title: string; artist_mbid: string | null;
+    } | undefined;
+    if (recording) {
+      const key = `fixture-${recording.id}`;
+      const artistMbid = recording.artist_mbid || "artist-mbid";
+      db.prepare(`
+        INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, primary_type)
+        VALUES (?, ?, ?, 'Album')
+      `).run(`rg-${key}`, artistMbid, recording.title);
+      const group = db.prepare("SELECT id FROM Albums WHERE mbid = ?").get(`rg-${key}`) as { id: number };
+      db.prepare(`
+        INSERT OR IGNORE INTO AlbumReleases (
+          mbid, release_group_mbid, release_group_id, artist_mbid, title, track_count
+        ) VALUES (?, ?, ?, ?, ?, 1)
+      `).run(`rel-${key}`, `rg-${key}`, group.id, artistMbid, recording.title);
+      const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?").get(`rel-${key}`) as { id: number };
+      db.prepare(`
+        INSERT OR IGNORE INTO Tracks (
+          mbid, release_mbid, album_release_id, recording_mbid, recording_id,
+          medium_position, position, title
+        ) VALUES (?, ?, ?, ?, ?, 1, 1, ?)
+      `).run(`trk-${key}`, `rel-${key}`, release.id, recording.mbid, recording.id, recording.title);
+      canonicalRelease = { album_release_id: release.id };
+    }
+  }
   if (canonicalRelease?.album_release_id) {
     db.prepare(`
       INSERT OR IGNORE INTO ProviderReleaseMatches (

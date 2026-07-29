@@ -225,18 +225,39 @@ test("canonical MusicBrainz video matching keeps official, lyric, and live asset
   );
   assert.ok(normalizedOffers.every((offer) => offer.availability === "available"));
 
-  assert.deepEqual(dbModule.db.prepare(`
+  // In schema 41 ProviderVideoMatches is the ONLY link from a provider video to
+  // its recording — the ProviderItems.recording_id shadow column is gone — so a
+  // provider-only video carries a match row too (otherwise it would be invisible
+  // to every video query). What separates the two is the RECORDING's
+  // metadata_status, not the presence of a match.
+  const matches = dbModule.db.prepare(`
     SELECT item.provider_id AS providerId, match.recording_id AS recordingId,
-           match.match_state AS matchState, match.method
+           match.match_state AS matchState, match.method,
+           recording.metadata_status AS metadataStatus
     FROM ProviderVideoMatches match
     JOIN ProviderItems item ON item.id = match.provider_video_item_id
+    JOIN Recordings recording ON recording.id = match.recording_id
     ORDER BY item.provider_id
-  `).all(), [{
-    providerId: "tidal-pompeii-official",
-    recordingId: canonical.id,
-    matchState: "accepted",
-    method: "title_artist_duration",
-  }], "provider-only identities must remain unmatched provider facts");
+  `).all() as Array<{
+    providerId: string; recordingId: number; matchState: string;
+    method: string; metadataStatus: string;
+  }>;
+  assert.equal(matches.length, 4, "every provider video resolves through a typed match");
+  assert.ok(matches.every((match) => match.matchState === "accepted"));
+
+  const canonicalMatches = matches.filter((match) => match.metadataStatus === "musicbrainz");
+  assert.deepEqual(
+    canonicalMatches.map((match) => ({ providerId: match.providerId, recordingId: match.recordingId })),
+    [{ providerId: "tidal-pompeii-official", recordingId: canonical.id }],
+    "only the MusicBrainz-backed cut matches the canonical recording",
+  );
+  assert.deepEqual(
+    matches.filter((match) => match.metadataStatus !== "musicbrainz")
+      .map((match) => match.providerId)
+      .sort(),
+    ["apple-pompeii-lyric", "apple-pompeii-performance", "tidal-pompeii-lyric"],
+    "the remaining cuts stay provider-only recordings, not canonical claims",
+  );
 });
 
 test("named venue live attaches to unlabeled MusicBrainz video at exact duration", () => {
@@ -275,11 +296,19 @@ test("named venue live attaches to unlabeled MusicBrainz video at exact duration
       RETURNING id
     `).get(sample.mbid, sample.mbid, sample.title, sample.duration * 1000, sample.date) as { id: number };
 
+    // The pre-existing unlabeled offer is already linked to the canonical MB
+    // video through the typed match (schema 41 has no recording_id shadow).
+    seedAcceptedProviderVideoMatch(dbModule.db, {
+      provider: "tidal",
+      providerVideoId: sample.tidalId,
+      recordingId: canonical.id,
+      title: sample.title,
+      durationMs: sample.duration * 1000,
+    });
     dbModule.db.prepare(`
-      INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms, release_date
-    ) VALUES ('tidal', 'video', ?, ?, ?, ?)
-    `).run( sample.tidalId, sample.title, sample.duration, sample.date );
+      UPDATE ProviderItems SET release_date = ?
+      WHERE provider = 'tidal' AND entity_type = 'video' AND provider_id = ?
+    `).run(sample.date, sample.tidalId);
 
     refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
       provider: "apple-music",
@@ -343,15 +372,19 @@ test("refresh promotes legacy provider-only venue live onto MusicBrainz twin", (
     RETURNING id
   `).get() as { id: number };
 
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal", providerVideoId: "tidal-mej", recordingId: canonical.id,
+    title: "Me & Mr. Jones", durationMs: 203000,
+  });
+  // The Apple live offer is still glued to the legacy provider-only recording;
+  // refresh must promote it onto the MusicBrainz twin.
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "apple-music", providerVideoId: "apple-mej-live", recordingId: legacyLive.id,
+    title: "Me & Mr. Jones (Live at Other Voices, 2006)", durationMs: 203000,
+  });
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms, release_date
-    ) VALUES ('tidal', 'video', 'tidal-mej', 'Me & Mr. Jones', 203, '2024-09-02')
-  `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms, release_date
-    ) VALUES ('apple-music', 'video', 'apple-mej-live', 'Me & Mr. Jones (Live at Other Voices, 2006)', 203, '2024-09-02')
+    UPDATE ProviderItems SET release_date = '2024-09-02'
+    WHERE entity_type = 'video' AND provider_id IN ('tidal-mej', 'apple-mej-live')
   `).run();
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
@@ -663,7 +696,7 @@ test("video refresh preserves probed quality when list payload sends null", () =
   }]);
 
   const row = dbModule.db.prepare(`
-    SELECT quality FROM ProviderItems
+    SELECT video_quality AS quality FROM ProviderItems
     WHERE provider = 'tidal' AND CAST(provider_id AS TEXT) = 'tidal-probed'
   `).get() as { quality: string | null };
   assert.equal(row.quality, "FHD");
@@ -728,16 +761,14 @@ test("refresh retro-merges pre-existing duplicate provider-only video recordings
     VALUES ('artist-mbid', 'SAVE MY SOUL ("FROM ALL SIDES" Tour)', 256000, 1, 'provider_only')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES ('tidal', 'video', 'tidal-video-sms', 'SAVE MY SOUL', 256)
-  `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES ('apple-music', 'video', 'apple-video-sms', 'SAVE MY SOUL ("FROM ALL SIDES" Tour)', 256)
-  `).run();
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "tidal", providerVideoId: "tidal-video-sms", recordingId: tidalRec.id,
+    title: "SAVE MY SOUL", durationMs: 256000,
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "apple-music", providerVideoId: "apple-video-sms", recordingId: appleRec.id,
+    title: 'SAVE MY SOUL ("FROM ALL SIDES" Tour)', durationMs: 256000,
+  });
 
   // Any video refresh for the artist sweeps and heals the duplicates.
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
@@ -942,16 +973,14 @@ test("refresh splits a live offer wrongly glued onto a studio recording", () => 
     VALUES ('artist-mbid', 'Oblivion', 197000, 1, 'provider_only')
     RETURNING id
   `).get() as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES ('youtube-music', 'video', 'yt-oblivion-studio', 'Oblivion', 197)
-  `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES ('youtube-music', 'video', 'yt-oblivion-live', 'Oblivion (Live From Capitol Studios, USA / 2013)', 187)
-  `).run();
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "youtube-music", providerVideoId: "yt-oblivion-studio", recordingId: studio.id,
+    title: "Oblivion", durationMs: 197000,
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "youtube-music", providerVideoId: "yt-oblivion-live", recordingId: studio.id,
+    title: "Oblivion (Live From Capitol Studios, USA / 2013)", durationMs: 187000,
+  });
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "youtube-music",
@@ -962,8 +991,11 @@ test("refresh splits a live offer wrongly glued onto a studio recording", () => 
   }]);
 
   const liveOffer = dbModule.db.prepare(`
-    SELECT recording_id AS recordingId FROM ProviderItems
-    WHERE provider_id = 'yt-oblivion-live'
+    SELECT vm.recording_id AS recordingId
+    FROM ProviderItems pi
+    LEFT JOIN ProviderVideoMatches vm
+      ON vm.provider_video_item_id = pi.id AND vm.match_state = 'accepted'
+    WHERE pi.entity_type = 'video' AND pi.provider_id = 'yt-oblivion-live'
   `).get() as { recordingId: number };
   assert.notEqual(liveOffer.recordingId, studio.id);
 
@@ -982,11 +1014,10 @@ test("provider video related_track_id links directly to the matched audio record
     RETURNING id
   `).get() as { id: number };
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms
-    ) VALUES ('apple-music', 'track', 'apple-song-1', 'Pompeii', 214)
-  `).run();
+  seedAcceptedProviderRecordingTrack(dbModule.db, {
+    provider: "apple-music", providerReleaseId: "apple-album-1", providerTrackId: "apple-song-1",
+    recordingId: audio.id, title: "Pompeii", durationMs: 214000,
+  });
 
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "apple-music",
@@ -1008,8 +1039,12 @@ test("provider video related_track_id links directly to the matched audio record
   assert.match(relation.data, /provider-video-related-track/);
 
   const offer = dbModule.db.prepare(`
-    SELECT provider_album_id AS albumId FROM ProviderItems
-    WHERE provider = 'apple-music' AND provider_id = 'apple-video-related'
+    SELECT CAST(release_item.provider_id AS TEXT) AS albumId
+    FROM ProviderItems pi
+    JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+    JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+    WHERE pi.provider = 'apple-music' AND pi.entity_type = 'video'
+      AND pi.provider_id = 'apple-video-related'
   `).get() as { albumId: string };
   assert.equal(offer.albumId, "apple-album-1");
 });
@@ -1141,15 +1176,18 @@ test("backfillMissingVideoOfferQuality fills null quality from the provider getV
     VALUES ('artist-mbid', 'Things We Lost', 1, 'video', 'provider_only', 1)
     RETURNING id
   `).get() as { id: number };
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "youtube-music", providerVideoId: "H5uf6fhbRek",
+    recordingId: nullQualityVideo.id, title: "Pompeii",
+  });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "youtube-music", providerVideoId: "alreadyTagged",
+    recordingId: taggedVideo.id, title: "Things We Lost",
+  });
+  // Only the second offer already carries a probed quality tag.
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES ('youtube-music', 'video', 'H5uf6fhbRek', 'Pompeii')
-  `).run();
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES ('youtube-music', 'video', 'alreadyTagged', 'Things We Lost')
+    UPDATE ProviderItems SET video_quality = 'HD'
+    WHERE entity_type = 'video' AND provider_id = 'alreadyTagged'
   `).run();
 
   const probed: string[] = [];
@@ -1170,9 +1208,9 @@ test("backfillMissingVideoOfferQuality fills null quality from the provider getV
     assert.equal(updated, 1);
     assert.deepEqual(probed, ["H5uf6fhbRek"], "only the null-quality offer is probed");
 
-    const filled = dbModule.db.prepare("SELECT quality FROM ProviderItems WHERE provider_id = 'H5uf6fhbRek'").get() as { quality: string };
+    const filled = dbModule.db.prepare("SELECT video_quality AS quality FROM ProviderItems WHERE entity_type = 'video' AND provider_id = 'H5uf6fhbRek'").get() as { quality: string };
     assert.equal(filled.quality, "FHD");
-    const untouched = dbModule.db.prepare("SELECT quality FROM ProviderItems WHERE provider_id = 'alreadyTagged'").get() as { quality: string };
+    const untouched = dbModule.db.prepare("SELECT video_quality AS quality FROM ProviderItems WHERE entity_type = 'video' AND provider_id = 'alreadyTagged'").get() as { quality: string };
     assert.equal(untouched.quality, "HD", "an existing quality tag is never overwritten");
   } finally {
     manager.getStreamingProvider = original;
