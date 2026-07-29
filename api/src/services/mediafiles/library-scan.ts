@@ -1022,9 +1022,18 @@ export class DiskScanService {
                                     monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
                                     updated_at = CURRENT_TIMESTAMP
                                 WHERE id = (
-                                    SELECT recording_id FROM ProviderItems
-                                    WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                                    ORDER BY CASE WHEN ? IS NOT NULL AND provider = ? THEN 0 ELSE 1 END, updated_at DESC
+                                    SELECT video_match.recording_id
+                                    FROM ProviderItems item
+                                    JOIN ProviderVideoMatches video_match
+                                      ON video_match.provider_video_item_id = item.id
+                                     AND video_match.match_state = 'accepted'
+                                    WHERE item.entity_type = 'video'
+                                      AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                                      AND (? IS NULL OR item.provider = ?)
+                                    ORDER BY
+                                      CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                                      video_match.confidence DESC,
+                                      video_match.id
                                     LIMIT 1
                                 )
                                   AND (monitored_lock = 0 OR monitored_lock IS NULL)
@@ -1033,22 +1042,35 @@ export class DiskScanService {
 
                         if (match.albumId && match.fileType === "track") {
                             const providerItem = db.prepare(`
-                                SELECT release_group_mbid, library_slot
-                                FROM ProviderItems
-                                WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                                ORDER BY CASE WHEN ? IS NOT NULL AND provider = ? THEN 0 ELSE 1 END, updated_at DESC
+                                SELECT release.release_group_id
+                                FROM ProviderItems item
+                                JOIN ProviderReleaseMatches release_match
+                                  ON release_match.provider_release_item_id = item.id
+                                 AND release_match.match_state = 'accepted'
+                                JOIN AlbumReleases release ON release.id = release_match.release_id
+                                WHERE item.entity_type = 'release'
+                                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                                  AND (? IS NULL OR item.provider = ?)
+                                ORDER BY
+                                  CASE release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                                  release_match.confidence DESC,
+                                  release_match.id
                                 LIMIT 1
-                            `).get(match.albumId, matchProvider, matchProvider) as { release_group_mbid?: string; library_slot?: string } | undefined;
+                            `).get(match.albumId, matchProvider, matchProvider) as {
+                                release_group_id?: number;
+                            } | undefined;
 
-                            if (providerItem?.release_group_mbid) {
+                            if (providerItem?.release_group_id != null) {
                                 db.prepare(`
-                                    UPDATE ReleaseGroupSlots
+                                    UPDATE LibraryReleaseGroups
                                     SET monitored = 1,
                                         updated_at = CURRENT_TIMESTAMP
-                                    WHERE release_group_mbid = ?
-                                      AND slot = ?
-                                      AND (monitored_lock = 0 OR monitored_lock IS NULL)
-                                `).run(providerItem.release_group_mbid, providerItem.library_slot || 'stereo');
+                                    WHERE release_group_id = ?
+                                      AND library_id = (
+                                        SELECT id FROM Libraries WHERE root_path = ? AND enabled = 1
+                                      )
+                                      AND locked = 0
+                                `).run(providerItem.release_group_id, rootPath);
                             }
                             updateAlbumDownloadStatus(match.albumId);
                         } else {

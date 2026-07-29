@@ -443,28 +443,6 @@ export class ManualImportService {
                     );
                 }
 
-                // Album monitoring is canonical: the slot + Albums row carry it.
-                // (AlbumArtists is canonical/Servarr Metadata Server; the legacy provider relation
-                // write is dropped.) The video canonical graph is ensured in a
-                // pre-pass before this transaction (RefreshVideoService); here we
-                // only flip the canonical monitored flags.
-                if (c.albumId) {
-                    const rgMbid = db.prepare(`
-                        SELECT release_group_mbid FROM ProviderItems
-                        WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                        ORDER BY updated_at DESC LIMIT 1
-                    `).get(c.albumId) as { release_group_mbid?: string | null } | undefined;
-                    if (rgMbid?.release_group_mbid) {
-                        db.prepare(`
-                            UPDATE ReleaseGroupSlots SET monitored = 1, updated_at = CURRENT_TIMESTAMP
-                            WHERE release_group_mbid = ? AND monitored_lock = 0
-                        `).run(rgMbid.release_group_mbid);
-                        db.prepare(`
-                            UPDATE Albums SET monitored = 1, updated_at = CURRENT_TIMESTAMP WHERE mbid = ?
-                        `).run(rgMbid.release_group_mbid);
-                    }
-                }
-
                 if (c.isVideo) {
                     db.prepare(`
                         UPDATE Recordings
@@ -472,12 +450,21 @@ export class ManualImportService {
                             monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = (
-                            SELECT recording_id FROM ProviderItems
-                            WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                              AND recording_id IS NOT NULL
+                            SELECT match.recording_id
+                            FROM ProviderItems item
+                            JOIN ProviderVideoMatches match
+                              ON match.provider_video_item_id = item.id
+                             AND match.match_state = 'accepted'
+                            WHERE item.entity_type = 'video'
+                              AND item.provider = ?
+                              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                            ORDER BY
+                              CASE match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                              match.confidence DESC,
+                              match.id
                             LIMIT 1
                         )
-                    `).run(c.providerId);
+                    `).run(provider.id, c.providerId);
                 }
 
                 // Check for existing library file

@@ -68,8 +68,8 @@ export class CanonicalManualImportService {
     if (!library) throw new Error(`Library ${request.libraryId} is unavailable`);
 
     const release = this.db.prepare(`
-      SELECT id FROM AlbumReleases WHERE id = ?
-    `).get(request.releaseId) as { id: number } | undefined;
+      SELECT id, release_group_id FROM AlbumReleases WHERE id = ?
+    `).get(request.releaseId) as { id: number; release_group_id: number } | undefined;
     if (!release) throw new Error(`Canonical release ${request.releaseId} does not exist`);
 
     const unmappedIds = new Set<number>();
@@ -176,6 +176,31 @@ export class CanonicalManualImportService {
     `);
 
     this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO LibraryReleaseGroups (
+          library_id, release_group_id, monitored, selection_mode, locked,
+          reason, curation_version, updated_at
+        ) VALUES (?, ?, 1, 'manual', 1, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
+        ON CONFLICT(library_id, release_group_id) DO UPDATE SET
+          monitored = 1,
+          selection_mode = 'manual',
+          locked = 1,
+          reason = excluded.reason,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(request.libraryId, release.release_group_id);
+      this.db.prepare(`
+        INSERT INTO LibraryReleases (
+          library_id, release_id, selection_mode, locked, reason,
+          curation_version, selected_at, updated_at
+        ) VALUES (?, ?, 'manual', 1, 'canonical_manual_import', 1,
+                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(library_id, release_id) DO UPDATE SET
+          selection_mode = 'manual',
+          locked = 1,
+          reason = excluded.reason,
+          selected_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(request.libraryId, request.releaseId);
       for (const mapping of request.mappings) {
         const track = trackById.get(mapping.trackId)!;
         const imported = findImportedFile.get(track.mbid) as { id: number } | undefined;

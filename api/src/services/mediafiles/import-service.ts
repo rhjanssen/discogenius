@@ -588,9 +588,17 @@ export class ImportService {
                             monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = (
-                            SELECT recording_id FROM ProviderItems
-                            WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                              AND recording_id IS NOT NULL
+                            SELECT video_match.recording_id
+                            FROM ProviderItems item
+                            JOIN ProviderVideoMatches video_match
+                              ON video_match.provider_video_item_id = item.id
+                             AND video_match.match_state = 'accepted'
+                            WHERE item.entity_type = 'video'
+                              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                            ORDER BY
+                              CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                              video_match.confidence DESC,
+                              video_match.id
                             LIMIT 1
                         )
                     `).run(videoId);
@@ -678,9 +686,17 @@ export class ImportService {
                             monitored_at = COALESCE(monitored_at, CURRENT_TIMESTAMP),
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = (
-                            SELECT recording_id FROM ProviderItems
-                            WHERE entity_type = 'video' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                              AND recording_id IS NOT NULL
+                            SELECT video_match.recording_id
+                            FROM ProviderItems item
+                            JOIN ProviderVideoMatches video_match
+                              ON video_match.provider_video_item_id = item.id
+                             AND video_match.match_state = 'accepted'
+                            WHERE item.entity_type = 'video'
+                              AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                            ORDER BY
+                              CASE video_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                              video_match.confidence DESC,
+                              video_match.id
                             LIMIT 1
                         )
                     `).run(videoId);
@@ -717,10 +733,29 @@ export class ImportService {
             }
 
             const albumRow = db.prepare(`
-                SELECT artist_mbid AS artist_id, release_group_mbid, release_mbid
-                FROM ProviderItems
-                WHERE entity_type = 'album' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                ORDER BY updated_at DESC
+                SELECT
+                  artist.mbid AS artist_id,
+                  release_group.id AS release_group_id,
+                  release_group.mbid AS release_group_mbid,
+                  release.id AS release_id,
+                  release.mbid AS release_mbid,
+                  item.provider
+                FROM ProviderItems item
+                JOIN ProviderReleaseMatches release_match
+                  ON release_match.provider_release_item_id = item.id
+                 AND release_match.match_state = 'accepted'
+                JOIN AlbumReleases release ON release.id = release_match.release_id
+                JOIN Albums release_group ON release_group.id = release.release_group_id
+                LEFT JOIN ReleaseGroupArtistCredits credit
+                  ON credit.release_group_id = release_group.id AND credit.ordinal = 0
+                JOIN ArtistMetadata artist
+                  ON artist.id = COALESCE(credit.artist_id, release_group.artist_metadata_id)
+                WHERE item.entity_type = 'release'
+                  AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
+                ORDER BY
+                  CASE release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+                  release_match.confidence DESC,
+                  release_match.id
                 LIMIT 1
             `).get(albumId) as any;
 
@@ -759,21 +794,16 @@ export class ImportService {
                     monitored_at = CASE WHEN ? = 1 THEN COALESCE(monitored_at, CURRENT_TIMESTAMP) ELSE monitored_at END
                 WHERE id = ?
             `).run(monitorValue, monitorValue, artistId);
-            // Album monitoring is canonical now: the slot (ReleaseGroupSlots) + the
-            // Albums row carry monitored state, not the retired provider catalog.
-            // Per-track monitoring is covered by the slot; AlbumArtists is canonical
-            // (Servarr Metadata Server), so the legacy ProviderAlbumArtists write is dropped.
-            if (albumRow.release_group_mbid) {
+            if (albumRow.release_group_id != null) {
                 db.prepare(`
-                    UPDATE ReleaseGroupSlots
+                    UPDATE LibraryReleaseGroups
                     SET monitored = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE release_group_mbid = ? AND monitored_lock = 0
-                `).run(monitorValue, albumRow.release_group_mbid);
-                db.prepare(`
-                    UPDATE Albums
-                    SET monitored = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE mbid = ?
-                `).run(monitorValue, albumRow.release_group_mbid);
+                    WHERE release_group_id = ?
+                      AND library_id = (
+                        SELECT id FROM Libraries WHERE root_path = ? AND enabled = 1
+                      )
+                      AND locked = 0
+                `).run(monitorValue, albumRow.release_group_id, rootPath);
             }
 
             // Catalog-first: position comes from Tracks on the canonical release,
@@ -781,19 +811,28 @@ export class ImportService {
             // layout, which can mis-number hybrid/partial releases).
             const trackRows = db.prepare(`
                 SELECT
-                    pi.provider_id AS id,
-                    COALESCE(NULLIF(TRIM(t.title), ''), pi.title) AS title,
+                    item.provider_id AS id,
+                    COALESCE(NULLIF(TRIM(t.title), ''), item.title) AS title,
                     t.position AS track_number,
                     t.medium_position AS volume_number
-                FROM ProviderItems pi
-                LEFT JOIN Tracks t
-                    ON t.release_mbid = ?
-                    AND (
-                        (pi.track_mbid IS NOT NULL AND t.mbid = pi.track_mbid)
-                        OR (pi.recording_mbid IS NOT NULL AND t.recording_mbid = pi.recording_mbid)
-                    )
-                WHERE pi.entity_type = 'track' AND pi.provider_album_id = ?
-            `).all(albumRow.release_mbid || null, albumId) as any[];
+                FROM ProviderItems release_item
+                JOIN ProviderReleaseMembers member
+                  ON member.provider_release_item_id = release_item.id
+                JOIN ProviderItems item ON item.id = member.member_item_id
+                JOIN ProviderReleaseMatches release_match
+                  ON release_match.provider_release_item_id = release_item.id
+                 AND release_match.release_id = ?
+                 AND release_match.match_state = 'accepted'
+                LEFT JOIN ProviderTrackMatches track_match
+                  ON track_match.provider_release_match_id = release_match.id
+                 AND track_match.provider_release_member_id = member.id
+                 AND track_match.match_state = 'accepted'
+                LEFT JOIN Tracks t ON t.id = track_match.track_id
+                WHERE release_item.entity_type = 'release'
+                  AND release_item.provider = ?
+                  AND release_item.provider_id = ?
+                  AND item.entity_type = 'track'
+            `).all(albumRow.release_id, albumRow.provider, albumId) as any[];
 
             const trackRowsById = new Map(trackRows.map((row) => [String(row.id), row]));
 

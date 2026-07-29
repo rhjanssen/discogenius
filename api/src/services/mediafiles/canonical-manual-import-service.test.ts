@@ -101,6 +101,25 @@ test("canonical manual import pins Library, Release, Track and Recording", async
       file_class: "audio",
       provider: null,
     });
+    assert.deepEqual(db.prepare(`
+      SELECT
+        release_group.monitored,
+        release_group.selection_mode AS group_mode,
+        release_group.locked AS group_locked,
+        release.selection_mode AS release_mode,
+        release.locked AS release_locked
+      FROM LibraryReleaseGroups release_group
+      JOIN LibraryReleases release
+        ON release.library_id = release_group.library_id
+       AND release.release_id = 10
+      WHERE release_group.library_id = 1 AND release_group.release_group_id = 1
+    `).get(), {
+      monitored: 1,
+      group_mode: "manual",
+      group_locked: 1,
+      release_mode: "manual",
+      release_locked: 1,
+    });
   } finally {
     db.close();
     rmSync(folder, { recursive: true, force: true });
