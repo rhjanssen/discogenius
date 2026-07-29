@@ -256,21 +256,14 @@ function seedCanonicalLibraryFiles() {
     `).get(library.id, release.id) as { id: number };
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
-          provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-          album_id, title, quality, library_slot
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
     `).run(
-        "tidal",
-        "album",
-        "200",
-        "artist-mbid-100",
-        "release-group-mbid-200",
-        "release-mbid-200",
-        "200",
-        "Provider Album",
-        "LOSSLESS",
-        "stereo"
-    );
+    "tidal",
+    "release",
+    "200",
+    "Provider Album",
+  );
     const providerRelease = dbModule.db.prepare(`
         SELECT id
         FROM ProviderItems
@@ -297,23 +290,14 @@ function seedCanonicalLibraryFiles() {
     `).run(plan.id, releaseMatch.id);
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
-          provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-          track_mbid, recording_mbid, album_id, title, quality, library_slot
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
     `).run(
-        "tidal",
-        "track",
-        "300",
-        "artist-mbid-100",
-        "release-group-mbid-200",
-        "release-mbid-200",
-        "track-mbid-300",
-        "recording-mbid-300",
-        "200",
-        "Provider Track",
-        "LOSSLESS",
-        "stereo"
-    );
+    "tidal",
+    "track",
+    "300",
+    "Provider Track",
+  );
     const musicRoot = configModule.Config.getMusicPath();
     const albumNfoPath = libraryFilesModule.LibraryFilesService.computeExpectedPath({
         id: -1,
@@ -370,23 +354,14 @@ function seedCanonicalLibraryFiles() {
         .get("video-recording-mbid-400") as { id: number }).id);
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
-          provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-          recording_mbid, recording_id, album_id, title, quality, library_slot
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
     `).run(
-        "tidal",
-        "video",
-        "400",
-        "artist-mbid-100",
-        "release-group-mbid-200",
-        "release-mbid-200",
-        "video-recording-mbid-400",
-        videoRecordingId,
-        "200",
-        "Provider Video",
-        "MP4_1080P",
-        "video"
-    );
+    "tidal",
+    "video",
+    "400",
+    "Provider Video",
+  );
 
     const videoRoot = configModule.Config.getVideoPath();
     const videoDir = path.join(videoRoot, "The Example Artist");

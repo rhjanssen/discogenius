@@ -56,8 +56,8 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
 
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, title, quality, library_slot
-    ) VALUES ('youtube-music', 'release', 'MPREb_yt_cp', 'artist-yt-cp', 'rg-yt-cp', 'release-yt-cp', 'Bad Blood', 'YOUTUBE_LOSSY', 'stereo')
+      provider, entity_type, provider_id, title
+    ) VALUES ('youtube-music', 'release', 'MPREb_yt_cp', 'Bad Blood')
   `).run();
   seedAcceptedProviderReleaseMatch(db, {
     provider: "youtube-music",
@@ -139,8 +139,8 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
 
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, title, quality, library_slot
-    ) VALUES ('youtube-music', 'release', 'MPREb_yt_self', 'artist-yt-self', 'rg-yt-self', 'release-yt-self', 'SAVE MY SOUL', 'YOUTUBE_LOSSY', 'stereo')
+      provider, entity_type, provider_id, title
+    ) VALUES ('youtube-music', 'release', 'MPREb_yt_self', 'SAVE MY SOUL')
   `).run();
   seedAcceptedProviderReleaseMatch(db, {
     provider: "youtube-music",

@@ -48,25 +48,13 @@ function seedCanonicalTrackFileOnly() {
   `).run("track-mbid", "release-mbid", "recording-mbid", "Only High Quality Track", 1, 1);
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, quality, library_slot,
-      match_status, match_confidence, match_method
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
   `).run(
     "tidal",
     "track",
     "provider-track",
-    "artist-mbid",
-    "release-group-mbid",
-    "release-mbid",
-    "track-mbid",
-    "recording-mbid",
     "Only High Quality Track",
-    "HIGH",
-    "stereo",
-    "verified",
-    1,
-    "test",
   );
 
   db.prepare(`

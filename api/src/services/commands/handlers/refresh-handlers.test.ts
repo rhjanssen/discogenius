@@ -204,10 +204,10 @@ test("SeedVideo monitors only the requested provider offer when IDs collide", as
       (102, 'apple-recording', 'artist-mbid', 'Apple video', 1, 0)
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, recording_id, recording_mbid, title)
-    VALUES
-      ('tidal', 'video', '42', 101, 'tidal-recording', 'Tidal video'),
-      ('apple-music', 'video', '42', 102, 'apple-recording', 'Apple video')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', '42', 'Tidal video'),
+    ('apple-music', 'video', '42', 'Apple video')
   `).run();
 
   const originalSeedVideo = MediaSeedService.seedVideo;

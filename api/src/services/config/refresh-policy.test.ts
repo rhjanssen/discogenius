@@ -72,12 +72,8 @@ function insertProviderItem(overrides: Partial<Record<string, unknown>>) {
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, library_slot, updated_at
-    ) VALUES (
-      @provider, @entity_type, @provider_id, @artist_mbid, @release_group_mbid,
-      @release_mbid, @track_mbid, @recording_mbid, @title, @library_slot, @updated_at
-    )
+      provider, entity_type, provider_id, title, updated_at
+    ) VALUES (@provider, @entity_type, @provider_id, @title, @updated_at)
   `).run(row);
 }
 

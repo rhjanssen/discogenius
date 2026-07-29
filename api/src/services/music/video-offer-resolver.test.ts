@@ -36,13 +36,9 @@ test("an explicit provider offer wins over a colliding canonical recording id", 
   `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, recording_mbid, recording_id,
-      title, quality, availability, library_slot
-    ) VALUES
-      ('apple-music', 'video', '42', 'apple-recording', 7,
-       'Apple asset', 'MP4_2160P', 'available', 'video'),
-      ('tidal', 'video', 'tidal-canonical-offer', 'canonical-recording', 42,
-       'Canonical asset', 'MP4_1080P', 'available', 'video')
+      provider, entity_type, provider_id, title, availability
+    ) VALUES ('apple-music', 'video', '42', 'Apple asset', 'available'),
+    ('tidal', 'video', 'tidal-canonical-offer', 'Canonical asset', 'available')
   `).run();
 
   assert.deepEqual(resolver.resolveRequestedVideoOffer("apple-music", "42"), {
@@ -61,17 +57,11 @@ test("canonical resolution prefers higher resolution within a provider", () => {
   `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, recording_mbid, recording_id,
-      title, quality, availability, library_slot, match_status
-    ) VALUES
-      ('tidal', 'video', 'z-unavailable', 'canonical-recording', 11,
-       'Canonical asset', 'MP4_2160P', 'unavailable', 'video', NULL),
-      ('tidal', 'video', 'rejected-4k', 'canonical-recording', 11,
-       'Canonical asset', 'MP4_2160P', 'available', 'video', 'rejected'),
-      ('tidal', 'video', 'b-available', 'canonical-recording', 11,
-       'Canonical asset', 'MP4_1080P', 'available', 'video', NULL),
-      ('tidal', 'video', 'a-available', 'canonical-recording', 11,
-       'Canonical asset', 'MP4_720P', 'available', 'video', NULL)
+      provider, entity_type, provider_id, title, availability
+    ) VALUES ('tidal', 'video', 'z-unavailable', 'Canonical asset', 'unavailable'),
+    ('tidal', 'video', 'rejected-4k', 'Canonical asset', 'available'),
+    ('tidal', 'video', 'b-available', 'Canonical asset', 'available'),
+    ('tidal', 'video', 'a-available', 'Canonical asset', 'available')
   `).run();
 
   assert.deepEqual(resolver.resolveVideoOfferForProvider("tidal", "11"), {
@@ -92,13 +82,9 @@ test("preferred offer chooses Apple 4K over a preferred-provider TIDAL 1080p off
   `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, recording_mbid, recording_id,
-      title, quality, availability, library_slot
-    ) VALUES
-      ('tidal', 'video', 'tidal-1080', 'shared-recording', 21,
-       'Shared asset', 'MP4_1080P', 'available', 'video'),
-      ('apple-music', 'video', 'apple-4k', 'shared-recording', 21,
-       'Shared asset', 'MP4_2160P', 'available', 'video')
+      provider, entity_type, provider_id, title, availability
+    ) VALUES ('tidal', 'video', 'tidal-1080', 'Shared asset', 'available'),
+    ('apple-music', 'video', 'apple-4k', 'Shared asset', 'available')
   `).run();
 
   assert.deepEqual(resolver.resolvePreferredVideoOffer("21"), {

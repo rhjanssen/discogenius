@@ -120,9 +120,8 @@ test("import lyric materializer saves provider plain lyrics as txt and reuses th
   );
   dbModule.db.prepare(`
     INSERT INTO ProviderItems(
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, duration, library_slot
-    ) VALUES('tidal', 'track', ?, ?, ?, ?, ?, ?, ?, 180, 'stereo')
+      provider, entity_type, provider_id, title, duration_ms
+    ) VALUES ('tidal', 'track', ?, ?, 180)
   `).run(
     "provider-track-301",
     "artist-mbid-101",

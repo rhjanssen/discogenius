@@ -88,29 +88,17 @@ test("video list and detail use canonical video recordings with provider offers"
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality, duration, release_date, provider_url, match_status, match_confidence, availability
-    )
-    VALUES (
-      'tidal', 'video', 'provider-video-1', 'artist-mbid', ?,
-      'Canonical Video', 'FHD', 215, '2024-01-02',
-      'https://tidal.com/browse/video/provider-video-1', 'verified', 0.99, 1
-    )
+      provider, entity_type, provider_id, title, duration_ms, release_date, provider_url, availability
+    ) VALUES ('tidal', 'video', 'provider-video-1', 'Canonical Video', 215, '2024-01-02', 'https://tidal.com/browse/video/provider-video-1', 1)
   `).run(recording.id);
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality, duration, availability, match_status
-    ) VALUES
-      ('youtube-music', 'video', 'yt-video-01', 'artist-mbid', ?,
-       'Canonical Video', NULL, 215, 1, NULL),
-      ('apple-music', 'video', 'apple-video-4k', 'artist-mbid', ?,
-       'Canonical Video', 'MP4_2160P', 215, 1, NULL),
-      ('apple-music', 'video', 'unavailable-video', 'artist-mbid', ?,
-       'Canonical Video', '4K', 215, 0, NULL),
-      ('deezer', 'video', 'rejected-video', 'artist-mbid', ?,
-       'Canonical Video', '8K', 215, 1, 'rejected')
+      provider, entity_type, provider_id, title, duration_ms, availability
+    ) VALUES ('youtube-music', 'video', 'yt-video-01', 'Canonical Video', 215, 1),
+    ('apple-music', 'video', 'apple-video-4k', 'Canonical Video', 215, 1),
+    ('apple-music', 'video', 'unavailable-video', 'Canonical Video', 215, 0),
+    ('deezer', 'video', 'rejected-video', 'Canonical Video', 215, 1)
   `).run(recording.id, recording.id, recording.id, recording.id);
 
   dbModule.db.prepare(`
@@ -232,12 +220,8 @@ test("video detail backfills null offer quality from TrackFiles", () => {
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality, duration, availability
-    ) VALUES (
-      'tidal', 'video', '25704375', 'file-quality-artist', ?,
-      'Pompeii', NULL, 233, 'available'
-    )
+      provider, entity_type, provider_id, title, duration_ms, availability
+    ) VALUES ('tidal', 'video', '25704375', 'Pompeii', 233, 'available')
   `).run(recording.id);
 
   dbModule.db.prepare(`
@@ -286,8 +270,8 @@ test("video downloaded state treats provider ids as provider-scoped", () => {
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id, title, quality
-    ) VALUES ('apple-music', 'video', '42', 'collision-artist', ?, 'Apple Video', 'FHD')
+      provider, entity_type, provider_id, title
+    ) VALUES ('apple-music', 'video', '42', 'Apple Video')
   `).run(recording.id);
 
   // A legacy TIDAL file with the same service-local numeric id must not mark
@@ -355,9 +339,8 @@ test("video detail appears-on follows related audio via provider_video_for, not 
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, artist_mbid,
-      recording_id, title, quality
-    ) VALUES ('apple-music', 'video', '99', '42', 'artist-mbid', ?, 'Canonical Video', 'FHD')
+      provider, entity_type, provider_id, title
+    ) VALUES ('apple-music', 'video', '99', 'Canonical Video')
   `).run(recording.id);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (
@@ -491,12 +474,8 @@ test("video detail appears-on follows related audio recordings and prefers monit
   // video offer is not consulted for Appears On.
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality
-    ) VALUES (
-      'youtube-music', 'video', 'yt-affil-omv', 'artist-affil', ?,
-      'Song', 'UHD'
-    )
+      provider, entity_type, provider_id, title
+    ) VALUES ('youtube-music', 'video', 'yt-affil-omv', 'Song')
   `).run(video.id);
 
   const detail = videoQueryModule.getVideoDetail(String(video.id));
@@ -642,12 +621,8 @@ test("video detail prefers provider title when recording title is Unknown Video"
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality, duration, availability
-    ) VALUES (
-      'tidal', 'video', 'prov-title-1', 'artist-mbid', ?,
-      'Happy Endings', 'FHD', 307, 1
-    )
+      provider, entity_type, provider_id, title, duration_ms, availability
+    ) VALUES ('tidal', 'video', 'prov-title-1', 'Happy Endings', 307, 1)
   `).run(recording.id);
 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
@@ -698,11 +673,8 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id, title, quality, provider_url
-    ) VALUES (
-      'tidal', 'video', 'assoc-video-1', 'artist-mbid', ?, 'Oblivion', 'FHD',
-      'https://tidal.com/browse/video/assoc-video-1'
-    )
+      provider, entity_type, provider_id, title, provider_url
+    ) VALUES ('tidal', 'video', 'assoc-video-1', 'Oblivion', 'https://tidal.com/browse/video/assoc-video-1')
   `).run(video.id);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (

@@ -1229,14 +1229,26 @@ test("artist provider artwork candidates follow streaming.provider_priority", as
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Priority Art Artist");
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, asset_id, match_confidence, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("priority-art-spotify", "artist", "spotify-artist-1", artistMbid, "spotify-pic", 0.99, "2026-01-02T00:00:00Z");
+      provider, entity_type, provider_id, cover_id, updated_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(
+    "priority-art-spotify",
+    "artist",
+    "spotify-artist-1",
+    "spotify-pic",
+    "2026-01-02T00:00:00Z",
+  );
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, asset_id, match_confidence, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("priority-art-tidal", "artist", "tidal-artist-1", artistMbid, "tidal-pic", 0.5, "2026-01-01T00:00:00Z");
+      provider, entity_type, provider_id, cover_id, updated_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(
+    "priority-art-tidal",
+    "artist",
+    "tidal-artist-1",
+    "tidal-pic",
+    "2026-01-01T00:00:00Z",
+  );
 
   try {
     configModule.updateConfig("streaming", {
@@ -1267,19 +1279,37 @@ test("album provider artwork candidates prefer nonspatial plans, then spatial pl
 
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, cover, match_confidence, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("tidal", "album", "stereo-album-1", artistMbid, albumMbid, "stereo-cover", null, 0.4, "2026-01-01T00:00:00Z");
+      provider, entity_type, provider_id, cover_id, updated_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(
+    "tidal",
+    "release",
+    "stereo-album-1",
+    "stereo-cover",
+    "2026-01-01T00:00:00Z",
+  );
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, cover, match_confidence, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("spotify", "album", "spatial-album-1", artistMbid, albumMbid, "spatial-cover", null, 0.5, "2026-01-02T00:00:00Z");
+      provider, entity_type, provider_id, cover_id, updated_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(
+    "spotify",
+    "release",
+    "spatial-album-1",
+    "spatial-cover",
+    "2026-01-02T00:00:00Z",
+  );
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, asset_id, cover, match_confidence, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("apple-music", "album", "other-album-1", artistMbid, albumMbid, "other-cover", null, 0.99, "2026-01-03T00:00:00Z");
+      provider, entity_type, provider_id, cover_id, updated_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `).run(
+    "apple-music",
+    "release",
+    "other-album-1",
+    "other-cover",
+    "2026-01-03T00:00:00Z",
+  );
 
   linkProviderArtworkCandidate({
     releaseGroupMbid: albumMbid,
@@ -1335,9 +1365,8 @@ test("Bad Blood artwork ranks the title-close accepted release ahead of another 
     .run(albumMbid, artistMbid, "Bad Blood");
   const insert = db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      title, asset_id, match_confidence
-    ) VALUES ('apple-music', 'album', ?, ?, ?, ?, ?, 1)
+      provider, entity_type, provider_id, title, cover_id
+    ) VALUES ('apple-music', 'release', ?, ?, ?)
   `);
   insert.run("1705033078", artistMbid, albumMbid, "Pompeii MMXXIII", "pompeii-cover");
   insert.run(

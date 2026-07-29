@@ -401,22 +401,15 @@ test("download queue query resolves canonical release-group provider offers with
     `).run("release-gmtf", "rg-gmtf", "artist-bastille", "Give Me the Future", 13, 1);
     db.prepare(`
         INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-            title, quality, asset_id, match_status, match_confidence
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title, cover_id
+    ) VALUES (?, ?, ?, ?, ?)
     `).run(
-        "tidal",
-        "album",
-        "tidal-gmtf-expanded",
-        "artist-bastille",
-        "rg-gmtf",
-        "release-gmtf",
-        "Give Me The Future + Dreams Of The Past",
-        "HIRES_LOSSLESS",
-        "provider-cover",
-        "probable",
-        0.9,
-    );
+    "tidal",
+    "release",
+    "tidal-gmtf-expanded",
+    "Give Me The Future + Dreams Of The Past",
+    "provider-cover",
+  );
 
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadAlbum,
@@ -547,23 +540,16 @@ test("download queue query resolves canonical track provider offers without Prov
     `).run("track-mbid-1", "release-track", "recording-track", "Canonical Track", 1, 1);
     db.prepare(`
         INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-            track_mbid, recording_mbid, title, version, quality, asset_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title, version, cover_id
+    ) VALUES (?, ?, ?, ?, ?, ?)
     `).run(
-        "tidal",
-        "track",
-        "tidal-track-1",
-        "artist-track",
-        "rg-track",
-        "release-track",
-        "track-mbid-1",
-        "recording-track",
-        "Canonical Track",
-        "Dolby Atmos",
-        "DOLBY_ATMOS",
-        "track-cover",
-    );
+    "tidal",
+    "track",
+    "tidal-track-1",
+    "Canonical Track",
+    "Dolby Atmos",
+    "track-cover",
+  );
 
     const commandId = queueModule.CommandQueueManager.push(
         queueModule.CommandNames.DownloadTrack,

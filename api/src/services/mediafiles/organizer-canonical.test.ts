@@ -80,21 +80,13 @@ test("organizer resolves exact provider track ids to their linked canonical trac
   `).run("track-2", "release-1", "recording-2", "Track Two", 1, 2);
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      track_mbid, recording_mbid, title, match_status, match_confidence
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
   `).run(
     "tidal",
     "track",
     "provider-track-2",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
-    "track-2",
-    "recording-2",
     "Track Two",
-    "matched",
-    1,
   );
 
   const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
@@ -129,22 +121,13 @@ test("resolveMatchedCanonicalAlbumTrackRow fails closed when catalog track is mi
   // Provider-native positions must not rematch a different Tracks row.
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      track_mbid, recording_mbid, title, track_number, volume_number, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
   `).run(
     "tidal",
     "track",
     "provider-orphan",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
-    "missing-track-mbid",
-    "missing-recording-mbid",
     "Provider Native Title",
-    1,
-    1,
-    "matched",
   );
 
   const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
@@ -179,23 +162,14 @@ test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC 
   // Provider offer has ISRC evidence but no track/recording MBIDs yet (stereo vol 3 case).
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      track_mbid, recording_mbid, isrc, title, track_number, volume_number, match_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, isrc, title
+    ) VALUES (?, ?, ?, ?, ?)
   `).run(
     "tidal",
     "track",
     "243864079",
-    "artist-mbid",
-    "rg-gmtf",
-    "rel-3vol",
-    null,
-    null,
     "GBUM72202390",
     "Running Away",
-    6,
-    3,
-    "matched",
   );
 
   const row = (organizerModule.OrganizerService as any).resolveMatchedCanonicalAlbumTrackRow({
@@ -317,9 +291,8 @@ test("organizer deterministically maps Apple album-bundled video filenames to pr
 test("organizer leaves ambiguous Apple bundled-video titles staged", async () => {
   const insertOffer = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, title,
-      track_number, volume_number, library_slot, match_status
-    ) VALUES ('apple-music', 'track', ?, 'apple-ambiguous-album', 'Intro', 8, 1, 'video', 'matched')
+      provider, entity_type, provider_id, title
+    ) VALUES ('apple-music', 'track', ?, 'Intro')
   `);
   insertOffer.run("apple-intro-a");
   insertOffer.run("apple-intro-b");
@@ -360,9 +333,8 @@ test("video imports prefer the managed MusicBrainz artist over a provider-only a
   `).run("video-recording-mbid", "artist-mbid", "Canonical Video");
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, recording_id, title, library_slot,
-      match_status, match_confidence
-    ) VALUES ('tidal', 'video', ?, ?, ?, 'video', 'verified', 1)
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', ?, ?)
   `).run("provider-video-1", Number(recording.lastInsertRowid), "Canonical Video");
 
   const artistId = (organizerModule.OrganizerService as any)
@@ -380,9 +352,8 @@ test("video file identity inherits canonical recording and artist from the recor
   `).run("video-recording-mbid", "artist-mbid", "Canonical Video");
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, recording_id, title, library_slot,
-      match_status, match_confidence
-    ) VALUES ('tidal', 'video', ?, ?, ?, 'video', 'verified', 1)
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', ?, ?)
   `).run("provider-video-1", Number(recording.lastInsertRowid), "Canonical Video");
   const providerVideo = dbModule.db.prepare(`
     SELECT id
@@ -622,14 +593,14 @@ test("typed plan identity maps a provider source track onto the selected canonic
     .get() as { id: number; recording_id: number };
   const providerRelease = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, quality
-    ) VALUES ('tidal', 'release', 'album-pompeii', 'Pompeii', 'LOSSLESS')
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'release', 'album-pompeii', 'Pompeii')
     RETURNING id
   `).get() as { id: number };
   const providerTrack = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, quality
-    ) VALUES ('tidal', 'track', 'provider-pompeii', 'Pompeii', 'LOSSLESS')
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'track', 'provider-pompeii', 'Pompeii')
     RETURNING id
   `).get() as { id: number };
   const member = dbModule.db.prepare(`

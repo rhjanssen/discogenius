@@ -127,29 +127,14 @@ function seedCanonicalArtistPage() {
 
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, quality, asset_id,
-      duration, library_slot, album_release_id, track_id, recording_id,
-      match_status, match_confidence
-    )
-    VALUES (
-      'tidal', 'track', 'provider-track-1', 'artist-mbid-1', 'release-group-mbid-1',
-      'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', 'Canonical Track', 'LOSSLESS', '13bb32e2-e326-4ee5-be74-f3320ad3379c',
-      180, 'stereo', 201, 401, 301, 'verified', 0.99
-    )
+      provider, entity_type, provider_id, title, cover_id, duration_ms
+    ) VALUES ('tidal', 'track', 'provider-track-1', 'Canonical Track', '13bb32e2-e326-4ee5-be74-f3320ad3379c', 180)
   `).run();
 
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, title, quality, asset_id, library_slot, album_release_id,
-      match_status, match_confidence, provider_url
-    )
-    VALUES (
-      'tidal', 'album', 'provider-album-1', 'artist-mbid-1', 'release-group-mbid-1',
-      'release-mbid-1', 'Canonical Album', 'LOSSLESS', '13bb32e2-e326-4ee5-be74-f3320ad3379c', 'stereo', 201,
-      'verified', 0.99, 'https://soundcloud.com/example/sets/canonical-album'
-    )
+      provider, entity_type, provider_id, title, cover_id, provider_url
+    ) VALUES ('tidal', 'release', 'provider-album-1', 'Canonical Album', '13bb32e2-e326-4ee5-be74-f3320ad3379c', 'https://soundcloud.com/example/sets/canonical-album')
   `).run();
 
   const providerTrack = db.prepare(`
@@ -158,7 +143,7 @@ function seedCanonicalArtistPage() {
   `).get() as { id: number };
   const providerRelease = db.prepare(`
     SELECT id FROM ProviderItems
-    WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = 'provider-album-1'
+    WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = 'provider-album-1'
   `).get() as { id: number };
   const releaseMember = db.prepare(`
     INSERT INTO ProviderReleaseMembers (
@@ -224,15 +209,8 @@ function seedCanonicalArtistPage() {
 
   const providerVideo = db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality, duration, release_date, asset_id, provider_url,
-      match_status, match_confidence
-    )
-    VALUES (
-      'tidal', 'video', 'provider-video-1', 'artist-mbid-1', 501,
-      'Canonical Video', 'FHD', 210, '2024-02-01', 'video-offer-cover',
-      'https://tidal.com/browse/video/provider-video-1', 'verified', 0.99
-    )
+      provider, entity_type, provider_id, title, duration_ms, release_date, cover_id, provider_url
+    ) VALUES ('tidal', 'video', 'provider-video-1', 'Canonical Video', 210, '2024-02-01', 'video-offer-cover', 'https://tidal.com/browse/video/provider-video-1')
     RETURNING id
   `).get() as { id: number };
   db.prepare(`
@@ -365,16 +343,8 @@ test("artist page top tracks ignore unselected alternate editions", async () => 
 
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, quality, asset_id,
-      duration, library_slot, album_release_id, track_id, recording_id,
-      match_status, match_confidence
-    )
-    VALUES (
-      'tidal', 'track', 'provider-track-atmos', 'artist-mbid-1', 'release-group-mbid-1',
-      'release-mbid-atmos', 'track-mbid-atmos', 'recording-mbid-atmos', 'Canonical Track', 'DOLBY_ATMOS', '13bb32e2-e326-4ee5-be74-f3320ad3379c',
-      180, 'spatial', 202, 402, 302, 'verified', 0.99
-    )
+      provider, entity_type, provider_id, title, cover_id, duration_ms
+    ) VALUES ('tidal', 'track', 'provider-track-atmos', 'Canonical Track', '13bb32e2-e326-4ee5-be74-f3320ad3379c', 180)
   `).run();
 
   const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
@@ -389,14 +359,9 @@ test("artist page top tracks ignore unselected alternate editions", async () => 
 
 test("artist page top tracks resolve provider previews through typed plan matches", async () => {
   const { artistId } = seedCanonicalArtistPage();
-  const { db } = dbModule;
 
-  db.prepare(`
-    UPDATE ProviderItems
-    SET track_id = NULL, recording_id = NULL
-    WHERE provider_id = 'provider-track-1'
-  `).run();
-
+  // Provider items never carry a direct canonical track/recording id anymore;
+  // the preview resolves purely through the typed plan matches seeded above.
   const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
     includeReleaseGroups: false,
     includeTracks: true,
@@ -414,21 +379,17 @@ test("artist page top tracks prefer the selected plan provider over a newer alte
   const { artistId } = seedCanonicalArtistPage();
   const { db } = dbModule;
 
+  // The tidal offer's release membership is already seeded; only the backdated
+  // updated_at matters here (the newer apple alternate must not win the preview).
   db.prepare(`
     UPDATE ProviderItems
-    SET provider_album_id = 'provider-album-1', updated_at = '2020-01-01T00:00:00.000Z'
+    SET updated_at = '2020-01-01T00:00:00.000Z'
     WHERE provider = 'tidal' AND provider_id = 'provider-track-1'
   `).run();
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, quality,
-      library_slot, album_release_id, track_id, recording_id, match_status, updated_at
-    ) VALUES (
-      'apple-music', 'track', 'apple-track-newer', 'apple-album-1', 'artist-mbid-1', 'release-group-mbid-1',
-      'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', 'Canonical Track', 'HIGH',
-      'stereo', 201, 401, 301, 'matched', '2026-01-01T00:00:00.000Z'
-    )
+      provider, entity_type, provider_id, title, updated_at
+    ) VALUES ('apple-music', 'track', 'apple-track-newer', 'Canonical Track', '2026-01-01T00:00:00.000Z')
   `).run();
 
   const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
@@ -453,14 +414,8 @@ test("artist top tracks prefer the default provider popularity and fall back to 
   db.prepare("UPDATE ProviderItems SET popularity = 5 WHERE provider = 'tidal' AND provider_id = 'provider-track-1'").run();
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, popularity,
-      library_slot, album_release_id, track_id, recording_id, match_status
-    ) VALUES (
-      'apple-music', 'track', 'apple-track-1', 'artist-mbid-1', 'release-group-mbid-1',
-      'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', 'Canonical Track', 90,
-      'stereo', 201, 401, 301, 'matched'
-    )
+      provider, entity_type, provider_id, title, popularity
+    ) VALUES ('apple-music', 'track', 'apple-track-1', 'Canonical Track', 90)
   `).run();
   db.prepare(`
     INSERT INTO Recordings (
@@ -475,15 +430,60 @@ test("artist top tracks prefer the default provider popularity and fall back to 
   `).run();
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, popularity,
-      library_slot, album_release_id, track_id, recording_id, match_status
-    ) VALUES (
-      'tidal', 'track', 'provider-track-2', 'artist-mbid-1', 'release-group-mbid-1',
-      'release-mbid-1', 'track-mbid-2', 'recording-mbid-2', 'Provider Favorite', 80,
-      'stereo', 201, 402, 302, 'matched'
-    )
+      provider, entity_type, provider_id, title, popularity
+    ) VALUES ('tidal', 'track', 'provider-track-2', 'Provider Favorite', 80)
   `).run();
+
+  // Provider popularity is only visible through an accepted typed track match.
+  // Link the extra tidal offer to Provider Favorite (recording 302) via the
+  // existing tidal release, and give the apple offer its own accepted chain to
+  // Canonical Track (recording 301) so the cross-provider fallback can resolve.
+  const linkProviderTrack = (
+    providerTrackProviderId: string,
+    provider: string,
+    releaseProviderId: string,
+    releaseId: number,
+    canonicalTrackId: number,
+    canonicalRecordingId: number,
+    position: number,
+  ) => {
+    const providerTrack = db.prepare(
+      "SELECT id FROM ProviderItems WHERE provider = ? AND entity_type = 'track' AND provider_id = ?",
+    ).get(provider, providerTrackProviderId) as { id: number };
+    let providerRelease = db.prepare(
+      "SELECT id FROM ProviderItems WHERE provider = ? AND entity_type = 'release' AND provider_id = ?",
+    ).get(provider, releaseProviderId) as { id: number } | undefined;
+    if (!providerRelease) {
+      providerRelease = db.prepare(`
+        INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+        VALUES (?, 'release', ?, 'Canonical Album') RETURNING id
+      `).get(provider, releaseProviderId) as { id: number };
+    }
+    let releaseMatch = db.prepare(
+      "SELECT id FROM ProviderReleaseMatches WHERE provider_release_item_id = ? AND release_id = ?",
+    ).get(providerRelease.id, releaseId) as { id: number } | undefined;
+    if (!releaseMatch) {
+      releaseMatch = db.prepare(`
+        INSERT INTO ProviderReleaseMatches (
+          provider_release_item_id, release_id, relation, match_state,
+          decision_source, confidence, method, matcher_version
+        ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1) RETURNING id
+      `).get(providerRelease.id, releaseId) as { id: number };
+    }
+    const member = db.prepare(`
+      INSERT INTO ProviderReleaseMembers (
+        provider_release_item_id, member_item_id, medium_position, position
+      ) VALUES (?, ?, 1, ?) RETURNING id
+    `).get(providerRelease.id, providerTrack.id, position) as { id: number };
+    db.prepare(`
+      INSERT INTO ProviderTrackMatches (
+        provider_release_member_id, provider_release_match_id, track_id,
+        recording_id, match_state, decision_source, confidence, method, matcher_version
+      ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    `).run(member.id, releaseMatch.id, canonicalTrackId, canonicalRecordingId);
+  };
+  linkProviderTrack("provider-track-2", "tidal", "provider-album-1", 201, 402, 302, 2);
+  linkProviderTrack("apple-track-1", "apple-music", "apple-album-1", 201, 401, 301, 1);
 
   const loadTopTracks = async () => {
     const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {

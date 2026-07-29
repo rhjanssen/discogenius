@@ -52,10 +52,12 @@ function seedArtistTrack(params?: { artistPath?: string; fileName?: string }) {
     .run("rec-one", "Track One", "artist-one-mbid", 180000);
   dbModule.db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)`).run("trk-one", "rel-one", "rec-one", 1, 1, "1", "Track One");
-  dbModule.db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'album', '10', 'artist-one-mbid', 'rg-one', 'rel-one', '10', 'Album One', 'LOSSLESS', 'stereo')`).run();
-  dbModule.db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'track', '100', 'artist-one-mbid', 'rg-one', 'rel-one', 'trk-one', 'rec-one', '10', 'Track One', 'LOSSLESS', 'stereo')`).run();
+  dbModule.db.prepare(`INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'release', '10', 'Album One')`).run();
+  dbModule.db.prepare(`INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'track', '100', 'Track One')`).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
     providerReleaseId: "10",

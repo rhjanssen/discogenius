@@ -542,18 +542,21 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
     VALUES (?, ?, ?, 'Canonical Album', 'Official')
   `).run(releaseMbid, releaseGroupMbid, artistMbid);
   const tidalReleaseId = (dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
-    VALUES ('tidal', 'release', '42', 'Tidal Album', 'available')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, availability
+    ) VALUES ('tidal', 'release', '42', 'Tidal Album', 'available')
     RETURNING id
   `).get() as { id: number }).id;
   const appleReleaseId = (dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
-    VALUES ('apple-music', 'release', '42', 'Apple Album', 'available')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, availability
+    ) VALUES ('apple-music', 'release', '42', 'Apple Album', 'available')
     RETURNING id
   `).get() as { id: number }).id;
   const tidalTrackId = (dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
-    VALUES ('tidal', 'track', 'tidal-track', 'Tidal Track', 'available')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, availability
+    ) VALUES ('tidal', 'track', 'tidal-track', 'Tidal Track', 'available')
     RETURNING id
   `).get() as { id: number }).id;
   dbModule.db.prepare(`

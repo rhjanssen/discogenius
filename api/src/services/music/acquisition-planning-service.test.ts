@@ -58,10 +58,10 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   `).run();
 
   db.prepare(`
-    INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
-    VALUES
-      (10, 'tidal', 'release', 'standard', 'Album A', 'available'),
-      (20, 'tidal', 'release', 'deluxe', 'Album A Deluxe', 'available')
+    INSERT INTO ProviderItems (
+      id, provider, entity_type, provider_id, title, availability
+    ) VALUES (10, 'tidal', 'release', 'standard', 'Album A', 'available'),
+    (20, 'tidal', 'release', 'deluxe', 'Album A Deluxe', 'available')
   `).run();
   for (let trackId = 1; trackId <= 4; trackId += 1) {
     db.prepare(`

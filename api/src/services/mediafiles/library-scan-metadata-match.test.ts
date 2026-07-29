@@ -57,12 +57,8 @@ function seedOffer(params: {
   const { db } = dbModule;
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, title, duration,
-      provider_album_id, library_slot, recording_id, quality, match_status
-    ) VALUES (
-      'tidal', 'track', ?, 'artist-mbid', ?, ?,
-      ?, 'stereo', ?, 'LOSSLESS', 'matched'
-    )
+      provider, entity_type, provider_id, title, duration_ms
+    ) VALUES ('tidal', 'track', ?, ?, ?)
   `).run(
     params.providerId,
     params.title,

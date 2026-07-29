@@ -55,13 +55,15 @@ test("canonical provider track resolution follows the current normalized plan", 
     RETURNING id
   `).get(release.id, recording.id) as { id: number };
   const providerRelease = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES ('test-provider', 'release', 'provider-release-1', 'Test Album')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('test-provider', 'release', 'provider-release-1', 'Test Album')
     RETURNING id
   `).get() as { id: number };
   const providerTrack = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES ('test-provider', 'track', 'provider-track-1', 'Target Track')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('test-provider', 'track', 'provider-track-1', 'Target Track')
     RETURNING id
   `).get() as { id: number };
   const member = db.prepare(`

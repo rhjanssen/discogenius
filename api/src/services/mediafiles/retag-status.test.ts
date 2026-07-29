@@ -44,13 +44,18 @@ test("retag status uses a bounded fast scan by default", async () => {
   `);
   const insertProviderTrack = db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, title, duration, library_slot
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title, duration_ms
+    ) VALUES (?, ?, ?, ?, ?)
   `);
 
   for (let i = 1; i <= 5; i += 1) {
-    insertProviderTrack.run("tidal", "track", String(i), "artist-1", `Track ${i}`, 180, "stereo");
+    insertProviderTrack.run(
+    "tidal",
+    "track",
+    String(i),
+    `Track ${i}`,
+    180,
+  );
     insertFile.run(
       "artist-1",
       "tidal",

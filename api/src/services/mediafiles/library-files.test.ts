@@ -199,12 +199,14 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
   // Provider availability mapped to the canonical ids (no legacy ProviderAlbums/ProviderMedia rows).
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'A Night at the Opera', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'release', '10', 'A Night at the Opera')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Bohemian Rhapsody', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'track', '100', 'Bohemian Rhapsody')
   `).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
@@ -263,12 +265,14 @@ test("computeExpectedPath prefers canonical release-group and track metadata ove
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 7, "7", "Canonical Track Title");
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'provider Album Title', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'release', '10', 'provider Album Title')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'provider Track Title', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'track', '100', 'provider Track Title')
   `).run();
 
   const expected = libraryFilesModule.LibraryFilesService.computeExpectedPath({
@@ -544,12 +548,14 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
   // through canonical MBIDs/catalog FKs plus provider provenance.
 
 dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'A Night at the Opera', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'release', '10', 'A Night at the Opera')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Bohemian Rhapsody', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'track', '100', 'Bohemian Rhapsody')
   `).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
@@ -660,28 +666,20 @@ test("upsertLibraryFile uses accepted typed matches instead of provider shadow i
 
 dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, title, quality, library_slot, match_status, match_confidence, match_method
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
   `).run(
     "tidal",
-    "album",
+    "release",
     "provider-album-1",
-    "artist-mbid-1",
-    "release-group-mbid-1",
-    "legacy-release-mbid",
     "Give Me The Future",
-    "LOSSLESS",
-    "stereo",
-    "verified",
-    1,
-    "test",
   );
   // Track offer carries the recording mbid; the selected slot resolves the exact
   // release/track (preferring the selected-release over the offer's legacy release).
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'track', 'provider-track-1', 'artist-mbid-1', 'recording-mbid-1', 'provider-album-1', 'Shut Off The Lights', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'track', 'provider-track-1', 'Shut Off The Lights')
   `).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
@@ -754,13 +752,25 @@ test("disk scan relinks album covers and renamed lyrics to their provider album 
   `).run("artist-local", "Bastille", "artist-mbid-1", "Bastille {mbid-artist-mbid-1}", 1);
 
 dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, library_slot)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run("tidal", "album", "provider-album-1", "artist-local", "SAVE MY SOUL", "stereo");
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
+  `).run(
+    "tidal",
+    "release",
+    "provider-album-1",
+    "SAVE MY SOUL",
+  );
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, title, library_slot, quality)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run("tidal", "track", "provider-track-1", "artist-local", "SAVE MY SOUL", "stereo", "LOSSLESS");
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
+  `).run(
+    "tidal",
+    "track",
+    "provider-track-1",
+    "SAVE MY SOUL",
+  );
 
   const root = configModule.Config.getMusicPath();
   const albumDir = path.join(root, "Bastille {mbid-artist-mbid-1}", "SAVE MY SOUL (2025)");
@@ -934,12 +944,14 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
   // Provider availability rows supply the streaming identity for both slots.
 
 dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'album', '10', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', NULL, NULL, '10', 'A Night at the Opera', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'release', '10', 'A Night at the Opera')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'track', '100', 'artist-mbid-1', 'rg-mbid-1', 'release-mbid-1', 'track-mbid-1', 'recording-mbid-1', '10', 'Bohemian Rhapsody', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'track', '100', 'Bohemian Rhapsody')
   `).run();
   seedAcceptedProviderTrackMatch(dbModule.db, {
     provider: "tidal",
@@ -1136,16 +1148,18 @@ dbModule.db.prepare(`
   `).run("video-rec-pompeii", "Pompeii Video", "artist-mbid-bastille");
   const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get("video-rec-pompeii") as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
-    VALUES ('tidal', 'video', 'video-inline-test', 'artist-mbid-bastille', 'video-rec-pompeii', ?, 'Pompeii Video', 'video')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', 'video-inline-test', 'Pompeii Video')
   `).run(videoRecId);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
     VALUES (?, ?, 'provider_video_for', 0.98)
   `).run(videoRecId, audioRecId);
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid, track_mbid, recording_mbid, album_id, title, quality, library_slot)
-    VALUES ('tidal', 'track', 'track-inline-test', 'artist-mbid-bastille', 'rg-mbid-pompeii', 'release-mbid-pompeii', 'track-mbid-pompeii', 'recording-mbid-pompeii', 'album-inline-test', 'Pompeii', 'LOSSLESS', 'stereo')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'track', 'track-inline-test', 'Pompeii')
   `).run();
 
   const config = configModule.readConfig();
@@ -1256,9 +1270,9 @@ dbModule.db.prepare(`
   const dupVideoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-rec-dup") as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
-    VALUES ('tidal', 'video', 'video-inline-duplicate', 'artist-mbid-bastille', 'video-rec-dup',
-      ?, 'Pompeii (Official Video)', 'video')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', 'video-inline-duplicate', 'Pompeii (Official Video)')
   `).run(dupVideoRecId);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
@@ -1290,9 +1304,9 @@ dbModule.db.prepare(`
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, 1)")
     .run("video-rec-unlinked", "Pompeii (Official Video)", "artist-mbid-bastille");
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
-    VALUES ('tidal', 'video', 'video-inline-unlinked', 'artist-mbid-bastille', 'video-rec-unlinked',
-      (SELECT id FROM Recordings WHERE mbid = 'video-rec-unlinked'), 'Pompeii (Official Video)', 'video')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', 'video-inline-unlinked', 'Pompeii (Official Video)')
   `).run();
 
   const expectedUnlinked = libraryFilesModule.LibraryFilesService.computeExpectedPath({
@@ -1344,8 +1358,9 @@ test("computeExpectedPath inline requires a monitored nonspatial library release
   const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-rec-inline-gate") as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
-    VALUES ('tidal', 'video', 'video-inline-gate', 'artist-mbid-inline-gate', 'video-rec-inline-gate', ?, 'Pompeii', 'video')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', 'video-inline-gate', 'Pompeii')
   `).run(videoRecId);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
@@ -1420,8 +1435,9 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
   const videoRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("video-rec-stereo-pref") as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id, title, library_slot)
-    VALUES ('tidal', 'video', 'video-stereo-pref', 'artist-mbid-stereo-pref', 'video-rec-stereo-pref', ?, 'Pompeii', 'video')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', 'video-stereo-pref', 'Pompeii')
   `).run(videoRecId);
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (source_recording_id, target_recording_id, relation_type, confidence)
@@ -1502,13 +1518,8 @@ test("upsertLibraryFile persists video_codec and frame size for music videos", (
   `).run("video-recording-codec", "Pompeii", "artist-mbid-video-codec");
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_mbid, recording_id,
-      title, quality, library_slot
-    ) VALUES (
-      'tidal', 'video', 'video-provider-codec', 'artist-mbid-video-codec', 'video-recording-codec',
-      (SELECT id FROM Recordings WHERE mbid = 'video-recording-codec'),
-      'Pompeii', 'MP4_1080P', 'video'
-    )
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', 'video-provider-codec', 'Pompeii')
   `).run();
 
   const videoRoot = configModule.Config.getVideoPath();

@@ -39,39 +39,24 @@ function seedCanonicalFingerprintMatch() {
     .run("artist-local", "Canonical Artist", "artist-mbid");
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, title, quality, library_slot, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title, updated_at
+    ) VALUES (?, ?, ?, ?, ?)
   `).run(
     "tidal",
-    "album",
+    "release",
     "provider-album",
-    "artist-mbid",
-    "release-group-mbid",
-    "release-mbid",
     "Canonical Album",
-    "LOSSLESS",
-    "stereo",
     "2026-01-01T00:00:00.000Z",
   );
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, quality, library_slot,
-      updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title, updated_at
+    ) VALUES (?, ?, ?, ?, ?)
   `).run(
     "tidal",
     "track",
     "provider-track",
-    "artist-mbid",
-    "release-group-mbid",
-    "release-mbid",
-    "track-mbid",
-    "recording-mbid",
     "Canonical Track",
-    "LOSSLESS",
-    "stereo",
     "2026-01-01T00:00:00.000Z",
   );
   dbModule.db.prepare(`

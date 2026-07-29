@@ -135,21 +135,20 @@ dbModule.db.prepare(`
 
     const releaseItemId = (dbModule.db.prepare(`
         INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, title, provider_type,
-            availability, artwork_url
-        ) VALUES ('tidal', 'release', '10', 'Album One', 'ALBUM', 'available', 'cover-10')
+      provider, entity_type, provider_id, title, provider_type, availability, artwork_url
+    ) VALUES ('tidal', 'release', '10', 'Album One', 'ALBUM', 'available', 'cover-10')
         RETURNING id
     `).get() as { id: number }).id;
     const trackItemId = (dbModule.db.prepare(`
         INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, title, duration_ms, availability
-        ) VALUES ('tidal', 'track', '100', 'Track One', 180000, 'available')
+      provider, entity_type, provider_id, title, duration_ms, availability
+    ) VALUES ('tidal', 'track', '100', 'Track One', 180000, 'available')
         RETURNING id
     `).get() as { id: number }).id;
     const videoItemId = (dbModule.db.prepare(`
         INSERT INTO ProviderItems (
-            provider, entity_type, provider_id, title, provider_type, availability
-        ) VALUES ('tidal', 'video', '200', 'Video One', 'MUSIC_VIDEO', 'available')
+      provider, entity_type, provider_id, title, provider_type, availability
+    ) VALUES ('tidal', 'video', '200', 'Video One', 'MUSIC_VIDEO', 'available')
         RETURNING id
     `).get() as { id: number }).id;
     const memberId = (dbModule.db.prepare(`

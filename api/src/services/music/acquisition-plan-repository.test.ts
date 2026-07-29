@@ -31,10 +31,11 @@ test("plan replacement is atomic and partial completion counts only imported ass
       INSERT INTO LibraryReleases (
         id, library_id, release_id, selection_mode, curation_version
       ) VALUES (1, 1, 1, 'auto', 1);
-      INSERT INTO ProviderItems (id, provider, entity_type, provider_id)
-        VALUES (1, 'tidal', 'release', 'provider-release'),
-               (2, 'tidal', 'track', 'provider-track-1'),
-               (3, 'tidal', 'track', 'provider-track-2');
+      INSERT INTO ProviderItems (
+      id, provider, entity_type, provider_id
+    ) VALUES (1, 'tidal', 'release', 'provider-release'),
+    (2, 'tidal', 'track', 'provider-track-1'),
+    (3, 'tidal', 'track', 'provider-track-2');
       INSERT INTO ProviderReleaseMembers (
         id, provider_release_item_id, member_item_id, medium_position, position
       ) VALUES (1, 1, 2, 1, 1), (2, 1, 3, 1, 2);

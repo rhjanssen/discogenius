@@ -90,8 +90,9 @@ function seedMatchedRelease(input: {
   });
 
   const providerRelease = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES ('tidal', 'release', ?, ?)
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'release', ?, ?)
     RETURNING id
   `).get(input.providerReleaseId, input.title) as { id: number };
   db.prepare(`

@@ -255,13 +255,8 @@ test("stored SoundCloud playlist coverage is revalidated and its permalink is ba
   const providerAlbumId = "220003151";
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, quality, artist_mbid,
-      release_group_mbid, release_mbid, match_status, match_confidence,
-      match_method, match_evidence
-    ) VALUES (
-      'soundcloud', 'album', ?, ?, 'SOUNDCLOUD_LOSSY', ?, ?, ?,
-      'probable', 0.85, 'playlist-tracklist-coverage', ?
-    )
+      provider, entity_type, provider_id, title
+    ) VALUES ('soundcloud', 'release', ?, ?)
   `).run(
     providerAlbumId,
     "Other People's Heartache part 1",
@@ -336,13 +331,8 @@ test("all durable SoundCloud playlist offers are revalidated after the first val
   const staleId = "220003151";
   const insertOffer = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, quality, artist_mbid,
-      release_group_mbid, release_mbid, match_status, match_confidence,
-      match_method, availability, updated_at
-    ) VALUES (
-      'soundcloud', 'album', ?, ?, 'SOUNDCLOUD_LOSSY', ?, ?, ?,
-      'probable', 0.85, 'playlist-tracklist-coverage', 'available', ?
-    )
+      provider, entity_type, provider_id, title, availability, updated_at
+    ) VALUES ('soundcloud', 'release', ?, ?, 'available', ?)
   `);
   insertOffer.run(
     validId,
@@ -417,22 +407,13 @@ test("empty stored SoundCloud playlist is rejected and a covering replacement is
   const staleId = "220003151";
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, quality, artist_mbid,
-      release_group_mbid, release_mbid, match_status, match_confidence,
-      match_method
-    ) VALUES (
-      'soundcloud', 'album', ?, ?, 'SOUNDCLOUD_LOSSY', ?, ?, ?,
-      'probable', 0.85, 'playlist-tracklist-coverage'
-    )
+      provider, entity_type, provider_id, title
+    ) VALUES ('soundcloud', 'release', ?, ?)
   `).run(staleId, "Other People's Heartache", artistMbid, releaseGroupMbid, releaseMbid);
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, provider_album_id, title,
-      match_status, match_method, availability
-    ) VALUES (
-      'soundcloud', 'track', 'stale-child-track', ?, 'Stale Track',
-      'matched', 'playlist-tracklist-coverage', 'available'
-    )
+      provider, entity_type, provider_id, title, availability
+    ) VALUES ('soundcloud', 'track', 'stale-child-track', 'Stale Track', 'available')
   `).run(staleId);
   const artist = { providerId: "sc-user", name: "Fan uploader" };
   const makeAlbum = (providerId: string) => ({

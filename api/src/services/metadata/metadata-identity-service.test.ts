@@ -42,13 +42,11 @@ test("provider-scoped identity lookup keeps equal album and track IDs independen
   `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, release_group_mbid,
-      release_mbid, recording_mbid, updated_at
-    ) VALUES
-      ('tidal', 'album', '42', 'Tidal release', 'tidal-rg', 'tidal-release', NULL, '2026-01-01'),
-      ('apple-music', 'album', '42', 'Apple release', 'apple-rg', 'apple-release', NULL, '2026-01-02'),
-      ('tidal', 'track', '7', 'Tidal track', NULL, NULL, 'tidal-recording', '2026-01-01'),
-      ('apple-music', 'track', '7', 'Apple track', NULL, NULL, 'apple-recording', '2026-01-02')
+      provider, entity_type, provider_id, title, updated_at
+    ) VALUES ('tidal', 'release', '42', 'Tidal release', '2026-01-01'),
+    ('apple-music', 'release', '42', 'Apple release', '2026-01-02'),
+    ('tidal', 'track', '7', 'Tidal track', '2026-01-01'),
+    ('apple-music', 'track', '7', 'Apple track', '2026-01-02')
   `).run();
 
   const tidalAlbum = await identityModule.MetadataIdentityService.resolveAlbum("42", { provider: "tidal" });
@@ -78,10 +76,10 @@ test("provider-scoped identity lookup keeps equal album and track IDs independen
 
 test("provider-scoped video identity does not pick the newest colliding offer", () => {
   dbModule.db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, recording_mbid, updated_at)
-    VALUES
-      ('tidal', 'video', '99', 'Tidal video', 'tidal-video-recording', '2026-01-01'),
-      ('apple-music', 'video', '99', 'Apple video', 'apple-video-recording', '2026-01-02')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, updated_at
+    ) VALUES ('tidal', 'video', '99', 'Tidal video', '2026-01-01'),
+    ('apple-music', 'video', '99', 'Apple video', '2026-01-02')
   `).run();
 
   const result = identityModule.MetadataIdentityService.markVideoKnown("99", { provider: "tidal" });

@@ -496,22 +496,14 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
   );
   const providerTrack = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, isrc, duration,
-      track_number, volume_number, provider_url
-    ) VALUES (
-      'apple-music', 'track', '1422677787', 'Tears Dry On Their Own',
-      ?, 186, 7, 1, 'https://music.apple.com/song/1422677787'
-    )
+      provider, entity_type, provider_id, title, isrc, duration_ms, provider_url
+    ) VALUES ('apple-music', 'track', '1422677787', 'Tears Dry On Their Own', ?, 186, 'https://music.apple.com/song/1422677787')
     RETURNING id
   `).get(isrc) as { id: number };
   const distractorTrack = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, isrc, duration,
-      track_number, volume_number
-    ) VALUES (
-      'apple-music', 'track', '1440827414', 'Tears Dry on Their Own',
-      ?, 187, 10, 1
-    )
+      provider, entity_type, provider_id, title, isrc, duration_ms
+    ) VALUES ('apple-music', 'track', '1440827414', 'Tears Dry on Their Own', ?, 187)
     RETURNING id
   `).get(isrc) as { id: number };
   const member = dbModule.db.prepare(`

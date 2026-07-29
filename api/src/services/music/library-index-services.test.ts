@@ -58,13 +58,15 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   `).get(release.id, recording.id) as { id: number };
 
   const providerRelease = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES ('tidal', 'release', 'provider-release-1', 'Index Album')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'release', 'provider-release-1', 'Index Album')
     RETURNING id
   `).get() as { id: number };
   const providerTrack = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES ('tidal', 'track', 'provider-track-1', 'Index Track')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'track', 'provider-track-1', 'Index Track')
     RETURNING id
   `).get() as { id: number };
   const member = db.prepare(`

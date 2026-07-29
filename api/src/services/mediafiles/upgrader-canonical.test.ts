@@ -116,35 +116,20 @@ function listDownloadJobs() {
 test("checkUpgrades queues canonical audio album upgrades without provider catalog rows", async () => {
   seedArtistAndRelease();
   db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    title, quality, library_slot
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)`).run(
     "tidal",
-    "album",
+    "release",
     "album-provider-1",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
     "Canonical Album",
-    "HIRES_LOSSLESS",
-    "stereo"
   );
   db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    track_mbid, recording_mbid, title, quality, library_slot, match_evidence
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)`).run(
     "tidal",
     "track",
     "track-provider-1",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
-    "track-1",
-    "recording-1",
     "Track One",
-    "HIRES_LOSSLESS",
-    "stereo",
-    JSON.stringify({ albumProviderId: "album-provider-1" })
   );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
@@ -186,16 +171,12 @@ test("checkUpgrades queues canonical video upgrades without provider catalog row
   db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video, monitored)
     VALUES (?, ?, ?, ?, ?)`).run("video-recording-1", "Video One", "artist-mbid", 1, 1);
   db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, recording_mbid, title, quality, library_slot
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)`).run(
     "tidal",
     "video",
     "video-provider-1",
-    "artist-mbid",
-    "video-recording-1",
     "Video One",
-    "MP4_1080P",
-    "video",
   );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
@@ -241,36 +222,20 @@ test("checkUpgrades does not queue Apple Music album ids as TIDAL (Grace Note)",
   seedArtistAndRelease();
   const appleAlbumId = "1776562088";
   db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    title, quality, library_slot
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)`).run(
     "apple-music",
-    "album",
+    "release",
     appleAlbumId,
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
     "Grace Note",
-    "LOSSLESS",
-    "stereo"
   );
   db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, provider_album_id, artist_mbid, release_group_mbid, release_mbid,
-    track_mbid, recording_mbid, title, quality, library_slot, match_evidence
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)`).run(
     "apple-music",
     "track",
     "apple-track-1",
-    appleAlbumId,
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
-    "track-1",
-    "recording-1",
     "Grace Note",
-    "HIRES_LOSSLESS",
-    "stereo",
-    JSON.stringify({ albumProviderId: appleAlbumId })
   );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
@@ -314,36 +279,20 @@ test("checkUpgrades skips album-level upgrade when provider has zero album track
   // Album offer exists, but no ProviderItems tracks for this provider/album —
   // must not enqueue DownloadAlbum (old bug: 1/0 always passed the ≥50% check).
   db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    title, quality, library_slot
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)`).run(
     "apple-music",
-    "album",
+    "release",
     "1776562088",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
     "Grace Note",
-    "HIRES_LOSSLESS",
-    "stereo"
   );
   db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    track_mbid, recording_mbid, title, quality, library_slot, match_evidence
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)`).run(
     "apple-music",
     "track",
     "apple-track-orphan",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
-    "track-1",
-    "recording-1",
     "Grace Note",
-    "HIRES_LOSSLESS",
-    "stereo",
-    // Deliberately wrong / missing album linkage so album track count is 0
-    JSON.stringify({})
   );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
@@ -379,35 +328,20 @@ test("checkUpgrades skips album-level upgrade when provider has zero album track
 test("checkUpgrades does not immediately requeue a recent completed no-improvement upgrade", async () => {
   seedArtistAndRelease();
   db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    title, quality, library_slot
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)`).run(
     "tidal",
-    "album",
+    "release",
     "album-provider-1",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
     "Canonical Album",
-    "HIRES_LOSSLESS",
-    "stereo"
   );
   db.prepare(`INSERT INTO ProviderItems (
-    provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-    track_mbid, recording_mbid, title, quality, library_slot, match_evidence
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)`).run(
     "tidal",
     "track",
     "track-provider-1",
-    "artist-mbid",
-    "release-group-1",
-    "release-1",
-    "track-1",
-    "recording-1",
     "Track One",
-    "HIRES_LOSSLESS",
-    "stereo",
-    JSON.stringify({ albumProviderId: "album-provider-1" })
   );
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",

@@ -139,15 +139,24 @@ function seedCanonicalArtistGraph() {
     .get("video-recording-1") as { id: number };
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-      release_mbid, track_mbid, recording_mbid, title, library_slot, recording_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("tidal", "track", "provider-track-1", "artist-mbid", "release-group-1", "release-1", "track-1", "recording-1", "Track One", "stereo", null);
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
+  `).run(
+    "tidal",
+    "track",
+    "provider-track-1",
+    "Track One",
+  );
   db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_mbid, title, library_slot, recording_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run("tidal", "video", "provider-video-1", "artist-mbid", "video-recording-1", "Track One", "video", videoRecording.id);
+      provider, entity_type, provider_id, title
+    ) VALUES (?, ?, ?, ?)
+  `).run(
+    "tidal",
+    "video",
+    "provider-video-1",
+    "Track One",
+  );
 
   return {
     releaseGroupId: releaseGroup.id,

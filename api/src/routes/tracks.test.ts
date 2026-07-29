@@ -126,13 +126,15 @@ function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: n
     SELECT id, recording_id FROM Tracks WHERE mbid = 'track-mbid'
   `).get() as { id: number; recording_id: number };
   const providerRelease = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
-    VALUES ('tidal', 'release', 'tidal-album', 'Track Album')
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'release', 'tidal-album', 'Track Album')
     RETURNING id
   `).get() as { id: number };
   const providerTrack = db.prepare(`
-    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, popularity)
-    VALUES ('tidal', 'track', 'tidal-track', 'Canonical Track', 90)
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, popularity
+    ) VALUES ('tidal', 'track', 'tidal-track', 'Canonical Track', 90)
     RETURNING id
   `).get() as { id: number };
   const member = db.prepare(`

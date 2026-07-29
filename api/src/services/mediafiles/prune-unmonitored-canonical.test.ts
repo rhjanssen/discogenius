@@ -74,8 +74,9 @@ function seedLibraryGroup(rg: string, monitored: number, lock = 0) {
 function seedVideoRecording(monitored: number, providerId: string) {
   const info = db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video, monitored) VALUES (?, ?, ?, 1, ?)")
     .run(null, "A Video", "artist-mbid", monitored);
-  db.prepare(`INSERT INTO ProviderItems (provider, entity_type, provider_id, recording_id, title, library_slot)
-    VALUES ('tidal', 'video', ?, ?, 'A Video', 'video')`).run(providerId, Number(info.lastInsertRowid));
+  db.prepare(`INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title
+    ) VALUES ('tidal', 'video', ?, 'A Video')`).run(providerId, Number(info.lastInsertRowid));
 }
 
 let tfId = 0;

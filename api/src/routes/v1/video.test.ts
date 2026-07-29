@@ -154,12 +154,9 @@ test("video list sorts by provider popularity and maps provider artwork to local
   `).run();
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, recording_id, recording_mbid, title,
-      duration, asset_id, popularity, match_confidence
-    )
-    VALUES
-      ('tidal', 'video', 'provider-low', 1, 'recording-low', 'Low Popularity', 180, 'low-cover-id', 15, 1),
-      ('tidal', 'video', 'provider-high', 2, 'recording-high', 'High Popularity', 200, 'high-cover-id', 95, 1)
+      provider, entity_type, provider_id, title, duration_ms, cover_id, popularity
+    ) VALUES ('tidal', 'video', 'provider-low', 'Low Popularity', 180, 'low-cover-id', 15),
+    ('tidal', 'video', 'provider-high', 'High Popularity', 200, 'high-cover-id', 95)
   `).run();
 
   handler({

@@ -93,48 +93,31 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      album_id, title, quality, upc, release_date, library_slot
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title, upc, release_date
+    ) VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     "tidal",
-    "album",
-    "provider-album-1",
-    "artist-mbid-1",
-    "release-group-mbid-1",
-    "release-mbid-1",
+    "release",
     "provider-album-1",
     "Soundtrack Album From Wrong Provider",
-    "LOSSLESS",
     "987654321000",
     "2024-03-01",
-    "stereo",
   );
 
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, release_group_mbid, release_mbid,
-      track_mbid, recording_mbid, album_id, title, explicit, quality, isrc, duration, library_slot,
-      replay_gain, peak
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      provider, entity_type, provider_id, title, explicit, isrc, duration_ms, replay_gain, peak
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "tidal",
     "track",
     "provider-track-1",
-    "artist-mbid-1",
-    "release-group-mbid-1",
-    "release-mbid-1",
-    "track-mbid-1",
-    "recording-mbid-1",
-    "provider-album-1",
     "Canonical Song",
     1,
-    "LOSSLESS",
     "TESTISRC1234",
     181,
-    "stereo",
     -7.31,
-    0.967717
+    0.967717,
   );
 
   const inserted = dbModule.db.prepare(`

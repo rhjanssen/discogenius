@@ -194,9 +194,8 @@ test("download recovery scopes equal video IDs to the command provider", () => {
   const providerVideos = db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
-    ) VALUES
-      ('tidal', 'video', '99', 'Tidal video'),
-      ('apple-music', 'video', '99', 'Apple video')
+    ) VALUES ('tidal', 'video', '99', 'Tidal video'),
+    ('apple-music', 'video', '99', 'Apple video')
     RETURNING id, provider
   `).all() as Array<{ id: number; provider: string }>;
   const providerVideoByProvider = new Map(
