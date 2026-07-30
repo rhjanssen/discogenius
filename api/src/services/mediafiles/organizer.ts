@@ -191,7 +191,7 @@ type OrganizeRequest = {
   providerId?: string;
   provider?: string | null;
   releaseGroupMbid?: string | null;
-  editionMbid?: string | null;
+  releaseMbid?: string | null;
   canonicalTrackMbid?: string | null;
   canonicalRecordingMbid?: string | null;
   albumId?: string | null;
@@ -253,7 +253,7 @@ type CanonicalAlbumImportContext = {
   provider: string;
   providerAlbumId: string;
   releaseGroupMbid: string | null;
-  editionMbid: string | null;
+  releaseMbid: string | null;
   slot: "stereo" | "spatial";
   quality: string | null;
   title: string | null;
@@ -471,14 +471,14 @@ export class OrganizerService {
     // Job acquisition-plan identity is exact. Provider IDs are never parsed as
     // composites or position-mapped to a canonical release.
     const releaseGroupMbid = String(raw.releaseGroupMbid || raw.albumId || "").trim();
-    const editionMbid = String(raw.editionMbid || "").trim();
+    const releaseMbid = String(raw.releaseMbid || "").trim();
     const requestedSlot = String(raw.slot || "").trim().toLowerCase();
     const row = db.prepare(`
       SELECT
         pi.provider AS provider,
         pi.provider_id AS providerAlbumId,
         rg.mbid AS releaseGroupMbid,
-        selected_release.mbid AS editionMbid,
+        selected_release.mbid AS releaseMbid,
         COALESCE(
           NULLIF(?, ''),
           CASE WHEN EXISTS (
@@ -570,12 +570,12 @@ export class OrganizerService {
       providerAlbumId,
       releaseGroupMbid,
       releaseGroupMbid,
-      editionMbid,
-      editionMbid,
+      releaseMbid,
+      releaseMbid,
       requestedSlot || "stereo",
     ) as any;
 
-    if (!row?.releaseGroupMbid && !row?.editionMbid) {
+    if (!row?.releaseGroupMbid && !row?.releaseMbid) {
       return null;
     }
 
@@ -590,7 +590,7 @@ export class OrganizerService {
       provider: String(row.provider || provider),
       providerAlbumId,
       releaseGroupMbid: row.releaseGroupMbid || null,
-      editionMbid: row.editionMbid || null,
+      releaseMbid: row.releaseMbid || null,
       slot,
       quality: row.quality || null,
       title: row.title || null,
@@ -886,7 +886,7 @@ export class OrganizerService {
   private static resolveMatchedCanonicalAlbumTrackRow(params: {
     provider: string;
     trackId: string;
-    editionMbid: string;
+    releaseMbid: string;
     fallbackAlbumId: string;
     fallbackAlbumIds?: string[];
     fallbackArtistId: string;
@@ -1911,8 +1911,8 @@ export class OrganizerService {
       const jobReleaseGroupMbid = String(raw.releaseGroupMbid || "").trim()
         || canonicalContext?.releaseGroupMbid
         || null;
-      const jobReleaseMbid = String(raw.editionMbid || "").trim()
-        || canonicalContext?.editionMbid
+      const jobReleaseMbid = String(raw.releaseMbid || "").trim()
+        || canonicalContext?.releaseMbid
         || null;
       const artistContext = this.resolveCanonicalArtistForAlbum(album);
       const artistId = artistContext.artistId;
@@ -1984,7 +1984,7 @@ export class OrganizerService {
           const trackRow = this.resolveMatchedCanonicalAlbumTrackRow({
             provider: canonicalContext?.provider || streamingProviderId,
             trackId,
-            editionMbid: jobReleaseMbid,
+            releaseMbid: jobReleaseMbid,
             fallbackAlbumId: albumIds[0],
             fallbackAlbumIds: albumIds,
             fallbackArtistId: artistId,
@@ -2081,7 +2081,7 @@ export class OrganizerService {
               t.position AS track_number,
               t.medium_position AS volume_number
             FROM Tracks t
-            WHERE t.edition_mbid = ?
+            WHERE t.release_mbid = ?
               AND (
                 (? IS NOT NULL AND t.mbid = ?)
                 OR (? IS NOT NULL AND t.recording_mbid = ?)
@@ -2129,7 +2129,7 @@ export class OrganizerService {
             ? this.resolveMatchedCanonicalAlbumTrackRow({
                 provider: canonicalContext?.provider || streamingProviderId,
                 trackId,
-                editionMbid: fallbackReleaseMbid,
+                releaseMbid: fallbackReleaseMbid,
                 fallbackAlbumId: albumIds[0],
                 fallbackAlbumIds: albumIds,
                 fallbackArtistId: artistId,
@@ -2576,7 +2576,7 @@ export class OrganizerService {
         try {
           await saveAlbumNfoFile(jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid || albumIds[0], albumNfoPath, {
             releaseGroupMbid: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid,
-            editionMbid: jobReleaseMbid || canonicalContext?.editionMbid,
+            releaseMbid: jobReleaseMbid || canonicalContext?.releaseMbid,
             librarySlot: canonicalContext?.slot || (isSpatial ? "spatial" : "stereo"),
             provider: streamingProviderId,
             providerAlbumId: albumIds[0],
@@ -2737,7 +2737,7 @@ export class OrganizerService {
       // Catalog-first: resolve title/position via the Tracks table on the
       // best-known release (job-supplied release mbid, else the album's own).
       // Never use match_evidence or live provider-native disc/track numbers.
-      const trackPositionReleaseMbid = String(raw.editionMbid || "").trim() || album.mbid || null;
+      const trackPositionReleaseMbid = String(raw.releaseMbid || "").trim() || album.mbid || null;
       // Release-track identity comes from the accepted typed track match, scoped
       // to the release this download targets. Title/position are canonical; the
       // provider row supplies only its own version/explicit facts.
@@ -2760,7 +2760,7 @@ export class OrganizerService {
          AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks t
           ON t.id = track_match.track_id
-         AND (? IS NULL OR t.edition_mbid = ?)
+         AND (? IS NULL OR t.release_mbid = ?)
         LEFT JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id
         LEFT JOIN ArtistMetadata canonical_artist
           ON canonical_artist.id = canonical_recording.artist_metadata_id
@@ -2790,7 +2790,7 @@ export class OrganizerService {
       const targetRoot = isSpatial ? spatialRoot : musicRoot;
 
       const jobReleaseGroupMbid = String(raw.releaseGroupMbid || "").trim() || null;
-      const jobReleaseMbid = String(raw.editionMbid || "").trim() || null;
+      const jobReleaseMbid = String(raw.releaseMbid || "").trim() || null;
       const jobCanonicalTrackMbid = String(raw.canonicalTrackMbid || "").trim() || null;
       const jobCanonicalRecordingMbid = String(raw.canonicalRecordingMbid || "").trim() || null;
       const jobSlot = String(raw.slot || "").trim() || null;
@@ -3155,7 +3155,7 @@ export class OrganizerService {
         try {
           await saveAlbumNfoFile(trackIdentity.canonicalReleaseGroupMbid || libraryAlbumId, albumNfoPath, {
             releaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid,
-            editionMbid: trackIdentity.canonicalReleaseMbid,
+            releaseMbid: trackIdentity.canonicalReleaseMbid,
             librarySlot: trackIdentity.librarySlot,
             provider: streamingProviderId,
             providerAlbumId: albumId,

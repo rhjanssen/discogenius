@@ -49,7 +49,7 @@ test("canonical provider track resolution follows the current normalized plan", 
   `).get(artist.id) as { id: number };
   const track = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       title, medium_position, position
     ) VALUES ('track-1', ?, 'release-1', ?, 'recording-1', 'Target Track', 1, 2)
     RETURNING id

@@ -43,7 +43,7 @@ function seedCanonicalTrackFileOnly() {
     VALUES (?, ?, ?, ?)
   `).run("recording-mbid", "Only High Quality Track", "artist-mbid", 0);
   db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-mbid", "release-mbid", "recording-mbid", "Only High Quality Track", 1, 1);
   db.prepare(`

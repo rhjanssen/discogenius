@@ -28,7 +28,7 @@ type ArtistRow = {
 
 type ProviderAlbumOffer = {
     id: string;
-    edition_mbid: string | null;
+    release_mbid: string | null;
     release_group_mbid: string | null;
     artist_mbid: string | null;
     title: string | null;
@@ -123,7 +123,7 @@ async function searchMusicBrainzArtists(name: string): Promise<MusicBrainzArtist
 /**
  * Metadata identity is now resolved against the canonical MusicBrainz/Servarr Metadata Server
  * graph. Provider catalog tables are gone: an album/track's canonical link lives
- * on its `ProviderItems` offer (release_group_mbid / edition_mbid / recording_mbid /
+ * on its `ProviderItems` offer (release_group_mbid / release_mbid / recording_mbid /
  * recording_id), populated by the release-group matcher and by-position mapping in
  * RefreshAlbumService.refreshTracks. This service therefore reports identity from
  * those offers and ensures the canonical release-group row is synced; it no longer
@@ -224,7 +224,7 @@ export class MetadataIdentityService {
         const offer = db.prepare(`
             SELECT
                 a.provider_id AS id,
-                a.edition_mbid AS edition_mbid,
+                a.release_mbid AS release_mbid,
                 a.release_group_mbid AS release_group_mbid,
                 a.artist_mbid AS artist_mbid,
                 a.title AS title
@@ -258,7 +258,7 @@ export class MetadataIdentityService {
             }
 
             const result = this.result("album", albumId, "verified", 1, "provider-items-canonical-link", undefined, {
-                editionId: offer.edition_mbid,
+                editionId: offer.release_mbid,
                 releaseGroupId: offer.release_group_mbid,
             });
             recordIdentityStatus(result, options.provider);

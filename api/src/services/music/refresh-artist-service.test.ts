@@ -40,7 +40,7 @@ after(() => {
 function seedSoundCloudMixtapeCatalog() {
   const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
   const releaseGroupMbid = "375227dd-11c1-4fec-afc0-f4c37a6de604";
-  const editionMbid = "b8f50118-3d3c-4826-a4b3-cf6228a97515";
+  const releaseMbid = "b8f50118-3d3c-4826-a4b3-cf6228a97515";
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run(artistMbid, "Bastille");
   dbModule.db.prepare(`
@@ -57,7 +57,7 @@ function seedSoundCloudMixtapeCatalog() {
     INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
     ) VALUES (?, ?, ?, ?, 'Official', '2012-02-17', 1, 2)
-  `).run(editionMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
   const canonicalTracks = [
     { id: "sc-track-mbid-1", recording: "sc-recording-mbid-1", title: "Adagio for Strings", duration: 239 },
     { id: "sc-track-mbid-2", recording: "sc-recording-mbid-2", title: "Falling", duration: 225 },
@@ -67,20 +67,20 @@ function seedSoundCloudMixtapeCatalog() {
       .run(track.recording, track.title, track.duration * 1000);
     dbModule.db.prepare(`
       INSERT INTO Tracks (
-        mbid, recording_mbid, edition_mbid, title, length_ms,
+        mbid, recording_mbid, release_mbid, title, length_ms,
         medium_position, position, number
       ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
     `).run(
       track.id,
       track.recording,
-      editionMbid,
+      releaseMbid,
       track.title,
       track.duration * 1000,
       index + 1,
       String(index + 1),
     );
   });
-  return { artistMbid, releaseGroupMbid, editionMbid, canonicalTracks };
+  return { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks };
 }
 
 test("bulk provider tracklists are accepted only when the album is complete", () => {
@@ -218,7 +218,7 @@ test("hybrid candidates retain discovery provenance without publishing direct av
       status: "candidate",
       confidence: 0.24,
       method: "musicbrainz-recording-isrc",
-      editionMbid: "release-mbid-candidate",
+      releaseMbid: "release-mbid-candidate",
       releaseGroup: {
         mbid: "release-group-mbid-candidate",
         title: "Canonical album",
@@ -228,7 +228,7 @@ test("hybrid candidates retain discovery provenance without publishing direct av
   );
 
   const offer = dbModule.db.prepare(`
-    SELECT artist_mbid, release_group_mbid, edition_mbid,
+    SELECT artist_mbid, release_group_mbid, release_mbid,
            discovered_from_artist_mbid, match_status
     FROM ProviderItems
     WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
@@ -244,14 +244,14 @@ test("hybrid candidates retain discovery provenance without publishing direct av
 
   assert.equal(offer.artist_mbid, artistMbid);
   assert.equal(offer.release_group_mbid, "release-group-mbid-candidate");
-  assert.equal(offer.edition_mbid, "release-mbid-candidate");
+  assert.equal(offer.release_mbid, "release-mbid-candidate");
   assert.equal(offer.discovered_from_artist_mbid, artistMbid);
   assert.equal(offer.match_status, "candidate");
   assert.equal(directMatchCount.count, 0);
 });
 
 test("stored SoundCloud playlist coverage is revalidated and its permalink is backfilled", async () => {
-  const { artistMbid, releaseGroupMbid, editionMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
   const providerAlbumId = "220003151";
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
@@ -319,13 +319,13 @@ test("stored SoundCloud playlist coverage is revalidated and its permalink is ba
 });
 
 test("all durable SoundCloud playlist offers are revalidated after the first valid one", async () => {
-  const { artistMbid, releaseGroupMbid, editionMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
   const validId = "110003151";
   const staleId = "220003151";
   const insertOffer = dbModule.db.prepare(`
     INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title, quality, artist_mbid,
-      release_group_mbid, edition_mbid, match_status, match_confidence,
+      release_group_mbid, release_mbid, match_status, match_confidence,
       match_method, availability, updated_at
     ) VALUES (
       'soundcloud', 'album', ?, ?, 'SOUNDCLOUD_LOSSY', ?, ?, ?,
@@ -337,7 +337,7 @@ test("all durable SoundCloud playlist offers are revalidated after the first val
     "Other People's Heartache",
     artistMbid,
     releaseGroupMbid,
-    editionMbid,
+    releaseMbid,
     "2030-01-01 00:00:00",
   );
   insertOffer.run(
@@ -345,7 +345,7 @@ test("all durable SoundCloud playlist offers are revalidated after the first val
     "Other People's Heartache",
     artistMbid,
     releaseGroupMbid,
-    editionMbid,
+    releaseMbid,
     "2020-01-01 00:00:00",
   );
 
@@ -401,7 +401,7 @@ test("all durable SoundCloud playlist offers are revalidated after the first val
 });
 
 test("empty stored SoundCloud playlist is rejected and a covering replacement is selected", async () => {
-  const { artistMbid, releaseGroupMbid, editionMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
+  const { artistMbid, releaseGroupMbid, releaseMbid, canonicalTracks } = seedSoundCloudMixtapeCatalog();
   const staleId = "220003151";
   dbModule.db.prepare(`
     INSERT INTO ProviderItems (
@@ -516,7 +516,7 @@ test("provider release-group matching passes spatial quality and release disambi
 
   const match = matches.get("291445075");
   assert.equal(match?.status, "verified");
-  assert.equal(match?.editionMbid, "dolby-atmos-release");
+  assert.equal(match?.releaseMbid, "dolby-atmos-release");
 });
 
 test("matched provider release discovery stores normalized facts without publishing a trackless typed edge", () => {
@@ -538,7 +538,7 @@ test("matched provider release discovery stores normalized facts without publish
         status: "verified",
         confidence: 1,
         method: "musicbrainz-release-upc",
-        editionMbid: "release-mbid-1",
+        releaseMbid: "release-mbid-1",
         releaseGroup: {
           mbid: "release-group-mbid-1",
           title: "Doom Days",
@@ -551,19 +551,19 @@ test("matched provider release discovery stores normalized facts without publish
   );
 
   const row = dbModule.db.prepare(`
-    SELECT artist_mbid, release_group_mbid, edition_mbid, match_status
+    SELECT artist_mbid, release_group_mbid, release_mbid, match_status
     FROM ProviderItems
     WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
   `).get(album.provider_id) as {
     artist_mbid: string | null;
     release_group_mbid: string | null;
-    edition_mbid: string | null;
+    release_mbid: string | null;
     match_status: string;
   };
 
   assert.equal(row.artist_mbid, artistMbid);
   assert.equal(row.release_group_mbid, "release-group-mbid-1");
-  assert.equal(row.edition_mbid, "release-mbid-1");
+  assert.equal(row.release_mbid, "release-mbid-1");
   assert.equal(row.match_status, "verified");
 
   const normalized = dbModule.db.prepare(`
@@ -640,7 +640,7 @@ test("matched provider offers persist the best compatible MusicBrainz release ve
         status: "verified",
         confidence: 1,
         method: "musicbrainz-release-group-title-year-type-track-count",
-        editionMbid: null,
+        releaseMbid: null,
         releaseGroup: {
           mbid: releaseGroupMbid,
           title: "Give Me the Future",
@@ -654,17 +654,17 @@ test("matched provider offers persist the best compatible MusicBrainz release ve
   );
 
   const row = dbModule.db.prepare(`
-    SELECT release_group_mbid, edition_mbid, match_status
+    SELECT release_group_mbid, release_mbid, match_status
     FROM ProviderItems
     WHERE provider = 'tidal' AND entity_type = 'album' AND provider_id = ?
   `).get(album.provider_id) as {
     release_group_mbid: string | null;
-    edition_mbid: string | null;
+    release_mbid: string | null;
     match_status: string;
   };
 
   assert.equal(row.release_group_mbid, releaseGroupMbid);
-  assert.equal(row.edition_mbid, expandedReleaseMbid);
+  assert.equal(row.release_mbid, expandedReleaseMbid);
   assert.equal(row.match_status, "verified");
 });
 

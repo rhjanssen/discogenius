@@ -520,7 +520,7 @@ test("download queue query resolves canonical track provider offers without Prov
     db.prepare("INSERT INTO Recordings (mbid, title) VALUES (?, ?)")
         .run("recording-track", "Canonical Recording");
     db.prepare(`
-        INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, position, medium_position)
+        INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position)
         VALUES (?, ?, ?, ?, ?, ?)
     `).run("track-mbid-1", "release-track", "recording-track", "Canonical Track", 1, 1);
     db.prepare(`

@@ -495,7 +495,7 @@ export class DiskScanService {
                     canonical_release_group_mbid = COALESCE(canonical_release_group_mbid, ?),
                     verified_at = CURRENT_TIMESTAMP
                 WHERE id = ?
-            `).run(link.trackMbid, link.recordingMbid, link.editionMbid, link.releaseGroupMbid, row.id);
+            `).run(link.trackMbid, link.recordingMbid, link.releaseMbid, link.releaseGroupMbid, row.id);
             healed++;
             if (link.releaseGroupMbid) touchedReleaseGroups.add(link.releaseGroupMbid);
         }

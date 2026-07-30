@@ -395,10 +395,10 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
         }
     };
 
-    const handleSelectReleaseVersion = (editionMbid: string) => {
-        setSelectedReleaseMbid(editionMbid);
+    const handleSelectReleaseVersion = (releaseMbid: string) => {
+        setSelectedReleaseMbid(releaseMbid);
         if (selectedMatch) {
-            void handleSelectMatch(selectedMatch, editionMbid);
+            void handleSelectMatch(selectedMatch, releaseMbid);
         }
     };
 

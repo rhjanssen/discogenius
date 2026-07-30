@@ -51,7 +51,7 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   `).get(artist.id) as { id: number };
   const track = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       medium_position, position, title
     ) VALUES ('track-1', ?, 'release-1', ?, 'recording-1', 1, 1, 'Index Track')
     RETURNING id

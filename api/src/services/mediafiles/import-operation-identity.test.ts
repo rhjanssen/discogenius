@@ -244,7 +244,7 @@ test("a reported row that is not a track file fails closed", () => {
 
 // ── Issue 3: canonical group from job context, else agreement ───────────────
 
-function seedCanonicalRelease(groupMbid: string, editionMbid: string): void {
+function seedCanonicalRelease(groupMbid: string, releaseMbid: string): void {
   db.prepare("INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES ('rc-artist', 'RC Artist')").run();
   db.prepare(`
     INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title, primary_type)
@@ -253,7 +253,7 @@ function seedCanonicalRelease(groupMbid: string, editionMbid: string): void {
   db.prepare(`
     INSERT OR IGNORE INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
     VALUES (?, ?, 'rc-artist', ?, 1)
-  `).run(editionMbid, groupMbid, editionMbid);
+  `).run(releaseMbid, groupMbid, releaseMbid);
 }
 
 test("an explicit releaseGroupMbid is used directly", () => {
@@ -263,16 +263,16 @@ test("an explicit releaseGroupMbid is used directly", () => {
   );
 });
 
-test("an explicit editionMbid resolves to its group", () => {
+test("an explicit releaseMbid resolves to its group", () => {
   seedCanonicalRelease("rg-from-release", "rel-from-release");
   assert.equal(
-    releaseGroupMbidFromJobContext({ editionMbid: "rel-from-release" }),
+    releaseGroupMbidFromJobContext({ releaseMbid: "rel-from-release" }),
     "rg-from-release",
   );
 });
 
-test("a editionMbid not in the catalogue yields null rather than a guess", () => {
-  assert.equal(releaseGroupMbidFromJobContext({ editionMbid: "rel-unknown" }), null);
+test("a releaseMbid not in the catalogue yields null rather than a guess", () => {
+  assert.equal(releaseGroupMbidFromJobContext({ releaseMbid: "rel-unknown" }), null);
 });
 
 test("no job context and disagreeing accepted matches reconciles by provider, not an arbitrary group", () => {
@@ -283,8 +283,8 @@ test("no job context and disagreeing accepted matches reconciles by provider, no
     VALUES ('tidal', 'release', 'prov-album-1', 'Ambiguous', 'available')
     RETURNING id
   `).get() as { id: number }).id);
-  for (const editionMbid of ["rel-one", "rel-two"]) {
-    const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(editionMbid) as { id: number };
+  for (const releaseMbid of ["rel-one", "rel-two"]) {
+    const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(releaseMbid) as { id: number };
     db.prepare(`
       INSERT INTO ProviderEditionMatches (
         provider_edition_item_id, edition_id, relation, match_state, decision_source,
@@ -309,7 +309,7 @@ test("job context wins over provider matches for the reconciled group", () => {
   seedCanonicalRelease("rg-planned", "rel-planned");
   seedCanonicalRelease("rg-other", "rel-other");
   assert.equal(
-    releaseGroupMbidFromJobContext({ releaseGroupMbid: "rg-planned", editionMbid: "rel-other" }),
+    releaseGroupMbidFromJobContext({ releaseGroupMbid: "rg-planned", releaseMbid: "rel-other" }),
     "rg-planned",
     "the plan's own group beats anything re-derived",
   );

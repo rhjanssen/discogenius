@@ -190,7 +190,7 @@ function seedCanonicalLibraryFiles() {
     dbModule.db.prepare("INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date) VALUES(?, ?, ?, ?, ?)")
         .run("recording-mbid-300", "artist-mbid-100", "Canonical Track", 0, "2024-02-03");
     dbModule.db.prepare(`
-        INSERT INTO Tracks(mbid, edition_mbid, recording_mbid, medium_position, position, title, length_ms)
+        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-mbid-300", "release-mbid-200", "recording-mbid-300", 1, 1, "Canonical Track", 180000);
     const artistMetadata = dbModule.db.prepare(`

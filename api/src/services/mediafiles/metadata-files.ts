@@ -24,7 +24,7 @@ type AlbumProviderItemRow = {
     provider_id: string;
     artist_mbid: string | null;
     release_group_mbid: string | null;
-    edition_mbid: string | null;
+    release_mbid: string | null;
     provider_title: string | null;
     provider_version: string | null;
     provider_quality: string | null;
@@ -61,7 +61,7 @@ type VideoProviderItemRow = {
     provider_id: string;
     artist_mbid: string | null;
     release_group_mbid: string | null;
-    edition_mbid: string | null;
+    release_mbid: string | null;
     recording_mbid: string | null;
     album_id: string | null;
     provider_title: string | null;
@@ -168,7 +168,7 @@ function loadAlbumProviderItem(albumId: string, provider?: string | null): Album
             pi.provider_id,
             artist_metadata.mbid AS artist_mbid,
             rg.mbid AS release_group_mbid,
-            release.mbid AS edition_mbid,
+            release.mbid AS release_mbid,
             pi.title AS provider_title,
             pi.version AS provider_version,
             COALESCE(variant.provider_quality_label, variant.quality_class) AS provider_quality,
@@ -231,7 +231,7 @@ function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
             pi.provider_id,
             artist_metadata.mbid AS artist_mbid,
             album.mbid AS release_group_mbid,
-            release.mbid AS edition_mbid,
+            release.mbid AS release_mbid,
             recording.mbid AS recording_mbid,
             CAST(album.id AS TEXT) AS album_id,
             pi.title AS provider_title,
@@ -763,7 +763,7 @@ export async function saveArtistNfoFile(
 
 export type AlbumNfoOptions = {
     releaseGroupMbid?: string | null;
-    editionMbid?: string | null;
+    releaseMbid?: string | null;
     librarySlot?: string | null;
     provider?: string | null;
     providerAlbumId?: string | null;
@@ -889,7 +889,7 @@ export async function saveAlbumNfoFile(
         selected_release_mbid?: string | null;
     } | undefined;
     const canonicalReleaseMbid = textOrNull(
-        options.editionMbid,
+        options.releaseMbid,
         selectedLibrary?.selected_release_mbid,
         (db.prepare(`
             SELECT mbid
@@ -908,7 +908,7 @@ export async function saveAlbumNfoFile(
             release_group.review_text,
             release_group.overview,
             release_group.genres,
-            release.mbid AS edition_mbid,
+            release.mbid AS release_mbid,
             release.date,
             release.barcode,
             release.label,
@@ -929,7 +929,7 @@ export async function saveAlbumNfoFile(
         review_text: string | null;
         overview: string | null;
         genres: string | null;
-        edition_mbid: string | null;
+        release_mbid: string | null;
         date: string | null;
         barcode: string | null;
         label: string | null;
@@ -949,7 +949,7 @@ export async function saveAlbumNfoFile(
         ? artistCredits.map((entry) => entry.credited_name)
         : [canonicalAlbum.artist_name || "Unknown Artist"];
 
-    const tracks = canonicalAlbum.edition_mbid
+    const tracks = canonicalAlbum.release_mbid
         ? db.prepare(`
             SELECT
                 track.title,
@@ -961,9 +961,9 @@ export async function saveAlbumNfoFile(
                 recording.isrcs AS recording_isrcs
             FROM Tracks track
             LEFT JOIN Recordings recording ON recording.mbid = track.recording_mbid
-            WHERE track.edition_mbid = ?
+            WHERE track.release_mbid = ?
             ORDER BY COALESCE(track.medium_position, 1), COALESCE(track.position, 0), track.id
-        `).all(canonicalAlbum.edition_mbid)
+        `).all(canonicalAlbum.release_mbid)
         : [];
     const nfoTracks = tracks as Array<{
         title: string;
@@ -1010,11 +1010,11 @@ export async function saveAlbumNfoFile(
         ...artists.map((artistName: unknown) => xmlElement("albumartist", artistName)),
         ...albumGenres.map((genre) => xmlElement("genre", genre)),
         ...albumLabels.map((labelName) => xmlElement("label", labelName)),
-        xmlElement("musicbrainzalbumid", canonicalAlbum.edition_mbid),
+        xmlElement("musicbrainzalbumid", canonicalAlbum.release_mbid),
         xmlElement("musicbrainzreleasegroupid", canonicalAlbum.release_group_mbid),
         xmlElement("musicbrainzalbumartistid", canonicalAlbum.artist_mbid),
         xmlElement("upc", canonicalAlbum.barcode),
-        xmlUniqueId("MusicBrainzAlbum", canonicalAlbum.edition_mbid, true),
+        xmlUniqueId("MusicBrainzAlbum", canonicalAlbum.release_mbid, true),
         xmlUniqueId("MusicBrainzReleaseGroup", canonicalAlbum.release_group_mbid),
         xmlUniqueId("MusicBrainzAlbumArtist", canonicalAlbum.artist_mbid),
         ...Array.from(providerUniqueIds.entries()).map(([key, providerAlbumId]) => {
@@ -1067,11 +1067,11 @@ export async function saveVideoNfoFile(
         : null;
     const albumRow = albumItem ? {
         title: albumItem.release_group_title || albumItem.release_title || albumItem.provider_title,
-        mbid: albumItem.edition_mbid,
+        mbid: albumItem.release_mbid,
         mb_release_group_id: albumItem.release_group_mbid,
     } : localVideo ? {
         title: localVideo.album_title,
-        mbid: localVideo.album_mbid || localVideo.edition_mbid,
+        mbid: localVideo.album_mbid || localVideo.release_mbid,
         mb_release_group_id: localVideo.release_group_mbid,
     } : undefined;
     const year = String(videoReleaseDate || "").match(/^\d{4}/)?.[0] || "";

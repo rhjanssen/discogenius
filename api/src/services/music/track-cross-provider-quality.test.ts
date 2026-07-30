@@ -74,11 +74,11 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   `).run("rel-atmos", "rg-1", "artist-1", "Atmos");
   db.prepare(`INSERT INTO Recordings (mbid, title) VALUES (?, ?)`).run("rec-1", "Song");
   db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, position, medium_position, length_ms)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
     VALUES (?, ?, ?, ?, 1, 1, 180000)
   `).run("track-1", "rel-stereo", "rec-1", "Song");
   db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, position, medium_position, length_ms)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
     VALUES (?, ?, ?, ?, 1, 1, 180000)
   `).run("track-atmos", "rel-atmos", "rec-1", "Song");
 
@@ -136,7 +136,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
 
   const seedSelection = (options: {
     libraryId: number;
-    editionMbid: string;
+    releaseMbid: string;
     trackMbid: string;
     provider: string;
     providerEditionId: string;
@@ -145,7 +145,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     quality: string;
   }) => {
     const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
-      .get(options.editionMbid) as { id: number };
+      .get(options.releaseMbid) as { id: number };
     const track = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = ?")
       .get(options.trackMbid) as { id: number; recording_id: number };
     const providerRelease = db.prepare(`
@@ -230,7 +230,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
 
   seedSelection({
     libraryId: stereoLibrary.id,
-    editionMbid: "rel-stereo",
+    releaseMbid: "rel-stereo",
     trackMbid: "track-1",
     provider: "tidal",
     providerEditionId: "tidal-album",
@@ -240,7 +240,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   });
   seedSelection({
     libraryId: spatialLibrary.id,
-    editionMbid: "rel-atmos",
+    releaseMbid: "rel-atmos",
     trackMbid: "track-atmos",
     provider: "apple-music",
     providerEditionId: "apple-atmos",

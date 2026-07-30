@@ -18,7 +18,7 @@ interface PlanHeader {
   library_name: string;
   root_path: string;
   edition_id: number;
-  edition_mbid: string;
+  release_mbid: string;
   release_group_mbid: string;
   album_title: string;
   artist_name: string;
@@ -79,7 +79,7 @@ export function buildAcquisitionDownloadCommand(
       library.name AS library_name,
       library.root_path,
       release.id AS edition_id,
-      release.mbid AS edition_mbid,
+      release.mbid AS release_mbid,
       release_group.mbid AS release_group_mbid,
       release_group.title AS album_title,
       COALESCE(primary_credit.credited_name, primary_artist.name, 'Unknown Artist') AS artist_name
@@ -198,7 +198,7 @@ export function buildAcquisitionDownloadCommand(
       provider: header.provider,
       providerId: primarySource.provider_release_id,
       releaseGroupMbid: header.release_group_mbid,
-      editionMbid: header.edition_mbid,
+      releaseMbid: header.release_mbid,
       albumId: header.release_group_mbid,
       libraryId: header.library_id,
       acquisitionPlanId: header.plan_id,

@@ -38,15 +38,15 @@ export type CatalogTrackLink = {
     /** Tracks.recording_mbid (= canonical_recording_mbid). */
     recordingMbid: string;
     /** The release the resolved track belongs to (= canonical_release_mbid). */
-    editionMbid: string;
+    releaseMbid: string;
     /** Owning release group (= canonical_release_group_mbid), when known. */
     releaseGroupMbid: string | null;
 };
 
-function releaseGroupForRelease(editionMbid: string): string | null {
+function releaseGroupForRelease(releaseMbid: string): string | null {
     const row = db.prepare(
         "SELECT release_group_mbid FROM AlbumEditions WHERE mbid = ? LIMIT 1",
-    ).get(editionMbid) as { release_group_mbid: string | null } | undefined;
+    ).get(releaseMbid) as { release_group_mbid: string | null } | undefined;
     return row?.release_group_mbid ? String(row.release_group_mbid) : null;
 }
 
@@ -104,26 +104,26 @@ export function resolveCatalogTrackFromEmbeddedMbids(
     const recordingMbid = tags.musicbrainzRecordingId?.trim() || null;
     const embeddedReleaseMbid = tags.musicbrainzAlbumId?.trim() || null;
 
-    type AnchorRow = { mbid: string; recording_mbid: string; edition_mbid: string };
+    type AnchorRow = { mbid: string; recording_mbid: string; release_mbid: string };
     let anchor: AnchorRow | undefined;
 
     if (releaseTrackMbid) {
         anchor = db.prepare(
-            "SELECT mbid, recording_mbid, edition_mbid FROM Tracks WHERE mbid = ? LIMIT 1",
+            "SELECT mbid, recording_mbid, release_mbid FROM Tracks WHERE mbid = ? LIMIT 1",
         ).get(releaseTrackMbid) as AnchorRow | undefined;
     }
     if (!anchor && recordingMbid && embeddedReleaseMbid) {
         anchor = db.prepare(`
-            SELECT mbid, recording_mbid, edition_mbid
+            SELECT mbid, recording_mbid, release_mbid
             FROM Tracks
-            WHERE edition_mbid = ? AND recording_mbid = ?
+            WHERE release_mbid = ? AND recording_mbid = ?
             ORDER BY medium_position, position
             LIMIT 1
         `).get(embeddedReleaseMbid, recordingMbid) as AnchorRow | undefined;
     }
     if (!anchor) return null;
 
-    const releaseGroupMbid = releaseGroupForRelease(anchor.edition_mbid);
+    const releaseGroupMbid = releaseGroupForRelease(anchor.release_mbid);
 
     // The file's own embedded release wins whenever that release is itself
     // selected in a library of this class — a library may select several
@@ -133,13 +133,13 @@ export function resolveCatalogTrackFromEmbeddedMbids(
     // recording. Anything ambiguous keeps the embedded anchor untouched.
     if (releaseGroupMbid && anchor.recording_mbid) {
         const selectedReleases = selectedReleasesForGroup(releaseGroupMbid, preferredSlot);
-        const embeddedIsSelected = selectedReleases.has(anchor.edition_mbid);
+        const embeddedIsSelected = selectedReleases.has(anchor.release_mbid);
         if (!embeddedIsSelected && selectedReleases.size === 1) {
             const [selectedRelease] = [...selectedReleases];
             const onSelected = db.prepare(`
-                SELECT mbid, recording_mbid, edition_mbid
+                SELECT mbid, recording_mbid, release_mbid
                 FROM Tracks
-                WHERE edition_mbid = ? AND recording_mbid = ?
+                WHERE release_mbid = ? AND recording_mbid = ?
                 ORDER BY medium_position, position
             `).all(selectedRelease, anchor.recording_mbid) as AnchorRow[];
             // A recording appearing twice on the target release (e.g. a reprise)
@@ -148,7 +148,7 @@ export function resolveCatalogTrackFromEmbeddedMbids(
                 return {
                     trackMbid: onSelected[0].mbid,
                     recordingMbid: onSelected[0].recording_mbid,
-                    editionMbid: onSelected[0].edition_mbid,
+                    releaseMbid: onSelected[0].release_mbid,
                     releaseGroupMbid,
                 };
             }
@@ -158,7 +158,7 @@ export function resolveCatalogTrackFromEmbeddedMbids(
     return {
         trackMbid: anchor.mbid,
         recordingMbid: anchor.recording_mbid,
-        editionMbid: anchor.edition_mbid,
+        releaseMbid: anchor.release_mbid,
         releaseGroupMbid,
     };
 }
@@ -583,7 +583,7 @@ export function matchAudioFileByMetadata(
     const preferredAlbumIds = folderAlbumIds(filePath, artistId, tags);
     const isrc = firstIsrc(tags.isrc);
     const recordingMbid = tags.musicbrainzRecordingId?.trim() || null;
-    const editionMbid = tags.musicbrainzAlbumId?.trim() || null;
+    const releaseMbid = tags.musicbrainzAlbumId?.trim() || null;
 
     // Authoritative catalog identity from the file's own embedded MB IDs. This is
     // independent of whether a provider offer still exists, so it both fills the
@@ -594,7 +594,7 @@ export function matchAudioFileByMetadata(
         ? {
             canonicalTrackMbid: catalogLink.trackMbid,
             canonicalRecordingMbid: catalogLink.recordingMbid,
-            canonicalReleaseMbid: catalogLink.editionMbid,
+            canonicalReleaseMbid: catalogLink.releaseMbid,
             canonicalReleaseGroupMbid: catalogLink.releaseGroupMbid,
         }
         : {};
@@ -603,7 +603,7 @@ export function matchAudioFileByMetadata(
     // Discogenius-tagged files), resolve directly against the catalog via
     // TrackFiles rather than walking ProviderItems. This makes rescans O(1) for
     // already-tagged content.
-    if (recordingMbid && editionMbid) {
+    if (recordingMbid && releaseMbid) {
         // TrackFiles has no album_id column (dropped in the schema-split
         // migration) — the release-group MBID is the album key here.
         const directHit = db.prepare(`
@@ -618,7 +618,7 @@ export function matchAudioFileByMetadata(
               AND (tf.library_slot IS NULL OR tf.library_slot = ?)
             ORDER BY tf.verified_at DESC, tf.id DESC
             LIMIT 1
-        `).get(artistId, recordingMbid, editionMbid, preferredSlot) as {
+        `).get(artistId, recordingMbid, releaseMbid, preferredSlot) as {
             provider: string; provider_id: string; album_id: string | null;
             quality: string | null; library_slot: string | null; file_path: string;
         } | undefined;

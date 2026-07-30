@@ -215,10 +215,10 @@ function secondaryTypeFromProviderMatch(match?: ProviderReleaseGroupMatch | null
 export class RefreshAlbumService {
     private static getCanonicalAlbumLink(providerId: string, albumId: string): {
         releaseGroupMbid: string | null;
-        editionMbid: string | null;
+        releaseMbid: string | null;
     } {
         const providerItem = db.prepare(`
-            SELECT release_group.mbid AS release_group_mbid, release.mbid AS edition_mbid
+            SELECT release_group.mbid AS release_group_mbid, release.mbid AS release_mbid
             FROM ProviderItems item
             JOIN ProviderEditionMatches match
               ON match.provider_edition_item_id = item.id
@@ -233,21 +233,21 @@ export class RefreshAlbumService {
               match.confidence DESC,
               match.id
             LIMIT 1
-        `).get(providerId, albumId) as { release_group_mbid?: string | null; edition_mbid?: string | null } | undefined;
+        `).get(providerId, albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
 
         return {
             releaseGroupMbid: providerItem?.release_group_mbid || null,
-            editionMbid: providerItem?.edition_mbid || null,
+            releaseMbid: providerItem?.release_mbid || null,
         };
     }
 
     private static storeCanonicalAlbumSupplements(input: {
         releaseGroupMbid?: string | null;
-        editionMbid?: string | null;
+        releaseMbid?: string | null;
         album: any;
     }): void {
         const releaseGroupMbid = textOrNull(input.releaseGroupMbid);
-        const editionMbid = textOrNull(input.editionMbid);
+        const releaseMbid = textOrNull(input.releaseMbid);
         const album = input.album || {};
 
         if (releaseGroupMbid) {
@@ -268,7 +268,7 @@ export class RefreshAlbumService {
             );
         }
 
-        if (editionMbid) {
+        if (releaseMbid) {
             db.prepare(`
                 UPDATE AlbumEditions SET
                     copyright = COALESCE(NULLIF(?, ''), copyright),
@@ -276,7 +276,7 @@ export class RefreshAlbumService {
                 WHERE mbid = ?
             `).run(
                 textOrNull(album.copyright),
-                editionMbid,
+                releaseMbid,
             );
         }
     }
@@ -468,14 +468,14 @@ export class RefreshAlbumService {
         }
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
 
-        const hasCredits = canonicalLink.editionMbid
+        const hasCredits = canonicalLink.releaseMbid
             ? db.prepare(`
                 SELECT 1 FROM Tracks t
                 JOIN Recordings r ON r.id = t.recording_id
                 JOIN AlbumEditions release ON release.id = t.album_edition_id
                 WHERE release.mbid = ? AND r.credits IS NOT NULL
                 LIMIT 1
-            `).get(canonicalLink.editionMbid)
+            `).get(canonicalLink.releaseMbid)
             : null;
         if (hasCredits) {
             return AlbumRefreshLevel.DETAILS;
@@ -571,7 +571,7 @@ export class RefreshAlbumService {
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
         this.storeCanonicalAlbumSupplements({
             releaseGroupMbid: canonicalLink.releaseGroupMbid,
-            editionMbid: canonicalLink.editionMbid,
+            releaseMbid: canonicalLink.releaseMbid,
             album: albumData,
         });
         // Advance the offer freshness so adaptive refresh policy sees this scan.
@@ -742,7 +742,7 @@ export class RefreshAlbumService {
             albumId,
             tracks,
             null,
-            canonicalLink.editionMbid,
+            canonicalLink.releaseMbid,
         );
     }
 
@@ -931,7 +931,7 @@ export class RefreshAlbumService {
                         provider: providerId,
                         albumId: String(albumId),
                         releaseGroupMbid: canonicalRelease.release_group_mbid,
-                        editionMbid: canonicalRelease.mbid,
+                        releaseMbid: canonicalRelease.mbid,
                         counterparts,
                     });
                 }
@@ -1078,7 +1078,7 @@ export class RefreshAlbumService {
 
         this.storeCanonicalAlbumSupplements({
             releaseGroupMbid: matchedReleaseGroup?.mbid || null,
-            editionMbid: matchedReleaseMbid,
+            releaseMbid: matchedReleaseMbid,
             album,
         });
 

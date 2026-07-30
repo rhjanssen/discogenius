@@ -107,17 +107,17 @@ export function createCatalogForeignKeyTriggers(db: Database.Database): void {
     AFTER INSERT ON Tracks
     BEGIN
       UPDATE Tracks SET
-        album_edition_id = COALESCE(NEW.album_edition_id, (SELECT id FROM AlbumEditions WHERE mbid = NEW.edition_mbid)),
+        album_edition_id = COALESCE(NEW.album_edition_id, (SELECT id FROM AlbumEditions WHERE mbid = NEW.release_mbid)),
         recording_id = COALESCE(NEW.recording_id, (SELECT id FROM Recordings WHERE mbid = NEW.recording_mbid))
       WHERE id = NEW.id;
     END;
   `);
   db.exec(`
     CREATE TRIGGER trg_tracks_catalog_fks_au
-    AFTER UPDATE OF edition_mbid, recording_mbid ON Tracks
+    AFTER UPDATE OF release_mbid, recording_mbid ON Tracks
     BEGIN
       UPDATE Tracks SET
-        album_edition_id = (SELECT id FROM AlbumEditions WHERE mbid = NEW.edition_mbid),
+        album_edition_id = (SELECT id FROM AlbumEditions WHERE mbid = NEW.release_mbid),
         recording_id = (SELECT id FROM Recordings WHERE mbid = NEW.recording_mbid)
       WHERE id = NEW.id;
     END;
@@ -318,7 +318,7 @@ export function createCatalogSchema(db: Database.Database): void {
       foreign_recording_id TEXT,
       mbid TEXT UNIQUE,
       album_edition_id INTEGER,
-      edition_mbid TEXT NOT NULL,
+      release_mbid TEXT NOT NULL,
       recording_id INTEGER,
       recording_mbid TEXT NOT NULL,
       medium_position INT NOT NULL,
@@ -328,9 +328,9 @@ export function createCatalogSchema(db: Database.Database): void {
       length_ms INT,
       monitored BOOLEAN NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(edition_mbid, medium_position, position),
+      UNIQUE(release_mbid, medium_position, position),
       FOREIGN KEY(album_edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE,
-      FOREIGN KEY(edition_mbid) REFERENCES AlbumEditions(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(release_mbid) REFERENCES AlbumEditions(mbid) ON DELETE CASCADE,
       FOREIGN KEY(recording_id) REFERENCES Recordings(id) ON DELETE CASCADE,
       FOREIGN KEY(recording_mbid) REFERENCES Recordings(mbid) ON DELETE CASCADE
     );
@@ -598,7 +598,7 @@ export function createCatalogSchema(db: Database.Database): void {
   db.exec("CREATE INDEX idx_artist_release_group_curation_group ON ArtistReleaseGroupCuration(release_group_mbid, included)");
   db.exec("CREATE INDEX idx_artist_release_group_curation_source_included ON ArtistReleaseGroupCuration(source_artist_mbid, included, release_group_mbid)");
   db.exec("CREATE INDEX idx_mb_releases_group ON AlbumEditions(release_group_mbid, date)");
-  // Tracks already has UNIQUE(edition_mbid, medium_position, position) and both
+  // Tracks already has UNIQUE(release_mbid, medium_position, position) and both
   // covering indexes below lead with album_edition_id, so no single-column
   // idx_tracks_album_release_id / idx_mb_tracks_release_position is created.
   db.exec("CREATE INDEX idx_provider_items_type ON ProviderItems(provider, entity_type, provider_id)");

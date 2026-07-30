@@ -579,7 +579,7 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
       CAST(a.id AS TEXT) AS artist_id,
       release_group.mbid AS release_group_mbid
     FROM Tracks track
-    JOIN AlbumEditions release ON release.mbid = track.edition_mbid
+    JOIN AlbumEditions release ON release.mbid = track.release_mbid
     JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
     LEFT JOIN Artists a ON a.mbid = release_group.artist_mbid
     WHERE track.mbid = ?

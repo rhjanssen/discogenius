@@ -193,7 +193,7 @@ export type ProviderAlbumFallbackTrackRow = {
  */
 export function listProviderAlbumFallbackTracks(
     database: { prepare: (sql: string) => { all: (...args: any[]) => unknown[] } },
-    input: { provider: string; providerAlbumId: string; editionMbid: string | null },
+    input: { provider: string; providerAlbumId: string; releaseMbid: string | null },
 ): ProviderAlbumFallbackTrackRow[] {
     return database.prepare(`
         SELECT
@@ -217,12 +217,12 @@ export function listProviderAlbumFallbackTracks(
            AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks t
             ON t.id = track_match.track_id
-           AND t.edition_mbid = ?
+           AND t.release_mbid = ?
         ORDER BY
             COALESCE(t.medium_position, member.medium_position, 1),
             COALESCE(t.position, member.position, 999999),
             pi.provider_id
-    `).all(input.provider, input.providerAlbumId, input.editionMbid) as ProviderAlbumFallbackTrackRow[];
+    `).all(input.provider, input.providerAlbumId, input.releaseMbid) as ProviderAlbumFallbackTrackRow[];
 }
 
 /**
@@ -1277,11 +1277,11 @@ export class DownloadProcessor {
                             // Catalog-first: order/number via Tracks on the canonical release
                             // when known, never via match_evidence disc/track numbers (native
                             // provider-album layout).
-                            const fallbackReleaseMbid = String((payload as DownloadAlbumCommand).editionMbid || '').trim() || null;
+                            const fallbackReleaseMbid = String((payload as DownloadAlbumCommand).releaseMbid || '').trim() || null;
                             const providerRows = listProviderAlbumFallbackTracks(db, {
                                 provider: this.resolvePayloadProvider(payload),
                                 providerAlbumId: String(providerId),
-                                editionMbid: fallbackReleaseMbid,
+                                releaseMbid: fallbackReleaseMbid,
                             });
 
                             initialTracks = providerRows.map((row) => ({
@@ -1400,7 +1400,7 @@ export class DownloadProcessor {
                 provider: entry.provider || payload.provider,
                 providerId: entry.providerId || payload.providerId || providerId,
                 releaseGroupMbid: payload.releaseGroupMbid,
-                editionMbid: payload.editionMbid,
+                releaseMbid: payload.releaseMbid,
                 canonicalTrackMbid: payload.canonicalTrackMbid,
                 canonicalRecordingMbid: payload.canonicalRecordingMbid,
                 slot: payload.slot,

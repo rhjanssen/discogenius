@@ -32,7 +32,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
             FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
             WHERE allowed.value = 'spatial'
           ) THEN 'spatial' ELSE 'stereo' END AS library_class,
-          release.mbid AS edition_mbid,
+          release.mbid AS release_mbid,
           COALESCE(provider_release.provider, plan.provider) AS provider,
           provider_release.provider_id AS provider_id,
           provider_release.provider_url AS provider_url,
@@ -132,20 +132,20 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         ) THEN 1 ELSE 0 END AS monitored_lock,
         COALESCE(stereo.provider, spatial.provider) AS selected_provider,
         COALESCE(stereo.provider_id, spatial.provider_id) AS selected_provider_id,
-        COALESCE(stereo.edition_mbid, spatial.edition_mbid) AS selected_release_mbid,
+        COALESCE(stereo.release_mbid, spatial.release_mbid) AS selected_release_mbid,
         COALESCE(stereo.quality, spatial.quality) AS selected_quality,
         stereo.provider AS stereo_provider,
         stereo.provider_id AS stereo_provider_id,
         stereo.provider_url AS stereo_provider_url,
         stereo.provider_cover AS stereo_cover,
-        stereo.edition_mbid AS stereo_release_mbid,
+        stereo.release_mbid AS stereo_release_mbid,
         stereo.quality AS stereo_quality,
         stereo.match_status AS stereo_match_status,
         spatial.provider AS spatial_provider,
         spatial.provider_id AS spatial_provider_id,
         spatial.provider_url AS spatial_provider_url,
         spatial.provider_cover AS spatial_cover,
-        spatial.edition_mbid AS spatial_release_mbid,
+        spatial.release_mbid AS spatial_release_mbid,
         spatial.quality AS spatial_quality,
         spatial.match_status AS spatial_match_status
       FROM Albums rg
@@ -273,7 +273,7 @@ function listMusicBrainzReleaseVersions(
       SELECT
         provider_item.provider,
         provider_item.provider_id,
-        release.mbid AS edition_mbid,
+        release.mbid AS release_mbid,
         CASE WHEN EXISTS (
           SELECT 1
           FROM AcquisitionPlanSources source
@@ -338,7 +338,7 @@ function listMusicBrainzReleaseVersions(
     `).all(releaseGroup.mbid) as Array<{
         provider: string | null;
         provider_id: string | number | null;
-        edition_mbid: string | null;
+        release_mbid: string | null;
         library_class: string | null;
         quality: string | null;
         match_status: string | null;
@@ -347,31 +347,31 @@ function listMusicBrainzReleaseVersions(
 
     const offersByReleaseMbid = new Map<string, typeof providerOffers>();
     for (const offer of providerOffers) {
-        const editionMbid = String(offer.edition_mbid || "").trim();
-        if (!editionMbid) continue;
-        const offers = offersByReleaseMbid.get(editionMbid) || [];
+        const releaseMbid = String(offer.release_mbid || "").trim();
+        if (!releaseMbid) continue;
+        const offers = offersByReleaseMbid.get(releaseMbid) || [];
         offers.push(offer);
-        offersByReleaseMbid.set(editionMbid, offers);
+        offersByReleaseMbid.set(releaseMbid, offers);
     }
 
-    const selectOfferForLibraryClass = (editionMbid: string, libraryClass: "stereo" | "spatial") => {
-        const offers = offersByReleaseMbid.get(editionMbid) || [];
+    const selectOfferForLibraryClass = (releaseMbid: string, libraryClass: "stereo" | "spatial") => {
+        const offers = offersByReleaseMbid.get(releaseMbid) || [];
         return offers.find((offer) => String(offer.library_class || "stereo") === libraryClass) || null;
     };
 
     return releases.map((release) => {
-        const editionMbid = String(release.mbid);
-        const isStereoSelected = releaseGroup.stereo_release_mbid === editionMbid;
-        const isSpatialSelected = releaseGroup.spatial_release_mbid === editionMbid;
+        const releaseMbid = String(release.mbid);
+        const isStereoSelected = releaseGroup.stereo_release_mbid === releaseMbid;
+        const isSpatialSelected = releaseGroup.spatial_release_mbid === releaseMbid;
         const stereoOffer = isStereoSelected
             ? null
-            : selectOfferForLibraryClass(editionMbid, "stereo");
+            : selectOfferForLibraryClass(releaseMbid, "stereo");
         const spatialOffer = includeSpatial && !isSpatialSelected
-            ? selectOfferForLibraryClass(editionMbid, "spatial")
+            ? selectOfferForLibraryClass(releaseMbid, "spatial")
             : null;
 
         return {
-            id: editionMbid,
+            id: releaseMbid,
             title: String(release.title || releaseGroup.title || "Unknown Release"),
             cover_id: imageUrl,
             provider_cover_id: providerCoverUrl,
@@ -540,7 +540,7 @@ function parseRecordingArtistCredits(creditsStr: string | null | undefined): Arr
 }
 
 function getReleaseTrackContracts(
-    editionMbid: string,
+    releaseMbid: string,
     releaseGroupMbid: string,
     albumTitle: string,
     artistName: string,
@@ -551,7 +551,7 @@ function getReleaseTrackContracts(
       SELECT
         t.mbid,
         t.recording_mbid,
-        t.edition_mbid,
+        t.release_mbid,
         t.title,
         t.number,
         t.position,
@@ -560,10 +560,10 @@ function getReleaseTrackContracts(
         r.credits AS recording_credits
       FROM Tracks t
       LEFT JOIN Recordings r ON t.recording_mbid = r.mbid
-      WHERE t.edition_mbid = ?
+      WHERE t.release_mbid = ?
         AND (r.is_video IS NULL OR r.is_video = 0)
       ORDER BY t.medium_position ASC, t.position ASC
-    `).all(editionMbid) as any[];
+    `).all(releaseMbid) as any[];
 
     return rows.map((track) => {
         const parsedCredits = parseRecordingArtistCredits(track.recording_credits);
@@ -587,7 +587,7 @@ function getReleaseTrackContracts(
             album_title: albumTitle,
             musicbrainz_track_id: String(track.mbid),
             musicbrainz_recording_id: track.recording_mbid == null ? null : String(track.recording_mbid),
-            musicbrainz_release_id: track.edition_mbid == null ? null : String(track.edition_mbid),
+            musicbrainz_release_id: track.release_mbid == null ? null : String(track.release_mbid),
             downloaded: false,
             is_downloaded: false,
             is_monitored: isMonitored,

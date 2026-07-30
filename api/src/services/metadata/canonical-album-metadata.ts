@@ -20,9 +20,9 @@ export function getCanonicalAlbumMetadata(input: {
   canonicalReleaseMbid?: string | null;
   canonicalReleaseGroupMbid?: string | null;
 }): CanonicalAlbumMetadata | null {
-  const editionMbid = String(input.canonicalReleaseMbid || "").trim();
+  const releaseMbid = String(input.canonicalReleaseMbid || "").trim();
   const releaseGroupMbid = String(input.canonicalReleaseGroupMbid || "").trim();
-  if (!editionMbid && !releaseGroupMbid) {
+  if (!releaseMbid && !releaseGroupMbid) {
     return null;
   }
 
@@ -47,7 +47,7 @@ export function getCanonicalAlbumMetadata(input: {
      AND release.mbid = ?
     WHERE release_group.mbid = ?
     LIMIT 1
-  `).get(editionMbid, releaseGroupMbid) as {
+  `).get(releaseMbid, releaseGroupMbid) as {
     title: string | null;
     release_date: string | null;
     album_type: string | null;

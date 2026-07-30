@@ -126,7 +126,7 @@ export class ManualImportService {
                             a.mbid AS artistMbid,
                             a.name AS artistName
                         FROM Tracks t
-                        JOIN AlbumEditions rel ON rel.mbid = t.edition_mbid
+                        JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
                         JOIN Albums rg ON rg.mbid = rel.release_group_mbid
                         JOIN Artists a ON a.mbid = rg.artist_mbid
                         LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
@@ -160,7 +160,7 @@ export class ManualImportService {
                                 a.mbid AS artistMbid,
                                 a.name AS artistName
                             FROM Tracks t
-                            JOIN AlbumEditions rel ON rel.mbid = t.edition_mbid
+                            JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
                             JOIN Albums rg ON rg.mbid = rel.release_group_mbid
                             JOIN Artists a ON a.mbid = rg.artist_mbid
                             LEFT JOIN Recordings r ON r.mbid = t.recording_mbid

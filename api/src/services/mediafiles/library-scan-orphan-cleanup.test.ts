@@ -47,11 +47,11 @@ function seedCanonicalArtistGraph() {
   db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
     .run("recording-2", "Track Two", "artist-mbid", 0);
   db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-1", "release-1", "recording-1", "Track One", 1, 1);
   db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-2", "release-1", "recording-2", "Track Two", 1, 2);
   db.prepare(`

@@ -56,7 +56,7 @@ function seedArtistAndRelease() {
     VALUES (?, ?, ?, ?, ?, ?)`).run("release-1", "release-group-1", "artist-mbid", "Canonical Album", 1, 1);
   db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
     VALUES (?, ?, ?, ?)`).run("recording-1", "Track One", "artist-mbid", 0);
-  db.prepare(`INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
+  db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)`).run("track-1", "release-1", "recording-1", "Track One", 1, 1);
 }
 

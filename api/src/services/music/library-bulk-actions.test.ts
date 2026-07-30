@@ -94,7 +94,7 @@ dbModule.db.prepare(`
 
     dbModule.db.prepare(`
         INSERT INTO Tracks (
-            id, foreign_track_id, foreign_recording_id, mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms
+            id, foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(401, "track-mbid-1", "recording-mbid-1", "track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Track One", 180000);
 

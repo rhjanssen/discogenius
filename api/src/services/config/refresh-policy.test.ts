@@ -43,7 +43,7 @@ function seedArtist() {
     .run("artist-mbid", "Canonical Artist");
 }
 
-function seedAlbum(releaseGroupMbid: string, editionMbid: string, date: string) {
+function seedAlbum(releaseGroupMbid: string, releaseMbid: string, date: string) {
   dbModule.db.prepare(`
     INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)
@@ -51,7 +51,7 @@ function seedAlbum(releaseGroupMbid: string, editionMbid: string, date: string) 
   dbModule.db.prepare(`
     INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date)
     VALUES (?, ?, ?, ?, ?)
-  `).run(editionMbid, releaseGroupMbid, "artist-mbid", "Canonical Album Release", date);
+  `).run(releaseMbid, releaseGroupMbid, "artist-mbid", "Canonical Album Release", date);
 }
 
 function insertProviderItem(overrides: Partial<Record<string, unknown>>) {
@@ -61,7 +61,7 @@ function insertProviderItem(overrides: Partial<Record<string, unknown>>) {
     provider_id: "provider-track",
     artist_mbid: "artist-mbid",
     release_group_mbid: "release-group-mbid",
-    edition_mbid: "release-mbid",
+    release_mbid: "release-mbid",
     track_mbid: null,
     recording_mbid: null,
     title: "Canonical Track",
@@ -175,7 +175,7 @@ test("video refresh policy reads canonical ProviderItems for the artist", () => 
     entity_type: "video",
     provider_id: "provider-video",
     release_group_mbid: null,
-    edition_mbid: null,
+    release_mbid: null,
     recording_mbid: "video-recording-mbid",
     title: "Canonical Video",
     library_slot: "video",

@@ -75,7 +75,7 @@ function seedMatchedRelease(input: {
     ) as { id: number };
     db.prepare(`
       INSERT INTO Tracks (
-        mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
+        mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
         title, medium_position, position
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     `).run(

@@ -59,7 +59,7 @@ export interface CatalogRecording {
 export interface CatalogUpcLookupResult {
   upc: string;
   releases: Array<{
-    editionMbid: string;
+    releaseMbid: string;
     releaseGroupMbid?: string | null;
     title?: string | null;
   }>;
@@ -169,7 +169,7 @@ export interface CatalogProvider {
   ): Promise<Array<{ releaseGroupMbid: string; detail: LidarrReleaseGroupDetail }>>;
 
   /** A single release with its full medium/track list. */
-  getReleaseWithTracks(editionMbid: string): Promise<LidarrRelease | null>;
+  getReleaseWithTracks(releaseMbid: string): Promise<LidarrRelease | null>;
 
   /** A single recording by MBID. Optional: Servarr Metadata Server has no recording endpoint. */
   getRecording?(recordingMbid: string): Promise<CatalogRecording | null>;
@@ -203,10 +203,10 @@ export interface CatalogProvider {
 /** Helper: project a `LidarrReleaseGroupDetail` into a `LidarrRelease` by MBID. */
 export function findReleaseInGroup(
   detail: LidarrReleaseGroupDetail,
-  editionMbid: string,
+  releaseMbid: string,
 ): LidarrRelease | null {
   for (const release of detail.Releases || []) {
-    if (String(release.Id) === String(editionMbid)) {
+    if (String(release.Id) === String(releaseMbid)) {
       return release;
     }
   }

@@ -25,7 +25,7 @@ export type CanonicalProviderOffer = {
     entity_type?: string | null;
     artist_mbid?: string | null;
     release_group_mbid?: string | null;
-    edition_mbid?: string | null;
+    release_mbid?: string | null;
     track_mbid?: string | null;
     recording_mbid?: string | null;
     provider_title?: string | null;
@@ -84,7 +84,7 @@ export function resolveCanonicalProviderOffer(
                 provider_release.entity_type,
                 release_group.artist_mbid,
                 release_group.mbid AS release_group_mbid,
-                release.mbid AS edition_mbid,
+                release.mbid AS release_mbid,
                 provider_release.title AS provider_title,
                 COALESCE(
                   (
@@ -232,7 +232,7 @@ export function resolveCanonicalProviderOffer(
             provider_track.entity_type,
             release_group.artist_mbid,
             release_group.mbid AS release_group_mbid,
-            release.mbid AS edition_mbid,
+            release.mbid AS release_mbid,
             track.mbid AS track_mbid,
             recording.mbid AS recording_mbid,
             provider_track.title AS provider_title,
@@ -474,9 +474,9 @@ export function getCanonicalAlbumDownloadProgress(
 ): { total: number; done: number } | null {
     const canonicalOffer = resolveCanonicalProviderOffer(providerId, 'album', payload);
     const releaseGroupMbid = pickString(payload?.releaseGroupMbid) || canonicalOffer?.release_group_mbid;
-    const editionMbid = pickString(payload?.editionMbid)
+    const releaseMbid = pickString(payload?.releaseMbid)
         || canonicalOffer?.selected_release_mbid
-        || canonicalOffer?.edition_mbid;
+        || canonicalOffer?.release_mbid;
     const acquisitionPlanId = Number.isInteger(payload?.acquisitionPlanId)
         ? Number(payload.acquisitionPlanId)
         : null;
@@ -484,7 +484,7 @@ export function getCanonicalAlbumDownloadProgress(
         ? Number(payload.libraryId)
         : null;
 
-    if (!releaseGroupMbid && !editionMbid) {
+    if (!releaseGroupMbid && !releaseMbid) {
         return null;
     }
 

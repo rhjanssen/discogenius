@@ -59,7 +59,7 @@ type EntityRow = {
     artist_name?: string | null;
     artist_mbid?: string | null;
     release_group_mbid?: string | null;
-    edition_mbid?: string | null;
+    release_mbid?: string | null;
     recording_mbid?: string | null;
     provider?: string | null;
     provider_id?: string | null;
@@ -624,7 +624,7 @@ export class LibraryBulkActionService {
                   ar.release_group_mbid,
                   ar.artist_mbid
                 FROM Tracks t
-                JOIN AlbumEditions ar ON ar.mbid = t.edition_mbid
+                JOIN AlbumEditions ar ON ar.mbid = t.release_mbid
                 WHERE CAST(t.id AS TEXT) IN (${buildPlaceholders(ids.length)})
                    OR t.mbid IN (${buildPlaceholders(ids.length)})
             `,

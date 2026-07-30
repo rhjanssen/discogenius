@@ -63,12 +63,12 @@ function hydrateCanonicalForeignKeys(releaseGroupMbid: string): void {
     UPDATE Tracks
     SET
       album_edition_id = (
-        SELECT id FROM AlbumEditions WHERE mbid = Tracks.edition_mbid
+        SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid
       ),
       recording_id = (
         SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
       )
-    WHERE edition_mbid IN (
+    WHERE release_mbid IN (
       SELECT mbid FROM AlbumEditions WHERE release_group_mbid = ?
     )
   `).run(releaseGroupMbid);
@@ -76,7 +76,7 @@ function hydrateCanonicalForeignKeys(releaseGroupMbid: string): void {
 
 function selectLibraryRelease(
   releaseGroupMbid: string,
-  editionMbid: string,
+  releaseMbid: string,
   libraryClass: "stereo" | "spatial" = "stereo",
 ): number {
   const { db } = dbModule;
@@ -119,7 +119,7 @@ function selectLibraryRelease(
   const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
     .get(releaseGroupMbid) as { id: number };
   const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
-    .get(editionMbid) as { id: number };
+    .get(releaseMbid) as { id: number };
   db.prepare(`
     INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
@@ -135,7 +135,7 @@ function selectLibraryRelease(
 }
 
 function insertAcceptedReleaseMatch(
-  editionMbid: string,
+  releaseMbid: string,
   provider: string,
   providerId: string,
   title: string,
@@ -149,7 +149,7 @@ function insertAcceptedReleaseMatch(
     RETURNING id
   `).get(provider, providerId, title, providerUrl) as { id: number };
   const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
-    .get(editionMbid) as { id: number };
+    .get(releaseMbid) as { id: number };
   const releaseMatch = db.prepare(`
     INSERT INTO ProviderEditionMatches (
       provider_edition_item_id, edition_id, relation, match_state,
@@ -308,7 +308,7 @@ test("album tracks attach library files by recording MBID when track MBIDs diffe
   `).run(recordingMbid, "Rehab", 214000);
 
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(stereoTrackMbid, stereoReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
 
@@ -406,12 +406,12 @@ test("single release group does not inherit album files by shared recording MBID
   `).run(recordingMbid, "Rehab", 214000);
 
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(albumTrackMbid, albumReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
 
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(singleTrackMbid, singleReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
   hydrateCanonicalForeignKeys(albumReleaseGroupMbid);
@@ -459,7 +459,7 @@ test("single release group does not inherit album files by shared recording MBID
 test("exact acquisition-plan track wins without positional or ISRC rematching", async () => {
   const artistMbid = "artist-mbid-amy-ost";
   const releaseGroupMbid = "rg-amy-ost";
-  const editionMbid = "release-amy-ost";
+  const releaseMbid = "release-amy-ost";
   const trackMbid = "track-tears-ost";
   const recordingMbid = "recording-tears";
   const isrc = "GBUM70603494";
@@ -476,19 +476,19 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
     INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(editionMbid, releaseGroupMbid, artistMbid, "Amy", "Official", "2015-10-30", 1, 1);
+  `).run(releaseMbid, releaseGroupMbid, artistMbid, "Amy", "Official", "2015-10-30", 1, 1);
   dbModule.db.prepare(`
     INSERT INTO Recordings (mbid, title, length_ms, isrcs)
     VALUES (?, ?, ?, ?)
   `).run(recordingMbid, "Tears Dry on Their Own", 187000, JSON.stringify([isrc]));
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(trackMbid, editionMbid, recordingMbid, 1, 10, "10", "Tears Dry on Their Own", 187000);
+  `).run(trackMbid, releaseMbid, recordingMbid, 1, 10, "10", "Tears Dry on Their Own", 187000);
   hydrateCanonicalForeignKeys(releaseGroupMbid);
-  const libraryEditionId = selectLibraryRelease(releaseGroupMbid, editionMbid);
+  const libraryEditionId = selectLibraryRelease(releaseGroupMbid, releaseMbid);
   const releaseMatch = insertAcceptedReleaseMatch(
-    editionMbid,
+    releaseMbid,
     "apple-music",
     "1422677780",
     "Amy",
@@ -571,7 +571,7 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
     providerUrl: "https://music.apple.com/album/1422677780",
     quality: "HIRES_LOSSLESS",
     matchStatus: "verified",
-    selectedReleaseMbid: editionMbid,
+    selectedReleaseMbid: releaseMbid,
     providerTrackId: "1422677787",
     providerTrackUrl: "https://music.apple.com/song/1422677787",
   }]);

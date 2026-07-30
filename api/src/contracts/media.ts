@@ -134,7 +134,7 @@ export interface LibraryReleaseGroupAvailabilityContract {
     selections: Array<{
       libraryEditionId: number;
       editionId: number;
-      editionMbid: string;
+      releaseMbid: string;
       selectionMode: "auto" | "manual";
       locked: boolean;
       plan: {
@@ -480,7 +480,7 @@ export function parseLibraryReleaseGroupAvailabilityContract(
             return {
               libraryEditionId: expectNumber(selection.libraryEditionId, `${label}.libraryEditionId`),
               editionId: expectNumber(selection.editionId, `${label}.editionId`),
-              editionMbid: expectString(selection.editionMbid, `${label}.editionMbid`),
+              releaseMbid: expectString(selection.releaseMbid, `${label}.releaseMbid`),
               selectionMode: expectString(selection.selectionMode, `${label}.selectionMode`) as "auto" | "manual",
               locked: expectBoolean(selection.locked, `${label}.locked`),
               plan: plan == null ? null : {

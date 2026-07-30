@@ -66,19 +66,19 @@ function seedTwoPlansDisagreeing(): {
 
   const build = (
     key: string,
-    editionMbid: string,
+    releaseMbid: string,
     providerEditionId: string,
     spatial: boolean,
   ) => {
     db.prepare(`
       INSERT INTO AlbumEditions (mbid, release_group_mbid, release_group_id, artist_mbid, artist_metadata_id, title, track_count)
       VALUES (?, 'rg-1', ?, 'artist-mbid', ?, 'Bad Blood', 1)
-    `).run(editionMbid, releaseGroup.id, artist.id);
-    const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(editionMbid) as { id: number };
+    `).run(releaseMbid, releaseGroup.id, artist.id);
+    const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(releaseMbid) as { id: number };
     const track = db.prepare(`
-      INSERT INTO Tracks (mbid, edition_mbid, album_edition_id, recording_mbid, recording_id, medium_position, position, title, length_ms)
+      INSERT INTO Tracks (mbid, release_mbid, album_edition_id, recording_mbid, recording_id, medium_position, position, title, length_ms)
       VALUES (?, ?, ?, 'rec-1', ?, 1, 1, 'Pompeii', 214000) RETURNING id
-    `).get(`trk-${key}`, editionMbid, release.id, recording.id) as { id: number };
+    `).get(`trk-${key}`, releaseMbid, release.id, recording.id) as { id: number };
 
     db.prepare(`
       INSERT INTO quality_profiles (name, allowed_source_formats, preference_order, cutoff, fallback_policy, output_format, transcode_policy)

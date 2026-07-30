@@ -760,7 +760,7 @@ export class ImportService {
                   release_group.id AS release_group_id,
                   release_group.mbid AS release_group_mbid,
                   release.id AS edition_id,
-                  release.mbid AS edition_mbid,
+                  release.mbid AS release_mbid,
                   item.provider
                 FROM ProviderItems item
                 JOIN ProviderEditionMatches release_match

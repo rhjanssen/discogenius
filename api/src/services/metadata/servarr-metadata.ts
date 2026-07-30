@@ -343,7 +343,7 @@ export class ServarrMetadataService {
           r.media_count,
           rec.isrcs AS recording_isrcs
         FROM AlbumEditions r
-        LEFT JOIN Tracks t ON t.edition_mbid = r.mbid
+        LEFT JOIN Tracks t ON t.release_mbid = r.mbid
         LEFT JOIN Recordings rec ON rec.mbid = t.recording_mbid
         WHERE r.release_group_mbid IN (${rows.map(() => "?").join(",")})
       `).all(...rows.map((row) => row.mbid)) as Array<{
@@ -731,9 +731,9 @@ export class ServarrMetadataService {
     `);
 
     const insertTrack = db.prepare(`
-      INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms, updated_at)
+      INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(edition_mbid, medium_position, position) DO UPDATE SET
+      ON CONFLICT(release_mbid, medium_position, position) DO UPDATE SET
         mbid = excluded.mbid,
         recording_mbid = excluded.recording_mbid,
         number = excluded.number,

@@ -127,7 +127,7 @@ test("local search returns canonical tracks", async () => {
     VALUES ('recording-mbid', 'artist-mbid', 'Canonical Track Recording', 181000, 0)
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES ('track-mbid', 'release-mbid', 'recording-mbid', 1, 1, '1', 'Canonical Search Track', 181000)
   `).run();
   const providerRelease = dbModule.db.prepare(`

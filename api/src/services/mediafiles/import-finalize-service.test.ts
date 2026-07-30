@@ -50,7 +50,7 @@ function seedImportedTrack(fileName = "track-one.flac") {
     VALUES (?, ?, ?, ?, ?, ?, ?)`).run("rel-one", "rg-one", "artist-one-mbid", "Album One", 1, 1, "2024-01-01");
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, length_ms) VALUES (?, ?, ?, ?)")
     .run("rec-one", "Track One", "artist-one-mbid", 180000);
-  dbModule.db.prepare(`INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
+  dbModule.db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)`).run("trk-one", "rel-one", "rec-one", 1, 1, "1", "Track One");
   dbModule.db.prepare(`INSERT INTO ProviderItems (
       provider, entity_type, provider_id, title
@@ -62,7 +62,7 @@ function seedImportedTrack(fileName = "track-one.flac") {
     provider: "tidal",
     providerEditionId: "10",
     providerTrackId: "100",
-    editionMbid: "rel-one",
+    releaseMbid: "rel-one",
     trackMbid: "trk-one",
   });
 

@@ -462,14 +462,14 @@ function resolveExpectedRecoveredTracks(
 /** The job's own canonical context, when the acquisition plan supplied one. */
 type ImportReconcileContext = {
     releaseGroupMbid?: string | null;
-    editionMbid?: string | null;
+    releaseMbid?: string | null;
 };
 
 /**
  * The release group this job belongs to, from the job's OWN canonical context.
  *
  * The plan already decided which release group it was acquiring, so prefer that
- * over re-deriving it from provider matches. `editionMbid` is resolved to its
+ * over re-deriving it from provider matches. `releaseMbid` is resolved to its
  * group; a release MBID that is not in the catalogue yields null rather than a
  * guess.
  */
@@ -478,7 +478,7 @@ export function releaseGroupMbidFromJobContext(context: ImportReconcileContext):
     if (explicitGroup) {
         return explicitGroup;
     }
-    const explicitRelease = String(context.editionMbid || "").trim();
+    const explicitRelease = String(context.releaseMbid || "").trim();
     if (!explicitRelease) {
         return null;
     }
@@ -698,7 +698,7 @@ export class DownloadedTracksImportService {
                 providerId,
                 provider: job.payload.provider || null,
                 releaseGroupMbid: job.payload.releaseGroupMbid || null,
-                editionMbid: job.payload.editionMbid || null,
+                releaseMbid: job.payload.releaseMbid || null,
                 canonicalTrackMbid: job.payload.canonicalTrackMbid || null,
                 canonicalRecordingMbid: job.payload.canonicalRecordingMbid || null,
                 albumId: job.payload.albumId || null,
@@ -756,7 +756,7 @@ export class DownloadedTracksImportService {
 
         reconcileImportedDownload(type, providerId, organizeResult, provider, {
             releaseGroupMbid: job.payload.releaseGroupMbid || null,
-            editionMbid: job.payload.editionMbid || null,
+            releaseMbid: job.payload.releaseMbid || null,
         });
         cancellationCheckpoint("after reconciling library state");
 

@@ -161,7 +161,7 @@ function seedOffer(params: {
  */
 function seedCatalogTrack(params: {
   releaseGroupMbid: string;
-  editionMbid: string;
+  releaseMbid: string;
   trackMbid: string;
   recordingMbid: string;
   title: string;
@@ -174,19 +174,19 @@ function seedCatalogTrack(params: {
   db.prepare(`
     INSERT OR IGNORE INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title)
     VALUES (?, ?, 'artist-mbid', ?)
-  `).run(params.editionMbid, params.releaseGroupMbid, params.title);
+  `).run(params.releaseMbid, params.releaseGroupMbid, params.title);
   db.prepare(`INSERT OR IGNORE INTO Recordings (mbid, title) VALUES (?, ?)`)
     .run(params.recordingMbid, params.title);
   db.prepare(`
-    INSERT OR IGNORE INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, title)
+    INSERT OR IGNORE INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, title)
     VALUES (?, ?, ?, 1, 1, ?)
-  `).run(params.trackMbid, params.editionMbid, params.recordingMbid, params.title);
+  `).run(params.trackMbid, params.releaseMbid, params.recordingMbid, params.title);
   const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")
     .get() as { id: number };
   const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
     .get(params.releaseGroupMbid) as { id: number };
   const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
-    .get(params.editionMbid) as { id: number };
+    .get(params.releaseMbid) as { id: number };
   const recording = db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get(params.recordingMbid) as { id: number };
   const track = db.prepare("SELECT id FROM Tracks WHERE mbid = ?")
@@ -257,7 +257,7 @@ test("catalog-direct link resolves from embedded release-track MBID with no prov
   seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-itunes",
-    editionMbid: "rel-itunes",
+    releaseMbid: "rel-itunes",
     trackMbid: "track-bad-blood",
     recordingMbid: "rec-bad-blood",
     title: "Bad Blood (live)",
@@ -271,7 +271,7 @@ test("catalog-direct link resolves from embedded release-track MBID with no prov
   assert.ok(link);
   assert.equal(link!.trackMbid, "track-bad-blood");
   assert.equal(link!.recordingMbid, "rec-bad-blood");
-  assert.equal(link!.editionMbid, "rel-itunes");
+  assert.equal(link!.releaseMbid, "rel-itunes");
   assert.equal(link!.releaseGroupMbid, "rg-itunes");
 });
 
@@ -279,7 +279,7 @@ test("metadata rematch links a provider-free file straight to the catalog via em
   seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-itunes",
-    editionMbid: "rel-itunes",
+    releaseMbid: "rel-itunes",
     trackMbid: "track-pompeii",
     recordingMbid: "rec-pompeii",
     title: "Pompeii (live)",
@@ -312,7 +312,7 @@ test("metadata rematch enriches a provider-offer match with canonical MBIDs", ()
   seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-wild",
-    editionMbid: "rel-wild",
+    releaseMbid: "rel-wild",
     trackMbid: "track-good-grief",
     recordingMbid: "rec-good-grief",
     title: "Good Grief",
@@ -464,7 +464,7 @@ test("embedded release identity survives when it is itself selected in the libra
   seedArtist();
   seedCatalogTrack({
     releaseGroupMbid: "rg-multi",
-    editionMbid: "rel-standard",
+    releaseMbid: "rel-standard",
     trackMbid: "trk-standard",
     recordingMbid: "rec-shared",
     title: "Pompeii",
@@ -472,7 +472,7 @@ test("embedded release identity survives when it is itself selected in the libra
   // A second release of the same group is ALSO selected into the same library.
   seedCatalogTrack({
     releaseGroupMbid: "rg-multi",
-    editionMbid: "rel-deluxe",
+    releaseMbid: "rel-deluxe",
     trackMbid: "trk-deluxe",
     recordingMbid: "rec-shared",
     title: "Pompeii",
@@ -486,6 +486,6 @@ test("embedded release identity survives when it is itself selected in the libra
   assert.ok(link);
   // The file's own embedded release is selected, so it is never relocated onto
   // the other selected release of the group.
-  assert.equal(link!.editionMbid, "rel-deluxe");
+  assert.equal(link!.releaseMbid, "rel-deluxe");
   assert.equal(link!.trackMbid, "trk-deluxe");
 });

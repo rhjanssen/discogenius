@@ -172,7 +172,7 @@ function buildArtistTrackCountMap(artistMbids: string[]): Map<string, ArtistCoun
                    COALESCE(library_state.monitored, 0) AS monitored
             FROM artist_scope scope
             JOIN AlbumEditions release ON release.release_group_mbid = scope.release_group_mbid
-            JOIN Tracks track ON track.edition_mbid = release.mbid
+            JOIN Tracks track ON track.release_mbid = release.mbid
             LEFT JOIN library_state ON library_state.release_group_mbid = scope.release_group_mbid
         )
         SELECT artist_mbid AS artist_id,
@@ -912,7 +912,7 @@ export class ArtistQueryService {
         OR track.mbid = json_extract(jq.payload, '$.canonicalTrackMbid')
         OR CAST(track.id AS TEXT) = CAST(json_extract(jq.payload, '$.canonicalTrackId') AS TEXT)
       INNER JOIN AlbumEditions release
-        ON release.mbid = track.edition_mbid
+        ON release.mbid = track.release_mbid
       INNER JOIN Albums rg
         ON rg.mbid = release.release_group_mbid
       WHERE rg.artist_mbid = ?
@@ -1186,7 +1186,7 @@ export class ArtistQueryService {
           track.position,
           track.medium_position,
           track.recording_mbid,
-          track.edition_mbid,
+          track.release_mbid,
           track.updated_at,
           release.date AS release_date,
           release_group.id AS release_group_row_id,
@@ -1414,7 +1414,7 @@ export class ArtistQueryService {
         provider_track.provider_id AS preview_provider_track_id,
         top_tracks.id AS musicbrainz_track_id,
         top_tracks.recording_mbid AS musicbrainz_recording_id,
-        top_tracks.edition_mbid AS musicbrainz_release_id,
+        top_tracks.release_mbid AS musicbrainz_release_id,
         CASE WHEN downloaded_tracks.track_id IS NOT NULL THEN 1 ELSE 0 END AS is_downloaded
       FROM top_tracks
       LEFT JOIN provider_tracks provider_track ON provider_track.track_id = top_tracks.id AND provider_track.rank = 1

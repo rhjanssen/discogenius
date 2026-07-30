@@ -13,7 +13,7 @@ export interface LibraryAcquisitionPlanView {
 export interface LibraryReleaseSelectionView {
   libraryEditionId: number;
   editionId: number;
-  editionMbid: string;
+  releaseMbid: string;
   selectionMode: "auto" | "manual";
   locked: boolean;
   plan: LibraryAcquisitionPlanView | null;
@@ -195,7 +195,7 @@ export class LibraryReleaseSelectionService {
         quality.name AS quality_profile,
         library_release.id AS library_edition_id,
         library_release.edition_id,
-        release.mbid AS edition_mbid,
+        release.mbid AS release_mbid,
         library_release.selection_mode,
         library_release.locked,
         plan.id AS plan_id,
@@ -222,7 +222,7 @@ export class LibraryReleaseSelectionService {
       quality_profile: string;
       library_edition_id: number | null;
       edition_id: number | null;
-      edition_mbid: string | null;
+      release_mbid: string | null;
       selection_mode: LibraryReleaseSelectionView["selectionMode"] | null;
       locked: number | null;
       plan_id: number | null;
@@ -246,13 +246,13 @@ export class LibraryReleaseSelectionService {
       if (
         row.library_edition_id != null
         && row.edition_id != null
-        && row.edition_mbid
+        && row.release_mbid
         && row.selection_mode
       ) {
         library.selections.push({
           libraryEditionId: row.library_edition_id,
           editionId: row.edition_id,
-          editionMbid: row.edition_mbid,
+          releaseMbid: row.release_mbid,
           selectionMode: row.selection_mode,
           locked: Boolean(row.locked),
           plan: row.plan_id != null

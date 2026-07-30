@@ -43,7 +43,7 @@ function addMember(releaseItemId: number, memberItemId: number, medium: number, 
 
 /** Canonical release-group / release / track, returning the Tracks row id. */
 function seedCanonicalTrack(
-  editionMbid: string, trackMbid: string, title: string, medium: number, position: number,
+  releaseMbid: string, trackMbid: string, title: string, medium: number, position: number,
 ): { trackId: number; recordingId: number } {
   db.prepare(`
     INSERT OR IGNORE INTO ArtistMetadata (mbid, name) VALUES ('artist-mbid', 'Fallback Artist')
@@ -55,17 +55,17 @@ function seedCanonicalTrack(
   db.prepare(`
     INSERT OR IGNORE INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, track_count)
     VALUES (?, 'rg-fallback', 'artist-mbid', 'Fallback Album', '2024-01-01', 3)
-  `).run(editionMbid);
+  `).run(releaseMbid);
   const recording = db.prepare(`
     INSERT INTO Recordings (mbid, artist_mbid, title, is_video, metadata_status)
     VALUES (?, 'artist-mbid', ?, 0, 'complete')
     RETURNING id
   `).get(`rec-${trackMbid}`, title) as { id: number };
   const track = db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, recording_id, medium_position, position, number, title)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, recording_id, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING id
-  `).get(trackMbid, editionMbid, `rec-${trackMbid}`, recording.id, medium, position, String(position), title) as { id: number };
+  `).get(trackMbid, releaseMbid, `rec-${trackMbid}`, recording.id, medium, position, String(position), title) as { id: number };
   return { trackId: track.id, recordingId: recording.id };
 }
 
@@ -116,7 +116,7 @@ test("fallback tracklist takes numbers from the accepted canonical track", () =>
   const rows = listProviderAlbumFallbackTracks(db, {
     provider: "tidal",
     providerAlbumId: "album-1",
-    editionMbid: "rel-1",
+    releaseMbid: "rel-1",
   });
 
   assert.deepEqual(rows, [
@@ -137,7 +137,7 @@ test("an unmatched member keeps null numbers but orders by its provider position
   const rows = listProviderAlbumFallbackTracks(db, {
     provider: "tidal",
     providerAlbumId: "album-1",
-    editionMbid: null,
+    releaseMbid: null,
   });
 
   assert.deepEqual(rows.map((row) => row.provider_id), ["aaa-first", "zzz-second"]);
@@ -157,12 +157,12 @@ test("a colliding album id from another provider contributes nothing", () => {
   const tidalRows = listProviderAlbumFallbackTracks(db, {
     provider: "tidal",
     providerAlbumId: "shared-id",
-    editionMbid: null,
+    releaseMbid: null,
   });
   const appleRows = listProviderAlbumFallbackTracks(db, {
     provider: "apple-music",
     providerAlbumId: "shared-id",
-    editionMbid: null,
+    releaseMbid: null,
   });
 
   assert.deepEqual(tidalRows.map((row) => row.provider_id), ["tidal-track"]);
@@ -179,7 +179,7 @@ test("a track on several provider releases only contributes to the requested one
   const albumRows = listProviderAlbumFallbackTracks(db, {
     provider: "tidal",
     providerAlbumId: "album-1",
-    editionMbid: null,
+    releaseMbid: null,
   });
 
   assert.equal(albumRows.length, 1, "one occurrence, not one row per membership");
@@ -200,7 +200,7 @@ test("a rejected typed edge does not supply canonical numbering", () => {
   const rows = listProviderAlbumFallbackTracks(db, {
     provider: "tidal",
     providerAlbumId: "album-1",
-    editionMbid: "rel-1",
+    releaseMbid: "rel-1",
   });
 
   assert.equal(rows.length, 1);

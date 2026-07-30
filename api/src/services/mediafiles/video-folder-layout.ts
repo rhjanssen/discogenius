@@ -63,7 +63,7 @@ export function canVideoPlaceInline(videoRecordingId: string | number | null | u
       ON (t.recording_id = audio.id OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid))
     LEFT JOIN AlbumEditions track_rg
       ON track_rg.id = t.album_edition_id
-      OR (t.edition_mbid IS NOT NULL AND track_rg.mbid = t.edition_mbid)
+      OR (t.release_mbid IS NOT NULL AND track_rg.mbid = t.release_mbid)
     LEFT JOIN Albums album
       ON album.mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)
     WHERE CAST(rr.source_recording_id AS TEXT) = CAST(? AS TEXT)

@@ -162,7 +162,7 @@ export function matchAppleMusicBundledVideoFiles(params: {
  * match_evidence disc/track numbers (native album layout ≠ hybrid release).
  */
 function resolveCanonicalTrackOnRelease(params: {
-  editionMbid: string;
+  releaseMbid: string;
   trackMbid?: string | null;
   recordingMbid?: string | null;
   isrc?: string | null;
@@ -179,7 +179,7 @@ function resolveCanonicalTrackOnRelease(params: {
     const byIdentity = db.prepare(`
       SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
       FROM Tracks t
-      WHERE t.edition_mbid = ?
+      WHERE t.release_mbid = ?
         AND (
           (? IS NOT NULL AND t.mbid = ?)
           OR (? IS NOT NULL AND t.recording_mbid = ?)
@@ -193,7 +193,7 @@ function resolveCanonicalTrackOnRelease(params: {
         t.position
       LIMIT 1
     `).get(
-      params.editionMbid,
+      params.releaseMbid,
       trackMbid,
       trackMbid,
       recordingMbid,
@@ -223,7 +223,7 @@ function resolveCanonicalTrackOnRelease(params: {
     SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
     FROM Tracks t
     JOIN Recordings r ON r.mbid = t.recording_mbid
-    WHERE t.edition_mbid = ?
+    WHERE t.release_mbid = ?
       AND r.isrcs IS NOT NULL
       AND TRIM(r.isrcs) != ''
       AND (
@@ -242,7 +242,7 @@ function resolveCanonicalTrackOnRelease(params: {
       )
     ORDER BY t.medium_position, t.position
     LIMIT 1
-  `).get(params.editionMbid, isrc, isrc) as {
+  `).get(params.releaseMbid, isrc, isrc) as {
     mbid: string;
     recording_mbid: string;
     title: string;
@@ -254,7 +254,7 @@ function resolveCanonicalTrackOnRelease(params: {
 export function resolveMatchedCanonicalAlbumTrackRow(params: {
   provider: string;
   trackId: string;
-  editionMbid: string;
+  releaseMbid: string;
   fallbackAlbumId: string;
   fallbackAlbumIds?: string[];
   fallbackArtistId: string;
@@ -307,14 +307,14 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
       track_match.confidence DESC,
       pi.updated_at DESC
     LIMIT 1
-  `).get(params.provider, params.trackId, params.editionMbid) as any;
+  `).get(params.provider, params.trackId, params.releaseMbid) as any;
 
   if (providerTrack) {
     // Catalog-first: bind via Tracks on the selected/hybrid release only.
     // Never use provider match_evidence disc/track numbers — those are the
     // native album layout (e.g. Come As You Are #1) and mis-number Softly.
     const canonicalTrack = resolveCanonicalTrackOnRelease({
-      editionMbid: params.editionMbid,
+      releaseMbid: params.releaseMbid,
       trackMbid: providerTrack.track_mbid,
       recordingMbid: providerTrack.recording_mbid,
       isrc: providerTrack.isrc,
@@ -356,14 +356,14 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
       t.mbid AS canonical_track_mbid,
       t.recording_mbid AS canonical_recording_mbid
     FROM Tracks t
-    WHERE t.edition_mbid = ?
+    WHERE t.release_mbid = ?
       AND CAST(t.id AS TEXT) = ?
     LIMIT 1
   `).get(
     params.fallbackAlbumId,
     params.fallbackArtistId,
     params.fallbackQuality,
-    params.editionMbid,
+    params.releaseMbid,
     params.trackId,
   ) as MatchedAlbumTrackRow | undefined;
 

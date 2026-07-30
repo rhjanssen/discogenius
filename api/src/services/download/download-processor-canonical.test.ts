@@ -43,7 +43,7 @@ function seedTypedRelease(input: {
 }) {
   const artistMbid = `artist-${input.suffix}`;
   const releaseGroupMbid = `rg-${input.suffix}`;
-  const editionMbid = `release-${input.suffix}`;
+  const releaseMbid = `release-${input.suffix}`;
   const recordingMbid = `recording-${input.suffix}`;
   const trackMbid = `track-${input.suffix}`;
   db.prepare(`
@@ -71,7 +71,7 @@ function seedTypedRelease(input: {
     ) VALUES (?, ?, ?, ?, ?, ?, 1, 1)
     RETURNING id
   `).get(
-    editionMbid,
+    releaseMbid,
     releaseGroup.id,
     releaseGroupMbid,
     artist.id,
@@ -91,14 +91,14 @@ function seedTypedRelease(input: {
   ) as { id: number };
   const track = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       title, position, medium_position
     ) VALUES (?, ?, ?, ?, ?, ?, 1, 1)
     RETURNING id
   `).get(
     trackMbid,
     release.id,
-    editionMbid,
+    releaseMbid,
     recording.id,
     recordingMbid,
     input.trackTitle,
@@ -190,7 +190,7 @@ function seedTypedRelease(input: {
   return {
     artistMbid,
     releaseGroupMbid,
-    editionMbid,
+    releaseMbid,
     recordingMbid,
     trackMbid,
     releaseGroupId: releaseGroup.id,
@@ -368,7 +368,7 @@ test("download processor resolves canonical album provider offers without legacy
     provider: "tidal",
     providerId: "tidal-gmtf-expanded",
     releaseGroupMbid: graph.releaseGroupMbid,
-    editionMbid: graph.editionMbid,
+    releaseMbid: graph.releaseMbid,
     acquisitionPlanId: graph.planId,
     libraryId: graph.libraryId,
     slot: "stereo",

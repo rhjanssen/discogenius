@@ -1256,7 +1256,7 @@ export class AudioTagService {
       const canonicalRow = db.prepare(`
         SELECT COUNT(*) AS count
         FROM Tracks
-        WHERE edition_mbid = ?
+        WHERE release_mbid = ?
           AND COALESCE(medium_position, 1) = ?
       `).get(canonicalReleaseMbid, volumeNumber) as { count?: number } | undefined;
       const canonicalCount = Number(canonicalRow?.count || 0);
@@ -1823,7 +1823,7 @@ export class AudioTagService {
     if (!releaseTrackMbid && row.album_mbid && row.media_mbid) {
       const trackRow = db.prepare(`
         SELECT mbid FROM Tracks
-        WHERE edition_mbid = ?
+        WHERE release_mbid = ?
           AND recording_mbid = ?
           AND medium_position = COALESCE(?, 1)
           AND position = COALESCE(?, 1)
@@ -1840,7 +1840,7 @@ export class AudioTagService {
       } else {
         const fallbackRow = db.prepare(`
           SELECT mbid FROM Tracks
-          WHERE edition_mbid = ? AND recording_mbid = ?
+          WHERE release_mbid = ? AND recording_mbid = ?
           LIMIT 1
         `).get(row.album_mbid, row.media_mbid) as { mbid: string } | undefined;
         if (fallbackRow) {

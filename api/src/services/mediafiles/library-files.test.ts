@@ -51,7 +51,7 @@ function writeTestConfig(overrides?: {
 function seedLibraryReleaseSelection(options: {
   key: string;
   releaseGroupMbid: string;
-  editionMbid: string;
+  releaseMbid: string;
   monitored: boolean;
   spatial?: boolean;
   rootPath?: string;
@@ -108,7 +108,7 @@ function seedLibraryReleaseSelection(options: {
   `).get(options.releaseGroupMbid) as { id: number };
   const release = db.prepare(`
     SELECT id FROM AlbumEditions WHERE mbid = ?
-  `).get(options.editionMbid) as { id: number };
+  `).get(options.releaseMbid) as { id: number };
 
   db.prepare(`
     INSERT INTO LibraryAlbums (
@@ -194,7 +194,7 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid) VALUES (?, ?, ?)")
     .run("recording-mbid-1", "Bohemian Rhapsody", "artist-mbid-1");
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
   // Provider availability mapped to the canonical ids (no legacy ProviderAlbums/ProviderMedia rows).
@@ -212,7 +212,7 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
     provider: "tidal",
     providerEditionId: "10",
     providerTrackId: "100",
-    editionMbid: "release-mbid-1",
+    releaseMbid: "release-mbid-1",
     trackMbid: "track-mbid-1",
   });
 
@@ -261,7 +261,7 @@ test("computeExpectedPath prefers canonical release-group and track metadata ove
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title) VALUES (?, ?)")
     .run("recording-mbid-1", "Canonical Recording");
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 7, "7", "Canonical Track Title");
   dbModule.db.prepare(`
@@ -536,7 +536,7 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
   `).run("recording-mbid-1", "Bohemian Rhapsody");
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, edition_mbid, recording_mbid, medium_position, position, number, title
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
 
@@ -561,13 +561,13 @@ dbModule.db.prepare(`
     provider: "tidal",
     providerEditionId: "10",
     providerTrackId: "100",
-    editionMbid: "release-mbid-1",
+    releaseMbid: "release-mbid-1",
     trackMbid: "track-mbid-1",
   });
   const libraryId = seedLibraryReleaseSelection({
     key: "identity-stereo",
     releaseGroupMbid: "rg-mbid-1",
-    editionMbid: "release-mbid-1",
+    releaseMbid: "release-mbid-1",
     monitored: true,
     rootPath: configModule.Config.getMusicPath(),
   });
@@ -658,7 +658,7 @@ test("upsertLibraryFile uses accepted typed matches instead of provider shadow i
     VALUES (?, ?, ?, ?)
   `).run("recording-mbid-1", "artist-mbid-1", "Shut Off The Lights", 0);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, recording_mbid, edition_mbid, medium_position, position, title)
+    INSERT INTO Tracks (mbid, recording_mbid, release_mbid, medium_position, position, title)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("selected-track-mbid", "recording-mbid-1", "selected-release-mbid", 1, 1, "Shut Off The Lights");
   // Provider availability rows intentionally point at a different provider
@@ -680,7 +680,7 @@ dbModule.db.prepare(`
     provider: "tidal",
     providerEditionId: "provider-album-1",
     providerTrackId: "provider-track-1",
-    editionMbid: "selected-release-mbid",
+    releaseMbid: "selected-release-mbid",
     trackMbid: "selected-track-mbid",
   });
 
@@ -950,7 +950,7 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
   `).run("recording-mbid-1", "Bohemian Rhapsody");
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, edition_mbid, recording_mbid, medium_position, position, number, title
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Bohemian Rhapsody");
   dbModule.db.prepare(`
@@ -973,7 +973,7 @@ dbModule.db.prepare(`
     provider: "tidal",
     providerEditionId: "10",
     providerTrackId: "100",
-    editionMbid: "release-mbid-1",
+    releaseMbid: "release-mbid-1",
     trackMbid: "track-mbid-1",
   });
 
@@ -982,14 +982,14 @@ dbModule.db.prepare(`
   const stereoLibraryId = seedLibraryReleaseSelection({
     key: "dual-stereo",
     releaseGroupMbid: "rg-mbid-1",
-    editionMbid: "release-mbid-1",
+    releaseMbid: "release-mbid-1",
     monitored: true,
     rootPath: stereoRoot,
   });
   const spatialLibraryId = seedLibraryReleaseSelection({
     key: "dual-spatial",
     releaseGroupMbid: "rg-mbid-1",
-    editionMbid: "release-mbid-1",
+    releaseMbid: "release-mbid-1",
     monitored: true,
     spatial: true,
     rootPath: spatialRoot,
@@ -1145,14 +1145,14 @@ dbModule.db.prepare(`
 
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, edition_mbid, recording_mbid, medium_position, position, number, title
+      mbid, release_mbid, recording_mbid, medium_position, position, number, title
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-pompeii", "release-mbid-pompeii", "recording-mbid-pompeii", 1, 1, "1", "Pompeii");
 
   const nonspatialLibraryId = seedLibraryReleaseSelection({
     key: "inline-main",
     releaseGroupMbid: "rg-mbid-pompeii",
-    editionMbid: "release-mbid-pompeii",
+    releaseMbid: "release-mbid-pompeii",
     monitored: true,
   });
 
@@ -1383,13 +1383,13 @@ test("computeExpectedPath inline requires a monitored nonspatial library release
   const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("recording-mbid-inline-gate") as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-inline-gate", "release-mbid-inline-gate", "recording-mbid-inline-gate", 1, 1, "1", "Pompeii");
   seedLibraryReleaseSelection({
     key: "inline-gate",
     releaseGroupMbid: "rg-mbid-inline-gate",
-    editionMbid: "release-mbid-inline-gate",
+    releaseMbid: "release-mbid-inline-gate",
     monitored: false,
   });
   dbModule.db.prepare(`
@@ -1459,19 +1459,19 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
   const audioRecId = (dbModule.db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get("recording-mbid-stereo-pref") as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
+    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-stereo-pref", "release-mbid-stereo-pref", "recording-mbid-stereo-pref", 1, 1, "1", "Pompeii");
   const nonspatialLibraryId = seedLibraryReleaseSelection({
     key: "inline-nonspatial-pref",
     releaseGroupMbid: "rg-mbid-stereo-pref",
-    editionMbid: "release-mbid-stereo-pref",
+    releaseMbid: "release-mbid-stereo-pref",
     monitored: true,
   });
   const spatialLibraryId = seedLibraryReleaseSelection({
     key: "inline-spatial-pref",
     releaseGroupMbid: "rg-mbid-stereo-pref",
-    editionMbid: "release-mbid-stereo-pref",
+    releaseMbid: "release-mbid-stereo-pref",
     monitored: true,
     spatial: true,
   });

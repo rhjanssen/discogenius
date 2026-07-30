@@ -6,7 +6,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "f5eb6adb-cdf7-4f9d-b8b3-64b0b5dec285",
-    "editionMbid": "a4204157-ef3c-4f6a-ae25-cc2db9a260f6"
+    "releaseMbid": "a4204157-ef3c-4f6a-ae25-cc2db9a260f6"
   },
   {
     "providerId": "107102284",
@@ -15,7 +15,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "06e3a8ff-abc5-4a51-b2e3-44a956056aa4",
-    "editionMbid": "933e8118-f897-4507-b960-c126a74e8901"
+    "releaseMbid": "933e8118-f897-4507-b960-c126a74e8901"
   },
   {
     "providerId": "110492267",
@@ -24,7 +24,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "06e3a8ff-abc5-4a51-b2e3-44a956056aa4",
-    "editionMbid": "933e8118-f897-4507-b960-c126a74e8901"
+    "releaseMbid": "933e8118-f897-4507-b960-c126a74e8901"
   },
   {
     "providerId": "121873249",
@@ -33,7 +33,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "406a4f08-c780-4d7a-8916-9609828e7a83",
-    "editionMbid": "832f0578-d68d-45e0-b777-02601e45ccee"
+    "releaseMbid": "832f0578-d68d-45e0-b777-02601e45ccee"
   },
   {
     "providerId": "129180396",
@@ -42,7 +42,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "69fb7092-19aa-401e-a3f2-8dd3b3487120",
-    "editionMbid": "7791af00-5be3-47bd-a0ee-868fbf236b6c"
+    "releaseMbid": "7791af00-5be3-47bd-a0ee-868fbf236b6c"
   },
   {
     "providerId": "153518229",
@@ -51,7 +51,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "f0a6daa7-cf56-404d-bcd7-f7c18d5867cc",
-    "editionMbid": "44847ed2-3de3-498e-ac09-a663b4ffefd5"
+    "releaseMbid": "44847ed2-3de3-498e-ac09-a663b4ffefd5"
   },
   {
     "providerId": "182240453",
@@ -60,7 +60,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "846675bb-dc08-4296-82e7-37d4ec525fc3",
-    "editionMbid": "6133d8e0-eeb0-403d-83e5-5c0f72e90c8e"
+    "releaseMbid": "6133d8e0-eeb0-403d-83e5-5c0f72e90c8e"
   },
   {
     "providerId": "186804979",
@@ -69,7 +69,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "89ba94d6-d11a-43b9-b4b5-96cddf40b29c",
-    "editionMbid": "8ec84f24-dba7-4ab5-a999-44f51bcd4cf3"
+    "releaseMbid": "8ec84f24-dba7-4ab5-a999-44f51bcd4cf3"
   },
   {
     "providerId": "186809646",
@@ -78,7 +78,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "6bb5b3df-c963-49ef-b1e1-2c8ad370eb98",
-    "editionMbid": "cc378fa5-a876-49f3-b533-b9518a0c84c5"
+    "releaseMbid": "cc378fa5-a876-49f3-b533-b9518a0c84c5"
   },
   {
     "providerId": "193939700",
@@ -87,7 +87,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "6bb5b3df-c963-49ef-b1e1-2c8ad370eb98",
-    "editionMbid": "df59cfb6-bedc-4363-a06d-451b92dfc68b"
+    "releaseMbid": "df59cfb6-bedc-4363-a06d-451b92dfc68b"
   },
   {
     "providerId": "244473528",
@@ -96,7 +96,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "3ba81220-45b5-49db-b0c3-c361d3851566",
-    "editionMbid": "4517f807-c868-4cdb-9359-ef93c8ff73d9"
+    "releaseMbid": "4517f807-c868-4cdb-9359-ef93c8ff73d9"
   },
   {
     "providerId": "251215280",
@@ -105,7 +105,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "387d361b-7a7b-4f43-aed9-4e95e02ed4b7",
-    "editionMbid": "2d967fb9-9b58-4680-9789-7a4b52bfe880"
+    "releaseMbid": "2d967fb9-9b58-4680-9789-7a4b52bfe880"
   },
   {
     "providerId": "25459012",
@@ -114,7 +114,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "5f699603-5079-4575-994a-b107746ae6a1",
-    "editionMbid": null
+    "releaseMbid": null
   },
   {
     "providerId": "256208589",
@@ -123,7 +123,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "030e7fcc-8390-4006-86d6-cf1248cfe83c",
-    "editionMbid": "c9b90cf9-1ced-416d-9459-5a23db697963"
+    "releaseMbid": "c9b90cf9-1ced-416d-9459-5a23db697963"
   },
   {
     "providerId": "257021430",
@@ -132,7 +132,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "a80f8720-1891-40c5-8cab-77a3f2ae2766",
-    "editionMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
+    "releaseMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
   },
   {
     "providerId": "257021434",
@@ -141,7 +141,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "a80f8720-1891-40c5-8cab-77a3f2ae2766",
-    "editionMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
+    "releaseMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
   },
   {
     "providerId": "257021455",
@@ -150,7 +150,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "fd5dbf65-c32a-4e25-ac2b-43fc1e73d3bd",
-    "editionMbid": "c00ef7f1-89dc-4e7b-a712-6d2f4fdabae6"
+    "releaseMbid": "c00ef7f1-89dc-4e7b-a712-6d2f4fdabae6"
   },
   {
     "providerId": "257021477",
@@ -159,7 +159,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "a80f8720-1891-40c5-8cab-77a3f2ae2766",
-    "editionMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
+    "releaseMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
   },
   {
     "providerId": "257764211",
@@ -168,7 +168,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "760e602a-7777-474a-be26-e74b10064073",
-    "editionMbid": "3180691f-24da-4f77-8945-01ec192caff0"
+    "releaseMbid": "3180691f-24da-4f77-8945-01ec192caff0"
   },
   {
     "providerId": "257770751",
@@ -177,7 +177,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "a80f8720-1891-40c5-8cab-77a3f2ae2766",
-    "editionMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
+    "releaseMbid": "aef4f6bf-4b2e-45e8-8863-df597f0a1330"
   },
   {
     "providerId": "26891889",
@@ -186,7 +186,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "9aad95d9-0674-433b-ab50-2229c93d32b2",
-    "editionMbid": "1bdcf41c-63d1-43be-a69f-2836a9a49213"
+    "releaseMbid": "1bdcf41c-63d1-43be-a69f-2836a9a49213"
   },
   {
     "providerId": "275484061",
@@ -195,7 +195,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "18332970-c3f2-4d6e-ad52-2bdce5ea4318",
-    "editionMbid": "14bc780d-802d-4142-9b6b-deb4be2cf1b2"
+    "releaseMbid": "14bc780d-802d-4142-9b6b-deb4be2cf1b2"
   },
   {
     "providerId": "290251063",
@@ -204,7 +204,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "ad889c8e-f976-474c-8deb-6ab7f9de5fbf",
-    "editionMbid": "ff6df1a5-bb9b-485b-a23b-389a4c2ecd7b"
+    "releaseMbid": "ff6df1a5-bb9b-485b-a23b-389a4c2ecd7b"
   },
   {
     "providerId": "304203502",
@@ -213,7 +213,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "44c9296c-d137-4d3e-8450-70655aa50bb3",
-    "editionMbid": "3aa91731-cef8-4fff-89fa-8601ad7bb78e"
+    "releaseMbid": "3aa91731-cef8-4fff-89fa-8601ad7bb78e"
   },
   {
     "providerId": "328140343",
@@ -222,7 +222,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "44c9296c-d137-4d3e-8450-70655aa50bb3",
-    "editionMbid": "3cc52f6a-124c-477d-9d62-7f03a40a3810"
+    "releaseMbid": "3cc52f6a-124c-477d-9d62-7f03a40a3810"
   },
   {
     "providerId": "336069294",
@@ -231,7 +231,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "2fc06abc-a560-4e37-b280-ee5ee10d60ca",
-    "editionMbid": "8ce81675-4856-4e3f-99f5-5cc0887d8a37"
+    "releaseMbid": "8ce81675-4856-4e3f-99f5-5cc0887d8a37"
   },
   {
     "providerId": "336702718",
@@ -240,7 +240,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "406a4f08-c780-4d7a-8916-9609828e7a83",
-    "editionMbid": "832f0578-d68d-45e0-b777-02601e45ccee"
+    "releaseMbid": "832f0578-d68d-45e0-b777-02601e45ccee"
   },
   {
     "providerId": "33923839",
@@ -249,7 +249,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "9aad95d9-0674-433b-ab50-2229c93d32b2",
-    "editionMbid": "1bdcf41c-63d1-43be-a69f-2836a9a49213"
+    "releaseMbid": "1bdcf41c-63d1-43be-a69f-2836a9a49213"
   },
   {
     "providerId": "352102368",
@@ -258,7 +258,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "296a7ac9-e15e-438c-ac57-37724f5934e2",
-    "editionMbid": "64f9cef9-1c9a-4839-b1df-9ca3a82e4ca8"
+    "releaseMbid": "64f9cef9-1c9a-4839-b1df-9ca3a82e4ca8"
   },
   {
     "providerId": "359812962",
@@ -267,7 +267,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "296a7ac9-e15e-438c-ac57-37724f5934e2",
-    "editionMbid": "dc210f51-197f-4964-886c-52580a90be1f"
+    "releaseMbid": "dc210f51-197f-4964-886c-52580a90be1f"
   },
   {
     "providerId": "366373483",
@@ -276,7 +276,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "e98c9bf0-e0a9-40ec-9378-214ece2d3e85",
-    "editionMbid": "304468cc-5a92-4d94-80bb-767d48862db7"
+    "releaseMbid": "304468cc-5a92-4d94-80bb-767d48862db7"
   },
   {
     "providerId": "372258097",
@@ -285,7 +285,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "e98c9bf0-e0a9-40ec-9378-214ece2d3e85",
-    "editionMbid": "304468cc-5a92-4d94-80bb-767d48862db7"
+    "releaseMbid": "304468cc-5a92-4d94-80bb-767d48862db7"
   },
   {
     "providerId": "379606676",
@@ -294,7 +294,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "77b0eb25-6c5d-4a32-a8f9-c4da0766a773",
-    "editionMbid": "2e91768b-4548-4e79-9809-caeb6abe6cd1"
+    "releaseMbid": "2e91768b-4548-4e79-9809-caeb6abe6cd1"
   },
   {
     "providerId": "38984935",
@@ -303,7 +303,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "31d963dc-4791-4838-80ae-3658e9cf4a46",
-    "editionMbid": "c2253f08-f86b-4e76-a119-c19506676c55"
+    "releaseMbid": "c2253f08-f86b-4e76-a119-c19506676c55"
   },
   {
     "providerId": "390381098",
@@ -312,7 +312,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "77b0eb25-6c5d-4a32-a8f9-c4da0766a773",
-    "editionMbid": "2e91768b-4548-4e79-9809-caeb6abe6cd1"
+    "releaseMbid": "2e91768b-4548-4e79-9809-caeb6abe6cd1"
   },
   {
     "providerId": "392547326",
@@ -321,7 +321,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "79221373-a6d5-4e42-a224-efbbfb772e5e",
-    "editionMbid": "6f37bbba-cef9-4ded-8326-f8e6e9755721"
+    "releaseMbid": "6f37bbba-cef9-4ded-8326-f8e6e9755721"
   },
   {
     "providerId": "396126620",
@@ -330,7 +330,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "d7deaee8-c9e5-44ea-b6eb-1aebc91468bf",
-    "editionMbid": "783974cc-f85d-484f-8322-168eaf695e13"
+    "releaseMbid": "783974cc-f85d-484f-8322-168eaf695e13"
   },
   {
     "providerId": "400336510",
@@ -339,7 +339,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "4d24502d-2c99-4f11-b5da-69a6aee0df56",
-    "editionMbid": "c733b8aa-961a-4e22-9743-e6e08cf8ff9c"
+    "releaseMbid": "c733b8aa-961a-4e22-9743-e6e08cf8ff9c"
   },
   {
     "providerId": "40775426",
@@ -348,7 +348,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "31d963dc-4791-4838-80ae-3658e9cf4a46",
-    "editionMbid": "c3e33602-23e9-4c4e-ade1-43342d79bef5"
+    "releaseMbid": "c3e33602-23e9-4c4e-ade1-43342d79bef5"
   },
   {
     "providerId": "427324125",
@@ -357,7 +357,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "2f1ea280-939c-4e1a-a0c1-13f4a07c8ff9",
-    "editionMbid": "f60060c1-73bd-4962-a47c-5d47a203f913"
+    "releaseMbid": "f60060c1-73bd-4962-a47c-5d47a203f913"
   },
   {
     "providerId": "433185281",
@@ -366,7 +366,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.97,
     "releaseGroupMbid": "2f1ea280-939c-4e1a-a0c1-13f4a07c8ff9",
-    "editionMbid": "f60060c1-73bd-4962-a47c-5d47a203f913"
+    "releaseMbid": "f60060c1-73bd-4962-a47c-5d47a203f913"
   },
   {
     "providerId": "455743087",
@@ -375,7 +375,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "37769014-b94f-4022-b79b-a9048e648daf",
-    "editionMbid": "9abe8deb-6a58-4146-ace1-9351df0f1fe4"
+    "releaseMbid": "9abe8deb-6a58-4146-ace1-9351df0f1fe4"
   },
   {
     "providerId": "467627208",
@@ -384,7 +384,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "d001d291-5a2b-4568-bdb4-c738a1fb636d",
-    "editionMbid": "c7550b98-c7a1-48d4-9db9-39e7388142ac"
+    "releaseMbid": "c7550b98-c7a1-48d4-9db9-39e7388142ac"
   },
   {
     "providerId": "498446503",
@@ -393,7 +393,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "7b5e026b-3197-46df-8e1f-c87baec08bca",
-    "editionMbid": "a14f1bc2-4ed7-481f-974e-869e1e619ef7"
+    "releaseMbid": "a14f1bc2-4ed7-481f-974e-869e1e619ef7"
   },
   {
     "providerId": "511738658",
@@ -402,7 +402,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "7fea40aa-4df6-4950-9514-bb520c4b220d",
-    "editionMbid": "529c085a-9f17-48d0-84be-51e1d9b0f4e7"
+    "releaseMbid": "529c085a-9f17-48d0-84be-51e1d9b0f4e7"
   },
   {
     "providerId": "55046646",
@@ -411,7 +411,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "5bbd1800-4585-454f-8e90-b472dc144d2a",
-    "editionMbid": "4961a054-63f8-40ef-874b-dc31e899901f"
+    "releaseMbid": "4961a054-63f8-40ef-874b-dc31e899901f"
   },
   {
     "providerId": "57231699",
@@ -420,7 +420,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "b14c65e0-d21c-4999-aa9e-0c2cb9a23f8d",
-    "editionMbid": "16462c36-3748-4edd-9bb8-334628778f14"
+    "releaseMbid": "16462c36-3748-4edd-9bb8-334628778f14"
   },
   {
     "providerId": "57379621",
@@ -429,7 +429,7 @@
     "method": "musicbrainz-release-upc",
     "confidence": 1,
     "releaseGroupMbid": "8056e83e-ff40-42b7-92a0-c3a3c924caba",
-    "editionMbid": "790a09fd-f667-4c56-98f0-677ee23cfd63"
+    "releaseMbid": "790a09fd-f667-4c56-98f0-677ee23cfd63"
   },
   {
     "providerId": "61799966",
@@ -438,7 +438,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "d2c7be4f-f18f-4275-b41e-15b82a8c7aa1",
-    "editionMbid": "aaa2d1a7-8f61-4998-ab95-7c6c4fa6a1cb"
+    "releaseMbid": "aaa2d1a7-8f61-4998-ab95-7c6c4fa6a1cb"
   },
   {
     "providerId": "63938656",
@@ -447,7 +447,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "3705bfea-9da8-4596-bf0a-df43ec23238e",
-    "editionMbid": "bb293bf9-75b1-41e0-8415-f5642bfceaad"
+    "releaseMbid": "bb293bf9-75b1-41e0-8415-f5642bfceaad"
   },
   {
     "providerId": "67222460",
@@ -456,7 +456,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.87,
     "releaseGroupMbid": "d2c7be4f-f18f-4275-b41e-15b82a8c7aa1",
-    "editionMbid": "aaa2d1a7-8f61-4998-ab95-7c6c4fa6a1cb"
+    "releaseMbid": "aaa2d1a7-8f61-4998-ab95-7c6c4fa6a1cb"
   },
   {
     "providerId": "68459773",
@@ -465,7 +465,7 @@
     "method": "musicbrainz-release-group-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "d2c7be4f-f18f-4275-b41e-15b82a8c7aa1",
-    "editionMbid": "aaa2d1a7-8f61-4998-ab95-7c6c4fa6a1cb"
+    "releaseMbid": "aaa2d1a7-8f61-4998-ab95-7c6c4fa6a1cb"
   },
   {
     "providerId": "69637552",
@@ -474,7 +474,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "86fcc36d-e1e4-414c-ace1-03cb80ed481b",
-    "editionMbid": "da7206ef-95bc-4560-b944-e39da6f94494"
+    "releaseMbid": "da7206ef-95bc-4560-b944-e39da6f94494"
   },
   {
     "providerId": "74015560",
@@ -483,7 +483,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "18b03817-b776-454a-9b93-342abc77d5cd",
-    "editionMbid": "0634d55e-5f46-4b52-a88c-e1d8b36078b6"
+    "releaseMbid": "0634d55e-5f46-4b52-a88c-e1d8b36078b6"
   },
   {
     "providerId": "77519176",
@@ -492,7 +492,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "3a926a58-b63e-4bd4-ad86-666673b11ee2",
-    "editionMbid": "6f90d982-4e4f-4304-b522-53538b99f0ff"
+    "releaseMbid": "6f90d982-4e4f-4304-b522-53538b99f0ff"
   },
   {
     "providerId": "89220076",
@@ -501,7 +501,7 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "c38b5cb0-13f8-46bd-93cf-f8af9ec38399",
-    "editionMbid": "7aa1eeef-4dc7-4a71-bf5e-5401b9d3ee1b"
+    "releaseMbid": "7aa1eeef-4dc7-4a71-bf5e-5401b9d3ee1b"
   },
   {
     "providerId": "95678942",
@@ -510,6 +510,6 @@
     "method": "musicbrainz-release-title-year-type-track-count",
     "confidence": 0.99,
     "releaseGroupMbid": "d5d49949-aa44-420b-8921-1374fd5e7205",
-    "editionMbid": "74040b23-fbe6-4591-9aaa-794e36a4569c"
+    "releaseMbid": "74040b23-fbe6-4591-9aaa-794e36a4569c"
   }
 ]

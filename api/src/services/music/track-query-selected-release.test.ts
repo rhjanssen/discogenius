@@ -76,7 +76,7 @@ function seedSelectedReleaseWithoutPlanOrFiles(): { trackIds: number[] } {
     const recording = db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(recMbid) as { id: number };
     const track = db.prepare(`
       INSERT INTO Tracks (
-        mbid, edition_mbid, album_edition_id, recording_mbid, recording_id,
+        mbid, release_mbid, album_edition_id, recording_mbid, recording_id,
         medium_position, position, number, title, length_ms
       ) VALUES (?, 'rel-bad-blood', ?, ?, ?, 1, ?, ?, ?, 214000)
       RETURNING id

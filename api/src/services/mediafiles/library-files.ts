@@ -474,7 +474,7 @@ function resolveCanonicalInlineAudioExpectedPath(
            t.position,
            t.number,
            t.medium_position,
-           ar.mbid AS edition_mbid,
+           ar.mbid AS release_mbid,
            ar.release_group_mbid,
            a.title AS album_title,
            a.primary_type,
@@ -508,7 +508,7 @@ function resolveCanonicalInlineAudioExpectedPath(
                )
            ) THEN 1 ELSE 0 END AS selected_release
     FROM Tracks t
-    JOIN AlbumEditions ar ON ar.mbid = t.edition_mbid
+    JOIN AlbumEditions ar ON ar.mbid = t.release_mbid
     JOIN Albums a ON a.mbid = ar.release_group_mbid
     LEFT JOIN ArtistReleaseGroupCuration c
       ON c.source_artist_mbid = ?
@@ -1145,7 +1145,7 @@ export class LibraryFilesService {
                )
               LEFT JOIN Tracks t
                 ON (t.recording_mbid = audio.mbid OR t.recording_id = audio.id)
-              LEFT JOIN AlbumEditions track_rg ON track_rg.mbid = t.edition_mbid
+              LEFT JOIN AlbumEditions track_rg ON track_rg.mbid = t.release_mbid
               LEFT JOIN Albums album
                 ON album.id = COALESCE(tf.release_group_id, track_rg.release_group_id)
               WHERE rr.source_recording_id = ?

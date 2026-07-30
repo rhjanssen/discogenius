@@ -4,7 +4,7 @@ export interface AcceptedProviderTrackFixture {
   provider: string;
   providerEditionId: string;
   providerTrackId: string;
-  editionMbid: string;
+  releaseMbid: string;
   trackMbid: string;
   quality?: string;
 }
@@ -26,14 +26,14 @@ export function seedAcceptedProviderReleaseMatch(
   fixture: {
     provider: string;
     providerEditionId: string;
-    editionMbid: string;
+    releaseMbid: string;
   },
 ): { providerEditionItemId: number; providerEditionMatchId: number; editionId: number; releaseGroupId: number } {
   const release = db.prepare(`
     SELECT release.id, release.release_group_id, release.title
     FROM AlbumEditions release
     WHERE release.mbid = ?
-  `).get(fixture.editionMbid) as {
+  `).get(fixture.releaseMbid) as {
     id: number;
     release_group_id: number;
     title: string;
@@ -233,7 +233,7 @@ export function seedAcceptedProviderRecordingTrack(
       const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(`rel-${key}`) as { id: number };
       db.prepare(`
         INSERT OR IGNORE INTO Tracks (
-          mbid, edition_mbid, album_edition_id, recording_mbid, recording_id,
+          mbid, release_mbid, album_edition_id, recording_mbid, recording_id,
           medium_position, position, title
         ) VALUES (?, ?, ?, ?, ?, 1, 1, ?)
       `).run(`trk-${key}`, `rel-${key}`, release.id, recording.mbid, recording.id, recording.title);
@@ -274,7 +274,7 @@ export function seedAcceptedProviderTrackMatch(
     SELECT release.id, release.release_group_id, release.title
     FROM AlbumEditions release
     WHERE release.mbid = ?
-  `).get(fixture.editionMbid) as {
+  `).get(fixture.releaseMbid) as {
     id: number;
     release_group_id: number;
     title: string;
@@ -369,7 +369,7 @@ export function seedCanonicalAlbum(
   db: Database.Database,
   fixture: {
     releaseGroupMbid: string;
-    editionMbid: string;
+    releaseMbid: string;
     artistMbid?: string;
     artistName?: string;
     title?: string;
@@ -389,7 +389,7 @@ export function seedCanonicalAlbum(
       mbid, release_group_mbid, artist_mbid, title, track_count, media_count
     ) VALUES (?, ?, ?, ?, ?, 1)
   `).run(
-    fixture.editionMbid,
+    fixture.releaseMbid,
     fixture.releaseGroupMbid,
     artistMbid,
     title,
@@ -407,12 +407,12 @@ export function seedCanonicalAlbum(
       .get(track.recordingMbid) as { id: number };
     db.prepare(`
       INSERT OR IGNORE INTO Tracks (
-        mbid, edition_mbid, recording_mbid, recording_id,
+        mbid, release_mbid, recording_mbid, recording_id,
         medium_position, position, number, title
       ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
     `).run(
       track.trackMbid,
-      fixture.editionMbid,
+      fixture.releaseMbid,
       track.recordingMbid,
       recording.id,
       track.position ?? position,
@@ -422,7 +422,7 @@ export function seedCanonicalAlbum(
   }
 
   const release = db.prepare("SELECT id, release_group_id FROM AlbumEditions WHERE mbid = ?")
-    .get(fixture.editionMbid) as { id: number; release_group_id: number };
+    .get(fixture.releaseMbid) as { id: number; release_group_id: number };
   return { releaseGroupId: release.release_group_id, editionId: release.id };
 }
 

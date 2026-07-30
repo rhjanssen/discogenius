@@ -94,7 +94,7 @@ export interface CommandBodyCommon {
   providerId?: string;
   provider?: string;
   releaseGroupMbid?: string;
-  editionMbid?: string | null;
+  releaseMbid?: string | null;
   canonicalTrackId?: string | null;
   canonicalRecordingId?: string | null;
   canonicalTrackMbid?: string | null;

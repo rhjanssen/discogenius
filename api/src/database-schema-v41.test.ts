@@ -99,7 +99,7 @@ test("schema 41 provider items contain provider-native facts only", () => {
     for (const forbidden of [
       "artist_mbid",
       "release_group_mbid",
-      "edition_mbid",
+      "release_mbid",
       "track_mbid",
       "recording_mbid",
       "artist_metadata_id",

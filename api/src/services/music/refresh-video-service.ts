@@ -228,7 +228,7 @@ function loadAudioRecordingCandidatesForProviderAlbum(
             FROM Tracks t
             JOIN AlbumEditions ar
               ON ar.id = t.album_edition_id
-              OR (t.edition_mbid IS NOT NULL AND ar.mbid = t.edition_mbid)
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -243,7 +243,7 @@ function loadAudioRecordingCandidatesForProviderAlbum(
             FROM Tracks t
             JOIN AlbumEditions ar
               ON ar.id = t.album_edition_id
-              OR (t.edition_mbid IS NOT NULL AND ar.mbid = t.edition_mbid)
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -383,7 +383,7 @@ function findAudioRecordingByArtistTitleDuration(
             FROM Tracks t
             JOIN AlbumEditions ar
               ON ar.id = t.album_edition_id
-              OR (t.edition_mbid IS NOT NULL AND ar.mbid = t.edition_mbid)
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -398,7 +398,7 @@ function findAudioRecordingByArtistTitleDuration(
             FROM Tracks t
             JOIN AlbumEditions ar
               ON ar.id = t.album_edition_id
-              OR (t.edition_mbid IS NOT NULL AND ar.mbid = t.edition_mbid)
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND LOWER(COALESCE(a.primary_type, '')) IN ('album', 'ep', 'single')
@@ -413,7 +413,7 @@ function findAudioRecordingByArtistTitleDuration(
             FROM Tracks t
             JOIN AlbumEditions ar
               ON ar.id = t.album_edition_id
-              OR (t.edition_mbid IS NOT NULL AND ar.mbid = t.edition_mbid)
+              OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
               AND (
@@ -1579,7 +1579,7 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         FROM Tracks t
         JOIN AlbumEditions ar
           ON ar.id = t.album_edition_id
-          OR (t.edition_mbid IS NOT NULL AND ar.mbid = t.edition_mbid)
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         JOIN Albums a ON a.mbid = ar.release_group_mbid
         WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
           AND (
@@ -1595,7 +1595,7 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         FROM Tracks t
         JOIN AlbumEditions ar
           ON ar.id = t.album_edition_id
-          OR (t.edition_mbid IS NOT NULL AND ar.mbid = t.edition_mbid)
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         JOIN Albums a ON a.mbid = ar.release_group_mbid
         WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
           AND LOWER(COALESCE(a.primary_type, '')) IN ('album', 'ep', 'single')
@@ -1612,7 +1612,7 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         FROM Tracks t
         JOIN AlbumEditions ar
           ON ar.id = t.album_edition_id
-          OR (t.edition_mbid IS NOT NULL AND ar.mbid = t.edition_mbid)
+          OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         JOIN Albums a ON a.mbid = ar.release_group_mbid
         WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
           AND (
@@ -1897,7 +1897,7 @@ export class RefreshVideoService {
         provider: string;
         albumId: string;
         releaseGroupMbid?: string | null;
-        editionMbid?: string | null;
+        releaseMbid?: string | null;
         counterparts: Array<{
             providerId: string;
             albumId: string;
@@ -1955,7 +1955,7 @@ export class RefreshVideoService {
                 artist_mbid: artistMbid,
                 artist_name: counterpart.artistName ?? null,
                 release_group_mbid: input.releaseGroupMbid ?? null,
-                edition_mbid: input.editionMbid ?? null,
+                release_mbid: input.releaseMbid ?? null,
                 quality: counterpart.quality ?? null,
                 _explicitAudioMatch: explicitAudioMatch,
             };
