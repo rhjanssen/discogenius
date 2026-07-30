@@ -168,6 +168,63 @@ export function deriveCatalogFileProgress(
     return { totalFiles, currentFileNum: Math.min(totalFiles, completed), completed };
 }
 
+export type ProviderAlbumFallbackTrackRow = {
+    provider_id: string;
+    title: string | null;
+    version: string | null;
+    track_number: number | null;
+    volume_number: number | null;
+};
+
+/**
+ * Last-resort tracklist for an album job whose canonical tracklist is unknown:
+ * the provider release's own member tracks.
+ *
+ * Album membership is a ProviderReleaseMembers occurrence, and a member's
+ * canonical track comes from the accepted ProviderTrackMatches edge on that
+ * occurrence — never from MBID shadow columns on the item, which no longer
+ * exist. The release is resolved by the full provider identity (provider +
+ * entity_type + provider_id), because a provider id alone is not unique across
+ * providers.
+ *
+ * Emitted numbers stay canonical-only. The member's own medium/position is used
+ * solely to order rows that have no accepted match, which beats lexical
+ * provider-id order without ever becoming a track number.
+ */
+export function listProviderAlbumFallbackTracks(
+    database: { prepare: (sql: string) => { all: (...args: any[]) => unknown[] } },
+    input: { provider: string; providerAlbumId: string; releaseMbid: string | null },
+): ProviderAlbumFallbackTrackRow[] {
+    return database.prepare(`
+        SELECT
+            CAST(pi.provider_id AS TEXT) AS provider_id,
+            COALESCE(NULLIF(TRIM(t.title), ''), pi.title) AS title,
+            pi.version,
+            t.position AS track_number,
+            t.medium_position AS volume_number
+        FROM ProviderReleaseMembers member
+        JOIN ProviderItems release_item
+            ON release_item.id = member.provider_release_item_id
+           AND release_item.entity_type = 'release'
+           AND release_item.provider = ?
+           AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
+        JOIN ProviderItems pi
+            ON pi.id = member.member_item_id
+           AND pi.entity_type = 'track'
+           AND pi.provider = release_item.provider
+        LEFT JOIN ProviderTrackMatches track_match
+            ON track_match.provider_release_member_id = member.id
+           AND track_match.match_state = 'accepted'
+        LEFT JOIN Tracks t
+            ON t.id = track_match.track_id
+           AND t.release_mbid = ?
+        ORDER BY
+            COALESCE(t.medium_position, member.medium_position, 1),
+            COALESCE(t.position, member.position, 999999),
+            pi.provider_id
+    `).all(input.provider, input.providerAlbumId, input.releaseMbid) as ProviderAlbumFallbackTrackRow[];
+}
+
 /**
  * Normalize a reported or catalog track title for matching: drop a leading
  * "Artist - " prefix (import filenames), lowercase, and reduce punctuation
@@ -1221,34 +1278,11 @@ export class DownloadProcessor {
                             // when known, never via match_evidence disc/track numbers (native
                             // provider-album layout).
                             const fallbackReleaseMbid = String((payload as DownloadAlbumCommand).releaseMbid || '').trim() || null;
-                            const providerRows = db.prepare(`
-                                SELECT
-                                    CAST(pi.provider_id AS TEXT) AS provider_id,
-                                    COALESCE(NULLIF(TRIM(t.title), ''), pi.title) AS title,
-                                    pi.version,
-                                    t.position AS track_number,
-                                    t.medium_position AS volume_number
-                                FROM ProviderItems pi
-                                LEFT JOIN Tracks t
-                                    ON t.release_mbid = ?
-                                    AND (
-                                        (pi.track_mbid IS NOT NULL AND t.mbid = pi.track_mbid)
-                                        OR (pi.recording_mbid IS NOT NULL AND t.recording_mbid = pi.recording_mbid)
-                                    )
-                                WHERE pi.provider = ?
-                                  AND pi.entity_type = 'track'
-                                  AND pi.provider_album_id = ?
-                                ORDER BY
-                                    COALESCE(t.medium_position, 1),
-                                    COALESCE(t.position, 999999),
-                                    pi.provider_id
-                            `).all(fallbackReleaseMbid, this.resolvePayloadProvider(payload), providerId) as Array<{
-                                provider_id: string;
-                                title: string | null;
-                                version: string | null;
-                                track_number: number | null;
-                                volume_number: number | null;
-                            }>;
+                            const providerRows = listProviderAlbumFallbackTracks(db, {
+                                provider: this.resolvePayloadProvider(payload),
+                                providerAlbumId: String(providerId),
+                                releaseMbid: fallbackReleaseMbid,
+                            });
 
                             initialTracks = providerRows.map((row) => ({
                                 title: formatTrackDisplayTitle(row.title, row.version),
