@@ -102,7 +102,7 @@ function calculateArtistStatisticsChunk(normalizedArtistIds: string[]): ArtistSt
       SELECT
         library_group.release_group_id,
         MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored
-      FROM LibraryReleaseGroups library_group
+      FROM LibraryAlbums library_group
       JOIN Libraries library
         ON library.id = library_group.library_id
        AND library.enabled = 1

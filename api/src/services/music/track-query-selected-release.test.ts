@@ -26,8 +26,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM AcquisitionPlanTracks").run();
   db.prepare("DELETE FROM AcquisitionPlanSources").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
-  db.prepare("DELETE FROM LibraryReleases").run();
-  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM LibraryEditions").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM AlbumEditions").run();
@@ -86,12 +86,12 @@ function seedSelectedReleaseWithoutPlanOrFiles(): { trackIds: number[] } {
 
   const library = db.prepare("SELECT id FROM Libraries ORDER BY id LIMIT 1").get() as { id: number };
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
   `).run(library.id, releaseGroup.id);
   db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, release.id);
@@ -142,7 +142,7 @@ test("a selected release's canonical tracks are listed before any plan or file e
 test("tracks of an unmonitored release group stay out of the monitored listing", () => {
   const { db } = dbModule;
   seedSelectedReleaseWithoutPlanOrFiles();
-  db.prepare("UPDATE LibraryReleaseGroups SET monitored = 0").run();
+  db.prepare("UPDATE LibraryAlbums SET monitored = 0").run();
   trackIndexModule.TrackLibraryIndexService.rebuild();
 
   const result = trackQueryModule.listTracks({

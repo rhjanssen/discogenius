@@ -20,11 +20,11 @@ export class AcquisitionPlanRepository {
     if (!input.plan.provider.trim()) throw new Error("Acquisition plan provider is required");
     if (!input.policyHash.trim()) throw new Error("Acquisition plan policy hash is required");
     return this.db.transaction(() => {
-      this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_release_id = ?")
+      this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_edition_id = ?")
         .run(input.libraryReleaseId);
       const planRow = this.db.prepare(`
         INSERT INTO AcquisitionPlans (
-          library_release_id, provider, composition, download_mode, state,
+          library_edition_id, provider, composition, download_mode, state,
           planner_version, policy_hash, computed_at, updated_at
         ) VALUES (?, ?, ?, ?, 'current', ?, ?, ?, CURRENT_TIMESTAMP)
         RETURNING id
@@ -92,12 +92,12 @@ export class AcquisitionPlanRepository {
     return this.db.prepare(`
       UPDATE AcquisitionPlans
       SET state = 'stale', updated_at = CURRENT_TIMESTAMP
-      WHERE library_release_id = ? AND state != 'stale'
+      WHERE library_edition_id = ? AND state != 'stale'
     `).run(libraryReleaseId).changes;
   }
 
   clear(libraryReleaseId: number): number {
-    return this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_release_id = ?")
+    return this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_edition_id = ?")
       .run(libraryReleaseId).changes;
   }
 
@@ -107,11 +107,11 @@ export class AcquisitionPlanRepository {
         COUNT(DISTINCT track.id) AS track_count,
         COUNT(DISTINCT plan_track.track_id) AS assigned_count,
         COUNT(DISTINCT file.track_id) AS complete_count
-      FROM LibraryReleases library_release
+      FROM LibraryEditions library_release
       JOIN AlbumEditions release ON release.id = library_release.edition_id
       JOIN Tracks track ON track.album_edition_id = release.id
       LEFT JOIN AcquisitionPlans plan
-        ON plan.library_release_id = library_release.id
+        ON plan.library_edition_id = library_release.id
        AND plan.state = 'current'
       LEFT JOIN AcquisitionPlanTracks plan_track
         ON plan_track.plan_id = plan.id

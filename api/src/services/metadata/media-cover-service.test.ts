@@ -108,18 +108,18 @@ function linkProviderArtworkCandidate(options: {
     SELECT id FROM Libraries WHERE name = ?
   `).get(libraryName) as { id: number };
   db.prepare(`
-    INSERT OR IGNORE INTO LibraryReleaseGroups (
+    INSERT OR IGNORE INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       reason, curation_version
     ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
   `).run(library.id, releaseGroup.id);
   db.prepare(`
-    INSERT OR IGNORE INTO LibraryReleases (
+    INSERT OR IGNORE INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, release.id);
   const libraryRelease = db.prepare(`
-    SELECT id FROM LibraryReleases WHERE library_id = ? AND edition_id = ?
+    SELECT id FROM LibraryEditions WHERE library_id = ? AND edition_id = ?
   `).get(library.id, release.id) as { id: number };
   const releaseMatch = db.prepare(`
     SELECT id
@@ -128,15 +128,15 @@ function linkProviderArtworkCandidate(options: {
   `).get(providerItem.id, release.id) as { id: number };
   db.prepare(`
     INSERT INTO AcquisitionPlans (
-      library_release_id, provider, composition, download_mode, state,
+      library_edition_id, provider, composition, download_mode, state,
       planner_version, policy_hash, computed_at
     ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
-    ON CONFLICT(library_release_id) DO UPDATE SET
+    ON CONFLICT(library_edition_id) DO UPDATE SET
       provider = excluded.provider,
       state = 'current'
   `).run(libraryRelease.id, options.provider);
   const plan = db.prepare(`
-    SELECT id FROM AcquisitionPlans WHERE library_release_id = ?
+    SELECT id FROM AcquisitionPlans WHERE library_edition_id = ?
   `).get(libraryRelease.id) as { id: number };
   db.prepare("DELETE FROM AcquisitionPlanSources WHERE plan_id = ?").run(plan.id);
   db.prepare(`
@@ -1297,7 +1297,7 @@ test("album provider artwork candidates prefer nonspatial plans, then spatial pl
     WHERE id IN (
       SELECT plan.id
       FROM AcquisitionPlans plan
-      JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
+      JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
       JOIN Libraries library ON library.id = library_release.library_id
       WHERE library.name = ?
     )

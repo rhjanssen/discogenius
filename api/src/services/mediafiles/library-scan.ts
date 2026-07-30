@@ -1084,7 +1084,7 @@ export class DiskScanService {
 
                             if (providerItem?.release_group_id != null) {
                                 db.prepare(`
-                                    UPDATE LibraryReleaseGroups
+                                    UPDATE LibraryAlbums
                                     SET monitored = 1,
                                         updated_at = CURRENT_TIMESTAMP
                                     WHERE release_group_id = ?

@@ -25,8 +25,8 @@ beforeEach(() => {
     "AcquisitionPlanTracks",
     "AcquisitionPlanSources",
     "AcquisitionPlans",
-    "LibraryReleases",
-    "LibraryReleaseGroups",
+    "LibraryEditions",
+    "LibraryAlbums",
     "ProviderTrackMatches",
     "ProviderEditionMatches",
     "ProviderEditionMembers",
@@ -189,20 +189,20 @@ test("tracklist remoteOffers include stereo and spatial from different providers
       RETURNING id
     `).get(providerTrack.id, options.qualityClass, options.qualityClass, options.quality) as { id: number };
     db.prepare(`
-      INSERT INTO LibraryReleaseGroups (
+      INSERT INTO LibraryAlbums (
         library_id, release_group_id, monitored, selection_mode, locked,
         curation_version
       ) VALUES (?, ?, 1, 'auto', 0, 1)
     `).run(options.libraryId, releaseGroup.id);
     const libraryRelease = db.prepare(`
-      INSERT INTO LibraryReleases (
+      INSERT INTO LibraryEditions (
         library_id, edition_id, selection_mode, locked, curation_version
       ) VALUES (?, ?, 'auto', 0, 1)
       RETURNING id
     `).get(options.libraryId, release.id) as { id: number };
     const plan = db.prepare(`
       INSERT INTO AcquisitionPlans (
-        library_release_id, provider, composition, download_mode, state,
+        library_edition_id, provider, composition, download_mode, state,
         planner_version, policy_hash, computed_at
       ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
       RETURNING id

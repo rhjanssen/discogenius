@@ -20,8 +20,8 @@ before(async () => {
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
   dbModule.db.prepare("DELETE FROM RecordingRelations").run();
-  dbModule.db.prepare("DELETE FROM LibraryReleases").run();
-  dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  dbModule.db.prepare("DELETE FROM LibraryEditions").run();
+  dbModule.db.prepare("DELETE FROM LibraryAlbums").run();
   dbModule.db.prepare("DELETE FROM Libraries").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
@@ -123,7 +123,7 @@ test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", 
     LIMIT 1
   `).run(path.join(tempDir, "video-layout-stereo"));
   dbModule.db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       reason, curation_version
     )

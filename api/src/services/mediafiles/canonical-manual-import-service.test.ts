@@ -125,8 +125,8 @@ test("canonical manual import pins Library, Release, Track and Recording", async
         release_group.locked AS group_locked,
         release.selection_mode AS release_mode,
         release.locked AS release_locked
-      FROM LibraryReleaseGroups release_group
-      JOIN LibraryReleases release
+      FROM LibraryAlbums release_group
+      JOIN LibraryEditions release
         ON release.library_id = release_group.library_id
        AND release.edition_id = 10
       WHERE release_group.library_id = 1 AND release_group.release_group_id = 1
@@ -277,13 +277,13 @@ test("a recording shared by two selected releases keeps the release-track the us
     `).run();
     // Both releases are selected into the library.
     db.prepare(`
-      INSERT INTO LibraryReleaseGroups (
+      INSERT INTO LibraryAlbums (
         library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
       ) VALUES (1, 1, 1, 'auto', 0, 'test', 1)
     `).run();
     for (const releaseId of [10, 20]) {
       db.prepare(`
-        INSERT INTO LibraryReleases (
+        INSERT INTO LibraryEditions (
           library_id, edition_id, selection_mode, locked, reason, curation_version
         ) VALUES (1, ?, 'auto', 0, 'test', 1)
       `).run(releaseId);
@@ -425,7 +425,7 @@ test("manual import monitors and custom-selects without silently locking", async
 
     // Monitored and custom-selected, but NOT locked: lock is separate user intent.
     const group = db.prepare(`
-      SELECT monitored, selection_mode, locked FROM LibraryReleaseGroups
+      SELECT monitored, selection_mode, locked FROM LibraryAlbums
       WHERE library_id = 1 AND release_group_id = 1
     `).get() as Record<string, unknown>;
     assert.equal(group.monitored, 1);
@@ -433,8 +433,8 @@ test("manual import monitors and custom-selects without silently locking", async
     assert.equal(group.locked, 0, "manual import must not silently lock the group");
 
     // An existing lock is preserved across a later import.
-    db.prepare("UPDATE LibraryReleaseGroups SET locked = 1 WHERE library_id = 1").run();
-    db.prepare("UPDATE LibraryReleases SET locked = 1 WHERE library_id = 1").run();
+    db.prepare("UPDATE LibraryAlbums SET locked = 1 WHERE library_id = 1").run();
+    db.prepare("UPDATE LibraryEditions SET locked = 1 WHERE library_id = 1").run();
     db.prepare("DELETE FROM TrackFiles WHERE id = 1").run();
     db.prepare(`
       INSERT INTO UnmappedFiles (id, file_path, relative_path, library_root, filename, extension)
@@ -448,7 +448,7 @@ test("manual import monitors and custom-selects without silently locking", async
     });
 
     assert.equal((db.prepare(`
-      SELECT locked FROM LibraryReleaseGroups WHERE library_id = 1 AND release_group_id = 1
+      SELECT locked FROM LibraryAlbums WHERE library_id = 1 AND release_group_id = 1
     `).get() as { locked: number }).locked, 1, "an existing lock survives a later import");
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);

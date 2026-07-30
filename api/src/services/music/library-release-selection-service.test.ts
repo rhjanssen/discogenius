@@ -118,7 +118,7 @@ test("manual library release selection persists a locked choice and normalized a
     }]);
     assert.deepEqual(db.prepare(`
       SELECT selection_mode, locked, monitored
-      FROM LibraryReleaseGroups
+      FROM LibraryAlbums
       WHERE library_id = 1 AND release_group_id = 1
     `).get(), { selection_mode: "manual", locked: 1, monitored: 1 });
   } finally {

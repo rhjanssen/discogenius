@@ -18,7 +18,7 @@ export class AlbumCommandService {
         }
 
         db.prepare(`
-            INSERT INTO LibraryReleaseGroups (
+            INSERT INTO LibraryAlbums (
               library_id, release_group_id, monitored, selection_mode,
               locked, reason, curation_version, updated_at
             )
@@ -42,7 +42,7 @@ export class AlbumCommandService {
         }
 
         db.prepare(`
-            INSERT INTO LibraryReleaseGroups (
+            INSERT INTO LibraryAlbums (
               library_id, release_group_id, monitored, selection_mode,
               locked, reason, curation_version, updated_at
             )
@@ -183,8 +183,8 @@ export class AlbumCommandService {
         const normalizedPlanIds = (db.prepare(`
             SELECT plan.id
             FROM AcquisitionPlans plan
-            JOIN LibraryReleases library_release
-              ON library_release.id = plan.library_release_id
+            JOIN LibraryEditions library_release
+              ON library_release.id = plan.library_edition_id
             JOIN Libraries library ON library.id = library_release.library_id
             JOIN AlbumEditions release ON release.id = library_release.edition_id
             JOIN Albums release_group ON release_group.id = release.release_group_id

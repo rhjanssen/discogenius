@@ -427,8 +427,8 @@ function resolveAlbumVideoCoverProvider(options?: AlbumVideoCoverDownloadOptions
               plan.provider AS selected_provider,
               provider_release.provider_id AS selected_provider_id
             FROM AcquisitionPlans plan
-            JOIN LibraryReleases library_release
-              ON library_release.id = plan.library_release_id
+            JOIN LibraryEditions library_release
+              ON library_release.id = plan.library_edition_id
             JOIN AlbumEditions release
               ON release.id = library_release.edition_id
             JOIN Albums release_group
@@ -833,19 +833,19 @@ export async function saveAlbumNfoFile(
           provider_release.provider_id AS selected_provider_id,
           release.mbid AS selected_release_mbid
         FROM Albums release_group
-        JOIN LibraryReleaseGroups library_group
+        JOIN LibraryAlbums library_group
           ON library_group.release_group_id = release_group.id
         JOIN Libraries library
           ON library.id = library_group.library_id
         JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
-        JOIN LibraryReleases library_release
+        JOIN LibraryEditions library_release
           ON library_release.library_id = library.id
         JOIN AlbumEditions release
           ON release.id = library_release.edition_id
          AND release.release_group_id = release_group.id
         LEFT JOIN AcquisitionPlans plan
-          ON plan.library_release_id = library_release.id
+          ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
         LEFT JOIN AcquisitionPlanSources plan_source
           ON plan_source.plan_id = plan.id

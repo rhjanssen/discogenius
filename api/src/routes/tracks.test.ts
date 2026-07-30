@@ -22,8 +22,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM AcquisitionPlanTracks").run();
   db.prepare("DELETE FROM AcquisitionPlanSources").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
-  db.prepare("DELETE FROM LibraryReleases").run();
-  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM LibraryEditions").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
@@ -103,12 +103,12 @@ function insertLibrarySelection(): { libraryId: number; libraryReleaseId: number
   const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'release-mbid'")
     .get() as { id: number };
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 1, 'manual', 0, 'route_test', 1)
   `).run(library.id, releaseGroup.id);
   const libraryRelease = db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'manual', 0, 'route_test', 1)
     RETURNING id
@@ -165,7 +165,7 @@ function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: n
   `).get(providerTrack.id) as { id: number };
   const plan = db.prepare(`
     INSERT INTO AcquisitionPlans (
-      library_release_id, provider, composition, download_mode, state,
+      library_edition_id, provider, composition, download_mode, state,
       planner_version, policy_hash, computed_at
     ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
     RETURNING id
@@ -202,7 +202,7 @@ test("POST track monitor creates normalized library release-group selections", a
 
   const selections = dbModule.db.prepare(`
     SELECT lrg.monitored AS wanted, lrg.selection_mode, lrg.reason
-    FROM LibraryReleaseGroups lrg
+    FROM LibraryAlbums lrg
     JOIN Albums a ON a.id = lrg.release_group_id
     WHERE a.mbid = 'rg-mbid'
     ORDER BY lrg.library_id
@@ -230,7 +230,7 @@ test("track monitor route rejects provider-only track IDs", async () => {
 test("PATCH track updates normalized library release-group wanted state", () => {
   insertCanonicalTrackFixture();
   dbModule.db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
     )
     SELECT id, (SELECT id FROM Albums WHERE mbid = 'rg-mbid'), 1, 'manual', 0, 'test', 1
@@ -248,7 +248,7 @@ test("PATCH track updates normalized library release-group wanted state", () => 
   assert.equal(res.body.success, true);
   const selections = dbModule.db.prepare(`
     SELECT monitored AS wanted
-    FROM LibraryReleaseGroups
+    FROM LibraryAlbums
     WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'rg-mbid')
   `).all() as Array<{ wanted: number }>;
   assert.ok(selections.length > 0);

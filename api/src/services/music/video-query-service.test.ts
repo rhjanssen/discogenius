@@ -22,8 +22,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderVideoMatches").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM RecordingRelations").run();
-  dbModule.db.prepare("DELETE FROM LibraryReleases").run();
-  dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  dbModule.db.prepare("DELETE FROM LibraryEditions").run();
+  dbModule.db.prepare("DELETE FROM LibraryAlbums").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
@@ -52,13 +52,13 @@ function seedLibrarySelection(
     SELECT id FROM AlbumEditions WHERE mbid = ?
   `).get(releaseMbid) as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       curation_version
     ) VALUES (?, ?, ?, 'auto', 0, 1)
   `).run(library.id, releaseGroup.id, monitored ? 1 : 0);
   dbModule.db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, curation_version
     ) VALUES (?, ?, 'auto', 0, 1)
   `).run(library.id, release.id);

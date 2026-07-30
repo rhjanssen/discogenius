@@ -193,13 +193,13 @@ export function getReleaseGroupDownloadStatsMap(
       FROM target_release_groups trg
       JOIN Albums release_group
         ON release_group.mbid = trg.release_group_mbid
-      JOIN LibraryReleaseGroups library_group
+      JOIN LibraryAlbums library_group
         ON library_group.release_group_id = release_group.id
       JOIN Libraries library
         ON library.id = library_group.library_id
       JOIN quality_profiles quality_profile
         ON quality_profile.id = library.quality_profile_id
-      JOIN LibraryReleases library_release
+      JOIN LibraryEditions library_release
         ON library_release.library_id = library_group.library_id
       JOIN AlbumEditions release
         ON release.id = library_release.edition_id
@@ -287,14 +287,14 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
         THEN track.id
       END) AS downloaded_tracks
     FROM Albums release_group
-    JOIN LibraryReleaseGroups library_group
+    JOIN LibraryAlbums library_group
       ON library_group.release_group_id = release_group.id
      AND library_group.monitored = 1
     JOIN Libraries library
       ON library.id = library_group.library_id
     JOIN quality_profiles quality_profile
       ON quality_profile.id = library.quality_profile_id
-    JOIN LibraryReleases library_release
+    JOIN LibraryEditions library_release
       ON library_release.library_id = library_group.library_id
     JOIN AlbumEditions release
       ON release.id = library_release.edition_id
@@ -420,12 +420,12 @@ export function countDownloadedAlbums(): number {
           WHEN ${buildTrackFileCompletionExistsPredicate("track", "library_group.library_id", "album_count_file")}
           THEN track.id
         END) AS downloaded_tracks
-      FROM LibraryReleaseGroups library_group
+      FROM LibraryAlbums library_group
       JOIN Libraries library
         ON library.id = library_group.library_id
       JOIN quality_profiles quality_profile
         ON quality_profile.id = library.quality_profile_id
-      JOIN LibraryReleases library_release
+      JOIN LibraryEditions library_release
         ON library_release.library_id = library_group.library_id
       JOIN AlbumEditions release
         ON release.id = library_release.edition_id
@@ -452,12 +452,12 @@ export function countDownloadedTracks(): number {
   const libraryClasses = getAudioLibraryClassFlags();
   const row = db.prepare(`
     SELECT COUNT(DISTINCT CAST(library_group.library_id AS TEXT) || ':' || CAST(track.id AS TEXT)) AS count
-    FROM LibraryReleaseGroups library_group
+    FROM LibraryAlbums library_group
     JOIN Libraries library
       ON library.id = library_group.library_id
     JOIN quality_profiles quality_profile
       ON quality_profile.id = library.quality_profile_id
-    JOIN LibraryReleases library_release
+    JOIN LibraryEditions library_release
       ON library_release.library_id = library_group.library_id
     JOIN AlbumEditions release
       ON release.id = library_release.edition_id

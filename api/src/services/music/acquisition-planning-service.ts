@@ -43,7 +43,7 @@ function isAvailable(value: unknown): boolean {
 }
 
 interface PlanningContextRow {
-  library_release_id: number;
+  library_edition_id: number;
   edition_id: number;
   quality_profile_id: number;
   allowed_source_formats: string;
@@ -82,14 +82,14 @@ export class AcquisitionPlanningService {
   }): number | null {
     const context = this.db.prepare(`
       SELECT
-        library_release.id AS library_release_id,
+        library_release.id AS library_edition_id,
         library_release.edition_id,
         library.quality_profile_id,
         profile.allowed_source_formats,
         profile.preference_order,
         profile.cutoff,
         profile.continue_upgrades
-      FROM LibraryReleases library_release
+      FROM LibraryEditions library_release
       JOIN Libraries library ON library.id = library_release.library_id
       JOIN quality_profiles profile ON profile.id = library.quality_profile_id
       WHERE library_release.id = ?

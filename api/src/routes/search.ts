@@ -272,7 +272,7 @@ router.get("/", async (req, res) => {
                     LIMIT 1
                   )
                 )
-                FROM LibraryReleases library_release
+                FROM LibraryEditions library_release
                 JOIN Libraries library
                   ON library.id = library_release.library_id
                  AND library.enabled = 1
@@ -282,7 +282,7 @@ router.get("/", async (req, res) => {
                   ON selected_release.id = library_release.edition_id
                  AND selected_release.release_group_id = rg.id
                 JOIN AcquisitionPlans plan
-                  ON plan.library_release_id = library_release.id
+                  ON plan.library_edition_id = library_release.id
                  AND plan.state = 'current'
                 JOIN AcquisitionPlanSources source
                   ON source.plan_id = plan.id
@@ -313,7 +313,7 @@ router.get("/", async (req, res) => {
               ) AS quality,
               CASE WHEN EXISTS (
                 SELECT 1
-                FROM LibraryReleaseGroups library_group
+                FROM LibraryAlbums library_group
                 JOIN Libraries library
                   ON library.id = library_group.library_id
                  AND library.enabled = 1
@@ -392,7 +392,7 @@ router.get("/", async (req, res) => {
               rg.images AS rg_images,
               CASE WHEN EXISTS (
                 SELECT 1
-                FROM LibraryReleaseGroups library_group
+                FROM LibraryAlbums library_group
                 JOIN Libraries monitored_library
                   ON monitored_library.id = library_group.library_id
                  AND monitored_library.enabled = 1
@@ -412,8 +412,8 @@ router.get("/", async (req, res) => {
                 JOIN AcquisitionPlans plan
                   ON plan.id = candidate_plan_track.plan_id
                  AND plan.state = 'current'
-                JOIN LibraryReleases library_release
-                  ON library_release.id = plan.library_release_id
+                JOIN LibraryEditions library_release
+                  ON library_release.id = plan.library_edition_id
                  AND library_release.edition_id = t.album_edition_id
                 JOIN Libraries library
                   ON library.id = library_release.library_id
@@ -625,7 +625,7 @@ router.get("/", async (req, res) => {
                         const localAlbum = db.prepare(`
                             SELECT rg.mbid, CASE WHEN EXISTS (
                               SELECT 1
-                              FROM LibraryReleaseGroups library_group
+                              FROM LibraryAlbums library_group
                               JOIN Libraries library
                                 ON library.id = library_group.library_id
                                AND library.enabled = 1

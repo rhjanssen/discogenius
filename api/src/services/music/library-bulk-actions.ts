@@ -137,7 +137,7 @@ function applyReleaseGroupWantedState(releaseGroupMbids: string[], monitored: bo
 
     const wanted = monitored ? 1 : 0;
     const upsert = db.prepare(`
-        INSERT INTO LibraryReleaseGroups (
+        INSERT INTO LibraryAlbums (
           library_id, release_group_id, monitored, selection_mode, locked,
           reason, curation_version, updated_at
         )
@@ -148,15 +148,15 @@ function applyReleaseGroupWantedState(releaseGroupMbids: string[], monitored: bo
         WHERE library.enabled = 1 AND release_group.mbid = ?
         ON CONFLICT(library_id, release_group_id) DO UPDATE SET
           monitored = CASE
-            WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.monitored
+            WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.monitored
             ELSE excluded.monitored
           END,
           selection_mode = CASE
-            WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.selection_mode
+            WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.selection_mode
             ELSE 'manual'
           END,
           reason = CASE
-            WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.reason
+            WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.reason
             ELSE excluded.reason
           END,
           updated_at = CURRENT_TIMESTAMP
@@ -185,7 +185,7 @@ function applyArtistMonitorState(artistIds: string[], monitored: boolean): void 
 
         if (!monitored) {
             db.prepare(`
-            UPDATE LibraryReleaseGroups
+            UPDATE LibraryAlbums
             SET monitored = 0, updated_at = CURRENT_TIMESTAMP
             WHERE release_group_id IN (
                 SELECT release_group.id
@@ -251,7 +251,7 @@ function applyAlbumLockState(releaseGroupMbids: string[], locked: boolean): void
 
     const tx = db.transaction(() => {
         db.prepare(`
-            UPDATE LibraryReleaseGroups
+            UPDATE LibraryAlbums
             SET locked = ?,
                 selection_mode = CASE WHEN ? = 1 THEN 'manual' ELSE selection_mode END,
                 updated_at = CURRENT_TIMESTAMP
@@ -288,10 +288,10 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
         const plans = db.prepare(`
           SELECT plan.id
           FROM AcquisitionPlans plan
-          JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
+          JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
           JOIN AlbumEditions release ON release.id = library_release.edition_id
           JOIN Albums release_group ON release_group.id = release.release_group_id
-          JOIN LibraryReleaseGroups library_release_group
+          JOIN LibraryAlbums library_release_group
             ON library_release_group.library_id = library_release.library_id
            AND library_release_group.release_group_id = release.release_group_id
           WHERE release_group.mbid = ?
@@ -317,9 +317,9 @@ function queueTrackDownloads(trackIds: string[]): number[] {
           FROM Tracks track
           JOIN AcquisitionPlanTracks plan_track ON plan_track.track_id = track.id
           JOIN AcquisitionPlans plan ON plan.id = plan_track.plan_id AND plan.state = 'current'
-          JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
+          JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
           JOIN AlbumEditions release ON release.id = library_release.edition_id
-          JOIN LibraryReleaseGroups release_group
+          JOIN LibraryAlbums release_group
             ON release_group.library_id = library_release.library_id
            AND release_group.release_group_id = release.release_group_id
            AND release_group.monitored = 1

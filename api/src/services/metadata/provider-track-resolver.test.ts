@@ -107,20 +107,20 @@ test("canonical provider track resolution follows the current normalized plan", 
   `).all() as Array<{ id: number; name: string }>;
   for (const library of libraries) {
     db.prepare(`
-      INSERT INTO LibraryReleaseGroups (
+      INSERT INTO LibraryAlbums (
         library_id, release_group_id, monitored, selection_mode, locked,
         reason, curation_version
       ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
     `).run(library.id, releaseGroup.id);
     const libraryRelease = db.prepare(`
-      INSERT INTO LibraryReleases (
+      INSERT INTO LibraryEditions (
         library_id, edition_id, selection_mode, locked, reason, curation_version
       ) VALUES (?, ?, 'auto', 0, 'test', 1)
       RETURNING id
     `).get(library.id, release.id) as { id: number };
     const plan = db.prepare(`
       INSERT INTO AcquisitionPlans (
-        library_release_id, provider, composition, download_mode, state,
+        library_edition_id, provider, composition, download_mode, state,
         planner_version, policy_hash, computed_at
       ) VALUES (?, 'test-provider', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
       RETURNING id

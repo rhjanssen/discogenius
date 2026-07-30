@@ -2220,8 +2220,8 @@ export function loadAlbumProviderArtworkCandidates(
         provider_item.version,
         release_match.confidence AS match_confidence
       FROM AcquisitionPlans plan
-      JOIN LibraryReleases library_release
-        ON library_release.id = plan.library_release_id
+      JOIN LibraryEditions library_release
+        ON library_release.id = plan.library_edition_id
       JOIN AlbumEditions release
         ON release.id = library_release.edition_id
       JOIN Albums release_group

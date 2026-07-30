@@ -149,7 +149,7 @@ test("unmonitoring an artist clears unlocked library curation and videos", () =>
     RETURNING id
   `).get(stereoLibraryId, managedArtistId) as { id: number }).id;
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
   `).run(stereoLibraryId, releaseGroupId);
@@ -159,13 +159,13 @@ test("unmonitoring an artist clears unlocked library curation and videos", () =>
   `).run(releaseGroupMbid, artistMbid);
   const releaseId = (db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'release-mbid-1'").get() as { id: number }).id;
   const libraryReleaseId = (db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
     RETURNING id
   `).get(stereoLibraryId, releaseId) as { id: number }).id;
   db.prepare(`
-    INSERT INTO LibraryReleaseScopes (library_release_id, library_artist_id, scope_type)
+    INSERT INTO LibraryEditionScopes (library_edition_id, library_artist_id, scope_type)
     VALUES (?, ?, 'primary')
   `).run(libraryReleaseId, libraryArtistId);
 
@@ -179,7 +179,7 @@ const changes = monitoringModule.applyArtistMonitoringState(artistMbid, false);
   const artist = db.prepare("SELECT monitored FROM Artists WHERE id = ?").get(artistMbid) as { monitored: number };
   const libraryState = db.prepare(`
     SELECT release_group.monitored, artist.monitored AS artist_monitored
-    FROM LibraryReleaseGroups release_group
+    FROM LibraryAlbums release_group
     JOIN LibraryArtists artist ON artist.library_id = release_group.library_id
     WHERE release_group.release_group_id = ? AND artist.managed_artist_id = ?
   `).get(releaseGroupId, managedArtistId) as { monitored: number; artist_monitored: number };

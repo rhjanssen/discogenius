@@ -482,7 +482,7 @@ function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, Library
               ) THEN 'spatial' ELSE 'stereo' END
             ORDER BY library_release.updated_at DESC, library_release.id DESC
           ) AS selection_rank
-        FROM LibraryReleases library_release
+        FROM LibraryEditions library_release
         JOIN AlbumEditions release ON release.id = library_release.edition_id
         JOIN Albums release_group ON release_group.id = release.release_group_id
         JOIN Libraries library
@@ -491,7 +491,7 @@ function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, Library
         JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
         LEFT JOIN AcquisitionPlans plan
-          ON plan.library_release_id = library_release.id
+          ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
         LEFT JOIN AcquisitionPlanSources source
           ON source.plan_id = plan.id
@@ -674,7 +674,7 @@ function resolveEvidence(
 
 /**
  * Resolve a rename/import batch from explicit canonical choices, typed provider
- * matches, and selected LibraryReleases. Provider shadow MBIDs and positional
+ * matches, and selected LibraryEditions. Provider shadow MBIDs and positional
  * reconstruction are intentionally excluded.
  */
 export function resolveLibraryFileIdentities(

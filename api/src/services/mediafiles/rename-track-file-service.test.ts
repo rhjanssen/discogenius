@@ -445,7 +445,7 @@ test("rename preload follows the selected-release track identity for hybrid sour
 
   seedCanonicalGraph({ albumTitle: "Hybrid Album", trackTitle: "Selected Track" });
   dbModule.db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
     )
     SELECT library.id, album.id, 1, 'manual', 0, 'hybrid_rename_test', 1
@@ -461,11 +461,11 @@ test("rename preload follows the selected-release track identity for hybrid sour
     LIMIT 1
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     )
     SELECT library_group.library_id, release.id, 'manual', 0, 'hybrid_rename_test', 1
-    FROM LibraryReleaseGroups library_group
+    FROM LibraryAlbums library_group
     JOIN Albums album ON album.id = library_group.release_group_id
     JOIN AlbumEditions release ON release.mbid = 'release-mbid-1'
     WHERE album.mbid = 'release-group-mbid-1'
@@ -1050,7 +1050,7 @@ function seedInlineVideoTransferFixture(options: { stereoMonitored?: boolean } =
 
   seedCanonicalGraph({ albumTitle: "Bad Blood", trackTitle: "Pompeii" });
   dbModule.db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
     )
     SELECT id, (SELECT id FROM Albums WHERE mbid = 'release-group-mbid-1'), ?, 'manual', 0, 'inline_video_test', 1

@@ -79,24 +79,24 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
         `).run(artistId);
 
         db.prepare(`
-            UPDATE LibraryReleaseGroups
+            UPDATE LibraryAlbums
             SET monitored = 0,
                 updated_at = CURRENT_TIMESTAMP
             WHERE locked = 0
               AND EXISTS (
                 SELECT 1
-                FROM LibraryReleases library_release
+                FROM LibraryEditions library_release
                 JOIN AlbumEditions release ON release.id = library_release.edition_id
-                JOIN LibraryReleaseScopes scope
-                  ON scope.library_release_id = library_release.id
+                JOIN LibraryEditionScopes scope
+                  ON scope.library_edition_id = library_release.id
                 JOIN LibraryArtists library_artist
                   ON library_artist.id = scope.library_artist_id
                 JOIN ManagedArtists managed
                   ON managed.id = library_artist.managed_artist_id
                 JOIN ArtistMetadata canonical ON canonical.id = managed.artist_id
                 JOIN Artists local ON local.mbid = canonical.mbid
-                WHERE library_release.library_id = LibraryReleaseGroups.library_id
-                  AND release.release_group_id = LibraryReleaseGroups.release_group_id
+                WHERE library_release.library_id = LibraryAlbums.library_id
+                  AND release.release_group_id = LibraryAlbums.release_group_id
                   AND CAST(local.id AS TEXT) = ?
               )
         `).run(artistId);

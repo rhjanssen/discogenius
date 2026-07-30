@@ -540,8 +540,8 @@ export class OrganizerService {
       LEFT JOIN AcquisitionPlans plan
         ON plan.id = plan_source.plan_id
        AND plan.state = 'current'
-      LEFT JOIN LibraryReleases library_release
-        ON library_release.id = plan.library_release_id
+      LEFT JOIN LibraryEditions library_release
+        ON library_release.id = plan.library_edition_id
        AND library_release.edition_id = selected_release.id
       LEFT JOIN Libraries library
         ON library.id = library_release.library_id

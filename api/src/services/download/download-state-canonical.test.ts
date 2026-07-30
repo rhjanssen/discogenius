@@ -25,8 +25,8 @@ function writeFilteringConfig(includeSpatial: boolean, includeVideos: boolean) {
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
-  db.prepare("DELETE FROM LibraryReleases").run();
-  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM LibraryEditions").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
@@ -122,13 +122,13 @@ function seedCanonicalArtistGraph() {
     SELECT id FROM Libraries WHERE name = 'Stereo'
   `).get() as { id: number };
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       reason, curation_version
     ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
   `).run(stereoLibrary.id, releaseGroup.id);
   db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(stereoLibrary.id, release.id);
@@ -354,13 +354,13 @@ test("download completion follows enabled libraries and keeps their track identi
     SELECT id FROM Libraries WHERE name = 'Spatial'
   `).get() as { id: number };
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       reason, curation_version
     ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
   `).run(spatialLibrary.id, graph.releaseGroupId);
   db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(spatialLibrary.id, graph.releaseId);
@@ -466,7 +466,7 @@ test("completion lookups use the library-and-track covering index", () => {
     EXPLAIN QUERY PLAN
     SELECT track.id
     FROM Tracks track
-    JOIN LibraryReleases library_release
+    JOIN LibraryEditions library_release
       ON library_release.edition_id = track.album_edition_id
     WHERE ${buildTrackFileCompletionExistsPredicate("track", "library_release.library_id", "plan_file")}
   `).all() as Array<{ detail: string }>;

@@ -80,7 +80,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
             ORDER BY library_release.updated_at DESC, library_release.id DESC
           ) AS selection_rank
         FROM Albums selected_group
-        JOIN LibraryReleases library_release
+        JOIN LibraryEditions library_release
           ON 1 = 1
         JOIN AlbumEditions release
           ON release.id = library_release.edition_id
@@ -91,7 +91,7 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
         LEFT JOIN AcquisitionPlans plan
-          ON plan.library_release_id = library_release.id
+          ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
         LEFT JOIN AcquisitionPlanSources plan_source
           ON plan_source.plan_id = plan.id
@@ -120,13 +120,13 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         a.monitored AS artist_monitor,
         CASE WHEN EXISTS (
           SELECT 1
-          FROM LibraryReleaseGroups library_group
+          FROM LibraryAlbums library_group
           WHERE library_group.release_group_id = rg.id
             AND library_group.monitored = 1
         ) THEN 1 ELSE 0 END AS wanted,
         CASE WHEN EXISTS (
           SELECT 1
-          FROM LibraryReleaseGroups library_group
+          FROM LibraryAlbums library_group
           WHERE library_group.release_group_id = rg.id
             AND library_group.locked = 1
         ) THEN 1 ELSE 0 END AS monitored_lock,
@@ -162,7 +162,7 @@ function selectPreferredRelease(releaseGroupMbid: string): any | null {
         FROM Albums release_group
         JOIN AlbumEditions release
           ON release.release_group_id = release_group.id
-        JOIN LibraryReleases library_release
+        JOIN LibraryEditions library_release
           ON library_release.edition_id = release.id
         JOIN Libraries library
           ON library.id = library_release.library_id
@@ -280,8 +280,8 @@ function listMusicBrainzReleaseVersions(
           JOIN AcquisitionPlans plan
             ON plan.id = source.plan_id
            AND plan.state = 'current'
-          JOIN LibraryReleases library_release
-            ON library_release.id = plan.library_release_id
+          JOIN LibraryEditions library_release
+            ON library_release.id = plan.library_edition_id
           JOIN Libraries library
             ON library.id = library_release.library_id
           JOIN quality_profiles quality_profile
@@ -858,8 +858,8 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
         JOIN AcquisitionPlans plan
           ON plan.id = plan_track.plan_id
          AND plan.state = 'current'
-        JOIN LibraryReleases library_release
-          ON library_release.id = plan.library_release_id
+        JOIN LibraryEditions library_release
+          ON library_release.id = plan.library_edition_id
         JOIN AlbumEditions release
           ON release.id = library_release.edition_id
         JOIN Albums release_group

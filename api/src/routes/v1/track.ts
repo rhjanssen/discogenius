@@ -69,7 +69,7 @@ function setCanonicalTrackMonitoring(trackId: string, monitored: boolean): boole
 
   const wanted = monitored ? 1 : 0;
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       reason, curation_version, updated_at
     )
@@ -78,15 +78,15 @@ function setCanonicalTrackMonitoring(trackId: string, monitored: boolean): boole
     WHERE enabled = 1
     ON CONFLICT(library_id, release_group_id) DO UPDATE SET
       monitored = CASE
-        WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.monitored
+        WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.monitored
         ELSE excluded.monitored
       END,
       selection_mode = CASE
-        WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.selection_mode
+        WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.selection_mode
         ELSE 'manual'
       END,
       reason = CASE
-        WHEN LibraryReleaseGroups.locked = 1 THEN LibraryReleaseGroups.reason
+        WHEN LibraryAlbums.locked = 1 THEN LibraryAlbums.reason
         ELSE excluded.reason
       END,
       updated_at = CURRENT_TIMESTAMP

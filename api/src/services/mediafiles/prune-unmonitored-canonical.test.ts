@@ -14,7 +14,7 @@ const { db } = dbModule;
 const { LibraryFilesService } = await import("./library-files.js");
 
 function reset() {
-  for (const t of ["TrackFiles", "LibraryReleaseGroups", "ProviderItems", "Recordings", "Albums", "Artists", "ArtistMetadata"]) {
+  for (const t of ["TrackFiles", "LibraryAlbums", "ProviderItems", "Recordings", "Albums", "Artists", "ArtistMetadata"]) {
     db.prepare(`DELETE FROM ${t}`).run();
   }
 }
@@ -61,7 +61,7 @@ function seedLibraryGroup(rg: string, monitored: number, lock = 0) {
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')`)
     .run(rg, "artist-mbid", `RG ${rg}`);
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       curation_version
     )

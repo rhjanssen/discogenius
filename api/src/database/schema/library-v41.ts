@@ -114,7 +114,7 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       FOREIGN KEY(managed_artist_id) REFERENCES ManagedArtists(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE LibraryReleaseGroups (
+    CREATE TABLE LibraryAlbums (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       library_id INTEGER NOT NULL,
       release_group_id INTEGER NOT NULL,
@@ -129,7 +129,7 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       FOREIGN KEY(release_group_id) REFERENCES Albums(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE LibraryReleases (
+    CREATE TABLE LibraryEditions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       library_id INTEGER NOT NULL,
       edition_id INTEGER NOT NULL,
@@ -144,19 +144,19 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       FOREIGN KEY(edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE LibraryReleaseScopes (
-      library_release_id INTEGER NOT NULL,
+    CREATE TABLE LibraryEditionScopes (
+      library_edition_id INTEGER NOT NULL,
       library_artist_id INTEGER NOT NULL,
       scope_type TEXT NOT NULL CHECK(scope_type IN ('primary', 'release_credit', 'track_credit')),
       reason TEXT,
-      PRIMARY KEY(library_release_id, library_artist_id, scope_type),
-      FOREIGN KEY(library_release_id) REFERENCES LibraryReleases(id) ON DELETE CASCADE,
+      PRIMARY KEY(library_edition_id, library_artist_id, scope_type),
+      FOREIGN KEY(library_edition_id) REFERENCES LibraryEditions(id) ON DELETE CASCADE,
       FOREIGN KEY(library_artist_id) REFERENCES LibraryArtists(id) ON DELETE CASCADE
     );
 
     CREATE TABLE AcquisitionPlans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      library_release_id INTEGER NOT NULL UNIQUE,
+      library_edition_id INTEGER NOT NULL UNIQUE,
       provider TEXT NOT NULL,
       composition TEXT NOT NULL CHECK(composition IN ('single_source', 'composite')),
       download_mode TEXT NOT NULL CHECK(download_mode IN ('album', 'tracks')),
@@ -165,7 +165,7 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       policy_hash TEXT NOT NULL,
       computed_at DATETIME NOT NULL,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(library_release_id) REFERENCES LibraryReleases(id) ON DELETE CASCADE
+      FOREIGN KEY(library_edition_id) REFERENCES LibraryEditions(id) ON DELETE CASCADE
     );
 
     CREATE TABLE AcquisitionPlanSources (
@@ -212,11 +212,11 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     CREATE INDEX idx_library_artists_library
       ON LibraryArtists(library_id, monitored, managed_artist_id);
     CREATE INDEX idx_library_release_groups_library
-      ON LibraryReleaseGroups(library_id, monitored, release_group_id);
+      ON LibraryAlbums(library_id, monitored, release_group_id);
     CREATE INDEX idx_library_releases_library
-      ON LibraryReleases(library_id, edition_id);
+      ON LibraryEditions(library_id, edition_id);
     CREATE INDEX idx_library_release_scopes_artist
-      ON LibraryReleaseScopes(library_artist_id, scope_type, library_release_id);
+      ON LibraryEditionScopes(library_artist_id, scope_type, library_edition_id);
     CREATE INDEX idx_acquisition_sources_plan
       ON AcquisitionPlanSources(plan_id, sort_order);
     CREATE INDEX idx_acquisition_tracks_plan

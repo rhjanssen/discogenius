@@ -108,7 +108,7 @@ function buildArtistReleaseGroupCountMap(artistMbids: string[]): Map<string, Art
         library_state AS (
             SELECT release_group.mbid AS release_group_mbid,
                    MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored
-            FROM LibraryReleaseGroups library_group
+            FROM LibraryAlbums library_group
             JOIN Libraries library
               ON library.id = library_group.library_id
              AND library.enabled = 1
@@ -158,7 +158,7 @@ function buildArtistTrackCountMap(artistMbids: string[]): Map<string, ArtistCoun
         library_state AS (
             SELECT release_group.mbid AS release_group_mbid,
                    MAX(CASE WHEN library_group.monitored = 1 THEN 1 ELSE 0 END) AS monitored
-            FROM LibraryReleaseGroups library_group
+            FROM LibraryAlbums library_group
             JOIN Libraries library
               ON library.id = library_group.library_id
              AND library.enabled = 1
@@ -567,13 +567,13 @@ const artistReleaseGroupLibraryStateCte = `
           library_release.id DESC,
           library.id ASC
       ) AS state_rank
-    FROM LibraryReleaseGroups library_group
+    FROM LibraryAlbums library_group
     JOIN Libraries library
       ON library.id = library_group.library_id
      AND library.enabled = 1
     JOIN quality_profiles quality_profile
       ON quality_profile.id = library.quality_profile_id
-    LEFT JOIN LibraryReleases library_release
+    LEFT JOIN LibraryEditions library_release
       ON library_release.library_id = library_group.library_id
      AND EXISTS (
        SELECT 1
@@ -584,7 +584,7 @@ const artistReleaseGroupLibraryStateCte = `
     LEFT JOIN AlbumEditions release
       ON release.id = library_release.edition_id
     LEFT JOIN AcquisitionPlans plan
-      ON plan.library_release_id = library_release.id
+      ON plan.library_edition_id = library_release.id
      AND plan.state = 'current'
     LEFT JOIN AcquisitionPlanSources source
       ON source.plan_id = plan.id
@@ -1242,8 +1242,8 @@ export class ArtistQueryService {
         JOIN AcquisitionPlans plan
           ON plan.id = plan_track.plan_id
          AND plan.state = 'current'
-        JOIN LibraryReleases library_release
-          ON library_release.id = plan.library_release_id
+        JOIN LibraryEditions library_release
+          ON library_release.id = plan.library_edition_id
          AND library_release.edition_id = top_tracks.album_release_row_id
         JOIN Libraries library
           ON library.id = library_release.library_id
@@ -1278,7 +1278,7 @@ export class ArtistQueryService {
               source.id
         ) AS rank
         FROM top_tracks
-        JOIN LibraryReleases library_release
+        JOIN LibraryEditions library_release
           ON library_release.edition_id = top_tracks.album_release_row_id
         JOIN Libraries library
           ON library.id = library_release.library_id
@@ -1286,7 +1286,7 @@ export class ArtistQueryService {
         JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
         JOIN AcquisitionPlans plan
-          ON plan.library_release_id = library_release.id
+          ON plan.library_edition_id = library_release.id
          AND plan.state = 'current'
         JOIN AcquisitionPlanSources source
           ON source.plan_id = plan.id
@@ -1312,9 +1312,9 @@ export class ArtistQueryService {
               library_release.id DESC
         ) AS rank
         FROM top_tracks
-        JOIN LibraryReleases library_release
+        JOIN LibraryEditions library_release
           ON library_release.edition_id = top_tracks.album_release_row_id
-        JOIN LibraryReleaseGroups library_group
+        JOIN LibraryAlbums library_group
           ON library_group.library_id = library_release.library_id
          AND library_group.release_group_id = top_tracks.release_group_row_id
         JOIN Libraries library
@@ -1365,7 +1365,7 @@ export class ArtistQueryService {
       monitored_groups AS (
         SELECT DISTINCT top_tracks.release_group_row_id
         FROM top_tracks
-        JOIN LibraryReleaseGroups library_group
+        JOIN LibraryAlbums library_group
           ON library_group.release_group_id = top_tracks.release_group_row_id
          AND library_group.monitored = 1
         JOIN Libraries library

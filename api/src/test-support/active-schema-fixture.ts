@@ -98,8 +98,8 @@ export const PROVIDER_STATE_TABLES_IN_DELETE_ORDER = [
 ] as const;
 
 export const CANONICAL_TABLES_IN_DELETE_ORDER = [
-  "LibraryReleases",
-  "LibraryReleaseGroups",
+  "LibraryEditions",
+  "LibraryAlbums",
   "Tracks",
   "Recordings",
   "AlbumEditions",

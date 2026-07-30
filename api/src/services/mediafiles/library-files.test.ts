@@ -111,13 +111,13 @@ function seedLibraryReleaseSelection(options: {
   `).get(options.releaseMbid) as { id: number };
 
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       curation_version
     ) VALUES (?, ?, ?, 'auto', 0, 1)
   `).run(library.id, releaseGroup.id, options.monitored ? 1 : 0);
   db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, curation_version
     ) VALUES (?, ?, 'auto', 0, 1)
   `).run(library.id, release.id);
@@ -150,8 +150,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM MetadataFiles").run();
   db.prepare("DELETE FROM ExtraFiles").run();
   db.prepare("DELETE FROM TrackFiles").run();
-  db.prepare("DELETE FROM LibraryReleases").run();
-  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM LibraryEditions").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM Tracks").run();

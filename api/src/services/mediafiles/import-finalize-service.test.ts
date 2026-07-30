@@ -156,7 +156,7 @@ test("finalizeImportedDirectories relocates linked separated videos inline after
 
   const { libraryFileId } = seedImportedTrack();
   dbModule.db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
     )
     SELECT id, (SELECT id FROM Albums WHERE mbid = 'rg-one'), 1, 'manual', 0, 'inline_video_test', 1

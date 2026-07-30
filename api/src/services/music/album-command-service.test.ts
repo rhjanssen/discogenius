@@ -20,7 +20,7 @@ before(async () => {
 beforeEach(() => {
   const { db } = dbModule;
   db.prepare("DELETE FROM commands").run();
-  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -45,7 +45,7 @@ test("album monitoring is persisted independently for every enabled library", ()
   assert.equal(result.success, true);
   const rows = dbModule.db.prepare(`
     SELECT library_id, monitored, selection_mode
-    FROM LibraryReleaseGroups
+    FROM LibraryAlbums
     WHERE release_group_id = 1
     ORDER BY library_id
   `).all();
@@ -61,7 +61,7 @@ test("album monitor locks are library release-group authority", () => {
   );
   assert.equal(result.success, true);
   const rows = dbModule.db.prepare(`
-    SELECT locked FROM LibraryReleaseGroups WHERE release_group_id = 1
+    SELECT locked FROM LibraryAlbums WHERE release_group_id = 1
   `).all() as Array<{ locked: number }>;
   assert.ok(rows.length >= 2);
   assert.ok(rows.every((row) => row.locked === 1));

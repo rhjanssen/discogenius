@@ -73,7 +73,7 @@ test("artist completion predicate uses canonical locks instead of provider catal
         SELECT id FROM Libraries WHERE name = 'Stereo'
     `).get() as { id: number };
     dbModule.db.prepare(`
-        INSERT INTO LibraryReleaseGroups (
+        INSERT INTO LibraryAlbums (
           library_id, release_group_id, monitored, selection_mode, locked,
           reason, curation_version
         ) VALUES (?, ?, 0, 'manual', 1, 'test', 1)

@@ -246,11 +246,11 @@ class LibraryMetadataBackfillService {
                         provider_release.cover_id,
                         provider_release.artwork_url
                       ) AS cover
-                    FROM LibraryReleases library_release
+                    FROM LibraryEditions library_release
                     JOIN AlbumEditions selected_release
                       ON selected_release.id = library_release.edition_id
                     JOIN AcquisitionPlans plan
-                      ON plan.library_release_id = library_release.id
+                      ON plan.library_edition_id = library_release.id
                      AND plan.state = 'current'
                     JOIN AcquisitionPlanSources plan_source
                       ON plan_source.plan_id = plan.id

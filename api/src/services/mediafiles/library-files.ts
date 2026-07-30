@@ -481,7 +481,7 @@ function resolveCanonicalInlineAudioExpectedPath(
            a.first_release_date,
            CASE WHEN EXISTS (
              SELECT 1
-             FROM LibraryReleaseGroups library_group
+             FROM LibraryAlbums library_group
              JOIN Libraries library ON library.id = library_group.library_id
              JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
              WHERE library_group.release_group_id = a.id
@@ -496,7 +496,7 @@ function resolveCanonicalInlineAudioExpectedPath(
            COALESCE(c.included, 0) AS included,
            CASE WHEN EXISTS (
              SELECT 1
-             FROM LibraryReleases library_release
+             FROM LibraryEditions library_release
              JOIN Libraries library ON library.id = library_release.library_id
              JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
              WHERE library_release.edition_id = ar.id
@@ -516,7 +516,7 @@ function resolveCanonicalInlineAudioExpectedPath(
     WHERE a.artist_mbid = ?
       AND EXISTS (
         SELECT 1
-        FROM LibraryReleaseGroups library_group
+        FROM LibraryAlbums library_group
         JOIN Libraries library ON library.id = library_group.library_id
         JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
         WHERE library_group.release_group_id = a.id
@@ -1111,7 +1111,7 @@ export class LibraryFilesService {
                 COALESCE(track_rg.track_count, 0) AS track_count,
                 CASE WHEN EXISTS (
                   SELECT 1
-                  FROM LibraryReleaseGroups library_group
+                  FROM LibraryAlbums library_group
                   JOIN Libraries library ON library.id = library_group.library_id
                   JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
                   WHERE library_group.release_group_id = COALESCE(tf.release_group_id, track_rg.release_group_id)
@@ -2720,7 +2720,7 @@ export class LibraryFilesService {
    *
    * A file is kept (monitored) when the canonical entity behind it is monitored
    * or user-locked:
-   *  - audio: its exact `LibraryReleaseGroups` row, keyed by the file's
+   *  - audio: its exact `LibraryAlbums` row, keyed by the file's
    *    `library_id` + `release_group_id`;
    *  - video / recording-scoped files: their exact `Recordings` row, matched by
    *    `recording_id` or — for transitional provider videos without that FK — via
@@ -2746,7 +2746,7 @@ export class LibraryFilesService {
       SELECT lf.id, lf.artist_id, NULL AS album_id, lf.provider_id AS media_id, lf.file_type, lf.quality, lf.file_path, lf.library_root
       FROM TrackFiles lf
       JOIN Artists art ON art.id = lf.artist_id
-      LEFT JOIN LibraryReleaseGroups library_group
+      LEFT JOIN LibraryAlbums library_group
         ON library_group.library_id = lf.library_id
        AND library_group.release_group_id = lf.release_group_id
       LEFT JOIN Recordings rec

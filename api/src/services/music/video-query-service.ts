@@ -446,10 +446,10 @@ export function getVideoDetail(videoId: string): VideoDetailContract | null {
 function preferredLibraryReleaseMbidSql(releaseGroupIdExpression: string): string {
   return `(
     SELECT selected_release.mbid
-    FROM LibraryReleases library_release
+    FROM LibraryEditions library_release
     JOIN AlbumEditions selected_release
       ON selected_release.id = library_release.edition_id
-    JOIN LibraryReleaseGroups library_group
+    JOIN LibraryAlbums library_group
       ON library_group.library_id = library_release.library_id
      AND library_group.release_group_id = selected_release.release_group_id
     JOIN Libraries library
@@ -1013,7 +1013,7 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       a.images AS album_images,
       CASE WHEN EXISTS (
         SELECT 1
-        FROM LibraryReleaseGroups library_group
+        FROM LibraryAlbums library_group
         JOIN Libraries library
           ON library.id = library_group.library_id
          AND library.enabled = 1

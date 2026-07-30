@@ -28,7 +28,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
       ) VALUES (1, 'High', '[]', '[]', 'lossless', 'best', '{}', 'preserve');
       INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
         VALUES (1, 'Stereo', '/library/stereo', 1, 1);
-      INSERT INTO LibraryReleases (
+      INSERT INTO LibraryEditions (
         id, library_id, edition_id, selection_mode, curation_version
       ) VALUES (1, 1, 1, 'auto', 1);
       INSERT INTO ProviderItems (

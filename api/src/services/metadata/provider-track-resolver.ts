@@ -134,8 +134,8 @@ export async function resolveProviderTrackForCanonicalTrack(input: {
         JOIN AcquisitionPlans plan
           ON plan.id = plan_track.plan_id
          AND plan.state = 'current'
-        JOIN LibraryReleases library_release
-          ON library_release.id = plan.library_release_id
+        JOIN LibraryEditions library_release
+          ON library_release.id = plan.library_edition_id
         JOIN AlbumEditions release
           ON release.id = library_release.edition_id
         JOIN Albums release_group

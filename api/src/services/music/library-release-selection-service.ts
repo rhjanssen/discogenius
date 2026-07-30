@@ -193,7 +193,7 @@ export class LibraryReleaseSelectionService {
         library.id AS library_id,
         library.name AS library_name,
         quality.name AS quality_profile,
-        library_release.id AS library_release_id,
+        library_release.id AS library_edition_id,
         library_release.edition_id,
         release.mbid AS release_mbid,
         library_release.selection_mode,
@@ -205,14 +205,14 @@ export class LibraryReleaseSelectionService {
         plan.state AS plan_state
       FROM Libraries library
       JOIN quality_profiles quality ON quality.id = library.quality_profile_id
-      LEFT JOIN LibraryReleases library_release
+      LEFT JOIN LibraryEditions library_release
         ON library_release.library_id = library.id
        AND library_release.edition_id IN (
          SELECT id FROM AlbumEditions WHERE release_group_id = ?
        )
       LEFT JOIN AlbumEditions release ON release.id = library_release.edition_id
       LEFT JOIN AcquisitionPlans plan
-        ON plan.library_release_id = library_release.id
+        ON plan.library_edition_id = library_release.id
        AND plan.state = 'current'
       WHERE library.enabled = 1
       ORDER BY library.id, library_release.id
@@ -220,7 +220,7 @@ export class LibraryReleaseSelectionService {
       library_id: number;
       library_name: string;
       quality_profile: string;
-      library_release_id: number | null;
+      library_edition_id: number | null;
       edition_id: number | null;
       release_mbid: string | null;
       selection_mode: LibraryReleaseSelectionView["selectionMode"] | null;
@@ -244,13 +244,13 @@ export class LibraryReleaseSelectionService {
         libraryById.set(row.library_id, library);
       }
       if (
-        row.library_release_id != null
+        row.library_edition_id != null
         && row.edition_id != null
         && row.release_mbid
         && row.selection_mode
       ) {
         library.selections.push({
-          libraryReleaseId: row.library_release_id,
+          libraryReleaseId: row.library_edition_id,
           releaseId: row.edition_id,
           releaseMbid: row.release_mbid,
           selectionMode: row.selection_mode,
@@ -298,7 +298,7 @@ export class LibraryReleaseSelectionService {
 
     const libraryReleaseId = this.db.transaction(() => {
       this.db.prepare(`
-        INSERT INTO LibraryReleaseGroups (
+        INSERT INTO LibraryAlbums (
           library_id, release_group_id, monitored, selection_mode, locked,
           reason, curation_version, updated_at
         ) VALUES (?, ?, 1, 'manual', 1, 'user', 1, CURRENT_TIMESTAMP)
@@ -310,14 +310,14 @@ export class LibraryReleaseSelectionService {
           updated_at = CURRENT_TIMESTAMP
       `).run(input.libraryId, target.release_group_id);
       this.db.prepare(`
-        DELETE FROM LibraryReleases
+        DELETE FROM LibraryEditions
         WHERE library_id = ?
           AND edition_id IN (
             SELECT id FROM AlbumEditions WHERE release_group_id = ?
           )
       `).run(input.libraryId, target.release_group_id);
       return (this.db.prepare(`
-        INSERT INTO LibraryReleases (
+        INSERT INTO LibraryEditions (
           library_id, edition_id, selection_mode, locked, reason,
           curation_version, selected_at, updated_at
         ) VALUES (?, ?, 'manual', 1, 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)

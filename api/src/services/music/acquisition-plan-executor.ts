@@ -84,7 +84,7 @@ export function buildAcquisitionDownloadCommand(
       release_group.title AS album_title,
       COALESCE(primary_credit.credited_name, primary_artist.name, 'Unknown Artist') AS artist_name
     FROM AcquisitionPlans plan
-    JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
+    JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
     JOIN Libraries library ON library.id = library_release.library_id
     JOIN AlbumEditions release ON release.id = library_release.edition_id
     JOIN Albums release_group ON release_group.id = release.release_group_id

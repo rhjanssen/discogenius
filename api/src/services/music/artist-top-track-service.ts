@@ -149,9 +149,9 @@ export class ArtistTopTrackService {
         artist_releases(id) AS (
           SELECT DISTINCT library_release.edition_id
           FROM artist_rgs
-          JOIN LibraryReleaseGroups library_group
+          JOIN LibraryAlbums library_group
             ON library_group.release_group_id = artist_rgs.id
-          JOIN LibraryReleases library_release
+          JOIN LibraryEditions library_release
             ON library_release.library_id = library_group.library_id
           JOIN AlbumEditions selected_release
             ON selected_release.id = library_release.edition_id

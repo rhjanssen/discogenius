@@ -71,7 +71,7 @@ export function canVideoPlaceInline(videoRecordingId: string | number | null | u
       AND ${mayFollowAudio}
       AND EXISTS (
         SELECT 1
-        FROM LibraryReleaseGroups library_group
+        FROM LibraryAlbums library_group
         JOIN Libraries library
           ON library.id = library_group.library_id
          AND library.enabled = 1

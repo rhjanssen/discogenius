@@ -141,8 +141,8 @@ test("library curation uses canonical scope and recording coverage without chang
     assert.deepEqual(
       db.prepare(`
         SELECT release.edition_id, scope.scope_type
-        FROM LibraryReleaseScopes scope
-        JOIN LibraryReleases release ON release.id = scope.library_release_id
+        FROM LibraryEditionScopes scope
+        JOIN LibraryEditions release ON release.id = scope.library_edition_id
         ORDER BY release.edition_id
       `).all(),
       [
@@ -172,7 +172,7 @@ test("library curation uses canonical scope and recording coverage without chang
     });
     assert.deepEqual(deduplicated.selectedReleaseIds, [101, 301]);
     assert.deepEqual(
-      db.prepare("SELECT edition_id FROM LibraryReleases ORDER BY edition_id").all(),
+      db.prepare("SELECT edition_id FROM LibraryEditions ORDER BY edition_id").all(),
       [{ edition_id: 101 }, { edition_id: 301 }],
       "Covered EP drops while the credited collaboration remains in scope",
     );

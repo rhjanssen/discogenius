@@ -34,7 +34,7 @@ export function buildArtistCompletionPredicate(alias: string = "a"): string {
     ${alias}.monitored = 1
     OR ${alias}.mbid IN (
       SELECT release_group.artist_mbid
-      FROM LibraryReleaseGroups library_group
+      FROM LibraryAlbums library_group
       JOIN Albums release_group
         ON release_group.id = library_group.release_group_id
       WHERE library_group.locked = 1

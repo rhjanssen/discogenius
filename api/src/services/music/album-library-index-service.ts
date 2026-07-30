@@ -3,8 +3,8 @@ import { db } from "../../database.js";
 /**
  * Compact, album library read model.
  *
- * Canonical album metadata remains in Albums. LibraryReleaseGroups own
- * monitoring, LibraryReleases own selected editions, and current acquisition
+ * Canonical album metadata remains in Albums. LibraryAlbums own
+ * monitoring, LibraryEditions own selected editions, and current acquisition
  * plans own provider/quality selection. This projection only denormalizes the
  * few fields needed to filter, sort and page the library without walking those
  * normalized graphs on every HTTP request.
@@ -67,19 +67,19 @@ export class AlbumLibraryIndexService {
                )
               THEN 1 ELSE 0
             END) AS has_spatial_provider
-          FROM LibraryReleaseGroups library_group
+          FROM LibraryAlbums library_group
           JOIN Libraries library
             ON library.id = library_group.library_id
            AND library.enabled = 1
           JOIN quality_profiles quality_profile
             ON quality_profile.id = library.quality_profile_id
-          LEFT JOIN LibraryReleases library_release
+          LEFT JOIN LibraryEditions library_release
             ON library_release.library_id = library_group.library_id
           LEFT JOIN AlbumEditions release
             ON release.id = library_release.edition_id
            AND release.release_group_id = library_group.release_group_id
           LEFT JOIN AcquisitionPlans plan
-            ON plan.library_release_id = library_release.id
+            ON plan.library_edition_id = library_release.id
           LEFT JOIN AcquisitionPlanSources plan_source
             ON plan_source.plan_id = plan.id
            AND plan_source.id = (

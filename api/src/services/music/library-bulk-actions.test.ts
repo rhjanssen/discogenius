@@ -34,9 +34,9 @@ beforeEach(() => {
     const { db } = dbModule;
     db.prepare("DELETE FROM commands").run();
     db.prepare("DELETE FROM TrackFiles").run();
-    db.prepare("DELETE FROM LibraryReleaseScopes").run();
-    db.prepare("DELETE FROM LibraryReleases").run();
-    db.prepare("DELETE FROM LibraryReleaseGroups").run();
+    db.prepare("DELETE FROM LibraryEditionScopes").run();
+    db.prepare("DELETE FROM LibraryEditions").run();
+    db.prepare("DELETE FROM LibraryAlbums").run();
     db.prepare("DELETE FROM LibraryArtists").run();
     db.prepare("DELETE FROM ManagedArtists").run();
     db.prepare("DELETE FROM ProviderTrackMatches").run();
@@ -118,18 +118,18 @@ dbModule.db.prepare(`
         VALUES (?, ?, 1, 'release_and_track_credit') RETURNING id
     `).get(libraryId, managedArtistId) as { id: number }).id;
     dbModule.db.prepare(`
-        INSERT INTO LibraryReleaseGroups (
+        INSERT INTO LibraryAlbums (
             library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
         ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
     `).run(libraryId, releaseGroupId);
     const libraryReleaseId = (dbModule.db.prepare(`
-        INSERT INTO LibraryReleases (
+        INSERT INTO LibraryEditions (
             library_id, edition_id, selection_mode, locked, reason, curation_version
         ) VALUES (?, 201, 'auto', 0, 'test', 1)
         RETURNING id
     `).get(libraryId) as { id: number }).id;
     dbModule.db.prepare(`
-        INSERT INTO LibraryReleaseScopes (library_release_id, library_artist_id, scope_type)
+        INSERT INTO LibraryEditionScopes (library_edition_id, library_artist_id, scope_type)
         VALUES (?, ?, 'primary')
     `).run(libraryReleaseId, libraryArtistId);
 
@@ -186,7 +186,7 @@ dbModule.db.prepare(`
     `).run(videoItemId);
     const planId = (dbModule.db.prepare(`
         INSERT INTO AcquisitionPlans (
-            library_release_id, provider, composition, download_mode, state,
+            library_edition_id, provider, composition, download_mode, state,
             planner_version, policy_hash, computed_at
         ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
         RETURNING id
@@ -260,7 +260,7 @@ test("album and video lock bulk actions write canonical state", async () => {
 
     const album = dbModule.db.prepare(`
         SELECT locked AS monitor_lock
-        FROM LibraryReleaseGroups
+        FROM LibraryAlbums
         WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
     `).get(seeded.albumId) as { monitor_lock: number };
     const video = dbModule.db.prepare("SELECT monitored_lock FROM Recordings WHERE id = ?").get(seeded.videoId) as { monitored_lock: number };
@@ -274,7 +274,7 @@ test("album and video lock bulk actions write canonical state", async () => {
 
     const unlockedAlbum = dbModule.db.prepare(`
         SELECT locked AS monitor_lock
-        FROM LibraryReleaseGroups
+        FROM LibraryAlbums
         WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
     `).get(seeded.albumId) as { monitor_lock: number };
     const unlockedVideo = dbModule.db.prepare("SELECT monitored_lock FROM Recordings WHERE id = ?").get(seeded.videoId) as { monitored_lock: number };
@@ -293,7 +293,7 @@ test("album bulk actions reject provider album IDs as catalog identity", async (
 
     const slot = dbModule.db.prepare(`
         SELECT monitored AS wanted
-        FROM LibraryReleaseGroups
+        FROM LibraryAlbums
         WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
     `).get(seeded.albumId) as { wanted: number };
 
@@ -309,7 +309,7 @@ test("track and video monitor bulk actions write canonical state only", async ()
 
     const slot = dbModule.db.prepare(`
         SELECT monitored AS wanted
-        FROM LibraryReleaseGroups
+        FROM LibraryAlbums
         WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = ?)
     `).get("release-group-mbid-1") as { wanted: number };
     const video = dbModule.db.prepare("SELECT monitored AS Monitor FROM Recordings WHERE id = ?").get(seeded.videoId) as { Monitor: number };

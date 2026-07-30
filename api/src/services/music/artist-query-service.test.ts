@@ -31,8 +31,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM AcquisitionPlanTracks").run();
   db.prepare("DELETE FROM AcquisitionPlanSources").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
-  db.prepare("DELETE FROM LibraryReleases").run();
-  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM LibraryEditions").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM ProviderTrackMatches").run();
   db.prepare("DELETE FROM ProviderVideoMatches").run();
   db.prepare("DELETE FROM ProviderEditionMatches").run();
@@ -92,13 +92,13 @@ function seedCanonicalArtistPage() {
     SELECT id FROM Libraries WHERE name = 'Stereo'
   `).get() as { id: number };
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       reason, curation_version
     ) VALUES (?, ?, 1, 'manual', 1, 'test', 1)
   `).run(library.id, releaseGroup.id);
   db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, 201, 'manual', 1, 'test', 1)
   `).run(library.id);
@@ -174,11 +174,11 @@ function seedCanonicalArtistPage() {
     RETURNING id
   `).get(providerTrack.id) as { id: number };
   const libraryRelease = db.prepare(`
-    SELECT id FROM LibraryReleases WHERE library_id = ? AND edition_id = 201
+    SELECT id FROM LibraryEditions WHERE library_id = ? AND edition_id = 201
   `).get(library.id) as { id: number };
   const plan = db.prepare(`
     INSERT INTO AcquisitionPlans (
-      library_release_id, provider, composition, download_mode, state,
+      library_edition_id, provider, composition, download_mode, state,
       planner_version, policy_hash, computed_at
     ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
     RETURNING id

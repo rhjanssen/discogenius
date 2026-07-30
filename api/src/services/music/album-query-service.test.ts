@@ -23,8 +23,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM AlbumLibraryIndex").run();
   db.prepare("DELETE FROM AcquisitionPlanSources").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
-  db.prepare("DELETE FROM LibraryReleases").run();
-  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM LibraryEditions").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM ProviderEditionMatches").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
@@ -169,13 +169,13 @@ function seedAlbum(options: {
   `).all() as Array<{ id: number; name: string }>;
   for (const library of libraries) {
     db.prepare(`
-      INSERT INTO LibraryReleaseGroups (
+      INSERT INTO LibraryAlbums (
         library_id, release_group_id, monitored, selection_mode, locked,
         curation_version
       ) VALUES (?, ?, 1, 'auto', 0, 1)
     `).run(library.id, album.id);
     const libraryRelease = db.prepare(`
-      INSERT INTO LibraryReleases (
+      INSERT INTO LibraryEditions (
         library_id, edition_id, selection_mode, locked, curation_version
       ) VALUES (?, ?, 'auto', 0, 1)
       RETURNING id
@@ -183,7 +183,7 @@ function seedAlbum(options: {
     const spatial = library.name === "Album Query Spatial";
     const plan = db.prepare(`
       INSERT INTO AcquisitionPlans (
-        library_release_id, provider, composition, download_mode, state,
+        library_edition_id, provider, composition, download_mode, state,
         planner_version, policy_hash, computed_at
       ) VALUES (?, ?, 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
       RETURNING id

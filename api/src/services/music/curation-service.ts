@@ -79,8 +79,8 @@ export class CurationService {
     `).all(managedArtistId) as Array<{ id: number }>;
     const selectedBefore = Number((db.prepare(`
       SELECT COUNT(*) AS count
-      FROM LibraryReleases release
-      JOIN LibraryReleaseScopes scope ON scope.library_release_id = release.id
+      FROM LibraryEditions release
+      JOIN LibraryEditionScopes scope ON scope.library_edition_id = release.id
       JOIN LibraryArtists artist ON artist.id = scope.library_artist_id
       WHERE artist.managed_artist_id = ?
     `).get(managedArtistId) as { count: number }).count);
@@ -99,8 +99,8 @@ export class CurationService {
     }
     const selectedAfter = Number((db.prepare(`
       SELECT COUNT(*) AS count
-      FROM LibraryReleases release
-      JOIN LibraryReleaseScopes scope ON scope.library_release_id = release.id
+      FROM LibraryEditions release
+      JOIN LibraryEditionScopes scope ON scope.library_edition_id = release.id
       JOIN LibraryArtists artist ON artist.id = scope.library_artist_id
       WHERE artist.managed_artist_id = ?
     `).get(managedArtistId) as { count: number }).count);

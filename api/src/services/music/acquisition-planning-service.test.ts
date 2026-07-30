@@ -52,7 +52,7 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
     VALUES (1, 1, 1, 1)
   `).run();
   db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       id, library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (1, 1, 1, 'auto', 0, 'fixture', 1)
   `).run();

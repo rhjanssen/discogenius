@@ -142,7 +142,7 @@ export class LibraryCurationService {
     const protectedReleaseIds = new Set(
       (this.db.prepare(`
         SELECT edition_id
-        FROM LibraryReleases
+        FROM LibraryEditions
         WHERE library_id = ? AND (locked = 1 OR selection_mode = 'manual')
       `).all(input.libraryId) as Array<{ edition_id: number }>).map(({ edition_id }) => edition_id),
     );
@@ -300,7 +300,7 @@ export class LibraryCurationService {
 
     const selectedLibraryReleases = this.db.prepare(`
       SELECT id
-      FROM LibraryReleases
+      FROM LibraryEditions
       WHERE library_id = ? AND edition_id IN (
         ${result.selectedReleaseIds.length > 0 ? result.selectedReleaseIds.map(() => "?").join(",") : "NULL"}
       )

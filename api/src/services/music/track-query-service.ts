@@ -18,7 +18,7 @@ const canonicalTrackDownloadedPredicate = `
 const canonicalTrackMonitoredPredicate = `
   EXISTS (
     SELECT 1
-    FROM LibraryReleaseGroups monitored_group
+    FROM LibraryAlbums monitored_group
     JOIN Libraries monitored_library
       ON monitored_library.id = monitored_group.library_id
      AND monitored_library.enabled = 1
@@ -35,8 +35,8 @@ const canonicalTrackSpatialQualityPredicate = `
       JOIN AcquisitionPlans spatial_plan
         ON spatial_plan.id = spatial_plan_track.plan_id
        AND spatial_plan.state = 'current'
-      JOIN LibraryReleases spatial_library_release
-        ON spatial_library_release.id = spatial_plan.library_release_id
+      JOIN LibraryEditions spatial_library_release
+        ON spatial_library_release.id = spatial_plan.library_edition_id
       JOIN Libraries spatial_library
         ON spatial_library.id = spatial_library_release.library_id
        AND spatial_library.enabled = 1
@@ -75,8 +75,8 @@ const canonicalTrackStereoQualityPredicate = `
       JOIN AcquisitionPlans stereo_plan
         ON stereo_plan.id = stereo_plan_track.plan_id
        AND stereo_plan.state = 'current'
-      JOIN LibraryReleases stereo_library_release
-        ON stereo_library_release.id = stereo_plan.library_release_id
+      JOIN LibraryEditions stereo_library_release
+        ON stereo_library_release.id = stereo_plan.library_edition_id
       JOIN Libraries stereo_library
         ON stereo_library.id = stereo_library_release.library_id
        AND stereo_library.enabled = 1
@@ -336,8 +336,8 @@ function getTrackSelectSql(whereClause: string): string {
             JOIN AcquisitionPlans quality_plan
               ON quality_plan.id = quality_plan_track.plan_id
              AND quality_plan.state = 'current'
-            JOIN LibraryReleases quality_library_release
-              ON quality_library_release.id = quality_plan.library_release_id
+            JOIN LibraryEditions quality_library_release
+              ON quality_library_release.id = quality_plan.library_edition_id
             JOIN AlbumEditions quality_release
               ON quality_release.id = quality_library_release.edition_id
             JOIN Libraries quality_library
@@ -406,8 +406,8 @@ function getTrackSelectSql(whereClause: string): string {
           JOIN AcquisitionPlans remote_plan
             ON remote_plan.id = remote_plan_track.plan_id
            AND remote_plan.state = 'current'
-          JOIN LibraryReleases remote_library_release
-            ON remote_library_release.id = remote_plan.library_release_id
+          JOIN LibraryEditions remote_library_release
+            ON remote_library_release.id = remote_plan.library_edition_id
           JOIN Libraries remote_library
             ON remote_library.id = remote_library_release.library_id
            AND remote_library.enabled = 1
@@ -447,7 +447,7 @@ function getTrackSelectSql(whereClause: string): string {
       CASE WHEN ${canonicalTrackMonitoredPredicate} THEN 1 ELSE 0 END AS is_monitored,
       COALESCE((
         SELECT MAX(library_group.locked)
-        FROM LibraryReleaseGroups library_group
+        FROM LibraryAlbums library_group
         JOIN Libraries monitored_library
           ON monitored_library.id = library_group.library_id
          AND monitored_library.enabled = 1
@@ -486,8 +486,8 @@ function getTrackSelectSql(whereClause: string): string {
         JOIN AcquisitionPlans candidate_plan
           ON candidate_plan.id = candidate_plan_track.plan_id
          AND candidate_plan.state = 'current'
-        JOIN LibraryReleases candidate_library_release
-          ON candidate_library_release.id = candidate_plan.library_release_id
+        JOIN LibraryEditions candidate_library_release
+          ON candidate_library_release.id = candidate_plan.library_edition_id
          AND candidate_library_release.edition_id = track.album_edition_id
         JOIN Libraries candidate_library
           ON candidate_library.id = candidate_library_release.library_id
@@ -790,12 +790,12 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
       -- them as missing. This is the same scope TrackLibraryIndex projects, so
       -- the fast COUNT path and the listed items always describe one set.
       SELECT selected_track.id
-      FROM LibraryReleases library_release
+      FROM LibraryEditions library_release
       JOIN AlbumEditions release
         ON release.id = library_release.edition_id
       JOIN Tracks selected_track
         ON selected_track.album_edition_id = library_release.edition_id
-      JOIN LibraryReleaseGroups library_group
+      JOIN LibraryAlbums library_group
         ON library_group.library_id = library_release.library_id
        AND library_group.release_group_id = release.release_group_id
       JOIN Libraries library
@@ -808,7 +808,7 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
       FROM TrackFiles available_file
       JOIN AlbumEditions file_release
         ON file_release.id = available_file.album_edition_id
-      JOIN LibraryReleaseGroups library_group
+      JOIN LibraryAlbums library_group
         ON library_group.library_id = available_file.library_id
        AND library_group.release_group_id = file_release.release_group_id
       JOIN Libraries library
@@ -888,8 +888,8 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
       FROM AcquisitionPlanTracks filtered_plan_track
       JOIN AcquisitionPlans filtered_plan
         ON filtered_plan.id = filtered_plan_track.plan_id
-      JOIN LibraryReleases filtered_library_release
-        ON filtered_library_release.id = filtered_plan.library_release_id
+      JOIN LibraryEditions filtered_library_release
+        ON filtered_library_release.id = filtered_plan.library_edition_id
        AND filtered_library_release.edition_id = track.album_edition_id
       JOIN Libraries filtered_library
         ON filtered_library.id = filtered_library_release.library_id

@@ -21,7 +21,7 @@ beforeEach(() => {
   const { db } = dbModule;
   for (const table of [
     "AcquisitionPlanTracks", "AcquisitionPlanSources", "AcquisitionPlans",
-    "LibraryReleases", "LibraryReleaseGroups", "ProviderTrackMatches",
+    "LibraryEditions", "LibraryAlbums", "ProviderTrackMatches",
     "ProviderEditionMatches", "ProviderEditionMembers", "ProviderItemAudioVariants",
     "ProviderItems", "Tracks", "Recordings", "AlbumEditions", "Albums", "ArtistMetadata",
   ]) {
@@ -92,11 +92,11 @@ function seedTwoPlansDisagreeing(): {
     `).run(`lib-${key}`, path.join(tempDir, key), metadataProfile.id, qualityProfile.id);
     const library = db.prepare("SELECT id FROM Libraries WHERE name = ?").get(`lib-${key}`) as { id: number };
     db.prepare(`
-      INSERT INTO LibraryReleaseGroups (library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version)
+      INSERT INTO LibraryAlbums (library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version)
       VALUES (?, ?, 1, 'auto', 0, 'test', 1)
     `).run(library.id, releaseGroup.id);
     const libraryRelease = db.prepare(`
-      INSERT INTO LibraryReleases (library_id, edition_id, selection_mode, locked, reason, curation_version)
+      INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, locked, reason, curation_version)
       VALUES (?, ?, 'auto', 0, 'test', 1) RETURNING id
     `).get(library.id, release.id) as { id: number };
 
@@ -128,7 +128,7 @@ function seedTwoPlansDisagreeing(): {
 
     const plan = db.prepare(`
       INSERT INTO AcquisitionPlans (
-        library_release_id, provider, composition, download_mode, state,
+        library_edition_id, provider, composition, download_mode, state,
         planner_version, policy_hash, computed_at
       ) VALUES (?, 'tidal', 'single_source', 'album', 'current', 1, 'test', CURRENT_TIMESTAMP)
       RETURNING id

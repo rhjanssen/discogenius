@@ -245,7 +245,7 @@ export class CanonicalManualImportService {
       // entrenching it is the selectRelease bug this cutover is removing. A row
       // that is already locked keeps its lock.
       this.db.prepare(`
-        INSERT INTO LibraryReleaseGroups (
+        INSERT INTO LibraryAlbums (
           library_id, release_group_id, monitored, selection_mode, locked,
           reason, curation_version, updated_at
         ) VALUES (?, ?, 1, 'manual', 0, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
@@ -256,7 +256,7 @@ export class CanonicalManualImportService {
           updated_at = CURRENT_TIMESTAMP
       `).run(request.libraryId, release.release_group_id);
       this.db.prepare(`
-        INSERT INTO LibraryReleases (
+        INSERT INTO LibraryEditions (
           library_id, edition_id, selection_mode, locked, reason,
           curation_version, selected_at, updated_at
         ) VALUES (?, ?, 'manual', 0, 'canonical_manual_import', 1,

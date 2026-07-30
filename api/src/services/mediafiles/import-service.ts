@@ -819,7 +819,7 @@ export class ImportService {
             `).run(monitorValue, monitorValue, artistId);
             if (albumRow.release_group_id != null) {
                 db.prepare(`
-                    UPDATE LibraryReleaseGroups
+                    UPDATE LibraryAlbums
                     SET monitored = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE release_group_id = ?
                       AND library_id = (

@@ -65,7 +65,7 @@ export class TrackLibraryIndexService {
           CURRENT_TIMESTAMP
         FROM Tracks track
         LEFT JOIN Recordings recording ON recording.id = track.recording_id
-        JOIN LibraryReleases library_release
+        JOIN LibraryEditions library_release
           ON library_release.edition_id = track.album_edition_id
         JOIN Libraries library
           ON library.id = library_release.library_id
@@ -74,12 +74,12 @@ export class TrackLibraryIndexService {
           ON quality_profile.id = library.quality_profile_id
         JOIN AlbumEditions release
           ON release.id = library_release.edition_id
-        JOIN LibraryReleaseGroups library_group
+        JOIN LibraryAlbums library_group
           ON library_group.library_id = library_release.library_id
          AND library_group.release_group_id = release.release_group_id
          AND library_group.monitored = 1
         LEFT JOIN AcquisitionPlans plan
-          ON plan.library_release_id = library_release.id
+          ON plan.library_edition_id = library_release.id
         LEFT JOIN AcquisitionPlanTracks plan_track
           ON plan_track.plan_id = plan.id
          AND plan_track.track_id = track.id

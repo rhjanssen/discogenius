@@ -13,7 +13,7 @@
  *   `release_credit` / `release_and_track_credit`), so they neither expand to a
  *   collaborator's releases the library actually wants nor exclude ones it does
  *   not;
- * - they ignore `LibraryReleaseScopes`, which records WHY a selected release is
+ * - they ignore `LibraryEditionScopes`, which records WHY a selected release is
  *   wanted and by which managed-artist workflow;
  * - the canonical fallback below keys on `AlbumEditions.artist_mbid`, i.e. the
  *   primary credited artist, so a collaboration owned by another artist is
@@ -21,7 +21,7 @@
  *
  * Do not reuse these for curation, acquisition, completion or any library-facing
  * membership question until a credited-scope-aware equivalent exists that reads
- * `LibraryArtists`/`LibraryReleaseScopes`. Track/release credits also flow
+ * `LibraryArtists`/`LibraryEditionScopes`. Track/release credits also flow
  * through `ProviderItemCredits`, so a featured or remixing artist matches here
  * exactly as a primary one does — correct for folder scanning, wrong as an
  * ownership claim.
@@ -192,7 +192,7 @@ export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {
   const itemAlias = context.itemAlias ?? "pi";
   const filters: string[] = [];
   if (context.planId) filters.push("AND acquisition_plan.id = @planId");
-  if (context.libraryReleaseId) filters.push("AND acquisition_plan.library_release_id = @libraryReleaseId");
+  if (context.libraryReleaseId) filters.push("AND acquisition_plan.library_edition_id = @libraryReleaseId");
   if (context.libraryId) filters.push("AND plan_library_release.library_id = @libraryId");
   if (context.libraryIdExpr) {
     // NULL expression → no narrowing, so the agree-or-NULL rule still applies.
@@ -220,8 +220,8 @@ export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {
         JOIN AcquisitionPlans acquisition_plan
           ON acquisition_plan.id = plan_track.plan_id
          AND acquisition_plan.state = 'current'
-        JOIN LibraryReleases plan_library_release
-          ON plan_library_release.id = acquisition_plan.library_release_id
+        JOIN LibraryEditions plan_library_release
+          ON plan_library_release.id = acquisition_plan.library_edition_id
         JOIN AcquisitionPlanSources plan_source
           ON plan_source.id = plan_track.source_id
         JOIN ProviderEditionMatches plan_release_match

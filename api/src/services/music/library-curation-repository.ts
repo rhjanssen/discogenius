@@ -158,31 +158,31 @@ export class LibraryCurationRepository {
 
       // User-locked/manual rows are never flipped or removed by automation.
       this.db.prepare(`
-        DELETE FROM LibraryReleaseScopes
-        WHERE library_release_id IN (
-          SELECT id FROM LibraryReleases
+        DELETE FROM LibraryEditionScopes
+        WHERE library_edition_id IN (
+          SELECT id FROM LibraryEditions
           WHERE library_id = ? AND selection_mode = 'auto' AND locked = 0
         )
       `).run(input.libraryId);
       this.db.prepare(`
-        DELETE FROM LibraryReleases
+        DELETE FROM LibraryEditions
         WHERE library_id = ? AND selection_mode = 'auto' AND locked = 0
       `).run(input.libraryId);
       this.db.prepare(`
-        DELETE FROM LibraryReleaseGroups
+        DELETE FROM LibraryAlbums
         WHERE library_id = ? AND selection_mode = 'auto' AND locked = 0
       `).run(input.libraryId);
 
       const insertGroup = this.db.prepare(`
-        INSERT INTO LibraryReleaseGroups (
+        INSERT INTO LibraryAlbums (
           library_id, release_group_id, monitored, selection_mode, locked,
           reason, curation_version, updated_at
         ) VALUES (?, ?, 1, 'auto', 0, 'curation', ?, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-          monitored = CASE WHEN LibraryReleaseGroups.locked = 1
-            THEN LibraryReleaseGroups.monitored ELSE 1 END,
-          curation_version = CASE WHEN LibraryReleaseGroups.locked = 1
-            THEN LibraryReleaseGroups.curation_version ELSE excluded.curation_version END,
+          monitored = CASE WHEN LibraryAlbums.locked = 1
+            THEN LibraryAlbums.monitored ELSE 1 END,
+          curation_version = CASE WHEN LibraryAlbums.locked = 1
+            THEN LibraryAlbums.curation_version ELSE excluded.curation_version END,
           updated_at = CURRENT_TIMESTAMP
       `);
       for (const releaseGroupId of [...selectedReleaseGroupIds].sort((a, b) => a - b)) {
@@ -190,13 +190,13 @@ export class LibraryCurationRepository {
       }
 
       const insertRelease = this.db.prepare(`
-        INSERT INTO LibraryReleases (
+        INSERT INTO LibraryEditions (
           library_id, edition_id, selection_mode, locked, reason,
           curation_version, selected_at, updated_at
         ) VALUES (?, ?, 'auto', 0, 'curation', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(library_id, edition_id) DO UPDATE SET
-          curation_version = CASE WHEN LibraryReleases.locked = 1
-            THEN LibraryReleases.curation_version ELSE excluded.curation_version END,
+          curation_version = CASE WHEN LibraryEditions.locked = 1
+            THEN LibraryEditions.curation_version ELSE excluded.curation_version END,
           updated_at = CURRENT_TIMESTAMP
         RETURNING id
       `);
@@ -211,14 +211,14 @@ export class LibraryCurationRepository {
       }
 
       const insertScope = this.db.prepare(`
-        INSERT OR IGNORE INTO LibraryReleaseScopes (
-          library_release_id, library_artist_id, scope_type, reason
+        INSERT OR IGNORE INTO LibraryEditionScopes (
+          library_edition_id, library_artist_id, scope_type, reason
         ) VALUES (?, ?, ?, ?)
       `);
       for (const scope of input.scopes) {
         const libraryReleaseId = libraryReleaseIdByReleaseId.get(scope.releaseId)
           ?? (this.db.prepare(`
-            SELECT id FROM LibraryReleases WHERE library_id = ? AND edition_id = ?
+            SELECT id FROM LibraryEditions WHERE library_id = ? AND edition_id = ?
           `).get(input.libraryId, scope.releaseId) as { id: number } | undefined)?.id;
         if (libraryReleaseId == null) continue;
         insertScope.run(

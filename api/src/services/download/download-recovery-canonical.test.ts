@@ -16,8 +16,8 @@ const { getExistingLibraryMediaIds, shouldQueueRedownloadForFailedImport } = awa
 function resetRows() {
   db.prepare("DELETE FROM TrackFiles").run();
   db.prepare("DELETE FROM AcquisitionPlans").run();
-  db.prepare("DELETE FROM LibraryReleases").run();
-  db.prepare("DELETE FROM LibraryReleaseGroups").run();
+  db.prepare("DELETE FROM LibraryEditions").run();
+  db.prepare("DELETE FROM LibraryAlbums").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
@@ -101,13 +101,13 @@ test("download recovery resolves existing album files through canonical provider
     SELECT id, root_path FROM Libraries WHERE name = 'Stereo'
   `).get() as { id: number; root_path: string };
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked,
       reason, curation_version
     ) VALUES (?, ?, 1, 'auto', 0, 'test', 1)
   `).run(library.id, releaseGroup.id);
   db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, release.id);

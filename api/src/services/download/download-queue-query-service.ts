@@ -690,7 +690,7 @@ function resolveCanonicalAlbumTracks(input: {
         FROM Albums release_group
         JOIN AlbumEditions release
           ON release.release_group_id = release_group.id
-        JOIN LibraryReleases library_release
+        JOIN LibraryEditions library_release
           ON library_release.edition_id = release.id
          AND (? IS NULL OR library_release.library_id = ?)
         JOIN Tracks track

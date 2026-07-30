@@ -55,7 +55,7 @@ function seedCanonicalArtistGraph() {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-2", "release-1", "recording-2", "Track Two", 1, 2);
   db.prepare(`
-    INSERT INTO LibraryReleaseGroups (
+    INSERT INTO LibraryAlbums (
       library_id, release_group_id, monitored, selection_mode, locked, reason, curation_version
     )
     SELECT library.id, (SELECT id FROM Albums WHERE mbid = 'release-group-1'), 1, 'manual', 0, 'orphan_cleanup_test', 1
@@ -70,11 +70,11 @@ function seedCanonicalArtistGraph() {
     LIMIT 1
   `).run();
   db.prepare(`
-    INSERT INTO LibraryReleases (
+    INSERT INTO LibraryEditions (
       library_id, edition_id, selection_mode, locked, reason, curation_version
     )
     SELECT library_group.library_id, release.id, 'manual', 0, 'orphan_cleanup_test', 1
-    FROM LibraryReleaseGroups library_group
+    FROM LibraryAlbums library_group
     JOIN AlbumEditions release ON release.mbid = 'release-1'
     WHERE library_group.release_group_id = release.release_group_id
   `).run();
@@ -99,7 +99,7 @@ function insertMissingTrackFile(
       canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id,
       library_slot, file_path, relative_path, library_root, filename, extension, file_type, file_class
     ) VALUES (
-      (SELECT library_id FROM LibraryReleaseGroups WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'release-group-1') ORDER BY library_id LIMIT 1),
+      (SELECT library_id FROM LibraryAlbums WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'release-group-1') ORDER BY library_id LIMIT 1),
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'audio'
     )
   `).run(
