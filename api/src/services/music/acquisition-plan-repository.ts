@@ -49,7 +49,7 @@ export class AcquisitionPlanRepository {
         (counts.get(right) || 0) - (counts.get(left) || 0) || left - right);
       const insertSource = this.db.prepare(`
         INSERT INTO AcquisitionPlanSources (
-          plan_id, provider_release_match_id, role, sort_order
+          plan_id, provider_edition_match_id, role, sort_order
         ) VALUES (?, ?, ?, ?)
         RETURNING id
       `);

@@ -60,11 +60,11 @@ function linkProviderArtworkCandidate(options: {
     LIMIT 1
   `).get(options.provider, options.providerId) as { id: number };
   db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
-    ON CONFLICT(provider_release_item_id, release_id) DO UPDATE SET
+    ON CONFLICT(provider_edition_item_id, release_id) DO UPDATE SET
       match_state = 'accepted',
       confidence = 1
   `).run(providerItem.id, release.id);
@@ -123,8 +123,8 @@ function linkProviderArtworkCandidate(options: {
   `).get(library.id, release.id) as { id: number };
   const releaseMatch = db.prepare(`
     SELECT id
-    FROM ProviderReleaseMatches
-    WHERE provider_release_item_id = ? AND release_id = ?
+    FROM ProviderEditionMatches
+    WHERE provider_edition_item_id = ? AND release_id = ?
   `).get(providerItem.id, release.id) as { id: number };
   db.prepare(`
     INSERT INTO AcquisitionPlans (
@@ -141,7 +141,7 @@ function linkProviderArtworkCandidate(options: {
   db.prepare("DELETE FROM AcquisitionPlanSources WHERE plan_id = ?").run(plan.id);
   db.prepare(`
     INSERT INTO AcquisitionPlanSources (
-      plan_id, provider_release_match_id, role, sort_order
+      plan_id, provider_edition_match_id, role, sort_order
     ) VALUES (?, ?, 'primary', 0)
   `).run(plan.id, releaseMatch.id);
 }

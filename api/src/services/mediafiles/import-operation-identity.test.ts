@@ -286,8 +286,8 @@ test("no job context and disagreeing accepted matches reconciles by provider, no
   for (const releaseMbid of ["rel-one", "rel-two"]) {
     const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?").get(releaseMbid) as { id: number };
     db.prepare(`
-      INSERT INTO ProviderReleaseMatches (
-        provider_release_item_id, release_id, relation, match_state, decision_source,
+      INSERT INTO ProviderEditionMatches (
+        provider_edition_item_id, release_id, relation, match_state, decision_source,
         confidence, method, matcher_version
       ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 0.9, 'test_fixture', 1)
     `).run(releaseItem, release.id);

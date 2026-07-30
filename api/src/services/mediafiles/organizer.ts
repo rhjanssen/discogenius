@@ -527,8 +527,8 @@ export class OrganizerService {
           1
         ) AS volumeCount
       FROM ProviderItems pi
-      JOIN ProviderReleaseMatches release_match
-        ON release_match.provider_release_item_id = pi.id
+      JOIN ProviderEditionMatches release_match
+        ON release_match.provider_edition_item_id = pi.id
        AND release_match.match_state = 'accepted'
       JOIN AlbumReleases selected_release
         ON selected_release.id = release_match.release_id
@@ -536,7 +536,7 @@ export class OrganizerService {
         ON rg.id = selected_release.release_group_id
       LEFT JOIN ArtistMetadata am ON am.mbid = rg.artist_mbid
       LEFT JOIN AcquisitionPlanSources plan_source
-        ON plan_source.provider_release_match_id = release_match.id
+        ON plan_source.provider_edition_match_id = release_match.id
       LEFT JOIN AcquisitionPlans plan
         ON plan.id = plan_source.plan_id
        AND plan.state = 'current'
@@ -1857,33 +1857,33 @@ export class OrganizerService {
         SELECT
           (
             SELECT CASE WHEN COUNT(DISTINCT agreed_group.mbid) = 1 THEN MAX(agreed_group.artist_mbid) END
-            FROM ProviderReleaseMatches agreed_match
+            FROM ProviderEditionMatches agreed_match
             JOIN AlbumReleases agreed_release ON agreed_release.id = agreed_match.release_id
             JOIN Albums agreed_group ON agreed_group.id = agreed_release.release_group_id
-            WHERE agreed_match.provider_release_item_id = release_item.id
+            WHERE agreed_match.provider_edition_item_id = release_item.id
               AND agreed_match.match_state = 'accepted'
           ) AS artist_id,
           (
             SELECT CASE WHEN COUNT(DISTINCT agreed_group.mbid) = 1 THEN MAX(agreed_group.mbid) END
-            FROM ProviderReleaseMatches agreed_match
+            FROM ProviderEditionMatches agreed_match
             JOIN AlbumReleases agreed_release ON agreed_release.id = agreed_match.release_id
             JOIN Albums agreed_group ON agreed_group.id = agreed_release.release_group_id
-            WHERE agreed_match.provider_release_item_id = release_item.id
+            WHERE agreed_match.provider_edition_item_id = release_item.id
               AND agreed_match.match_state = 'accepted'
           ) AS mb_release_group_id,
           (
             SELECT CASE WHEN COUNT(DISTINCT agreed_release.mbid) = 1 THEN MAX(agreed_release.mbid) END
-            FROM ProviderReleaseMatches agreed_match
+            FROM ProviderEditionMatches agreed_match
             JOIN AlbumReleases agreed_release ON agreed_release.id = agreed_match.release_id
-            WHERE agreed_match.provider_release_item_id = release_item.id
+            WHERE agreed_match.provider_edition_item_id = release_item.id
               AND agreed_match.match_state = 'accepted'
           ) AS mbid,
           (
             SELECT variant.provider_quality_label
-            FROM ProviderReleaseMembers release_member
+            FROM ProviderEditionMembers release_member
             JOIN ProviderItemAudioVariants variant
               ON variant.provider_item_id = release_member.member_item_id
-            WHERE release_member.provider_release_item_id = release_item.id
+            WHERE release_member.provider_edition_item_id = release_item.id
               AND variant.availability NOT IN ('unavailable', 'restricted')
               AND variant.provider_quality_label IS NOT NULL
             ORDER BY
@@ -2149,9 +2149,9 @@ export class OrganizerService {
                     canonical_recording.mbid AS canonical_recording_mbid,
                     canonical_artist.mbid AS artist_id
                   FROM ProviderItems pi
-                  LEFT JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+                  LEFT JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
                   LEFT JOIN ProviderTrackMatches track_match
-                    ON track_match.provider_release_member_id = member.id
+                    ON track_match.provider_edition_member_id = member.id
                    AND track_match.match_state = 'accepted'
                   LEFT JOIN Tracks canonical_track ON canonical_track.id = track_match.track_id
                   LEFT JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id
@@ -2716,8 +2716,8 @@ export class OrganizerService {
           release_group.primary_type AS type,
           release_group.primary_type AS mb_primary
         FROM ProviderItems pi
-        LEFT JOIN ProviderReleaseMatches release_match
-          ON release_match.provider_release_item_id = pi.id
+        LEFT JOIN ProviderEditionMatches release_match
+          ON release_match.provider_edition_item_id = pi.id
          AND release_match.match_state = 'accepted'
         LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
         LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
@@ -2754,9 +2754,9 @@ export class OrganizerService {
           t.position AS track_number,
           t.medium_position AS volume_number
         FROM ProviderItems pi
-        LEFT JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+        LEFT JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
         LEFT JOIN ProviderTrackMatches track_match
-          ON track_match.provider_release_member_id = member.id
+          ON track_match.provider_edition_member_id = member.id
          AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks t
           ON t.id = track_match.track_id

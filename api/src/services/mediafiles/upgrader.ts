@@ -61,7 +61,7 @@ function albumUpgradeKey(provider: string, albumId: string): string {
 
 /**
  * How many track resources this provider's release actually carries. Counted
- * through ProviderReleaseMembers — the release's own tracklist occurrences —
+ * through ProviderEditionMembers — the release's own tracklist occurrences —
  * and scoped by the full provider identity, because a release id is unique only
  * within a provider.
  *
@@ -72,8 +72,8 @@ function countProviderAlbumTracks(provider: string, albumId: string): number {
     const row = db.prepare(`
         SELECT COUNT(DISTINCT member.member_item_id) AS cnt
         FROM ProviderItems release_item
-        JOIN ProviderReleaseMembers member
-          ON member.provider_release_item_id = release_item.id
+        JOIN ProviderEditionMembers member
+          ON member.provider_edition_item_id = release_item.id
         JOIN ProviderItems member_item
           ON member_item.id = member.member_item_id
          AND member_item.entity_type = 'track'
@@ -237,10 +237,10 @@ export class UpgraderService {
             -- member tracks. Correlates on the release item resolved below.
             (
                 SELECT variant.provider_quality_label
-                FROM ProviderReleaseMembers album_member
+                FROM ProviderEditionMembers album_member
                 JOIN ProviderItemAudioVariants variant
                   ON variant.provider_item_id = album_member.member_item_id
-                WHERE album_member.provider_release_item_id = album_item.id
+                WHERE album_member.provider_edition_item_id = album_item.id
                   AND variant.availability NOT IN ('unavailable', 'restricted')
                   AND variant.provider_quality_label IS NOT NULL
                 ORDER BY
@@ -275,8 +275,8 @@ export class UpgraderService {
                   -- provider resource resolves to nothing rather than guessing.
                   SELECT CASE WHEN COUNT(DISTINCT matched.id) = 1 THEN MAX(matched.id) END
                   FROM ProviderTrackMatches typed_match
-                  JOIN ProviderReleaseMembers typed_member
-                    ON typed_member.id = typed_match.provider_release_member_id
+                  JOIN ProviderEditionMembers typed_member
+                    ON typed_member.id = typed_match.provider_edition_member_id
                   JOIN ProviderItems matched
                     ON matched.id = typed_member.member_item_id
                    AND matched.entity_type = 'track'

@@ -272,25 +272,25 @@ function loadCanonicalMatches(providerItems: ProviderItemRow[]): Map<number, Can
 
     const releases = db.prepare(`
       SELECT
-        release_match.provider_release_item_id AS provider_item_id,
-        release_match.provider_release_item_id AS provider_release_item_id,
+        release_match.provider_edition_item_id AS provider_item_id,
+        release_match.provider_edition_item_id AS provider_edition_item_id,
         release_group.artist_mbid,
         release_group.mbid AS release_group_mbid,
         release.mbid AS release_mbid,
         NULL AS track_mbid,
         NULL AS recording_mbid,
         release_match.confidence
-      FROM ProviderReleaseMatches release_match
+      FROM ProviderEditionMatches release_match
       JOIN AlbumReleases release ON release.id = release_match.release_id
       JOIN Albums release_group ON release_group.id = release.release_group_id
-      WHERE release_match.provider_release_item_id IN (${marks})
+      WHERE release_match.provider_edition_item_id IN (${marks})
         AND release_match.match_state = 'accepted'
       ORDER BY release_match.confidence DESC, release_match.id
     `).all(...itemIds) as Array<Record<string, unknown>>;
     for (const row of releases) {
       addCanonicalMatch(byProviderItem, {
         providerItemId: Number(row.provider_item_id),
-        providerReleaseItemId: Number(row.provider_release_item_id),
+        providerReleaseItemId: Number(row.provider_edition_item_id),
         artistMbid: nullableText(row.artist_mbid),
         releaseGroupMbid: nullableText(row.release_group_mbid),
         releaseMbid: nullableText(row.release_mbid),
@@ -303,7 +303,7 @@ function loadCanonicalMatches(providerItems: ProviderItemRow[]): Map<number, Can
     const tracks = db.prepare(`
       SELECT
         member.member_item_id AS provider_item_id,
-        release_match.provider_release_item_id AS provider_release_item_id,
+        release_match.provider_edition_item_id AS provider_edition_item_id,
         release_group.artist_mbid,
         release_group.mbid AS release_group_mbid,
         release.mbid AS release_mbid,
@@ -311,10 +311,10 @@ function loadCanonicalMatches(providerItems: ProviderItemRow[]): Map<number, Can
         recording.mbid AS recording_mbid,
         track_match.confidence
       FROM ProviderTrackMatches track_match
-      JOIN ProviderReleaseMembers member
-        ON member.id = track_match.provider_release_member_id
-      JOIN ProviderReleaseMatches release_match
-        ON release_match.id = track_match.provider_release_match_id
+      JOIN ProviderEditionMembers member
+        ON member.id = track_match.provider_edition_member_id
+      JOIN ProviderEditionMatches release_match
+        ON release_match.id = track_match.provider_edition_match_id
        AND release_match.match_state = 'accepted'
       JOIN AlbumReleases release ON release.id = release_match.release_id
       JOIN Albums release_group ON release_group.id = release.release_group_id
@@ -327,7 +327,7 @@ function loadCanonicalMatches(providerItems: ProviderItemRow[]): Map<number, Can
     for (const row of tracks) {
       addCanonicalMatch(byProviderItem, {
         providerItemId: Number(row.provider_item_id),
-        providerReleaseItemId: Number(row.provider_release_item_id),
+        providerReleaseItemId: Number(row.provider_edition_item_id),
         artistMbid: nullableText(row.artist_mbid),
         releaseGroupMbid: nullableText(row.release_group_mbid),
         releaseMbid: nullableText(row.release_mbid),
@@ -340,7 +340,7 @@ function loadCanonicalMatches(providerItems: ProviderItemRow[]): Map<number, Can
     const videos = db.prepare(`
       SELECT
         video_match.provider_video_item_id AS provider_item_id,
-        NULL AS provider_release_item_id,
+        NULL AS provider_edition_item_id,
         recording.artist_mbid,
         NULL AS release_group_mbid,
         NULL AS release_mbid,
@@ -471,7 +471,7 @@ function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, Library
             FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
             WHERE allowed.value = 'spatial'
           ) THEN 'spatial' ELSE 'stereo' END AS library_class,
-          provider_match.provider_release_item_id,
+          provider_match.provider_edition_item_id,
           ROW_NUMBER() OVER (
             PARTITION BY
               release_group.id,
@@ -496,8 +496,8 @@ function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, Library
         LEFT JOIN AcquisitionPlanSources source
           ON source.plan_id = plan.id
          AND source.role = 'primary'
-        LEFT JOIN ProviderReleaseMatches provider_match
-          ON provider_match.id = source.provider_release_match_id
+        LEFT JOIN ProviderEditionMatches provider_match
+          ON provider_match.id = source.provider_edition_match_id
          AND provider_match.match_state = 'accepted'
         WHERE release_group.mbid IN (${marks})
       )
@@ -505,21 +505,21 @@ function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, Library
         release_group_mbid,
         release_mbid,
         library_class,
-        provider_release_item_id
+        provider_edition_item_id
       FROM ranked
       WHERE selection_rank = 1
     `).all(...groupMbids) as Array<{
       release_group_mbid: string;
       release_mbid: string;
       library_class: "stereo" | "spatial";
-      provider_release_item_id: number | null;
+      provider_edition_item_id: number | null;
     }>;
     for (const row of rows) {
       byGroupAndClass.set(selectionKey(row.release_group_mbid, row.library_class), {
         releaseGroupMbid: row.release_group_mbid,
         releaseMbid: row.release_mbid,
         libraryClass: row.library_class,
-        providerReleaseItemId: row.provider_release_item_id,
+        providerReleaseItemId: row.provider_edition_item_id,
       });
     }
   }

@@ -41,8 +41,8 @@ beforeEach(() => {
     db.prepare("DELETE FROM ManagedArtists").run();
     db.prepare("DELETE FROM ProviderTrackMatches").run();
     db.prepare("DELETE FROM ProviderVideoMatches").run();
-    db.prepare("DELETE FROM ProviderReleaseMatches").run();
-    db.prepare("DELETE FROM ProviderReleaseMembers").run();
+    db.prepare("DELETE FROM ProviderEditionMatches").run();
+    db.prepare("DELETE FROM ProviderEditionMembers").run();
     db.prepare("DELETE FROM ProviderItemAudioVariants").run();
     db.prepare("DELETE FROM ProviderItems").run();
     db.prepare("DELETE FROM Tracks").run();
@@ -152,8 +152,8 @@ dbModule.db.prepare(`
         RETURNING id
     `).get() as { id: number }).id;
     const memberId = (dbModule.db.prepare(`
-        INSERT INTO ProviderReleaseMembers (
-            provider_release_item_id, member_item_id, medium_position, position
+        INSERT INTO ProviderEditionMembers (
+            provider_edition_item_id, member_item_id, medium_position, position
         ) VALUES (?, ?, 1, 1)
         RETURNING id
     `).get(releaseItemId, trackItemId) as { id: number }).id;
@@ -164,8 +164,8 @@ dbModule.db.prepare(`
         RETURNING id
     `).get(trackItemId) as { id: number }).id;
     const releaseMatchId = (dbModule.db.prepare(`
-        INSERT INTO ProviderReleaseMatches (
-            provider_release_item_id, release_id, relation, match_state, decision_source,
+        INSERT INTO ProviderEditionMatches (
+            provider_edition_item_id, release_id, relation, match_state, decision_source,
             confidence, method, matcher_version, matched_track_count,
             source_track_count, target_track_count, source_coverage, target_coverage
         ) VALUES (?, 201, 'exact', 'accepted', 'automatic', 1, 'test', 1, 1, 1, 1, 1, 1)
@@ -173,7 +173,7 @@ dbModule.db.prepare(`
     `).get(releaseItemId) as { id: number }).id;
     const trackMatchId = (dbModule.db.prepare(`
         INSERT INTO ProviderTrackMatches (
-            provider_release_member_id, provider_release_match_id, track_id, recording_id,
+            provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
             match_state, decision_source, confidence, method, matcher_version
         ) VALUES (?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', 1)
         RETURNING id
@@ -193,7 +193,7 @@ dbModule.db.prepare(`
     `).get(libraryReleaseId) as { id: number }).id;
     const sourceId = (dbModule.db.prepare(`
         INSERT INTO AcquisitionPlanSources (
-            plan_id, provider_release_match_id, role, sort_order
+            plan_id, provider_edition_match_id, role, sort_order
         ) VALUES (?, ?, 'primary', 0)
         RETURNING id
     `).get(planId, releaseMatchId) as { id: number }).id;

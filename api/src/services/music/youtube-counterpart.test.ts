@@ -91,7 +91,7 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
   const audioMatch = db.prepare(`
     SELECT match.match_state
     FROM ProviderTrackMatches match
-    JOIN ProviderReleaseMembers member ON member.id = match.provider_release_member_id
+    JOIN ProviderEditionMembers member ON member.id = match.provider_edition_member_id
     JOIN ProviderItems item ON item.id = member.member_item_id
     WHERE item.provider = 'youtube-music'
       AND item.entity_type = 'track'

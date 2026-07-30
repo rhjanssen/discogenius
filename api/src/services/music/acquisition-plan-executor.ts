@@ -103,10 +103,10 @@ export function buildAcquisitionDownloadCommand(
       source.sort_order,
       release_item.provider_id AS provider_release_id
     FROM AcquisitionPlanSources source
-    JOIN ProviderReleaseMatches release_match
-      ON release_match.id = source.provider_release_match_id
+    JOIN ProviderEditionMatches release_match
+      ON release_match.id = source.provider_edition_match_id
     JOIN ProviderItems release_item
-      ON release_item.id = release_match.provider_release_item_id
+      ON release_item.id = release_match.provider_edition_item_id
     WHERE source.plan_id = ?
     ORDER BY source.sort_order, source.id
   `).all(planId) as PlanSource[];
@@ -138,14 +138,14 @@ export function buildAcquisitionDownloadCommand(
     JOIN Recordings recording ON recording.id = track.recording_id
     JOIN ProviderTrackMatches track_match
       ON track_match.id = plan_track.provider_track_match_id
-    JOIN ProviderReleaseMembers member
-      ON member.id = track_match.provider_release_member_id
+    JOIN ProviderEditionMembers member
+      ON member.id = track_match.provider_edition_member_id
     JOIN ProviderItems member_item ON member_item.id = member.member_item_id
     JOIN AcquisitionPlanSources source ON source.id = plan_track.source_id
-    JOIN ProviderReleaseMatches release_match
-      ON release_match.id = source.provider_release_match_id
+    JOIN ProviderEditionMatches release_match
+      ON release_match.id = source.provider_edition_match_id
     JOIN ProviderItems release_item
-      ON release_item.id = release_match.provider_release_item_id
+      ON release_item.id = release_match.provider_edition_item_id
     WHERE plan_track.plan_id = ?
     ORDER BY track.medium_position, track.position, track.id
   `).all(header.library_id, header.release_id, planId) as PlanTrack[];

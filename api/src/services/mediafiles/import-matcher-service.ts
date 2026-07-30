@@ -421,8 +421,8 @@ export class ImportMatcherService {
                     (
                         SELECT album_item.provider_id
                         FROM ProviderItems album_item
-                        LEFT JOIN ProviderReleaseMatches album_match
-                          ON album_match.provider_release_item_id = album_item.id
+                        LEFT JOIN ProviderEditionMatches album_match
+                          ON album_match.provider_edition_item_id = album_item.id
                          AND album_match.match_state = 'accepted'
                         LEFT JOIN AlbumReleases album_release ON album_release.id = album_match.release_id
                         LEFT JOIN Albums album_group ON album_group.id = album_release.release_group_id
@@ -441,12 +441,12 @@ export class ImportMatcherService {
                     (
                         SELECT album_item.provider_id
                         FROM ProviderItems track_item
-                        JOIN ProviderReleaseMembers track_member
+                        JOIN ProviderEditionMembers track_member
                           ON track_member.member_item_id = track_item.id
                         JOIN ProviderItems album_item
-                          ON album_item.id = track_member.provider_release_item_id
+                          ON album_item.id = track_member.provider_edition_item_id
                         LEFT JOIN ProviderTrackMatches track_match
-                          ON track_match.provider_release_member_id = track_member.id
+                          ON track_match.provider_edition_member_id = track_member.id
                          AND track_match.match_state = 'accepted'
                         LEFT JOIN Tracks canonical_track ON canonical_track.id = track_match.track_id
                         LEFT JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id

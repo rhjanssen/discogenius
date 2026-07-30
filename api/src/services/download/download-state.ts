@@ -549,9 +549,9 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
       CAST(a.id AS TEXT) AS artist_id,
       rg.mbid AS release_group_mbid
     FROM ProviderItems pi
-    JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+    JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
     JOIN ProviderTrackMatches track_match
-      ON track_match.provider_release_member_id = member.id
+      ON track_match.provider_edition_member_id = member.id
      AND track_match.match_state = 'accepted'
      AND track_match.track_id IS NOT NULL
     JOIN Tracks track ON track.id = track_match.track_id

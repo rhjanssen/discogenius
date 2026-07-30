@@ -150,10 +150,10 @@ function providerTrackProjectionJoins(itemAlias: string): string {
       ON ${matchAlias}.id = (
         SELECT candidate_match.id
         FROM ProviderTrackMatches candidate_match
-        JOIN ProviderReleaseMembers candidate_member
-          ON candidate_member.id = candidate_match.provider_release_member_id
-        JOIN ProviderReleaseMatches candidate_release_match
-          ON candidate_release_match.id = candidate_match.provider_release_match_id
+        JOIN ProviderEditionMembers candidate_member
+          ON candidate_member.id = candidate_match.provider_edition_member_id
+        JOIN ProviderEditionMatches candidate_release_match
+          ON candidate_release_match.id = candidate_match.provider_edition_match_id
          AND candidate_release_match.match_state = 'accepted'
         WHERE candidate_member.member_item_id = ${itemAlias}.id
           AND candidate_match.match_state = 'accepted'
@@ -164,10 +164,10 @@ function providerTrackProjectionJoins(itemAlias: string): string {
           candidate_match.updated_at DESC
         LIMIT 1
       )
-    LEFT JOIN ProviderReleaseMembers ${memberAlias}
-      ON ${memberAlias}.id = ${matchAlias}.provider_release_member_id
-    LEFT JOIN ProviderReleaseMatches ${releaseMatchAlias}
-      ON ${releaseMatchAlias}.id = ${matchAlias}.provider_release_match_id
+    LEFT JOIN ProviderEditionMembers ${memberAlias}
+      ON ${memberAlias}.id = ${matchAlias}.provider_edition_member_id
+    LEFT JOIN ProviderEditionMatches ${releaseMatchAlias}
+      ON ${releaseMatchAlias}.id = ${matchAlias}.provider_edition_match_id
      AND ${releaseMatchAlias}.match_state = 'accepted'
     LEFT JOIN Tracks ${trackAlias} ON ${trackAlias}.id = ${matchAlias}.track_id
     LEFT JOIN Recordings ${recordingAlias} ON ${recordingAlias}.id = ${matchAlias}.recording_id
@@ -233,12 +233,12 @@ function getProviderItemRecordingId(provider: string, providerMediaId: string): 
   const row = db.prepare(`
     SELECT track_match.recording_id
     FROM ProviderItems item
-    JOIN ProviderReleaseMembers member ON member.member_item_id = item.id
+    JOIN ProviderEditionMembers member ON member.member_item_id = item.id
     JOIN ProviderTrackMatches track_match
-      ON track_match.provider_release_member_id = member.id
+      ON track_match.provider_edition_member_id = member.id
      AND track_match.match_state = 'accepted'
-    JOIN ProviderReleaseMatches release_match
-      ON release_match.id = track_match.provider_release_match_id
+    JOIN ProviderEditionMatches release_match
+      ON release_match.id = track_match.provider_edition_match_id
      AND release_match.match_state = 'accepted'
     WHERE item.provider = ?
       AND item.entity_type = 'track'

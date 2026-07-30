@@ -699,8 +699,8 @@ export class RefreshArtistService {
                   AND entity_type = 'track'
                   AND id IN (
                     SELECT member_item_id
-                    FROM ProviderReleaseMembers
-                    WHERE provider_release_item_id = (
+                    FROM ProviderEditionMembers
+                    WHERE provider_edition_item_id = (
                       SELECT id
                       FROM ProviderItems
                       WHERE provider = 'soundcloud'
@@ -794,9 +794,9 @@ export class RefreshArtistService {
         `);
         const loadStoredPlaylistOffers = db.prepare(`
             SELECT CAST(item.provider_id AS TEXT) AS provider_id
-            FROM ProviderReleaseMatches release_match
+            FROM ProviderEditionMatches release_match
             JOIN ProviderItems item
-              ON item.id = release_match.provider_release_item_id
+              ON item.id = release_match.provider_edition_item_id
             JOIN AlbumReleases release ON release.id = release_match.release_id
             JOIN Albums release_group ON release_group.id = release.release_group_id
             WHERE item.provider = 'soundcloud'
@@ -1459,8 +1459,8 @@ export class RefreshArtistService {
                         member.position AS track_number,
                         member.medium_position AS volume_number
                     FROM ProviderItems release_item
-                    JOIN ProviderReleaseMembers member
-                      ON member.provider_release_item_id = release_item.id
+                    JOIN ProviderEditionMembers member
+                      ON member.provider_edition_item_id = release_item.id
                     JOIN ProviderItems track_item
                       ON track_item.id = member.member_item_id
                      AND track_item.entity_type = 'track'

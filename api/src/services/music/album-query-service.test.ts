@@ -25,7 +25,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM AcquisitionPlans").run();
   db.prepare("DELETE FROM LibraryReleases").run();
   db.prepare("DELETE FROM LibraryReleaseGroups").run();
-  db.prepare("DELETE FROM ProviderReleaseMatches").run();
+  db.prepare("DELETE FROM ProviderEditionMatches").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
   db.prepare("DELETE FROM AlbumReleases").run();
@@ -103,8 +103,8 @@ function seedAlbum(options: {
   ) as { id: number };
 
   const insertMatch = db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -193,7 +193,7 @@ function seedAlbum(options: {
     ) as { id: number };
     db.prepare(`
       INSERT INTO AcquisitionPlanSources (
-        plan_id, provider_release_match_id, role, sort_order
+        plan_id, provider_edition_match_id, role, sort_order
       ) VALUES (?, ?, 'primary', 0)
     `).run(plan.id, spatial ? spatialMatch.id : stereoMatch.id);
   }

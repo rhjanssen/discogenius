@@ -192,8 +192,8 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
     assert.deepEqual(
       db.prepare(`
         SELECT release.provider_id AS release_id, member.position
-        FROM ProviderReleaseMembers member
-        JOIN ProviderItems release ON release.id = member.provider_release_item_id
+        FROM ProviderEditionMembers member
+        JOIN ProviderItems release ON release.id = member.provider_edition_item_id
         JOIN ProviderItems track ON track.id = member.member_item_id
         WHERE track.provider_id = 'shared-track'
         ORDER BY release.provider_id

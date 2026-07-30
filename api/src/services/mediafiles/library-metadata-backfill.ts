@@ -255,11 +255,11 @@ class LibraryMetadataBackfillService {
                     JOIN AcquisitionPlanSources plan_source
                       ON plan_source.plan_id = plan.id
                      AND plan_source.role = 'primary'
-                    JOIN ProviderReleaseMatches release_match
-                      ON release_match.id = plan_source.provider_release_match_id
+                    JOIN ProviderEditionMatches release_match
+                      ON release_match.id = plan_source.provider_edition_match_id
                      AND release_match.match_state = 'accepted'
                     JOIN ProviderItems provider_release
-                      ON provider_release.id = release_match.provider_release_item_id
+                      ON provider_release.id = release_match.provider_edition_item_id
                     WHERE library_release.library_id = ?
                       AND selected_release.release_group_id = ?
                     ORDER BY plan_source.sort_order, plan_source.id
@@ -540,8 +540,8 @@ class LibraryMetadataBackfillService {
           COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
           (
             SELECT CAST(release_item.provider_id AS TEXT)
-            FROM ProviderReleaseMembers member
-            JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+            FROM ProviderEditionMembers member
+            JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
             WHERE member.member_item_id = pi.id
             ORDER BY member.id
             LIMIT 1
@@ -561,9 +561,9 @@ class LibraryMetadataBackfillService {
               -- typed track match instead of the retired MBID shadow columns.
               AND EXISTS (
                 SELECT 1
-                FROM ProviderReleaseMembers member
+                FROM ProviderEditionMembers member
                 JOIN ProviderTrackMatches track_match
-                  ON track_match.provider_release_member_id = member.id
+                  ON track_match.provider_edition_member_id = member.id
                  AND track_match.match_state = 'accepted'
                 LEFT JOIN Tracks canonical_track ON canonical_track.id = track_match.track_id
                 JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id
@@ -682,8 +682,8 @@ class LibraryMetadataBackfillService {
         COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
         (
           SELECT CAST(release_item.provider_id AS TEXT)
-          FROM ProviderReleaseMembers member
-          JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+          FROM ProviderEditionMembers member
+          JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
           WHERE member.member_item_id = pi.id
           ORDER BY member.id
           LIMIT 1
@@ -821,8 +821,8 @@ class LibraryMetadataBackfillService {
         COALESCE(lf.provider_id, pi.provider_id) AS provider_id,
         (
           SELECT CAST(release_item.provider_id AS TEXT)
-          FROM ProviderReleaseMembers member
-          JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+          FROM ProviderEditionMembers member
+          JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
           WHERE member.member_item_id = pi.id
           ORDER BY member.id
           LIMIT 1
@@ -909,9 +909,9 @@ class LibraryMetadataBackfillService {
       JOIN Artists ar ON ar.id = lf.artist_id
       LEFT JOIN Albums album ON album.id = (
         SELECT canonical_release.release_group_id
-        FROM ProviderReleaseMembers member
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.provider_release_item_id = member.provider_release_item_id
+        FROM ProviderEditionMembers member
+        JOIN ProviderEditionMatches release_match
+          ON release_match.provider_edition_item_id = member.provider_edition_item_id
          AND release_match.match_state = 'accepted'
         JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
         WHERE member.member_item_id = pi.id

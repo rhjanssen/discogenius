@@ -417,16 +417,16 @@ function getTrackSelectSql(whereClause: string): string {
             ON remote_release.id = remote_library_release.release_id
           JOIN AcquisitionPlanSources remote_source
             ON remote_source.id = remote_plan_track.source_id
-          JOIN ProviderReleaseMatches remote_release_match
-            ON remote_release_match.id = remote_source.provider_release_match_id
+          JOIN ProviderEditionMatches remote_release_match
+            ON remote_release_match.id = remote_source.provider_edition_match_id
            AND remote_release_match.match_state = 'accepted'
           JOIN ProviderItems remote_release_item
-            ON remote_release_item.id = remote_release_match.provider_release_item_id
+            ON remote_release_item.id = remote_release_match.provider_edition_item_id
           JOIN ProviderTrackMatches remote_track_match
             ON remote_track_match.id = remote_plan_track.provider_track_match_id
            AND remote_track_match.match_state = 'accepted'
-          JOIN ProviderReleaseMembers remote_member
-            ON remote_member.id = remote_track_match.provider_release_member_id
+          JOIN ProviderEditionMembers remote_member
+            ON remote_member.id = remote_track_match.provider_edition_member_id
           JOIN ProviderItems remote_track_item
             ON remote_track_item.id = remote_member.member_item_id
           JOIN ProviderItemAudioVariants remote_variant
@@ -510,17 +510,17 @@ function getTrackSelectSql(whereClause: string): string {
     LEFT JOIN ProviderTrackMatches selected_track_match
       ON selected_track_match.id = selected_plan_track.provider_track_match_id
      AND selected_track_match.match_state = 'accepted'
-    LEFT JOIN ProviderReleaseMembers selected_member
-      ON selected_member.id = selected_track_match.provider_release_member_id
+    LEFT JOIN ProviderEditionMembers selected_member
+      ON selected_member.id = selected_track_match.provider_edition_member_id
     LEFT JOIN ProviderItems provider_track
       ON provider_track.id = selected_member.member_item_id
     LEFT JOIN AcquisitionPlanSources selected_source
       ON selected_source.id = selected_plan_track.source_id
-    LEFT JOIN ProviderReleaseMatches selected_release_match
-      ON selected_release_match.id = selected_source.provider_release_match_id
+    LEFT JOIN ProviderEditionMatches selected_release_match
+      ON selected_release_match.id = selected_source.provider_edition_match_id
      AND selected_release_match.match_state = 'accepted'
     LEFT JOIN ProviderItems provider_album
-      ON provider_album.id = selected_release_match.provider_release_item_id
+      ON provider_album.id = selected_release_match.provider_edition_item_id
     ${whereClause}
   `);
 }
@@ -898,15 +898,15 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
         ON filtered_profile.id = filtered_library.quality_profile_id
       JOIN AcquisitionPlanSources filtered_source
         ON filtered_source.id = filtered_plan_track.source_id
-      JOIN ProviderReleaseMatches filtered_release_match
-        ON filtered_release_match.id = filtered_source.provider_release_match_id
+      JOIN ProviderEditionMatches filtered_release_match
+        ON filtered_release_match.id = filtered_source.provider_edition_match_id
       JOIN ProviderItems filtered_release_item
-        ON filtered_release_item.id = filtered_release_match.provider_release_item_id
+        ON filtered_release_item.id = filtered_release_match.provider_edition_item_id
       JOIN ProviderTrackMatches filtered_track_match
         ON filtered_track_match.id = filtered_plan_track.provider_track_match_id
        AND filtered_track_match.match_state = 'accepted'
-      JOIN ProviderReleaseMembers filtered_member
-        ON filtered_member.id = filtered_track_match.provider_release_member_id
+      JOIN ProviderEditionMembers filtered_member
+        ON filtered_member.id = filtered_track_match.provider_edition_member_id
       JOIN ProviderItems filtered_track_item
         ON filtered_track_item.id = filtered_member.member_item_id
       JOIN ProviderItemAudioVariants filtered_variant
@@ -937,8 +937,8 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
             JOIN ProviderTrackMatches popularity_match
               ON popularity_match.id = popularity_plan_track.provider_track_match_id
              AND popularity_match.match_state = 'accepted'
-            JOIN ProviderReleaseMembers popularity_member
-              ON popularity_member.id = popularity_match.provider_release_member_id
+            JOIN ProviderEditionMembers popularity_member
+              ON popularity_member.id = popularity_match.provider_edition_member_id
             JOIN ProviderItems selected_track_item
               ON selected_track_item.id = popularity_member.member_item_id
             WHERE popularity_plan_track.track_id = track.id

@@ -284,8 +284,8 @@ export class ManualImportService {
                            pi.explicit,
                            canonical_release.media_count AS num_volumes
                     FROM ProviderItems pi
-                    LEFT JOIN ProviderReleaseMatches release_match
-                      ON release_match.provider_release_item_id = pi.id
+                    LEFT JOIN ProviderEditionMatches release_match
+                      ON release_match.provider_edition_item_id = pi.id
                      AND release_match.match_state = 'accepted'
                     LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
                     LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id

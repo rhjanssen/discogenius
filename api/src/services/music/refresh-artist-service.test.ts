@@ -235,8 +235,8 @@ test("hybrid candidates retain discovery provenance without publishing direct av
   `).get(album.provider_id) as Record<string, string | null>;
   const directMatchCount = dbModule.db.prepare(`
     SELECT COUNT(*) AS count
-    FROM ProviderReleaseMatches match
-    JOIN ProviderItems item ON item.id = match.provider_release_item_id
+    FROM ProviderEditionMatches match
+    JOIN ProviderItems item ON item.id = match.provider_edition_item_id
     WHERE item.provider = 'tidal'
       AND item.entity_type = 'release'
       AND item.provider_id = ?
@@ -577,8 +577,8 @@ test("matched provider release discovery stores normalized facts without publish
   );
   const typedMatchCount = dbModule.db.prepare(`
     SELECT COUNT(*) AS count
-    FROM ProviderReleaseMatches
-    WHERE provider_release_item_id = ?
+    FROM ProviderEditionMatches
+    WHERE provider_edition_item_id = ?
   `).get(normalized.id) as { count: number };
   assert.equal(typedMatchCount.count, 0);
 });

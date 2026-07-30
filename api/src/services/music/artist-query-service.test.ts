@@ -35,8 +35,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM LibraryReleaseGroups").run();
   db.prepare("DELETE FROM ProviderTrackMatches").run();
   db.prepare("DELETE FROM ProviderVideoMatches").run();
-  db.prepare("DELETE FROM ProviderReleaseMatches").run();
-  db.prepare("DELETE FROM ProviderReleaseMembers").run();
+  db.prepare("DELETE FROM ProviderEditionMatches").run();
+  db.prepare("DELETE FROM ProviderEditionMembers").run();
   db.prepare("DELETE FROM ProviderItemAudioVariants").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
@@ -146,21 +146,21 @@ function seedCanonicalArtistPage() {
     WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = 'provider-album-1'
   `).get() as { id: number };
   const releaseMember = db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 1)
     RETURNING id
   `).get(providerRelease.id, providerTrack.id) as { id: number };
   const releaseMatch = db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, 201, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
   `).get(providerRelease.id) as { id: number };
   const trackMatch = db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_release_member_id, provider_release_match_id, track_id,
+      provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
     ) VALUES (?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', 1)
@@ -185,7 +185,7 @@ function seedCanonicalArtistPage() {
   `).get(libraryRelease.id) as { id: number };
   const source = db.prepare(`
     INSERT INTO AcquisitionPlanSources (
-      plan_id, provider_release_match_id, role, sort_order
+      plan_id, provider_edition_match_id, role, sort_order
     ) VALUES (?, ?, 'primary', 0)
     RETURNING id
   `).get(plan.id, releaseMatch.id) as { id: number };
@@ -460,24 +460,24 @@ test("artist top tracks prefer the default provider popularity and fall back to 
       `).get(provider, releaseProviderId) as { id: number };
     }
     let releaseMatch = db.prepare(
-      "SELECT id FROM ProviderReleaseMatches WHERE provider_release_item_id = ? AND release_id = ?",
+      "SELECT id FROM ProviderEditionMatches WHERE provider_edition_item_id = ? AND release_id = ?",
     ).get(providerRelease.id, releaseId) as { id: number } | undefined;
     if (!releaseMatch) {
       releaseMatch = db.prepare(`
-        INSERT INTO ProviderReleaseMatches (
-          provider_release_item_id, release_id, relation, match_state,
+        INSERT INTO ProviderEditionMatches (
+          provider_edition_item_id, release_id, relation, match_state,
           decision_source, confidence, method, matcher_version
         ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1) RETURNING id
       `).get(providerRelease.id, releaseId) as { id: number };
     }
     const member = db.prepare(`
-      INSERT INTO ProviderReleaseMembers (
-        provider_release_item_id, member_item_id, medium_position, position
+      INSERT INTO ProviderEditionMembers (
+        provider_edition_item_id, member_item_id, medium_position, position
       ) VALUES (?, ?, 1, ?) RETURNING id
     `).get(providerRelease.id, providerTrack.id, position) as { id: number };
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        provider_release_member_id, provider_release_match_id, track_id,
+        provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
       ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
     `).run(member.id, releaseMatch.id, canonicalTrackId, canonicalRecordingId);

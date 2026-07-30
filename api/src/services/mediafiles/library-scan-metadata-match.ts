@@ -232,9 +232,9 @@ const OFFER_SELECT = `
       ${PROVIDER_RESOLVED_ALBUM_ID_SQL} AS provider_album_id,
       (
         SELECT recording.mbid
-        FROM ProviderReleaseMembers member
+        FROM ProviderEditionMembers member
         JOIN ProviderTrackMatches track_match
-          ON track_match.provider_release_member_id = member.id
+          ON track_match.provider_edition_member_id = member.id
          AND track_match.match_state = 'accepted'
         JOIN Recordings recording ON recording.id = track_match.recording_id
         WHERE member.member_item_id = pi.id
@@ -303,8 +303,8 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
           ON CAST(pi.provider_id AS TEXT) = CAST(tf.provider_id AS TEXT)
          AND pi.entity_type IN ('track', 'video')
          AND (tf.provider IS NULL OR pi.provider = tf.provider)
-        JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
-        JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+        JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
+        JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
         WHERE tf.artist_id = ?
           AND tf.provider_id IS NOT NULL
           AND replace(tf.file_path, '\\', '/') LIKE ? || '/%'
@@ -321,8 +321,8 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
         const mbidOffers = db.prepare(`
             SELECT DISTINCT CAST(release_item.provider_id AS TEXT) AS provider_album_id
             FROM ProviderItems release_item
-            JOIN ProviderReleaseMatches release_match
-              ON release_match.provider_release_item_id = release_item.id
+            JOIN ProviderEditionMatches release_match
+              ON release_match.provider_edition_item_id = release_item.id
              AND release_match.match_state = 'accepted'
             JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
             WHERE release_item.entity_type = 'release'
@@ -342,8 +342,8 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
               CAST(release_item.provider_id AS TEXT) AS provider_album_id,
               COALESCE(release_group.title, release_item.title) AS title
             FROM ProviderItems release_item
-            LEFT JOIN ProviderReleaseMatches release_match
-              ON release_match.provider_release_item_id = release_item.id
+            LEFT JOIN ProviderEditionMatches release_match
+              ON release_match.provider_edition_item_id = release_item.id
              AND release_match.match_state = 'accepted'
             LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
             LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
@@ -420,9 +420,9 @@ function offersByRecordingMbid(artistId: string, recordingMbid: string, preferre
           AND ${OFFER_ARTIST_SCOPE}
           AND EXISTS (
             SELECT 1
-            FROM ProviderReleaseMembers member
+            FROM ProviderEditionMembers member
             JOIN ProviderTrackMatches track_match
-              ON track_match.provider_release_member_id = member.id
+              ON track_match.provider_edition_member_id = member.id
              AND track_match.match_state = 'accepted'
             JOIN Recordings recording ON recording.id = track_match.recording_id
             WHERE member.member_item_id = pi.id
@@ -458,8 +458,8 @@ function offersByTitleInAlbums(
           AND ${OFFER_ARTIST_SCOPE}
           AND EXISTS (
             SELECT 1
-            FROM ProviderReleaseMembers member
-            JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+            FROM ProviderEditionMembers member
+            JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
             WHERE member.member_item_id = pi.id
               AND CAST(release_item.provider_id AS TEXT) IN (${placeholders})
           )
@@ -501,8 +501,8 @@ function findSameFolderDuplicate(
                pi.title,
                (
                  SELECT CAST(release_item.provider_id AS TEXT)
-                 FROM ProviderReleaseMembers member
-                 JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+                 FROM ProviderEditionMembers member
+                 JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
                  WHERE member.member_item_id = pi.id
                  ORDER BY member.id
                  LIMIT 1

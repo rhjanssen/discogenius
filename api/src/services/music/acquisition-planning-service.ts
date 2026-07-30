@@ -54,10 +54,10 @@ interface PlanningContextRow {
 
 interface CandidateRow {
   provider: string;
-  provider_release_match_id: number;
+  provider_edition_match_id: number;
   relation: AcquisitionSourceCandidate["relation"];
   source_track_count: number;
-  provider_release_member_id: number;
+  provider_edition_member_id: number;
   provider_track_match_id: number;
   track_id: number;
   track_variant_id: number | null;
@@ -123,10 +123,10 @@ export class AcquisitionPlanningService {
     const rows = this.db.prepare(`
       SELECT
         release_item.provider,
-        release_match.id AS provider_release_match_id,
+        release_match.id AS provider_edition_match_id,
         release_match.relation,
         release_match.source_track_count,
-        member.id AS provider_release_member_id,
+        member.id AS provider_edition_member_id,
         track_match.id AS provider_track_match_id,
         track_match.track_id,
         track_variant.id AS track_variant_id,
@@ -135,19 +135,19 @@ export class AcquisitionPlanningService {
         release_variant.id AS release_variant_id,
         release_variant.quality_class AS release_quality,
         release_variant.availability AS release_availability
-      FROM ProviderReleaseMatches release_match
+      FROM ProviderEditionMatches release_match
       JOIN ProviderItems release_item
-        ON release_item.id = release_match.provider_release_item_id
+        ON release_item.id = release_match.provider_edition_item_id
       JOIN ProviderTrackMatches track_match
-        ON track_match.provider_release_match_id = release_match.id
+        ON track_match.provider_edition_match_id = release_match.id
        AND track_match.match_state = 'accepted'
        AND track_match.track_id IS NOT NULL
-      JOIN ProviderReleaseMembers member
-        ON member.id = track_match.provider_release_member_id
+      JOIN ProviderEditionMembers member
+        ON member.id = track_match.provider_edition_member_id
       LEFT JOIN ProviderItemAudioVariants track_variant
         ON track_variant.provider_item_id = member.member_item_id
       LEFT JOIN ProviderItemAudioVariants release_variant
-        ON release_variant.provider_item_id = release_match.provider_release_item_id
+        ON release_variant.provider_item_id = release_match.provider_edition_item_id
       WHERE release_match.release_id = ?
         AND release_match.match_state = 'accepted'
         AND release_item.availability NOT IN (
@@ -160,23 +160,23 @@ export class AcquisitionPlanningService {
     const sourceById = new Map<number, AcquisitionSourceCandidate>();
     const matchById = new Map<number, AcquisitionSourceCandidate["trackMatches"][number]>();
     for (const row of rows) {
-      let source = sourceById.get(row.provider_release_match_id);
+      let source = sourceById.get(row.provider_edition_match_id);
       if (!source) {
         source = {
           provider: row.provider,
-          providerReleaseMatchId: row.provider_release_match_id,
+          providerReleaseMatchId: row.provider_edition_match_id,
           relation: row.relation,
           sourceTrackCount: row.source_track_count,
           albumDownloadSafe: row.relation === "exact",
           trackMatches: [],
         };
-        sourceById.set(row.provider_release_match_id, source);
+        sourceById.set(row.provider_edition_match_id, source);
       }
       let trackMatch = matchById.get(row.provider_track_match_id);
       if (!trackMatch) {
         trackMatch = {
           providerTrackMatchId: row.provider_track_match_id,
-          providerReleaseMemberId: row.provider_release_member_id,
+          providerReleaseMemberId: row.provider_edition_member_id,
           trackId: row.track_id,
           variants: [],
         };

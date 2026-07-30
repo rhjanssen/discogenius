@@ -46,15 +46,15 @@ export function seedAcceptedProviderReleaseMatch(
     release.title,
   );
   db.prepare(`
-    INSERT OR IGNORE INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT OR IGNORE INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test_fixture', 1)
   `).run(providerRelease.id, release.id);
   const releaseMatch = db.prepare(`
     SELECT id
-    FROM ProviderReleaseMatches
-    WHERE provider_release_item_id = ? AND release_id = ?
+    FROM ProviderEditionMatches
+    WHERE provider_edition_item_id = ? AND release_id = ?
   `).get(providerRelease.id, release.id) as { id: number };
   return {
     providerReleaseItemId: providerRelease.id,
@@ -142,11 +142,11 @@ export function seedAcceptedProviderVideoMatch(
     providerReleaseItemId = releaseItem.id;
     const position = fixture.position
       ?? (db.prepare(`
-          SELECT COUNT(*) AS count FROM ProviderReleaseMembers WHERE provider_release_item_id = ?
+          SELECT COUNT(*) AS count FROM ProviderEditionMembers WHERE provider_edition_item_id = ?
         `).get(releaseItem.id) as { count: number }).count + 1;
     db.prepare(`
-      INSERT OR IGNORE INTO ProviderReleaseMembers (
-        provider_release_item_id, member_item_id, medium_position, position
+      INSERT OR IGNORE INTO ProviderEditionMembers (
+        provider_edition_item_id, member_item_id, medium_position, position
       ) VALUES (?, ?, 1, ?)
     `).run(releaseItem.id, videoItem.id, position);
   }
@@ -190,16 +190,16 @@ export function seedAcceptedProviderRecordingTrack(
 
   const position = fixture.position
     ?? (db.prepare(`
-        SELECT COUNT(*) AS count FROM ProviderReleaseMembers WHERE provider_release_item_id = ?
+        SELECT COUNT(*) AS count FROM ProviderEditionMembers WHERE provider_edition_item_id = ?
       `).get(releaseItem.id) as { count: number }).count + 1;
   db.prepare(`
-    INSERT OR IGNORE INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT OR IGNORE INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, ?)
   `).run(releaseItem.id, trackItem.id, position);
   const member = db.prepare(`
-    SELECT id FROM ProviderReleaseMembers
-    WHERE provider_release_item_id = ? AND member_item_id = ?
+    SELECT id FROM ProviderEditionMembers
+    WHERE provider_edition_item_id = ? AND member_item_id = ?
     ORDER BY id LIMIT 1
   `).get(releaseItem.id, trackItem.id) as { id: number };
 
@@ -242,18 +242,18 @@ export function seedAcceptedProviderRecordingTrack(
   }
   if (canonicalRelease?.album_release_id) {
     db.prepare(`
-      INSERT OR IGNORE INTO ProviderReleaseMatches (
-        provider_release_item_id, release_id, relation, match_state,
+      INSERT OR IGNORE INTO ProviderEditionMatches (
+        provider_edition_item_id, release_id, relation, match_state,
         decision_source, confidence, method, matcher_version
       ) VALUES (?, ?, 'overlap', 'accepted', 'automatic', 1, 'test_fixture', 1)
     `).run(releaseItem.id, canonicalRelease.album_release_id);
     const releaseMatch = db.prepare(`
-      SELECT id FROM ProviderReleaseMatches
-      WHERE provider_release_item_id = ? AND release_id = ?
+      SELECT id FROM ProviderEditionMatches
+      WHERE provider_edition_item_id = ? AND release_id = ?
     `).get(releaseItem.id, canonicalRelease.album_release_id) as { id: number };
     db.prepare(`
       INSERT OR IGNORE INTO ProviderTrackMatches (
-        provider_release_member_id, provider_release_match_id, track_id, recording_id,
+        provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
         match_state, decision_source, confidence, method, matcher_version
       ) VALUES (?, ?, NULL, ?, 'accepted', 'automatic', 1, 'test_fixture', 1)
     `).run(member.id, releaseMatch.id, fixture.recordingId);
@@ -308,8 +308,8 @@ export function seedAcceptedProviderTrackMatch(
   );
 
   db.prepare(`
-    INSERT OR IGNORE INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position,
+    INSERT OR IGNORE INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position,
       number, contextual_title
     ) VALUES (?, ?, ?, ?, ?, ?)
   `).run(
@@ -322,8 +322,8 @@ export function seedAcceptedProviderTrackMatch(
   );
   const member = db.prepare(`
     SELECT id
-    FROM ProviderReleaseMembers
-    WHERE provider_release_item_id = ?
+    FROM ProviderEditionMembers
+    WHERE provider_edition_item_id = ?
       AND member_item_id = ?
     ORDER BY id
     LIMIT 1
@@ -333,15 +333,15 @@ export function seedAcceptedProviderTrackMatch(
 
   db.prepare(`
     INSERT OR IGNORE INTO ProviderTrackMatches (
-      provider_release_member_id, provider_release_match_id, track_id, recording_id,
+      provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
       match_state, decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test_fixture', 1)
   `).run(member.id, releaseMatch.providerReleaseMatchId, track.id, track.recording_id);
   const trackMatch = db.prepare(`
     SELECT id
     FROM ProviderTrackMatches
-    WHERE provider_release_member_id = ?
-      AND provider_release_match_id = ?
+    WHERE provider_edition_member_id = ?
+      AND provider_edition_match_id = ?
       AND track_id = ?
       AND recording_id = ?
     ORDER BY id

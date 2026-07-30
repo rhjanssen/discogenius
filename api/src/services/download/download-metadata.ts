@@ -135,8 +135,8 @@ export function resolveCanonicalProviderOffer(
                 release_group.title AS canonical_album_title,
                 COALESCE(canonical_credit.credited_name, artist.name) AS artist_name
             FROM ProviderItems provider_release
-            JOIN ProviderReleaseMatches release_match
-              ON release_match.provider_release_item_id = provider_release.id
+            JOIN ProviderEditionMatches release_match
+              ON release_match.provider_edition_item_id = provider_release.id
              AND release_match.match_state = 'accepted'
             JOIN AlbumReleases release
               ON release.id = release_match.release_id
@@ -162,7 +162,7 @@ export function resolveCanonicalProviderOffer(
                   SELECT 1
                   FROM AcquisitionPlanSources source
                   WHERE source.plan_id = ?
-                    AND source.provider_release_match_id = release_match.id
+                    AND source.provider_edition_match_id = release_match.id
                 )
               )
             ORDER BY
@@ -248,10 +248,10 @@ export function resolveCanonicalProviderOffer(
             recording.id AS canonical_recording_id,
             COALESCE(track_credit.credited_name, artist.name) AS artist_name
         FROM ProviderItems provider_track
-        JOIN ProviderReleaseMembers release_member
+        JOIN ProviderEditionMembers release_member
           ON release_member.member_item_id = provider_track.id
         JOIN ProviderTrackMatches track_match
-          ON track_match.provider_release_member_id = release_member.id
+          ON track_match.provider_edition_member_id = release_member.id
          AND track_match.match_state = 'accepted'
         JOIN Tracks track
           ON track.id = track_match.track_id

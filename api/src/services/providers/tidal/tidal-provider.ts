@@ -61,8 +61,8 @@ export function getTidalAlbumDownloadTrackInfo(providerIds: string[]): TidalAlbu
       ON provider_release.provider = 'tidal'
      AND provider_release.entity_type = 'release'
      AND CAST(provider_release.provider_id AS TEXT) = input_albums.provider_id
-    JOIN ProviderReleaseMatches release_match
-      ON release_match.provider_release_item_id = provider_release.id
+    JOIN ProviderEditionMatches release_match
+      ON release_match.provider_edition_item_id = provider_release.id
      AND release_match.match_state = 'accepted'
     JOIN AlbumReleases release
       ON release.id = release_match.release_id

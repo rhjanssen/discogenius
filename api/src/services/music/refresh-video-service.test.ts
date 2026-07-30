@@ -1109,8 +1109,8 @@ test("provider video related_track_id links directly to the matched audio record
   const offer = dbModule.db.prepare(`
     SELECT CAST(release_item.provider_id AS TEXT) AS albumId
     FROM ProviderItems pi
-    JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
-    JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+    JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
+    JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
     WHERE pi.provider = 'apple-music' AND pi.entity_type = 'video'
       AND pi.provider_id = 'apple-video-related'
   `).get() as { albumId: string };

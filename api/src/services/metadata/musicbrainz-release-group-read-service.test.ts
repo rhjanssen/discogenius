@@ -26,8 +26,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
   dbModule.db.prepare("DELETE FROM Libraries").run();
   dbModule.db.prepare("DELETE FROM ProviderTrackMatches").run();
-  dbModule.db.prepare("DELETE FROM ProviderReleaseMatches").run();
-  dbModule.db.prepare("DELETE FROM ProviderReleaseMembers").run();
+  dbModule.db.prepare("DELETE FROM ProviderEditionMatches").run();
+  dbModule.db.prepare("DELETE FROM ProviderEditionMembers").run();
   dbModule.db.prepare("DELETE FROM ProviderItemAudioVariants").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
@@ -151,8 +151,8 @@ function insertAcceptedReleaseMatch(
   const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?")
     .get(releaseMbid) as { id: number };
   const releaseMatch = db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -507,14 +507,14 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
     RETURNING id
   `).get(isrc) as { id: number };
   const member = dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 7)
     RETURNING id
   `).get(releaseMatch.providerItemId, providerTrack.id) as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 10)
   `).run(releaseMatch.providerItemId, distractorTrack.id);
   const canonicalTrack = dbModule.db.prepare(`
@@ -522,7 +522,7 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
   `).get(trackMbid) as { id: number; recording_id: number };
   const trackMatch = dbModule.db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_release_member_id, provider_release_match_id, track_id,
+      provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
     ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
@@ -549,7 +549,7 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
   `).get(libraryReleaseId) as { id: number };
   const source = dbModule.db.prepare(`
     INSERT INTO AcquisitionPlanSources (
-      plan_id, provider_release_match_id, role, sort_order
+      plan_id, provider_edition_match_id, role, sort_order
     ) VALUES (?, ?, 'primary', 0)
     RETURNING id
   `).get(plan.id, releaseMatch.releaseMatchId) as { id: number };

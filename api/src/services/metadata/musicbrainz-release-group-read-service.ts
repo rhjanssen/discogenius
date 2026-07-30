@@ -96,11 +96,11 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         LEFT JOIN AcquisitionPlanSources plan_source
           ON plan_source.plan_id = plan.id
          AND plan_source.role = 'primary'
-        LEFT JOIN ProviderReleaseMatches release_match
-          ON release_match.id = plan_source.provider_release_match_id
+        LEFT JOIN ProviderEditionMatches release_match
+          ON release_match.id = plan_source.provider_edition_match_id
          AND release_match.match_state = 'accepted'
         LEFT JOIN ProviderItems provider_release
-          ON provider_release.id = release_match.provider_release_item_id
+          ON provider_release.id = release_match.provider_edition_item_id
         WHERE selected_group.mbid = ?
       ),
       stereo AS (
@@ -287,7 +287,7 @@ function listMusicBrainzReleaseVersions(
           JOIN quality_profiles quality_profile
             ON quality_profile.id = library.quality_profile_id
           JOIN json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-          WHERE source.provider_release_match_id = release_match.id
+          WHERE source.provider_edition_match_id = release_match.id
             AND allowed.value = 'spatial'
         ) THEN 'spatial' ELSE 'stereo' END AS library_class,
         (
@@ -303,7 +303,7 @@ function listMusicBrainzReleaseVersions(
             ON plan_track.plan_id = plan.id
           JOIN ProviderItemAudioVariants variant
             ON variant.id = plan_track.provider_audio_variant_id
-          WHERE source.provider_release_match_id = release_match.id
+          WHERE source.provider_edition_match_id = release_match.id
           ORDER BY
             CASE variant.quality_class
               WHEN 'spatial' THEN 0
@@ -316,9 +316,9 @@ function listMusicBrainzReleaseVersions(
         ) AS quality,
         release_match.match_state AS match_status,
         release_match.confidence AS match_confidence
-      FROM ProviderReleaseMatches release_match
+      FROM ProviderEditionMatches release_match
       JOIN ProviderItems provider_item
-        ON provider_item.id = release_match.provider_release_item_id
+        ON provider_item.id = release_match.provider_edition_item_id
       JOIN AlbumReleases release
         ON release.id = release_match.release_id
       JOIN Albums release_group
@@ -876,19 +876,19 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
         JOIN AcquisitionPlanSources source
           ON source.id = plan_track.source_id
          AND source.plan_id = plan.id
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.id = source.provider_release_match_id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.id = source.provider_edition_match_id
          AND release_match.match_state = 'accepted'
         JOIN ProviderItems provider_release
-          ON provider_release.id = release_match.provider_release_item_id
+          ON provider_release.id = release_match.provider_edition_item_id
         JOIN ProviderTrackMatches track_match
           ON track_match.id = plan_track.provider_track_match_id
-         AND track_match.provider_release_match_id = release_match.id
+         AND track_match.provider_edition_match_id = release_match.id
          AND track_match.track_id = plan_track.track_id
          AND track_match.match_state = 'accepted'
-        JOIN ProviderReleaseMembers member
-          ON member.id = track_match.provider_release_member_id
-         AND member.provider_release_item_id = provider_release.id
+        JOIN ProviderEditionMembers member
+          ON member.id = track_match.provider_edition_member_id
+         AND member.provider_edition_item_id = provider_release.id
         JOIN ProviderItems provider_track
           ON provider_track.id = member.member_item_id
         JOIN ProviderItemAudioVariants audio_variant

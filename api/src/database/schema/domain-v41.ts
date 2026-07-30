@@ -234,9 +234,9 @@ export function createDomainSchemaV41(db: Database.Database): void {
       UNIQUE (provider, entity_type, provider_id)
     );
 
-    CREATE TABLE ProviderReleaseMembers (
+    CREATE TABLE ProviderEditionMembers (
       id INTEGER PRIMARY KEY,
-      provider_release_item_id INTEGER NOT NULL,
+      provider_edition_item_id INTEGER NOT NULL,
       member_item_id INTEGER NOT NULL,
       medium_position INTEGER NOT NULL DEFAULT 1,
       position INTEGER NOT NULL,
@@ -245,8 +245,8 @@ export function createDomainSchemaV41(db: Database.Database): void {
       contextual_duration_ms INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (provider_release_item_id, medium_position, position),
-      FOREIGN KEY (provider_release_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
+      UNIQUE (provider_edition_item_id, medium_position, position),
+      FOREIGN KEY (provider_edition_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
       FOREIGN KEY (member_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE
     );
 
@@ -313,9 +313,9 @@ export function createDomainSchemaV41(db: Database.Database): void {
       FOREIGN KEY (provider_artist_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE ProviderReleaseMatches (
+    CREATE TABLE ProviderEditionMatches (
       id INTEGER PRIMARY KEY,
-      provider_release_item_id INTEGER NOT NULL,
+      provider_edition_item_id INTEGER NOT NULL,
       release_id INTEGER NOT NULL,
       relation TEXT NOT NULL CHECK (relation IN ('exact', 'source_superset', 'source_subset', 'overlap')),
       match_state TEXT NOT NULL CHECK (match_state IN ('candidate', 'accepted', 'ambiguous', 'rejected')),
@@ -330,15 +330,15 @@ export function createDomainSchemaV41(db: Database.Database): void {
       source_coverage REAL NOT NULL DEFAULT 0,
       target_coverage REAL NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (provider_release_item_id, release_id),
-      FOREIGN KEY (provider_release_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
+      UNIQUE (provider_edition_item_id, release_id),
+      FOREIGN KEY (provider_edition_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
       FOREIGN KEY (release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE
     );
 
     CREATE TABLE ProviderTrackMatches (
       id INTEGER PRIMARY KEY,
-      provider_release_member_id INTEGER NOT NULL,
-      provider_release_match_id INTEGER NOT NULL,
+      provider_edition_member_id INTEGER NOT NULL,
+      provider_edition_match_id INTEGER NOT NULL,
       track_id INTEGER,
       recording_id INTEGER NOT NULL,
       match_state TEXT NOT NULL CHECK (match_state IN ('candidate', 'accepted', 'ambiguous', 'rejected')),
@@ -350,9 +350,9 @@ export function createDomainSchemaV41(db: Database.Database): void {
       duration_delta_ms INTEGER,
       ambiguity_margin REAL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (provider_release_member_id, provider_release_match_id, track_id, recording_id),
-      FOREIGN KEY (provider_release_member_id) REFERENCES ProviderReleaseMembers(id) ON DELETE CASCADE,
-      FOREIGN KEY (provider_release_match_id) REFERENCES ProviderReleaseMatches(id) ON DELETE CASCADE,
+      UNIQUE (provider_edition_member_id, provider_edition_match_id, track_id, recording_id),
+      FOREIGN KEY (provider_edition_member_id) REFERENCES ProviderEditionMembers(id) ON DELETE CASCADE,
+      FOREIGN KEY (provider_edition_match_id) REFERENCES ProviderEditionMatches(id) ON DELETE CASCADE,
       FOREIGN KEY (track_id) REFERENCES Tracks(id) ON DELETE CASCADE,
       FOREIGN KEY (recording_id) REFERENCES Recordings(id) ON DELETE CASCADE
     );
@@ -482,12 +482,12 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE TABLE AcquisitionPlanSources (
       id INTEGER PRIMARY KEY,
       plan_id INTEGER NOT NULL,
-      provider_release_match_id INTEGER NOT NULL,
+      provider_edition_match_id INTEGER NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('primary', 'supplement')),
       sort_order INTEGER NOT NULL,
-      UNIQUE (plan_id, provider_release_match_id),
+      UNIQUE (plan_id, provider_edition_match_id),
       FOREIGN KEY (plan_id) REFERENCES AcquisitionPlans(id) ON DELETE CASCADE,
-      FOREIGN KEY (provider_release_match_id) REFERENCES ProviderReleaseMatches(id)
+      FOREIGN KEY (provider_edition_match_id) REFERENCES ProviderEditionMatches(id)
     );
 
     CREATE TABLE AcquisitionPlanTracks (
@@ -580,22 +580,22 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE INDEX idx_provider_items_type ON ProviderItems(provider, entity_type, provider_id);
     CREATE INDEX idx_provider_items_upc ON ProviderItems(provider, upc) WHERE upc IS NOT NULL;
     CREATE INDEX idx_provider_items_isrc ON ProviderItems(provider, isrc) WHERE isrc IS NOT NULL;
-    CREATE INDEX idx_provider_release_members_release ON ProviderReleaseMembers(provider_release_item_id, medium_position, position);
-    CREATE INDEX idx_provider_release_members_member ON ProviderReleaseMembers(member_item_id, provider_release_item_id);
+    CREATE INDEX idx_provider_release_members_release ON ProviderEditionMembers(provider_edition_item_id, medium_position, position);
+    CREATE INDEX idx_provider_release_members_member ON ProviderEditionMembers(member_item_id, provider_edition_item_id);
     CREATE INDEX idx_provider_item_credits_artist ON ProviderItemCredits(artist_item_id, item_id);
     CREATE INDEX idx_provider_audio_variants_item ON ProviderItemAudioVariants(provider_item_id, availability);
     CREATE INDEX idx_provider_artist_matches_provider ON ProviderArtistMatches(provider_artist_item_id, match_state);
     CREATE INDEX idx_provider_artist_matches_artist ON ProviderArtistMatches(artist_id, match_state);
-    CREATE INDEX idx_provider_release_matches_provider ON ProviderReleaseMatches(provider_release_item_id, match_state, relation);
-    CREATE INDEX idx_provider_release_matches_release ON ProviderReleaseMatches(release_id, match_state, relation);
-    CREATE INDEX idx_provider_track_matches_member ON ProviderTrackMatches(provider_release_member_id, match_state);
-    CREATE INDEX idx_provider_track_matches_release_match ON ProviderTrackMatches(provider_release_match_id, match_state);
+    CREATE INDEX idx_provider_release_matches_provider ON ProviderEditionMatches(provider_edition_item_id, match_state, relation);
+    CREATE INDEX idx_provider_release_matches_release ON ProviderEditionMatches(release_id, match_state, relation);
+    CREATE INDEX idx_provider_track_matches_member ON ProviderTrackMatches(provider_edition_member_id, match_state);
+    CREATE INDEX idx_provider_track_matches_release_match ON ProviderTrackMatches(provider_edition_match_id, match_state);
     CREATE INDEX idx_provider_track_matches_track ON ProviderTrackMatches(track_id, match_state);
     CREATE INDEX idx_provider_track_matches_recording ON ProviderTrackMatches(recording_id, match_state);
     CREATE UNIQUE INDEX idx_provider_track_matches_unique_edge
       ON ProviderTrackMatches(
-        provider_release_member_id,
-        provider_release_match_id,
+        provider_edition_member_id,
+        provider_edition_match_id,
         COALESCE(track_id, -1),
         recording_id
       );
@@ -616,10 +616,10 @@ export function createDomainSchemaV41(db: Database.Database): void {
 
   db.exec(`
     CREATE TRIGGER provider_release_members_validate_insert
-    BEFORE INSERT ON ProviderReleaseMembers
+    BEFORE INSERT ON ProviderEditionMembers
     BEGIN
       SELECT CASE
-        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_release_item_id) != 'release'
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_edition_item_id) != 'release'
           THEN RAISE(ABORT, 'provider release member parent must be a release')
         WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.member_item_id) NOT IN ('track', 'video')
           THEN RAISE(ABORT, 'provider release member must be a track or video')
@@ -655,10 +655,10 @@ export function createDomainSchemaV41(db: Database.Database): void {
     END;
 
     CREATE TRIGGER provider_release_matches_validate_insert
-    BEFORE INSERT ON ProviderReleaseMatches
+    BEFORE INSERT ON ProviderEditionMatches
     BEGIN
       SELECT CASE
-        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_release_item_id) != 'release'
+        WHEN (SELECT entity_type FROM ProviderItems WHERE id = NEW.provider_edition_item_id) != 'release'
           THEN RAISE(ABORT, 'provider release match source must be a release item')
       END;
     END;

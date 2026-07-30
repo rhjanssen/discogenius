@@ -36,17 +36,17 @@ test("plan replacement is atomic and partial completion counts only imported ass
     ) VALUES (1, 'tidal', 'release', 'provider-release'),
     (2, 'tidal', 'track', 'provider-track-1'),
     (3, 'tidal', 'track', 'provider-track-2');
-      INSERT INTO ProviderReleaseMembers (
-        id, provider_release_item_id, member_item_id, medium_position, position
+      INSERT INTO ProviderEditionMembers (
+        id, provider_edition_item_id, member_item_id, medium_position, position
       ) VALUES (1, 1, 2, 1, 1), (2, 1, 3, 1, 2);
-      INSERT INTO ProviderReleaseMatches (
-        id, provider_release_item_id, release_id, relation, match_state,
+      INSERT INTO ProviderEditionMatches (
+        id, provider_edition_item_id, release_id, relation, match_state,
         decision_source, confidence, method, matcher_version,
         matched_track_count, source_track_count, target_track_count,
         source_coverage, target_coverage
       ) VALUES (1, 1, 1, 'exact', 'accepted', 'automatic', 1, 'external_id', 1, 2, 2, 2, 1, 1);
       INSERT INTO ProviderTrackMatches (
-        id, provider_release_member_id, provider_release_match_id, track_id,
+        id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
       ) VALUES (1, 1, 1, 1, 1, 'accepted', 'automatic', 1, 'external_id', 1),
                (2, 2, 1, 2, 2, 'accepted', 'automatic', 1, 'external_id', 1);

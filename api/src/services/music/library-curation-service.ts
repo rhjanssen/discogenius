@@ -225,13 +225,13 @@ export class LibraryCurationService {
     if (allowedQualities.length > 0) {
       const attainableRows = this.db.prepare(`
         SELECT DISTINCT release_match.release_id, track_match.recording_id
-        FROM ProviderReleaseMatches release_match
+        FROM ProviderEditionMatches release_match
         JOIN ProviderTrackMatches track_match
-          ON track_match.provider_release_match_id = release_match.id
+          ON track_match.provider_edition_match_id = release_match.id
          AND track_match.match_state = 'accepted'
          AND track_match.track_id IS NOT NULL
-        JOIN ProviderReleaseMembers member
-          ON member.id = track_match.provider_release_member_id
+        JOIN ProviderEditionMembers member
+          ON member.id = track_match.provider_edition_member_id
         WHERE release_match.match_state = 'accepted'
           AND (
             EXISTS (
@@ -245,7 +245,7 @@ export class LibraryCurationService {
             )
             OR EXISTS (
               SELECT 1 FROM ProviderItemAudioVariants variant
-              WHERE variant.provider_item_id = release_match.provider_release_item_id
+              WHERE variant.provider_item_id = release_match.provider_edition_item_id
                 AND variant.quality_class IN (${qualityPlaceholders})
                 AND variant.availability NOT IN (
                   'unavailable', 'no_longer_available', 'geography_restricted',

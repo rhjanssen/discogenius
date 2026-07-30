@@ -34,11 +34,11 @@ test("schema 41 separates canonical, provider, match, curation, and acquisition 
       "Tracks",
       "Recordings",
       "ProviderItems",
-      "ProviderReleaseMembers",
+      "ProviderEditionMembers",
       "ProviderItemCredits",
       "ProviderItemAudioVariants",
       "ProviderArtistMatches",
-      "ProviderReleaseMatches",
+      "ProviderEditionMatches",
       "ProviderTrackMatches",
       "ProviderVideoMatches",
       "Libraries",
@@ -73,9 +73,9 @@ test("schema 41 relation tables use integer authorities without MBID shadows", (
       "AlbumReleases",
       "Tracks",
       "ReleaseGroupArtistCredits",
-      "ProviderReleaseMembers",
+      "ProviderEditionMembers",
       "ProviderArtistMatches",
-      "ProviderReleaseMatches",
+      "ProviderEditionMatches",
       "ProviderTrackMatches",
       "LibraryReleaseGroups",
       "LibraryReleases",
@@ -138,7 +138,7 @@ test("schema 41 validates provider membership, credits, and track recording iden
     `).run();
 
     db.prepare(`
-      INSERT INTO ProviderReleaseMembers (id, provider_release_item_id, member_item_id, position)
+      INSERT INTO ProviderEditionMembers (id, provider_edition_item_id, member_item_id, position)
       VALUES (1, 1, 2, 1)
     `).run();
     db.prepare(`
@@ -146,21 +146,21 @@ test("schema 41 validates provider membership, credits, and track recording iden
       VALUES (1, 3, 0, 'Artist', 'primary')
     `).run();
     db.prepare(`
-      INSERT INTO ProviderReleaseMatches (
-        id, provider_release_item_id, release_id, relation, match_state, decision_source,
+      INSERT INTO ProviderEditionMatches (
+        id, provider_edition_item_id, release_id, relation, match_state, decision_source,
         confidence, method, matcher_version
       ) VALUES (1, 1, 1, 'exact', 'accepted', 'automatic', 1, 'external_id', 1)
     `).run();
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        id, provider_release_member_id, provider_release_match_id, track_id, recording_id,
+        id, provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
         match_state, decision_source, confidence, method, matcher_version
       ) VALUES (1, 1, 1, 1, 1, 'accepted', 'automatic', 1, 'external_id', 1)
     `).run();
 
     assert.throws(
       () => db.prepare(`
-        INSERT INTO ProviderReleaseMembers (provider_release_item_id, member_item_id, position)
+        INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, position)
         VALUES (2, 3, 2)
       `).run(),
       /parent must be a release/,
@@ -168,7 +168,7 @@ test("schema 41 validates provider membership, credits, and track recording iden
     assert.throws(
       () => db.prepare(`
         INSERT INTO ProviderTrackMatches (
-          provider_release_member_id, provider_release_match_id, track_id, recording_id,
+          provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
           match_state, decision_source, confidence, method, matcher_version
         ) VALUES (1, 1, 1, 2, 'accepted', 'automatic', 1, 'external_id', 1)
       `).run(),

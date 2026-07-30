@@ -53,8 +53,8 @@ export const LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL = `
       )
       OR EXISTS (
         SELECT 1
-        FROM ProviderReleaseMembers member
-        JOIN ProviderItemCredits credit ON credit.item_id = member.provider_release_item_id
+        FROM ProviderEditionMembers member
+        JOIN ProviderItemCredits credit ON credit.item_id = member.provider_edition_item_id
         JOIN ProviderArtistMatches artist_match
           ON artist_match.provider_artist_item_id = credit.artist_item_id
          AND artist_match.match_state = 'accepted'
@@ -65,9 +65,9 @@ export const LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL = `
       )
       OR EXISTS (
         SELECT 1
-        FROM ProviderReleaseMembers member
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.provider_release_item_id = member.provider_release_item_id
+        FROM ProviderEditionMembers member
+        JOIN ProviderEditionMatches release_match
+          ON release_match.provider_edition_item_id = member.provider_edition_item_id
          AND release_match.match_state = 'accepted'
         JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
         JOIN Artists managed_artist ON managed_artist.mbid = canonical_release.artist_mbid
@@ -97,10 +97,10 @@ export const LEGACY_FOLDER_SCAN_RELEASE_ARTIST_SCOPE_SQL = `
       )
       OR EXISTS (
         SELECT 1
-        FROM ProviderReleaseMatches release_match
+        FROM ProviderEditionMatches release_match
         JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
         JOIN Artists managed_artist ON managed_artist.mbid = canonical_release.artist_mbid
-        WHERE release_match.provider_release_item_id = pi.id
+        WHERE release_match.provider_edition_item_id = pi.id
           AND release_match.match_state = 'accepted'
           AND managed_artist.id = @artistId
       )
@@ -126,12 +126,12 @@ export function providerUnambiguousAlbumIdSql(itemAlias: string): string {
   return `
     (
       SELECT CAST(release_item.provider_id AS TEXT)
-      FROM ProviderReleaseMembers member
-      JOIN ProviderItems release_item ON release_item.id = member.provider_release_item_id
+      FROM ProviderEditionMembers member
+      JOIN ProviderItems release_item ON release_item.id = member.provider_edition_item_id
       WHERE member.member_item_id = ${itemAlias}.id
         AND (
-          SELECT COUNT(DISTINCT sibling.provider_release_item_id)
-          FROM ProviderReleaseMembers sibling
+          SELECT COUNT(DISTINCT sibling.provider_edition_item_id)
+          FROM ProviderEditionMembers sibling
           WHERE sibling.member_item_id = ${itemAlias}.id
         ) = 1
       LIMIT 1
@@ -211,9 +211,9 @@ export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {
         SELECT
           plan_release_item.id AS release_item_id,
           CAST(plan_release_item.provider_id AS TEXT) AS release_provider_id
-        FROM ProviderReleaseMembers plan_member
+        FROM ProviderEditionMembers plan_member
         JOIN ProviderTrackMatches plan_match
-          ON plan_match.provider_release_member_id = plan_member.id
+          ON plan_match.provider_edition_member_id = plan_member.id
          AND plan_match.match_state = 'accepted'
         JOIN AcquisitionPlanTracks plan_track
           ON plan_track.provider_track_match_id = plan_match.id
@@ -224,10 +224,10 @@ export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {
           ON plan_library_release.id = acquisition_plan.library_release_id
         JOIN AcquisitionPlanSources plan_source
           ON plan_source.id = plan_track.source_id
-        JOIN ProviderReleaseMatches plan_release_match
-          ON plan_release_match.id = plan_source.provider_release_match_id
+        JOIN ProviderEditionMatches plan_release_match
+          ON plan_release_match.id = plan_source.provider_edition_match_id
         JOIN ProviderItems plan_release_item
-          ON plan_release_item.id = plan_release_match.provider_release_item_id
+          ON plan_release_item.id = plan_release_match.provider_edition_item_id
         WHERE plan_member.member_item_id = ${itemAlias}.id
           ${filters.join("\n          ")}
       ) plan_choice
@@ -274,9 +274,9 @@ export const PROVIDER_ITEM_AGREED_RELEASE_GROUP_MBID_SQL = `
         SELECT
           release_group.id AS release_group_id,
           release_group.mbid AS release_group_mbid
-        FROM ProviderReleaseMembers member
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.provider_release_item_id = member.provider_release_item_id
+        FROM ProviderEditionMembers member
+        JOIN ProviderEditionMatches release_match
+          ON release_match.provider_edition_item_id = member.provider_edition_item_id
          AND release_match.match_state = 'accepted'
         JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
         JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
@@ -297,9 +297,9 @@ export function providerItemOnAnyReleaseSql(placeholders: string): string {
   return `
     EXISTS (
       SELECT 1
-      FROM ProviderReleaseMembers scope_member
+      FROM ProviderEditionMembers scope_member
       JOIN ProviderItems scope_release
-        ON scope_release.id = scope_member.provider_release_item_id
+        ON scope_release.id = scope_member.provider_edition_item_id
       WHERE scope_member.member_item_id = pi.id
         AND CAST(scope_release.provider_id AS TEXT) IN (${placeholders})
     )

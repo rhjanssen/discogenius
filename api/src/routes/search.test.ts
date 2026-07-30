@@ -27,8 +27,8 @@ beforeEach(() => {
   db.prepare("DELETE FROM LibraryReleaseGroups").run();
   db.prepare("DELETE FROM ProviderTrackMatches").run();
   db.prepare("DELETE FROM ProviderVideoMatches").run();
-  db.prepare("DELETE FROM ProviderReleaseMatches").run();
-  db.prepare("DELETE FROM ProviderReleaseMembers").run();
+  db.prepare("DELETE FROM ProviderEditionMatches").run();
+  db.prepare("DELETE FROM ProviderEditionMembers").run();
   db.prepare("DELETE FROM ProviderItemAudioVariants").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
@@ -143,8 +143,8 @@ test("local search returns canonical tracks", async () => {
     RETURNING id
   `).get() as { id: number };
   const member = dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 1)
     RETURNING id
   `).get(providerRelease.id, providerTrack.id) as { id: number };
@@ -155,15 +155,15 @@ test("local search returns canonical tracks", async () => {
     SELECT id, recording_id FROM Tracks WHERE mbid = 'track-mbid'
   `).get() as { id: number; recording_id: number };
   const releaseMatch = dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
   `).get(providerRelease.id, release.id) as { id: number };
   const trackMatch = dbModule.db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_release_member_id, provider_release_match_id, track_id,
+      provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
     ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
@@ -200,7 +200,7 @@ test("local search returns canonical tracks", async () => {
   `).get(libraryRelease.id) as { id: number };
   const source = dbModule.db.prepare(`
     INSERT INTO AcquisitionPlanSources (
-      plan_id, provider_release_match_id, role, sort_order
+      plan_id, provider_edition_match_id, role, sort_order
     ) VALUES (?, ?, 'primary', 0)
     RETURNING id
   `).get(plan.id, releaseMatch.id) as { id: number };

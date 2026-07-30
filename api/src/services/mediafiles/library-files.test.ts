@@ -759,8 +759,8 @@ test("disk scan relinks album covers and renamed lyrics to their provider album 
     RETURNING id
   `).get("tidal", "track", "provider-track-1", "SAVE MY SOUL") as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 1)
   `).run(releaseItem.id, trackItem.id);
   // Scope the provider release/track to the managed artist through the typed

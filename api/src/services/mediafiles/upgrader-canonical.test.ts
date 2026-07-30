@@ -27,8 +27,8 @@ afterEach(() => {
     "commands",
     "TrackFiles",
     "ProviderTrackMatches",
-    "ProviderReleaseMatches",
-    "ProviderReleaseMembers",
+    "ProviderEditionMatches",
+    "ProviderEditionMembers",
     "ProviderItems",
     "Tracks",
     "Recordings",
@@ -84,7 +84,7 @@ function providerItem(
  */
 function addReleaseMember(releaseItemId: number, memberItemId: number, position = 1): void {
   db.prepare(`
-    INSERT INTO ProviderReleaseMembers (provider_release_item_id, member_item_id, medium_position, position)
+    INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
     VALUES (?, ?, 1, ?)
   `).run(releaseItemId, memberItemId, position);
 }
@@ -111,19 +111,19 @@ function seedAcceptedTrackEdge(input: {
   const recordingId = track.recording_id
     ?? (db.prepare("SELECT id FROM Recordings WHERE mbid = 'recording-1'").get() as { id: number }).id;
   const member = db.prepare(`
-    SELECT id FROM ProviderReleaseMembers
-    WHERE provider_release_item_id = ? AND member_item_id = ?
+    SELECT id FROM ProviderEditionMembers
+    WHERE provider_edition_item_id = ? AND member_item_id = ?
   `).get(input.releaseItemId, input.memberItemId) as { id: number };
   const releaseMatch = db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state, decision_source,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state, decision_source,
       confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 0.99, 'test_fixture', 1)
     RETURNING id
   `).get(input.releaseItemId, release.id) as { id: number };
   db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_release_member_id, provider_release_match_id, track_id, recording_id,
+      provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
       match_state, decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 0.99, 'test_fixture', 1)
   `).run(member.id, releaseMatch.id, track.id, recordingId);

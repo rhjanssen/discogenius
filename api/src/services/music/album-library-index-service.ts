@@ -92,8 +92,8 @@ export class AlbumLibraryIndexService {
                preferred_source.id
              LIMIT 1
            )
-          LEFT JOIN ProviderReleaseMatches release_match
-            ON release_match.id = plan_source.provider_release_match_id
+          LEFT JOIN ProviderEditionMatches release_match
+            ON release_match.id = plan_source.provider_edition_match_id
           GROUP BY library_group.release_group_id
         )
         SELECT

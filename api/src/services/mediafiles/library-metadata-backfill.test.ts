@@ -133,8 +133,8 @@ beforeEach(() => {
         "LibraryReleaseGroups",
         "Libraries",
         "ProviderTrackMatches",
-        "ProviderReleaseMatches",
-        "ProviderReleaseMembers",
+        "ProviderEditionMatches",
+        "ProviderEditionMembers",
         "ProviderItemAudioVariants",
         "ProviderItems",
         "Tracks",
@@ -265,8 +265,8 @@ function seedCanonicalLibraryFiles() {
         WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = '200'
     `).get() as { id: number };
     const releaseMatch = dbModule.db.prepare(`
-        INSERT INTO ProviderReleaseMatches (
-          provider_release_item_id, release_id, relation, match_state,
+        INSERT INTO ProviderEditionMatches (
+          provider_edition_item_id, release_id, relation, match_state,
           decision_source, confidence, method, matcher_version
         ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
         RETURNING id
@@ -280,7 +280,7 @@ function seedCanonicalLibraryFiles() {
     `).get(libraryRelease.id) as { id: number };
     dbModule.db.prepare(`
         INSERT INTO AcquisitionPlanSources (
-          plan_id, provider_release_match_id, role, sort_order
+          plan_id, provider_edition_match_id, role, sort_order
         ) VALUES (?, ?, 'primary', 0)
     `).run(plan.id, releaseMatch.id);
     dbModule.db.prepare(`

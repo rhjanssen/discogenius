@@ -29,8 +29,8 @@ export function loadBundledVideoTrackCandidates(
       COALESCE(member.contextual_title, member_item.title, '') AS title,
       member.position AS track_number
     FROM ProviderItems provider_release
-    JOIN ProviderReleaseMembers member
-      ON member.provider_release_item_id = provider_release.id
+    JOIN ProviderEditionMembers member
+      ON member.provider_edition_item_id = provider_release.id
     JOIN ProviderItems member_item
       ON member_item.id = member.member_item_id
      AND member_item.entity_type = 'track'
@@ -65,8 +65,8 @@ export function loadProviderTrackIdSet(albumIds: string[], provider = ""): Set<s
   const rows = db.prepare(`
     SELECT CAST(member_item.provider_id AS TEXT) AS provider_id
     FROM ProviderItems provider_release
-    JOIN ProviderReleaseMembers member
-      ON member.provider_release_item_id = provider_release.id
+    JOIN ProviderEditionMembers member
+      ON member.provider_edition_item_id = provider_release.id
     JOIN ProviderItems member_item
       ON member_item.id = member.member_item_id
      AND member_item.entity_type = 'track'
@@ -272,15 +272,15 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
       pi.isrc,
       canonical_release.mbid AS canonical_release_mbid
     FROM ProviderItems pi
-    JOIN ProviderReleaseMembers member
+    JOIN ProviderEditionMembers member
       ON member.member_item_id = pi.id
     JOIN ProviderItems provider_release
-      ON provider_release.id = member.provider_release_item_id
+      ON provider_release.id = member.provider_edition_item_id
     JOIN ProviderTrackMatches track_match
-      ON track_match.provider_release_member_id = member.id
+      ON track_match.provider_edition_member_id = member.id
      AND track_match.match_state = 'accepted'
-    JOIN ProviderReleaseMatches release_match
-      ON release_match.id = track_match.provider_release_match_id
+    JOIN ProviderEditionMatches release_match
+      ON release_match.id = track_match.provider_edition_match_id
      AND release_match.match_state = 'accepted'
     JOIN AlbumReleases canonical_release
       ON canonical_release.id = release_match.release_id

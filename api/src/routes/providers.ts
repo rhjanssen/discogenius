@@ -203,15 +203,15 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
       const item = db.prepare(`
         SELECT provider_release.provider_id
         FROM ProviderItems provider_release
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.provider_release_item_id = provider_release.id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.provider_edition_item_id = provider_release.id
          AND release_match.match_state = 'accepted'
         JOIN AlbumReleases release
           ON release.id = release_match.release_id
         JOIN Albums release_group
           ON release_group.id = release.release_group_id
         LEFT JOIN AcquisitionPlanSources source
-          ON source.provider_release_match_id = release_match.id
+          ON source.provider_edition_match_id = release_match.id
         LEFT JOIN AcquisitionPlans plan
           ON plan.id = source.plan_id
          AND plan.state = 'current'

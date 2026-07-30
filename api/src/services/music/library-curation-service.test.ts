@@ -20,8 +20,8 @@ function seedProviderExactMatch(
     ) VALUES (?, 'tidal', 'release', ?, 'available')
   `).run(providerReleaseItemId, `release-${releaseId}`);
   db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      id, provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      id, provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version,
       matched_track_count, source_track_count, target_track_count,
       source_coverage, target_coverage
@@ -46,8 +46,8 @@ function seedProviderExactMatch(
     ) VALUES (?, 'tidal', 'track', ?, 'available')
     `).run(providerTrackItemId, `track-${releaseId}-${index + 1}`);
     db.prepare(`
-      INSERT INTO ProviderReleaseMembers (
-        id, provider_release_item_id, member_item_id, medium_position, position
+      INSERT INTO ProviderEditionMembers (
+        id, provider_edition_item_id, member_item_id, medium_position, position
       ) VALUES (?, ?, ?, 1, ?)
     `).run(memberId, providerReleaseItemId, providerTrackItemId, index + 1);
     db.prepare(`
@@ -57,7 +57,7 @@ function seedProviderExactMatch(
     `).run(60_000 + releaseId * 10 + index, providerTrackItemId);
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        id, provider_release_member_id, provider_release_match_id, track_id,
+        id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
       ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
     `).run(trackMatchId, memberId, releaseMatchId, trackId, recordingId);

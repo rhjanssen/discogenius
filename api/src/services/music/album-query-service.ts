@@ -112,11 +112,11 @@ const releaseGroupLibraryStateCte = `
          preferred_source.id
        LIMIT 1
      )
-    LEFT JOIN ProviderReleaseMatches release_match
-      ON release_match.id = plan_source.provider_release_match_id
+    LEFT JOIN ProviderEditionMatches release_match
+      ON release_match.id = plan_source.provider_edition_match_id
      AND release_match.match_state = 'accepted'
     LEFT JOIN ProviderItems provider_item
-      ON provider_item.id = release_match.provider_release_item_id
+      ON provider_item.id = release_match.provider_edition_item_id
      AND (
        provider_item.availability IS NULL
        OR LOWER(CAST(provider_item.availability AS TEXT))

@@ -220,8 +220,8 @@ export class RefreshAlbumService {
         const providerItem = db.prepare(`
             SELECT release_group.mbid AS release_group_mbid, release.mbid AS release_mbid
             FROM ProviderItems item
-            JOIN ProviderReleaseMatches match
-              ON match.provider_release_item_id = item.id
+            JOIN ProviderEditionMatches match
+              ON match.provider_edition_item_id = item.id
              AND match.match_state = 'accepted'
             JOIN AlbumReleases release ON release.id = match.release_id
             JOIN Albums release_group ON release_group.id = release.release_group_id
@@ -334,9 +334,9 @@ export class RefreshAlbumService {
             WHERE id IN (
                 SELECT DISTINCT match.recording_id
                 FROM ProviderItems item
-                JOIN ProviderReleaseMembers member ON member.member_item_id = item.id
+                JOIN ProviderEditionMembers member ON member.member_item_id = item.id
                 JOIN ProviderTrackMatches match
-                  ON match.provider_release_member_id = member.id
+                  ON match.provider_edition_member_id = member.id
                  AND match.match_state = 'accepted'
                 WHERE item.provider = ?
                   AND item.entity_type = 'track'
@@ -486,8 +486,8 @@ export class RefreshAlbumService {
             : null;
         const trackCount = Number((db.prepare(`
             SELECT COUNT(*) AS c
-            FROM ProviderReleaseMembers
-            WHERE provider_release_item_id = ?
+            FROM ProviderEditionMembers
+            WHERE provider_edition_item_id = ?
         `).get(offer.id) as { c?: number } | undefined)?.c || 0);
         if (reviewText !== null && reviewText !== undefined && trackCount > 0) {
             return AlbumRefreshLevel.METADATA;
@@ -514,11 +514,11 @@ export class RefreshAlbumService {
                 pi.updated_at AS last_scanned,
                 COALESCE(release.date, album.first_release_date, pi.release_date) AS album_release_date
             FROM ProviderItems pi
-            LEFT JOIN ProviderReleaseMatches match
+            LEFT JOIN ProviderEditionMatches match
               ON match.id = (
                 SELECT preferred.id
-                FROM ProviderReleaseMatches preferred
-                WHERE preferred.provider_release_item_id = pi.id
+                FROM ProviderEditionMatches preferred
+                WHERE preferred.provider_edition_item_id = pi.id
                   AND preferred.match_state = 'accepted'
                 ORDER BY
                   CASE preferred.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
@@ -595,11 +595,11 @@ export class RefreshAlbumService {
                 pi.updated_at AS last_scanned,
                 COALESCE(release.date, a.first_release_date, pi.release_date) AS album_release_date
             FROM ProviderItems pi
-            LEFT JOIN ProviderReleaseMatches match
+            LEFT JOIN ProviderEditionMatches match
               ON match.id = (
                 SELECT preferred.id
-                FROM ProviderReleaseMatches preferred
-                WHERE preferred.provider_release_item_id = pi.id
+                FROM ProviderEditionMatches preferred
+                WHERE preferred.provider_edition_item_id = pi.id
                   AND preferred.match_state = 'accepted'
                 ORDER BY
                   CASE preferred.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
@@ -854,8 +854,8 @@ export class RefreshAlbumService {
             : db.prepare(`
                 SELECT release.id, release.mbid, release_group.mbid AS release_group_mbid
                 FROM ProviderItems item
-                JOIN ProviderReleaseMatches match
-                  ON match.provider_release_item_id = item.id
+                JOIN ProviderEditionMatches match
+                  ON match.provider_edition_item_id = item.id
                  AND match.match_state = 'accepted'
                 JOIN AlbumReleases release ON release.id = match.release_id
                 JOIN Albums release_group ON release_group.id = release.release_group_id
@@ -880,10 +880,10 @@ export class RefreshAlbumService {
                 const accepted = db.prepare(`
                     SELECT item.provider_id, match.recording_id
                     FROM ProviderTrackMatches match
-                    JOIN ProviderReleaseMembers member
-                      ON member.id = match.provider_release_member_id
+                    JOIN ProviderEditionMembers member
+                      ON member.id = match.provider_edition_member_id
                     JOIN ProviderItems item ON item.id = member.member_item_id
-                    WHERE match.provider_release_match_id = ?
+                    WHERE match.provider_edition_match_id = ?
                       AND match.match_state = 'accepted'
                 `).all(ingested.releaseMatchId) as Array<{
                     provider_id: string;

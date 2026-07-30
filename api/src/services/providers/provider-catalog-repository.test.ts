@@ -30,13 +30,13 @@ test("provider track identity is reused across distinct release memberships", ()
     repository.replaceReleaseMembers(releaseA, [{ memberItemId: track, mediumPosition: 1, position: 2 }]);
 
     const rows = db.prepare(`
-      SELECT provider_release_item_id, member_item_id, position
-      FROM ProviderReleaseMembers
-      ORDER BY provider_release_item_id
+      SELECT provider_edition_item_id, member_item_id, position
+      FROM ProviderEditionMembers
+      ORDER BY provider_edition_item_id
     `).all();
     assert.deepEqual(rows, [
-      { provider_release_item_id: releaseA, member_item_id: track, position: 2 },
-      { provider_release_item_id: releaseB, member_item_id: track, position: 3 },
+      { provider_edition_item_id: releaseA, member_item_id: track, position: 2 },
+      { provider_edition_item_id: releaseB, member_item_id: track, position: 3 },
     ]);
   });
 });
@@ -69,7 +69,7 @@ test("refreshing unchanged membership preserves row identity regardless of input
 
     assert.deepEqual(refreshed, [original[1], original[0]]);
     assert.equal(
-      (db.prepare("SELECT COUNT(*) AS count FROM ProviderReleaseMembers")
+      (db.prepare("SELECT COUNT(*) AS count FROM ProviderEditionMembers")
         .get() as { count: number }).count,
       2,
     );

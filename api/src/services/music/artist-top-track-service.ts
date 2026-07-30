@@ -167,8 +167,8 @@ export class ArtistTopTrackService {
               (
                 SELECT provider_score.popularity
                 FROM ProviderTrackMatches provider_match
-                JOIN ProviderReleaseMembers provider_member
-                  ON provider_member.id = provider_match.provider_release_member_id
+                JOIN ProviderEditionMembers provider_member
+                  ON provider_member.id = provider_match.provider_edition_member_id
                 JOIN ProviderItems provider_score
                   ON provider_score.id = provider_member.member_item_id
                 WHERE recording.id IS NOT NULL
@@ -186,8 +186,8 @@ export class ArtistTopTrackService {
               (
                 SELECT provider_score.popularity
                 FROM ProviderTrackMatches provider_match
-                JOIN ProviderReleaseMembers provider_member
-                  ON provider_member.id = provider_match.provider_release_member_id
+                JOIN ProviderEditionMembers provider_member
+                  ON provider_member.id = provider_match.provider_edition_member_id
                 JOIN ProviderItems provider_score
                   ON provider_score.id = provider_member.member_item_id
                 WHERE provider_match.track_id = track.id

@@ -51,7 +51,7 @@ function seedArtist() {
 
 /**
  * Seed a provider track offer with its typed linkage: the parent provider
- * release (ProviderReleaseMembers) and the credit chain to the managed artist
+ * release (ProviderEditionMembers) and the credit chain to the managed artist
  * (ProviderItemCredits → accepted ProviderArtistMatches → ArtistMetadata) —
  * the same rows real ingestion writes.
  */
@@ -82,11 +82,11 @@ function seedOffer(params: {
     `).get(params.albumId, `Album ${params.albumId}`) as { id: number };
   }
   const position = (db.prepare(`
-    SELECT COUNT(*) AS count FROM ProviderReleaseMembers WHERE provider_release_item_id = ?
+    SELECT COUNT(*) AS count FROM ProviderEditionMembers WHERE provider_edition_item_id = ?
   `).get(release.id) as { count: number }).count + 1;
   const member = db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, ?)
     RETURNING id
   `).get(release.id, track.id, position) as { id: number };
@@ -129,23 +129,23 @@ function seedOffer(params: {
       let releaseMatchId: number | null = null;
       if (canonicalRelease?.release_id) {
         const releaseMatch = db.prepare(`
-          INSERT OR IGNORE INTO ProviderReleaseMatches (
-            provider_release_item_id, release_id, relation, match_state,
+          INSERT OR IGNORE INTO ProviderEditionMatches (
+            provider_edition_item_id, release_id, relation, match_state,
             decision_source, confidence, method, matcher_version
           ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
         `).run(release.id, canonicalRelease.release_id);
         releaseMatchId = releaseMatch.lastInsertRowid
           ? Number(releaseMatch.lastInsertRowid)
           : (db.prepare(`
-              SELECT id FROM ProviderReleaseMatches
-              WHERE provider_release_item_id = ? AND release_id = ?
+              SELECT id FROM ProviderEditionMatches
+              WHERE provider_edition_item_id = ? AND release_id = ?
             `).get(release.id, canonicalRelease.release_id) as { id: number }).id;
         const canonicalTrack = db.prepare(`
           SELECT id FROM Tracks WHERE recording_id = ? AND album_release_id = ? LIMIT 1
         `).get(recording.id, canonicalRelease.release_id) as { id: number } | undefined;
         db.prepare(`
           INSERT INTO ProviderTrackMatches (
-            provider_release_member_id, provider_release_match_id, track_id,
+            provider_edition_member_id, provider_edition_match_id, track_id,
             recording_id, match_state, decision_source, confidence, method, matcher_version
           ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
         `).run(member.id, releaseMatchId, canonicalTrack?.id ?? null, recording.id);
@@ -444,8 +444,8 @@ test("a provider track on several releases yields no invented album context", ()
     RETURNING id
   `).get() as { id: number };
   db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 5)
   `).run(deluxe.id, trackItem.id);
 

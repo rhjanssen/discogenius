@@ -296,11 +296,11 @@ router.get("/", async (req, res) => {
                      preferred_source.id
                    LIMIT 1
                  )
-                JOIN ProviderReleaseMatches release_match
-                  ON release_match.id = source.provider_release_match_id
+                JOIN ProviderEditionMatches release_match
+                  ON release_match.id = source.provider_edition_match_id
                  AND release_match.match_state = 'accepted'
                 JOIN ProviderItems provider_release
-                  ON provider_release.id = release_match.provider_release_item_id
+                  ON provider_release.id = release_match.provider_edition_item_id
                 ORDER BY
                   CASE WHEN EXISTS (
                     SELECT 1
@@ -436,8 +436,8 @@ router.get("/", async (req, res) => {
             LEFT JOIN ProviderTrackMatches selected_track_match
               ON selected_track_match.id = selected_plan_track.provider_track_match_id
              AND selected_track_match.match_state = 'accepted'
-            LEFT JOIN ProviderReleaseMembers selected_member
-              ON selected_member.id = selected_track_match.provider_release_member_id
+            LEFT JOIN ProviderEditionMembers selected_member
+              ON selected_member.id = selected_track_match.provider_edition_member_id
             LEFT JOIN ProviderItems provider_track
               ON provider_track.id = selected_member.member_item_id
             LEFT JOIN TrackFiles file_quality

@@ -938,10 +938,10 @@ export class AudioTagService {
           AND CAST(lf.provider_id AS TEXT) IN (
             SELECT CAST(scope_item.provider_id AS TEXT)
             FROM ProviderItems scope_item
-            JOIN ProviderReleaseMembers scope_member
+            JOIN ProviderEditionMembers scope_member
               ON scope_member.member_item_id = scope_item.id
-            JOIN ProviderReleaseMatches scope_match
-              ON scope_match.provider_release_item_id = scope_member.provider_release_item_id
+            JOIN ProviderEditionMatches scope_match
+              ON scope_match.provider_edition_item_id = scope_member.provider_edition_item_id
              AND scope_match.match_state = 'accepted'
             JOIN AlbumReleases scope_release ON scope_release.id = scope_match.release_id
             JOIN Albums scope_group ON scope_group.id = scope_release.release_group_id
@@ -981,10 +981,10 @@ export class AudioTagService {
           AND CAST(lf.provider_id AS TEXT) IN (
             SELECT CAST(scope_item.provider_id AS TEXT)
             FROM ProviderItems scope_item
-            JOIN ProviderReleaseMembers scope_member
+            JOIN ProviderEditionMembers scope_member
               ON scope_member.member_item_id = scope_item.id
-            JOIN ProviderReleaseMatches scope_match
-              ON scope_match.provider_release_item_id = scope_member.provider_release_item_id
+            JOIN ProviderEditionMatches scope_match
+              ON scope_match.provider_edition_item_id = scope_member.provider_edition_item_id
              AND scope_match.match_state = 'accepted'
             JOIN AlbumReleases scope_release ON scope_release.id = scope_match.release_id
             JOIN Albums scope_group ON scope_group.id = scope_release.release_group_id
@@ -1123,12 +1123,12 @@ export class AudioTagService {
           ORDER BY candidate.updated_at DESC, candidate.provider_id ASC
           LIMIT 1
         )
-      LEFT JOIN ProviderReleaseMembers provider_member
+      LEFT JOIN ProviderEditionMembers provider_member
         ON provider_member.id = (
           SELECT candidate_member.id
-          FROM ProviderReleaseMembers candidate_member
+          FROM ProviderEditionMembers candidate_member
           LEFT JOIN ProviderTrackMatches candidate_match
-            ON candidate_match.provider_release_member_id = candidate_member.id
+            ON candidate_match.provider_edition_member_id = candidate_member.id
            AND candidate_match.match_state = 'accepted'
           WHERE candidate_member.member_item_id = provider_track.id
           ORDER BY
@@ -1141,7 +1141,7 @@ export class AudioTagService {
           LIMIT 1
         )
       LEFT JOIN ProviderTrackMatches provider_track_match
-        ON provider_track_match.provider_release_member_id = provider_member.id
+        ON provider_track_match.provider_edition_member_id = provider_member.id
        AND provider_track_match.match_state = 'accepted'
       LEFT JOIN Tracks provider_canonical_track
         ON provider_canonical_track.id = provider_track_match.track_id
@@ -1158,17 +1158,17 @@ export class AudioTagService {
                 AND CAST(album_candidate.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
                 AND (COALESCE(lf.provider, provider_track.provider) IS NULL OR album_candidate.provider = COALESCE(lf.provider, provider_track.provider))
               )
-              OR album_candidate.id = provider_member.provider_release_item_id
+              OR album_candidate.id = provider_member.provider_edition_item_id
             )
-          ORDER BY CASE WHEN album_candidate.id = provider_member.provider_release_item_id THEN 0 ELSE 1 END,
+          ORDER BY CASE WHEN album_candidate.id = provider_member.provider_edition_item_id THEN 0 ELSE 1 END,
             album_candidate.updated_at DESC
           LIMIT 1
         )
-      LEFT JOIN ProviderReleaseMatches provider_release_match
+      LEFT JOIN ProviderEditionMatches provider_release_match
         ON provider_release_match.id = (
           SELECT candidate_release_match.id
-          FROM ProviderReleaseMatches candidate_release_match
-          WHERE candidate_release_match.provider_release_item_id = provider_album.id
+          FROM ProviderEditionMatches candidate_release_match
+          WHERE candidate_release_match.provider_edition_item_id = provider_album.id
             AND candidate_release_match.match_state = 'accepted'
           ORDER BY
             CASE WHEN candidate_release_match.release_id = canonical_release.id THEN 0 ELSE 1 END,

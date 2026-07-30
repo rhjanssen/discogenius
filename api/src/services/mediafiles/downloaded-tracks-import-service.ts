@@ -346,7 +346,7 @@ function providerImportEntityType(type: string): "release" | "track" | "video" {
 
 /**
  * Resolve the canonical identity a provider download maps to, entirely through
- * the typed match authority (ProviderReleaseMatches / ProviderReleaseMembers →
+ * the typed match authority (ProviderEditionMatches / ProviderEditionMembers →
  * ProviderTrackMatches / ProviderVideoMatches → canonical rows). ProviderItems
  * no longer stores canonical MBIDs or scalar quality, so nothing here reads a
  * provider-shadow column; quality is best-effort from the normalized audio
@@ -365,17 +365,17 @@ function resolveImportHistoryContext(
             COALESCE(track_recording.mbid, video_recording.mbid) AS media_id,
             COALESCE(variant.provider_quality_label, variant.quality_class) AS quality
         FROM ProviderItems pi
-        LEFT JOIN ProviderReleaseMatches release_match
+        LEFT JOIN ProviderEditionMatches release_match
           ON pi.entity_type = 'release'
-         AND release_match.provider_release_item_id = pi.id
+         AND release_match.provider_edition_item_id = pi.id
          AND release_match.match_state = 'accepted'
         LEFT JOIN AlbumReleases direct_release ON direct_release.id = release_match.release_id
         LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
-        LEFT JOIN ProviderReleaseMembers member
+        LEFT JOIN ProviderEditionMembers member
           ON pi.entity_type = 'track'
          AND member.member_item_id = pi.id
         LEFT JOIN ProviderTrackMatches track_match
-          ON track_match.provider_release_member_id = member.id
+          ON track_match.provider_edition_member_id = member.id
          AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks track ON track.id = track_match.track_id
         LEFT JOIN Recordings track_recording ON track_recording.id = track_match.recording_id
@@ -439,8 +439,8 @@ function resolveExpectedRecoveredTracks(
     const row = db.prepare(`
         SELECT COUNT(DISTINCT track.id) AS count
         FROM ProviderItems provider_release
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.provider_release_item_id = provider_release.id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.provider_edition_item_id = provider_release.id
          AND release_match.match_state = 'accepted'
         JOIN Tracks track
           ON track.album_release_id = release_match.release_id
@@ -510,8 +510,8 @@ function agreedReleaseGroupMbidForProviderRelease(
             WHEN COUNT(DISTINCT release_group.mbid) = 1 THEN MAX(release_group.mbid)
         END AS release_group_mbid
         FROM ProviderItems provider_release
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.provider_release_item_id = provider_release.id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.provider_edition_item_id = provider_release.id
          AND release_match.match_state = 'accepted'
         JOIN AlbumReleases release
           ON release.id = release_match.release_id
@@ -534,10 +534,10 @@ function agreedReleaseGroupMbidForProviderTrack(
             WHEN COUNT(DISTINCT release_group.mbid) = 1 THEN MAX(release_group.mbid)
         END AS release_group_mbid
         FROM ProviderItems provider_track
-        JOIN ProviderReleaseMembers member
+        JOIN ProviderEditionMembers member
           ON member.member_item_id = provider_track.id
         JOIN ProviderTrackMatches track_match
-          ON track_match.provider_release_member_id = member.id
+          ON track_match.provider_edition_member_id = member.id
          AND track_match.match_state = 'accepted'
         JOIN Tracks track ON track.id = track_match.track_id
         JOIN AlbumReleases release ON release.id = track.album_release_id

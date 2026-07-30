@@ -15,8 +15,8 @@ const { listProviderAlbumFallbackTracks } = await import("./download-processor.j
 
 beforeEach(() => {
   db.prepare("DELETE FROM ProviderTrackMatches").run();
-  db.prepare("DELETE FROM ProviderReleaseMatches").run();
-  db.prepare("DELETE FROM ProviderReleaseMembers").run();
+  db.prepare("DELETE FROM ProviderEditionMatches").run();
+  db.prepare("DELETE FROM ProviderEditionMembers").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
@@ -35,7 +35,7 @@ function providerItem(provider: string, entityType: string, providerId: string, 
 
 function addMember(releaseItemId: number, memberItemId: number, medium: number, position: number): number {
   return (db.prepare(`
-    INSERT INTO ProviderReleaseMembers (provider_release_item_id, member_item_id, medium_position, position)
+    INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
     VALUES (?, ?, ?, ?)
     RETURNING id
   `).get(releaseItemId, memberItemId, medium, position) as { id: number }).id;
@@ -72,8 +72,8 @@ function seedCanonicalTrack(
 /** One accepted release edge per (provider release item, canonical release). */
 function acceptReleaseMatch(releaseItemId: number, releaseId: number): number {
   return (db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state, decision_source,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state, decision_source,
       confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 0.99, 'test_fixture', 1)
     RETURNING id
@@ -86,7 +86,7 @@ function addTrackMatch(
 ) {
   db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_release_member_id, provider_release_match_id, track_id, recording_id,
+      provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
       match_state, decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, ?, ?, ?, 'automatic', 0.99, 'test_fixture', 1)
   `).run(memberId, releaseMatchId, trackId, recordingId, matchState);

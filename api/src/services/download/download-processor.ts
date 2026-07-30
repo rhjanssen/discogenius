@@ -180,7 +180,7 @@ export type ProviderAlbumFallbackTrackRow = {
  * Last-resort tracklist for an album job whose canonical tracklist is unknown:
  * the provider release's own member tracks.
  *
- * Album membership is a ProviderReleaseMembers occurrence, and a member's
+ * Album membership is a ProviderEditionMembers occurrence, and a member's
  * canonical track comes from the accepted ProviderTrackMatches edge on that
  * occurrence — never from MBID shadow columns on the item, which no longer
  * exist. The release is resolved by the full provider identity (provider +
@@ -202,9 +202,9 @@ export function listProviderAlbumFallbackTracks(
             pi.version,
             t.position AS track_number,
             t.medium_position AS volume_number
-        FROM ProviderReleaseMembers member
+        FROM ProviderEditionMembers member
         JOIN ProviderItems release_item
-            ON release_item.id = member.provider_release_item_id
+            ON release_item.id = member.provider_edition_item_id
            AND release_item.entity_type = 'release'
            AND release_item.provider = ?
            AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
@@ -213,7 +213,7 @@ export function listProviderAlbumFallbackTracks(
            AND pi.entity_type = 'track'
            AND pi.provider = release_item.provider
         LEFT JOIN ProviderTrackMatches track_match
-            ON track_match.provider_release_member_id = member.id
+            ON track_match.provider_edition_member_id = member.id
            AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks t
             ON t.id = track_match.track_id

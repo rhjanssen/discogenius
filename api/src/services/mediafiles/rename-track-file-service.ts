@@ -971,8 +971,8 @@ export class RenameTrackFileService {
           ON album_item.entity_type = 'release'
          AND (mf.provider IS NULL OR album_item.provider = mf.provider)
          AND CAST(album_item.provider_id AS TEXT) = CAST(mf.provider_id AS TEXT)
-        LEFT JOIN ProviderReleaseMatches album_match
-          ON album_match.provider_release_item_id = album_item.id
+        LEFT JOIN ProviderEditionMatches album_match
+          ON album_match.provider_edition_item_id = album_item.id
          AND album_match.match_state = 'accepted'
         LEFT JOIN AlbumReleases album_release ON album_release.id = album_match.release_id
         LEFT JOIN Albums album_group ON album_group.id = album_release.release_group_id
@@ -1022,10 +1022,10 @@ export class RenameTrackFileService {
           ON lyric_item.entity_type = 'track'
          AND (lf.provider IS NULL OR lyric_item.provider = lf.provider)
          AND CAST(lyric_item.provider_id AS TEXT) = CAST(lf.provider_id AS TEXT)
-        LEFT JOIN ProviderReleaseMembers lyric_member
+        LEFT JOIN ProviderEditionMembers lyric_member
           ON lyric_member.member_item_id = lyric_item.id
         LEFT JOIN ProviderTrackMatches lyric_match
-          ON lyric_match.provider_release_member_id = lyric_member.id
+          ON lyric_match.provider_edition_member_id = lyric_member.id
          AND lyric_match.match_state = 'accepted'
         LEFT JOIN Recordings lyric_recording ON lyric_recording.id = lyric_match.recording_id
         LEFT JOIN Tracks lyric_track ON lyric_track.id = lyric_match.track_id

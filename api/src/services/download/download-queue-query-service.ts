@@ -184,8 +184,8 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
         SELECT release_group.mbid AS release_group_mbid,
                release.mbid AS release_mbid
         FROM ProviderItems provider_item
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.provider_release_item_id = provider_item.id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.provider_edition_item_id = provider_item.id
          AND release_match.match_state = 'accepted'
         JOIN AlbumReleases release ON release.id = release_match.release_id
         JOIN Albums release_group ON release_group.id = release.release_group_id
@@ -202,10 +202,10 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
           SELECT release_group.mbid AS release_group_mbid,
                  release.mbid AS release_mbid
           FROM ProviderItems provider_item
-          JOIN ProviderReleaseMembers member
+          JOIN ProviderEditionMembers member
             ON member.member_item_id = provider_item.id
           JOIN ProviderTrackMatches track_match
-            ON track_match.provider_release_member_id = member.id
+            ON track_match.provider_edition_member_id = member.id
            AND track_match.match_state = 'accepted'
           JOIN Tracks track ON track.id = track_match.track_id
           JOIN AlbumReleases release ON release.id = track.album_release_id
@@ -249,17 +249,17 @@ function getProviderItemArtistId(contentType: QueueItemContract["type"], provide
   const row = db.prepare(`
     SELECT artist.mbid AS artist_mbid
     FROM ProviderItems provider_item
-    LEFT JOIN ProviderReleaseMatches release_match
+    LEFT JOIN ProviderEditionMatches release_match
       ON provider_item.entity_type = 'release'
-     AND release_match.provider_release_item_id = provider_item.id
+     AND release_match.provider_edition_item_id = provider_item.id
      AND release_match.match_state = 'accepted'
     LEFT JOIN AlbumReleases direct_release ON direct_release.id = release_match.release_id
     LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
-    LEFT JOIN ProviderReleaseMembers member
+    LEFT JOIN ProviderEditionMembers member
       ON provider_item.entity_type = 'track'
      AND member.member_item_id = provider_item.id
     LEFT JOIN ProviderTrackMatches track_match
-      ON track_match.provider_release_member_id = member.id
+      ON track_match.provider_edition_member_id = member.id
      AND track_match.match_state = 'accepted'
     LEFT JOIN Tracks track ON track.id = track_match.track_id
     LEFT JOIN AlbumReleases track_release ON track_release.id = track.album_release_id
@@ -429,15 +429,15 @@ function resolveCanonicalAlbumMetadata(input: {
       provider_item.title AS provider_title,
       COALESCE(provider_item.artwork_url, provider_item.cover_id) AS provider_cover,
       provider_item.cover_id AS provider_asset_id
-    FROM ProviderReleaseMatches release_match
+    FROM ProviderEditionMatches release_match
     JOIN ProviderItems provider_item
-      ON provider_item.id = release_match.provider_release_item_id
+      ON provider_item.id = release_match.provider_edition_item_id
     JOIN AlbumReleases release
       ON release.id = release_match.release_id
     JOIN Albums release_group
       ON release_group.id = release.release_group_id
     LEFT JOIN AcquisitionPlanSources plan_source
-      ON plan_source.provider_release_match_id = release_match.id
+      ON plan_source.provider_edition_match_id = release_match.id
      AND plan_source.plan_id = ?
     LEFT JOIN ReleaseGroupArtistCredits canonical_credit
       ON canonical_credit.release_group_id = release_group.id
@@ -544,17 +544,17 @@ function resolveProviderItemMetadata(input: {
       track.title AS track_title,
       recording.title AS recording_title
     FROM ProviderItems provider_item
-    LEFT JOIN ProviderReleaseMatches release_match
+    LEFT JOIN ProviderEditionMatches release_match
       ON provider_item.entity_type = 'release'
-     AND release_match.provider_release_item_id = provider_item.id
+     AND release_match.provider_edition_item_id = provider_item.id
      AND release_match.match_state = 'accepted'
     LEFT JOIN AlbumReleases direct_release ON direct_release.id = release_match.release_id
     LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
-    LEFT JOIN ProviderReleaseMembers member
+    LEFT JOIN ProviderEditionMembers member
       ON provider_item.entity_type = 'track'
      AND member.member_item_id = provider_item.id
     LEFT JOIN ProviderTrackMatches track_match
-      ON track_match.provider_release_member_id = member.id
+      ON track_match.provider_edition_member_id = member.id
      AND track_match.match_state = 'accepted'
     LEFT JOIN Tracks track ON track.id = track_match.track_id
     LEFT JOIN AlbumReleases track_release ON track_release.id = track.album_release_id

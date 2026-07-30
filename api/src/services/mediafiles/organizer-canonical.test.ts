@@ -34,8 +34,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
   dbModule.db.prepare("DELETE FROM Libraries").run();
   dbModule.db.prepare("DELETE FROM ProviderTrackMatches").run();
-  dbModule.db.prepare("DELETE FROM ProviderReleaseMatches").run();
-  dbModule.db.prepare("DELETE FROM ProviderReleaseMembers").run();
+  dbModule.db.prepare("DELETE FROM ProviderEditionMatches").run();
+  dbModule.db.prepare("DELETE FROM ProviderEditionMembers").run();
   dbModule.db.prepare("DELETE FROM ProviderItemAudioVariants").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
@@ -245,7 +245,7 @@ test("organizer matches provider-id staging filenames to materialized provider t
 });
 
 test("organizer deterministically maps Apple album-bundled video filenames to provider ids", async () => {
-  // A bundled video's album context is a release OCCURRENCE (ProviderReleaseMembers),
+  // A bundled video's album context is a release OCCURRENCE (ProviderEditionMembers),
   // not a scalar column; its position comes from that occurrence.
   const insertOffer = (provider: string, providerId: string, albumProviderId: string, title: string, position: number) => {
     const item = dbModule.db.prepare(`
@@ -263,8 +263,8 @@ test("organizer deterministically maps Apple album-bundled video filenames to pr
       `).get(provider, albumProviderId, "Bundled Album") as { id: number };
     }
     dbModule.db.prepare(`
-      INSERT INTO ProviderReleaseMembers (
-        provider_release_item_id, member_item_id, medium_position, position, contextual_title
+      INSERT INTO ProviderEditionMembers (
+        provider_edition_item_id, member_item_id, medium_position, position, contextual_title
       ) VALUES (?, ?, 1, ?, ?)
     `).run(release.id, item.id, position, title);
   };
@@ -605,21 +605,21 @@ test("typed plan identity maps a provider source track onto the selected canonic
     RETURNING id
   `).get() as { id: number };
   const member = dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 1)
     RETURNING id
   `).get(providerRelease.id, providerTrack.id) as { id: number };
   const releaseMatch = dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'source_subset', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
   `).get(providerRelease.id, hybridRelease.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_release_member_id, provider_release_match_id, track_id,
+      provider_edition_member_id, provider_edition_match_id, track_id,
       recording_id, match_state, decision_source, confidence, method,
       matcher_version
     ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
@@ -667,7 +667,7 @@ test("typed plan identity maps a provider source track onto the selected canonic
   `).get(libraryRelease.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO AcquisitionPlanSources (
-      plan_id, provider_release_match_id, role, sort_order
+      plan_id, provider_edition_match_id, role, sort_order
     ) VALUES (?, ?, 'primary', 0)
   `).run(plan.id, releaseMatch.id);
 
@@ -907,8 +907,8 @@ test("an exact plan source organizes under the job release, not a same-recording
     WHERE provider = 'tidal' AND entity_type = 'release' AND provider_id = '77661290'
   `).get() as { id: number };
   const releaseMatch = dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -956,7 +956,7 @@ test("an exact plan source organizes under the job release, not a same-recording
   `).get(libraryRelease.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO AcquisitionPlanSources (
-      plan_id, provider_release_match_id, role, sort_order
+      plan_id, provider_edition_match_id, role, sort_order
     ) VALUES (?, ?, 'primary', 0)
   `).run(plan.id, releaseMatch.id);
 

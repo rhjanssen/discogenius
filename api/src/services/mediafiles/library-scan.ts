@@ -1066,8 +1066,8 @@ export class DiskScanService {
                             const providerItem = db.prepare(`
                                 SELECT release.release_group_id
                                 FROM ProviderItems item
-                                JOIN ProviderReleaseMatches release_match
-                                  ON release_match.provider_release_item_id = item.id
+                                JOIN ProviderEditionMatches release_match
+                                  ON release_match.provider_edition_item_id = item.id
                                  AND release_match.match_state = 'accepted'
                                 JOIN AlbumReleases release ON release.id = release_match.release_id
                                 WHERE item.entity_type = 'release'

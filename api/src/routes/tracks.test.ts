@@ -138,21 +138,21 @@ function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: n
     RETURNING id
   `).get() as { id: number };
   const member = db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 1)
     RETURNING id
   `).get(providerRelease.id, providerTrack.id) as { id: number };
   const releaseMatch = db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
   `).get(providerRelease.id, release.id) as { id: number };
   const trackMatch = db.prepare(`
     INSERT INTO ProviderTrackMatches (
-      provider_release_member_id, provider_release_match_id, track_id, recording_id,
+      provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
       match_state, decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -172,7 +172,7 @@ function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: n
   `).get(selection.libraryReleaseId) as { id: number };
   const source = db.prepare(`
     INSERT INTO AcquisitionPlanSources (
-      plan_id, provider_release_match_id, role, sort_order
+      plan_id, provider_edition_match_id, role, sort_order
     ) VALUES (?, ?, 'primary', 0)
     RETURNING id
   `).get(plan.id, releaseMatch.id) as { id: number };

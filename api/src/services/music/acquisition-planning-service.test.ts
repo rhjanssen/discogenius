@@ -70,8 +70,8 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
     ) VALUES (?, 'tidal', 'track', ?, ?, 'available')
     `).run(100 + trackId, `standard-${trackId}`, `Standard ${trackId}`);
     db.prepare(`
-      INSERT INTO ProviderReleaseMembers (
-        id, provider_release_item_id, member_item_id, medium_position, position
+      INSERT INTO ProviderEditionMembers (
+        id, provider_edition_item_id, member_item_id, medium_position, position
       ) VALUES (?, 10, ?, 1, ?)
     `).run(1000 + trackId, 100 + trackId, trackId);
     db.prepare(`
@@ -87,8 +87,8 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
     ) VALUES (?, 'tidal', 'track', ?, ?, 'available')
     `).run(200 + trackId, `deluxe-${trackId}`, `Deluxe ${trackId}`);
     db.prepare(`
-      INSERT INTO ProviderReleaseMembers (
-        id, provider_release_item_id, member_item_id, medium_position, position
+      INSERT INTO ProviderEditionMembers (
+        id, provider_edition_item_id, member_item_id, medium_position, position
       ) VALUES (?, 20, ?, 1, ?)
     `).run(3000 + trackId, 200 + trackId, trackId);
     db.prepare(`
@@ -99,8 +99,8 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   }
 
   db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      id, provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      id, provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version,
       matched_track_count, source_track_count, target_track_count,
       source_coverage, target_coverage
@@ -111,7 +111,7 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   for (let trackId = 1; trackId <= 4; trackId += 1) {
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        id, provider_release_member_id, provider_release_match_id, track_id,
+        id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
       ) VALUES (?, ?, 10, ?, ?, 'accepted', 'automatic', 1, 'fixture', 1)
     `).run(5000 + trackId, 1000 + trackId, trackId, trackId);
@@ -119,7 +119,7 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   for (let trackId = 1; trackId <= 3; trackId += 1) {
     db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        id, provider_release_member_id, provider_release_match_id, track_id,
+        id, provider_edition_member_id, provider_edition_match_id, track_id,
         recording_id, match_state, decision_source, confidence, method, matcher_version
       ) VALUES (?, ?, 20, ?, ?, 'accepted', 'automatic', 0.95, 'fixture', 1)
     `).run(6000 + trackId, 3000 + trackId, trackId, trackId);
@@ -147,10 +147,10 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
     `).get(highPlanId), { composition: "single_source", download_mode: "album" });
     assert.deepEqual(
       db.prepare(`
-        SELECT provider_release_match_id, role
+        SELECT provider_edition_match_id, role
         FROM AcquisitionPlanSources WHERE plan_id = ? ORDER BY sort_order
       `).all(highPlanId),
-      [{ provider_release_match_id: 10, role: "primary" }],
+      [{ provider_edition_match_id: 10, role: "primary" }],
     );
     const highCommand = buildAcquisitionDownloadCommand(db, highPlanId!);
     assert.equal(highCommand?.body.acquisitionMode, "album");
@@ -175,17 +175,17 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
     `).get(maxPlanId), { composition: "composite", download_mode: "tracks" });
     assert.deepEqual(
       db.prepare(`
-        SELECT track_id, provider_release_match_id
+        SELECT track_id, provider_edition_match_id
         FROM AcquisitionPlanTracks track
         JOIN AcquisitionPlanSources source ON source.id = track.source_id
         WHERE track.plan_id = ?
         ORDER BY track.track_id
       `).all(maxPlanId),
       [
-        { track_id: 1, provider_release_match_id: 20 },
-        { track_id: 2, provider_release_match_id: 20 },
-        { track_id: 3, provider_release_match_id: 20 },
-        { track_id: 4, provider_release_match_id: 10 },
+        { track_id: 1, provider_edition_match_id: 20 },
+        { track_id: 2, provider_edition_match_id: 20 },
+        { track_id: 3, provider_edition_match_id: 20 },
+        { track_id: 4, provider_edition_match_id: 10 },
       ],
     );
     const maxCommand = buildAcquisitionDownloadCommand(db, maxPlanId!);

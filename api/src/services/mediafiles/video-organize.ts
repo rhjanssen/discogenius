@@ -29,8 +29,8 @@ export function loadBundledVideoTrackCandidates(
       COALESCE(member.contextual_title, member_item.title, '') AS title,
       member.position AS track_number
     FROM ProviderItems provider_release
-    JOIN ProviderReleaseMembers member
-      ON member.provider_release_item_id = provider_release.id
+    JOIN ProviderEditionMembers member
+      ON member.provider_edition_item_id = provider_release.id
     JOIN ProviderItems member_item
       ON member_item.id = member.member_item_id
      AND member_item.entity_type = 'track'

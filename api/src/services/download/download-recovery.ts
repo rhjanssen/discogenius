@@ -42,8 +42,8 @@ export function getExistingLibraryFiles(
                     lf.library_root,
                     CAST(lf.track_id AS TEXT) AS media_id
                 FROM ProviderItems provider_release
-                JOIN ProviderReleaseMatches release_match
-                  ON release_match.provider_release_item_id = provider_release.id
+                JOIN ProviderEditionMatches release_match
+                  ON release_match.provider_edition_item_id = provider_release.id
                  AND release_match.match_state = 'accepted'
                 JOIN LibraryReleases library_release
                   ON library_release.release_id = release_match.release_id
@@ -69,10 +69,10 @@ export function getExistingLibraryFiles(
                     lf.library_root,
                     CAST(lf.track_id AS TEXT) AS media_id
                 FROM ProviderItems provider_track
-                JOIN ProviderReleaseMembers release_member
+                JOIN ProviderEditionMembers release_member
                   ON release_member.member_item_id = provider_track.id
                 JOIN ProviderTrackMatches track_match
-                  ON track_match.provider_release_member_id = release_member.id
+                  ON track_match.provider_edition_member_id = release_member.id
                  AND track_match.match_state = 'accepted'
                 JOIN TrackFiles lf
                   ON lf.track_id = track_match.track_id

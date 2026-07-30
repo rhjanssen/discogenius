@@ -159,8 +159,8 @@ export class ProviderCatalogRepository {
       seenPositions.add(key);
     }
     const insert = this.db.prepare(`
-      INSERT INTO ProviderReleaseMembers (
-        provider_release_item_id, member_item_id, medium_position, position,
+      INSERT INTO ProviderEditionMembers (
+        provider_edition_item_id, member_item_id, medium_position, position,
         number, contextual_title, contextual_duration_ms
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
       RETURNING id
@@ -168,8 +168,8 @@ export class ProviderCatalogRepository {
     return this.db.transaction(() => {
       const existing = this.db.prepare(`
         SELECT id, member_item_id, medium_position, position
-        FROM ProviderReleaseMembers
-        WHERE provider_release_item_id = ?
+        FROM ProviderEditionMembers
+        WHERE provider_edition_item_id = ?
       `).all(providerReleaseItemId) as Array<{
         id: number;
         member_item_id: number;
@@ -181,14 +181,14 @@ export class ProviderCatalogRepository {
       );
       const retainedIds = new Set<number>();
       const update = this.db.prepare(`
-        UPDATE ProviderReleaseMembers
+        UPDATE ProviderEditionMembers
         SET number = ?,
             contextual_title = ?,
             contextual_duration_ms = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `);
-      const remove = this.db.prepare("DELETE FROM ProviderReleaseMembers WHERE id = ?");
+      const remove = this.db.prepare("DELETE FROM ProviderEditionMembers WHERE id = ?");
       const ids = members.map((member) => {
         const key = `${member.mediumPosition}:${member.position}`;
         const current = existingByPosition.get(key);

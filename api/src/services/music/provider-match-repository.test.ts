@@ -89,10 +89,10 @@ test("Laura Palmer provider release persists one safe assignment and no position
     assert.equal(result.relation.relation, "overlap");
     assert.equal(result.relation.matchedTrackCount, 1);
     assert.deepEqual(db.prepare(`
-      SELECT provider_release_member_id, track_id, recording_id, match_state
+      SELECT provider_edition_member_id, track_id, recording_id, match_state
       FROM ProviderTrackMatches
     `).all(), [{
-      provider_release_member_id: memberIds[0],
+      provider_edition_member_id: memberIds[0],
       track_id: 1,
       recording_id: 1,
       match_state: "accepted",

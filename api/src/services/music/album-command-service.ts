@@ -95,8 +95,8 @@ export class AlbumCommandService {
             LEFT JOIN ProviderTrackMatches provider_match
               ON provider_match.track_id = t.id
              AND provider_match.match_state = 'accepted'
-            LEFT JOIN ProviderReleaseMembers provider_member
-              ON provider_member.id = provider_match.provider_release_member_id
+            LEFT JOIN ProviderEditionMembers provider_member
+              ON provider_member.id = provider_match.provider_edition_member_id
             LEFT JOIN ProviderItems pi
               ON pi.id = provider_member.member_item_id
              AND pi.entity_type = 'track'

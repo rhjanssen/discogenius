@@ -39,8 +39,8 @@ test("fresh database initializes the current development baseline", () => {
     "Artists", "ArtistMetadata", "Albums", "AlbumReleases",
     "AlbumArtists", "ArtistReleaseGroups", "ArtistReleaseGroupCuration",
     "Tracks", "Recordings", "ProviderItems",
-    "ProviderReleaseMembers", "ProviderItemCredits", "ProviderItemAudioVariants",
-    "ProviderArtistMatches", "ProviderReleaseMatches", "ProviderTrackMatches",
+    "ProviderEditionMembers", "ProviderItemCredits", "ProviderItemAudioVariants",
+    "ProviderArtistMatches", "ProviderEditionMatches", "ProviderTrackMatches",
     "ProviderVideoMatches",
     "ReleaseGroupArtistCredits", "ReleaseArtistCredits",
     "TrackArtistCredits", "RecordingArtistCredits",
@@ -213,8 +213,8 @@ test("provider facts are normalized and match edges use typed integer foreign ke
 
   const typedMatches: Record<string, string[]> = {
     ProviderArtistMatches: ["provider_artist_item_id", "artist_id"],
-    ProviderReleaseMatches: ["provider_release_item_id", "release_id", "relation"],
-    ProviderTrackMatches: ["provider_release_member_id", "track_id", "recording_id"],
+    ProviderEditionMatches: ["provider_edition_item_id", "release_id", "relation"],
+    ProviderTrackMatches: ["provider_edition_member_id", "track_id", "recording_id"],
     ProviderVideoMatches: ["provider_video_item_id", "recording_id"],
   };
   for (const [tableName, identityColumns] of Object.entries(typedMatches)) {

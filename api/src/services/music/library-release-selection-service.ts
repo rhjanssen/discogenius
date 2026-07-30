@@ -113,7 +113,7 @@ export class LibraryReleaseSelectionService {
 
     const offerRows = this.db.prepare(`
       SELECT
-        match.id AS provider_release_match_id,
+        match.id AS provider_edition_match_id,
         match.release_id,
         match.relation,
         match.match_state,
@@ -129,8 +129,8 @@ export class LibraryReleaseSelectionService {
         variant.codec,
         variant.container,
         variant.spatial_format
-      FROM ProviderReleaseMatches match
-      JOIN ProviderItems item ON item.id = match.provider_release_item_id
+      FROM ProviderEditionMatches match
+      JOIN ProviderItems item ON item.id = match.provider_edition_item_id
       LEFT JOIN ProviderItemAudioVariants variant ON variant.provider_item_id = item.id
       WHERE match.release_id IN (
         SELECT id FROM AlbumReleases WHERE release_group_id = ?
@@ -138,7 +138,7 @@ export class LibraryReleaseSelectionService {
         AND match.match_state != 'rejected'
       ORDER BY match.release_id, match.confidence DESC, match.id, variant.id
     `).all(releaseGroup.id) as Array<{
-      provider_release_match_id: number;
+      provider_edition_match_id: number;
       release_id: number;
       relation: ProviderReleaseOfferView["relation"];
       match_state: ProviderReleaseOfferView["matchState"];
@@ -159,10 +159,10 @@ export class LibraryReleaseSelectionService {
     for (const row of offerRows) {
       const release = releaseById.get(row.release_id);
       if (!release) continue;
-      let offer = offerByMatchId.get(row.provider_release_match_id);
+      let offer = offerByMatchId.get(row.provider_edition_match_id);
       if (!offer) {
         offer = {
-          providerReleaseMatchId: row.provider_release_match_id,
+          providerReleaseMatchId: row.provider_edition_match_id,
           providerItemId: row.provider_item_id,
           provider: row.provider,
           providerId: row.provider_id,
@@ -173,7 +173,7 @@ export class LibraryReleaseSelectionService {
           confidence: row.confidence,
           variants: [],
         };
-        offerByMatchId.set(row.provider_release_match_id, offer);
+        offerByMatchId.set(row.provider_edition_match_id, offer);
         release.offers.push(offer);
       }
       if (row.variant_id != null && row.quality_class) {

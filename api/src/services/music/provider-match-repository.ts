@@ -238,48 +238,48 @@ export class ProviderMatchRepository {
 
     return this.db.transaction(() => {
       const releaseMatch = this.db.prepare(`
-        INSERT INTO ProviderReleaseMatches (
-          provider_release_item_id, release_id, relation, match_state,
+        INSERT INTO ProviderEditionMatches (
+          provider_edition_item_id, release_id, relation, match_state,
           decision_source, confidence, method, evidence, matcher_version,
           matched_track_count, source_track_count, target_track_count,
           source_coverage, target_coverage, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(provider_release_item_id, release_id) DO UPDATE SET
+        ON CONFLICT(provider_edition_item_id, release_id) DO UPDATE SET
           relation = excluded.relation,
           match_state = CASE
-            WHEN ProviderReleaseMatches.decision_source = 'manual'
+            WHEN ProviderEditionMatches.decision_source = 'manual'
              AND excluded.decision_source = 'automatic'
-              THEN ProviderReleaseMatches.match_state
+              THEN ProviderEditionMatches.match_state
             ELSE excluded.match_state
           END,
           decision_source = CASE
-            WHEN ProviderReleaseMatches.decision_source = 'manual'
+            WHEN ProviderEditionMatches.decision_source = 'manual'
              AND excluded.decision_source = 'automatic'
-              THEN ProviderReleaseMatches.decision_source
+              THEN ProviderEditionMatches.decision_source
             ELSE excluded.decision_source
           END,
           confidence = CASE
-            WHEN ProviderReleaseMatches.decision_source = 'manual'
+            WHEN ProviderEditionMatches.decision_source = 'manual'
              AND excluded.decision_source = 'automatic'
-              THEN ProviderReleaseMatches.confidence
+              THEN ProviderEditionMatches.confidence
             ELSE excluded.confidence
           END,
           method = CASE
-            WHEN ProviderReleaseMatches.decision_source = 'manual'
+            WHEN ProviderEditionMatches.decision_source = 'manual'
              AND excluded.decision_source = 'automatic'
-              THEN ProviderReleaseMatches.method
+              THEN ProviderEditionMatches.method
             ELSE excluded.method
           END,
           evidence = CASE
-            WHEN ProviderReleaseMatches.decision_source = 'manual'
+            WHEN ProviderEditionMatches.decision_source = 'manual'
              AND excluded.decision_source = 'automatic'
-              THEN ProviderReleaseMatches.evidence
+              THEN ProviderEditionMatches.evidence
             ELSE excluded.evidence
           END,
           matcher_version = CASE
-            WHEN ProviderReleaseMatches.decision_source = 'manual'
+            WHEN ProviderEditionMatches.decision_source = 'manual'
              AND excluded.decision_source = 'automatic'
-              THEN ProviderReleaseMatches.matcher_version
+              THEN ProviderEditionMatches.matcher_version
             ELSE excluded.matcher_version
           END,
           matched_track_count = excluded.matched_track_count,
@@ -308,11 +308,11 @@ export class ProviderMatchRepository {
 
       const preservedManual = input.decision.decisionSource === "automatic"
         ? this.db.prepare(`
-            SELECT provider_release_member_id, track_id, recording_id, match_state
+            SELECT provider_edition_member_id, track_id, recording_id, match_state
             FROM ProviderTrackMatches
-            WHERE provider_release_match_id = ? AND decision_source = 'manual'
+            WHERE provider_edition_match_id = ? AND decision_source = 'manual'
           `).all(releaseMatch.id) as Array<{
-            provider_release_member_id: number;
+            provider_edition_member_id: number;
             track_id: number | null;
             recording_id: number;
             match_state: ProviderMatchState;
@@ -321,14 +321,14 @@ export class ProviderMatchRepository {
       if (input.decision.decisionSource === "automatic") {
         this.db.prepare(`
           DELETE FROM ProviderTrackMatches
-          WHERE provider_release_match_id = ? AND decision_source != 'manual'
+          WHERE provider_edition_match_id = ? AND decision_source != 'manual'
         `).run(releaseMatch.id);
       } else {
-        this.db.prepare("DELETE FROM ProviderTrackMatches WHERE provider_release_match_id = ?")
+        this.db.prepare("DELETE FROM ProviderTrackMatches WHERE provider_edition_match_id = ?")
           .run(releaseMatch.id);
       }
       const manualSourceIds = new Set(
-        preservedManual.map((match) => match.provider_release_member_id),
+        preservedManual.map((match) => match.provider_edition_member_id),
       );
       const manualTargetTrackIds = new Set(
         preservedManual
@@ -342,7 +342,7 @@ export class ProviderMatchRepository {
       );
       const insertTrackMatch = this.db.prepare(`
         INSERT INTO ProviderTrackMatches (
-          provider_release_member_id, provider_release_match_id, track_id,
+          provider_edition_member_id, provider_edition_match_id, track_id,
           recording_id, match_state, decision_source, confidence, method,
           evidence, matcher_version, duration_delta_ms, ambiguity_margin,
           updated_at

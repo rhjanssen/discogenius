@@ -171,12 +171,12 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     CREATE TABLE AcquisitionPlanSources (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       plan_id INTEGER NOT NULL,
-      provider_release_match_id INTEGER NOT NULL,
+      provider_edition_match_id INTEGER NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('primary', 'supplement')),
       sort_order INTEGER NOT NULL,
-      UNIQUE(plan_id, provider_release_match_id),
+      UNIQUE(plan_id, provider_edition_match_id),
       FOREIGN KEY(plan_id) REFERENCES AcquisitionPlans(id) ON DELETE CASCADE,
-      FOREIGN KEY(provider_release_match_id) REFERENCES ProviderReleaseMatches(id)
+      FOREIGN KEY(provider_edition_match_id) REFERENCES ProviderEditionMatches(id)
     );
 
     CREATE TABLE AcquisitionPlanTracks (

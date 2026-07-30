@@ -55,8 +55,8 @@ export class ProviderTrackTagSupplementService {
                THEN 1 ELSE 0
              END) AS missing
       FROM ProviderItems release_item
-      JOIN ProviderReleaseMembers member
-        ON member.provider_release_item_id = release_item.id
+      JOIN ProviderEditionMembers member
+        ON member.provider_edition_item_id = release_item.id
       JOIN ProviderItems track_item
         ON track_item.id = member.member_item_id
        AND track_item.entity_type = 'track'

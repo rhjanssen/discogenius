@@ -199,8 +199,8 @@ function loadAlbumProviderItem(albumId: string, provider?: string | null): Album
             artist.id AS artist_id,
             COALESCE(artist.name, artist_metadata.name) AS artist_name
         FROM ProviderItems pi
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.provider_release_item_id = pi.id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.provider_edition_item_id = pi.id
          AND release_match.match_state = 'accepted'
         JOIN AlbumReleases release ON release.id = release_match.release_id
         JOIN Albums rg ON rg.id = release.release_group_id
@@ -435,10 +435,10 @@ function resolveAlbumVideoCoverProvider(options?: AlbumVideoCoverDownloadOptions
               ON release_group.id = release.release_group_id
             JOIN AcquisitionPlanSources plan_source
               ON plan_source.plan_id = plan.id
-            JOIN ProviderReleaseMatches release_match
-              ON release_match.id = plan_source.provider_release_match_id
+            JOIN ProviderEditionMatches release_match
+              ON release_match.id = plan_source.provider_edition_match_id
             JOIN ProviderItems provider_release
-              ON provider_release.id = release_match.provider_release_item_id
+              ON provider_release.id = release_match.provider_edition_item_id
             WHERE release_group.mbid = ?
               AND plan.state = 'current'
               AND release_match.match_state = 'accepted'
@@ -804,8 +804,8 @@ export async function saveAlbumNfoFile(
         const qualifiedOffer = db.prepare(`
             SELECT release_group.mbid AS release_group_mbid
             FROM ProviderItems pi
-            JOIN ProviderReleaseMatches release_match
-              ON release_match.provider_release_item_id = pi.id
+            JOIN ProviderEditionMatches release_match
+              ON release_match.provider_edition_item_id = pi.id
              AND release_match.match_state = 'accepted'
             JOIN AlbumReleases release ON release.id = release_match.release_id
             JOIN Albums release_group ON release_group.id = release.release_group_id
@@ -850,11 +850,11 @@ export async function saveAlbumNfoFile(
         LEFT JOIN AcquisitionPlanSources plan_source
           ON plan_source.plan_id = plan.id
          AND plan_source.role = 'primary'
-        LEFT JOIN ProviderReleaseMatches release_match
-          ON release_match.id = plan_source.provider_release_match_id
+        LEFT JOIN ProviderEditionMatches release_match
+          ON release_match.id = plan_source.provider_edition_match_id
          AND release_match.match_state = 'accepted'
         LEFT JOIN ProviderItems provider_release
-          ON provider_release.id = release_match.provider_release_item_id
+          ON provider_release.id = release_match.provider_edition_item_id
         WHERE release_group.mbid = ?
           AND (
             ? = ''

@@ -55,8 +55,8 @@ function seedCanonicalFingerprintMatch() {
     SELECT id FROM ProviderItems WHERE provider = 'tidal' AND entity_type = 'track' AND provider_id = 'provider-track'
   `).get() as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 1)
   `).run(albumItemId, trackItemId);
   dbModule.db.prepare(`

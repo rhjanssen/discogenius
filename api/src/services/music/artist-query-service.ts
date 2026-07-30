@@ -598,11 +598,11 @@ const artistReleaseGroupLibraryStateCte = `
          preferred_source.id
        LIMIT 1
      )
-    LEFT JOIN ProviderReleaseMatches release_match
-      ON release_match.id = source.provider_release_match_id
+    LEFT JOIN ProviderEditionMatches release_match
+      ON release_match.id = source.provider_edition_match_id
      AND release_match.match_state = 'accepted'
     LEFT JOIN ProviderItems provider_item
-      ON provider_item.id = release_match.provider_release_item_id
+      ON provider_item.id = release_match.provider_edition_item_id
      AND (
        provider_item.availability IS NULL
        OR LOWER(CAST(provider_item.availability AS TEXT))
@@ -1253,8 +1253,8 @@ export class ArtistQueryService {
         JOIN ProviderTrackMatches track_match
           ON track_match.id = plan_track.provider_track_match_id
          AND track_match.match_state = 'accepted'
-        JOIN ProviderReleaseMembers member
-          ON member.id = track_match.provider_release_member_id
+        JOIN ProviderEditionMembers member
+          ON member.id = track_match.provider_edition_member_id
         JOIN ProviderItems provider_item
           ON provider_item.id = member.member_item_id
         JOIN ProviderItemAudioVariants variant
@@ -1290,11 +1290,11 @@ export class ArtistQueryService {
          AND plan.state = 'current'
         JOIN AcquisitionPlanSources source
           ON source.plan_id = plan.id
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.id = source.provider_release_match_id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.id = source.provider_edition_match_id
          AND release_match.match_state = 'accepted'
         JOIN ProviderItems provider_item
-          ON provider_item.id = release_match.provider_release_item_id
+          ON provider_item.id = release_match.provider_edition_item_id
       ),
       selected_libraries AS (
         SELECT

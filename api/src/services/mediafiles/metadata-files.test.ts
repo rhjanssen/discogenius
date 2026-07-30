@@ -68,7 +68,7 @@ function seedMusicBrainzMetadata() {
     `).run("track-mbid-300", "album-mbid-200", "recording-mbid-300", 1, 1, "Example Track", 180000);
 
       // Release + track offers linked to the canonical release/track through the
-      // typed match authority (ProviderReleaseMembers + accepted Provider*Matches).
+      // typed match authority (ProviderEditionMembers + accepted Provider*Matches).
       seedAcceptedProviderTrackMatch(dbModule.db, {
           provider: "tidal",
           providerReleaseId: "200",

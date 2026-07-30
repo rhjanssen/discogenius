@@ -2232,10 +2232,10 @@ export function loadAlbumProviderArtworkCandidates(
         ON quality_profile.id = library.quality_profile_id
       JOIN AcquisitionPlanSources source
         ON source.plan_id = plan.id
-      JOIN ProviderReleaseMatches release_match
-        ON release_match.id = source.provider_release_match_id
+      JOIN ProviderEditionMatches release_match
+        ON release_match.id = source.provider_edition_match_id
       JOIN ProviderItems provider_item
-        ON provider_item.id = release_match.provider_release_item_id
+        ON provider_item.id = release_match.provider_edition_item_id
       WHERE release_group.mbid = ?
         AND plan.state = 'current'
         AND release_match.match_state = 'accepted'
@@ -2261,9 +2261,9 @@ export function loadAlbumProviderArtworkCandidates(
         provider_item.title,
         provider_item.version,
         release_match.confidence AS match_confidence
-      FROM ProviderReleaseMatches release_match
+      FROM ProviderEditionMatches release_match
       JOIN ProviderItems provider_item
-        ON provider_item.id = release_match.provider_release_item_id
+        ON provider_item.id = release_match.provider_edition_item_id
       JOIN AlbumReleases release
         ON release.id = release_match.release_id
       JOIN Albums release_group

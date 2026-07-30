@@ -126,8 +126,8 @@ export function listRankedAlbumOffers(
            variant.quality_class,
            variant.spatial_format
     FROM ProviderItems item
-    JOIN ProviderReleaseMatches release_match
-      ON release_match.provider_release_item_id = item.id
+    JOIN ProviderEditionMatches release_match
+      ON release_match.provider_edition_item_id = item.id
      AND release_match.match_state = 'accepted'
     JOIN AlbumReleases release ON release.id = release_match.release_id
     JOIN Albums release_group ON release_group.id = release.release_group_id
@@ -173,10 +173,10 @@ export function listRankedTrackOffers(options: {
            variant.spatial_format,
            CAST(parent.provider_id AS TEXT) AS provider_album_id
     FROM ProviderItems item
-    JOIN ProviderReleaseMembers member ON member.member_item_id = item.id
-    JOIN ProviderItems parent ON parent.id = member.provider_release_item_id
+    JOIN ProviderEditionMembers member ON member.member_item_id = item.id
+    JOIN ProviderItems parent ON parent.id = member.provider_edition_item_id
     JOIN ProviderTrackMatches track_match
-      ON track_match.provider_release_member_id = member.id
+      ON track_match.provider_edition_member_id = member.id
      AND track_match.match_state = 'accepted'
     LEFT JOIN Tracks track ON track.id = track_match.track_id
     JOIN Recordings recording ON recording.id = track_match.recording_id

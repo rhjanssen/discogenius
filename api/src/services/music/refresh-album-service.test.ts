@@ -239,8 +239,8 @@ test("album track scan stores provider track offers linked to the selected canon
     SELECT id FROM AlbumReleases WHERE mbid = ?
   `).get(releaseMbid) as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state, decision_source,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state, decision_source,
       confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1)
   `).run(providerReleaseItemId, canonicalReleaseId);
@@ -277,14 +277,14 @@ test("album track scan stores provider track offers linked to the selected canon
         track_item.provider_id AS provider_track_id,
         track_match.track_id,
         track_match.recording_id
-      FROM ProviderReleaseMatches release_match
+      FROM ProviderEditionMatches release_match
       JOIN ProviderItems release_item
-        ON release_item.id = release_match.provider_release_item_id
+        ON release_item.id = release_match.provider_edition_item_id
       JOIN ProviderTrackMatches track_match
-        ON track_match.provider_release_match_id = release_match.id
+        ON track_match.provider_edition_match_id = release_match.id
        AND track_match.match_state = 'accepted'
-      JOIN ProviderReleaseMembers member
-        ON member.id = track_match.provider_release_member_id
+      JOIN ProviderEditionMembers member
+        ON member.id = track_match.provider_edition_member_id
       JOIN ProviderItems track_item ON track_item.id = member.member_item_id
       WHERE release_item.provider = 'fake'
         AND release_item.entity_type = 'release'
@@ -367,14 +367,14 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
       track_match.method AS match_method,
       item.availability
     FROM ProviderItems release_item
-    JOIN ProviderReleaseMatches release_match
-      ON release_match.provider_release_item_id = release_item.id
-    JOIN ProviderReleaseMembers member
-      ON member.provider_release_item_id = release_item.id
+    JOIN ProviderEditionMatches release_match
+      ON release_match.provider_edition_item_id = release_item.id
+    JOIN ProviderEditionMembers member
+      ON member.provider_edition_item_id = release_item.id
     JOIN ProviderItems item ON item.id = member.member_item_id
     LEFT JOIN ProviderTrackMatches track_match
-      ON track_match.provider_release_match_id = release_match.id
-     AND track_match.provider_release_member_id = member.id
+      ON track_match.provider_edition_match_id = release_match.id
+     AND track_match.provider_edition_member_id = member.id
     LEFT JOIN Tracks track ON track.id = track_match.track_id
     LEFT JOIN Recordings recording ON recording.id = track_match.recording_id
     WHERE release_item.provider = 'soundcloud'
@@ -467,15 +467,15 @@ test("same-release provider superset maps exact-duration version tracks and clea
       track_match.method AS match_method,
       item.availability
     FROM ProviderItems release_item
-    JOIN ProviderReleaseMembers member
-      ON member.provider_release_item_id = release_item.id
+    JOIN ProviderEditionMembers member
+      ON member.provider_edition_item_id = release_item.id
     JOIN ProviderItems item ON item.id = member.member_item_id
-    LEFT JOIN ProviderReleaseMatches release_match
-      ON release_match.provider_release_item_id = release_item.id
+    LEFT JOIN ProviderEditionMatches release_match
+      ON release_match.provider_edition_item_id = release_item.id
      AND release_match.match_state = 'accepted'
     LEFT JOIN ProviderTrackMatches track_match
-      ON track_match.provider_release_match_id = release_match.id
-     AND track_match.provider_release_member_id = member.id
+      ON track_match.provider_edition_match_id = release_match.id
+     AND track_match.provider_edition_member_id = member.id
     LEFT JOIN Tracks track ON track.id = track_match.track_id
     LEFT JOIN Recordings recording ON recording.id = track_match.recording_id
     WHERE release_item.provider = 'tidal'
@@ -560,16 +560,16 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
     RETURNING id
   `).get() as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMembers (
-      provider_release_item_id, member_item_id, medium_position, position
+    INSERT INTO ProviderEditionMembers (
+      provider_edition_item_id, member_item_id, medium_position, position
     ) VALUES (?, ?, 1, 1)
   `).run(tidalReleaseId, tidalTrackId);
   const canonicalReleaseId = (dbModule.db.prepare(`
     SELECT id FROM AlbumReleases WHERE mbid = ?
   `).get(releaseMbid) as { id: number }).id;
   dbModule.db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state, decision_source,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state, decision_source,
       confidence, method, matcher_version
     ) VALUES
       (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1),

@@ -22,7 +22,7 @@ beforeEach(() => {
   for (const table of [
     "AcquisitionPlanTracks", "AcquisitionPlanSources", "AcquisitionPlans",
     "LibraryReleases", "LibraryReleaseGroups", "ProviderTrackMatches",
-    "ProviderReleaseMatches", "ProviderReleaseMembers", "ProviderItemAudioVariants",
+    "ProviderEditionMatches", "ProviderEditionMembers", "ProviderItemAudioVariants",
     "ProviderItems", "Tracks", "Recordings", "AlbumReleases", "Albums", "ArtistMetadata",
   ]) {
     db.prepare(`DELETE FROM ${table}`).run();
@@ -106,18 +106,18 @@ function seedTwoPlansDisagreeing(): {
       VALUES ('tidal', 'release', ?, 'Bad Blood') RETURNING id
     `).get(providerReleaseId) as { id: number };
     const member = db.prepare(`
-      INSERT INTO ProviderReleaseMembers (provider_release_item_id, member_item_id, medium_position, position)
+      INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
       VALUES (?, ?, 1, 1) RETURNING id
     `).get(providerRelease.id, providerTrack.id) as { id: number };
     const releaseMatch = db.prepare(`
-      INSERT INTO ProviderReleaseMatches (
-        provider_release_item_id, release_id, relation, match_state, decision_source,
+      INSERT INTO ProviderEditionMatches (
+        provider_edition_item_id, release_id, relation, match_state, decision_source,
         confidence, method, matcher_version
       ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1) RETURNING id
     `).get(providerRelease.id, release.id) as { id: number };
     const trackMatch = db.prepare(`
       INSERT INTO ProviderTrackMatches (
-        provider_release_member_id, provider_release_match_id, track_id, recording_id,
+        provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
         match_state, decision_source, confidence, method, matcher_version
       ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1) RETURNING id
     `).get(member.id, releaseMatch.id, track.id, recording.id) as { id: number };
@@ -134,7 +134,7 @@ function seedTwoPlansDisagreeing(): {
       RETURNING id
     `).get(libraryRelease.id) as { id: number };
     const source = db.prepare(`
-      INSERT INTO AcquisitionPlanSources (plan_id, provider_release_match_id, role, sort_order)
+      INSERT INTO AcquisitionPlanSources (plan_id, provider_edition_match_id, role, sort_order)
       VALUES (?, ?, 'primary', 0) RETURNING id
     `).get(plan.id, releaseMatch.id) as { id: number };
     db.prepare(`
@@ -229,11 +229,11 @@ test("agreeing current plans still resolve without explicit context", () => {
   // Repoint the spatial plan at the SAME provider release as the stereo plan.
   const standardMatch = db.prepare(`
     SELECT release_match.id
-    FROM ProviderReleaseMatches release_match
-    JOIN ProviderItems release_item ON release_item.id = release_match.provider_release_item_id
+    FROM ProviderEditionMatches release_match
+    JOIN ProviderItems release_item ON release_item.id = release_match.provider_edition_item_id
     WHERE release_item.provider_id = 'tidal-album-standard'
   `).get() as { id: number };
-  db.prepare("UPDATE AcquisitionPlanSources SET provider_release_match_id = ? WHERE plan_id = ?")
+  db.prepare("UPDATE AcquisitionPlanSources SET provider_edition_match_id = ? WHERE plan_id = ?")
     .run(standardMatch.id, seeded.spatial.planId);
 
   assert.equal(
@@ -255,7 +255,7 @@ test("context-free resolution falls back to a unique membership, never to a gues
     VALUES ('tidal', 'release', 'only-album', 'Bad Blood') RETURNING id
   `).get() as { id: number };
   db.prepare(`
-    INSERT INTO ProviderReleaseMembers (provider_release_item_id, member_item_id, medium_position, position)
+    INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
     VALUES (?, ?, 1, 1)
   `).run(providerRelease.id, providerTrack.id);
 
@@ -271,7 +271,7 @@ test("context-free resolution falls back to a unique membership, never to a gues
     VALUES ('tidal', 'release', 'other-album', 'Bad Blood (Deluxe)') RETURNING id
   `).get() as { id: number };
   db.prepare(`
-    INSERT INTO ProviderReleaseMembers (provider_release_item_id, member_item_id, medium_position, position)
+    INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
     VALUES (?, ?, 1, 2)
   `).run(second.id, providerTrack.id);
 

@@ -186,11 +186,11 @@ function insertTestProviderCandidate(
       AND provider_id = ?
   `).get(options.providerId) as { id: number };
   db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
-    ON CONFLICT(provider_release_item_id, release_id) DO UPDATE SET
+    ON CONFLICT(provider_edition_item_id, release_id) DO UPDATE SET
       match_state = 'accepted',
       confidence = 1
   `).run(providerItem.id, release.id);

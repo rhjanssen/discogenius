@@ -145,16 +145,16 @@ export async function resolveProviderTrackForCanonicalTrack(input: {
          AND track_match.match_state = 'accepted'
         JOIN Recordings canonical_recording
           ON canonical_recording.id = track_match.recording_id
-        JOIN ProviderReleaseMembers release_member
-          ON release_member.id = track_match.provider_release_member_id
+        JOIN ProviderEditionMembers release_member
+          ON release_member.id = track_match.provider_edition_member_id
         JOIN ProviderItems provider_track
           ON provider_track.id = release_member.member_item_id
         JOIN AcquisitionPlanSources source
           ON source.id = plan_track.source_id
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.id = source.provider_release_match_id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.id = source.provider_edition_match_id
         JOIN ProviderItems provider_release
-          ON provider_release.id = release_match.provider_release_item_id
+          ON provider_release.id = release_match.provider_edition_item_id
         JOIN ProviderItemAudioVariants variant
           ON variant.id = plan_track.provider_audio_variant_id
         WHERE release_group.mbid = ?

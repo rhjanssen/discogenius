@@ -142,8 +142,8 @@ function loadMissingAlbums(ids: readonly string[], context: DescriptionLookupCon
                 pi.version AS version,
                 artist.name AS artist_name
             FROM ProviderItems pi
-            LEFT JOIN ProviderReleaseMatches provider_match
-              ON provider_match.provider_release_item_id = pi.id
+            LEFT JOIN ProviderEditionMatches provider_match
+              ON provider_match.provider_edition_item_id = pi.id
              AND provider_match.match_state = 'accepted'
             LEFT JOIN AlbumReleases release ON release.id = provider_match.release_id
             LEFT JOIN Albums album ON album.id = release.release_group_id
@@ -193,9 +193,9 @@ function loadMissingTracks(ids: readonly string[], context: DescriptionLookupCon
                 release.disambiguation AS album_version,
                 artist.name AS artist_name
             FROM ProviderItems pi
-            LEFT JOIN ProviderReleaseMembers member ON member.member_item_id = pi.id
+            LEFT JOIN ProviderEditionMembers member ON member.member_item_id = pi.id
             LEFT JOIN ProviderTrackMatches provider_match
-              ON provider_match.provider_release_member_id = member.id
+              ON provider_match.provider_edition_member_id = member.id
              AND provider_match.match_state = 'accepted'
              AND provider_match.track_id IS NOT NULL
             LEFT JOIN Tracks track ON track.id = provider_match.track_id

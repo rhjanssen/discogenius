@@ -92,8 +92,8 @@ test("download recovery resolves existing album files through canonical provider
     RETURNING id
   `).get("tidal", "release", "provider-album", "Album") as { id: number };
   db.prepare(`
-    INSERT INTO ProviderReleaseMatches (
-      provider_release_item_id, release_id, relation, match_state,
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, release_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
   `).run(providerRelease.id, release.id);

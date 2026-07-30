@@ -763,8 +763,8 @@ export class ImportService {
                   release.mbid AS release_mbid,
                   item.provider
                 FROM ProviderItems item
-                JOIN ProviderReleaseMatches release_match
-                  ON release_match.provider_release_item_id = item.id
+                JOIN ProviderEditionMatches release_match
+                  ON release_match.provider_edition_item_id = item.id
                  AND release_match.match_state = 'accepted'
                 JOIN AlbumReleases release ON release.id = release_match.release_id
                 JOIN Albums release_group ON release_group.id = release.release_group_id
@@ -839,16 +839,16 @@ export class ImportService {
                     t.position AS track_number,
                     t.medium_position AS volume_number
                 FROM ProviderItems release_item
-                JOIN ProviderReleaseMembers member
-                  ON member.provider_release_item_id = release_item.id
+                JOIN ProviderEditionMembers member
+                  ON member.provider_edition_item_id = release_item.id
                 JOIN ProviderItems item ON item.id = member.member_item_id
-                JOIN ProviderReleaseMatches release_match
-                  ON release_match.provider_release_item_id = release_item.id
+                JOIN ProviderEditionMatches release_match
+                  ON release_match.provider_edition_item_id = release_item.id
                  AND release_match.release_id = ?
                  AND release_match.match_state = 'accepted'
                 LEFT JOIN ProviderTrackMatches track_match
-                  ON track_match.provider_release_match_id = release_match.id
-                 AND track_match.provider_release_member_id = member.id
+                  ON track_match.provider_edition_match_id = release_match.id
+                 AND track_match.provider_edition_member_id = member.id
                  AND track_match.match_state = 'accepted'
                 LEFT JOIN Tracks t ON t.id = track_match.track_id
                 WHERE release_item.entity_type = 'release'

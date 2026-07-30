@@ -74,7 +74,7 @@ function persistNormalizedProviderVideo(input: {
 
     // A bundled video's album context is a release OCCURRENCE, not a scalar on
     // the item (the provider_album_id shadow column is gone). Persist it as a
-    // ProviderReleaseMembers row so downstream readers resolve it the same way
+    // ProviderEditionMembers row so downstream readers resolve it the same way
     // they resolve a track's release, and so one video can legitimately occur on
     // several provider releases.
     const providerAlbumId = nullableText(input.video.album_id ?? input.video.albumId);
@@ -86,19 +86,19 @@ function persistNormalizedProviderVideo(input: {
             availability: "unknown",
         });
         const existingMember = db.prepare(`
-            SELECT id FROM ProviderReleaseMembers
-            WHERE provider_release_item_id = ? AND member_item_id = ?
+            SELECT id FROM ProviderEditionMembers
+            WHERE provider_edition_item_id = ? AND member_item_id = ?
             LIMIT 1
         `).get(providerReleaseItemId, providerVideoItemId) as { id: number } | undefined;
         if (!existingMember) {
             const nextPosition = Number((db.prepare(`
                 SELECT COALESCE(MAX(position), 0) + 1 AS next
-                FROM ProviderReleaseMembers
-                WHERE provider_release_item_id = ? AND medium_position = 1
+                FROM ProviderEditionMembers
+                WHERE provider_edition_item_id = ? AND medium_position = 1
             `).get(providerReleaseItemId) as { next: number }).next);
             db.prepare(`
-                INSERT OR IGNORE INTO ProviderReleaseMembers (
-                    provider_release_item_id, member_item_id, medium_position, position,
+                INSERT OR IGNORE INTO ProviderEditionMembers (
+                    provider_edition_item_id, member_item_id, medium_position, position,
                     contextual_title
                 ) VALUES (?, ?, 1, ?, ?)
             `).run(providerReleaseItemId, providerVideoItemId, nextPosition, nullableText(input.video.title));
@@ -252,15 +252,15 @@ function loadAudioRecordingCandidatesForProviderAlbum(
               )
           ) THEN 1 ELSE 0 END AS has_live_album
         FROM ProviderItems track
-        JOIN ProviderReleaseMembers member ON member.member_item_id = track.id
+        JOIN ProviderEditionMembers member ON member.member_item_id = track.id
         JOIN ProviderItems release_item
-          ON release_item.id = member.provider_release_item_id
+          ON release_item.id = member.provider_edition_item_id
          AND release_item.entity_type = 'release'
         JOIN ProviderTrackMatches track_match
-          ON track_match.provider_release_member_id = member.id
+          ON track_match.provider_edition_member_id = member.id
          AND track_match.match_state = 'accepted'
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.id = track_match.provider_release_match_id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.id = track_match.provider_edition_match_id
          AND release_match.match_state = 'accepted'
         JOIN Recordings rec ON rec.id = track_match.recording_id
         WHERE release_item.provider = ?
@@ -277,12 +277,12 @@ function findAudioRecordingByProviderTrack(
     const row = db.prepare(`
         SELECT rec.id, rec.mbid, rec.title
         FROM ProviderItems track
-        JOIN ProviderReleaseMembers member ON member.member_item_id = track.id
+        JOIN ProviderEditionMembers member ON member.member_item_id = track.id
         JOIN ProviderTrackMatches track_match
-          ON track_match.provider_release_member_id = member.id
+          ON track_match.provider_edition_member_id = member.id
          AND track_match.match_state = 'accepted'
-        JOIN ProviderReleaseMatches release_match
-          ON release_match.id = track_match.provider_release_match_id
+        JOIN ProviderEditionMatches release_match
+          ON release_match.id = track_match.provider_edition_match_id
          AND release_match.match_state = 'accepted'
         JOIN Recordings rec ON rec.id = track_match.recording_id
         WHERE track.provider = ?
@@ -1334,23 +1334,23 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         JOIN ProviderItems provider_item
           ON provider_item.id = video_match.provider_video_item_id
         JOIN Recordings recording ON recording.id = video_match.recording_id
-        LEFT JOIN ProviderReleaseMembers release_member
+        LEFT JOIN ProviderEditionMembers release_member
           ON release_member.id = (
             -- Only an UNAMBIGUOUS membership yields a release context: one
             -- provider video may sit on several releases, and picking the
             -- lowest member id would invent one.
             SELECT candidate_member.id
-            FROM ProviderReleaseMembers candidate_member
+            FROM ProviderEditionMembers candidate_member
             WHERE candidate_member.member_item_id = provider_item.id
               AND (
-                SELECT COUNT(DISTINCT sibling.provider_release_item_id)
-                FROM ProviderReleaseMembers sibling
+                SELECT COUNT(DISTINCT sibling.provider_edition_item_id)
+                FROM ProviderEditionMembers sibling
                 WHERE sibling.member_item_id = provider_item.id
               ) = 1
             LIMIT 1
           )
         LEFT JOIN ProviderItems release_item
-          ON release_item.id = release_member.provider_release_item_id
+          ON release_item.id = release_member.provider_edition_item_id
         WHERE provider_item.entity_type = 'video'
           AND video_match.match_state = 'accepted'
           AND recording.artist_mbid = ?
@@ -1505,23 +1505,23 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
         JOIN ProviderItems provider_item
           ON provider_item.id = video_match.provider_video_item_id
         JOIN Recordings recording ON recording.id = video_match.recording_id
-        LEFT JOIN ProviderReleaseMembers release_member
+        LEFT JOIN ProviderEditionMembers release_member
           ON release_member.id = (
             -- Only an UNAMBIGUOUS membership yields a release context: one
             -- provider video may sit on several releases, and picking the
             -- lowest member id would invent one.
             SELECT candidate_member.id
-            FROM ProviderReleaseMembers candidate_member
+            FROM ProviderEditionMembers candidate_member
             WHERE candidate_member.member_item_id = provider_item.id
               AND (
-                SELECT COUNT(DISTINCT sibling.provider_release_item_id)
-                FROM ProviderReleaseMembers sibling
+                SELECT COUNT(DISTINCT sibling.provider_edition_item_id)
+                FROM ProviderEditionMembers sibling
                 WHERE sibling.member_item_id = provider_item.id
               ) = 1
             LIMIT 1
           )
         LEFT JOIN ProviderItems release_item
-          ON release_item.id = release_member.provider_release_item_id
+          ON release_item.id = release_member.provider_edition_item_id
         WHERE provider_item.entity_type = 'video'
           AND video_match.match_state = 'accepted'
           AND recording.artist_mbid = ?
