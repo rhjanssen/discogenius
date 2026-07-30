@@ -713,7 +713,11 @@ export class ImportService {
                             LIMIT 1
                         )
                     `).run(activeProvider, videoId);
-                    updateArtistDownloadStatusFromMedia(videoId);
+                    // The active provider is known here, so scope the status
+                    // recompute to it: `provider_id` alone is unique only within
+                    // (provider, entity_type), and an unscoped id can collide with
+                    // another provider's resource and invalidate the wrong artist.
+                    updateArtistDownloadStatusFromMedia(videoId, activeProvider);
 
                     dirMappings.set(path.dirname(file.path), {
                         destDir: path.dirname(expectedPath),

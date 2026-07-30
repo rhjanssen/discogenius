@@ -621,6 +621,7 @@ export class DiskScanService {
         const rows = db.prepare(`
       SELECT id, file_path, relative_path, library_root,
              provider_id AS media_id,
+             provider AS media_provider,
              canonical_release_group_mbid,
              file_type
       FROM TrackFiles
@@ -630,6 +631,7 @@ export class DiskScanService {
             file_path: string;
             relative_path: string | null;
             library_root: string;
+            media_provider: string | null;
             media_id: number | null;
             canonical_release_group_mbid: string | null;
             file_type: string;
@@ -644,7 +646,9 @@ export class DiskScanService {
         // canonically-linked row, including provider-free ones with a null
         // provider_id. Provider-only rows are covered by provider_id below.
         const affectedReleaseGroupMbids = new Set<string>();
-        const affectedMediaIds = new Set<string>();
+        // Keyed by provider + provider_id, never provider_id alone: two providers
+        // may legitimately use the same id for unrelated resources.
+        const affectedMedia = new Map<string, { mediaId: string; provider: string | null }>();
 
         for (const row of rows) {
             const resolvedPath = resolveStoredLibraryPath({
@@ -673,7 +677,9 @@ export class DiskScanService {
                 affectedReleaseGroupMbids.add(String(row.canonical_release_group_mbid));
             }
             if (row.media_id) {
-                affectedMediaIds.add(String(row.media_id));
+                const mediaId = String(row.media_id);
+                const provider = row.media_provider ?? null;
+                affectedMedia.set(`${provider ?? ""}|${mediaId}`, { mediaId, provider });
             }
         }
 
@@ -685,8 +691,8 @@ export class DiskScanService {
             flagsReset += 1;
         }
 
-        for (const mediaId of affectedMediaIds) {
-            updateArtistDownloadStatusFromMedia(mediaId);
+        for (const { mediaId, provider } of affectedMedia.values()) {
+            updateArtistDownloadStatusFromMedia(mediaId, provider);
             flagsReset += 1;
         }
 
@@ -1090,7 +1096,10 @@ export class DiskScanService {
                             }
                             updateAlbumDownloadStatus(match.albumId);
                         } else {
-                            updateArtistDownloadStatusFromMedia(match.mediaId);
+                            // matchProvider is the resolved provider identity for this
+                            // stem; pass it so the recompute cannot hit a same-id
+                            // resource belonging to a different provider.
+                            updateArtistDownloadStatusFromMedia(match.mediaId, matchProvider);
                         }
                     }
 
