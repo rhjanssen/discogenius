@@ -83,8 +83,22 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - `yarn ci` = `yarn lint && yarn typecheck && yarn test:api && yarn build`.
   ALWAYS run before tagging a release to catch tsc-only errors.
 - `docker compose up -d --build` when runtime packaging changes.
+- **Production-service tests boot the ACTIVE schema** via
+  `api/src/test-support/active-schema-fixture.ts`. `domain-v41` fixtures are only
+  for domain/schema contract tests. Getting this wrong once let an UPDATE writing
+  a non-existent column ship with a fully green suite.
+- **Judge a change by failing test NAMES, not counts.** Capture the TAP output
+  before and after and `comm` the sorted `not ok` lines; zero newly-failing is
+  the gate. `api/scripts/run-tests.mjs` retries clone-flake files in isolation
+  and APPENDS that output, so cut at the first `1..N` line before comparing or
+  you will read the retry summary as the main one.
 - Test flake: the node test-runner occasionally fails a whole file with "Unable
-  to deserialize cloned data" — rerun in isolation.
+  to deserialize cloned data" — rerun in isolation before calling it a
+  regression.
+- Renames are done one table family per commit, gated by `tsc` plus the
+  failure-name comparison. A value used as a string literal (e.g. an
+  `entity_type` CHECK) must land together with its fixture sweep — `tsc` cannot
+  see those call sites.
 
 ## Releases
 - The Docker image is published by `.github/workflows/release-dockerhub.yml`;
@@ -95,21 +109,72 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   `node .github/workflows/release/prepare-release.mjs --version x.y.z`. Commit
   `release: x.y.z`, tag `vX.Y.Z`, push.
 
+## Catalogue model — the target, not the current state
+Schema 41 is an unpublished clean start: there are **no compatibility
+migrations**, no legacy aliases, no dual writers. Where the code still diverges
+from the model below, the code is wrong and moves toward the model.
+
+**Vocabulary.** An **album** is a release group. An **edition** (album edition)
+is one specific release of it. A **provider edition** is a provider's
+album/release resource.
+
+    Albums                  album_id        our release-group entity
+    AlbumEditions           edition_id      our release entity
+    LibraryAlbums / LibraryEditions         per-library curation
+    ProviderItems           provider_edition_id / track / video / artist
+    ProviderEditionMatches / ProviderEditionMembers / ProviderTrackMatches /
+    ProviderVideoMatches / ProviderArtistMatches / ProviderArtistIgnores
+
+**MBID columns keep MusicBrainz vocabulary.** Our entities are albums and
+editions; identifiers borrowed from MusicBrainz stay `release_group_mbid` and
+`release_mbid`, so it is always obvious which side of the boundary a value came
+from. Same reason `foreign_release_id` keeps its name.
+
+**Four authorities, never mixed:**
+1. canonical MusicBrainz catalogue facts,
+2. provider-native resource/capability facts,
+3. typed provider→canonical match decisions,
+4. per-library curation / acquisition / completion.
+
+**Rules that follow from this:**
+- **`provider_id` alone is NEVER an identity.** It is unique only within
+  `(provider, entity_type)`. Carry `ProviderItems.id`, or the full triple. Every
+  ProviderItems join needs both predicates.
+- Typed match tables are the ONLY provider→canonical link. There is no
+  `ProviderItemMatches` (retired) and no MBID shadow column on `ProviderItems`.
+  A provider video with no accepted `ProviderVideoMatches` row has no canonical
+  identity, and readers must fail closed rather than invent one.
+- A track's edition context is a **`ProviderEditionMembers` occurrence** — one
+  provider track legitimately sits on several provider editions. Resolve it from
+  the acquisition plan, else a unique membership, else NULL. **Never
+  `ORDER BY … LIMIT 1`.** Where a caller has no context, answer only when all
+  relevant candidates agree; otherwise NULL.
+- **`ProviderItemAudioVariants` is SOURCE CAPABILITY**, never a local file's
+  imported quality. Read a file's own quality by probing it or from its
+  `TrackFiles` technical facts.
+- Operations report **exact row identity**. An importer says which
+  `TrackFiles.id` it produced; callers never re-find rows by `provider_id`, and
+  never position-match two lists. Missing or ambiguous identity is an error.
+- Never assume one selected edition per album.
+- **MusicBrainz / the configured catalog provider is the source of truth.**
+  Providers download media and may supplement allowed catalogue holes (cover-art
+  ids, copyright, replay gain/peak, provider URLs/availability). Provider
+  UPC/ISRC are matching evidence and live on `ProviderItems`. If a feature is
+  populated exclusively from provider data, re-source it from the catalogue or
+  remove it. Prefer integer catalogue FKs; never add provider-shadow catalogue
+  columns.
+
 ## Database rules
 - Never touch the host SQLite DB directly while the container is running. For
   ad-hoc inspection, `docker exec discogenius sh -c 'node /tmp/x.js'` opening
   better-sqlite3 with `{readonly:true, fileMustExist:true}`.
-- **MusicBrainz / the configured catalog provider is the source of truth.**
-  Providers exist only to download media and to supplement allowed catalog holes
-  (cover-art ids, copyright, replay gain/peak, provider URLs/availability), never
-  to seed a parallel catalog table. Provider UPC/barcode and ISRC are matching
-  evidence and stay on `ProviderItems`, not `Albums`/`AlbumReleases`/`Recordings`;
-  the default online catalog does not populate catalog UPC/ISRC from provider
-  data. There are no provider catalog tables: `ProviderItems` is
-  offers/availability and `ProviderItemMatches` is match evidence. If a feature
-  is populated exclusively from provider data, re-source it from the catalog or
-  remove it. Prefer integer catalog FKs for new file joins; do not add
-  provider-shadow catalog columns.
+- **Two schema definitions exist and they are not the same thing.**
+  `createBaselineSchemaV41()` in `api/src/database.ts` is what `initDatabase()`
+  builds and what production runs. `api/src/database/schema/domain-v41.ts` is the
+  aspirational CORE schema (catalogue/library only) and is contract-tested but
+  never created at runtime. The active schema converges onto the target; until it
+  has, a test proving something against `domain-v41` proves nothing about
+  production.
 
 ## Import & M4A
 - M4A stores tags fine (iTunes-style atoms).
