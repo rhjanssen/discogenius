@@ -19,6 +19,7 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
+  dbModule.db.prepare("DELETE FROM ProviderVideoMatches").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM RecordingRelations").run();
   dbModule.db.prepare("DELETE FROM LibraryReleases").run();
@@ -63,6 +64,54 @@ function seedLibrarySelection(
   `).run(library.id, release.id);
 }
 
+/**
+ * A provider video offer plus its typed edge to a canonical recording.
+ *
+ * Under schema 41 `ProviderVideoMatches` is the ONLY link between a provider
+ * video and a Recording — there is no `ProviderItems.recording_id` to stamp — so
+ * an offer without a match row is invisible to every reader. `matchState` also
+ * replaces the old `match_status` column: a rejected edge is a rejected match
+ * row, not a rejected item.
+ */
+function seedVideoOffer(fixture: {
+  provider: string;
+  providerId: string;
+  recordingId: number;
+  title?: string | null;
+  videoQuality?: string | null;
+  durationMs?: number | null;
+  releaseDate?: string | null;
+  providerUrl?: string | null;
+  availability?: string;
+  matchState?: "accepted" | "rejected" | "candidate" | "ambiguous";
+}): number {
+  const item = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (
+      provider, entity_type, provider_id, title, video_quality, duration_ms,
+      release_date, provider_url, availability
+    ) VALUES (?, 'video', ?, ?, ?, ?, ?, ?, ?)
+    RETURNING id
+  `).get(
+    fixture.provider,
+    fixture.providerId,
+    fixture.title ?? null,
+    fixture.videoQuality ?? null,
+    fixture.durationMs ?? null,
+    fixture.releaseDate ?? null,
+    fixture.providerUrl ?? null,
+    fixture.availability ?? "available",
+  ) as { id: number };
+
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, ?, 'automatic', 0.99, 'test_fixture', 1)
+  `).run(item.id, fixture.recordingId, fixture.matchState ?? "accepted");
+
+  return item.id;
+}
+
 test("video list and detail use canonical video recordings with provider offers", () => {
   const artist = dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name)
@@ -86,26 +135,52 @@ test("video list and detail use canonical video recordings with provider offers"
     RETURNING id
   `).get(artist.id) as { id: number };
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms, release_date, provider_url, availability
-    ) VALUES ('tidal', 'video', 'provider-video-1', 'Canonical Video', 215, '2024-01-02', 'https://tidal.com/browse/video/provider-video-1', 1)
-  `).run();
-
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, artist_mbid, recording_id,
-      title, quality, duration, availability, match_status
-    ) VALUES
-      ('youtube-music', 'video', 'yt-video-01', 'artist-mbid', ?,
-       'Canonical Video', NULL, 215, 1, NULL),
-      ('apple-music', 'video', 'apple-video-4k', 'artist-mbid', ?,
-       'Canonical Video', 'MP4_2160P', 215, 1, NULL),
-      ('apple-music', 'video', 'unavailable-video', 'artist-mbid', ?,
-       'Canonical Video', '4K', 215, 0, NULL),
-      ('deezer', 'video', 'rejected-video', 'artist-mbid', ?,
-       'Canonical Video', '8K', 215, 1, 'rejected')
-  `).run(recording.id, recording.id, recording.id, recording.id);
+  seedVideoOffer({
+    provider: "tidal",
+    providerId: "provider-video-1",
+    recordingId: recording.id,
+    title: "Canonical Video",
+    videoQuality: "FHD",
+    durationMs: 215_000,
+    releaseDate: "2024-01-02",
+    providerUrl: "https://tidal.com/browse/video/provider-video-1",
+  });
+  seedVideoOffer({
+    provider: "youtube-music",
+    providerId: "yt-video-01",
+    recordingId: recording.id,
+    title: "Canonical Video",
+    durationMs: 215_000,
+  });
+  seedVideoOffer({
+    provider: "apple-music",
+    providerId: "apple-video-4k",
+    recordingId: recording.id,
+    title: "Canonical Video",
+    videoQuality: "MP4_2160P",
+    durationMs: 215_000,
+  });
+  // Accepted but unavailable — readers must drop it on availability, not on match.
+  seedVideoOffer({
+    provider: "apple-music",
+    providerId: "unavailable-video",
+    recordingId: recording.id,
+    title: "Canonical Video",
+    videoQuality: "4K",
+    durationMs: 215_000,
+    availability: "unavailable",
+  });
+  // A rejected typed edge, which is how schema 41 expresses the old
+  // match_status = 'rejected'.
+  seedVideoOffer({
+    provider: "deezer",
+    providerId: "rejected-video",
+    recordingId: recording.id,
+    title: "Canonical Video",
+    videoQuality: "8K",
+    durationMs: 215_000,
+    matchState: "rejected",
+  });
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
@@ -224,11 +299,13 @@ test("video detail backfills null offer quality from TrackFiles", () => {
     RETURNING id
   `).get(artist.id) as { id: number };
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms, availability
-    ) VALUES ('tidal', 'video', '25704375', 'Pompeii', 233, 'available')
-  `).run();
+  seedVideoOffer({
+    provider: "tidal",
+    providerId: "25704375",
+    recordingId: recording.id,
+    title: "Pompeii",
+    durationMs: 233_000,
+  });
 
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
@@ -274,11 +351,12 @@ test("video downloaded state treats provider ids as provider-scoped", () => {
     ) VALUES ('shared-42', ?, 'collision-artist', 'Apple Video', 1, 'provider_only')
     RETURNING id
   `).get(artist.id) as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title
-    ) VALUES ('apple-music', 'video', '42', 'Apple Video')
-  `).run();
+  seedVideoOffer({
+    provider: "apple-music",
+    providerId: "42",
+    recordingId: recording.id,
+    title: "Apple Video",
+  });
 
   // A legacy TIDAL file with the same service-local numeric id must not mark
   // Apple's canonical video as downloaded.
@@ -625,11 +703,13 @@ test("video detail prefers provider title when recording title is Unknown Video"
     RETURNING id
   `).get(artist.id) as { id: number };
 
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, duration_ms, availability
-    ) VALUES ('tidal', 'video', 'prov-title-1', 'Happy Endings', 307, 1)
-  `).run();
+  seedVideoOffer({
+    provider: "tidal",
+    providerId: "prov-title-1",
+    recordingId: recording.id,
+    title: "Happy Endings",
+    durationMs: 307_000,
+  });
 
   const detail = videoQueryModule.getVideoDetail(String(recording.id));
   assert.equal(detail?.title, "Happy Endings");
@@ -677,11 +757,13 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
     ) VALUES (?, 'artist-mbid', 'Oblivion', 1, 'official', 'provider_only', 1)
     RETURNING id
   `).get(artist.id) as { id: number };
-  dbModule.db.prepare(`
-    INSERT INTO ProviderItems (
-      provider, entity_type, provider_id, title, provider_url
-    ) VALUES ('tidal', 'video', 'assoc-video-1', 'Oblivion', 'https://tidal.com/browse/video/assoc-video-1')
-  `).run();
+  seedVideoOffer({
+    provider: "tidal",
+    providerId: "assoc-video-1",
+    recordingId: video.id,
+    title: "Oblivion",
+    providerUrl: "https://tidal.com/browse/video/assoc-video-1",
+  });
   dbModule.db.prepare(`
     INSERT INTO RecordingRelations (
       source_recording_id, target_recording_id, relation_type, source, confidence
