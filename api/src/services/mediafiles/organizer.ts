@@ -228,6 +228,17 @@ export type OrganizeResult = {
   processedTrackIds: string[];   // Track IDs that were successfully organized
   totalTracksInStaging: number;  // How many media files were found in the download workspace
   expectedTracks?: number;       // How many tracks the album should have (for albums)
+  /**
+   * Exact operation identity: provider track id -> the TrackFiles row this
+   * organize actually created or updated for it.
+   *
+   * Callers that need to attach per-file facts (imported quality, library
+   * assignment) MUST use this rather than re-finding rows by provider_id — a
+   * provider id is unique only within (provider, entity_type), so a bulk update
+   * keyed on it can hit another provider's file, and position-zipping two lists
+   * can assign one track's quality to another's row.
+   */
+  importedTrackFileIds: Record<string, number>;
 };
 
 type OrganizerArtistContext = {
@@ -537,7 +548,7 @@ export class OrganizerService {
       LEFT JOIN quality_profiles quality_profile
         ON quality_profile.id = library.quality_profile_id
       WHERE pi.provider = ?
-        AND pi.entity_type IN ('release', 'album')
+        AND pi.entity_type = 'release'
         AND pi.provider_id = ?
         AND (? = '' OR rg.mbid = ?)
         AND (? = '' OR selected_release.mbid = ?)
@@ -1836,18 +1847,60 @@ export class OrganizerService {
         await RefreshAlbumService.refreshMetadata(albumIdVal, { provider: streamingProviderId });
       }
 
+      // Provider-native facts for the release, plus the canonical identity its
+      // accepted matches AGREE on. There is no entity_type = 'album' any more,
+      // and no MBID shadow columns: one provider release can be accepted against
+      // several canonical releases (edition supersets), so a disagreement yields
+      // NULL and the job's own plan MBIDs below decide instead. `ORDER BY
+      // updated_at LIMIT 1` would have silently bound the wrong release.
       const album = db.prepare(`
         SELECT
-          artist_mbid AS artist_id,
-          release_group_mbid AS mb_release_group_id,
-          release_mbid AS mbid,
-          quality,
-          NULL AS num_volumes
-        FROM ProviderItems
-        WHERE provider = ?
-          AND entity_type = 'album'
-          AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        ORDER BY updated_at DESC
+          (
+            SELECT CASE WHEN COUNT(DISTINCT agreed_group.mbid) = 1 THEN MAX(agreed_group.artist_mbid) END
+            FROM ProviderReleaseMatches agreed_match
+            JOIN AlbumReleases agreed_release ON agreed_release.id = agreed_match.release_id
+            JOIN Albums agreed_group ON agreed_group.id = agreed_release.release_group_id
+            WHERE agreed_match.provider_release_item_id = release_item.id
+              AND agreed_match.match_state = 'accepted'
+          ) AS artist_id,
+          (
+            SELECT CASE WHEN COUNT(DISTINCT agreed_group.mbid) = 1 THEN MAX(agreed_group.mbid) END
+            FROM ProviderReleaseMatches agreed_match
+            JOIN AlbumReleases agreed_release ON agreed_release.id = agreed_match.release_id
+            JOIN Albums agreed_group ON agreed_group.id = agreed_release.release_group_id
+            WHERE agreed_match.provider_release_item_id = release_item.id
+              AND agreed_match.match_state = 'accepted'
+          ) AS mb_release_group_id,
+          (
+            SELECT CASE WHEN COUNT(DISTINCT agreed_release.mbid) = 1 THEN MAX(agreed_release.mbid) END
+            FROM ProviderReleaseMatches agreed_match
+            JOIN AlbumReleases agreed_release ON agreed_release.id = agreed_match.release_id
+            WHERE agreed_match.provider_release_item_id = release_item.id
+              AND agreed_match.match_state = 'accepted'
+          ) AS mbid,
+          (
+            SELECT variant.provider_quality_label
+            FROM ProviderReleaseMembers release_member
+            JOIN ProviderItemAudioVariants variant
+              ON variant.provider_item_id = release_member.member_item_id
+            WHERE release_member.provider_release_item_id = release_item.id
+              AND variant.availability NOT IN ('unavailable', 'restricted')
+              AND variant.provider_quality_label IS NOT NULL
+            ORDER BY
+              CASE variant.quality_class
+                WHEN 'spatial' THEN 0
+                WHEN 'hires-lossless' THEN 1
+                WHEN 'lossless' THEN 2
+                ELSE 3
+              END,
+              variant.id DESC
+            LIMIT 1
+          ) AS quality,
+          release_item.volume_count AS num_volumes
+        FROM ProviderItems release_item
+        WHERE release_item.provider = ?
+          AND release_item.entity_type = 'release'
+          AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
         LIMIT 1
       `).get(streamingProviderId, albumIds[0]) as any;
       if (!album) throw new Error(`Album ${albumIds[0]} offer not found in ProviderItems after scan`);
@@ -1980,6 +2033,8 @@ export class OrganizerService {
       const renderedTrackDirs: string[] = [];
       const destFiles: Array<{ trackId: string; destFile: string; ext: string }> = [];
       const importedStereoTrackFileIds: number[] = [];
+      // provider track id -> exact TrackFiles row created/updated for it.
+      const importedTrackFileIds: Record<string, number> = {};
       let sampleRelativeTrackPath: string | null = null;
       const processedEmbeddedVideoIds = new Set<string>();
       const albumTrackNamingTemplate = path.join(artistFolder, trackTemplate);
@@ -2339,6 +2394,9 @@ export class OrganizerService {
         }
 
         destFiles.push({ trackId, destFile, ext });
+        if (importedTrackFileId != null) {
+          importedTrackFileIds[String(trackId)] = importedTrackFileId;
+        }
         if (
           importedTrackFileId != null
           && (canonicalIdentity.librarySlot ?? (isSpatial ? "spatial" : "stereo")) === "stereo"
@@ -2598,6 +2656,7 @@ export class OrganizerService {
         processedTrackIds: [...destFiles.map((file) => file.trackId), ...bundledVideoIds],
         totalTracksInStaging: files.length,
         expectedTracks,
+        importedTrackFileIds,
       };
     }
 
@@ -3143,6 +3202,9 @@ export class OrganizerService {
         providerId,
         processedTrackIds: [providerId],
         totalTracksInStaging: 1,
+        importedTrackFileIds: importedTrackFileId != null
+          ? { [String(providerId)]: importedTrackFileId }
+          : {},
       };
     }
 
@@ -3344,6 +3406,7 @@ export class OrganizerService {
           providerId,
           processedTrackIds: [],
           totalTracksInStaging: 1,
+          importedTrackFileIds: {},
         };
       }
       this.ensureDir(path.dirname(dest));
@@ -3477,6 +3540,9 @@ export class OrganizerService {
         providerId,
         processedTrackIds: [providerId],
         totalTracksInStaging: 1,
+        // Video quality is persisted by the video import path itself; audio
+        // imported-quality reconciliation does not apply here.
+        importedTrackFileIds: {},
       };
     }
 

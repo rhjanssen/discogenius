@@ -216,7 +216,7 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
           ON plan.id = source.plan_id
          AND plan.state = 'current'
         WHERE provider_release.provider = ?
-          AND provider_release.entity_type IN ('release', 'album')
+          AND provider_release.entity_type = 'release'
           AND (release_group.mbid = ? OR release.mbid = ?)
         ORDER BY
           CASE WHEN plan.id IS NOT NULL THEN 0 ELSE 1 END,

@@ -16,15 +16,28 @@ function isImportDownloadJob(job: CommandModel): job is CommandModel & { type: t
     return job.name === CommandNames.ImportDownload;
 }
 
-export function getExistingLibraryMediaIds(
+export type ExistingLibraryFile = {
+    /** Exact TrackFiles row — the operation identity recovery must report. */
+    trackFileId: number;
+    /** Canonical media id (Tracks.id for audio, Recordings.id for video). */
+    mediaId: string;
+};
+
+/**
+ * Files already present in the library for this provider resource, with the
+ * exact TrackFiles row for each. Callers that attach per-file facts need the row
+ * id, not just the media id.
+ */
+export function getExistingLibraryFiles(
     type: DownloadMediaType,
     providerId: string,
     provider?: string | null,
-): string[] {
+): ExistingLibraryFile[] {
     const normalizedProvider = String(provider || "").trim() || null;
     const rows = type === 'album'
         ? db.prepare(`
                 SELECT
+                    lf.id AS track_file_id,
                     lf.file_path,
                     lf.library_root,
                     CAST(lf.track_id AS TEXT) AS media_id
@@ -41,16 +54,17 @@ export function getExistingLibraryMediaIds(
                  AND lf.track_id = track.id
                  AND lf.file_class = 'audio'
                 WHERE provider_release.provider_id = ?
-                  AND provider_release.entity_type IN ('release', 'album')
+                  AND provider_release.entity_type = 'release'
                   AND (? IS NULL OR provider_release.provider = ?)
             `).all(
                 providerId,
                 normalizedProvider,
                 normalizedProvider,
-            ) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>
+            ) as Array<{ track_file_id: number; file_path: string; library_root: string; media_id: string | number | null }>
         : type === 'track'
           ? db.prepare(`
                 SELECT
+                    lf.id AS track_file_id,
                     lf.file_path,
                     lf.library_root,
                     CAST(lf.track_id AS TEXT) AS media_id
@@ -70,9 +84,10 @@ export function getExistingLibraryMediaIds(
                 providerId,
                 normalizedProvider,
                 normalizedProvider,
-            ) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>
+            ) as Array<{ track_file_id: number; file_path: string; library_root: string; media_id: string | number | null }>
           : db.prepare(`
                 SELECT
+                    lf.id AS track_file_id,
                     lf.file_path,
                     lf.library_root,
                     CAST(lf.recording_id AS TEXT) AS media_id
@@ -90,7 +105,7 @@ export function getExistingLibraryMediaIds(
                 providerId,
                 normalizedProvider,
                 normalizedProvider,
-            ) as Array<{ file_path: string; library_root: string; media_id: string | number | null }>;
+            ) as Array<{ track_file_id: number; file_path: string; library_root: string; media_id: string | number | null }>;
 
     return rows
         .filter((row) => {
@@ -100,8 +115,17 @@ export function getExistingLibraryMediaIds(
             });
             return fs.existsSync(resolvedPath);
         })
-        .map((row) => String(row.media_id || ""))
-        .filter(Boolean);
+        .map((row) => ({ trackFileId: Number(row.track_file_id), mediaId: String(row.media_id || "") }))
+        .filter((entry) => Boolean(entry.mediaId) && Number.isInteger(entry.trackFileId));
+}
+
+/** Media ids only, for callers that just need presence or a count. */
+export function getExistingLibraryMediaIds(
+    type: DownloadMediaType,
+    providerId: string,
+    provider?: string | null,
+): string[] {
+    return getExistingLibraryFiles(type, providerId, provider).map((entry) => entry.mediaId);
 }
 
 export function shouldQueueRedownloadForFailedImport(job: CommandModel): boolean {

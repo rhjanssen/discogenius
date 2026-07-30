@@ -9,7 +9,7 @@ import {
 import { AudioTagService } from "./audio-tag-service.js";
 import { VideoTagService } from "./video-tag-service.js";
 import { getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
-import { getExistingLibraryMediaIds } from "../download/download-recovery.js";
+import { getExistingLibraryFiles } from "../download/download-recovery.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import {type CommandModelOf} from "../commands/command-model.js";
 import {CommandNames} from "../commands/command-names.js";
@@ -206,49 +206,108 @@ async function prepareWorkspaceForLibraryProfile(
     return outcomes;
 }
 
-function persistPreparedImportQuality(
+/**
+ * Attach each prepared quality decision to the exact TrackFiles row the organize
+ * produced for that provider track.
+ *
+ * The previous version updated `WHERE provider_id = ?` with no provider and no
+ * entity type, so a colliding id from another provider could be rewritten, and
+ * `library_id IS NULL` let it adopt an arbitrary unassigned legacy row. Worse, an
+ * outcome whose key did not match a processed id fell through to a POSITIONAL
+ * fallback that zipped the two lists by index — silently stamping one track's
+ * quality onto another track's file whenever the counts happened to agree.
+ *
+ * Both are gone. Every decision is applied by row id, the row is verified to be
+ * the audio track file this operation touched, and anything unresolved or
+ * ambiguous throws instead of guessing.
+ */
+export function persistPreparedImportQuality(
     libraryId: number,
     outcomes: ReadonlyMap<string, PreparedImportQuality>,
-    processedTrackIds: readonly string[],
+    organizeResult: OrganizeResult,
+    provider: string | null,
 ): void {
+    const importedTrackFileIds = organizeResult.importedTrackFileIds ?? {};
+    const processed = new Set(organizeResult.processedTrackIds.map(String));
+
+    // Every decision must name a track this operation actually organized.
+    const orphanKeys = [...outcomes.keys()].filter((key) => !processed.has(String(key)));
+    if (orphanKeys.length > 0) {
+        throw new Error(
+            `[ImportDownload] Prepared quality decisions reference ${orphanKeys.length} track(s) that were not organized: ${orphanKeys.join(", ")}`,
+        );
+    }
+
+    // ...and must resolve to exactly one TrackFiles row.
+    const missingRows = [...outcomes.keys()].filter((key) => importedTrackFileIds[String(key)] == null);
+    if (missingRows.length > 0) {
+        throw new Error(
+            `[ImportDownload] No imported TrackFiles row reported for ${missingRows.length} track(s) with prepared quality: ${missingRows.join(", ")}`,
+        );
+    }
+
+    const distinctRowIds = new Set(
+        [...outcomes.keys()].map((key) => importedTrackFileIds[String(key)]),
+    );
+    if (distinctRowIds.size !== outcomes.size) {
+        throw new Error(
+            `[ImportDownload] ${outcomes.size} prepared quality decision(s) map onto only ${distinctRowIds.size} distinct TrackFiles row(s); refusing to guess`,
+        );
+    }
+
+    // Provider identity is still checked on the row itself: the reported id must
+    // belong to this provider's track file, not merely exist.
+    const loadRow = db.prepare(`
+        SELECT id, provider, provider_entity_type, file_type, library_id
+        FROM TrackFiles
+        WHERE id = ?
+    `);
     const update = db.prepare(`
         UPDATE TrackFiles
         SET
-          library_id = ?,
+          library_id = @libraryId,
           file_class = 'audio',
-          source_quality = ?,
-          imported_quality = ?
-        WHERE provider_id = ?
-          AND file_type = 'track'
-          AND (library_id IS NULL OR library_id = ?)
+          source_quality = @sourceQuality,
+          imported_quality = @importedQuality
+        WHERE id = @fileId
     `);
-    const resolved = new Map<string, PreparedImportQuality>();
-    const unused = [...outcomes.entries()];
-    for (const providerId of processedTrackIds) {
-        const direct = outcomes.get(String(providerId));
-        if (direct) {
-            resolved.set(String(providerId), direct);
-            const index = unused.findIndex(([key]) => key === String(providerId));
-            if (index >= 0) unused.splice(index, 1);
-        }
-    }
-    const unmatchedProviderIds = processedTrackIds
-        .map(String)
-        .filter((providerId) => !resolved.has(providerId));
-    if (unmatchedProviderIds.length === unused.length) {
-        unmatchedProviderIds.forEach((providerId, index) => {
-            resolved.set(providerId, unused[index][1]);
-        });
-    }
+
     db.transaction(() => {
-        for (const [providerId, outcome] of resolved) {
-            update.run(
+        for (const [providerTrackId, outcome] of outcomes) {
+            const fileId = importedTrackFileIds[String(providerTrackId)];
+            const row = loadRow.get(fileId) as {
+                id: number;
+                provider: string | null;
+                provider_entity_type: string | null;
+                file_type: string | null;
+                library_id: number | null;
+            } | undefined;
+            if (!row) {
+                throw new Error(
+                    `[ImportDownload] Reported TrackFiles row ${fileId} for track ${providerTrackId} does not exist`,
+                );
+            }
+            if (row.file_type !== "track") {
+                throw new Error(
+                    `[ImportDownload] Reported TrackFiles row ${fileId} for track ${providerTrackId} is a ${row.file_type ?? "null"} file, not a track`,
+                );
+            }
+            if (provider && row.provider && row.provider !== provider) {
+                throw new Error(
+                    `[ImportDownload] Reported TrackFiles row ${fileId} belongs to provider ${row.provider}, not ${provider}`,
+                );
+            }
+            if (row.library_id != null && row.library_id !== libraryId) {
+                throw new Error(
+                    `[ImportDownload] Reported TrackFiles row ${fileId} already belongs to library ${row.library_id}, not ${libraryId}`,
+                );
+            }
+            update.run({
                 libraryId,
-                outcome.sourceQuality,
-                outcome.importedQuality,
-                providerId,
-                libraryId,
-            );
+                sourceQuality: outcome.sourceQuality,
+                importedQuality: outcome.importedQuality,
+                fileId,
+            });
         }
     })();
 }
@@ -258,18 +317,26 @@ function recoverExistingLibraryImport(
     providerId: string,
     provider?: string | null,
 ): OrganizeResult | null {
-    const recoveredMediaIds = getExistingLibraryMediaIds(type as any, providerId, provider);
-    if (recoveredMediaIds.length === 0) {
+    const recovered = getExistingLibraryFiles(type as any, providerId, provider);
+    if (recovered.length === 0) {
         return null;
     }
 
-    const expectedTracks = resolveExpectedRecoveredTracks(type, providerId, recoveredMediaIds.length, provider);
+    // Recovery reports the SAME exact operation identity a fresh organize would,
+    // so downstream per-file writes never fall back to id-shaped guessing.
+    const importedTrackFileIds: Record<string, number> = {};
+    for (const entry of recovered) {
+        importedTrackFileIds[entry.mediaId] = entry.trackFileId;
+    }
+
+    const expectedTracks = resolveExpectedRecoveredTracks(type, providerId, recovered.length, provider);
     return {
         type,
         providerId,
-        processedTrackIds: recoveredMediaIds,
-        totalTracksInStaging: recoveredMediaIds.length,
+        processedTrackIds: recovered.map((entry) => entry.mediaId),
+        totalTracksInStaging: recovered.length,
         expectedTracks,
+        importedTrackFileIds,
     } as OrganizeResult;
 }
 
@@ -392,12 +459,105 @@ function resolveExpectedRecoveredTracks(
     return Number(row?.count || fallbackCount);
 }
 
-function reconcileImportedDownload(
+/** The job's own canonical context, when the acquisition plan supplied one. */
+type ImportReconcileContext = {
+    releaseGroupMbid?: string | null;
+    releaseMbid?: string | null;
+};
+
+/**
+ * The release group this job belongs to, from the job's OWN canonical context.
+ *
+ * The plan already decided which release group it was acquiring, so prefer that
+ * over re-deriving it from provider matches. `releaseMbid` is resolved to its
+ * group; a release MBID that is not in the catalogue yields null rather than a
+ * guess.
+ */
+export function releaseGroupMbidFromJobContext(context: ImportReconcileContext): string | null {
+    const explicitGroup = String(context.releaseGroupMbid || "").trim();
+    if (explicitGroup) {
+        return explicitGroup;
+    }
+    const explicitRelease = String(context.releaseMbid || "").trim();
+    if (!explicitRelease) {
+        return null;
+    }
+    const row = db.prepare(`
+        SELECT release_group.mbid AS release_group_mbid
+        FROM AlbumReleases release
+        JOIN Albums release_group ON release_group.id = release.release_group_id
+        WHERE release.mbid = ?
+        LIMIT 1
+    `).get(explicitRelease) as { release_group_mbid?: string | null } | undefined;
+    return row?.release_group_mbid ?? null;
+}
+
+/**
+ * The release group implied by a provider RELEASE's accepted matches, returned
+ * only when every one of them agrees.
+ *
+ * One provider release can be accepted against several canonical releases (an
+ * edition superset), and `ORDER BY confidence LIMIT 1` would silently pick a
+ * winner — reconciling download state onto the wrong album. Disagreement yields
+ * null so the caller falls back to something it can justify.
+ */
+function agreedReleaseGroupMbidForProviderRelease(
+    providerId: string,
+    provider: string | null,
+): string | null {
+    const row = db.prepare(`
+        SELECT CASE
+            WHEN COUNT(DISTINCT release_group.mbid) = 1 THEN MAX(release_group.mbid)
+        END AS release_group_mbid
+        FROM ProviderItems provider_release
+        JOIN ProviderReleaseMatches release_match
+          ON release_match.provider_release_item_id = provider_release.id
+         AND release_match.match_state = 'accepted'
+        JOIN AlbumReleases release
+          ON release.id = release_match.release_id
+        JOIN Albums release_group
+          ON release_group.id = release.release_group_id
+        WHERE provider_release.entity_type = 'release'
+          AND CAST(provider_release.provider_id AS TEXT) = CAST(? AS TEXT)
+          AND (? IS NULL OR provider_release.provider = ?)
+    `).get(providerId, provider, provider) as { release_group_mbid?: string | null } | undefined;
+    return row?.release_group_mbid ?? null;
+}
+
+/** Same agree-or-null rule for a provider TRACK, via its typed track edges. */
+function agreedReleaseGroupMbidForProviderTrack(
+    providerId: string,
+    provider: string | null,
+): string | null {
+    const row = db.prepare(`
+        SELECT CASE
+            WHEN COUNT(DISTINCT release_group.mbid) = 1 THEN MAX(release_group.mbid)
+        END AS release_group_mbid
+        FROM ProviderItems provider_track
+        JOIN ProviderReleaseMembers member
+          ON member.member_item_id = provider_track.id
+        JOIN ProviderTrackMatches track_match
+          ON track_match.provider_release_member_id = member.id
+         AND track_match.match_state = 'accepted'
+        JOIN Tracks track ON track.id = track_match.track_id
+        JOIN AlbumReleases release ON release.id = track.album_release_id
+        JOIN Albums release_group ON release_group.id = release.release_group_id
+        WHERE CAST(provider_track.provider_id AS TEXT) = CAST(? AS TEXT)
+          AND provider_track.entity_type = 'track'
+          AND (? IS NULL OR provider_track.provider = ?)
+    `).get(providerId, provider, provider) as { release_group_mbid?: string | null } | undefined;
+    return row?.release_group_mbid ?? null;
+}
+
+export function reconcileImportedDownload(
     type: string,
     providerId: string,
     organizeResult: OrganizeResult,
     provider?: string | null,
+    context: ImportReconcileContext = {},
 ) {
+    const normalizedProvider = provider || null;
+
     if (type === "album") {
         const processedIds = organizeResult.processedTrackIds;
         if (processedIds.length === 0) {
@@ -409,60 +569,29 @@ function reconcileImportedDownload(
             console.warn(`[ImportDownload] Album ${providerId}: only ${processedIds.length}/${expected} tracks were imported. Partial download.`);
         }
 
-        const row = db.prepare(`
-            SELECT release_group.mbid AS release_group_mbid
-            FROM ProviderItems provider_release
-            JOIN ProviderReleaseMatches release_match
-              ON release_match.provider_release_item_id = provider_release.id
-             AND release_match.match_state = 'accepted'
-            JOIN AlbumReleases release
-              ON release.id = release_match.release_id
-            JOIN Albums release_group
-              ON release_group.id = release.release_group_id
-            WHERE provider_release.entity_type IN ('release', 'album')
-              AND provider_release.provider_id = ?
-              AND (? IS NULL OR provider_release.provider = ?)
-            ORDER BY
-              CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
-              release_match.confidence DESC,
-              release_match.id
-            LIMIT 1
-        `).get(providerId, provider || null, provider || null) as {
-            release_group_mbid?: string | null;
-        } | undefined;
-        updateAlbumDownloadStatus(String(row?.release_group_mbid || providerId));
+        const releaseGroupMbid = releaseGroupMbidFromJobContext(context)
+            ?? agreedReleaseGroupMbidForProviderRelease(providerId, normalizedProvider);
+        if (releaseGroupMbid) {
+            updateAlbumDownloadStatus(releaseGroupMbid);
+        } else {
+            // No canonical group we can name. Recompute from the provider resource
+            // instead of invalidating whatever album happens to share this id.
+            updateArtistDownloadStatusFromMedia(String(providerId), normalizedProvider);
+        }
         return;
     }
 
     if (type === "video") {
-        updateArtistDownloadStatusFromMedia(String(providerId), provider);
+        updateArtistDownloadStatusFromMedia(String(providerId), normalizedProvider);
         return;
     }
 
-    const row = db.prepare(`
-        SELECT release_group.mbid AS release_group_mbid
-        FROM ProviderItems provider_track
-        JOIN ProviderReleaseMembers member
-          ON member.member_item_id = provider_track.id
-        JOIN ProviderTrackMatches track_match
-          ON track_match.provider_release_member_id = member.id
-         AND track_match.match_state = 'accepted'
-        JOIN Tracks track ON track.id = track_match.track_id
-        JOIN AlbumReleases release ON release.id = track.album_release_id
-        JOIN Albums release_group ON release_group.id = release.release_group_id
-        WHERE provider_track.provider_id = ?
-          AND provider_track.entity_type = 'track'
-          AND (? IS NULL OR provider_track.provider = ?)
-        ORDER BY
-          CASE WHEN track_match.decision_source = 'manual' THEN 0 ELSE 1 END,
-          track_match.confidence DESC,
-          track_match.id
-        LIMIT 1
-    `).get(providerId, provider || null, provider || null) as { release_group_mbid?: string | null } | undefined;
-    if (row?.release_group_mbid) {
-        updateAlbumDownloadStatus(row.release_group_mbid);
+    const releaseGroupMbid = releaseGroupMbidFromJobContext(context)
+        ?? agreedReleaseGroupMbidForProviderTrack(providerId, normalizedProvider);
+    if (releaseGroupMbid) {
+        updateAlbumDownloadStatus(releaseGroupMbid);
     } else {
-        updateArtistDownloadStatusFromMedia(String(providerId), provider);
+        updateArtistDownloadStatusFromMedia(String(providerId), normalizedProvider);
     }
 }
 
@@ -611,7 +740,8 @@ export class DownloadedTracksImportService {
             persistPreparedImportQuality(
                 job.payload.libraryId,
                 preparedImportQuality,
-                organizeResult.processedTrackIds,
+                organizeResult,
+                provider,
             );
         }
 
@@ -624,7 +754,10 @@ export class DownloadedTracksImportService {
             state: "importing",
         });
 
-        reconcileImportedDownload(type, providerId, organizeResult, provider);
+        reconcileImportedDownload(type, providerId, organizeResult, provider, {
+            releaseGroupMbid: job.payload.releaseGroupMbid || null,
+            releaseMbid: job.payload.releaseMbid || null,
+        });
         cancellationCheckpoint("after reconciling library state");
 
         const affectedArtistId = resolveAffectedArtistId(type, providerId, provider);
