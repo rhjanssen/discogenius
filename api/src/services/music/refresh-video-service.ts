@@ -1307,12 +1307,27 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
             provider_item.provider,
             provider_item.provider_id,
             release_item.provider_id AS provider_album_id,
-            recording.mbid AS recording_mbid,
+            -- The attached recording's MBID is deliberately NOT selected. It is the
+            -- attachment under review, never evidence about the provider offer, and
+            -- having it in scope is what previously let it leak into both the
+            -- revalidation input and the repaired match's identity.
             provider_item.title,
             provider_item.duration_ms / 1000.0 AS duration,
             provider_item.release_date,
             provider_item.provider_url,
             COALESCE(provider_item.cover_id, provider_item.artwork_url) AS asset_id,
+            provider_item.video_quality,
+            (
+              -- Provider-native credited artist name, so the repaired identity's
+              -- fingerprint fallback is a real provider fact rather than an empty
+              -- artist component.
+              SELECT credit.credited_name
+              FROM ProviderItemCredits credit
+              WHERE credit.item_id = provider_item.id
+              ORDER BY CASE credit.normalized_role WHEN 'primary' THEN 0 ELSE 1 END,
+                       credit.ordinal
+              LIMIT 1
+            ) AS artist_name,
             video_match.recording_id,
             recording.artist_mbid
         FROM ProviderVideoMatches video_match
@@ -1344,12 +1359,13 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         provider: string;
         provider_id: string;
         provider_album_id: string | null;
-        recording_mbid: string | null;
         title: string | null;
         duration: number | null;
         release_date: string | null;
         provider_url: string | null;
         asset_id: string | null;
+        video_quality: string | null;
+        artist_name: string | null;
         recording_id: number;
         artist_mbid: string | null;
     }>;
@@ -1395,7 +1411,7 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
             continue;
         }
         // Deliberately do NOT pass the currently attached recording's MBID as
-        // the offer's own claim. `row.recording_mbid` is the attachment under
+        // the offer's own claim. That MBID is the attachment under
         // review, and feeding it back in takes ensureProviderVideoRecording's
         // MusicBrainz short-circuit, which returns that same recording and skips
         // revalidation entirely — so an overmerged lyric/live cut could never be
@@ -1407,11 +1423,13 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
                 provider_id: row.provider_id,
                 album_id: row.provider_album_id,
                 artist_mbid: row.artist_mbid,
+                artist_name: row.artist_name,
                 title: row.title,
                 duration: row.duration,
                 release_date: row.release_date,
                 url: row.provider_url,
                 image_id: row.asset_id,
+                quality: row.video_quality,
             },
             artistMbid: row.artist_mbid ?? artistMbid,
             existingRecordingId: row.recording_id,
@@ -1423,23 +1441,43 @@ function repairProviderVideoRecordingAssignments(artistMbid: string): number {
         copyAudioRelations.run(targetRecordingId, targetRecordingId, row.recording_id);
         inheritMonitoredState.run(row.recording_id, targetRecordingId);
         updateTrackFiles.run(targetRecordingId, targetRecordingId, row.provider, row.provider_id);
+        // Provider-native facts ONLY. The old attached recording's MBID is the
+        // attachment this sweep just decided against, so it must not reappear here:
+        // buildVideoIdentity
+        // short-circuits on a recording MBID and would stamp the new accepted edge
+        // with `mb-recording:<old mbid>` at 0.98 confidence — provenance claiming the
+        // very recording the offer was split off from. The repaired edge is justified
+        // by the offer's own URL, or by its title/artist/duration fingerprint.
         const repairedVideo = {
             provider: row.provider,
             provider_id: row.provider_id,
             album_id: row.provider_album_id,
-            recording_mbid: row.recording_mbid,
             artist_mbid: row.artist_mbid,
+            artist_name: row.artist_name,
             title: row.title,
             duration: row.duration,
             release_date: row.release_date,
             url: row.provider_url,
             image_id: row.asset_id,
+            quality: row.video_quality,
         };
+        const repairedIdentity = buildVideoIdentity(repairedVideo);
         persistNormalizedProviderVideo({
             video: repairedVideo,
             provider: row.provider,
             recordingId: targetRecordingId,
-            identity: buildVideoIdentity(repairedVideo),
+            identity: {
+                ...repairedIdentity,
+                evidence: {
+                    ...repairedIdentity.evidence,
+                    // Cut class parsed from the offer's own title, and the provider's
+                    // own quality label — both provider-native, and the variant is what
+                    // separates a lyric/live cut from the official one.
+                    providerVideoVariant: parseVideoVariant(row.title),
+                    providerVideoQuality: nullableText(row.video_quality),
+                    repairedFromRecordingId: row.recording_id,
+                },
+            },
         });
         repaired += 1;
     }

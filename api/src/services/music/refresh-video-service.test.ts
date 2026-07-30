@@ -513,6 +513,74 @@ test("refresh repairs legacy canonical overmerges across providers", () => {
   assert.ok(repairedVariants.every((recording) => recording.monitored === 1));
 });
 
+test("a repaired video match is justified by provider facts, never the recording it was split from", () => {
+  const canonical = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      foreign_recording_id, mbid, artist_mbid, title, length_ms,
+      is_video, metadata_status, monitored
+    ) VALUES (
+      'mb-video-things', 'mb-video-things', 'artist-mbid', 'Things We Lost In The Fire', 245000,
+      1, 'musicbrainz', 1
+    )
+    RETURNING id
+  `).get() as { id: number };
+
+  // Overmerged: a lyric cut 30s short of the official one shares the canonical
+  // MusicBrainz recording, and carries a real provider URL.
+  const { providerVideoItemId: lyricItemId } = seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "apple-music",
+    providerVideoId: "apple-things-lyric",
+    recordingId: canonical.id,
+    title: "Things We Lost In The Fire (Lyric Video)",
+    durationMs: 215_000,
+    availability: "available",
+  });
+  dbModule.db.prepare(`
+    UPDATE ProviderItems SET provider_url = ?, video_quality = ? WHERE id = ?
+  `).run("https://music.apple.com/video/things-lyric", "1080p", lyricItemId);
+
+  refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
+    provider: "apple-music",
+    provider_id: "apple-things-official",
+    title: "Things We Lost In The Fire",
+    artist_name: "Bastille",
+    duration: 245,
+  }]);
+
+  const repaired = dbModule.db.prepare(`
+    SELECT vm.recording_id AS recordingId, vm.method, vm.confidence, vm.evidence
+    FROM ProviderVideoMatches vm
+    JOIN ProviderItems pi ON pi.id = vm.provider_video_item_id
+    WHERE pi.provider = 'apple-music'
+      AND pi.provider_id = 'apple-things-lyric'
+      AND vm.match_state = 'accepted'
+  `).get() as { recordingId: number; method: string; confidence: number; evidence: string | null };
+
+  // It was split off the canonical recording...
+  assert.notEqual(repaired.recordingId, canonical.id);
+
+  // ...so nothing about the new edge may cite that recording as its own claim.
+  const evidence = JSON.parse(repaired.evidence || "{}") as Record<string, unknown>;
+  assert.notEqual(repaired.method, "external_id");
+  assert.notEqual(evidence.identityMethod, "musicbrainz-recording");
+  assert.equal(evidence.recordingMbid, undefined);
+  assert.ok(
+    !String(evidence.identityKey || "").startsWith("mb-recording:"),
+    `identityKey must not claim a MusicBrainz recording, got ${String(evidence.identityKey)}`,
+  );
+  assert.ok(
+    !JSON.stringify(evidence).includes("mb-video-things"),
+    "the split-from recording's MBID must not appear anywhere in the repaired evidence",
+  );
+
+  // The identity that IS recorded comes from the offer's own provider facts.
+  assert.equal(evidence.identityKey, "url:music.apple.com/video/things-lyric");
+  assert.equal(evidence.identityMethod, "provider-url");
+  assert.equal(repaired.confidence, 0.9);
+  assert.equal(evidence.providerVideoVariant, "lyric");
+  assert.equal(evidence.providerVideoQuality, "1080p");
+});
+
 test("a parenthetical qualifier one provider omits still dedupes when durations agree", () => {
   refreshVideoModule.RefreshVideoService.upsertArtistVideos("provider-artist-1", [{
     provider: "tidal",
