@@ -51,7 +51,7 @@ export class ManualImportService {
         const { Config } = await import("../config/config.js");
         const { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord } = await import("../config/naming.js");
         const { resolveArtistFolderForPersistence } = await import("../music/artist-paths.js");
-        const { calculateFingerprint } = await import("./audioUtils.js");
+        const { calculateFingerprint, parseAudioFile, deriveQuality, deriveVideoQuality } = await import("./audioUtils.js");
         const { isSpatialAudioQuality } = await import("../../utils/spatial-audio.js");
         const { resolveLibraryFileIdentity } = await import("./library-file-identity.js");
         const { resolveCanonicalTrackPosition } = await import("../metadata/canonical-track-position.js");
@@ -76,7 +76,9 @@ export class ManualImportService {
             stats: fs.Stats;
             extension: string;
             libraryRootKey: string;
-            quality: string;
+            /** Derived from probedMetrics — the file's own quality, not the provider's. */
+            quality: string | null;
+            probedMetrics: Awaited<ReturnType<typeof parseAudioFile>>;
             rootPath: string;
             expectedPath: string;
             relativePath: string;
@@ -300,6 +302,14 @@ export class ManualImportService {
 
                 const stats = fs.statSync(file.file_path);
 
+                // A manually imported file is the user's OWN existing file, so its
+                // quality is a property of the bytes on disk. Probe them. The
+                // provider's `quality` describes what the provider could serve —
+                // source capability / provenance — and defaulting an unclassified
+                // file to LOSSLESS made a 128kbit MP3 claim lossless, which then
+                // suppressed every future upgrade for it.
+                const probedMetrics = await parseAudioFile(file.file_path);
+
                 // Compute paths and naming
                 const storedLibraryRoot = String(file.library_root || "");
                 const libraryRootKey = (() => {
@@ -312,7 +322,9 @@ export class ManualImportService {
                     return isVideo ? "videos" : "music";
                 })();
 
-                const quality = trackData.quality || (isVideo ? null : "LOSSLESS");
+                const quality = isVideo
+                    ? deriveVideoQuality(probedMetrics)
+                    : deriveQuality(extension, probedMetrics);
                 const artistFolder = resolveArtistFolderFromRecord({
                     name: artistRow?.name || trackData.artist?.name || trackData.artist_name || "Unknown Artist",
                     mbid: artistRow?.mbid || null,
@@ -404,6 +416,7 @@ export class ManualImportService {
                     extension,
                     libraryRootKey,
                     quality,
+                    probedMetrics,
                     rootPath,
                     expectedPath,
                     relativePath,
@@ -574,7 +587,9 @@ export class ManualImportService {
                             provider, provider_entity_type, provider_id, library_slot,
                             file_path, relative_path, library_root,
                             filename, extension, file_size, duration,
-                            file_type, quality, needs_rename,
+                            file_type, quality, imported_quality, needs_rename,
+                            bitrate, sample_rate, bit_depth, channels, codec,
+                            video_codec, width, height,
                             naming_template, expected_path,
                             original_filename, fingerprint,
                             modified_at, verified_at
@@ -584,7 +599,9 @@ export class ManualImportService {
                             @provider, @providerEntityType, @providerIdValue, @librarySlot,
                             @filePath, @relativePath, @libraryRoot,
                             @filename, @extension, @fileSize, @duration,
-                            @fileType, @quality, @needsRename,
+                            @fileType, @quality, @quality, @needsRename,
+                            @bitrate, @sampleRate, @bitDepth, @channels, @codec,
+                            @videoCodec, @width, @height,
                             @namingTemplate, @expectedPath,
                             @originalFilename, @fingerprint,
                             @modifiedAt, CURRENT_TIMESTAMP
@@ -599,6 +616,20 @@ export class ManualImportService {
                             library_slot = COALESCE(excluded.library_slot, library_slot),
                             artist_id = excluded.artist_id, needs_rename = excluded.needs_rename,
                             expected_path = excluded.expected_path, fingerprint = excluded.fingerprint,
+                            -- Probed technical facts describe the bytes on disk, so a
+                            -- re-import always refreshes them (and the quality derived
+                            -- from them) rather than preserving a stale claim.
+                            quality = excluded.quality,
+                            imported_quality = excluded.imported_quality,
+                            duration = COALESCE(excluded.duration, duration),
+                            bitrate = excluded.bitrate,
+                            sample_rate = excluded.sample_rate,
+                            bit_depth = excluded.bit_depth,
+                            channels = excluded.channels,
+                            codec = excluded.codec,
+                            video_codec = excluded.video_codec,
+                            width = excluded.width,
+                            height = excluded.height,
                             verified_at = CURRENT_TIMESTAMP
                     `).run({
                         artistId: c.artistId, albumId: c.albumId, mediaId: c.providerId,
@@ -610,8 +641,19 @@ export class ManualImportService {
                         filePath: c.file.file_path, relativePath: c.relativePath,
                         libraryRoot: c.libraryRootKey, filename: c.file.filename,
                         extension: c.extension, fileSize: c.stats.size,
-                        duration: c.trackData.duration || 0, fileType: c.fileType,
+                        // The probed duration is the file's own; fall back to the
+                        // provider's only when the probe could not read one.
+                        duration: c.probedMetrics.duration ?? c.trackData.duration ?? 0,
+                        fileType: c.fileType,
                         quality: c.quality, needsRename: c.needsRename,
+                        bitrate: c.probedMetrics.bitrate ?? null,
+                        sampleRate: c.probedMetrics.sampleRate ?? null,
+                        bitDepth: c.probedMetrics.bitDepth ?? null,
+                        channels: c.probedMetrics.channels ?? null,
+                        codec: c.probedMetrics.codec ?? null,
+                        videoCodec: c.probedMetrics.videoCodec ?? null,
+                        width: c.probedMetrics.width ?? null,
+                        height: c.probedMetrics.height ?? null,
                         namingTemplate: c.fullPathTemplate, expectedPath: c.expectedPath,
                         originalFilename: c.file.filename, fingerprint: c.fingerprint,
                         modifiedAt: c.stats.mtime.toISOString(),
