@@ -89,7 +89,7 @@ function insertCanonicalTrackFixture() {
     VALUES ('recording-mbid', 'artist-mbid', 'Track Recording', 180000, 0)
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES ('track-mbid', 'release-mbid', 'recording-mbid', 1, 1, '1', 'Canonical Track', 180000)
   `).run();
 }
@@ -281,7 +281,7 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
       ('recording-high', 'artist-mbid', 'High Track Recording', 180000, 0, 80)
   `).run();
   db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES
       ('track-low', 'release-mbid', 'recording-low', 1, 1, '1', 'Low Track', 180000),
       ('track-high', 'release-mbid', 'recording-high', 1, 2, '2', 'High Track', 180000)

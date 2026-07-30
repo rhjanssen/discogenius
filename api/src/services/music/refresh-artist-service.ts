@@ -458,7 +458,7 @@ export class RefreshArtistService {
                 SELECT t.title, r.isrcs
                 FROM Tracks t
                 LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-                WHERE t.release_mbid = ?
+                WHERE t.edition_mbid = ?
                 ORDER BY t.medium_position ASC, t.position ASC
             `).all(representative.mbid) as Array<{ title: string; isrcs?: string | null }>;
             const targetRows = targets.map((target) => {
@@ -789,7 +789,7 @@ export class RefreshArtistService {
         const loadTracks = db.prepare(`
             SELECT title, length_ms, position
             FROM Tracks
-            WHERE release_mbid = ?
+            WHERE edition_mbid = ?
             ORDER BY medium_position, position
         `);
         const loadStoredPlaylistOffers = db.prepare(`

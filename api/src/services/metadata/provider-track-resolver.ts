@@ -51,7 +51,7 @@ function getCanonicalTrack(input: {
               t.length_ms,
               recording.isrcs
             FROM Tracks t
-            JOIN AlbumEditions r ON r.mbid = t.release_mbid
+            JOIN AlbumEditions r ON r.mbid = t.edition_mbid
             LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid
             WHERE t.mbid = ?
               AND r.release_group_mbid = ?
@@ -73,7 +73,7 @@ function getCanonicalTrack(input: {
               t.length_ms,
               recording.isrcs
             FROM Tracks t
-            JOIN AlbumEditions r ON r.mbid = t.release_mbid
+            JOIN AlbumEditions r ON r.mbid = t.edition_mbid
             LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid
             WHERE t.recording_mbid = ?
               AND r.release_group_mbid = ?

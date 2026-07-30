@@ -116,7 +116,7 @@ function seedCanonicalArtistPage() {
 
   db.prepare(`
     INSERT INTO Tracks (
-      id, foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid,
+      id, foreign_track_id, foreign_recording_id, mbid, edition_mbid, recording_mbid,
       medium_position, position, number, title, length_ms
     )
     VALUES (
@@ -332,7 +332,7 @@ test("artist page top tracks ignore unselected alternate editions", async () => 
 
   db.prepare(`
     INSERT INTO Tracks (
-      id, foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid,
+      id, foreign_track_id, foreign_recording_id, mbid, edition_mbid, recording_mbid,
       medium_position, position, number, title, length_ms
     )
     VALUES (
@@ -424,7 +424,7 @@ test("artist top tracks prefer the default provider popularity and fall back to 
   `).run();
   db.prepare(`
     INSERT INTO Tracks (
-      id, foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid,
+      id, foreign_track_id, foreign_recording_id, mbid, edition_mbid, recording_mbid,
       medium_position, position, number, title, length_ms
     ) VALUES (402, 'track-mbid-2', 'recording-mbid-2', 'track-mbid-2', 'release-mbid-1', 'recording-mbid-2', 1, 2, '2', 'Provider Favorite', 190000)
   `).run();
@@ -523,7 +523,7 @@ test("artist top-track projection returns the indexed top 100 recordings", async
     `);
     const insertTrack = db.prepare(`
       INSERT INTO Tracks (
-        foreign_track_id, foreign_recording_id, mbid, release_mbid, recording_mbid,
+        foreign_track_id, foreign_recording_id, mbid, edition_mbid, recording_mbid,
         medium_position, position, number, title, length_ms
       ) VALUES (?, ?, ?, 'release-mbid-1', ?, 1, ?, ?, ?, 180000)
     `);

@@ -2081,7 +2081,7 @@ export class OrganizerService {
               t.position AS track_number,
               t.medium_position AS volume_number
             FROM Tracks t
-            WHERE t.release_mbid = ?
+            WHERE t.edition_mbid = ?
               AND (
                 (? IS NOT NULL AND t.mbid = ?)
                 OR (? IS NOT NULL AND t.recording_mbid = ?)
@@ -2760,7 +2760,7 @@ export class OrganizerService {
          AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks t
           ON t.id = track_match.track_id
-         AND (? IS NULL OR t.release_mbid = ?)
+         AND (? IS NULL OR t.edition_mbid = ?)
         LEFT JOIN Recordings canonical_recording ON canonical_recording.id = track_match.recording_id
         LEFT JOIN ArtistMetadata canonical_artist
           ON canonical_artist.id = canonical_recording.artist_metadata_id

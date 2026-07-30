@@ -91,7 +91,7 @@ function seedTypedRelease(input: {
   ) as { id: number };
   const track = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
       title, position, medium_position
     ) VALUES (?, ?, ?, ?, ?, ?, 1, 1)
     RETURNING id

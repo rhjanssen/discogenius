@@ -182,7 +182,7 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
   const row = contentType === "album"
     ? db.prepare(`
         SELECT release_group.mbid AS release_group_mbid,
-               release.mbid AS release_mbid
+               release.mbid AS edition_mbid
         FROM ProviderItems provider_item
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = provider_item.id
@@ -200,7 +200,7 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
     : contentType === "track"
       ? db.prepare(`
           SELECT release_group.mbid AS release_group_mbid,
-                 release.mbid AS release_mbid
+                 release.mbid AS edition_mbid
           FROM ProviderItems provider_item
           JOIN ProviderEditionMembers member
             ON member.member_item_id = provider_item.id
@@ -220,7 +220,7 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
         `).get(providerId)
       : db.prepare(`
           SELECT release_group.mbid AS release_group_mbid,
-                 release.mbid AS release_mbid
+                 release.mbid AS edition_mbid
           FROM ProviderItems provider_item
           JOIN ProviderVideoMatches video_match
             ON video_match.provider_video_item_id = provider_item.id
@@ -238,10 +238,10 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
         `).get(providerId);
   const scope = row as {
     release_group_mbid?: string | null;
-    release_mbid?: string | null;
+    edition_mbid?: string | null;
   } | undefined;
 
-  return getOptionalString(scope?.release_group_mbid) ?? getOptionalString(scope?.release_mbid);
+  return getOptionalString(scope?.release_group_mbid) ?? getOptionalString(scope?.edition_mbid);
 }
 
 function getProviderItemArtistId(contentType: QueueItemContract["type"], providerId: string): string | null {
@@ -536,7 +536,7 @@ function resolveProviderItemMetadata(input: {
       provider_item.cover_id AS asset_id,
       COALESCE(provider_item.artwork_url, provider_item.cover_id) AS cover,
       COALESCE(direct_group.mbid, track_group.mbid) AS release_group_mbid,
-      COALESCE(direct_release.mbid, track_release.mbid) AS release_mbid,
+      COALESCE(direct_release.mbid, track_release.mbid) AS edition_mbid,
       COALESCE(direct_group.title, track_group.title) AS release_group_title,
       COALESCE(direct_group.images, track_group.images) AS release_group_images,
       artist.name AS artist_name,
@@ -611,7 +611,7 @@ function resolveProviderItemMetadata(input: {
     asset_id?: string | null;
     cover?: string | null;
     release_group_mbid?: string | null;
-    release_mbid?: string | null;
+    edition_mbid?: string | null;
     release_group_title?: string | null;
     release_group_images?: string | null;
     artist_name?: string | null;
@@ -642,7 +642,7 @@ function resolveProviderItemMetadata(input: {
     title: canonicalTitle ?? row.title,
     artist: row.artist_name ?? row.provider_artist_name,
     cover: cover ?? row.cover ?? row.asset_id,
-    albumId: row.release_group_mbid ?? row.release_mbid ?? null,
+    albumId: row.release_group_mbid ?? row.edition_mbid ?? null,
     albumTitle: row.release_group_title ?? null,
     quality: row.quality,
   };
@@ -678,7 +678,7 @@ function resolveCanonicalAlbumTracks(input: {
     ? db.prepare(`
         SELECT title, position, medium_position
         FROM Tracks
-        WHERE release_mbid = ?
+        WHERE edition_mbid = ?
         ORDER BY medium_position ASC, position ASC, id ASC
       `).all(releaseMbid) as Array<{
         title?: string | null;

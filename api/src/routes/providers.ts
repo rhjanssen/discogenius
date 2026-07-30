@@ -165,22 +165,22 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
           t.position,
           t.medium_position,
           COALESCE(r.length_ms, t.length_ms, 0) AS length_ms,
-          t.release_mbid
+          t.edition_mbid
         FROM Tracks t
-        JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
+        JOIN AlbumEditions rel ON rel.mbid = t.edition_mbid
         LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
         ${releaseFilter}
         ORDER BY
-          (SELECT COUNT(*) FROM Tracks t2 WHERE t2.release_mbid = rel.mbid) DESC,
+          (SELECT COUNT(*) FROM Tracks t2 WHERE t2.edition_mbid = rel.mbid) DESC,
           t.medium_position ASC,
           t.position ASC
       `).all(...params) as any[];
 
       if (localTracks.length > 0) {
-        // Group tracks by the top release_mbid
-        const targetReleaseMbid = requestedReleaseMbid || localTracks[0].release_mbid;
+        // Group tracks by the top edition_mbid
+        const targetReleaseMbid = requestedReleaseMbid || localTracks[0].edition_mbid;
         const filteredTracks = localTracks
-          .filter((t) => !targetReleaseMbid || t.release_mbid === targetReleaseMbid)
+          .filter((t) => !targetReleaseMbid || t.edition_mbid === targetReleaseMbid)
           .map((t) => ({
             id: String(t.id),
             providerId: String(t.providerId || t.id),
@@ -191,7 +191,7 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
             rawTrackNumber: Number(t.position || 0),
             volumeNumber: Number(t.medium_position || 1),
             duration: Math.round(Number(t.length_ms || 0) / 1000),
-            releaseMbid: String(t.release_mbid),
+            releaseMbid: String(t.edition_mbid),
           }));
 
         if (filteredTracks.length > 0) {

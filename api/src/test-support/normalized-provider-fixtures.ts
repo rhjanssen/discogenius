@@ -233,7 +233,7 @@ export function seedAcceptedProviderRecordingTrack(
       const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(`rel-${key}`) as { id: number };
       db.prepare(`
         INSERT OR IGNORE INTO Tracks (
-          mbid, release_mbid, album_edition_id, recording_mbid, recording_id,
+          mbid, edition_mbid, album_edition_id, recording_mbid, recording_id,
           medium_position, position, title
         ) VALUES (?, ?, ?, ?, ?, 1, 1, ?)
       `).run(`trk-${key}`, `rel-${key}`, release.id, recording.mbid, recording.id, recording.title);
@@ -407,7 +407,7 @@ export function seedCanonicalAlbum(
       .get(track.recordingMbid) as { id: number };
     db.prepare(`
       INSERT OR IGNORE INTO Tracks (
-        mbid, release_mbid, recording_mbid, recording_id,
+        mbid, edition_mbid, recording_mbid, recording_id,
         medium_position, position, number, title
       ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
     `).run(

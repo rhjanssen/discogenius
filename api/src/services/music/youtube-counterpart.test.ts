@@ -50,7 +50,7 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
     .run("rec-audio-yt-cp", "artist-yt-cp", "Pompeii");
   const audioRecId = (db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`).get("rec-audio-yt-cp") as { id: number }).id;
   db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, position, medium_position, length_ms)
     VALUES (?, ?, ?, ?, 1, 1, 214000)
   `).run("track-yt-cp", "release-yt-cp", "rec-audio-yt-cp", "Pompeii");
 
@@ -133,7 +133,7 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
     .run("rec-audio-yt-self", "artist-yt-self", "SAVE MY SOUL");
   const audioRecId = (db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`).get("rec-audio-yt-self") as { id: number }).id;
   db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, position, medium_position, length_ms)
     VALUES (?, ?, ?, ?, 1, 1, 241000)
   `).run("track-yt-self", "release-yt-self", "rec-audio-yt-self", "SAVE MY SOUL");
 

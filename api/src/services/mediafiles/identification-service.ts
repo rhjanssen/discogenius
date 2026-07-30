@@ -299,15 +299,15 @@ export class IdentificationService {
                     t.medium_position AS volumeNumber,
                     t.medium_position AS volume_number,
                     t.medium_position AS medium_position,
-                    t.release_mbid AS release_mbid,
+                    t.edition_mbid AS edition_mbid,
                     COALESCE(r.length_ms, t.length_ms, 0) AS length_ms,
                     COALESCE(r.length_ms, t.length_ms, 0) / 1000.0 AS duration
                 FROM Tracks t
-                JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
+                JOIN AlbumEditions rel ON rel.mbid = t.edition_mbid
                 LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
                 WHERE rel.release_group_mbid = ? OR rel.mbid = ?
                 ORDER BY
-                    (SELECT COUNT(*) FROM Tracks t2 WHERE t2.release_mbid = rel.mbid) DESC,
+                    (SELECT COUNT(*) FROM Tracks t2 WHERE t2.edition_mbid = rel.mbid) DESC,
                     t.medium_position ASC,
                     t.position ASC
             `).all(cleanMbid, cleanMbid) as any[];
@@ -316,9 +316,9 @@ export class IdentificationService {
             // AlbumRelease). The query orders the largest release first; restrict
             // to that release's tracklist so multi-edition release groups don't
             // blend two tracklists into one Munkres matrix.
-            const targetReleaseMbid = tracks[0]?.release_mbid;
+            const targetReleaseMbid = tracks[0]?.edition_mbid;
             if (targetReleaseMbid) {
-                tracks = tracks.filter((track) => track.release_mbid === targetReleaseMbid);
+                tracks = tracks.filter((track) => track.edition_mbid === targetReleaseMbid);
             }
         }
 

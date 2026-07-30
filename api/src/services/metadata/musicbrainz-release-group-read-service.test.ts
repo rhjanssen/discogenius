@@ -63,12 +63,12 @@ function hydrateCanonicalForeignKeys(releaseGroupMbid: string): void {
     UPDATE Tracks
     SET
       album_edition_id = (
-        SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid
+        SELECT id FROM AlbumEditions WHERE mbid = Tracks.edition_mbid
       ),
       recording_id = (
         SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
       )
-    WHERE release_mbid IN (
+    WHERE edition_mbid IN (
       SELECT mbid FROM AlbumEditions WHERE release_group_mbid = ?
     )
   `).run(releaseGroupMbid);
@@ -308,7 +308,7 @@ test("album tracks attach library files by recording MBID when track MBIDs diffe
   `).run(recordingMbid, "Rehab", 214000);
 
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(stereoTrackMbid, stereoReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
 
@@ -406,12 +406,12 @@ test("single release group does not inherit album files by shared recording MBID
   `).run(recordingMbid, "Rehab", 214000);
 
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(albumTrackMbid, albumReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
 
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(singleTrackMbid, singleReleaseMbid, recordingMbid, 1, 1, "1", "Rehab", 214000);
   hydrateCanonicalForeignKeys(albumReleaseGroupMbid);
@@ -482,7 +482,7 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
     VALUES (?, ?, ?, ?)
   `).run(recordingMbid, "Tears Dry on Their Own", 187000, JSON.stringify([isrc]));
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(trackMbid, releaseMbid, recordingMbid, 1, 10, "10", "Tears Dry on Their Own", 187000);
   hydrateCanonicalForeignKeys(releaseGroupMbid);

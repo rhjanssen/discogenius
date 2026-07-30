@@ -74,11 +74,11 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   `).run("rel-atmos", "rg-1", "artist-1", "Atmos");
   db.prepare(`INSERT INTO Recordings (mbid, title) VALUES (?, ?)`).run("rec-1", "Song");
   db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, position, medium_position, length_ms)
     VALUES (?, ?, ?, ?, 1, 1, 180000)
   `).run("track-1", "rel-stereo", "rec-1", "Song");
   db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, position, medium_position, length_ms)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, position, medium_position, length_ms)
     VALUES (?, ?, ?, ?, 1, 1, 180000)
   `).run("track-atmos", "rel-atmos", "rec-1", "Song");
 

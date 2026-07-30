@@ -218,7 +218,7 @@ export class RefreshAlbumService {
         releaseMbid: string | null;
     } {
         const providerItem = db.prepare(`
-            SELECT release_group.mbid AS release_group_mbid, release.mbid AS release_mbid
+            SELECT release_group.mbid AS release_group_mbid, release.mbid AS edition_mbid
             FROM ProviderItems item
             JOIN ProviderEditionMatches match
               ON match.provider_edition_item_id = item.id
@@ -233,11 +233,11 @@ export class RefreshAlbumService {
               match.confidence DESC,
               match.id
             LIMIT 1
-        `).get(providerId, albumId) as { release_group_mbid?: string | null; release_mbid?: string | null } | undefined;
+        `).get(providerId, albumId) as { release_group_mbid?: string | null; edition_mbid?: string | null } | undefined;
 
         return {
             releaseGroupMbid: providerItem?.release_group_mbid || null,
-            releaseMbid: providerItem?.release_mbid || null,
+            releaseMbid: providerItem?.edition_mbid || null,
         };
     }
 

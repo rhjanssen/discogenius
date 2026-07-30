@@ -75,11 +75,11 @@ test("organizer resolves exact provider track ids to their linked canonical trac
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
     .run("recording-2", "Track Two", "artist-mbid", 0);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-1", "release-1", "recording-1", "Track One", 1, 1);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-2", "release-1", "recording-2", "Track Two", 1, 2);
   seedAcceptedProviderTrackMatch(dbModule.db, {
@@ -152,7 +152,7 @@ test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC 
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video, isrcs) VALUES (?, ?, ?, ?, ?)")
     .run("rec-vol3", "Running Away", "artist-mbid", 0, JSON.stringify(["GBUM72202390"]));
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("track-vol3", "rel-3vol", "rec-vol3", "Running Away", 3, 6);
   // The matcher already accepted this offer onto the trailing-disc track using
@@ -200,7 +200,7 @@ test("organizer matches provider-id staging filenames to materialized provider t
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
     .run("recording-1", "Feeling Good", "artist-mbid", 0);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (id, mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (id, mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(101, "track-1", "release-1", "recording-1", "Feeling Good", 1, 1);
   // Materialized provider track offer with its accepted typed match (the single
@@ -540,24 +540,24 @@ test("typed plan identity maps a provider source track onto the selected canonic
 
   // Native positions (1 on each native release).
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-pompeii-native", "rel-pompeii", "rec-pompeii", "Pompeii", 1, 1);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-come-native", "rel-come", "rec-come", "Come as You Are", 1, 1);
   // Hybrid positions (2 and 3).
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-softly-hybrid", "rel-hybrid", "rec-softly", "Killing Me Softly", 1, 1);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-pompeii-hybrid", "rel-hybrid", "rec-pompeii", "Pompeii", 1, 2);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-come-hybrid", "rel-hybrid", "rec-come", "Come as You Are", 1, 3);
 
@@ -580,7 +580,7 @@ test("typed plan identity maps a provider source track onto the selected canonic
     UPDATE Tracks
     SET
       album_edition_id = (
-        SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid
+        SELECT id FROM AlbumEditions WHERE mbid = Tracks.edition_mbid
       ),
       recording_id = (
         SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
@@ -743,11 +743,11 @@ test("hybrid tips with providerAlbumId on secondary albums match organize scope"
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
     .run("rec-secondary", "Secondary Tip", "artist-mbid", 0);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-primary", "rel-hybrid-tips", "rec-primary", "Primary Tip", 1, 1);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-secondary", "rel-hybrid-tips", "rec-secondary", "Secondary Tip", 1, 2);
 
@@ -842,16 +842,16 @@ test("an exact plan source organizes under the job release, not a same-recording
 
   // Deluxe BTB positions.
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-rehab-btb", "rel-btb-deluxe", "rec-rehab", "Rehab", 1, 7);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-you-know-btb", "rel-btb-deluxe", "rec-you-know", "You Know I'm No Good", 1, 2);
   // Competing single position (same recording).
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("t-rehab-single", "rel-rehab-single", "rec-rehab", "Rehab", 1, 1);
 
@@ -888,12 +888,12 @@ test("an exact plan source organizes under the job release, not a same-recording
     UPDATE Tracks
     SET
       album_edition_id = (
-        SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid
+        SELECT id FROM AlbumEditions WHERE mbid = Tracks.edition_mbid
       ),
       recording_id = (
         SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
       )
-    WHERE release_mbid IN ('rel-btb-deluxe', 'rel-rehab-single')
+    WHERE edition_mbid IN ('rel-btb-deluxe', 'rel-rehab-single')
   `).run();
 
   dbModule.db.prepare(`

@@ -25,7 +25,7 @@ export type CanonicalProviderOffer = {
     entity_type?: string | null;
     artist_mbid?: string | null;
     release_group_mbid?: string | null;
-    release_mbid?: string | null;
+    edition_mbid?: string | null;
     track_mbid?: string | null;
     recording_mbid?: string | null;
     provider_title?: string | null;
@@ -84,7 +84,7 @@ export function resolveCanonicalProviderOffer(
                 provider_release.entity_type,
                 release_group.artist_mbid,
                 release_group.mbid AS release_group_mbid,
-                release.mbid AS release_mbid,
+                release.mbid AS edition_mbid,
                 provider_release.title AS provider_title,
                 COALESCE(
                   (
@@ -232,7 +232,7 @@ export function resolveCanonicalProviderOffer(
             provider_track.entity_type,
             release_group.artist_mbid,
             release_group.mbid AS release_group_mbid,
-            release.mbid AS release_mbid,
+            release.mbid AS edition_mbid,
             track.mbid AS track_mbid,
             recording.mbid AS recording_mbid,
             provider_track.title AS provider_title,
@@ -476,7 +476,7 @@ export function getCanonicalAlbumDownloadProgress(
     const releaseGroupMbid = pickString(payload?.releaseGroupMbid) || canonicalOffer?.release_group_mbid;
     const releaseMbid = pickString(payload?.releaseMbid)
         || canonicalOffer?.selected_release_mbid
-        || canonicalOffer?.release_mbid;
+        || canonicalOffer?.edition_mbid;
     const acquisitionPlanId = Number.isInteger(payload?.acquisitionPlanId)
         ? Number(payload.acquisitionPlanId)
         : null;

@@ -30,7 +30,7 @@ import { resolveAlbumVideoCoverForLibrary } from "./organizer.js";
 type ProviderAlbumOfferRow = {
     provider?: string | null;
     provider_id?: string | null;
-    release_mbid?: string | null;
+    edition_mbid?: string | null;
     quality?: string | null;
     title?: string | null;
     version?: string | null;
@@ -279,7 +279,7 @@ class LibraryMetadataBackfillService {
                 ? {
                     provider: selectedPlan.selected_provider,
                     provider_id: selectedPlan.selected_provider_id,
-                    release_mbid: selectedPlan.selected_release_mbid,
+                    edition_mbid: selectedPlan.selected_release_mbid,
                     quality: selectedPlan.quality,
                     title: selectedPlan.title,
                     version: selectedPlan.version,

@@ -87,7 +87,7 @@ test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", 
   `).get() as { id: number };
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_edition_id, release_mbid, recording_mbid, recording_id,
+      mbid, album_edition_id, edition_mbid, recording_mbid, recording_id,
       medium_position, position, number, title
     )
     SELECT 'track-inline', release.id, 'rel-inline', 'audio-inline', ?, 1, 1, '1', 'Song'

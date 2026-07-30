@@ -87,7 +87,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   );
 
   dbModule.db.prepare(`
-    INSERT INTO Tracks (foreign_track_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms)
+    INSERT INTO Tracks (foreign_track_id, mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Canonical Song", 181000);
 

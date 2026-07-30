@@ -62,7 +62,7 @@ function seedCanonicalTrack(
     RETURNING id
   `).get(`rec-${trackMbid}`, title) as { id: number };
   const track = db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, recording_id, medium_position, position, number, title)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, recording_id, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING id
   `).get(trackMbid, releaseMbid, `rec-${trackMbid}`, recording.id, medium, position, String(position), title) as { id: number };

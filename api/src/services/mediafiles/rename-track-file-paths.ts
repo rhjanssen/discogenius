@@ -123,7 +123,7 @@ export function buildRenameFilters(options: RenameScopeOptions = {}): { where: s
           SELECT scope_item.entity_type, CAST(scope_item.provider_id AS TEXT)
           FROM ProviderItems scope_item
           WHERE scope_item.entity_type IN ('track', 'video')
-            AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+            AND (scope_item.release_group_mbid = ? OR scope_item.edition_mbid = ?)
         )
       )`);
     params.push(options.albumId, options.albumId, options.albumId, options.albumId);

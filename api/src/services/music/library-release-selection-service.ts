@@ -195,7 +195,7 @@ export class LibraryReleaseSelectionService {
         quality.name AS quality_profile,
         library_release.id AS library_edition_id,
         library_release.edition_id,
-        release.mbid AS release_mbid,
+        release.mbid AS edition_mbid,
         library_release.selection_mode,
         library_release.locked,
         plan.id AS plan_id,
@@ -222,7 +222,7 @@ export class LibraryReleaseSelectionService {
       quality_profile: string;
       library_edition_id: number | null;
       edition_id: number | null;
-      release_mbid: string | null;
+      edition_mbid: string | null;
       selection_mode: LibraryReleaseSelectionView["selectionMode"] | null;
       locked: number | null;
       plan_id: number | null;
@@ -246,13 +246,13 @@ export class LibraryReleaseSelectionService {
       if (
         row.library_edition_id != null
         && row.edition_id != null
-        && row.release_mbid
+        && row.edition_mbid
         && row.selection_mode
       ) {
         library.selections.push({
           libraryReleaseId: row.library_edition_id,
           releaseId: row.edition_id,
-          releaseMbid: row.release_mbid,
+          releaseMbid: row.edition_mbid,
           selectionMode: row.selection_mode,
           locked: Boolean(row.locked),
           plan: row.plan_id != null

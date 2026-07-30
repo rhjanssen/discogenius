@@ -178,7 +178,7 @@ function seedCatalogTrack(params: {
   db.prepare(`INSERT OR IGNORE INTO Recordings (mbid, title) VALUES (?, ?)`)
     .run(params.recordingMbid, params.title);
   db.prepare(`
-    INSERT OR IGNORE INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, title)
+    INSERT OR IGNORE INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, title)
     VALUES (?, ?, ?, 1, 1, ?)
   `).run(params.trackMbid, params.releaseMbid, params.recordingMbid, params.title);
   const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")

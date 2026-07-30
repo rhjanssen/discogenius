@@ -30,7 +30,7 @@ type ProviderTrackLyricsRow = {
   mbid: string | null;
   type: string | null;
   release_group_mbid: string | null;
-  release_mbid: string | null;
+  edition_mbid: string | null;
   track_mbid: string | null;
   recording_mbid: string | null;
   recording_id: number | null;
@@ -213,7 +213,7 @@ function loadProviderTrack(provider: string, providerMediaId: string | number): 
       pi_recording.mbid AS mbid,
       pi.entity_type AS type,
       pi_group.mbid AS release_group_mbid,
-      pi_release.mbid AS release_mbid,
+      pi_release.mbid AS edition_mbid,
       pi_track.mbid AS track_mbid,
       pi_recording.mbid AS recording_mbid,
       pi_match.recording_id
@@ -361,7 +361,7 @@ function findCachedCounterpart(media: ProviderTrackLyricsRow): LyricCandidateRow
       ? AS source_release_group_mbid,
       candidate_group.mbid AS candidate_release_group_mbid,
       candidate_group.mbid AS release_group_mbid,
-      candidate_release.mbid AS release_mbid,
+      candidate_release.mbid AS edition_mbid,
       candidate_track.mbid AS track_mbid,
       candidate_recording.mbid AS recording_mbid,
       candidate_match.recording_id,
@@ -438,7 +438,7 @@ function findSourceCandidates(media: ProviderTrackLyricsRow): CandidateRow[] {
       ? AS source_release_group_mbid,
       candidate_group.mbid AS candidate_release_group_mbid,
       candidate_group.mbid AS release_group_mbid,
-      candidate_release.mbid AS release_mbid,
+      candidate_release.mbid AS edition_mbid,
       candidate_track.mbid AS track_mbid,
       candidate_recording.mbid AS recording_mbid,
       candidate_match.recording_id

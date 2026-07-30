@@ -104,26 +104,26 @@ export function resolveCatalogTrackFromEmbeddedMbids(
     const recordingMbid = tags.musicbrainzRecordingId?.trim() || null;
     const embeddedReleaseMbid = tags.musicbrainzAlbumId?.trim() || null;
 
-    type AnchorRow = { mbid: string; recording_mbid: string; release_mbid: string };
+    type AnchorRow = { mbid: string; recording_mbid: string; edition_mbid: string };
     let anchor: AnchorRow | undefined;
 
     if (releaseTrackMbid) {
         anchor = db.prepare(
-            "SELECT mbid, recording_mbid, release_mbid FROM Tracks WHERE mbid = ? LIMIT 1",
+            "SELECT mbid, recording_mbid, edition_mbid FROM Tracks WHERE mbid = ? LIMIT 1",
         ).get(releaseTrackMbid) as AnchorRow | undefined;
     }
     if (!anchor && recordingMbid && embeddedReleaseMbid) {
         anchor = db.prepare(`
-            SELECT mbid, recording_mbid, release_mbid
+            SELECT mbid, recording_mbid, edition_mbid
             FROM Tracks
-            WHERE release_mbid = ? AND recording_mbid = ?
+            WHERE edition_mbid = ? AND recording_mbid = ?
             ORDER BY medium_position, position
             LIMIT 1
         `).get(embeddedReleaseMbid, recordingMbid) as AnchorRow | undefined;
     }
     if (!anchor) return null;
 
-    const releaseGroupMbid = releaseGroupForRelease(anchor.release_mbid);
+    const releaseGroupMbid = releaseGroupForRelease(anchor.edition_mbid);
 
     // The file's own embedded release wins whenever that release is itself
     // selected in a library of this class — a library may select several
@@ -133,13 +133,13 @@ export function resolveCatalogTrackFromEmbeddedMbids(
     // recording. Anything ambiguous keeps the embedded anchor untouched.
     if (releaseGroupMbid && anchor.recording_mbid) {
         const selectedReleases = selectedReleasesForGroup(releaseGroupMbid, preferredSlot);
-        const embeddedIsSelected = selectedReleases.has(anchor.release_mbid);
+        const embeddedIsSelected = selectedReleases.has(anchor.edition_mbid);
         if (!embeddedIsSelected && selectedReleases.size === 1) {
             const [selectedRelease] = [...selectedReleases];
             const onSelected = db.prepare(`
-                SELECT mbid, recording_mbid, release_mbid
+                SELECT mbid, recording_mbid, edition_mbid
                 FROM Tracks
-                WHERE release_mbid = ? AND recording_mbid = ?
+                WHERE edition_mbid = ? AND recording_mbid = ?
                 ORDER BY medium_position, position
             `).all(selectedRelease, anchor.recording_mbid) as AnchorRow[];
             // A recording appearing twice on the target release (e.g. a reprise)
@@ -148,7 +148,7 @@ export function resolveCatalogTrackFromEmbeddedMbids(
                 return {
                     trackMbid: onSelected[0].mbid,
                     recordingMbid: onSelected[0].recording_mbid,
-                    releaseMbid: onSelected[0].release_mbid,
+                    releaseMbid: onSelected[0].edition_mbid,
                     releaseGroupMbid,
                 };
             }
@@ -158,7 +158,7 @@ export function resolveCatalogTrackFromEmbeddedMbids(
     return {
         trackMbid: anchor.mbid,
         recordingMbid: anchor.recording_mbid,
-        releaseMbid: anchor.release_mbid,
+        releaseMbid: anchor.edition_mbid,
         releaseGroupMbid,
     };
 }

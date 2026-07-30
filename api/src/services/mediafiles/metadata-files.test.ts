@@ -63,7 +63,7 @@ function seedMusicBrainzMetadata() {
         VALUES(?, ?, ?, ?, ?, ?)
     `).run("recording-mbid-300", "artist-mbid-100", "Example Track", 0, "2024-02-03", JSON.stringify(["GBUM72300001"]));
     dbModule.db.prepare(`
-        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
+        INSERT INTO Tracks(mbid, edition_mbid, recording_mbid, medium_position, position, title, length_ms)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-mbid-300", "album-mbid-200", "recording-mbid-300", 1, 1, "Example Track", 180000);
 
@@ -198,12 +198,12 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
     `).run("recording-atmos", "artist-mbid-100", "Example Track", 181000);
 
     dbModule.db.prepare(`
-        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
+        INSERT INTO Tracks(mbid, edition_mbid, recording_mbid, medium_position, position, title, length_ms)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-stereo", "album-mbid-stereo", "recording-stereo", 1, 1, "Example Track", 180000);
 
     dbModule.db.prepare(`
-        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
+        INSERT INTO Tracks(mbid, edition_mbid, recording_mbid, medium_position, position, title, length_ms)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-spatial", "album-mbid-spatial", "recording-atmos", 1, 1, "Example Track", 181000);
 
@@ -454,7 +454,7 @@ test("album NFO uses the selected canonical release and one exact provider relea
         VALUES(?, ?)
     `).run("recording-mbid-301", "Second Canonical Track");
     dbModule.db.prepare(`
-        INSERT INTO Tracks(mbid, release_mbid, recording_mbid, medium_position, position, title, length_ms)
+        INSERT INTO Tracks(mbid, edition_mbid, recording_mbid, medium_position, position, title, length_ms)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("track-mbid-301", "album-mbid-200", "recording-mbid-301", 1, 2, "Second Canonical Track", 120000);
     const albumPath = path.join(tempDir, "composite-album.nfo");

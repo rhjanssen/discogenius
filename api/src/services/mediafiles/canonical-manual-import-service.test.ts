@@ -44,13 +44,13 @@ function fixture() {
   db.prepare("INSERT INTO Recordings (id, mbid, title) VALUES (200, 'recording-b', 'Track B')").run();
   db.prepare(`
     INSERT INTO Tracks (
-      id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      id, mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
       medium_position, position, title
     ) VALUES (1000, 'track-a', 10, 'release-a', 100, 'recording-a', 1, 1, 'Track A')
   `).run();
   db.prepare(`
     INSERT INTO Tracks (
-      id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      id, mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
       medium_position, position, title
     ) VALUES (2000, 'track-b', 20, 'release-b', 200, 'recording-b', 1, 1, 'Track B')
   `).run();
@@ -271,7 +271,7 @@ test("a recording shared by two selected releases keeps the release-track the us
     // track 1000 — as its own release-track occurrence.
     db.prepare(`
       INSERT INTO Tracks (
-        id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+        id, mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
         medium_position, position, title
       ) VALUES (2100, 'track-b-shared', 20, 'release-b', 100, 'recording-a', 1, 2, 'Track A')
     `).run();

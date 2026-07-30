@@ -410,7 +410,7 @@ test("video detail appears-on follows related audio via provider_video_for, not 
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, recording_id,
+      mbid, edition_mbid, recording_mbid, recording_id,
       medium_position, position, number, title
     ) VALUES ('track-apple-1', 'rel-apple', 'rec-audio-99', ?, 1, 1, '1', 'Canonical Song')
   `).run(audio.id);
@@ -474,7 +474,7 @@ test("video detail surfaces album track position when the video is on a release 
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, recording_id,
+      mbid, edition_mbid, recording_mbid, recording_id,
       medium_position, position, number, title
     ) VALUES (
       'track-video-3', 'rel-track-pos', 'rec-video-track', ?,
@@ -541,7 +541,7 @@ test("video detail appears-on follows related audio recordings and prefers monit
 
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, recording_id,
+      mbid, edition_mbid, recording_mbid, recording_id,
       medium_position, position, number, title
     ) VALUES
       ('track-affil-2', 'rel-affil-single', 'rec-affil-audio', ?, 1, 2, '2', 'Song'),
@@ -611,7 +611,7 @@ test("video detail appears-on prefers studio album over larger monitored live co
 
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, recording_id,
+      mbid, edition_mbid, recording_mbid, recording_id,
       medium_position, position, number, title
     ) VALUES
       ('track-studio-pref', 'rel-studio-pref', 'rec-studio-pref-audio', ?, 1, 5, '5', 'Back to Black'),
@@ -669,7 +669,7 @@ test("video detail appears-on prefers selected multi-disc release over earliest 
 
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, recording_id,
+      mbid, edition_mbid, recording_mbid, recording_id,
       medium_position, position, number, title
     ) VALUES
       ('track-multivol-early', 'rel-multivol-single', 'rec-multivol-video', ?, 1, 1, '1', 'Pompeii'),
@@ -746,7 +746,7 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, recording_id,
+      mbid, edition_mbid, recording_mbid, recording_id,
       medium_position, position, number, title
     ) VALUES ('track-assoc-1', 'rel-assoc', 'rec-audio-assoc', ?, 1, 4, '4', 'Oblivion')
   `).run(audio.id);
@@ -831,7 +831,7 @@ test("album associated videos honor monitored state and music-video type filters
     RETURNING id
   `).get(artist.id) as { id: number };
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, recording_id, medium_position, position, number, title)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, recording_id, medium_position, position, number, title)
     VALUES ('track-filter-1', 'rel-filter', 'rec-audio-filter', ?, 1, 1, '1', 'Anchor')
   `).run(audio.id);
 

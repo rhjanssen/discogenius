@@ -62,7 +62,7 @@ function seedTrackedFile() {
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, length_ms) VALUES (?, ?, ?, ?)")
     .run("rec-one", "Track One", "artist-one-mbid", 180000);
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("trk-one", "rel-one", "rec-one", 1, 1, "1", "Track One");
   dbModule.db.prepare(`
@@ -130,7 +130,7 @@ function seedCanonicalGraph(options: { albumTitle?: string; trackTitle?: string 
   `).run("recording-mbid-1", "recording-mbid-1", "artist-mbid-1", trackTitle);
 
   dbModule.db.prepare(`
-    INSERT INTO Tracks (foreign_track_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    INSERT INTO Tracks (foreign_track_id, mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", trackTitle);
 }
@@ -400,7 +400,7 @@ test("RenameTrackFileService derives track paths from canonical MusicBrainz rows
   `).run("recording-mbid-1", "recording-mbid-1", "artist-mbid-1", "Canonical Song");
 
   dbModule.db.prepare(`
-    INSERT INTO Tracks (foreign_track_id, mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    INSERT INTO Tracks (foreign_track_id, mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run("track-mbid-1", "track-mbid-1", "release-mbid-1", "recording-mbid-1", 1, 1, "1", "Canonical Song");
 
@@ -490,7 +490,7 @@ test("rename preload follows the selected-release track identity for hybrid sour
   `).run();
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      foreign_track_id, mbid, release_mbid, recording_mbid,
+      foreign_track_id, mbid, edition_mbid, recording_mbid,
       medium_position, position, number, title
     ) VALUES (
       'source-track', 'source-track', 'source-release', 'recording-mbid-1',
@@ -602,7 +602,7 @@ test("rename preview batches canonical metadata and collision-owner lookups", ()
       "INSERT INTO Recordings (mbid, title, artist_mbid, length_ms) VALUES (?, ?, ?, ?)",
     ).run(recordingMbid, trackTitle, "artist-one-mbid", 180000);
     dbModule.db.prepare(`
-      INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+      INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
       VALUES (?, 'rel-one', ?, 1, ?, ?, ?)
     `).run(trackMbid, recordingMbid, index, String(index), trackTitle);
     dbModule.db.prepare(`
@@ -673,7 +673,7 @@ test("benchmark: 200-row rename preview statement shape", () => {
   `);
   const insertTrack = dbModule.db.prepare(`
     INSERT INTO Tracks (
-      foreign_track_id, mbid, release_mbid, recording_mbid,
+      foreign_track_id, mbid, edition_mbid, recording_mbid,
       medium_position, position, number, title
     ) VALUES (?, ?, 'release-mbid-1', ?, 1, ?, ?, ?)
   `);

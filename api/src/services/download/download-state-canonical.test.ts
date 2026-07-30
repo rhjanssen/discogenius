@@ -88,7 +88,7 @@ function seedCanonicalArtistGraph() {
   `).get("recording-2", "Track Two", "artist-mbid", artistMetadata.id, 0) as { id: number };
   const track1 = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
       title, medium_position, position
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING id
@@ -104,7 +104,7 @@ function seedCanonicalArtistGraph() {
   ) as { id: number };
   const track2 = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
       title, medium_position, position
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING id
@@ -419,7 +419,7 @@ test("audio completion ignores video recordings embedded in the selected release
   seedCanonicalArtistGraph();
   db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, edition_mbid, recording_id, recording_mbid,
       title, medium_position, position
     ) VALUES (
       ?, (SELECT id FROM AlbumEditions WHERE mbid = ?), ?,

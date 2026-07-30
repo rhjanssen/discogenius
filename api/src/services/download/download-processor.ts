@@ -217,7 +217,7 @@ export function listProviderAlbumFallbackTracks(
            AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks t
             ON t.id = track_match.track_id
-           AND t.release_mbid = ?
+           AND t.edition_mbid = ?
         ORDER BY
             COALESCE(t.medium_position, member.medium_position, 1),
             COALESCE(t.position, member.position, 999999),

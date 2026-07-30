@@ -127,7 +127,7 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
     ["AlbumArtists", ["release_group_id", "artist_metadata_id", "release_group_mbid", "artist_mbid"]],
     ["ArtistReleaseGroups", ["artist_metadata_id", "release_group_id", "artist_mbid", "release_group_mbid"]],
     ["ArtistReleaseGroupCuration", ["source_artist_metadata_id", "release_group_id", "redundant_to_release_group_id", "source_artist_mbid", "release_group_mbid"]],
-    ["Tracks", ["id", "album_edition_id", "recording_id", "release_mbid", "recording_mbid"]],
+    ["Tracks", ["id", "album_edition_id", "recording_id", "edition_mbid", "recording_mbid"]],
     ["LibraryAlbums", ["id", "library_id", "release_group_id", "monitored", "selection_mode", "locked", "reason", "curation_version", "updated_at"]],
     ["LibraryEditions", ["id", "library_id", "edition_id", "selection_mode", "locked", "reason", "curation_version", "selected_at", "updated_at"]],
     ["AcquisitionPlans", ["id", "library_edition_id", "provider", "composition", "download_mode", "state", "planner_version", "policy_hash", "computed_at", "updated_at"]],

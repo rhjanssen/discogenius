@@ -179,7 +179,7 @@ function resolveCanonicalTrackOnRelease(params: {
     const byIdentity = db.prepare(`
       SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
       FROM Tracks t
-      WHERE t.release_mbid = ?
+      WHERE t.edition_mbid = ?
         AND (
           (? IS NOT NULL AND t.mbid = ?)
           OR (? IS NOT NULL AND t.recording_mbid = ?)
@@ -223,7 +223,7 @@ function resolveCanonicalTrackOnRelease(params: {
     SELECT t.mbid, t.recording_mbid, t.title, t.position, t.medium_position
     FROM Tracks t
     JOIN Recordings r ON r.mbid = t.recording_mbid
-    WHERE t.release_mbid = ?
+    WHERE t.edition_mbid = ?
       AND r.isrcs IS NOT NULL
       AND TRIM(r.isrcs) != ''
       AND (
@@ -356,7 +356,7 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
       t.mbid AS canonical_track_mbid,
       t.recording_mbid AS canonical_recording_mbid
     FROM Tracks t
-    WHERE t.release_mbid = ?
+    WHERE t.edition_mbid = ?
       AND CAST(t.id AS TEXT) = ?
     LIMIT 1
   `).get(

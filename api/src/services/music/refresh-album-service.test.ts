@@ -226,7 +226,7 @@ test("album track scan stores provider track offers linked to the selected canon
   );
   dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)").run(recordingMbid, artistMbid, "Track One");
   dbModule.db.prepare(`
-    INSERT INTO Tracks (mbid, release_mbid, recording_mbid, medium_position, position, number, title)
+    INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, medium_position, position, number, title)
     VALUES (?, ?, ?, 1, 1, '1', ?)
   `).run(trackMbid, releaseMbid, recordingMbid, "Track One");
   const providerReleaseItemId = (dbModule.db.prepare(`
@@ -325,12 +325,12 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
     .run(secondRecordingMbid, artistMbid, "Second Song");
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
+      mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms
     ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
   `).run(firstTrackMbid, releaseMbid, firstRecordingMbid, 1, "1", "First Song", 180000);
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
+      mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms
     ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
   `).run(secondTrackMbid, releaseMbid, secondRecordingMbid, 2, "2", "Second Song", 200000);
   await refreshServiceModule.RefreshAlbumService.storeProviderTrackOffers(
@@ -427,7 +427,7 @@ test("same-release provider superset maps exact-duration version tracks and clea
   `);
   const insertTrack = dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, release_mbid, recording_mbid, medium_position, position, number, title, length_ms
+      mbid, edition_mbid, recording_mbid, medium_position, position, number, title, length_ms
     ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
   `);
   const canonical = versions.map(([version, duration], index) => {

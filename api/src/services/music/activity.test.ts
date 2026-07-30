@@ -215,13 +215,13 @@ test("activity descriptions resolve download jobs from canonical provider items 
         1,
     );
     dbModule.db.prepare(`
-        INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
+        INSERT INTO Tracks (mbid, edition_mbid, recording_mbid, title, medium_position, position)
         VALUES (?, ?, ?, ?, ?, ?)
     `).run("track-mbid", "release-mbid", "recording-mbid", "Canonical Track", 1, 1);
     dbModule.db.prepare(`
         INSERT INTO ProviderItems (
             provider, entity_type, provider_id, artist_mbid, release_group_mbid,
-            release_mbid, track_mbid, recording_mbid, title, library_slot,
+            edition_mbid, track_mbid, recording_mbid, title, library_slot,
             match_status, match_confidence, match_method
         ) VALUES
             (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),

@@ -471,7 +471,7 @@ function getTrackSelectSql(whereClause: string): string {
       provider_track.provider_id AS preview_provider_track_id,
       track.mbid AS musicbrainz_track_id,
       track.recording_mbid AS musicbrainz_recording_id,
-      track.release_mbid AS musicbrainz_release_id,
+      track.edition_mbid AS musicbrainz_release_id,
       CASE WHEN EXISTS (
         SELECT 1
         FROM TrackFiles detail_downloaded_file

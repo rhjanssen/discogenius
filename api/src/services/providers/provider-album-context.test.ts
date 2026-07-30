@@ -76,7 +76,7 @@ function seedTwoPlansDisagreeing(): {
     `).run(releaseMbid, releaseGroup.id, artist.id);
     const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(releaseMbid) as { id: number };
     const track = db.prepare(`
-      INSERT INTO Tracks (mbid, release_mbid, album_edition_id, recording_mbid, recording_id, medium_position, position, title, length_ms)
+      INSERT INTO Tracks (mbid, edition_mbid, album_edition_id, recording_mbid, recording_id, medium_position, position, title, length_ms)
       VALUES (?, ?, ?, 'rec-1', ?, 1, 1, 'Pompeii', 214000) RETURNING id
     `).get(`trk-${key}`, releaseMbid, release.id, recording.id) as { id: number };
 
