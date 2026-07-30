@@ -278,8 +278,8 @@ router.get("/", async (req, res) => {
                  AND library.enabled = 1
                 JOIN quality_profiles quality_profile
                   ON quality_profile.id = library.quality_profile_id
-                JOIN AlbumReleases selected_release
-                  ON selected_release.id = library_release.release_id
+                JOIN AlbumEditions selected_release
+                  ON selected_release.id = library_release.edition_id
                  AND selected_release.release_group_id = rg.id
                 JOIN AcquisitionPlans plan
                   ON plan.library_release_id = library_release.id
@@ -400,7 +400,7 @@ router.get("/", async (req, res) => {
                   AND library_group.monitored = 1
               ) THEN 1 ELSE 0 END AS monitored
             FROM Tracks t
-            JOIN AlbumReleases release ON release.id = t.album_release_id
+            JOIN AlbumEditions release ON release.id = t.album_edition_id
             JOIN Albums rg ON rg.id = release.release_group_id
             JOIN ArtistMetadata artist ON artist.id = rg.artist_metadata_id
             JOIN Artists managed_artist ON managed_artist.mbid = artist.mbid
@@ -414,7 +414,7 @@ router.get("/", async (req, res) => {
                  AND plan.state = 'current'
                 JOIN LibraryReleases library_release
                   ON library_release.id = plan.library_release_id
-                 AND library_release.release_id = t.album_release_id
+                 AND library_release.edition_id = t.album_edition_id
                 JOIN Libraries library
                   ON library.id = library_release.library_id
                  AND library.enabled = 1

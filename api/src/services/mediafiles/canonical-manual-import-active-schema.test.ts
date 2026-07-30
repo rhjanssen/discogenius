@@ -28,7 +28,7 @@ const { db } = dbModule;
 /** Columns the canonical manual import boundary writes on TrackFiles. */
 const REQUIRED_TRACK_FILE_COLUMNS = [
   "library_id",
-  "album_release_id",
+  "album_edition_id",
   "track_id",
   "recording_id",
   "file_class",
@@ -59,7 +59,7 @@ test("the boundary's TrackFiles update prepares against the active schema", () =
       UPDATE TrackFiles
       SET
         library_id = @libraryId,
-        album_release_id = @releaseId,
+        album_edition_id = @releaseId,
         track_id = @trackId,
         recording_id = @recordingId,
         file_class = 'audio',

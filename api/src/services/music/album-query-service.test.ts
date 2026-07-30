@@ -28,7 +28,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderEditionMatches").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -71,7 +71,7 @@ function seedAlbum(options: {
   `).run(artistMbid, album.id, options.mbid);
 
   const release = db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_mbid, title, track_count
     ) VALUES (?, ?, ?, ?, ?, 1)
     RETURNING id
@@ -104,7 +104,7 @@ function seedAlbum(options: {
 
   const insertMatch = db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -176,7 +176,7 @@ function seedAlbum(options: {
     `).run(library.id, album.id);
     const libraryRelease = db.prepare(`
       INSERT INTO LibraryReleases (
-        library_id, release_id, selection_mode, locked, curation_version
+        library_id, edition_id, selection_mode, locked, curation_version
       ) VALUES (?, ?, 'auto', 0, 1)
       RETURNING id
     `).get(library.id, release.id) as { id: number };

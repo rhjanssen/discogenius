@@ -89,7 +89,7 @@ export class AlbumCommandService {
               pi.version,
               COALESCE(variant.provider_quality_label, variant.quality_class) AS quality
             FROM Tracks t
-            JOIN AlbumReleases ar ON ar.id = t.album_release_id
+            JOIN AlbumEditions ar ON ar.id = t.album_edition_id
             JOIN Albums album ON album.id = ar.release_group_id
             LEFT JOIN ArtistMetadata artist ON artist.id = album.artist_metadata_id
             LEFT JOIN ProviderTrackMatches provider_match
@@ -186,7 +186,7 @@ export class AlbumCommandService {
             JOIN LibraryReleases library_release
               ON library_release.id = plan.library_release_id
             JOIN Libraries library ON library.id = library_release.library_id
-            JOIN AlbumReleases release ON release.id = library_release.release_id
+            JOIN AlbumEditions release ON release.id = library_release.edition_id
             JOIN Albums release_group ON release_group.id = release.release_group_id
             WHERE release_group.mbid = ?
               AND plan.state = 'current'

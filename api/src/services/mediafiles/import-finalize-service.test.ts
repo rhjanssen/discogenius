@@ -46,7 +46,7 @@ function seedImportedTrack(fileName = "track-one.flac") {
 // Canonical graph + provider availability (naming resolves from these).
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
     .run("rg-one", "artist-one-mbid", "Album One", "Album", "2024-01-01");
-  dbModule.db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count, date)
+  dbModule.db.prepare(`INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count, date)
     VALUES (?, ?, ?, ?, ?, ?, ?)`).run("rel-one", "rg-one", "artist-one-mbid", "Album One", 1, 1, "2024-01-01");
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, length_ms) VALUES (?, ?, ?, ?)")
     .run("rec-one", "Track One", "artist-one-mbid", 180000);
@@ -108,7 +108,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();

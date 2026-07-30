@@ -21,7 +21,7 @@ function seedProviderExactMatch(
   `).run(providerReleaseItemId, `release-${releaseId}`);
   db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      id, provider_edition_item_id, release_id, relation, match_state,
+      id, provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version,
       matched_track_count, source_track_count, target_track_count,
       source_coverage, target_coverage
@@ -80,7 +80,7 @@ test("library curation uses canonical scope and recording coverage without chang
           (2, 'laura-palmer', 1, 'Laura Palmer EP', 'EP'),
           (3, 'collaboration', 2, 'Collaboration', 'Single'),
           (4, 'unrelated', 2, 'Unrelated', 'Album');
-      INSERT INTO AlbumReleases (id, mbid, release_group_id, title, status, media_count)
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, status, media_count)
         VALUES
           (101, 'bad-blood-release', 1, 'Bad Blood', 'Official', 1),
           (201, 'laura-palmer-release', 2, 'Laura Palmer EP', 'Official', 1),
@@ -95,7 +95,7 @@ test("library curation uses canonical scope and recording coverage without chang
           (5, 'recording-5', 'Collaboration'),
           (6, 'recording-6', 'Unrelated');
       INSERT INTO Tracks (
-        id, mbid, album_release_id, recording_id, medium_position, position, title
+        id, mbid, album_edition_id, recording_id, medium_position, position, title
       ) VALUES
         (1, 'bb-track-1', 101, 1, 1, 1, 'Laura Palmer'),
         (2, 'bb-track-2', 101, 2, 1, 2, 'Pompeii'),
@@ -105,7 +105,7 @@ test("library curation uses canonical scope and recording coverage without chang
         (6, 'collab-track-1', 301, 5, 1, 1, 'Collaboration'),
         (7, 'unrelated-track-1', 401, 6, 1, 1, 'Unrelated');
       INSERT INTO ReleaseArtistCredits (
-        release_id, artist_id, ordinal, credited_name, join_phrase
+        edition_id, artist_id, ordinal, credited_name, join_phrase
       ) VALUES (301, 1, 1, 'Bastille', '');
       INSERT INTO MetadataProfiles (
         id, name, release_type_policy, redundancy_enabled
@@ -140,15 +140,15 @@ test("library curation uses canonical scope and recording coverage without chang
     assert.deepEqual(baseline.selectedReleaseIds, [101, 201, 301]);
     assert.deepEqual(
       db.prepare(`
-        SELECT release.release_id, scope.scope_type
+        SELECT release.edition_id, scope.scope_type
         FROM LibraryReleaseScopes scope
         JOIN LibraryReleases release ON release.id = scope.library_release_id
-        ORDER BY release.release_id
+        ORDER BY release.edition_id
       `).all(),
       [
-        { release_id: 101, scope_type: "primary" },
-        { release_id: 201, scope_type: "primary" },
-        { release_id: 301, scope_type: "release_credit" },
+        { edition_id: 101, scope_type: "primary" },
+        { edition_id: 201, scope_type: "primary" },
+        { edition_id: 301, scope_type: "release_credit" },
       ],
     );
     assert.equal(
@@ -172,8 +172,8 @@ test("library curation uses canonical scope and recording coverage without chang
     });
     assert.deepEqual(deduplicated.selectedReleaseIds, [101, 301]);
     assert.deepEqual(
-      db.prepare("SELECT release_id FROM LibraryReleases ORDER BY release_id").all(),
-      [{ release_id: 101 }, { release_id: 301 }],
+      db.prepare("SELECT edition_id FROM LibraryReleases ORDER BY edition_id").all(),
+      [{ edition_id: 101 }, { edition_id: 301 }],
       "Covered EP drops while the credited collaboration remains in scope",
     );
   } finally {

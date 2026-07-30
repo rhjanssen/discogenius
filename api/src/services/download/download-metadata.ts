@@ -138,8 +138,8 @@ export function resolveCanonicalProviderOffer(
             JOIN ProviderEditionMatches release_match
               ON release_match.provider_edition_item_id = provider_release.id
              AND release_match.match_state = 'accepted'
-            JOIN AlbumReleases release
-              ON release.id = release_match.release_id
+            JOIN AlbumEditions release
+              ON release.id = release_match.edition_id
             JOIN Albums release_group
               ON release_group.id = release.release_group_id
             LEFT JOIN ReleaseGroupArtistCredits canonical_credit
@@ -257,8 +257,8 @@ export function resolveCanonicalProviderOffer(
           ON track.id = track_match.track_id
         JOIN Recordings recording
           ON recording.id = track_match.recording_id
-        JOIN AlbumReleases release
-          ON release.id = track.album_release_id
+        JOIN AlbumEditions release
+          ON release.id = track.album_edition_id
         JOIN Albums release_group
           ON release_group.id = release.release_group_id
         LEFT JOIN ProviderItemAudioVariants variant
@@ -501,7 +501,7 @@ export function getCanonicalAlbumDownloadProgress(
                     JOIN LibraryReleases file_library_release
                       ON file_library_release.id = file_plan.library_release_id
                     WHERE file.library_id = file_library_release.library_id
-                      AND file.album_release_id = file_library_release.release_id
+                      AND file.album_edition_id = file_library_release.edition_id
                       AND file.track_id = plan_track.track_id
                       AND file.file_class = 'audio'
                   )
@@ -518,10 +518,10 @@ export function getCanonicalAlbumDownloadProgress(
             JOIN Recordings recording ON recording.id = track.recording_id
             LEFT JOIN TrackFiles file
               ON file.library_id = ?
-             AND file.album_release_id = track.album_release_id
+             AND file.album_edition_id = track.album_edition_id
              AND file.track_id = track.id
              AND file.file_class = 'audio'
-            WHERE track.album_release_id = ?
+            WHERE track.album_edition_id = ?
               AND recording.is_video = 0
         `).get(
             libraryId,

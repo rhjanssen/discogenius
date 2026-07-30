@@ -759,14 +759,14 @@ export class ImportService {
                   artist.mbid AS artist_id,
                   release_group.id AS release_group_id,
                   release_group.mbid AS release_group_mbid,
-                  release.id AS release_id,
+                  release.id AS edition_id,
                   release.mbid AS release_mbid,
                   item.provider
                 FROM ProviderItems item
                 JOIN ProviderEditionMatches release_match
                   ON release_match.provider_edition_item_id = item.id
                  AND release_match.match_state = 'accepted'
-                JOIN AlbumReleases release ON release.id = release_match.release_id
+                JOIN AlbumEditions release ON release.id = release_match.edition_id
                 JOIN Albums release_group ON release_group.id = release.release_group_id
                 LEFT JOIN ReleaseGroupArtistCredits credit
                   ON credit.release_group_id = release_group.id AND credit.ordinal = 0
@@ -844,7 +844,7 @@ export class ImportService {
                 JOIN ProviderItems item ON item.id = member.member_item_id
                 JOIN ProviderEditionMatches release_match
                   ON release_match.provider_edition_item_id = release_item.id
-                 AND release_match.release_id = ?
+                 AND release_match.edition_id = ?
                  AND release_match.match_state = 'accepted'
                 LEFT JOIN ProviderTrackMatches track_match
                   ON track_match.provider_edition_match_id = release_match.id
@@ -855,7 +855,7 @@ export class ImportService {
                   AND release_item.provider = ?
                   AND release_item.provider_id = ?
                   AND item.entity_type = 'track'
-            `).all(albumRow.release_id, albumRow.provider, albumId) as any[];
+            `).all(albumRow.edition_id, albumRow.provider, albumId) as any[];
 
             const trackRowsById = new Map(trackRows.map((row) => [String(row.id), row]));
 

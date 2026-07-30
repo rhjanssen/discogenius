@@ -35,7 +35,7 @@ function toFtsPrefixQuery(value: string): string | null {
  *
  * Given the artist/album tags detected for a folder group of local files, this
  * returns candidate release groups drawn exclusively from the local catalog
- * (Albums = release groups, Artists, AlbumReleases, CatalogSearch FTS). It never
+ * (Albums = release groups, Artists, AlbumEditions, CatalogSearch FTS). It never
  * calls a streaming provider — the streaming provider is only ever used to
  * *download* audio, not to identify local files, exactly like Lidarr identifies
  * against its own MusicBrainz-synced database.
@@ -105,7 +105,7 @@ export class CatalogCandidateService {
                 a.mbid AS artist_mbid,
                 (
                     SELECT MAX(rel.track_count)
-                    FROM AlbumReleases rel
+                    FROM AlbumEditions rel
                     WHERE rel.release_group_mbid = al.mbid
                 ) AS num_tracks
             FROM Albums al

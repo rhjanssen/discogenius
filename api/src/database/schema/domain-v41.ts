@@ -77,7 +77,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       FOREIGN KEY (artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL
     );
 
-    CREATE TABLE AlbumReleases (
+    CREATE TABLE AlbumEditions (
       id INTEGER PRIMARY KEY,
       mbid TEXT NOT NULL UNIQUE,
       foreign_release_id TEXT UNIQUE,
@@ -126,7 +126,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       mbid TEXT NOT NULL UNIQUE,
       foreign_track_id TEXT UNIQUE,
       foreign_recording_id TEXT,
-      album_release_id INTEGER NOT NULL,
+      album_edition_id INTEGER NOT NULL,
       recording_id INTEGER NOT NULL,
       medium_position INTEGER NOT NULL,
       position INTEGER NOT NULL,
@@ -134,8 +134,8 @@ export function createDomainSchemaV41(db: Database.Database): void {
       title TEXT NOT NULL,
       length_ms INTEGER,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (album_release_id, medium_position, position),
-      FOREIGN KEY (album_release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE,
+      UNIQUE (album_edition_id, medium_position, position),
+      FOREIGN KEY (album_edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE,
       FOREIGN KEY (recording_id) REFERENCES Recordings(id) ON DELETE CASCADE
     );
 
@@ -152,14 +152,14 @@ export function createDomainSchemaV41(db: Database.Database): void {
     );
 
     CREATE TABLE ReleaseArtistCredits (
-      release_id INTEGER NOT NULL,
+      edition_id INTEGER NOT NULL,
       artist_id INTEGER NOT NULL,
       ordinal INTEGER NOT NULL,
       credited_name TEXT NOT NULL,
       join_phrase TEXT NOT NULL DEFAULT '',
       role TEXT,
-      PRIMARY KEY (release_id, ordinal),
-      FOREIGN KEY (release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE,
+      PRIMARY KEY (edition_id, ordinal),
+      FOREIGN KEY (edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE,
       FOREIGN KEY (artist_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
     );
 
@@ -316,7 +316,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE TABLE ProviderEditionMatches (
       id INTEGER PRIMARY KEY,
       provider_edition_item_id INTEGER NOT NULL,
-      release_id INTEGER NOT NULL,
+      edition_id INTEGER NOT NULL,
       relation TEXT NOT NULL CHECK (relation IN ('exact', 'source_superset', 'source_subset', 'overlap')),
       match_state TEXT NOT NULL CHECK (match_state IN ('candidate', 'accepted', 'ambiguous', 'rejected')),
       decision_source TEXT NOT NULL CHECK (decision_source IN ('automatic', 'manual')),
@@ -330,9 +330,9 @@ export function createDomainSchemaV41(db: Database.Database): void {
       source_coverage REAL NOT NULL DEFAULT 0,
       target_coverage REAL NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (provider_edition_item_id, release_id),
+      UNIQUE (provider_edition_item_id, edition_id),
       FOREIGN KEY (provider_edition_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
-      FOREIGN KEY (release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE
+      FOREIGN KEY (edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
     );
 
     CREATE TABLE ProviderTrackMatches (
@@ -443,16 +443,16 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE TABLE LibraryReleases (
       id INTEGER PRIMARY KEY,
       library_id INTEGER NOT NULL,
-      release_id INTEGER NOT NULL,
+      edition_id INTEGER NOT NULL,
       selection_mode TEXT NOT NULL CHECK (selection_mode IN ('auto', 'manual')),
       locked INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
       reason TEXT,
       curation_version INTEGER NOT NULL,
       selected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (library_id, release_id),
+      UNIQUE (library_id, edition_id),
       FOREIGN KEY (library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
-      FOREIGN KEY (release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE
+      FOREIGN KEY (edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
     );
 
     CREATE TABLE LibraryReleaseScopes (
@@ -512,7 +512,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE TABLE TrackFiles (
       id INTEGER PRIMARY KEY,
       library_id INTEGER NOT NULL,
-      album_release_id INTEGER NOT NULL,
+      album_edition_id INTEGER NOT NULL,
       track_id INTEGER,
       recording_id INTEGER NOT NULL,
       provider_item_id INTEGER,
@@ -548,7 +548,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
       modified_at TEXT,
       verified_at TEXT,
       FOREIGN KEY (library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
-      FOREIGN KEY (album_release_id) REFERENCES AlbumReleases(id),
+      FOREIGN KEY (album_edition_id) REFERENCES AlbumEditions(id),
       FOREIGN KEY (track_id) REFERENCES Tracks(id),
       FOREIGN KEY (recording_id) REFERENCES Recordings(id),
       FOREIGN KEY (provider_item_id) REFERENCES ProviderItems(id) ON DELETE SET NULL,
@@ -569,11 +569,11 @@ export function createDomainSchemaV41(db: Database.Database): void {
   db.exec(`
     CREATE INDEX idx_managed_artists_artist ON ManagedArtists(artist_id);
     CREATE INDEX idx_albums_primary_artist ON Albums(artist_metadata_id, first_release_date);
-    CREATE INDEX idx_releases_group ON AlbumReleases(release_group_id, date);
-    CREATE INDEX idx_tracks_release_position ON Tracks(album_release_id, medium_position, position);
-    CREATE INDEX idx_tracks_recording_release ON Tracks(recording_id, album_release_id);
+    CREATE INDEX idx_releases_group ON AlbumEditions(release_group_id, date);
+    CREATE INDEX idx_tracks_release_position ON Tracks(album_edition_id, medium_position, position);
+    CREATE INDEX idx_tracks_recording_release ON Tracks(recording_id, album_edition_id);
     CREATE INDEX idx_rg_credits_artist ON ReleaseGroupArtistCredits(artist_id, release_group_id);
-    CREATE INDEX idx_release_credits_artist ON ReleaseArtistCredits(artist_id, release_id);
+    CREATE INDEX idx_release_credits_artist ON ReleaseArtistCredits(artist_id, edition_id);
     CREATE INDEX idx_track_credits_artist ON TrackArtistCredits(artist_id, track_id);
     CREATE INDEX idx_recording_credits_artist ON RecordingArtistCredits(artist_id, recording_id);
 
@@ -587,7 +587,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE INDEX idx_provider_artist_matches_provider ON ProviderArtistMatches(provider_artist_item_id, match_state);
     CREATE INDEX idx_provider_artist_matches_artist ON ProviderArtistMatches(artist_id, match_state);
     CREATE INDEX idx_provider_release_matches_provider ON ProviderEditionMatches(provider_edition_item_id, match_state, relation);
-    CREATE INDEX idx_provider_release_matches_release ON ProviderEditionMatches(release_id, match_state, relation);
+    CREATE INDEX idx_provider_release_matches_release ON ProviderEditionMatches(edition_id, match_state, relation);
     CREATE INDEX idx_provider_track_matches_member ON ProviderTrackMatches(provider_edition_member_id, match_state);
     CREATE INDEX idx_provider_track_matches_release_match ON ProviderTrackMatches(provider_edition_match_id, match_state);
     CREATE INDEX idx_provider_track_matches_track ON ProviderTrackMatches(track_id, match_state);
@@ -603,7 +603,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
 
     CREATE INDEX idx_library_artists_library ON LibraryArtists(library_id, monitored, managed_artist_id);
     CREATE INDEX idx_library_release_groups_library ON LibraryReleaseGroups(library_id, monitored, release_group_id);
-    CREATE INDEX idx_library_releases_library ON LibraryReleases(library_id, release_id);
+    CREATE INDEX idx_library_releases_library ON LibraryReleases(library_id, edition_id);
     CREATE INDEX idx_library_release_scopes_artist ON LibraryReleaseScopes(library_artist_id, scope_type, library_release_id);
     CREATE INDEX idx_acquisition_sources_plan ON AcquisitionPlanSources(plan_id, sort_order);
     CREATE INDEX idx_acquisition_tracks_plan ON AcquisitionPlanTracks(plan_id, track_id);
@@ -611,7 +611,7 @@ export function createDomainSchemaV41(db: Database.Database): void {
     CREATE INDEX idx_acquisition_tracks_match ON AcquisitionPlanTracks(provider_track_match_id);
     CREATE INDEX idx_track_files_library_track ON TrackFiles(library_id, track_id);
     CREATE INDEX idx_track_files_library_recording ON TrackFiles(library_id, recording_id);
-    CREATE INDEX idx_track_files_library_release ON TrackFiles(library_id, album_release_id);
+    CREATE INDEX idx_track_files_library_release ON TrackFiles(library_id, album_edition_id);
   `);
 
   db.exec(`

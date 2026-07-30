@@ -189,7 +189,7 @@ export function getReleaseGroupDownloadStatsMap(
       SELECT
         release_group.mbid AS release_group_mbid,
         library_group.library_id,
-        library_release.release_id
+        library_release.edition_id
       FROM target_release_groups trg
       JOIN Albums release_group
         ON release_group.mbid = trg.release_group_mbid
@@ -201,8 +201,8 @@ export function getReleaseGroupDownloadStatsMap(
         ON quality_profile.id = library.quality_profile_id
       JOIN LibraryReleases library_release
         ON library_release.library_id = library_group.library_id
-      JOIN AlbumReleases release
-        ON release.id = library_release.release_id
+      JOIN AlbumEditions release
+        ON release.id = library_release.edition_id
        AND release.release_group_id = release_group.id
       WHERE ${audioLibraryClassPredicate("library", "quality_profile")}
     )
@@ -215,7 +215,7 @@ export function getReleaseGroupDownloadStatsMap(
       END) AS downloaded_tracks
     FROM selected_releases sr
     LEFT JOIN Tracks t
-      ON t.album_release_id = sr.release_id
+      ON t.album_edition_id = sr.edition_id
     LEFT JOIN Recordings recording
       ON recording.id = t.recording_id
     WHERE recording.is_video = 0
@@ -296,11 +296,11 @@ export function getArtistDownloadStatsMap(artistIds: Array<string | number>): Ma
       ON quality_profile.id = library.quality_profile_id
     JOIN LibraryReleases library_release
       ON library_release.library_id = library_group.library_id
-    JOIN AlbumReleases release
-      ON release.id = library_release.release_id
+    JOIN AlbumEditions release
+      ON release.id = library_release.edition_id
      AND release.release_group_id = release_group.id
     LEFT JOIN Tracks track
-      ON track.album_release_id = release.id
+      ON track.album_edition_id = release.id
     LEFT JOIN Recordings recording
       ON recording.id = track.recording_id
     WHERE release_group.artist_mbid IN (${mbidMarks})
@@ -427,11 +427,11 @@ export function countDownloadedAlbums(): number {
         ON quality_profile.id = library.quality_profile_id
       JOIN LibraryReleases library_release
         ON library_release.library_id = library_group.library_id
-      JOIN AlbumReleases release
-        ON release.id = library_release.release_id
+      JOIN AlbumEditions release
+        ON release.id = library_release.edition_id
        AND release.release_group_id = library_group.release_group_id
       JOIN Tracks track
-        ON track.album_release_id = release.id
+        ON track.album_edition_id = release.id
       LEFT JOIN Recordings recording
         ON recording.id = track.recording_id
       WHERE ${audioLibraryClassPredicate("library", "quality_profile")}
@@ -459,11 +459,11 @@ export function countDownloadedTracks(): number {
       ON quality_profile.id = library.quality_profile_id
     JOIN LibraryReleases library_release
       ON library_release.library_id = library_group.library_id
-    JOIN AlbumReleases release
-      ON release.id = library_release.release_id
+    JOIN AlbumEditions release
+      ON release.id = library_release.edition_id
      AND release.release_group_id = library_group.release_group_id
     JOIN Tracks track
-      ON track.album_release_id = release.id
+      ON track.album_edition_id = release.id
     LEFT JOIN Recordings recording
       ON recording.id = track.recording_id
     WHERE ${audioLibraryClassPredicate("library", "quality_profile")}
@@ -555,7 +555,7 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
      AND track_match.match_state = 'accepted'
      AND track_match.track_id IS NOT NULL
     JOIN Tracks track ON track.id = track_match.track_id
-    JOIN AlbumReleases release ON release.id = track.album_release_id
+    JOIN AlbumEditions release ON release.id = track.album_edition_id
     JOIN Albums rg ON rg.id = release.release_group_id
     LEFT JOIN Artists a ON a.mbid = rg.artist_mbid
     WHERE CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
@@ -579,7 +579,7 @@ export function updateArtistDownloadStatusFromMedia(mediaId: string, provider?: 
       CAST(a.id AS TEXT) AS artist_id,
       release_group.mbid AS release_group_mbid
     FROM Tracks track
-    JOIN AlbumReleases release ON release.mbid = track.release_mbid
+    JOIN AlbumEditions release ON release.mbid = track.release_mbid
     JOIN Albums release_group ON release_group.mbid = release.release_group_mbid
     LEFT JOIN Artists a ON a.mbid = release_group.artist_mbid
     WHERE track.mbid = ?

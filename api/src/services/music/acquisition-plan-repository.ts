@@ -108,8 +108,8 @@ export class AcquisitionPlanRepository {
         COUNT(DISTINCT plan_track.track_id) AS assigned_count,
         COUNT(DISTINCT file.track_id) AS complete_count
       FROM LibraryReleases library_release
-      JOIN AlbumReleases release ON release.id = library_release.release_id
-      JOIN Tracks track ON track.album_release_id = release.id
+      JOIN AlbumEditions release ON release.id = library_release.edition_id
+      JOIN Tracks track ON track.album_edition_id = release.id
       LEFT JOIN AcquisitionPlans plan
         ON plan.library_release_id = library_release.id
        AND plan.state = 'current'
@@ -118,7 +118,7 @@ export class AcquisitionPlanRepository {
        AND plan_track.track_id = track.id
       LEFT JOIN TrackFiles file
         ON file.library_id = library_release.library_id
-       AND file.album_release_id = library_release.release_id
+       AND file.album_edition_id = library_release.edition_id
        AND file.track_id = track.id
        AND file.recording_id = track.recording_id
        AND file.file_class = 'audio'

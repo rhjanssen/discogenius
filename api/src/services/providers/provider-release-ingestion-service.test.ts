@@ -17,7 +17,7 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A');
       INSERT INTO Albums (id, mbid, artist_metadata_id, title)
         VALUES (1, 'group-a', 1, 'Release Group A'), (2, 'group-b', 1, 'Release Group B');
-      INSERT INTO AlbumReleases (id, mbid, release_group_id, title)
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title)
         VALUES (1, 'release-a', 1, 'Release A'), (2, 'release-b', 2, 'Release B');
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs)
         VALUES
@@ -25,7 +25,7 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
           (2, 'recording-original', 'Theme', 200000, NULL),
           (3, 'recording-instrumental', 'Theme', 200000, NULL);
       INSERT INTO Tracks (
-        id, mbid, album_release_id, recording_id, medium_position, position, title, length_ms
+        id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms
       ) VALUES
         (1, 'track-exact', 1, 1, 1, 1, 'Opening', 180000),
         (2, 'track-original', 1, 2, 1, 2, 'Theme', 200000),
@@ -191,7 +191,7 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
     );
     assert.deepEqual(
       db.prepare(`
-        SELECT release.provider_id AS release_id, member.position
+        SELECT release.provider_id AS edition_id, member.position
         FROM ProviderEditionMembers member
         JOIN ProviderItems release ON release.id = member.provider_edition_item_id
         JOIN ProviderItems track ON track.id = member.member_item_id
@@ -199,8 +199,8 @@ test("normalized provider ingestion preserves membership reuse, credits, and amb
         ORDER BY release.provider_id
       `).all(),
       [
-        { release_id: "provider-release-a", position: 1 },
-        { release_id: "provider-release-b", position: 1 },
+        { edition_id: "provider-release-a", position: 1 },
+        { edition_id: "provider-release-b", position: 1 },
       ],
       "One provider track identity must retain distinct membership occurrences",
     );

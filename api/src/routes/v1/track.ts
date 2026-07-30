@@ -45,7 +45,7 @@ function getCanonicalTrackReleaseGroup(trackId: string): { release_group_id: num
   const row = db.prepare(`
     SELECT release_group.id AS release_group_id, release_group.mbid AS release_group_mbid
     FROM Tracks track
-    JOIN AlbumReleases release ON release.id = track.album_release_id
+    JOIN AlbumEditions release ON release.id = track.album_edition_id
     JOIN Albums release_group ON release_group.id = release.release_group_id
     WHERE track.mbid = ?
     LIMIT 1

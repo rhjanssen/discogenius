@@ -312,14 +312,14 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
 
     const rows = await this.query<{
       rg_id: number;
-      release_id: number; release_gid: string; release_name: string; status: string | null; barcode: string | null; release_comment: string | null;
+      edition_id: number; release_gid: string; release_name: string; status: string | null; barcode: string | null; release_comment: string | null;
       medium_pos: number; format: string | null; medium_name: string | null;
       track_gid: string; track_pos: number; track_number: string | null; track_name: string; track_length: number | null;
       recording_gid: string; recording_name: string; recording_length: number | null; video: boolean; isrcs: string | null;
     }>(
       `SELECT
           r.release_group AS rg_id,
-          r.id AS release_id, r.gid AS release_gid, r.name AS release_name, rst.name AS status,
+          r.id AS edition_id, r.gid AS release_gid, r.name AS release_name, rst.name AS status,
           r.barcode, r.comment AS release_comment,
           m.position AS medium_pos, mf.name AS format, m.name AS medium_name,
           t.gid AS track_gid, t.position AS track_pos, t.number AS track_number, t.name AS track_name, t.length AS track_length,

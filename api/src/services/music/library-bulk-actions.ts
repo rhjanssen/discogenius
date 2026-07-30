@@ -219,7 +219,7 @@ function applyTrackMonitorState(trackIds: string[], monitored: boolean): void {
     const rows = fetchRows(`
         SELECT DISTINCT release_group.mbid AS id
         FROM Tracks t
-        JOIN AlbumReleases release ON release.id = t.album_release_id
+        JOIN AlbumEditions release ON release.id = t.album_edition_id
         JOIN Albums release_group ON release_group.id = release.release_group_id
         WHERE CAST(t.id AS TEXT) IN (${buildPlaceholders(trackIds.length)})
            OR t.mbid IN (${buildPlaceholders(trackIds.length)})
@@ -289,7 +289,7 @@ function queueAlbumDownloads(releaseGroupMbids: string[]): number[] {
           SELECT plan.id
           FROM AcquisitionPlans plan
           JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
-          JOIN AlbumReleases release ON release.id = library_release.release_id
+          JOIN AlbumEditions release ON release.id = library_release.edition_id
           JOIN Albums release_group ON release_group.id = release.release_group_id
           JOIN LibraryReleaseGroups library_release_group
             ON library_release_group.library_id = library_release.library_id
@@ -318,7 +318,7 @@ function queueTrackDownloads(trackIds: string[]): number[] {
           JOIN AcquisitionPlanTracks plan_track ON plan_track.track_id = track.id
           JOIN AcquisitionPlans plan ON plan.id = plan_track.plan_id AND plan.state = 'current'
           JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
-          JOIN AlbumReleases release ON release.id = library_release.release_id
+          JOIN AlbumEditions release ON release.id = library_release.edition_id
           JOIN LibraryReleaseGroups release_group
             ON release_group.library_id = library_release.library_id
            AND release_group.release_group_id = release.release_group_id
@@ -624,7 +624,7 @@ export class LibraryBulkActionService {
                   ar.release_group_mbid,
                   ar.artist_mbid
                 FROM Tracks t
-                JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
+                JOIN AlbumEditions ar ON ar.mbid = t.release_mbid
                 WHERE CAST(t.id AS TEXT) IN (${buildPlaceholders(ids.length)})
                    OR t.mbid IN (${buildPlaceholders(ids.length)})
             `,

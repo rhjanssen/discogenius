@@ -37,7 +37,7 @@ function linkProviderArtworkCandidate(options: {
     title: string;
   };
   db.prepare(`
-    INSERT OR IGNORE INTO AlbumReleases (
+    INSERT OR IGNORE INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title
     ) VALUES (?, ?, ?, ?, ?, ?)
@@ -50,7 +50,7 @@ function linkProviderArtworkCandidate(options: {
     releaseGroup.title,
   );
   const release = db.prepare(`
-    SELECT id FROM AlbumReleases WHERE mbid = ?
+    SELECT id FROM AlbumEditions WHERE mbid = ?
   `).get(`${options.releaseGroupMbid}-release`) as { id: number };
   const providerItem = db.prepare(`
     SELECT id
@@ -61,10 +61,10 @@ function linkProviderArtworkCandidate(options: {
   `).get(options.provider, options.providerId) as { id: number };
   db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
-    ON CONFLICT(provider_edition_item_id, release_id) DO UPDATE SET
+    ON CONFLICT(provider_edition_item_id, edition_id) DO UPDATE SET
       match_state = 'accepted',
       confidence = 1
   `).run(providerItem.id, release.id);
@@ -115,16 +115,16 @@ function linkProviderArtworkCandidate(options: {
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT OR IGNORE INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, release.id);
   const libraryRelease = db.prepare(`
-    SELECT id FROM LibraryReleases WHERE library_id = ? AND release_id = ?
+    SELECT id FROM LibraryReleases WHERE library_id = ? AND edition_id = ?
   `).get(library.id, release.id) as { id: number };
   const releaseMatch = db.prepare(`
     SELECT id
     FROM ProviderEditionMatches
-    WHERE provider_edition_item_id = ? AND release_id = ?
+    WHERE provider_edition_item_id = ? AND edition_id = ?
   `).get(providerItem.id, release.id) as { id: number };
   db.prepare(`
     INSERT INTO AcquisitionPlans (

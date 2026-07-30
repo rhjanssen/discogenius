@@ -102,7 +102,7 @@ export const CANONICAL_TABLES_IN_DELETE_ORDER = [
   "LibraryReleaseGroups",
   "Tracks",
   "Recordings",
-  "AlbumReleases",
+  "AlbumEditions",
   "Albums",
   "ArtistMetadata",
   "Artists",

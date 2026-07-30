@@ -17,7 +17,7 @@ interface PlanHeader {
   library_id: number;
   library_name: string;
   root_path: string;
-  release_id: number;
+  edition_id: number;
   release_mbid: string;
   release_group_mbid: string;
   album_title: string;
@@ -78,7 +78,7 @@ export function buildAcquisitionDownloadCommand(
       library.id AS library_id,
       library.name AS library_name,
       library.root_path,
-      release.id AS release_id,
+      release.id AS edition_id,
       release.mbid AS release_mbid,
       release_group.mbid AS release_group_mbid,
       release_group.title AS album_title,
@@ -86,7 +86,7 @@ export function buildAcquisitionDownloadCommand(
     FROM AcquisitionPlans plan
     JOIN LibraryReleases library_release ON library_release.id = plan.library_release_id
     JOIN Libraries library ON library.id = library_release.library_id
-    JOIN AlbumReleases release ON release.id = library_release.release_id
+    JOIN AlbumEditions release ON release.id = library_release.edition_id
     JOIN Albums release_group ON release_group.id = release.release_group_id
     LEFT JOIN ReleaseGroupArtistCredits primary_credit
       ON primary_credit.release_group_id = release_group.id AND primary_credit.ordinal = 0
@@ -128,7 +128,7 @@ export function buildAcquisitionDownloadCommand(
         SELECT 1
         FROM TrackFiles file
         WHERE file.library_id = ?
-          AND file.album_release_id = ?
+          AND file.album_edition_id = ?
           AND file.track_id = plan_track.track_id
           AND file.recording_id = track.recording_id
           AND file.file_class = 'audio'
@@ -148,7 +148,7 @@ export function buildAcquisitionDownloadCommand(
       ON release_item.id = release_match.provider_edition_item_id
     WHERE plan_track.plan_id = ?
     ORDER BY track.medium_position, track.position, track.id
-  `).all(header.library_id, header.release_id, planId) as PlanTrack[];
+  `).all(header.library_id, header.edition_id, planId) as PlanTrack[];
   const requestedTrackIds = new Set(options.trackIds || []);
   if (requestedTrackIds.size > 0) {
     tracks = tracks.filter((track) => requestedTrackIds.has(track.track_id));

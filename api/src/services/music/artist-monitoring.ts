@@ -86,7 +86,7 @@ export function applyArtistMonitoringState(artistId: string, monitored: boolean)
               AND EXISTS (
                 SELECT 1
                 FROM LibraryReleases library_release
-                JOIN AlbumReleases release ON release.id = library_release.release_id
+                JOIN AlbumEditions release ON release.id = library_release.edition_id
                 JOIN LibraryReleaseScopes scope
                   ON scope.library_release_id = library_release.id
                 JOIN LibraryArtists library_artist

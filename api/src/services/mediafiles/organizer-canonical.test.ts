@@ -40,7 +40,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
@@ -67,7 +67,7 @@ test("organizer resolves exact provider track ids to their linked canonical trac
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("release-group-1", "artist-mbid", "Canonical Album");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("release-1", "release-group-1", "artist-mbid", "Canonical Album", 1, 2);
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
@@ -115,7 +115,7 @@ test("resolveMatchedCanonicalAlbumTrackRow fails closed when catalog track is mi
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("release-group-1", "artist-mbid", "Canonical Album");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("release-1", "release-group-1", "artist-mbid", "Canonical Album", 1, 1);
   // Offer exists but points at MBIDs that are not on the selected release.
@@ -146,7 +146,7 @@ test("resolveMatchedCanonicalAlbumTrackRow matches trailing-disc offers by ISRC 
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-gmtf", "artist-mbid", "Give Me the Future");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("rel-3vol", "rg-gmtf", "artist-mbid", "Give Me the Future + Dreams of the Past", 3, 2);
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video, isrcs) VALUES (?, ?, ?, ?, ?)")
@@ -194,7 +194,7 @@ test("organizer matches provider-id staging filenames to materialized provider t
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("release-group-1", "artist-mbid", "Canonical Album");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("release-1", "release-group-1", "artist-mbid", "Canonical Album", 1, 1);
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
@@ -519,15 +519,15 @@ test("typed plan identity maps a provider source track onto the selected canonic
     .run("rg-hybrid", "artist-mbid", "Killing Me Softly");
 
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("rel-pompeii", "rg-pompeii", "artist-mbid", "Pompeii", 1, 1);
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("rel-come", "rg-come", "artist-mbid", "Come as You Are", 1, 1);
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("rel-hybrid", "rg-hybrid", "artist-mbid", "Killing Me Softly", 1, 3);
 
@@ -568,10 +568,10 @@ test("typed plan identity maps a provider source track onto the selected canonic
     UPDATE Albums SET artist_metadata_id = ? WHERE artist_mbid = 'artist-mbid'
   `).run(artistMetadata.id);
   dbModule.db.prepare(`
-    UPDATE AlbumReleases
+    UPDATE AlbumEditions
     SET
       release_group_id = (
-        SELECT id FROM Albums WHERE mbid = AlbumReleases.release_group_mbid
+        SELECT id FROM Albums WHERE mbid = AlbumEditions.release_group_mbid
       ),
       artist_metadata_id = ?
     WHERE artist_mbid = 'artist-mbid'
@@ -579,8 +579,8 @@ test("typed plan identity maps a provider source track onto the selected canonic
   dbModule.db.prepare(`
     UPDATE Tracks
     SET
-      album_release_id = (
-        SELECT id FROM AlbumReleases WHERE mbid = Tracks.release_mbid
+      album_edition_id = (
+        SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid
       ),
       recording_id = (
         SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
@@ -588,7 +588,7 @@ test("typed plan identity maps a provider source track onto the selected canonic
   `).run();
   const hybridGroup = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-hybrid'")
     .get() as { id: number };
-  const hybridRelease = dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-hybrid'")
+  const hybridRelease = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-hybrid'")
     .get() as { id: number };
   const hybridTrack = dbModule.db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = 't-pompeii-hybrid'")
     .get() as { id: number; recording_id: number };
@@ -612,7 +612,7 @@ test("typed plan identity maps a provider source track onto the selected canonic
   `).get(providerRelease.id, providerTrack.id) as { id: number };
   const releaseMatch = dbModule.db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'source_subset', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -654,7 +654,7 @@ test("typed plan identity maps a provider source track onto the selected canonic
   `).run(library.id, hybridGroup.id);
   const libraryRelease = dbModule.db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
     RETURNING id
   `).get(library.id, hybridRelease.id) as { id: number };
@@ -735,7 +735,7 @@ test("hybrid tips with providerAlbumId on secondary albums match organize scope"
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, ?)")
     .run("rg-hybrid-tips", "artist-mbid", "Hybrid Tips");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("rel-hybrid-tips", "rg-hybrid-tips", "artist-mbid", "Hybrid Tips", 1, 2);
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
@@ -827,11 +827,11 @@ test("an exact plan source organizes under the job release, not a same-recording
     .run("rg-rehab-single", "artist-amy", "Rehab");
 
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("rel-btb-deluxe", "rg-btb", "artist-amy", "Back to Black", 1, 2);
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("rel-rehab-single", "rg-rehab-single", "artist-amy", "Rehab", 1, 1);
 
@@ -862,14 +862,14 @@ test("an exact plan source organizes under the job release, not a same-recording
     .get() as { id: number };
   const singleGroup = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-rehab-single'")
     .get() as { id: number };
-  const btbRelease = dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-btb-deluxe'")
+  const btbRelease = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-btb-deluxe'")
     .get() as { id: number };
-  const singleRelease = dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-rehab-single'")
+  const singleRelease = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-rehab-single'")
     .get() as { id: number };
   dbModule.db.prepare("UPDATE Albums SET artist_metadata_id = ? WHERE id IN (?, ?)")
     .run(artistMetadata.id, btbGroup.id, singleGroup.id);
   dbModule.db.prepare(`
-    UPDATE AlbumReleases
+    UPDATE AlbumEditions
     SET
       release_group_id = CASE mbid
         WHEN 'rel-btb-deluxe' THEN ?
@@ -887,8 +887,8 @@ test("an exact plan source organizes under the job release, not a same-recording
   dbModule.db.prepare(`
     UPDATE Tracks
     SET
-      album_release_id = (
-        SELECT id FROM AlbumReleases WHERE mbid = Tracks.release_mbid
+      album_edition_id = (
+        SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid
       ),
       recording_id = (
         SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
@@ -908,7 +908,7 @@ test("an exact plan source organizes under the job release, not a same-recording
   `).get() as { id: number };
   const releaseMatch = dbModule.db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -943,7 +943,7 @@ test("an exact plan source organizes under the job release, not a same-recording
   `).run(library.id, btbGroup.id);
   const libraryRelease = dbModule.db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
     RETURNING id
   `).get(library.id, btbRelease.id) as { id: number };

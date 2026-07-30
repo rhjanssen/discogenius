@@ -56,7 +56,7 @@ function seedTrackedFile() {
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
     .run("rg-one", "artist-one-mbid", "Album One", "Album", "2024-01-01");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count, date)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count, date)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("rel-one", "rg-one", "artist-one-mbid", "Album One", 1, 1, "2024-01-01");
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, length_ms) VALUES (?, ?, ?, ?)")
@@ -120,7 +120,7 @@ function seedCanonicalGraph(options: { albumTitle?: string; trackTitle?: string 
   `).run("release-group-mbid-1", "release-group-mbid-1", "artist-mbid-1", albumTitle, "Album", "2024-03-01");
 
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count)
+    INSERT INTO AlbumEditions (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", albumTitle, "Official", "[\"[Worldwide]\"]", "2024-03-01", 1, 1);
 
@@ -190,7 +190,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();
@@ -390,7 +390,7 @@ test("RenameTrackFileService derives track paths from canonical MusicBrainz rows
   `).run("release-group-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Album", "2024-03-01");
 
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count)
+    INSERT INTO AlbumEditions (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Official", "[\"[Worldwide]\"]", "2024-03-01", 1, 1);
 
@@ -462,12 +462,12 @@ test("rename preload follows the selected-release track identity for hybrid sour
   `).run();
   dbModule.db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     )
     SELECT library_group.library_id, release.id, 'manual', 0, 'hybrid_rename_test', 1
     FROM LibraryReleaseGroups library_group
     JOIN Albums album ON album.id = library_group.release_group_id
-    JOIN AlbumReleases release ON release.mbid = 'release-mbid-1'
+    JOIN AlbumEditions release ON release.mbid = 'release-mbid-1'
     WHERE album.mbid = 'release-group-mbid-1'
   `).run();
   dbModule.db.prepare(`
@@ -480,7 +480,7 @@ test("rename preload follows the selected-release track identity for hybrid sour
     VALUES ('source-rg', 'source-rg', 'artist-mbid-1', 'Source Single', 'Single', '2024-02-01')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       foreign_release_id, mbid, release_group_mbid, artist_mbid, title,
       status, country, date, media_count, track_count
     ) VALUES (

@@ -342,7 +342,7 @@ export class ServarrMetadataService {
           r.track_count,
           r.media_count,
           rec.isrcs AS recording_isrcs
-        FROM AlbumReleases r
+        FROM AlbumEditions r
         LEFT JOIN Tracks t ON t.release_mbid = r.mbid
         LEFT JOIN Recordings rec ON rec.mbid = t.recording_mbid
         WHERE r.release_group_mbid IN (${rows.map(() => "?").join(",")})
@@ -663,7 +663,7 @@ export class ServarrMetadataService {
     const existing = db.prepare(`
       SELECT
         rg.content_hash AS contentHash,
-        EXISTS(SELECT 1 FROM AlbumReleases ar WHERE ar.release_group_mbid = rg.mbid) AS hasReleases
+        EXISTS(SELECT 1 FROM AlbumEditions ar WHERE ar.release_group_mbid = rg.mbid) AS hasReleases
       FROM Albums rg
       WHERE rg.mbid = ?
     `).get(releaseGroupMbid) as { contentHash?: string | null; hasReleases?: number } | undefined;
@@ -696,7 +696,7 @@ export class ServarrMetadataService {
     `);
 
     const insertRelease = db.prepare(`
-      INSERT INTO AlbumReleases (
+      INSERT INTO AlbumEditions (
         mbid, release_group_mbid, artist_mbid, title, status, country,
         date, barcode, disambiguation, media_count, track_count,
         label, media, old_foreign_ids, updated_at
@@ -708,7 +708,7 @@ export class ServarrMetadataService {
         country = excluded.country,
         date = excluded.date,
         -- Servarr strips UPC; keep any barcode already filled (e.g. from MB-local).
-        barcode = COALESCE(excluded.barcode, AlbumReleases.barcode),
+        barcode = COALESCE(excluded.barcode, AlbumEditions.barcode),
         disambiguation = excluded.disambiguation,
         media_count = excluded.media_count,
         track_count = excluded.track_count,

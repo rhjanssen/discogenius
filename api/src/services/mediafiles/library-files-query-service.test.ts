@@ -16,7 +16,7 @@ const { listLibraryFiles } = await import("./library-files-query-service.js");
 function resetRows() {
   for (const table of [
     "TrackFiles", "ProviderItems", "Tracks", "Recordings",
-    "AlbumReleases", "Albums", "ArtistMetadata", "Artists",
+    "AlbumEditions", "Albums", "ArtistMetadata", "Artists",
   ]) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
@@ -35,7 +35,7 @@ function seedCanonicalTrackFileOnly() {
     VALUES (?, ?, ?, ?)
   `).run("release-group-mbid", "artist-mbid", "Provider Limited Album", "album");
   db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("release-mbid", "release-group-mbid", "artist-mbid", "Provider Limited Album", 1, 1);
   db.prepare(`

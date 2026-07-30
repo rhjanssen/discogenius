@@ -4,7 +4,7 @@ export function createTrackFileForeignKeyTriggers(db: Database.Database): void {
   const body = `
     UPDATE TrackFiles SET
       release_group_id = COALESCE(release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.canonical_release_group_mbid)),
-      album_release_id = COALESCE(album_release_id, (SELECT id FROM AlbumReleases WHERE mbid = NEW.canonical_release_mbid)),
+      album_edition_id = COALESCE(album_edition_id, (SELECT id FROM AlbumEditions WHERE mbid = NEW.canonical_release_mbid)),
       track_id = COALESCE(track_id, (SELECT id FROM Tracks WHERE mbid = NEW.canonical_track_mbid)),
       recording_id = COALESCE(
         recording_id,

@@ -145,7 +145,7 @@ function loadMissingAlbums(ids: readonly string[], context: DescriptionLookupCon
             LEFT JOIN ProviderEditionMatches provider_match
               ON provider_match.provider_edition_item_id = pi.id
              AND provider_match.match_state = 'accepted'
-            LEFT JOIN AlbumReleases release ON release.id = provider_match.release_id
+            LEFT JOIN AlbumEditions release ON release.id = provider_match.edition_id
             LEFT JOIN Albums album ON album.id = release.release_group_id
             LEFT JOIN ArtistMetadata artist ON artist.id = album.artist_metadata_id
             WHERE pi.entity_type = 'release'
@@ -200,7 +200,7 @@ function loadMissingTracks(ids: readonly string[], context: DescriptionLookupCon
              AND provider_match.track_id IS NOT NULL
             LEFT JOIN Tracks track ON track.id = provider_match.track_id
             LEFT JOIN Recordings recording ON recording.id = provider_match.recording_id
-            LEFT JOIN AlbumReleases release ON release.id = track.album_release_id
+            LEFT JOIN AlbumEditions release ON release.id = track.album_edition_id
             LEFT JOIN Albums album ON album.id = release.release_group_id
             LEFT JOIN ArtistMetadata artist ON artist.id = COALESCE(
               recording.artist_metadata_id,

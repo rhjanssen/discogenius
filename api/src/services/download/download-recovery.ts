@@ -46,9 +46,9 @@ export function getExistingLibraryFiles(
                   ON release_match.provider_edition_item_id = provider_release.id
                  AND release_match.match_state = 'accepted'
                 JOIN LibraryReleases library_release
-                  ON library_release.release_id = release_match.release_id
+                  ON library_release.edition_id = release_match.edition_id
                 JOIN Tracks track
-                  ON track.album_release_id = library_release.release_id
+                  ON track.album_edition_id = library_release.edition_id
                 JOIN TrackFiles lf
                   ON lf.library_id = library_release.library_id
                  AND lf.track_id = track.id

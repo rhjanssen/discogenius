@@ -499,7 +499,7 @@ function resolveCanonicalInlineAudioExpectedPath(
              FROM LibraryReleases library_release
              JOIN Libraries library ON library.id = library_release.library_id
              JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
-             WHERE library_release.release_id = ar.id
+             WHERE library_release.edition_id = ar.id
                AND library.enabled = 1
                AND NOT EXISTS (
                  SELECT 1
@@ -508,7 +508,7 @@ function resolveCanonicalInlineAudioExpectedPath(
                )
            ) THEN 1 ELSE 0 END AS selected_release
     FROM Tracks t
-    JOIN AlbumReleases ar ON ar.mbid = t.release_mbid
+    JOIN AlbumEditions ar ON ar.mbid = t.release_mbid
     JOIN Albums a ON a.mbid = ar.release_group_mbid
     LEFT JOIN ArtistReleaseGroupCuration c
       ON c.source_artist_mbid = ?
@@ -1145,7 +1145,7 @@ export class LibraryFilesService {
                )
               LEFT JOIN Tracks t
                 ON (t.recording_mbid = audio.mbid OR t.recording_id = audio.id)
-              LEFT JOIN AlbumReleases track_rg ON track_rg.mbid = t.release_mbid
+              LEFT JOIN AlbumEditions track_rg ON track_rg.mbid = t.release_mbid
               LEFT JOIN Albums album
                 ON album.id = COALESCE(tf.release_group_id, track_rg.release_group_id)
               WHERE rr.source_recording_id = ?
@@ -1402,7 +1402,7 @@ export class LibraryFilesService {
 
     // Canonical-first album naming context. Audio files always carry a canonical
     // release-group identity (the gap-fill guarantees it); we resolve naming from
-    // Albums/AlbumReleases via getCanonicalAlbumMetadata rather than ProviderAlbums.
+    // Albums/AlbumEditions via getCanonicalAlbumMetadata rather than ProviderAlbums.
     // Only look up the associated audio track's release group when THIS row does
     // not already carry its own — i.e. for sidecars (nfo/cover/lyrics) that key
     // off a shared media_id. A track row already has canonical_release_group_mbid,
@@ -1859,7 +1859,7 @@ export class LibraryFilesService {
     const catalogIds = db.prepare(`
       SELECT
         (SELECT id FROM Albums WHERE mbid = ?) AS release_group_id,
-        (SELECT id FROM AlbumReleases WHERE mbid = ?) AS album_release_id,
+        (SELECT id FROM AlbumEditions WHERE mbid = ?) AS album_edition_id,
         (SELECT id FROM Tracks WHERE mbid = ?) AS track_id,
         (SELECT id FROM Recordings WHERE mbid = ?) AS recording_id
     `).get(
@@ -1869,7 +1869,7 @@ export class LibraryFilesService {
       canonicalIdentity.canonicalRecordingMbid,
     ) as {
       release_group_id: number | null;
-      album_release_id: number | null;
+      album_edition_id: number | null;
       track_id: number | null;
       recording_id: number | null;
     };
@@ -2250,7 +2250,7 @@ export class LibraryFilesService {
     const insert = db.prepare(`
       INSERT INTO TrackFiles (
         artist_id,
-        library_id, release_group_id, album_release_id, track_id, recording_id,
+        library_id, release_group_id, album_edition_id, track_id, recording_id,
         source_audio_variant_id, file_class, source_quality, imported_quality,
         canonical_artist_mbid, canonical_release_group_mbid,
         canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
@@ -2280,7 +2280,7 @@ export class LibraryFilesService {
         artist_id = excluded.artist_id,
         library_id = COALESCE(excluded.library_id, TrackFiles.library_id),
         release_group_id = COALESCE(excluded.release_group_id, TrackFiles.release_group_id),
-        album_release_id = COALESCE(excluded.album_release_id, TrackFiles.album_release_id),
+        album_edition_id = COALESCE(excluded.album_edition_id, TrackFiles.album_edition_id),
         track_id = COALESCE(excluded.track_id, TrackFiles.track_id),
         recording_id = COALESCE(excluded.recording_id, TrackFiles.recording_id),
         source_audio_variant_id = COALESCE(excluded.source_audio_variant_id, TrackFiles.source_audio_variant_id),
@@ -2324,7 +2324,7 @@ export class LibraryFilesService {
       params.artistId,
       libraryId,
       catalogIds.release_group_id,
-      catalogIds.album_release_id,
+      catalogIds.album_edition_id,
       catalogIds.track_id,
       catalogIds.recording_id,
       params.sourceAudioVariantId ?? null,

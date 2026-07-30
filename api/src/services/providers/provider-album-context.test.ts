@@ -23,7 +23,7 @@ beforeEach(() => {
     "AcquisitionPlanTracks", "AcquisitionPlanSources", "AcquisitionPlans",
     "LibraryReleases", "LibraryReleaseGroups", "ProviderTrackMatches",
     "ProviderEditionMatches", "ProviderEditionMembers", "ProviderItemAudioVariants",
-    "ProviderItems", "Tracks", "Recordings", "AlbumReleases", "Albums", "ArtistMetadata",
+    "ProviderItems", "Tracks", "Recordings", "AlbumEditions", "Albums", "ArtistMetadata",
   ]) {
     db.prepare(`DELETE FROM ${table}`).run();
   }
@@ -71,12 +71,12 @@ function seedTwoPlansDisagreeing(): {
     spatial: boolean,
   ) => {
     db.prepare(`
-      INSERT INTO AlbumReleases (mbid, release_group_mbid, release_group_id, artist_mbid, artist_metadata_id, title, track_count)
+      INSERT INTO AlbumEditions (mbid, release_group_mbid, release_group_id, artist_mbid, artist_metadata_id, title, track_count)
       VALUES (?, 'rg-1', ?, 'artist-mbid', ?, 'Bad Blood', 1)
     `).run(releaseMbid, releaseGroup.id, artist.id);
-    const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?").get(releaseMbid) as { id: number };
+    const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(releaseMbid) as { id: number };
     const track = db.prepare(`
-      INSERT INTO Tracks (mbid, release_mbid, album_release_id, recording_mbid, recording_id, medium_position, position, title, length_ms)
+      INSERT INTO Tracks (mbid, release_mbid, album_edition_id, recording_mbid, recording_id, medium_position, position, title, length_ms)
       VALUES (?, ?, ?, 'rec-1', ?, 1, 1, 'Pompeii', 214000) RETURNING id
     `).get(`trk-${key}`, releaseMbid, release.id, recording.id) as { id: number };
 
@@ -96,7 +96,7 @@ function seedTwoPlansDisagreeing(): {
       VALUES (?, ?, 1, 'auto', 0, 'test', 1)
     `).run(library.id, releaseGroup.id);
     const libraryRelease = db.prepare(`
-      INSERT INTO LibraryReleases (library_id, release_id, selection_mode, locked, reason, curation_version)
+      INSERT INTO LibraryReleases (library_id, edition_id, selection_mode, locked, reason, curation_version)
       VALUES (?, ?, 'auto', 0, 'test', 1) RETURNING id
     `).get(library.id, release.id) as { id: number };
 
@@ -111,7 +111,7 @@ function seedTwoPlansDisagreeing(): {
     `).get(providerRelease.id, providerTrack.id) as { id: number };
     const releaseMatch = db.prepare(`
       INSERT INTO ProviderEditionMatches (
-        provider_edition_item_id, release_id, relation, match_state, decision_source,
+        provider_edition_item_id, edition_id, relation, match_state, decision_source,
         confidence, method, matcher_version
       ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1) RETURNING id
     `).get(providerRelease.id, release.id) as { id: number };

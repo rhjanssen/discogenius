@@ -16,7 +16,7 @@ test("Laura Palmer provider release persists one safe assignment and no position
     createDomainSchemaV41(db);
     db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Bastille')").run();
     db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Laura Palmer EP')").run();
-    db.prepare("INSERT INTO AlbumReleases (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Laura Palmer EP')").run();
+    db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Laura Palmer EP')").run();
     const canonicalTitles = [
       "Laura Palmer",
       "Overjoyed",
@@ -28,7 +28,7 @@ test("Laura Palmer provider release persists one safe assignment and no position
       const id = index + 1;
       db.prepare("INSERT INTO Recordings (id, mbid, title) VALUES (?, ?, ?)").run(id, `recording-${id}`, title);
       db.prepare(`
-        INSERT INTO Tracks (id, mbid, album_release_id, recording_id, medium_position, position, title)
+        INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
         VALUES (?, ?, 1, ?, 1, ?, ?)
       `).run(id, `track-${id}`, id, id, title);
     });

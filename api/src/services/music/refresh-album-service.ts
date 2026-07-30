@@ -223,7 +223,7 @@ export class RefreshAlbumService {
             JOIN ProviderEditionMatches match
               ON match.provider_edition_item_id = item.id
              AND match.match_state = 'accepted'
-            JOIN AlbumReleases release ON release.id = match.release_id
+            JOIN AlbumEditions release ON release.id = match.edition_id
             JOIN Albums release_group ON release_group.id = release.release_group_id
             WHERE item.provider = ?
               AND item.entity_type = 'release'
@@ -270,7 +270,7 @@ export class RefreshAlbumService {
 
         if (releaseMbid) {
             db.prepare(`
-                UPDATE AlbumReleases SET
+                UPDATE AlbumEditions SET
                     copyright = COALESCE(NULLIF(?, ''), copyright),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE mbid = ?
@@ -472,7 +472,7 @@ export class RefreshAlbumService {
             ? db.prepare(`
                 SELECT 1 FROM Tracks t
                 JOIN Recordings r ON r.id = t.recording_id
-                JOIN AlbumReleases release ON release.id = t.album_release_id
+                JOIN AlbumEditions release ON release.id = t.album_edition_id
                 WHERE release.mbid = ? AND r.credits IS NOT NULL
                 LIMIT 1
             `).get(canonicalLink.releaseMbid)
@@ -526,7 +526,7 @@ export class RefreshAlbumService {
                   preferred.id
                 LIMIT 1
               )
-            LEFT JOIN AlbumReleases release ON release.id = match.release_id
+            LEFT JOIN AlbumEditions release ON release.id = match.edition_id
             LEFT JOIN Albums album ON album.id = release.release_group_id
             WHERE pi.provider = ?
               AND pi.entity_type = 'release'
@@ -607,7 +607,7 @@ export class RefreshAlbumService {
                   preferred.id
                 LIMIT 1
               )
-            LEFT JOIN AlbumReleases release ON release.id = match.release_id
+            LEFT JOIN AlbumEditions release ON release.id = match.edition_id
             LEFT JOIN Albums a ON a.id = release.release_group_id
             WHERE pi.provider = ?
               AND pi.entity_type = 'release'
@@ -846,7 +846,7 @@ export class RefreshAlbumService {
         const canonicalRelease = canonicalReleaseMbid
             ? db.prepare(`
                 SELECT release.id, release.mbid, release_group.mbid AS release_group_mbid
-                FROM AlbumReleases release
+                FROM AlbumEditions release
                 JOIN Albums release_group ON release_group.id = release.release_group_id
                 WHERE release.mbid = ?
                 LIMIT 1
@@ -857,7 +857,7 @@ export class RefreshAlbumService {
                 JOIN ProviderEditionMatches match
                   ON match.provider_edition_item_id = item.id
                  AND match.match_state = 'accepted'
-                JOIN AlbumReleases release ON release.id = match.release_id
+                JOIN AlbumEditions release ON release.id = match.edition_id
                 JOIN Albums release_group ON release_group.id = release.release_group_id
                 WHERE item.provider = ?
                   AND item.entity_type = 'release'

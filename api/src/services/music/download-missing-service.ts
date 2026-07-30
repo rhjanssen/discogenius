@@ -51,7 +51,7 @@ export class DownloadMissingService {
             JOIN LibraryReleases library_release
               ON library_release.id = plan.library_release_id
             JOIN Libraries library ON library.id = library_release.library_id
-            JOIN AlbumReleases release ON release.id = library_release.release_id
+            JOIN AlbumEditions release ON release.id = library_release.edition_id
             JOIN Albums release_group ON release_group.id = release.release_group_id
             JOIN LibraryReleaseGroups library_release_group
               ON library_release_group.library_id = library_release.library_id
@@ -77,7 +77,7 @@ export class DownloadMissingService {
                     SELECT 1
                     FROM TrackFiles file
                     WHERE file.library_id = library_release.library_id
-                      AND file.album_release_id = library_release.release_id
+                      AND file.album_edition_id = library_release.edition_id
                       AND file.track_id = plan_track.track_id
                       AND file.recording_id = plan_track_catalog.recording_id
                       AND file.file_class = 'audio'

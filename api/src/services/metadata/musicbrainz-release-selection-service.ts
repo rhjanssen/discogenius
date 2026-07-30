@@ -47,7 +47,7 @@ export class MusicBrainzReleaseSelectionService {
                     WHERE lf.file_type = 'track'
                       AND lf.canonical_release_mbid = r.mbid
                 ) AS imported_file_count
-            FROM AlbumReleases r
+            FROM AlbumEditions r
             WHERE r.release_group_mbid = ?
               ${availabilityWhere}
             ORDER BY
@@ -115,7 +115,7 @@ export class MusicBrainzReleaseSelectionService {
                     WHERE lf.file_type = 'track'
                       AND lf.canonical_release_mbid = r.mbid
                 ) AS imported_file_count
-            FROM AlbumReleases r
+            FROM AlbumEditions r
             WHERE r.release_group_mbid = ?
               ${availabilityWhere}
             ORDER BY

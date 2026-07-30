@@ -25,7 +25,7 @@ export class TrackLibraryIndexService {
       const result = db.prepare(`
         INSERT INTO TrackLibraryIndex (
           track_id,
-          album_release_id,
+          album_edition_id,
           recording_id,
           popularity,
           downloaded,
@@ -35,7 +35,7 @@ export class TrackLibraryIndexService {
         )
         SELECT
           track.id,
-          track.album_release_id,
+          track.album_edition_id,
           track.recording_id,
           COALESCE(recording.popularity, 0),
           EXISTS (
@@ -66,14 +66,14 @@ export class TrackLibraryIndexService {
         FROM Tracks track
         LEFT JOIN Recordings recording ON recording.id = track.recording_id
         JOIN LibraryReleases library_release
-          ON library_release.release_id = track.album_release_id
+          ON library_release.edition_id = track.album_edition_id
         JOIN Libraries library
           ON library.id = library_release.library_id
          AND library.enabled = 1
         JOIN quality_profiles quality_profile
           ON quality_profile.id = library.quality_profile_id
-        JOIN AlbumReleases release
-          ON release.id = library_release.release_id
+        JOIN AlbumEditions release
+          ON release.id = library_release.edition_id
         JOIN LibraryReleaseGroups library_group
           ON library_group.library_id = library_release.library_id
          AND library_group.release_group_id = release.release_group_id

@@ -32,7 +32,7 @@ afterEach(() => {
     "ProviderItems",
     "Tracks",
     "Recordings",
-    "AlbumReleases",
+    "AlbumEditions",
     "Albums",
     "ArtistMetadata",
     "Artists",
@@ -52,7 +52,7 @@ function seedArtistAndRelease() {
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Canonical Artist");
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
     VALUES (?, ?, ?, ?, ?)`).run("release-group-1", "artist-mbid", "Canonical Album", "album", "2024-01-01");
-  db.prepare(`INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+  db.prepare(`INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
     VALUES (?, ?, ?, ?, ?, ?)`).run("release-1", "release-group-1", "artist-mbid", "Canonical Album", 1, 1);
   db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
     VALUES (?, ?, ?, ?)`).run("recording-1", "Track One", "artist-mbid", 0);
@@ -104,7 +104,7 @@ function seedAcceptedTrackEdge(input: {
   canonicalReleaseMbid: string;
   canonicalTrackMbid: string;
 }): void {
-  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?")
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
     .get(input.canonicalReleaseMbid) as { id: number };
   const track = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = ?")
     .get(input.canonicalTrackMbid) as { id: number; recording_id: number | null };
@@ -116,7 +116,7 @@ function seedAcceptedTrackEdge(input: {
   `).get(input.releaseItemId, input.memberItemId) as { id: number };
   const releaseMatch = db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state, decision_source,
+      provider_edition_item_id, edition_id, relation, match_state, decision_source,
       confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 0.99, 'test_fixture', 1)
     RETURNING id

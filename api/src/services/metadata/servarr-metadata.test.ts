@@ -138,7 +138,7 @@ function resetCatalog(): void {
   const { db } = dbModule;
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run("artist-mbid", "Bastille");
@@ -185,10 +185,10 @@ test("syncReleaseGroup re-hydrates missing releases even when the hash matches",
 
   // Child rows pruned but the RG hash still present: an identical re-sync must
   // repair the tracklist rather than skip on the stale hash.
-  db.prepare("DELETE FROM AlbumReleases WHERE release_group_mbid = ?").run("rg-skip");
+  db.prepare("DELETE FROM AlbumEditions WHERE release_group_mbid = ?").run("rg-skip");
   await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
 
-  const releaseCount = db.prepare("SELECT COUNT(*) AS count FROM AlbumReleases WHERE release_group_mbid = ?")
+  const releaseCount = db.prepare("SELECT COUNT(*) AS count FROM AlbumEditions WHERE release_group_mbid = ?")
     .get("rg-skip") as { count: number };
   assert.equal(releaseCount.count, 1, "missing release should be re-hydrated despite a matching hash");
 });
@@ -242,7 +242,7 @@ test("syncReleaseGroup persists typed curated release-group fields from MusicBra
   assert.deepEqual(JSON.parse(album.aliases), ["Doom Days (album)"]);
   assert.deepEqual(JSON.parse(album.ratings), { Count: 10, Value: 7.5 });
 
-  const rel = db.prepare("SELECT label FROM AlbumReleases WHERE mbid = ?")
+  const rel = db.prepare("SELECT label FROM AlbumEditions WHERE mbid = ?")
     .get("rel-1") as { label: string };
   assert.deepEqual(JSON.parse(rel.label), ["Virgin EMI"]);
 });
@@ -274,7 +274,7 @@ test("syncReleaseGroup populates curated release columns from the payload", asyn
   fetchReturning(DOOM_DAYS_PAYLOAD);
   await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
 
-  const rel = db.prepare("SELECT country, label, media FROM AlbumReleases WHERE mbid = ?")
+  const rel = db.prepare("SELECT country, label, media FROM AlbumEditions WHERE mbid = ?")
     .get("rel-1") as { country: string; label: string; media: string };
   assert.deepEqual(JSON.parse(rel.country), ["GB"]);
   assert.deepEqual(JSON.parse(rel.label), []);

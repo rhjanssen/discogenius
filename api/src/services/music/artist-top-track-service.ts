@@ -147,14 +147,14 @@ export class ArtistTopTrackService {
           WHERE scope.artist_mbid = @artistMbid
         ),
         artist_releases(id) AS (
-          SELECT DISTINCT library_release.release_id
+          SELECT DISTINCT library_release.edition_id
           FROM artist_rgs
           JOIN LibraryReleaseGroups library_group
             ON library_group.release_group_id = artist_rgs.id
           JOIN LibraryReleases library_release
             ON library_release.library_id = library_group.library_id
-          JOIN AlbumReleases selected_release
-            ON selected_release.id = library_release.release_id
+          JOIN AlbumEditions selected_release
+            ON selected_release.id = library_release.edition_id
            AND selected_release.release_group_id = library_group.release_group_id
         ),
         edition_tracks AS (
@@ -212,8 +212,8 @@ export class ArtistTopTrackService {
             ) AS recording_rank
           FROM artist_releases
           JOIN Tracks track INDEXED BY idx_tracks_album_release_position
-            ON track.album_release_id = artist_releases.id
-          JOIN AlbumReleases release ON release.id = track.album_release_id
+            ON track.album_edition_id = artist_releases.id
+          JOIN AlbumEditions release ON release.id = track.album_edition_id
           JOIN Albums release_group ON release_group.id = release.release_group_id
           LEFT JOIN Recordings recording ON recording.id = track.recording_id
           WHERE recording.artist_metadata_id = @artistMetadataId

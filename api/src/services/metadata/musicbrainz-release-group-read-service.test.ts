@@ -32,7 +32,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM ArtistReleaseGroups").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
@@ -49,27 +49,27 @@ function hydrateCanonicalForeignKeys(releaseGroupMbid: string): void {
     WHERE mbid = ?
   `).run(releaseGroupMbid);
   db.prepare(`
-    UPDATE AlbumReleases
+    UPDATE AlbumEditions
     SET
       release_group_id = (
-        SELECT id FROM Albums WHERE mbid = AlbumReleases.release_group_mbid
+        SELECT id FROM Albums WHERE mbid = AlbumEditions.release_group_mbid
       ),
       artist_metadata_id = (
-        SELECT id FROM ArtistMetadata WHERE mbid = AlbumReleases.artist_mbid
+        SELECT id FROM ArtistMetadata WHERE mbid = AlbumEditions.artist_mbid
       )
     WHERE release_group_mbid = ?
   `).run(releaseGroupMbid);
   db.prepare(`
     UPDATE Tracks
     SET
-      album_release_id = (
-        SELECT id FROM AlbumReleases WHERE mbid = Tracks.release_mbid
+      album_edition_id = (
+        SELECT id FROM AlbumEditions WHERE mbid = Tracks.release_mbid
       ),
       recording_id = (
         SELECT id FROM Recordings WHERE mbid = Tracks.recording_mbid
       )
     WHERE release_mbid IN (
-      SELECT mbid FROM AlbumReleases WHERE release_group_mbid = ?
+      SELECT mbid FROM AlbumEditions WHERE release_group_mbid = ?
     )
   `).run(releaseGroupMbid);
 }
@@ -118,7 +118,7 @@ function selectLibraryRelease(
     .get(libraryName) as { id: number };
   const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
     .get(releaseGroupMbid) as { id: number };
-  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?")
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
     .get(releaseMbid) as { id: number };
   db.prepare(`
     INSERT INTO LibraryReleaseGroups (
@@ -128,7 +128,7 @@ function selectLibraryRelease(
   `).run(library.id, releaseGroup.id);
   return (db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
     RETURNING id
   `).get(library.id, release.id) as { id: number }).id;
@@ -148,11 +148,11 @@ function insertAcceptedReleaseMatch(
     ) VALUES (?, 'release', ?, ?, ?)
     RETURNING id
   `).get(provider, providerId, title, providerUrl) as { id: number };
-  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?")
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
     .get(releaseMbid) as { id: number };
   const releaseMatch = db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -190,7 +190,7 @@ test("album versions expose provider offers for all compatible MusicBrainz relea
     "2022-02-04",
   );
   const insertRelease = dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count, disambiguation
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
@@ -277,7 +277,7 @@ test("album tracks attach library files by recording MBID when track MBIDs diffe
   `).run(releaseGroupMbid, artistMbid, "Frank", "Album", "2006-10-20");
 
   const insertRelease = dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
@@ -375,7 +375,7 @@ test("single release group does not inherit album files by shared recording MBID
   `).run(singleReleaseGroupMbid, artistMbid, "Rehab", "Single", "2006-10-23");
 
   const insertRelease = dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
@@ -473,7 +473,7 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
     VALUES (?, ?, ?, ?, ?)
   `).run(releaseGroupMbid, artistMbid, "Amy", "Album", "2015-10-30");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(releaseMbid, releaseGroupMbid, artistMbid, "Amy", "Official", "2015-10-30", 1, 1);

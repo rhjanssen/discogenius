@@ -24,7 +24,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -43,7 +43,7 @@ test("storeProviderTrackOffers persists YouTube ATV→OMV counterparts as album-
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
     .run("rg-yt-cp", "artist-yt-cp", "Bad Blood", "Album");
   db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
     VALUES (?, ?, ?, ?, 1)
   `).run("release-yt-cp", "rg-yt-cp", "artist-yt-cp", "Bad Blood");
   db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, is_video) VALUES (?, ?, ?, 0)`)
@@ -126,7 +126,7 @@ test("storeProviderTrackOffers persists YouTube self-OMV album tracks as video o
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)`)
     .run("rg-yt-self", "artist-yt-self", "SAVE MY SOUL", "Single");
   db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
     VALUES (?, ?, ?, ?, 1)
   `).run("release-yt-self", "rg-yt-self", "artist-yt-self", "SAVE MY SOUL");
   db.prepare(`INSERT INTO Recordings (mbid, artist_mbid, title, is_video) VALUES (?, ?, ?, 0)`)

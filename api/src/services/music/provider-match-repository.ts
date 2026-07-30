@@ -239,12 +239,12 @@ export class ProviderMatchRepository {
     return this.db.transaction(() => {
       const releaseMatch = this.db.prepare(`
         INSERT INTO ProviderEditionMatches (
-          provider_edition_item_id, release_id, relation, match_state,
+          provider_edition_item_id, edition_id, relation, match_state,
           decision_source, confidence, method, evidence, matcher_version,
           matched_track_count, source_track_count, target_track_count,
           source_coverage, target_coverage, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(provider_edition_item_id, release_id) DO UPDATE SET
+        ON CONFLICT(provider_edition_item_id, edition_id) DO UPDATE SET
           relation = excluded.relation,
           match_state = CASE
             WHEN ProviderEditionMatches.decision_source = 'manual'

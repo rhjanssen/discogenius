@@ -31,7 +31,7 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
     if (sql.includes("JOIN medium m")) {
       return [{
         rg_id: 101,
-        release_id: 201,
+        edition_id: 201,
         release_gid: "d75f9d41-a70a-4ee1-9343-b58a628d5130",
         release_name: "The Spirit",
         status: "Official",

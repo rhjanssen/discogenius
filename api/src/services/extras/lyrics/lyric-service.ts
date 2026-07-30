@@ -171,7 +171,7 @@ function providerTrackProjectionJoins(itemAlias: string): string {
      AND ${releaseMatchAlias}.match_state = 'accepted'
     LEFT JOIN Tracks ${trackAlias} ON ${trackAlias}.id = ${matchAlias}.track_id
     LEFT JOIN Recordings ${recordingAlias} ON ${recordingAlias}.id = ${matchAlias}.recording_id
-    LEFT JOIN AlbumReleases ${releaseAlias} ON ${releaseAlias}.id = ${releaseMatchAlias}.release_id
+    LEFT JOIN AlbumEditions ${releaseAlias} ON ${releaseAlias}.id = ${releaseMatchAlias}.edition_id
     LEFT JOIN Albums ${groupAlias} ON ${groupAlias}.id = ${releaseAlias}.release_group_id
     LEFT JOIN ArtistMetadata ${artistAlias}
       ON ${artistAlias}.id = COALESCE(

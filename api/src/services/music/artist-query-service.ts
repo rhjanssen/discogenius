@@ -171,7 +171,7 @@ function buildArtistTrackCountMap(artistMbids: string[]): Map<string, ArtistCoun
                    track.mbid,
                    COALESCE(library_state.monitored, 0) AS monitored
             FROM artist_scope scope
-            JOIN AlbumReleases release ON release.release_group_mbid = scope.release_group_mbid
+            JOIN AlbumEditions release ON release.release_group_mbid = scope.release_group_mbid
             JOIN Tracks track ON track.release_mbid = release.mbid
             LEFT JOIN library_state ON library_state.release_group_mbid = scope.release_group_mbid
         )
@@ -577,12 +577,12 @@ const artistReleaseGroupLibraryStateCte = `
       ON library_release.library_id = library_group.library_id
      AND EXISTS (
        SELECT 1
-       FROM AlbumReleases candidate_release
-       WHERE candidate_release.id = library_release.release_id
+       FROM AlbumEditions candidate_release
+       WHERE candidate_release.id = library_release.edition_id
          AND candidate_release.release_group_id = library_group.release_group_id
      )
-    LEFT JOIN AlbumReleases release
-      ON release.id = library_release.release_id
+    LEFT JOIN AlbumEditions release
+      ON release.id = library_release.edition_id
     LEFT JOIN AcquisitionPlans plan
       ON plan.library_release_id = library_release.id
      AND plan.state = 'current'
@@ -911,7 +911,7 @@ export class ArtistQueryService {
         OR track.mbid = jq.ref_id
         OR track.mbid = json_extract(jq.payload, '$.canonicalTrackMbid')
         OR CAST(track.id AS TEXT) = CAST(json_extract(jq.payload, '$.canonicalTrackId') AS TEXT)
-      INNER JOIN AlbumReleases release
+      INNER JOIN AlbumEditions release
         ON release.mbid = track.release_mbid
       INNER JOIN Albums rg
         ON rg.mbid = release.release_group_mbid
@@ -1180,7 +1180,7 @@ export class ArtistQueryService {
           projection.popularity,
           track.mbid AS id,
           track.id AS track_row_id,
-          track.album_release_id AS album_release_row_id,
+          track.album_edition_id AS album_release_row_id,
           track.title,
           track.length_ms,
           track.position,
@@ -1200,7 +1200,7 @@ export class ArtistQueryService {
           recording.credits AS recording_credits
         FROM ArtistTopTracks projection INDEXED BY idx_artist_top_tracks_rank
         JOIN Tracks track ON track.id = projection.track_id
-        JOIN AlbumReleases release ON release.id = track.album_release_id
+        JOIN AlbumEditions release ON release.id = track.album_edition_id
         JOIN Albums release_group ON release_group.id = release.release_group_id
         LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.id = release_group.artist_metadata_id
         LEFT JOIN Recordings recording ON recording.id = track.recording_id
@@ -1244,7 +1244,7 @@ export class ArtistQueryService {
          AND plan.state = 'current'
         JOIN LibraryReleases library_release
           ON library_release.id = plan.library_release_id
-         AND library_release.release_id = top_tracks.album_release_row_id
+         AND library_release.edition_id = top_tracks.album_release_row_id
         JOIN Libraries library
           ON library.id = library_release.library_id
          AND library.enabled = 1
@@ -1279,7 +1279,7 @@ export class ArtistQueryService {
         ) AS rank
         FROM top_tracks
         JOIN LibraryReleases library_release
-          ON library_release.release_id = top_tracks.album_release_row_id
+          ON library_release.edition_id = top_tracks.album_release_row_id
         JOIN Libraries library
           ON library.id = library_release.library_id
          AND library.enabled = 1
@@ -1313,7 +1313,7 @@ export class ArtistQueryService {
         ) AS rank
         FROM top_tracks
         JOIN LibraryReleases library_release
-          ON library_release.release_id = top_tracks.album_release_row_id
+          ON library_release.edition_id = top_tracks.album_release_row_id
         JOIN LibraryReleaseGroups library_group
           ON library_group.library_id = library_release.library_id
          AND library_group.release_group_id = top_tracks.release_group_row_id

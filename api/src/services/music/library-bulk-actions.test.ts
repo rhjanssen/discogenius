@@ -48,7 +48,7 @@ beforeEach(() => {
     db.prepare("DELETE FROM Tracks").run();
     db.prepare("DELETE FROM RecordingRelations").run();
     db.prepare("DELETE FROM Recordings").run();
-    db.prepare("DELETE FROM AlbumReleases").run();
+    db.prepare("DELETE FROM AlbumEditions").run();
     db.prepare("DELETE FROM AlbumArtists").run();
     db.prepare("DELETE FROM ArtistReleaseGroups").run();
     db.prepare("DELETE FROM ArtistReleaseGroupCuration").run();
@@ -81,7 +81,7 @@ dbModule.db.prepare(`
     `).run("release-group-mbid-1", "artist-mbid-1", "Album One", "Album", "2024-01-01");
 
     dbModule.db.prepare(`
-        INSERT INTO AlbumReleases (
+        INSERT INTO AlbumEditions (
             id, foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, barcode, media_count, track_count
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(201, "release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Album One", "Official", "XW", "2024-01-01", "123456789012", 1, 1);
@@ -124,7 +124,7 @@ dbModule.db.prepare(`
     `).run(libraryId, releaseGroupId);
     const libraryReleaseId = (dbModule.db.prepare(`
         INSERT INTO LibraryReleases (
-            library_id, release_id, selection_mode, locked, reason, curation_version
+            library_id, edition_id, selection_mode, locked, reason, curation_version
         ) VALUES (?, 201, 'auto', 0, 'test', 1)
         RETURNING id
     `).get(libraryId) as { id: number }).id;
@@ -165,7 +165,7 @@ dbModule.db.prepare(`
     `).get(trackItemId) as { id: number }).id;
     const releaseMatchId = (dbModule.db.prepare(`
         INSERT INTO ProviderEditionMatches (
-            provider_edition_item_id, release_id, relation, match_state, decision_source,
+            provider_edition_item_id, edition_id, relation, match_state, decision_source,
             confidence, method, matcher_version, matched_track_count,
             source_track_count, target_track_count, source_coverage, target_coverage
         ) VALUES (?, 201, 'exact', 'accepted', 'automatic', 1, 'test', 1, 1, 1, 1, 1, 1)

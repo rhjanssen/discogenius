@@ -22,7 +22,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
@@ -41,7 +41,7 @@ test("artist album upsert stores allowed provider supplements on catalog album a
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid) VALUES (?, ?, ?)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
-  dbModule.db.prepare("INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status) VALUES (?, ?, ?, ?, ?)").run(releaseMbid, releaseGroupMbid, artistMbid, "Canonical Album", "Official");
+  dbModule.db.prepare("INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status) VALUES (?, ?, ?, ?, ?)").run(releaseMbid, releaseGroupMbid, artistMbid, "Canonical Album", "Official");
 
   await refreshServiceModule.RefreshAlbumService.upsertArtistAlbum(
     {
@@ -103,7 +103,7 @@ test("artist album upsert stores allowed provider supplements on catalog album a
   assert.equal(album.video_cover, "provider-video-cover-id");
   assert.equal(album.popularity, 47);
 
-  const release = dbModule.db.prepare("SELECT barcode, copyright FROM AlbumReleases WHERE mbid = ?").get(releaseMbid) as {
+  const release = dbModule.db.prepare("SELECT barcode, copyright FROM AlbumEditions WHERE mbid = ?").get(releaseMbid) as {
     barcode: string | null;
     copyright: string | null;
   };
@@ -216,7 +216,7 @@ test("album track scan stores provider track offers linked to the selected canon
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
   dbModule.db.prepare("INSERT INTO Artists (id, name, mbid, monitored) VALUES (?, ?, ?, 1)").run(artistMbid, "Bastille", artistMbid);
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)").run(releaseGroupMbid, artistMbid, "Canonical Album", "album");
-  dbModule.db.prepare("INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, media) VALUES (?, ?, ?, ?, ?, ?)").run(
+  dbModule.db.prepare("INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status, media) VALUES (?, ?, ?, ?, ?, ?)").run(
     releaseMbid,
     releaseGroupMbid,
     artistMbid,
@@ -236,11 +236,11 @@ test("album track scan stores provider track offers linked to the selected canon
     RETURNING id
   `).get("provider-album-1", "Provider Album") as { id: number }).id;
   const canonicalReleaseId = (dbModule.db.prepare(`
-    SELECT id FROM AlbumReleases WHERE mbid = ?
+    SELECT id FROM AlbumEditions WHERE mbid = ?
   `).get(releaseMbid) as { id: number }).id;
   dbModule.db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state, decision_source,
+      provider_edition_item_id, edition_id, relation, match_state, decision_source,
       confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1)
   `).run(providerReleaseItemId, canonicalReleaseId);
@@ -316,7 +316,7 @@ test("SoundCloud playlist tracks map to canonical identity by title and duration
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
     .run(releaseGroupMbid, artistMbid, "Other People's Heartache");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
     VALUES (?, ?, ?, ?, 'Official')
   `).run(releaseMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
   dbModule.db.prepare("INSERT INTO Recordings (mbid, artist_mbid, title) VALUES (?, ?, ?)")
@@ -417,7 +417,7 @@ test("same-release provider superset maps exact-duration version tracks and clea
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'album')")
     .run(releaseGroupMbid, artistMbid, "Reality");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
     VALUES (?, ?, ?, 'Reality (Remixes)', 'Official')
   `).run(releaseMbid, releaseGroupMbid, artistMbid);
 
@@ -538,7 +538,7 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
     VALUES (?, ?, 'Canonical Album', 'album', '')
   `).run(releaseGroupMbid, artistMbid);
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status)
     VALUES (?, ?, ?, 'Canonical Album', 'Official')
   `).run(releaseMbid, releaseGroupMbid, artistMbid);
   const tidalReleaseId = (dbModule.db.prepare(`
@@ -565,11 +565,11 @@ test("album refresh level does not borrow tracks from a colliding provider ID", 
     ) VALUES (?, ?, 1, 1)
   `).run(tidalReleaseId, tidalTrackId);
   const canonicalReleaseId = (dbModule.db.prepare(`
-    SELECT id FROM AlbumReleases WHERE mbid = ?
+    SELECT id FROM AlbumEditions WHERE mbid = ?
   `).get(releaseMbid) as { id: number }).id;
   dbModule.db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state, decision_source,
+      provider_edition_item_id, edition_id, relation, match_state, decision_source,
       confidence, method, matcher_version
     ) VALUES
       (?, ?, 'exact', 'accepted', 'manual', 1, 'test', 1),

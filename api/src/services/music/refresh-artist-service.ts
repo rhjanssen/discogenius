@@ -562,14 +562,14 @@ export class RefreshArtistService {
                 owner.name AS artist_name,
                 (
                     SELECT release.track_count
-                    FROM AlbumReleases release
+                    FROM AlbumEditions release
                     WHERE release.release_group_mbid = rg.mbid
                     ORDER BY COALESCE(release.track_count, 0) DESC, release.mbid ASC
                     LIMIT 1
                 ) AS preferred_track_count,
                 (
                     SELECT release.media_count
-                    FROM AlbumReleases release
+                    FROM AlbumEditions release
                     WHERE release.release_group_mbid = rg.mbid
                     ORDER BY COALESCE(release.track_count, 0) DESC, release.mbid ASC
                     LIMIT 1
@@ -757,14 +757,14 @@ export class RefreshArtistService {
                 owner.name AS artist_name,
                 (
                     SELECT release.mbid
-                    FROM AlbumReleases release
+                    FROM AlbumEditions release
                     WHERE release.release_group_mbid = rg.mbid
                     ORDER BY COALESCE(release.track_count, 0) DESC, release.mbid ASC
                     LIMIT 1
                 ) AS preferred_release_mbid,
                 (
                     SELECT release.track_count
-                    FROM AlbumReleases release
+                    FROM AlbumEditions release
                     WHERE release.release_group_mbid = rg.mbid
                     ORDER BY COALESCE(release.track_count, 0) DESC, release.mbid ASC
                     LIMIT 1
@@ -797,7 +797,7 @@ export class RefreshArtistService {
             FROM ProviderEditionMatches release_match
             JOIN ProviderItems item
               ON item.id = release_match.provider_edition_item_id
-            JOIN AlbumReleases release ON release.id = release_match.release_id
+            JOIN AlbumEditions release ON release.id = release_match.edition_id
             JOIN Albums release_group ON release_group.id = release.release_group_id
             WHERE item.provider = 'soundcloud'
               AND item.entity_type = 'release'

@@ -20,7 +20,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 });
@@ -53,7 +53,7 @@ function seedCanonicalTrack(
     VALUES ('rg-fallback', 'artist-mbid', 'Fallback Album', 'album')
   `).run();
   db.prepare(`
-    INSERT OR IGNORE INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count)
+    INSERT OR IGNORE INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, track_count)
     VALUES (?, 'rg-fallback', 'artist-mbid', 'Fallback Album', '2024-01-01', 3)
   `).run(releaseMbid);
   const recording = db.prepare(`
@@ -73,7 +73,7 @@ function seedCanonicalTrack(
 function acceptReleaseMatch(releaseItemId: number, releaseId: number): number {
   return (db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state, decision_source,
+      provider_edition_item_id, edition_id, relation, match_state, decision_source,
       confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 0.99, 'test_fixture', 1)
     RETURNING id
@@ -102,12 +102,12 @@ test("fallback tracklist takes numbers from the accepted canonical track", () =>
   const memberA = addMember(releaseItem, trackA, 1, 1);
   const memberB = addMember(releaseItem, trackB, 1, 2);
 
-  const releaseId = (db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-1'").get() as { id: number } | undefined)?.id;
+  const releaseId = (db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-1'").get() as { id: number } | undefined)?.id;
   assert.equal(releaseId, undefined, "no canonical release yet");
 
   const canonicalB = seedCanonicalTrack("rel-1", "track-b", "Canonical Title B", 1, 1);
   const canonicalA = seedCanonicalTrack("rel-1", "track-a", "Canonical Title A", 2, 3);
-  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-1'").get() as { id: number };
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-1'").get() as { id: number };
 
   const releaseMatch = acceptReleaseMatch(releaseItem, release.id);
   addTrackMatch(memberA, releaseMatch, canonicalA.trackId, canonicalA.recordingId);
@@ -191,7 +191,7 @@ test("a rejected typed edge does not supply canonical numbering", () => {
   const trackItem = providerItem("tidal", "track", "t-a", "Provider Title");
   const memberId = addMember(releaseItem, trackItem, 1, 1);
   const canonical = seedCanonicalTrack("rel-1", "track-a", "Canonical Title", 1, 7);
-  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-1'").get() as { id: number };
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-1'").get() as { id: number };
 
   // The release edge is accepted, but this member's track edge is rejected.
   const releaseMatch = acceptReleaseMatch(releaseItem, release.id);

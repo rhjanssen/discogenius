@@ -45,7 +45,7 @@ export type CatalogTrackLink = {
 
 function releaseGroupForRelease(releaseMbid: string): string | null {
     const row = db.prepare(
-        "SELECT release_group_mbid FROM AlbumReleases WHERE mbid = ? LIMIT 1",
+        "SELECT release_group_mbid FROM AlbumEditions WHERE mbid = ? LIMIT 1",
     ).get(releaseMbid) as { release_group_mbid: string | null } | undefined;
     return row?.release_group_mbid ? String(row.release_group_mbid) : null;
 }
@@ -60,10 +60,10 @@ function selectedReleasesForGroup(releaseGroupMbid: string, preferredSlot: strin
     const rows = db.prepare(`
         SELECT DISTINCT release.mbid AS selected_release_mbid
         FROM Albums release_group
-        JOIN AlbumReleases release
+        JOIN AlbumEditions release
           ON release.release_group_id = release_group.id
         JOIN LibraryReleases library_release
-          ON library_release.release_id = release.id
+          ON library_release.edition_id = release.id
         JOIN Libraries library
           ON library.id = library_release.library_id
          AND library.enabled = 1
@@ -324,7 +324,7 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
             JOIN ProviderEditionMatches release_match
               ON release_match.provider_edition_item_id = release_item.id
              AND release_match.match_state = 'accepted'
-            JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+            JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
             WHERE release_item.entity_type = 'release'
               AND (canonical_release.mbid = ? OR canonical_release.release_group_mbid = ?)
         `).all(mbid, mbid) as Array<{ provider_album_id: string }>;
@@ -345,7 +345,7 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
             LEFT JOIN ProviderEditionMatches release_match
               ON release_match.provider_edition_item_id = release_item.id
              AND release_match.match_state = 'accepted'
-            LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+            LEFT JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
             LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
             WHERE release_item.entity_type = 'release'
               AND (

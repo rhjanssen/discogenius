@@ -27,7 +27,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM Libraries").run();
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Recordings").run();
   db.prepare("DELETE FROM Artists").run();
@@ -120,29 +120,29 @@ function seedOffer(params: {
       .get(params.recordingMbid) as { id: number } | undefined;
     if (recording) {
       const canonicalRelease = db.prepare(`
-        SELECT track.album_release_id AS release_id
+        SELECT track.album_edition_id AS edition_id
         FROM Tracks track
         WHERE track.recording_id = ?
         ORDER BY track.id
         LIMIT 1
-      `).get(recording.id) as { release_id: number } | undefined;
+      `).get(recording.id) as { edition_id: number } | undefined;
       let releaseMatchId: number | null = null;
-      if (canonicalRelease?.release_id) {
+      if (canonicalRelease?.edition_id) {
         const releaseMatch = db.prepare(`
           INSERT OR IGNORE INTO ProviderEditionMatches (
-            provider_edition_item_id, release_id, relation, match_state,
+            provider_edition_item_id, edition_id, relation, match_state,
             decision_source, confidence, method, matcher_version
           ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
-        `).run(release.id, canonicalRelease.release_id);
+        `).run(release.id, canonicalRelease.edition_id);
         releaseMatchId = releaseMatch.lastInsertRowid
           ? Number(releaseMatch.lastInsertRowid)
           : (db.prepare(`
               SELECT id FROM ProviderEditionMatches
-              WHERE provider_edition_item_id = ? AND release_id = ?
-            `).get(release.id, canonicalRelease.release_id) as { id: number }).id;
+              WHERE provider_edition_item_id = ? AND edition_id = ?
+            `).get(release.id, canonicalRelease.edition_id) as { id: number }).id;
         const canonicalTrack = db.prepare(`
-          SELECT id FROM Tracks WHERE recording_id = ? AND album_release_id = ? LIMIT 1
-        `).get(recording.id, canonicalRelease.release_id) as { id: number } | undefined;
+          SELECT id FROM Tracks WHERE recording_id = ? AND album_edition_id = ? LIMIT 1
+        `).get(recording.id, canonicalRelease.edition_id) as { id: number } | undefined;
         db.prepare(`
           INSERT INTO ProviderTrackMatches (
             provider_edition_member_id, provider_edition_match_id, track_id,
@@ -172,7 +172,7 @@ function seedCatalogTrack(params: {
   db.prepare(`INSERT OR IGNORE INTO Albums (mbid, artist_mbid, title) VALUES (?, 'artist-mbid', ?)`)
     .run(params.releaseGroupMbid, params.title);
   db.prepare(`
-    INSERT OR IGNORE INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title)
+    INSERT OR IGNORE INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title)
     VALUES (?, ?, 'artist-mbid', ?)
   `).run(params.releaseMbid, params.releaseGroupMbid, params.title);
   db.prepare(`INSERT OR IGNORE INTO Recordings (mbid, title) VALUES (?, ?)`)
@@ -185,7 +185,7 @@ function seedCatalogTrack(params: {
     .get() as { id: number };
   const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = ?")
     .get(params.releaseGroupMbid) as { id: number };
-  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?")
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
     .get(params.releaseMbid) as { id: number };
   const recording = db.prepare("SELECT id FROM Recordings WHERE mbid = ?")
     .get(params.recordingMbid) as { id: number };
@@ -195,12 +195,12 @@ function seedCatalogTrack(params: {
     UPDATE Albums SET artist_metadata_id = ? WHERE id = ?
   `).run(artist.id, releaseGroup.id);
   db.prepare(`
-    UPDATE AlbumReleases
+    UPDATE AlbumEditions
     SET release_group_id = ?, artist_metadata_id = ?
     WHERE id = ?
   `).run(releaseGroup.id, artist.id, release.id);
   db.prepare(`
-    UPDATE Tracks SET album_release_id = ?, recording_id = ? WHERE id = ?
+    UPDATE Tracks SET album_edition_id = ?, recording_id = ? WHERE id = ?
   `).run(release.id, recording.id, track.id);
   db.prepare(`
     INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
@@ -248,7 +248,7 @@ function seedCatalogTrack(params: {
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT OR IGNORE INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, release.id);
 }

@@ -281,7 +281,7 @@ function loadCanonicalMatches(providerItems: ProviderItemRow[]): Map<number, Can
         NULL AS recording_mbid,
         release_match.confidence
       FROM ProviderEditionMatches release_match
-      JOIN AlbumReleases release ON release.id = release_match.release_id
+      JOIN AlbumEditions release ON release.id = release_match.edition_id
       JOIN Albums release_group ON release_group.id = release.release_group_id
       WHERE release_match.provider_edition_item_id IN (${marks})
         AND release_match.match_state = 'accepted'
@@ -316,7 +316,7 @@ function loadCanonicalMatches(providerItems: ProviderItemRow[]): Map<number, Can
       JOIN ProviderEditionMatches release_match
         ON release_match.id = track_match.provider_edition_match_id
        AND release_match.match_state = 'accepted'
-      JOIN AlbumReleases release ON release.id = release_match.release_id
+      JOIN AlbumEditions release ON release.id = release_match.edition_id
       JOIN Albums release_group ON release_group.id = release.release_group_id
       JOIN Tracks track ON track.id = track_match.track_id
       JOIN Recordings recording ON recording.id = track_match.recording_id
@@ -402,7 +402,7 @@ function loadCanonicalReleases(mbids: string[]): Map<string, CanonicalReleaseRow
         release.mbid,
         release_group.mbid AS release_group_mbid,
         release_group.artist_mbid
-      FROM AlbumReleases release
+      FROM AlbumEditions release
       JOIN Albums release_group ON release_group.id = release.release_group_id
       WHERE release.mbid IN (${marks})
     `).all(...releaseMbids) as Array<{
@@ -433,7 +433,7 @@ function loadCanonicalTracks(mbids: string[]): Map<string, CanonicalTrackRow> {
         recording.mbid AS recording_mbid,
         release_group.artist_mbid
       FROM Tracks track
-      JOIN AlbumReleases release ON release.id = track.album_release_id
+      JOIN AlbumEditions release ON release.id = track.album_edition_id
       JOIN Albums release_group ON release_group.id = release.release_group_id
       JOIN Recordings recording ON recording.id = track.recording_id
       WHERE track.mbid IN (${marks})
@@ -483,7 +483,7 @@ function loadLibrarySelections(releaseGroupMbids: string[]): Map<string, Library
             ORDER BY library_release.updated_at DESC, library_release.id DESC
           ) AS selection_rank
         FROM LibraryReleases library_release
-        JOIN AlbumReleases release ON release.id = library_release.release_id
+        JOIN AlbumEditions release ON release.id = library_release.edition_id
         JOIN Albums release_group ON release_group.id = release.release_group_id
         JOIN Libraries library
           ON library.id = library_release.library_id
@@ -567,9 +567,9 @@ function loadTracksForReleaseRecording(
         recording.mbid AS recording_mbid,
         release_group.artist_mbid
       FROM requested
-      JOIN AlbumReleases release ON release.mbid = requested.release_mbid
+      JOIN AlbumEditions release ON release.mbid = requested.release_mbid
       JOIN Albums release_group ON release_group.id = release.release_group_id
-      JOIN Tracks track ON track.album_release_id = release.id
+      JOIN Tracks track ON track.album_edition_id = release.id
       JOIN Recordings recording
         ON recording.id = track.recording_id
        AND recording.mbid = requested.recording_mbid

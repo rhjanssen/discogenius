@@ -18,7 +18,7 @@ before(async () => {
 });
 
 beforeEach(() => {
-  for (const table of ["ProviderItems", "AlbumReleases", "Albums", "ArtistMetadata", "Artists"]) {
+  for (const table of ["ProviderItems", "AlbumEditions", "Albums", "ArtistMetadata", "Artists"]) {
     dbModule.db.prepare(`DELETE FROM ${table}`).run();
   }
 });
@@ -49,7 +49,7 @@ function seedAlbum(releaseGroupMbid: string, releaseMbid: string, date: string) 
     VALUES (?, ?, ?, ?, ?)
   `).run(releaseGroupMbid, "artist-mbid", "Canonical Album", "Album", date);
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date)
     VALUES (?, ?, ?, ?, ?)
   `).run(releaseMbid, releaseGroupMbid, "artist-mbid", "Canonical Album Release", date);
 }

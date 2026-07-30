@@ -25,7 +25,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM LibraryReleases").run();
   dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
@@ -49,7 +49,7 @@ function seedLibrarySelection(
     SELECT id FROM Albums WHERE mbid = ?
   `).get(releaseGroupMbid) as { id: number };
   const release = dbModule.db.prepare(`
-    SELECT id FROM AlbumReleases WHERE mbid = ?
+    SELECT id FROM AlbumEditions WHERE mbid = ?
   `).get(releaseMbid) as { id: number };
   dbModule.db.prepare(`
     INSERT INTO LibraryReleaseGroups (
@@ -59,7 +59,7 @@ function seedLibrarySelection(
   `).run(library.id, releaseGroup.id, monitored ? 1 : 0);
   dbModule.db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, curation_version
+      library_id, edition_id, selection_mode, locked, curation_version
     ) VALUES (?, ?, 'auto', 0, 1)
   `).run(library.id, release.id);
 }
@@ -393,7 +393,7 @@ test("video detail appears-on follows related audio via provider_video_for, not 
       ('rg-tidal', 'artist-mbid', 'TIDAL Album', 'album')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, track_count)
     VALUES
       ('rel-apple', 'rg-apple', 'artist-mbid', 'Apple Album', '2024-01-01', 1),
       ('rel-tidal', 'rg-tidal', 'artist-mbid', 'TIDAL Album', '2024-01-01', 1)
@@ -462,7 +462,7 @@ test("video detail surfaces album track position when the video is on a release 
     VALUES ('rg-track-pos', 'artist-track-pos', 'Video Album', 'album', 'cover-42')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, track_count)
     VALUES ('rel-track-pos', 'rg-track-pos', 'artist-track-pos', 'Video Album', '2024-01-01', 2)
   `).run();
 
@@ -517,7 +517,7 @@ test("video detail appears-on follows related audio recordings and prefers monit
       ('rg-affil-album', 'artist-affil', 'Ampersand', 'album', 0)
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
     VALUES
       ('rel-affil-single', 'rg-affil-single', 'artist-affil', 'Part Two', '2024-01-01', 3, 1),
       ('rel-affil-album', 'rg-affil-album', 'artist-affil', 'Ampersand', '2024-06-01', 12, 1)
@@ -588,7 +588,7 @@ test("video detail appears-on prefers studio album over larger monitored live co
       ('rg-live-comp', 'artist-studio-pref', 'At the BBC', 'Album', '["Compilation","Live"]')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
     VALUES
       ('rel-studio-pref', 'rg-studio-pref', 'artist-studio-pref', 'Back to Black', '2006-01-01', 11, 1),
       ('rel-live-comp', 'rg-live-comp', 'artist-studio-pref', 'At the BBC', '2012-01-01', 52, 4)
@@ -652,7 +652,7 @@ test("video detail appears-on prefers selected multi-disc release over earliest 
     VALUES ('rg-multivol', 'artist-multivol', 'Give Me The Future', 'album')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count
     ) VALUES
       ('rel-multivol-single', 'rg-multivol', 'artist-multivol', 'GMTF Single', '2021-01-01', 13, 1),
@@ -733,7 +733,7 @@ test("album associated videos follow provider_video_for audio tracks on the RG",
     VALUES ('rg-assoc', 'artist-mbid', 'Associated Album', 'album')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
     VALUES ('rel-assoc', 'rg-assoc', 'artist-mbid', 'Associated Album', '2024-01-01', 2, 1)
   `).run();
   seedLibrarySelection("rg-assoc", "rel-assoc", true);
@@ -821,7 +821,7 @@ test("album associated videos honor monitored state and music-video type filters
     VALUES ('rg-filter', 'artist-mbid', 'Filter Album', 'album')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, track_count, media_count)
     VALUES ('rel-filter', 'rg-filter', 'artist-mbid', 'Filter Album', '2024-01-01', 1, 1)
   `).run();
   seedLibrarySelection("rg-filter", "rel-filter", true);

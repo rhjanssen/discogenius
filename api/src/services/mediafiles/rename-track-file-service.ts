@@ -974,7 +974,7 @@ export class RenameTrackFileService {
         LEFT JOIN ProviderEditionMatches album_match
           ON album_match.provider_edition_item_id = album_item.id
          AND album_match.match_state = 'accepted'
-        LEFT JOIN AlbumReleases album_release ON album_release.id = album_match.release_id
+        LEFT JOIN AlbumEditions album_release ON album_release.id = album_match.edition_id
         LEFT JOIN Albums album_group ON album_group.id = album_release.release_group_id
         WHERE mf.artist_id = ?
           AND (mf.canonical_release_group_mbid IS NOT NULL OR mf.canonical_release_mbid IS NOT NULL OR mf.provider_id IS NOT NULL)

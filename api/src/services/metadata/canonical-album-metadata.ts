@@ -42,7 +42,7 @@ export function getCanonicalAlbumMetadata(input: {
       release_group.disambiguation AS disambiguation,
       release_group.genres AS genres
     FROM Albums release_group
-    LEFT JOIN AlbumReleases release
+    LEFT JOIN AlbumEditions release
       ON release.release_group_mbid = release_group.mbid
      AND release.mbid = ?
     WHERE release_group.mbid = ?

@@ -21,7 +21,7 @@ before(async () => {
 beforeEach(() => {
   for (const table of [
     "TrackFiles", "ProviderItems", "Tracks", "Recordings",
-    "AlbumReleases", "Albums", "ArtistMetadata", "Artists",
+    "AlbumEditions", "Albums", "ArtistMetadata", "Artists",
   ]) {
     dbModule.db.prepare(`DELETE FROM ${table}`).run();
   }

@@ -28,7 +28,7 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM ProviderItems").run();
     dbModule.db.prepare("DELETE FROM RecordingRelations").run();
     dbModule.db.prepare("DELETE FROM Tracks").run();
-    dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+    dbModule.db.prepare("DELETE FROM AlbumEditions").run();
     dbModule.db.prepare("DELETE FROM Albums").run();
     dbModule.db.prepare("DELETE FROM Recordings").run();
     dbModule.db.prepare("DELETE FROM Artists").run();
@@ -55,7 +55,7 @@ function seedMusicBrainzMetadata() {
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album", "Album review with <markup>", JSON.stringify(["Indie Pop", "Synth-pop"]));
     dbModule.db.prepare(`
-        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, barcode, media_count, track_count, label)
+        INSERT INTO AlbumEditions(mbid, release_group_mbid, artist_mbid, title, date, barcode, media_count, track_count, label)
         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run("album-mbid-200", "release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "123456789012", 1, 1, JSON.stringify(["Virgin Records"]));
     dbModule.db.prepare(`
@@ -178,12 +178,12 @@ test("lyrics cached for a stereo provider item are shared with a spatial counter
     `).run("release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", "Album");
 
     dbModule.db.prepare(`
-        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, media_count, track_count)
+        INSERT INTO AlbumEditions(mbid, release_group_mbid, artist_mbid, title, date, media_count, track_count)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("album-mbid-stereo", "release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", 1, 1);
 
     dbModule.db.prepare(`
-        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, media_count, track_count)
+        INSERT INTO AlbumEditions(mbid, release_group_mbid, artist_mbid, title, date, media_count, track_count)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("album-mbid-spatial", "release-group-mbid-200", "artist-mbid-100", "Example Album", "2024-02-03", 1, 1);
 
@@ -446,7 +446,7 @@ test("album NFO uses the selected canonical release and one exact provider relea
     seedMusicBrainzMetadata();
     dbModule.db.prepare("UPDATE Albums SET title = ? WHERE mbid = ?")
       .run("Canonical Release Group Title", "release-group-mbid-200");
-    dbModule.db.prepare("UPDATE AlbumReleases SET title = ? WHERE mbid = ?")
+    dbModule.db.prepare("UPDATE AlbumEditions SET title = ? WHERE mbid = ?")
       .run("Edition-Specific Release Title", "album-mbid-200");
 
     dbModule.db.prepare(`

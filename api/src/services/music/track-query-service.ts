@@ -272,7 +272,7 @@ function getTrackFromSql(selectClause: string, whereClause: string, candidateSco
     SELECT
       ${selectClause}
     FROM ${candidateScoped ? "candidate_track_ids candidate JOIN Tracks track ON track.id = candidate.id" : "Tracks track"}
-    JOIN AlbumReleases release ON release.id = track.album_release_id
+    JOIN AlbumEditions release ON release.id = track.album_edition_id
     JOIN Albums release_group ON release_group.id = release.release_group_id
     LEFT JOIN ArtistMetadata artist ON artist.id = release_group.artist_metadata_id
     LEFT JOIN Recordings recording ON recording.id = track.recording_id
@@ -338,8 +338,8 @@ function getTrackSelectSql(whereClause: string): string {
              AND quality_plan.state = 'current'
             JOIN LibraryReleases quality_library_release
               ON quality_library_release.id = quality_plan.library_release_id
-            JOIN AlbumReleases quality_release
-              ON quality_release.id = quality_library_release.release_id
+            JOIN AlbumEditions quality_release
+              ON quality_release.id = quality_library_release.edition_id
             JOIN Libraries quality_library
               ON quality_library.id = quality_library_release.library_id
              AND quality_library.enabled = 1
@@ -413,8 +413,8 @@ function getTrackSelectSql(whereClause: string): string {
            AND remote_library.enabled = 1
           JOIN quality_profiles remote_profile
             ON remote_profile.id = remote_library.quality_profile_id
-          JOIN AlbumReleases remote_release
-            ON remote_release.id = remote_library_release.release_id
+          JOIN AlbumEditions remote_release
+            ON remote_release.id = remote_library_release.edition_id
           JOIN AcquisitionPlanSources remote_source
             ON remote_source.id = remote_plan_track.source_id
           JOIN ProviderEditionMatches remote_release_match
@@ -488,7 +488,7 @@ function getTrackSelectSql(whereClause: string): string {
          AND candidate_plan.state = 'current'
         JOIN LibraryReleases candidate_library_release
           ON candidate_library_release.id = candidate_plan.library_release_id
-         AND candidate_library_release.release_id = track.album_release_id
+         AND candidate_library_release.edition_id = track.album_edition_id
         JOIN Libraries candidate_library
           ON candidate_library.id = candidate_library_release.library_id
          AND candidate_library.enabled = 1
@@ -641,7 +641,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
         file.duration
       FROM TrackFiles file
       JOIN Tracks track ON track.id = file.track_id
-      JOIN AlbumReleases release ON release.id = file.album_release_id
+      JOIN AlbumEditions release ON release.id = file.album_edition_id
       JOIN Albums release_group ON release_group.id = release.release_group_id
       LEFT JOIN ArtistMetadata artist ON artist.id = release_group.artist_metadata_id
       JOIN Recordings recording ON recording.id = file.recording_id
@@ -791,10 +791,10 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
       -- the fast COUNT path and the listed items always describe one set.
       SELECT selected_track.id
       FROM LibraryReleases library_release
-      JOIN AlbumReleases release
-        ON release.id = library_release.release_id
+      JOIN AlbumEditions release
+        ON release.id = library_release.edition_id
       JOIN Tracks selected_track
-        ON selected_track.album_release_id = library_release.release_id
+        ON selected_track.album_edition_id = library_release.edition_id
       JOIN LibraryReleaseGroups library_group
         ON library_group.library_id = library_release.library_id
        AND library_group.release_group_id = release.release_group_id
@@ -806,8 +806,8 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
       UNION
       SELECT available_file.track_id
       FROM TrackFiles available_file
-      JOIN AlbumReleases file_release
-        ON file_release.id = available_file.album_release_id
+      JOIN AlbumEditions file_release
+        ON file_release.id = available_file.album_edition_id
       JOIN LibraryReleaseGroups library_group
         ON library_group.library_id = available_file.library_id
        AND library_group.release_group_id = file_release.release_group_id
@@ -890,7 +890,7 @@ export function listTracks(input: ListTracksQuery): TracksListResponse {
         ON filtered_plan.id = filtered_plan_track.plan_id
       JOIN LibraryReleases filtered_library_release
         ON filtered_library_release.id = filtered_plan.library_release_id
-       AND filtered_library_release.release_id = track.album_release_id
+       AND filtered_library_release.edition_id = track.album_edition_id
       JOIN Libraries filtered_library
         ON filtered_library.id = filtered_library_release.library_id
        AND filtered_library.enabled = 1
@@ -1058,7 +1058,7 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
       file.modified_at
     FROM TrackFiles file
     JOIN Tracks track ON track.id = file.track_id
-    JOIN AlbumReleases release ON release.id = file.album_release_id
+    JOIN AlbumEditions release ON release.id = file.album_edition_id
     JOIN Albums release_group ON release_group.id = release.release_group_id
     LEFT JOIN ArtistMetadata artist ON artist.id = release_group.artist_metadata_id
     JOIN Recordings recording ON recording.id = file.recording_id

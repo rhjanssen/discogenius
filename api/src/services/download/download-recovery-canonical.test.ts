@@ -21,7 +21,7 @@ function resetRows() {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();
@@ -48,7 +48,7 @@ test("download recovery resolves existing album files through canonical provider
     RETURNING id
   `).get("rg-mbid", "artist-mbid", "Album", "album") as { id: number };
   const release = db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title, track_count, media_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -71,7 +71,7 @@ test("download recovery resolves existing album files through canonical provider
   `).get("recording-mbid", artist.id, "artist-mbid", "Track", 0) as { id: number };
   const track = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       title, medium_position, position
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING id
@@ -93,7 +93,7 @@ test("download recovery resolves existing album files through canonical provider
   `).get("tidal", "release", "provider-album", "Album") as { id: number };
   db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
   `).run(providerRelease.id, release.id);
@@ -108,14 +108,14 @@ test("download recovery resolves existing album files through canonical provider
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, release.id);
   db.prepare(`
     INSERT INTO TrackFiles (
       artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type,
-      provider_id, release_group_id, album_release_id, track_id, recording_id,
+      provider_id, release_group_id, album_edition_id, track_id, recording_id,
       library_slot, library_id, file_path, relative_path, library_root, filename,
       extension, file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

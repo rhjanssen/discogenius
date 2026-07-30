@@ -91,7 +91,7 @@ export function createAlbumLibraryProjectionSchema(db: Database.Database): void 
     stateTable: "AlbumLibraryProjectionState",
     tables: [
       "Albums",
-      "AlbumReleases",
+      "AlbumEditions",
       "LibraryReleaseGroups",
       "LibraryReleases",
       "AcquisitionPlans",
@@ -115,7 +115,7 @@ export function createTrackLibraryProjectionSchema(db: Database.Database): void 
   db.exec(`
     CREATE TABLE TrackLibraryIndex (
       track_id INTEGER PRIMARY KEY,
-      album_release_id INTEGER NOT NULL,
+      album_edition_id INTEGER NOT NULL,
       recording_id INTEGER,
       popularity REAL NOT NULL DEFAULT 0,
       downloaded BOOLEAN NOT NULL DEFAULT 0,
@@ -123,7 +123,7 @@ export function createTrackLibraryProjectionSchema(db: Database.Database): void 
       has_spatial BOOLEAN NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(track_id) REFERENCES Tracks(id) ON DELETE CASCADE,
-      FOREIGN KEY(album_release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE,
+      FOREIGN KEY(album_edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE,
       FOREIGN KEY(recording_id) REFERENCES Recordings(id) ON DELETE SET NULL
     );
 
@@ -150,7 +150,7 @@ export function createTrackLibraryProjectionSchema(db: Database.Database): void 
       "Tracks",
       "Recordings",
       "TrackFiles",
-      "AlbumReleases",
+      "AlbumEditions",
       "LibraryReleaseGroups",
       "LibraryReleases",
       "AcquisitionPlans",

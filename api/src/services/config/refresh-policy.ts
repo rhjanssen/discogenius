@@ -113,7 +113,7 @@ export function shouldRefreshTrackSet(options: {
     LEFT JOIN ProviderEditionMatches release_match
       ON release_match.provider_edition_item_id = album_item.id
      AND release_match.match_state = 'accepted'
-    LEFT JOIN AlbumReleases release ON release.id = release_match.release_id
+    LEFT JOIN AlbumEditions release ON release.id = release_match.edition_id
     LEFT JOIN Albums album ON album.id = release.release_group_id
     WHERE album_item.entity_type = 'release'
       AND album_item.provider_id = ?

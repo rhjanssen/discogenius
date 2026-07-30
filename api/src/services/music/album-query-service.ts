@@ -91,12 +91,12 @@ const releaseGroupLibraryStateCte = `
       ON library_release.library_id = library_group.library_id
      AND EXISTS (
        SELECT 1
-       FROM AlbumReleases selected_release
-       WHERE selected_release.id = library_release.release_id
+       FROM AlbumEditions selected_release
+       WHERE selected_release.id = library_release.edition_id
          AND selected_release.release_group_id = library_group.release_group_id
      )
-    LEFT JOIN AlbumReleases release
-      ON release.id = library_release.release_id
+    LEFT JOIN AlbumEditions release
+      ON release.id = library_release.edition_id
     LEFT JOIN AcquisitionPlans plan
       ON plan.library_release_id = library_release.id
      AND plan.state = 'current'
@@ -171,9 +171,9 @@ function getFullyDownloadedReleaseGroupMbids(libraryFilter: string): string[] {
         ON quality_profile.id = library.quality_profile_id
       JOIN LibraryReleases library_release
         ON library_release.library_id = library_file.library_id
-       AND library_release.release_id = library_file.album_release_id
-      JOIN AlbumReleases release
-        ON release.id = library_release.release_id
+       AND library_release.edition_id = library_file.album_edition_id
+      JOIN AlbumEditions release
+        ON release.id = library_release.edition_id
       JOIN Albums release_group
         ON release_group.id = release.release_group_id
       WHERE library_file.file_type = 'track'

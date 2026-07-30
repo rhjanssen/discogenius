@@ -58,7 +58,7 @@ test("audio tag context derives canonical MusicBrainz tags without provider cata
   );
 
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, barcode, copyright, media_count, track_count, label)
+    INSERT INTO AlbumEditions (foreign_release_id, mbid, release_group_mbid, artist_mbid, title, status, country, date, barcode, copyright, media_count, track_count, label)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("release-mbid-1", "release-mbid-1", "release-group-mbid-1", "artist-mbid-1", "Canonical Album", "Official", "[\"[Worldwide]\"]", "2024-03-01", null, "(P) 2024 Canonical Release", 1, 1, JSON.stringify(["Canonical Label"]));
 

@@ -18,7 +18,7 @@ test("manual library release selection persists a locked choice and normalized a
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-bastille', 'Bastille');
       INSERT INTO Albums (id, mbid, artist_metadata_id, title)
       VALUES (1, 'group-doom-days', 1, 'Doom Days');
-      INSERT INTO AlbumReleases (
+      INSERT INTO AlbumEditions (
         id, mbid, release_group_id, title, status, country, date, media_count, track_count
       ) VALUES (1, 'release-doom-days', 1, 'Doom Days', 'Official', 'GB', '2019-06-14', 1, 2);
       INSERT INTO Recordings (id, mbid, title, length_ms, isrcs)
@@ -26,7 +26,7 @@ test("manual library release selection persists a locked choice and normalized a
         (1, 'recording-quarter-past-midnight', 'Quarter Past Midnight', 199000, '["GBUM71801770"]'),
         (2, 'recording-bad-decisions', 'Bad Decisions', 190000, '["GBUM71901234"]');
       INSERT INTO Tracks (
-        id, mbid, album_release_id, recording_id, medium_position, position, title, length_ms
+        id, mbid, album_edition_id, recording_id, medium_position, position, title, length_ms
       ) VALUES
         (1, 'track-quarter-past-midnight', 1, 1, 1, 1, 'Quarter Past Midnight', 199000),
         (2, 'track-bad-decisions', 1, 2, 1, 2, 'Bad Decisions', 190000);

@@ -33,7 +33,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -119,7 +119,7 @@ test("local search returns canonical tracks", async () => {
     VALUES ('rg-mbid', 'artist-mbid', 'Search Album', 'Album', '2024-01-01')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, country, date)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status, country, date)
     VALUES ('release-mbid', 'rg-mbid', 'artist-mbid', 'Search Album', 'Official', 'XW', '2024-01-01')
   `).run();
   dbModule.db.prepare(`
@@ -149,14 +149,14 @@ test("local search returns canonical tracks", async () => {
     RETURNING id
   `).get(providerRelease.id, providerTrack.id) as { id: number };
   const release = dbModule.db.prepare(`
-    SELECT id, release_group_id FROM AlbumReleases WHERE mbid = 'release-mbid'
+    SELECT id, release_group_id FROM AlbumEditions WHERE mbid = 'release-mbid'
   `).get() as { id: number; release_group_id: number };
   const track = dbModule.db.prepare(`
     SELECT id, recording_id FROM Tracks WHERE mbid = 'track-mbid'
   `).get() as { id: number; recording_id: number };
   const releaseMatch = dbModule.db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -187,7 +187,7 @@ test("local search returns canonical tracks", async () => {
   `).run(library.id, release.release_group_id);
   const libraryRelease = dbModule.db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, curation_version
+      library_id, edition_id, selection_mode, locked, curation_version
     ) VALUES (?, ?, 'auto', 0, 1)
     RETURNING id
   `).get(library.id, release.id) as { id: number };

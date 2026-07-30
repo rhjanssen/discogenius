@@ -15,7 +15,7 @@
  *   not;
  * - they ignore `LibraryReleaseScopes`, which records WHY a selected release is
  *   wanted and by which managed-artist workflow;
- * - the canonical fallback below keys on `AlbumReleases.artist_mbid`, i.e. the
+ * - the canonical fallback below keys on `AlbumEditions.artist_mbid`, i.e. the
  *   primary credited artist, so a collaboration owned by another artist is
  *   invisible to it even when this artist performs on it.
  *
@@ -69,7 +69,7 @@ export const LEGACY_FOLDER_SCAN_MEMBER_ARTIST_SCOPE_SQL = `
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = member.provider_edition_item_id
          AND release_match.match_state = 'accepted'
-        JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+        JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
         JOIN Artists managed_artist ON managed_artist.mbid = canonical_release.artist_mbid
         WHERE member.member_item_id = pi.id
           AND managed_artist.id = @artistId
@@ -98,7 +98,7 @@ export const LEGACY_FOLDER_SCAN_RELEASE_ARTIST_SCOPE_SQL = `
       OR EXISTS (
         SELECT 1
         FROM ProviderEditionMatches release_match
-        JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+        JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
         JOIN Artists managed_artist ON managed_artist.mbid = canonical_release.artist_mbid
         WHERE release_match.provider_edition_item_id = pi.id
           AND release_match.match_state = 'accepted'
@@ -199,7 +199,7 @@ export function providerSelectedPlanAlbumIdSql(context: ProviderAlbumContext = {
     filters.push(`AND (${context.libraryIdExpr} IS NULL OR plan_library_release.library_id = ${context.libraryIdExpr})`);
   }
   if (context.canonicalTrackId) filters.push("AND plan_track.track_id = @canonicalTrackId");
-  if (context.canonicalReleaseId) filters.push("AND plan_library_release.release_id = @canonicalReleaseId");
+  if (context.canonicalReleaseId) filters.push("AND plan_library_release.edition_id = @canonicalReleaseId");
 
   return `
     (
@@ -278,7 +278,7 @@ export const PROVIDER_ITEM_AGREED_RELEASE_GROUP_MBID_SQL = `
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = member.provider_edition_item_id
          AND release_match.match_state = 'accepted'
-        JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+        JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
         JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
         WHERE member.member_item_id = pi.id
       ) group_choice

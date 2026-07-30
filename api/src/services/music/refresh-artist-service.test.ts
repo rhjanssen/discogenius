@@ -25,7 +25,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM ArtistReleaseGroups").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
@@ -54,7 +54,7 @@ function seedSoundCloudMixtapeCatalog() {
     JSON.stringify(["Mixtape/Street"]),
   );
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count
     ) VALUES (?, ?, ?, ?, 'Official', '2012-02-17', 1, 2)
   `).run(releaseMbid, releaseGroupMbid, artistMbid, "Other People's Heartache");
@@ -484,7 +484,7 @@ test("provider release-group matching passes spatial quality and release disambi
     VALUES (?, ?, ?, ?, ?)
   `).run(releaseGroupMbid, artistMbid, "MTV Unplugged – Live in London", "Album", "2023-04-22");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, disambiguation, status, date, media_count, track_count
     ) VALUES
       (?, ?, ?, ?, NULL, 'Official', '2023-04-22', 1, 15),
@@ -604,7 +604,7 @@ test("matched provider offers persist the best compatible MusicBrainz release ve
     VALUES (?, ?, ?, ?, ?)
   `).run(releaseGroupMbid, artistMbid, "Give Me the Future", "Album", "2022-02-04");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, status, country, date, media_count, track_count
     ) VALUES
       (?, ?, ?, ?, ?, ?, ?, ?, ?),

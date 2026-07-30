@@ -569,7 +569,7 @@ function createBaselineSchemaV41(): void {
       -- Catalog integer FKs (files link straight to catalog rows;
       -- recording_id covers mbid-less provider videos too)
       release_group_id INTEGER REFERENCES Albums(id) ON DELETE SET NULL,
-      album_release_id INTEGER REFERENCES AlbumReleases(id) ON DELETE SET NULL,
+      album_edition_id INTEGER REFERENCES AlbumEditions(id) ON DELETE SET NULL,
       track_id INTEGER REFERENCES Tracks(id) ON DELETE SET NULL,
       recording_id INTEGER REFERENCES Recordings(id) ON DELETE SET NULL,
 
@@ -727,7 +727,7 @@ function createBaselineSchemaV41(): void {
   db.exec(`CREATE INDEX idx_metadata_identity_status_status ON metadata_identity_status(status, updated_at DESC)`);
 
   // Foreign key and lookup performance indexes
-  db.exec("CREATE INDEX idx_mb_releases_artist_mbid ON AlbumReleases(artist_mbid)");
+  db.exec("CREATE INDEX idx_mb_releases_artist_mbid ON AlbumEditions(artist_mbid)");
   db.exec("CREATE INDEX idx_mb_tracks_recording_mbid ON Tracks(recording_mbid)");
   db.exec("CREATE INDEX idx_artists_path ON Artists(path)");
 }

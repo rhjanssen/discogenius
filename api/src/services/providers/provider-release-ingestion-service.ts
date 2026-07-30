@@ -108,7 +108,7 @@ export class ProviderReleaseIngestionService {
         track.medium_position
       FROM Tracks track
       JOIN Recordings recording ON recording.id = track.recording_id
-      WHERE track.album_release_id = ? AND recording.is_video = 0
+      WHERE track.album_edition_id = ? AND recording.is_video = 0
       ORDER BY track.medium_position, track.position, track.id
     `).all(input.canonicalReleaseId) as Array<{
       id: number;

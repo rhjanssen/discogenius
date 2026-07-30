@@ -82,8 +82,8 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         FROM Albums selected_group
         JOIN LibraryReleases library_release
           ON 1 = 1
-        JOIN AlbumReleases release
-          ON release.id = library_release.release_id
+        JOIN AlbumEditions release
+          ON release.id = library_release.edition_id
          AND release.release_group_id = selected_group.id
         JOIN Libraries library
           ON library.id = library_release.library_id
@@ -160,10 +160,10 @@ function selectPreferredRelease(releaseGroupMbid: string): any | null {
     const selectedLibraryRelease = db.prepare(`
         SELECT release.*
         FROM Albums release_group
-        JOIN AlbumReleases release
+        JOIN AlbumEditions release
           ON release.release_group_id = release_group.id
         JOIN LibraryReleases library_release
-          ON library_release.release_id = release.id
+          ON library_release.edition_id = release.id
         JOIN Libraries library
           ON library.id = library_release.library_id
          AND library.enabled = 1
@@ -186,7 +186,7 @@ function selectPreferredRelease(releaseGroupMbid: string): any | null {
 
     const selected = MusicBrainzReleaseSelectionService.selectRepresentativeRelease(releaseGroupMbid);
     return selected
-        ? db.prepare("SELECT * FROM AlbumReleases WHERE mbid = ?").get(selected.mbid) as any | null
+        ? db.prepare("SELECT * FROM AlbumEditions WHERE mbid = ?").get(selected.mbid) as any | null
         : null;
 }
 
@@ -254,7 +254,7 @@ function listMusicBrainzReleaseVersions(
             )) LIKE '%digital%'
           ) THEN 1 ELSE 0
         END AS digital_score
-      FROM AlbumReleases r
+      FROM AlbumEditions r
       WHERE r.release_group_mbid = ?
       ORDER BY
         digital_score DESC,
@@ -319,8 +319,8 @@ function listMusicBrainzReleaseVersions(
       FROM ProviderEditionMatches release_match
       JOIN ProviderItems provider_item
         ON provider_item.id = release_match.provider_edition_item_id
-      JOIN AlbumReleases release
-        ON release.id = release_match.release_id
+      JOIN AlbumEditions release
+        ON release.id = release_match.edition_id
       JOIN Albums release_group
         ON release_group.id = release.release_group_id
       WHERE release_group.mbid = ?
@@ -860,8 +860,8 @@ function loadPlannedTrackOffers(releaseGroupMbid: string): PlannedTrackOffer[] {
          AND plan.state = 'current'
         JOIN LibraryReleases library_release
           ON library_release.id = plan.library_release_id
-        JOIN AlbumReleases release
-          ON release.id = library_release.release_id
+        JOIN AlbumEditions release
+          ON release.id = library_release.edition_id
         JOIN Albums release_group
           ON release_group.id = release.release_group_id
         JOIN Libraries library
@@ -1039,7 +1039,7 @@ export class MusicBrainzReleaseGroupReadService {
         // trip even when content_hash would skip the write (Lidarr/Jellyfin keep
         // detail GETs DB-only; freshness is the refresh/scheduler path).
         const releaseCount = db.prepare(
-            "SELECT COUNT(*) AS count FROM AlbumReleases WHERE release_group_mbid = ?",
+            "SELECT COUNT(*) AS count FROM AlbumEditions WHERE release_group_mbid = ?",
         ).get(releaseGroupMbid) as { count?: number } | undefined;
 
         if (Number(releaseCount?.count || 0) === 0) {

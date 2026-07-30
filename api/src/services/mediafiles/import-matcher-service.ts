@@ -424,7 +424,7 @@ export class ImportMatcherService {
                         LEFT JOIN ProviderEditionMatches album_match
                           ON album_match.provider_edition_item_id = album_item.id
                          AND album_match.match_state = 'accepted'
-                        LEFT JOIN AlbumReleases album_release ON album_release.id = album_match.release_id
+                        LEFT JOIN AlbumEditions album_release ON album_release.id = album_match.edition_id
                         LEFT JOIN Albums album_group ON album_group.id = album_release.release_group_id
                         WHERE album_item.entity_type = 'release'
                           AND (lf.provider IS NULL OR album_item.provider = lf.provider)

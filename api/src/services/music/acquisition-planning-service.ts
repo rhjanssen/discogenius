@@ -44,7 +44,7 @@ function isAvailable(value: unknown): boolean {
 
 interface PlanningContextRow {
   library_release_id: number;
-  release_id: number;
+  edition_id: number;
   quality_profile_id: number;
   allowed_source_formats: string;
   preference_order: string;
@@ -83,7 +83,7 @@ export class AcquisitionPlanningService {
     const context = this.db.prepare(`
       SELECT
         library_release.id AS library_release_id,
-        library_release.release_id,
+        library_release.edition_id,
         library.quality_profile_id,
         profile.allowed_source_formats,
         profile.preference_order,
@@ -99,9 +99,9 @@ export class AcquisitionPlanningService {
     const orderedTrackIds = (this.db.prepare(`
       SELECT id
       FROM Tracks
-      WHERE album_release_id = ?
+      WHERE album_edition_id = ?
       ORDER BY medium_position, position, id
-    `).all(context.release_id) as Array<{ id: number }>).map(({ id }) => id);
+    `).all(context.edition_id) as Array<{ id: number }>).map(({ id }) => id);
     if (orderedTrackIds.length === 0) {
       this.repository.clear(input.libraryReleaseId);
       return null;
@@ -148,14 +148,14 @@ export class AcquisitionPlanningService {
         ON track_variant.provider_item_id = member.member_item_id
       LEFT JOIN ProviderItemAudioVariants release_variant
         ON release_variant.provider_item_id = release_match.provider_edition_item_id
-      WHERE release_match.release_id = ?
+      WHERE release_match.edition_id = ?
         AND release_match.match_state = 'accepted'
         AND release_item.availability NOT IN (
           'unavailable', 'no_longer_available', 'geography_restricted',
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
       ORDER BY release_match.id, track_match.id, track_variant.id, release_variant.id
-    `).all(context.release_id) as CandidateRow[];
+    `).all(context.edition_id) as CandidateRow[];
 
     const sourceById = new Map<number, AcquisitionSourceCandidate>();
     const matchById = new Map<number, AcquisitionSourceCandidate["trackMatches"][number]>();

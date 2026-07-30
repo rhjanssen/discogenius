@@ -51,7 +51,7 @@ function getCanonicalTrack(input: {
               t.length_ms,
               recording.isrcs
             FROM Tracks t
-            JOIN AlbumReleases r ON r.mbid = t.release_mbid
+            JOIN AlbumEditions r ON r.mbid = t.release_mbid
             LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid
             WHERE t.mbid = ?
               AND r.release_group_mbid = ?
@@ -73,7 +73,7 @@ function getCanonicalTrack(input: {
               t.length_ms,
               recording.isrcs
             FROM Tracks t
-            JOIN AlbumReleases r ON r.mbid = t.release_mbid
+            JOIN AlbumEditions r ON r.mbid = t.release_mbid
             LEFT JOIN Recordings recording ON recording.mbid = t.recording_mbid
             WHERE t.recording_mbid = ?
               AND r.release_group_mbid = ?
@@ -136,8 +136,8 @@ export async function resolveProviderTrackForCanonicalTrack(input: {
          AND plan.state = 'current'
         JOIN LibraryReleases library_release
           ON library_release.id = plan.library_release_id
-        JOIN AlbumReleases release
-          ON release.id = library_release.release_id
+        JOIN AlbumEditions release
+          ON release.id = library_release.edition_id
         JOIN Albums release_group
           ON release_group.id = release.release_group_id
         JOIN ProviderTrackMatches track_match

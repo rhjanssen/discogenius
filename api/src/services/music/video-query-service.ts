@@ -447,8 +447,8 @@ function preferredLibraryReleaseMbidSql(releaseGroupIdExpression: string): strin
   return `(
     SELECT selected_release.mbid
     FROM LibraryReleases library_release
-    JOIN AlbumReleases selected_release
-      ON selected_release.id = library_release.release_id
+    JOIN AlbumEditions selected_release
+      ON selected_release.id = library_release.edition_id
     JOIN LibraryReleaseGroups library_group
       ON library_group.library_id = library_release.library_id
      AND library_group.release_group_id = selected_release.release_group_id
@@ -540,8 +540,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       (
         SELECT t.mbid
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -554,8 +554,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       (
         SELECT COALESCE(NULLIF(TRIM(t.title), ''), audio.title)
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -568,8 +568,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       (
         SELECT t.position
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -582,8 +582,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       (
         SELECT t.medium_position
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -621,8 +621,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       AND EXISTS (
         SELECT 1
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -689,8 +689,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       (
         SELECT t.mbid
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -703,8 +703,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       (
         SELECT COALESCE(NULLIF(TRIM(t.title), ''), video.title)
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -717,8 +717,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       (
         SELECT t.position
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -731,8 +731,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       (
         SELECT t.medium_position
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -768,8 +768,8 @@ export function getAlbumAssociatedVideos(releaseGroupMbid: string): AlbumAssocia
       AND EXISTS (
         SELECT 1
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = ?
           AND (
@@ -1023,8 +1023,8 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       (
         SELECT t.mbid
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = a.mbid
           AND (${videoOrRelatedAudio})
@@ -1034,8 +1034,8 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       (
         SELECT t.position
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = a.mbid
           AND (${videoOrRelatedAudio})
@@ -1045,8 +1045,8 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       (
         SELECT t.medium_position
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = a.mbid
           AND (${videoOrRelatedAudio})
@@ -1059,13 +1059,13 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
           (
             SELECT COUNT(*)
             FROM Tracks t2
-            WHERE t2.album_release_id = ar.id
+            WHERE t2.album_edition_id = ar.id
                OR (t2.release_mbid IS NOT NULL AND t2.release_mbid = ar.mbid)
           )
         )
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = a.mbid
           AND (${videoOrRelatedAudio})
@@ -1075,8 +1075,8 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
       (
         SELECT COALESCE(NULLIF(ar.media_count, 0), 1)
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = a.mbid
           AND (${videoOrRelatedAudio})
@@ -1087,8 +1087,8 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
     WHERE a.mbid IN (
       SELECT ar.release_group_mbid
       FROM Tracks t
-      JOIN AlbumReleases ar
-        ON ar.id = t.album_release_id
+      JOIN AlbumEditions ar
+        ON ar.id = t.album_edition_id
         OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
       WHERE ${videoOrRelatedAudio}
     )
@@ -1101,13 +1101,13 @@ function getVideoAlbumRefs(recordingId: string): VideoAlbumRefContract[] {
           (
             SELECT COUNT(*)
             FROM Tracks t2
-            WHERE t2.album_release_id = ar.id
+            WHERE t2.album_edition_id = ar.id
                OR (t2.release_mbid IS NOT NULL AND t2.release_mbid = ar.mbid)
           )
         )
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         WHERE ar.release_group_mbid = a.mbid
           AND (${videoOrRelatedAudio})

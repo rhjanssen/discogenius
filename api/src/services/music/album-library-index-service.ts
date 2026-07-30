@@ -75,8 +75,8 @@ export class AlbumLibraryIndexService {
             ON quality_profile.id = library.quality_profile_id
           LEFT JOIN LibraryReleases library_release
             ON library_release.library_id = library_group.library_id
-          LEFT JOIN AlbumReleases release
-            ON release.id = library_release.release_id
+          LEFT JOIN AlbumEditions release
+            ON release.id = library_release.edition_id
            AND release.release_group_id = library_group.release_group_id
           LEFT JOIN AcquisitionPlans plan
             ON plan.library_release_id = library_release.id

@@ -530,8 +530,8 @@ export class OrganizerService {
       JOIN ProviderEditionMatches release_match
         ON release_match.provider_edition_item_id = pi.id
        AND release_match.match_state = 'accepted'
-      JOIN AlbumReleases selected_release
-        ON selected_release.id = release_match.release_id
+      JOIN AlbumEditions selected_release
+        ON selected_release.id = release_match.edition_id
       JOIN Albums rg
         ON rg.id = selected_release.release_group_id
       LEFT JOIN ArtistMetadata am ON am.mbid = rg.artist_mbid
@@ -542,7 +542,7 @@ export class OrganizerService {
        AND plan.state = 'current'
       LEFT JOIN LibraryReleases library_release
         ON library_release.id = plan.library_release_id
-       AND library_release.release_id = selected_release.id
+       AND library_release.edition_id = selected_release.id
       LEFT JOIN Libraries library
         ON library.id = library_release.library_id
       LEFT JOIN quality_profiles quality_profile
@@ -1858,7 +1858,7 @@ export class OrganizerService {
           (
             SELECT CASE WHEN COUNT(DISTINCT agreed_group.mbid) = 1 THEN MAX(agreed_group.artist_mbid) END
             FROM ProviderEditionMatches agreed_match
-            JOIN AlbumReleases agreed_release ON agreed_release.id = agreed_match.release_id
+            JOIN AlbumEditions agreed_release ON agreed_release.id = agreed_match.edition_id
             JOIN Albums agreed_group ON agreed_group.id = agreed_release.release_group_id
             WHERE agreed_match.provider_edition_item_id = release_item.id
               AND agreed_match.match_state = 'accepted'
@@ -1866,7 +1866,7 @@ export class OrganizerService {
           (
             SELECT CASE WHEN COUNT(DISTINCT agreed_group.mbid) = 1 THEN MAX(agreed_group.mbid) END
             FROM ProviderEditionMatches agreed_match
-            JOIN AlbumReleases agreed_release ON agreed_release.id = agreed_match.release_id
+            JOIN AlbumEditions agreed_release ON agreed_release.id = agreed_match.edition_id
             JOIN Albums agreed_group ON agreed_group.id = agreed_release.release_group_id
             WHERE agreed_match.provider_edition_item_id = release_item.id
               AND agreed_match.match_state = 'accepted'
@@ -1874,7 +1874,7 @@ export class OrganizerService {
           (
             SELECT CASE WHEN COUNT(DISTINCT agreed_release.mbid) = 1 THEN MAX(agreed_release.mbid) END
             FROM ProviderEditionMatches agreed_match
-            JOIN AlbumReleases agreed_release ON agreed_release.id = agreed_match.release_id
+            JOIN AlbumEditions agreed_release ON agreed_release.id = agreed_match.edition_id
             WHERE agreed_match.provider_edition_item_id = release_item.id
               AND agreed_match.match_state = 'accepted'
           ) AS mbid,
@@ -2719,7 +2719,7 @@ export class OrganizerService {
         LEFT JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = pi.id
          AND release_match.match_state = 'accepted'
-        LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+        LEFT JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
         LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
         LEFT JOIN ArtistMetadata canonical_artist
           ON canonical_artist.id = release_group.artist_metadata_id

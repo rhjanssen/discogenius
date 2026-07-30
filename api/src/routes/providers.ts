@@ -167,7 +167,7 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
           COALESCE(r.length_ms, t.length_ms, 0) AS length_ms,
           t.release_mbid
         FROM Tracks t
-        JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
+        JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
         LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
         ${releaseFilter}
         ORDER BY
@@ -206,8 +206,8 @@ router.get("/:providerId/albums/:albumId/tracks", async (req, res) => {
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = provider_release.id
          AND release_match.match_state = 'accepted'
-        JOIN AlbumReleases release
-          ON release.id = release_match.release_id
+        JOIN AlbumEditions release
+          ON release.id = release_match.edition_id
         JOIN Albums release_group
           ON release_group.id = release.release_group_id
         LEFT JOIN AcquisitionPlanSources source

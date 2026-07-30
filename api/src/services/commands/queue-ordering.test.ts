@@ -24,7 +24,7 @@ beforeEach(() => {
     dbModule.db.prepare("DELETE FROM ProviderItems").run();
     dbModule.db.prepare("DELETE FROM Tracks").run();
     dbModule.db.prepare("DELETE FROM Recordings").run();
-    dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+    dbModule.db.prepare("DELETE FROM AlbumEditions").run();
     dbModule.db.prepare("DELETE FROM Albums").run();
     dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
 });
@@ -396,7 +396,7 @@ test("download queue query resolves canonical release-group provider offers with
         JSON.stringify([{ coverType: "Cover", url: canonicalCoverUrl, source: "servarr-metadata" }]),
     );
     db.prepare(`
-        INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+        INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
         VALUES (?, ?, ?, ?, ?, ?)
     `).run("release-gmtf", "rg-gmtf", "artist-bastille", "Give Me the Future", 13, 1);
     db.prepare(`
@@ -514,7 +514,7 @@ test("download queue query resolves canonical track provider offers without Prov
         JSON.stringify([{ coverType: "Cover", url: "https://images.example/canonical-track-cover.jpg" }]),
     );
     db.prepare(`
-        INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+        INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
         VALUES (?, ?, ?, ?, ?, ?)
     `).run("release-track", "rg-track", "artist-track", "Canonical Album", 1, 1);
     db.prepare("INSERT INTO Recordings (mbid, title) VALUES (?, ?)")

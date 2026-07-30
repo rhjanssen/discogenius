@@ -191,10 +191,10 @@ export class LibraryCurationRepository {
 
       const insertRelease = this.db.prepare(`
         INSERT INTO LibraryReleases (
-          library_id, release_id, selection_mode, locked, reason,
+          library_id, edition_id, selection_mode, locked, reason,
           curation_version, selected_at, updated_at
         ) VALUES (?, ?, 'auto', 0, 'curation', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT(library_id, release_id) DO UPDATE SET
+        ON CONFLICT(library_id, edition_id) DO UPDATE SET
           curation_version = CASE WHEN LibraryReleases.locked = 1
             THEN LibraryReleases.curation_version ELSE excluded.curation_version END,
           updated_at = CURRENT_TIMESTAMP
@@ -218,7 +218,7 @@ export class LibraryCurationRepository {
       for (const scope of input.scopes) {
         const libraryReleaseId = libraryReleaseIdByReleaseId.get(scope.releaseId)
           ?? (this.db.prepare(`
-            SELECT id FROM LibraryReleases WHERE library_id = ? AND release_id = ?
+            SELECT id FROM LibraryReleases WHERE library_id = ? AND edition_id = ?
           `).get(input.libraryId, scope.releaseId) as { id: number } | undefined)?.id;
         if (libraryReleaseId == null) continue;
         insertScope.run(

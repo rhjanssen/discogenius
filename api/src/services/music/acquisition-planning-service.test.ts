@@ -12,7 +12,7 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
   db.prepare("INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1)").run();
   db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Album A')").run();
-  db.prepare("INSERT INTO AlbumReleases (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Album A')").run();
+  db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Album A')").run();
   db.prepare(`
     INSERT INTO Recordings (id, mbid, title) VALUES
       (1, 'recording-1', 'One'),
@@ -22,7 +22,7 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   `).run();
   const insertTrack = db.prepare(`
     INSERT INTO Tracks (
-      id, mbid, album_release_id, recording_id, medium_position, position, title
+      id, mbid, album_edition_id, recording_id, medium_position, position, title
     ) VALUES (?, ?, 1, ?, 1, ?, ?)
   `);
   ["One", "Two", "Three", "Four"].forEach((title, index) =>
@@ -53,7 +53,7 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
   `).run();
   db.prepare(`
     INSERT INTO LibraryReleases (
-      id, library_id, release_id, selection_mode, locked, reason, curation_version
+      id, library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (1, 1, 1, 'auto', 0, 'fixture', 1)
   `).run();
 
@@ -100,7 +100,7 @@ function seedStandardDeluxeFixture(db: Database.Database): number {
 
   db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      id, provider_edition_item_id, release_id, relation, match_state,
+      id, provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version,
       matched_track_count, source_track_count, target_track_count,
       source_coverage, target_coverage
@@ -207,7 +207,7 @@ test("planning service materializes HIGH coherent and MAX justified composite pl
 
     db.prepare(`
       INSERT INTO TrackFiles (
-        library_id, album_release_id, track_id, recording_id, file_path,
+        library_id, album_edition_id, track_id, recording_id, file_path,
         relative_path, filename, extension, file_class
       ) VALUES (1, 1, 1, 1, '/library/stereo/one.flac', 'one.flac', 'one.flac', 'flac', 'audio')
     `).run();

@@ -3,8 +3,8 @@ import type Database from "better-sqlite3";
 export function createCatalogForeignKeyIndexes(db: Database.Database): void {
   db.exec("CREATE INDEX idx_albums_artist_metadata_id ON Albums(artist_metadata_id)");
   db.exec("CREATE INDEX idx_albums_library_release_date ON Albums((first_release_date IS NULL), first_release_date DESC)");
-  db.exec("CREATE INDEX idx_album_releases_release_group_id ON AlbumReleases(release_group_id)");
-  db.exec("CREATE INDEX idx_album_releases_artist_metadata_id ON AlbumReleases(artist_metadata_id)");
+  db.exec("CREATE INDEX idx_album_releases_release_group_id ON AlbumEditions(release_group_id)");
+  db.exec("CREATE INDEX idx_album_releases_artist_metadata_id ON AlbumEditions(artist_metadata_id)");
   db.exec("CREATE INDEX idx_album_artists_release_group_id ON AlbumArtists(release_group_id)");
   db.exec("CREATE INDEX idx_album_artists_artist_metadata_id ON AlbumArtists(artist_metadata_id)");
   db.exec("CREATE INDEX idx_artist_release_groups_artist_metadata_id ON ArtistReleaseGroups(artist_metadata_id)");
@@ -12,9 +12,9 @@ export function createCatalogForeignKeyIndexes(db: Database.Database): void {
   db.exec("CREATE INDEX idx_artist_release_group_curation_artist_metadata_id ON ArtistReleaseGroupCuration(source_artist_metadata_id, included)");
   db.exec("CREATE INDEX idx_artist_release_group_curation_release_group_id ON ArtistReleaseGroupCuration(release_group_id)");
   db.exec("CREATE INDEX idx_artist_release_group_curation_source_release_group_id ON ArtistReleaseGroupCuration(source_artist_mbid, included, release_group_id)");
-  db.exec("CREATE INDEX idx_tracks_album_release_mbid ON Tracks(album_release_id, mbid)");
-  db.exec("CREATE INDEX idx_tracks_recording_release ON Tracks(recording_id, album_release_id)");
-  db.exec("CREATE INDEX idx_tracks_album_release_position ON Tracks(album_release_id, medium_position, position)");
+  db.exec("CREATE INDEX idx_tracks_album_release_mbid ON Tracks(album_edition_id, mbid)");
+  db.exec("CREATE INDEX idx_tracks_recording_release ON Tracks(recording_id, album_edition_id)");
+  db.exec("CREATE INDEX idx_tracks_album_release_position ON Tracks(album_edition_id, medium_position, position)");
   db.exec("CREATE INDEX idx_recordings_library_popularity ON Recordings(COALESCE(popularity, 0) DESC, id ASC)");
 }
 
@@ -83,9 +83,9 @@ export function createCatalogForeignKeyTriggers(db: Database.Database): void {
 
   db.exec(`
     CREATE TRIGGER trg_album_releases_catalog_fks_ai
-    AFTER INSERT ON AlbumReleases
+    AFTER INSERT ON AlbumEditions
     BEGIN
-      UPDATE AlbumReleases SET
+      UPDATE AlbumEditions SET
         release_group_id = COALESCE(NEW.release_group_id, (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid)),
         artist_metadata_id = COALESCE(NEW.artist_metadata_id, (SELECT id FROM ArtistMetadata WHERE mbid = NEW.artist_mbid))
       WHERE id = NEW.id;
@@ -93,9 +93,9 @@ export function createCatalogForeignKeyTriggers(db: Database.Database): void {
   `);
   db.exec(`
     CREATE TRIGGER trg_album_releases_catalog_fks_au
-    AFTER UPDATE OF release_group_mbid, artist_mbid ON AlbumReleases
+    AFTER UPDATE OF release_group_mbid, artist_mbid ON AlbumEditions
     BEGIN
-      UPDATE AlbumReleases SET
+      UPDATE AlbumEditions SET
         release_group_id = (SELECT id FROM Albums WHERE mbid = NEW.release_group_mbid),
         artist_metadata_id = (SELECT id FROM ArtistMetadata WHERE mbid = NEW.artist_mbid)
       WHERE id = NEW.id;
@@ -107,7 +107,7 @@ export function createCatalogForeignKeyTriggers(db: Database.Database): void {
     AFTER INSERT ON Tracks
     BEGIN
       UPDATE Tracks SET
-        album_release_id = COALESCE(NEW.album_release_id, (SELECT id FROM AlbumReleases WHERE mbid = NEW.release_mbid)),
+        album_edition_id = COALESCE(NEW.album_edition_id, (SELECT id FROM AlbumEditions WHERE mbid = NEW.release_mbid)),
         recording_id = COALESCE(NEW.recording_id, (SELECT id FROM Recordings WHERE mbid = NEW.recording_mbid))
       WHERE id = NEW.id;
     END;
@@ -117,7 +117,7 @@ export function createCatalogForeignKeyTriggers(db: Database.Database): void {
     AFTER UPDATE OF release_mbid, recording_mbid ON Tracks
     BEGIN
       UPDATE Tracks SET
-        album_release_id = (SELECT id FROM AlbumReleases WHERE mbid = NEW.release_mbid),
+        album_edition_id = (SELECT id FROM AlbumEditions WHERE mbid = NEW.release_mbid),
         recording_id = (SELECT id FROM Recordings WHERE mbid = NEW.recording_mbid)
       WHERE id = NEW.id;
     END;
@@ -200,7 +200,7 @@ export function createCatalogSchema(db: Database.Database): void {
       FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE CASCADE
     );
 
-    CREATE TABLE AlbumReleases (
+    CREATE TABLE AlbumEditions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       foreign_release_id TEXT UNIQUE,
       mbid TEXT UNIQUE,
@@ -317,7 +317,7 @@ export function createCatalogSchema(db: Database.Database): void {
       foreign_track_id TEXT UNIQUE,
       foreign_recording_id TEXT,
       mbid TEXT UNIQUE,
-      album_release_id INTEGER,
+      album_edition_id INTEGER,
       release_mbid TEXT NOT NULL,
       recording_id INTEGER,
       recording_mbid TEXT NOT NULL,
@@ -329,8 +329,8 @@ export function createCatalogSchema(db: Database.Database): void {
       monitored BOOLEAN NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(release_mbid, medium_position, position),
-      FOREIGN KEY(album_release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE,
-      FOREIGN KEY(release_mbid) REFERENCES AlbumReleases(mbid) ON DELETE CASCADE,
+      FOREIGN KEY(album_edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE,
+      FOREIGN KEY(release_mbid) REFERENCES AlbumEditions(mbid) ON DELETE CASCADE,
       FOREIGN KEY(recording_id) REFERENCES Recordings(id) ON DELETE CASCADE,
       FOREIGN KEY(recording_mbid) REFERENCES Recordings(mbid) ON DELETE CASCADE
     );
@@ -471,7 +471,7 @@ export function createCatalogSchema(db: Database.Database): void {
     CREATE TABLE ProviderEditionMatches (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider_edition_item_id INTEGER NOT NULL,
-      release_id INTEGER NOT NULL,
+      edition_id INTEGER NOT NULL,
       relation TEXT NOT NULL CHECK(relation IN ('exact', 'source_superset', 'source_subset', 'overlap')),
       match_state TEXT NOT NULL CHECK(match_state IN ('candidate', 'accepted', 'ambiguous', 'rejected')),
       decision_source TEXT NOT NULL CHECK(decision_source IN ('automatic', 'manual')),
@@ -485,9 +485,9 @@ export function createCatalogSchema(db: Database.Database): void {
       source_coverage REAL NOT NULL DEFAULT 0,
       target_coverage REAL NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(provider_edition_item_id, release_id),
+      UNIQUE(provider_edition_item_id, edition_id),
       FOREIGN KEY(provider_edition_item_id) REFERENCES ProviderItems(id) ON DELETE CASCADE,
-      FOREIGN KEY(release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE
+      FOREIGN KEY(edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
     );
 
     CREATE TABLE ProviderTrackMatches (
@@ -542,7 +542,7 @@ export function createCatalogSchema(db: Database.Database): void {
     CREATE INDEX idx_provider_release_matches_provider
       ON ProviderEditionMatches(provider_edition_item_id, match_state, relation);
     CREATE INDEX idx_provider_release_matches_release
-      ON ProviderEditionMatches(release_id, match_state, relation);
+      ON ProviderEditionMatches(edition_id, match_state, relation);
     CREATE INDEX idx_provider_track_matches_member
       ON ProviderTrackMatches(provider_edition_member_id, match_state);
     CREATE INDEX idx_provider_track_matches_release_match
@@ -597,9 +597,9 @@ export function createCatalogSchema(db: Database.Database): void {
   db.exec("CREATE INDEX idx_artist_release_groups_group ON ArtistReleaseGroups(release_group_mbid, artist_mbid)");
   db.exec("CREATE INDEX idx_artist_release_group_curation_group ON ArtistReleaseGroupCuration(release_group_mbid, included)");
   db.exec("CREATE INDEX idx_artist_release_group_curation_source_included ON ArtistReleaseGroupCuration(source_artist_mbid, included, release_group_mbid)");
-  db.exec("CREATE INDEX idx_mb_releases_group ON AlbumReleases(release_group_mbid, date)");
+  db.exec("CREATE INDEX idx_mb_releases_group ON AlbumEditions(release_group_mbid, date)");
   // Tracks already has UNIQUE(release_mbid, medium_position, position) and both
-  // covering indexes below lead with album_release_id, so no single-column
+  // covering indexes below lead with album_edition_id, so no single-column
   // idx_tracks_album_release_id / idx_mb_tracks_release_position is created.
   db.exec("CREATE INDEX idx_provider_items_type ON ProviderItems(provider, entity_type, provider_id)");
   db.exec("CREATE INDEX idx_provider_items_upc ON ProviderItems(provider, upc) WHERE upc IS NOT NULL");
@@ -618,7 +618,7 @@ export function createCatalogSchema(db: Database.Database): void {
   db.exec("CREATE INDEX idx_track_files_recording_id ON TrackFiles(recording_id)");
   db.exec("CREATE INDEX idx_track_files_track_id ON TrackFiles(track_id)");
   db.exec("CREATE INDEX idx_track_files_release_group_id ON TrackFiles(release_group_id)");
-  db.exec("CREATE INDEX idx_track_files_album_release_id ON TrackFiles(album_release_id)");
+  db.exec("CREATE INDEX idx_track_files_album_release_id ON TrackFiles(album_edition_id)");
   // Recordings is large on real libraries (one row per MusicBrainz recording —
   // ~280k on a 2.3k-artist library). Artist-completion, download-stats and the
   // video counts filter Recordings by artist on every library + dashboard load;

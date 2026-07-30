@@ -24,7 +24,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM LibraryReleaseGroups").run();
   dbModule.db.prepare("DELETE FROM Libraries").run();
   dbModule.db.prepare("DELETE FROM Tracks").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
@@ -63,7 +63,7 @@ test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", 
     WHERE mbid = 'artist-mbid'
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title, date, track_count
     )
@@ -87,11 +87,11 @@ test("canVideoPlaceInline requires provider_video_for and monitored stereo RG", 
   `).get() as { id: number };
   dbModule.db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_release_id, release_mbid, recording_mbid, recording_id,
+      mbid, album_edition_id, release_mbid, recording_mbid, recording_id,
       medium_position, position, number, title
     )
     SELECT 'track-inline', release.id, 'rel-inline', 'audio-inline', ?, 1, 1, '1', 'Song'
-    FROM AlbumReleases release
+    FROM AlbumEditions release
     WHERE release.mbid = 'rel-inline'
   `).run(audio.id);
   dbModule.db.prepare(`

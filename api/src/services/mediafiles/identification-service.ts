@@ -303,7 +303,7 @@ export class IdentificationService {
                     COALESCE(r.length_ms, t.length_ms, 0) AS length_ms,
                     COALESCE(r.length_ms, t.length_ms, 0) / 1000.0 AS duration
                 FROM Tracks t
-                JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
+                JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
                 LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
                 WHERE rel.release_group_mbid = ? OR rel.mbid = ?
                 ORDER BY

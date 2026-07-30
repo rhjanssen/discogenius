@@ -282,8 +282,8 @@ export function resolveMatchedCanonicalAlbumTrackRow(params: {
     JOIN ProviderEditionMatches release_match
       ON release_match.id = track_match.provider_edition_match_id
      AND release_match.match_state = 'accepted'
-    JOIN AlbumReleases canonical_release
-      ON canonical_release.id = release_match.release_id
+    JOIN AlbumEditions canonical_release
+      ON canonical_release.id = release_match.edition_id
     LEFT JOIN Tracks canonical_track
       ON canonical_track.id = track_match.track_id
     JOIN Recordings recording

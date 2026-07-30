@@ -251,7 +251,7 @@ function seedCanonicalRelease(groupMbid: string, releaseMbid: string): void {
     VALUES (?, 'rc-artist', ?, 'album')
   `).run(groupMbid, groupMbid);
   db.prepare(`
-    INSERT OR IGNORE INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    INSERT OR IGNORE INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
     VALUES (?, ?, 'rc-artist', ?, 1)
   `).run(releaseMbid, groupMbid, releaseMbid);
 }
@@ -284,10 +284,10 @@ test("no job context and disagreeing accepted matches reconciles by provider, no
     RETURNING id
   `).get() as { id: number }).id);
   for (const releaseMbid of ["rel-one", "rel-two"]) {
-    const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?").get(releaseMbid) as { id: number };
+    const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(releaseMbid) as { id: number };
     db.prepare(`
       INSERT INTO ProviderEditionMatches (
-        provider_edition_item_id, release_id, relation, match_state, decision_source,
+        provider_edition_item_id, edition_id, relation, match_state, decision_source,
         confidence, method, matcher_version
       ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 0.9, 'test_fixture', 1)
     `).run(releaseItem, release.id);

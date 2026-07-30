@@ -25,7 +25,7 @@ function resetRows() {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();
@@ -65,7 +65,7 @@ function seedTypedRelease(input: {
     input.albumTitle,
   ) as { id: number };
   const release = db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title, track_count, media_count
     ) VALUES (?, ?, ?, ?, ?, ?, 1, 1)
@@ -91,7 +91,7 @@ function seedTypedRelease(input: {
   ) as { id: number };
   const track = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       title, position, medium_position
     ) VALUES (?, ?, ?, ?, ?, ?, 1, 1)
     RETURNING id
@@ -123,7 +123,7 @@ function seedTypedRelease(input: {
   `).get(providerRelease.id, providerTrack.id) as { id: number };
   const releaseMatch = db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -163,7 +163,7 @@ function seedTypedRelease(input: {
   `).run(library.id, releaseGroup.id);
   const libraryRelease = db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
     RETURNING id
   `).get(library.id, release.id) as { id: number };
@@ -406,7 +406,7 @@ test("download processor detects canonical track and video files without Provide
   });
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, release_group_id, album_release_id, track_id, recording_id,
+      artist_id, release_group_id, album_edition_id, track_id, recording_id,
       library_id, file_path, relative_path, library_root, filename, extension,
       file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'track', 'audio')
@@ -496,7 +496,7 @@ test("download processor scopes provider offers when services reuse the same res
   });
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, release_group_id, album_release_id, track_id, recording_id,
+      artist_id, release_group_id, album_edition_id, track_id, recording_id,
       library_id, file_path, relative_path, library_root, filename, extension,
       file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'tidal.flac', ?, 'tidal.flac', 'flac', 'track', 'audio')

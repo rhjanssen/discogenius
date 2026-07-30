@@ -1069,7 +1069,7 @@ export class DiskScanService {
                                 JOIN ProviderEditionMatches release_match
                                   ON release_match.provider_edition_item_id = item.id
                                  AND release_match.match_state = 'accepted'
-                                JOIN AlbumReleases release ON release.id = release_match.release_id
+                                JOIN AlbumEditions release ON release.id = release_match.edition_id
                                 WHERE item.entity_type = 'release'
                                   AND CAST(item.provider_id AS TEXT) = CAST(? AS TEXT)
                                   AND (? IS NULL OR item.provider = ?)

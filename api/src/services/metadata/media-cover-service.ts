@@ -2222,8 +2222,8 @@ export function loadAlbumProviderArtworkCandidates(
       FROM AcquisitionPlans plan
       JOIN LibraryReleases library_release
         ON library_release.id = plan.library_release_id
-      JOIN AlbumReleases release
-        ON release.id = library_release.release_id
+      JOIN AlbumEditions release
+        ON release.id = library_release.edition_id
       JOIN Albums release_group
         ON release_group.id = release.release_group_id
       JOIN Libraries library
@@ -2264,8 +2264,8 @@ export function loadAlbumProviderArtworkCandidates(
       FROM ProviderEditionMatches release_match
       JOIN ProviderItems provider_item
         ON provider_item.id = release_match.provider_edition_item_id
-      JOIN AlbumReleases release
-        ON release.id = release_match.release_id
+      JOIN AlbumEditions release
+        ON release.id = release_match.edition_id
       JOIN Albums release_group
         ON release_group.id = release.release_group_id
       WHERE release_group.mbid = ?

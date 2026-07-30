@@ -95,7 +95,7 @@ export class CanonicalManualImportService {
     if (!library) throw new Error(`Library ${request.libraryId} is unavailable`);
 
     const release = this.db.prepare(`
-      SELECT id, release_group_id FROM AlbumReleases WHERE id = ?
+      SELECT id, release_group_id FROM AlbumEditions WHERE id = ?
     `).get(request.releaseId) as { id: number; release_group_id: number } | undefined;
     if (!release) throw new Error(`Canonical release ${request.releaseId} does not exist`);
 
@@ -128,7 +128,7 @@ export class CanonicalManualImportService {
       FROM Tracks track
       JOIN Recordings recording ON recording.id = track.recording_id
       WHERE track.id = ?
-        AND track.album_release_id = ?
+        AND track.album_edition_id = ?
         AND recording.is_video = 0
     `);
     const getProvenance = this.db.prepare(`
@@ -216,7 +216,7 @@ export class CanonicalManualImportService {
       UPDATE TrackFiles
       SET
         library_id = @libraryId,
-        album_release_id = @releaseId,
+        album_edition_id = @releaseId,
         track_id = @trackId,
         recording_id = @recordingId,
         file_class = 'audio',
@@ -257,11 +257,11 @@ export class CanonicalManualImportService {
       `).run(request.libraryId, release.release_group_id);
       this.db.prepare(`
         INSERT INTO LibraryReleases (
-          library_id, release_id, selection_mode, locked, reason,
+          library_id, edition_id, selection_mode, locked, reason,
           curation_version, selected_at, updated_at
         ) VALUES (?, ?, 'manual', 0, 'canonical_manual_import', 1,
                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT(library_id, release_id) DO UPDATE SET
+        ON CONFLICT(library_id, edition_id) DO UPDATE SET
           selection_mode = 'manual',
           reason = excluded.reason,
           selected_at = CURRENT_TIMESTAMP,

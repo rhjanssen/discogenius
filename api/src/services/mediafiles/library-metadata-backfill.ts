@@ -194,7 +194,7 @@ class LibraryMetadataBackfillService {
           FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
           WHERE allowed.value = 'spatial'
         ) THEN 'spatial' ELSE 'stereo' END AS library_class,
-        MIN(lf.album_release_id) AS album_release_id
+        MIN(lf.album_edition_id) AS album_edition_id
       FROM TrackFiles lf
       JOIN Albums release_group
         ON release_group.id = lf.release_group_id
@@ -247,8 +247,8 @@ class LibraryMetadataBackfillService {
                         provider_release.artwork_url
                       ) AS cover
                     FROM LibraryReleases library_release
-                    JOIN AlbumReleases selected_release
-                      ON selected_release.id = library_release.release_id
+                    JOIN AlbumEditions selected_release
+                      ON selected_release.id = library_release.edition_id
                     JOIN AcquisitionPlans plan
                       ON plan.library_release_id = library_release.id
                      AND plan.state = 'current'
@@ -290,9 +290,9 @@ class LibraryMetadataBackfillService {
             const selectedProviderAlbumId = String(selectedPlan?.selected_provider_id || "").trim() || null;
             const representativeAlbumId = String(albumProviderItem?.provider_id || selectedProviderAlbumId || "").trim() || null;
             const canonicalReleaseMbid = selectedPlan?.selected_release_mbid
-                || (sourceAlbum.album_release_id
-                    ? (db.prepare("SELECT mbid FROM AlbumReleases WHERE id = ?")
-                        .get(sourceAlbum.album_release_id) as { mbid?: string | null } | undefined)?.mbid
+                || (sourceAlbum.album_edition_id
+                    ? (db.prepare("SELECT mbid FROM AlbumEditions WHERE id = ?")
+                        .get(sourceAlbum.album_edition_id) as { mbid?: string | null } | undefined)?.mbid
                     : null)
                 || null;
             const canonicalAlbum = getCanonicalAlbumMetadata({
@@ -840,7 +840,7 @@ class LibraryMetadataBackfillService {
         ON relation.source_recording_id = video_match.recording_id
        AND relation.relation_type IN ('provider_video_for', 'music_video_for')
       LEFT JOIN Tracks related_track ON related_track.recording_id = relation.target_recording_id
-      LEFT JOIN AlbumReleases related_release ON related_release.id = related_track.album_release_id
+      LEFT JOIN AlbumEditions related_release ON related_release.id = related_track.album_edition_id
       LEFT JOIN Albums related_group ON related_group.id = related_release.release_group_id
       WHERE lf.artist_id = ?
         AND lf.file_type = 'video'
@@ -913,7 +913,7 @@ class LibraryMetadataBackfillService {
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = member.provider_edition_item_id
          AND release_match.match_state = 'accepted'
-        JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+        JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
         WHERE member.member_item_id = pi.id
         ORDER BY release_match.id
         LIMIT 1

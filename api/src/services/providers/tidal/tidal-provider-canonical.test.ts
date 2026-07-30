@@ -45,7 +45,7 @@ function seedMatchedRelease(input: {
     input.title,
   ) as { id: number };
   const release = db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title, media_count, track_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -75,7 +75,7 @@ function seedMatchedRelease(input: {
     ) as { id: number };
     db.prepare(`
       INSERT INTO Tracks (
-        mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+        mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
         title, medium_position, position
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     `).run(
@@ -97,7 +97,7 @@ function seedMatchedRelease(input: {
   `).get(input.providerReleaseId, input.title) as { id: number };
   db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
   `).run(providerRelease.id, release.id);

@@ -64,10 +64,10 @@ export function getTidalAlbumDownloadTrackInfo(providerIds: string[]): TidalAlbu
     JOIN ProviderEditionMatches release_match
       ON release_match.provider_edition_item_id = provider_release.id
      AND release_match.match_state = 'accepted'
-    JOIN AlbumReleases release
-      ON release.id = release_match.release_id
+    JOIN AlbumEditions release
+      ON release.id = release_match.edition_id
     JOIN Tracks track
-      ON track.album_release_id = release.id
+      ON track.album_edition_id = release.id
     LEFT JOIN Recordings recording
       ON recording.id = track.recording_id
     LEFT JOIN TrackArtistCredits track_credit

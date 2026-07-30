@@ -17,9 +17,9 @@ test("plan replacement is atomic and partial completion counts only imported ass
       INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist');
       INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1);
       INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Group');
-      INSERT INTO AlbumReleases (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Release');
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release', 1, 'Release');
       INSERT INTO Recordings (id, mbid, title) VALUES (1, 'recording-1', 'One'), (2, 'recording-2', 'Two');
-      INSERT INTO Tracks (id, mbid, album_release_id, recording_id, medium_position, position, title)
+      INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title)
         VALUES (1, 'track-1', 1, 1, 1, 1, 'One'), (2, 'track-2', 1, 2, 1, 2, 'Two');
       INSERT INTO MetadataProfiles (id, name, release_type_policy) VALUES (1, 'Default', '{}');
       INSERT INTO quality_profiles (
@@ -29,7 +29,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
       INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
         VALUES (1, 'Stereo', '/library/stereo', 1, 1);
       INSERT INTO LibraryReleases (
-        id, library_id, release_id, selection_mode, curation_version
+        id, library_id, edition_id, selection_mode, curation_version
       ) VALUES (1, 1, 1, 'auto', 1);
       INSERT INTO ProviderItems (
       id, provider, entity_type, provider_id
@@ -40,7 +40,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
         id, provider_edition_item_id, member_item_id, medium_position, position
       ) VALUES (1, 1, 2, 1, 1), (2, 1, 3, 1, 2);
       INSERT INTO ProviderEditionMatches (
-        id, provider_edition_item_id, release_id, relation, match_state,
+        id, provider_edition_item_id, edition_id, relation, match_state,
         decision_source, confidence, method, matcher_version,
         matched_track_count, source_track_count, target_track_count,
         source_coverage, target_coverage
@@ -88,7 +88,7 @@ test("plan replacement is atomic and partial completion counts only imported ass
     });
     db.prepare(`
       INSERT INTO TrackFiles (
-        library_id, album_release_id, track_id, recording_id, file_path, relative_path,
+        library_id, album_edition_id, track_id, recording_id, file_path, relative_path,
         filename, extension, file_class, source_quality, imported_quality
       ) VALUES (1, 1, 1, 1, '/library/stereo/one.flac', 'one.flac', 'one.flac',
                 'flac', 'audio', 'lossless', 'lossless')

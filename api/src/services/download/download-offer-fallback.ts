@@ -129,7 +129,7 @@ export function listRankedAlbumOffers(
     JOIN ProviderEditionMatches release_match
       ON release_match.provider_edition_item_id = item.id
      AND release_match.match_state = 'accepted'
-    JOIN AlbumReleases release ON release.id = release_match.release_id
+    JOIN AlbumEditions release ON release.id = release_match.edition_id
     JOIN Albums release_group ON release_group.id = release.release_group_id
     LEFT JOIN ProviderItemAudioVariants variant
       ON variant.provider_item_id = item.id

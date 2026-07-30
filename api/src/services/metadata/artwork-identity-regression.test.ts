@@ -149,7 +149,7 @@ function insertTestProviderCandidate(
   };
   const releaseMbid = `${options.releaseGroupMbid}-release`;
   db.prepare(`
-    INSERT OR IGNORE INTO AlbumReleases (
+    INSERT OR IGNORE INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title
     ) VALUES (?, ?, ?, ?, ?, ?)
@@ -162,7 +162,7 @@ function insertTestProviderCandidate(
     options.title,
   );
   const release = db.prepare(`
-    SELECT id FROM AlbumReleases WHERE mbid = ?
+    SELECT id FROM AlbumEditions WHERE mbid = ?
   `).get(releaseMbid) as { id: number };
   db.prepare(`
     INSERT INTO ProviderItems (
@@ -187,10 +187,10 @@ function insertTestProviderCandidate(
   `).get(options.providerId) as { id: number };
   db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
-    ON CONFLICT(provider_edition_item_id, release_id) DO UPDATE SET
+    ON CONFLICT(provider_edition_item_id, edition_id) DO UPDATE SET
       match_state = 'accepted',
       confidence = 1
   `).run(providerItem.id, release.id);
@@ -648,7 +648,7 @@ test("same-release-group-characterization", async () => {
   const rgMbid = "rg-same-group-char";
   insertTestAlbum(db, rgMbid, "Same Group Char Album");
 
-  // Create two distinct release_mbids in AlbumReleases for the same release group
+  // Create two distinct release_mbids in AlbumEditions for the same release group
   const releaseGroup = db.prepare(`
     SELECT id, artist_metadata_id, artist_mbid
     FROM Albums
@@ -659,7 +659,7 @@ test("same-release-group-characterization", async () => {
     artist_mbid: string;
   };
   db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title, status, track_count, media_count
     ) VALUES (?, ?, ?, ?, ?, ?, 'Official', ?, ?)
@@ -674,7 +674,7 @@ test("same-release-group-characterization", async () => {
     1,
   );
   db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title, status, track_count, media_count
     ) VALUES (?, ?, ?, ?, ?, ?, 'Official', ?, ?)
@@ -690,7 +690,7 @@ test("same-release-group-characterization", async () => {
   );
 
   const editions = db.prepare(`
-    SELECT id FROM AlbumReleases WHERE release_group_mbid = ?
+    SELECT id FROM AlbumEditions WHERE release_group_mbid = ?
   `).all(rgMbid);
   assert.equal(editions.length, 2, "One release group can own multiple canonical editions");
 });

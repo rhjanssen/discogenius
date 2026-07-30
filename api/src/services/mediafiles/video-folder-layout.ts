@@ -61,8 +61,8 @@ export function canVideoPlaceInline(videoRecordingId: string | number | null | u
      AND tf.library_slot = 'stereo'
     LEFT JOIN Tracks t
       ON (t.recording_id = audio.id OR (audio.mbid IS NOT NULL AND t.recording_mbid = audio.mbid))
-    LEFT JOIN AlbumReleases track_rg
-      ON track_rg.id = t.album_release_id
+    LEFT JOIN AlbumEditions track_rg
+      ON track_rg.id = t.album_edition_id
       OR (t.release_mbid IS NOT NULL AND track_rg.mbid = t.release_mbid)
     LEFT JOIN Albums album
       ON album.mbid = COALESCE(tf.canonical_release_group_mbid, track_rg.release_group_mbid)

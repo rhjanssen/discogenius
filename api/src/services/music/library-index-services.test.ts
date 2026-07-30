@@ -38,7 +38,7 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
     RETURNING id
   `).get(artist.id) as { id: number };
   const release = db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title
     ) VALUES ('release-1', ?, 'group-1', ?, 'artist-1', 'Index Album')
@@ -51,7 +51,7 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   `).get(artist.id) as { id: number };
   const track = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       medium_position, position, title
     ) VALUES ('track-1', ?, 'release-1', ?, 'recording-1', 1, 1, 'Index Track')
     RETURNING id
@@ -77,7 +77,7 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   `).get(providerRelease.id, providerTrack.id) as { id: number };
   const releaseMatch = db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -108,7 +108,7 @@ test("library indexes derive monitoring, selected tracks, and quality from norma
   `).run(library.id, releaseGroup.id);
   const libraryRelease = db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
     RETURNING id
   `).get(library.id, release.id) as { id: number };

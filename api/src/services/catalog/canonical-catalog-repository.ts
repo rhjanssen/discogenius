@@ -127,7 +127,7 @@ export class CanonicalCatalogRepository {
 
   upsertRelease(input: CanonicalReleaseInput): number {
     const row = this.db.prepare(`
-      INSERT INTO AlbumReleases (
+      INSERT INTO AlbumEditions (
         mbid, release_group_id, title, status, country, date, barcode,
         disambiguation, media_count, track_count, media, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -185,11 +185,11 @@ export class CanonicalCatalogRepository {
   upsertTrack(input: CanonicalTrackInput): number {
     const row = this.db.prepare(`
       INSERT INTO Tracks (
-        mbid, album_release_id, recording_id, medium_position, position,
+        mbid, album_edition_id, recording_id, medium_position, position,
         number, title, length_ms, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
-        album_release_id = excluded.album_release_id,
+        album_edition_id = excluded.album_edition_id,
         recording_id = excluded.recording_id,
         medium_position = excluded.medium_position,
         position = excluded.position,
@@ -221,7 +221,7 @@ export class CanonicalCatalogRepository {
   }
 
   replaceReleaseCredits(releaseId: number, credits: readonly CanonicalCreditInput[]): void {
-    this.replaceCredits("ReleaseArtistCredits", "release_id", releaseId, credits);
+    this.replaceCredits("ReleaseArtistCredits", "edition_id", releaseId, credits);
   }
 
   replaceTrackCredits(trackId: number, credits: readonly CanonicalCreditInput[]): void {

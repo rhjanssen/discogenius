@@ -106,8 +106,8 @@ export function liveAlbumOnlyRecordingSql(
     EXISTS (
       SELECT 1
       FROM Tracks _t
-      JOIN AlbumReleases _ar
-        ON _ar.id = _t.album_release_id
+      JOIN AlbumEditions _ar
+        ON _ar.id = _t.album_edition_id
         OR (_t.release_mbid IS NOT NULL AND _ar.mbid = _t.release_mbid)
       JOIN Albums _a ON _a.mbid = _ar.release_group_mbid
       WHERE ${onRecording}
@@ -116,8 +116,8 @@ export function liveAlbumOnlyRecordingSql(
     AND NOT EXISTS (
       SELECT 1
       FROM Tracks _t
-      JOIN AlbumReleases _ar
-        ON _ar.id = _t.album_release_id
+      JOIN AlbumEditions _ar
+        ON _ar.id = _t.album_edition_id
         OR (_t.release_mbid IS NOT NULL AND _ar.mbid = _t.release_mbid)
       JOIN Albums _a ON _a.mbid = _ar.release_group_mbid
       WHERE ${onRecording}

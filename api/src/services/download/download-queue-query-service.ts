@@ -187,7 +187,7 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = provider_item.id
          AND release_match.match_state = 'accepted'
-        JOIN AlbumReleases release ON release.id = release_match.release_id
+        JOIN AlbumEditions release ON release.id = release_match.edition_id
         JOIN Albums release_group ON release_group.id = release.release_group_id
         WHERE provider_item.provider_id = ?
           AND provider_item.entity_type = 'release'
@@ -208,7 +208,7 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
             ON track_match.provider_edition_member_id = member.id
            AND track_match.match_state = 'accepted'
           JOIN Tracks track ON track.id = track_match.track_id
-          JOIN AlbumReleases release ON release.id = track.album_release_id
+          JOIN AlbumEditions release ON release.id = track.album_edition_id
           JOIN Albums release_group ON release_group.id = release.release_group_id
           WHERE provider_item.provider_id = ?
             AND provider_item.entity_type = 'track'
@@ -229,7 +229,7 @@ function getProviderItemAlbumId(contentType: QueueItemContract["type"], provider
             ON relation.source_recording_id = video_match.recording_id
            AND relation.relation_type IN ('provider_video_for', 'music_video_for')
           JOIN Tracks track ON track.recording_id = relation.target_recording_id
-          JOIN AlbumReleases release ON release.id = track.album_release_id
+          JOIN AlbumEditions release ON release.id = track.album_edition_id
           JOIN Albums release_group ON release_group.id = release.release_group_id
           WHERE provider_item.provider_id = ?
             AND provider_item.entity_type = 'video'
@@ -253,7 +253,7 @@ function getProviderItemArtistId(contentType: QueueItemContract["type"], provide
       ON provider_item.entity_type = 'release'
      AND release_match.provider_edition_item_id = provider_item.id
      AND release_match.match_state = 'accepted'
-    LEFT JOIN AlbumReleases direct_release ON direct_release.id = release_match.release_id
+    LEFT JOIN AlbumEditions direct_release ON direct_release.id = release_match.edition_id
     LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
     LEFT JOIN ProviderEditionMembers member
       ON provider_item.entity_type = 'track'
@@ -262,7 +262,7 @@ function getProviderItemArtistId(contentType: QueueItemContract["type"], provide
       ON track_match.provider_edition_member_id = member.id
      AND track_match.match_state = 'accepted'
     LEFT JOIN Tracks track ON track.id = track_match.track_id
-    LEFT JOIN AlbumReleases track_release ON track_release.id = track.album_release_id
+    LEFT JOIN AlbumEditions track_release ON track_release.id = track.album_edition_id
     LEFT JOIN Albums track_group ON track_group.id = track_release.release_group_id
     LEFT JOIN ProviderVideoMatches video_match
       ON provider_item.entity_type = 'video'
@@ -432,8 +432,8 @@ function resolveCanonicalAlbumMetadata(input: {
     FROM ProviderEditionMatches release_match
     JOIN ProviderItems provider_item
       ON provider_item.id = release_match.provider_edition_item_id
-    JOIN AlbumReleases release
-      ON release.id = release_match.release_id
+    JOIN AlbumEditions release
+      ON release.id = release_match.edition_id
     JOIN Albums release_group
       ON release_group.id = release.release_group_id
     LEFT JOIN AcquisitionPlanSources plan_source
@@ -548,7 +548,7 @@ function resolveProviderItemMetadata(input: {
       ON provider_item.entity_type = 'release'
      AND release_match.provider_edition_item_id = provider_item.id
      AND release_match.match_state = 'accepted'
-    LEFT JOIN AlbumReleases direct_release ON direct_release.id = release_match.release_id
+    LEFT JOIN AlbumEditions direct_release ON direct_release.id = release_match.edition_id
     LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
     LEFT JOIN ProviderEditionMembers member
       ON provider_item.entity_type = 'track'
@@ -557,7 +557,7 @@ function resolveProviderItemMetadata(input: {
       ON track_match.provider_edition_member_id = member.id
      AND track_match.match_state = 'accepted'
     LEFT JOIN Tracks track ON track.id = track_match.track_id
-    LEFT JOIN AlbumReleases track_release ON track_release.id = track.album_release_id
+    LEFT JOIN AlbumEditions track_release ON track_release.id = track.album_edition_id
     LEFT JOIN Albums track_group ON track_group.id = track_release.release_group_id
     LEFT JOIN ProviderVideoMatches video_match
       ON provider_item.entity_type = 'video'
@@ -688,13 +688,13 @@ function resolveCanonicalAlbumTracks(input: {
     : db.prepare(`
         SELECT track.title, track.position, track.medium_position
         FROM Albums release_group
-        JOIN AlbumReleases release
+        JOIN AlbumEditions release
           ON release.release_group_id = release_group.id
         JOIN LibraryReleases library_release
-          ON library_release.release_id = release.id
+          ON library_release.edition_id = release.id
          AND (? IS NULL OR library_release.library_id = ?)
         JOIN Tracks track
-          ON track.album_release_id = release.id
+          ON track.album_edition_id = release.id
         WHERE release_group.mbid = ?
         ORDER BY
           library_release.updated_at DESC,

@@ -15,14 +15,14 @@ export function createCanonicalCreditSchemaV41(db: Database.Database): void {
     );
 
     CREATE TABLE ReleaseArtistCredits (
-      release_id INTEGER NOT NULL,
+      edition_id INTEGER NOT NULL,
       artist_id INTEGER NOT NULL,
       ordinal INTEGER NOT NULL,
       credited_name TEXT NOT NULL,
       join_phrase TEXT NOT NULL DEFAULT '',
       role TEXT,
-      PRIMARY KEY(release_id, ordinal),
-      FOREIGN KEY(release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE,
+      PRIMARY KEY(edition_id, ordinal),
+      FOREIGN KEY(edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE,
       FOREIGN KEY(artist_id) REFERENCES ArtistMetadata(id) ON DELETE CASCADE
     );
 
@@ -53,7 +53,7 @@ export function createCanonicalCreditSchemaV41(db: Database.Database): void {
     CREATE INDEX idx_rg_credits_artist
       ON ReleaseGroupArtistCredits(artist_id, release_group_id);
     CREATE INDEX idx_release_credits_artist
-      ON ReleaseArtistCredits(artist_id, release_id);
+      ON ReleaseArtistCredits(artist_id, edition_id);
     CREATE INDEX idx_track_credits_artist
       ON TrackArtistCredits(artist_id, track_id);
     CREATE INDEX idx_recording_credits_artist
@@ -132,16 +132,16 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     CREATE TABLE LibraryReleases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       library_id INTEGER NOT NULL,
-      release_id INTEGER NOT NULL,
+      edition_id INTEGER NOT NULL,
       selection_mode TEXT NOT NULL CHECK(selection_mode IN ('auto', 'manual')),
       locked BOOLEAN NOT NULL DEFAULT 0,
       reason TEXT,
       curation_version INTEGER NOT NULL,
       selected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(library_id, release_id),
+      UNIQUE(library_id, edition_id),
       FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
-      FOREIGN KEY(release_id) REFERENCES AlbumReleases(id) ON DELETE CASCADE
+      FOREIGN KEY(edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
     );
 
     CREATE TABLE LibraryReleaseScopes (
@@ -214,7 +214,7 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     CREATE INDEX idx_library_release_groups_library
       ON LibraryReleaseGroups(library_id, monitored, release_group_id);
     CREATE INDEX idx_library_releases_library
-      ON LibraryReleases(library_id, release_id);
+      ON LibraryReleases(library_id, edition_id);
     CREATE INDEX idx_library_release_scopes_artist
       ON LibraryReleaseScopes(library_artist_id, scope_type, library_release_id);
     CREATE INDEX idx_acquisition_sources_plan
@@ -230,6 +230,6 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     CREATE INDEX idx_track_files_library_recording
       ON TrackFiles(library_id, recording_id);
     CREATE INDEX idx_track_files_library_release
-      ON TrackFiles(library_id, album_release_id);
+      ON TrackFiles(library_id, album_edition_id);
   `);
 }

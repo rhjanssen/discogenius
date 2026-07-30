@@ -21,7 +21,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM metadata_identity_status").run();
   dbModule.db.prepare("DELETE FROM ProviderItems").run();
   dbModule.db.prepare("DELETE FROM Recordings").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
   dbModule.db.prepare("DELETE FROM Artists").run();

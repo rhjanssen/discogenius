@@ -107,7 +107,7 @@ function seedLibraryReleaseSelection(options: {
     SELECT id FROM Albums WHERE mbid = ?
   `).get(options.releaseGroupMbid) as { id: number };
   const release = db.prepare(`
-    SELECT id FROM AlbumReleases WHERE mbid = ?
+    SELECT id FROM AlbumEditions WHERE mbid = ?
   `).get(options.releaseMbid) as { id: number };
 
   db.prepare(`
@@ -118,7 +118,7 @@ function seedLibraryReleaseSelection(options: {
   `).run(library.id, releaseGroup.id, options.monitored ? 1 : 0);
   db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, curation_version
+      library_id, edition_id, selection_mode, locked, curation_version
     ) VALUES (?, ?, 'auto', 0, 1)
   `).run(library.id, release.id);
   return library.id;
@@ -156,7 +156,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
 
@@ -188,7 +188,7 @@ test("computeExpectedPath keeps the stored artist folder canonical when naming c
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date) VALUES (?, ?, ?, ?, ?)")
     .run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album", "1975-11-21");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count, date)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count, date)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", 1, 1, "1975-11-21");
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid) VALUES (?, ?, ?)")
@@ -255,7 +255,7 @@ test("computeExpectedPath prefers canonical release-group and track metadata ove
   dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, ?)")
     .run("rg-mbid-1", "artist-mbid-1", "Canonical Group Title", "Album");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "Edition-Specific Title", 1, 1);
   dbModule.db.prepare("INSERT INTO Recordings (mbid, title) VALUES (?, ?)")
@@ -527,7 +527,7 @@ test("upsertLibraryFile stores canonical MusicBrainz and provider identity for i
     VALUES (?, ?, ?, ?)
   `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
     VALUES (?, ?, ?, ?, ?)
   `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", 1);
   dbModule.db.prepare(`
@@ -631,7 +631,7 @@ test("upsertLibraryFile uses accepted typed matches instead of provider shadow i
     VALUES (?, ?, ?, ?, ?)
   `).run("release-group-mbid-1", "artist-mbid-1", "Give Me The Future", "album", null);
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, date, country, status, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, date, country, status, media_count, track_count)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "legacy-release-mbid",
@@ -941,7 +941,7 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
     VALUES (?, ?, ?, ?)
   `).run("rg-mbid-1", "artist-mbid-1", "A Night at the Opera", "Album");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
     VALUES (?, ?, ?, ?, ?)
   `).run("release-mbid-1", "rg-mbid-1", "artist-mbid-1", "A Night at the Opera", 1);
   dbModule.db.prepare(`
@@ -1132,7 +1132,7 @@ dbModule.db.prepare(`
   `).run("rg-mbid-pompeii", "artist-mbid-bastille", "Bad Blood", "Album");
 
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
     VALUES (?, ?, ?, ?, ?)
   `).run("release-mbid-pompeii", "rg-mbid-pompeii", "artist-mbid-bastille", "Bad Blood", 1);
 
@@ -1239,7 +1239,7 @@ dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       id, artist_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
-      file_type, quality, library_id, release_group_id, album_release_id,
+      file_type, quality, library_id, release_group_id, album_edition_id,
       recording_id, canonical_recording_mbid, canonical_release_group_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -1249,7 +1249,7 @@ dbModule.db.prepare(`
     "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS",
     nonspatialLibraryId,
     (dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-mbid-pompeii'").get() as { id: number }).id,
-    (dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid-pompeii'").get() as { id: number }).id,
+    (dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'release-mbid-pompeii'").get() as { id: number }).id,
     audioRecId, "recording-mbid-pompeii", "rg-mbid-pompeii",
   );
 
@@ -1375,7 +1375,7 @@ test("computeExpectedPath inline requires a monitored nonspatial library release
     VALUES (?, ?, ?, ?)
   `).run("rg-mbid-inline-gate", "artist-mbid-inline-gate", "Bad Blood", "Album");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count)
     VALUES (?, ?, ?, ?, ?)
   `).run("release-mbid-inline-gate", "rg-mbid-inline-gate", "artist-mbid-inline-gate", "Bad Blood", 1);
   dbModule.db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid) VALUES (?, ?, ?)`)
@@ -1450,7 +1450,7 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
     VALUES (?, ?, ?, ?, 1)
   `).run("rg-mbid-stereo-pref", "artist-mbid-stereo-pref", "Bad Blood", "Album");
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, date)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, date)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("release-mbid-stereo-pref", "rg-mbid-stereo-pref", "artist-mbid-stereo-pref", "Bad Blood", 1, "2013-01-01");
   dbModule.db.prepare(`
@@ -1506,7 +1506,7 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
     INSERT INTO TrackFiles (
       id, artist_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
-      file_type, quality, library_id, release_group_id, album_release_id,
+      file_type, quality, library_id, release_group_id, album_edition_id,
       recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -1515,14 +1515,14 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
     "spatial", "01 - Pompeii.m4a", "m4a", 100, "track", "DOLBY_ATMOS",
     spatialLibraryId,
     (dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-mbid-stereo-pref'").get() as { id: number }).id,
-    (dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid-stereo-pref'").get() as { id: number }).id,
+    (dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'release-mbid-stereo-pref'").get() as { id: number }).id,
     audioRecId, "recording-mbid-stereo-pref", "rg-mbid-stereo-pref", "release-mbid-stereo-pref",
   );
   dbModule.db.prepare(`
     INSERT INTO TrackFiles (
       id, artist_id, provider, provider_entity_type, provider_id, library_slot,
       file_path, relative_path, library_root, filename, extension, file_size,
-      file_type, quality, library_id, release_group_id, album_release_id,
+      file_type, quality, library_id, release_group_id, album_edition_id,
       recording_id, canonical_recording_mbid, canonical_release_group_mbid, canonical_release_mbid
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -1531,7 +1531,7 @@ test("computeExpectedPath prefers stereo over spatial for inline videos", () => 
     "music", "01 - Pompeii.flac", "flac", 100, "track", "LOSSLESS",
     nonspatialLibraryId,
     (dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-mbid-stereo-pref'").get() as { id: number }).id,
-    (dbModule.db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid-stereo-pref'").get() as { id: number }).id,
+    (dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'release-mbid-stereo-pref'").get() as { id: number }).id,
     audioRecId, "recording-mbid-stereo-pref", "rg-mbid-stereo-pref", "release-mbid-stereo-pref",
   );
 

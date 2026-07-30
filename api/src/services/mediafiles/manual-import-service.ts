@@ -126,7 +126,7 @@ export class ManualImportService {
                             a.mbid AS artistMbid,
                             a.name AS artistName
                         FROM Tracks t
-                        JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
+                        JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
                         JOIN Albums rg ON rg.mbid = rel.release_group_mbid
                         JOIN Artists a ON a.mbid = rg.artist_mbid
                         LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
@@ -160,7 +160,7 @@ export class ManualImportService {
                                 a.mbid AS artistMbid,
                                 a.name AS artistName
                             FROM Tracks t
-                            JOIN AlbumReleases rel ON rel.mbid = t.release_mbid
+                            JOIN AlbumEditions rel ON rel.mbid = t.release_mbid
                             JOIN Albums rg ON rg.mbid = rel.release_group_mbid
                             JOIN Artists a ON a.mbid = rg.artist_mbid
                             LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
@@ -287,7 +287,7 @@ export class ManualImportService {
                     LEFT JOIN ProviderEditionMatches release_match
                       ON release_match.provider_edition_item_id = pi.id
                      AND release_match.match_state = 'accepted'
-                    LEFT JOIN AlbumReleases canonical_release ON canonical_release.id = release_match.release_id
+                    LEFT JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
                     LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
                     WHERE pi.entity_type = 'release'
                       AND pi.provider = ?

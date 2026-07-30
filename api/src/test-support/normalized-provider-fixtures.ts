@@ -31,7 +31,7 @@ export function seedAcceptedProviderReleaseMatch(
 ): { providerReleaseItemId: number; providerReleaseMatchId: number; releaseId: number; releaseGroupId: number } {
   const release = db.prepare(`
     SELECT release.id, release.release_group_id, release.title
-    FROM AlbumReleases release
+    FROM AlbumEditions release
     WHERE release.mbid = ?
   `).get(fixture.releaseMbid) as {
     id: number;
@@ -47,14 +47,14 @@ export function seedAcceptedProviderReleaseMatch(
   );
   db.prepare(`
     INSERT OR IGNORE INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test_fixture', 1)
   `).run(providerRelease.id, release.id);
   const releaseMatch = db.prepare(`
     SELECT id
     FROM ProviderEditionMatches
-    WHERE provider_edition_item_id = ? AND release_id = ?
+    WHERE provider_edition_item_id = ? AND edition_id = ?
   `).get(providerRelease.id, release.id) as { id: number };
   return {
     providerReleaseItemId: providerRelease.id,
@@ -209,9 +209,9 @@ export function seedAcceptedProviderRecordingTrack(
   // release-group/release/track it implies so the chain production walks
   // (member -> track match -> release match) actually exists.
   let canonicalRelease = db.prepare(`
-    SELECT album_release_id FROM Tracks WHERE recording_id = ? ORDER BY id LIMIT 1
-  `).get(fixture.recordingId) as { album_release_id: number } | undefined;
-  if (!canonicalRelease?.album_release_id) {
+    SELECT album_edition_id FROM Tracks WHERE recording_id = ? ORDER BY id LIMIT 1
+  `).get(fixture.recordingId) as { album_edition_id: number } | undefined;
+  if (!canonicalRelease?.album_edition_id) {
     const recording = db.prepare(
       "SELECT id, mbid, title, artist_mbid FROM Recordings WHERE id = ?",
     ).get(fixture.recordingId) as {
@@ -226,31 +226,31 @@ export function seedAcceptedProviderRecordingTrack(
       `).run(`rg-${key}`, artistMbid, recording.title);
       const group = db.prepare("SELECT id FROM Albums WHERE mbid = ?").get(`rg-${key}`) as { id: number };
       db.prepare(`
-        INSERT OR IGNORE INTO AlbumReleases (
+        INSERT OR IGNORE INTO AlbumEditions (
           mbid, release_group_mbid, release_group_id, artist_mbid, title, track_count
         ) VALUES (?, ?, ?, ?, ?, 1)
       `).run(`rel-${key}`, `rg-${key}`, group.id, artistMbid, recording.title);
-      const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?").get(`rel-${key}`) as { id: number };
+      const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(`rel-${key}`) as { id: number };
       db.prepare(`
         INSERT OR IGNORE INTO Tracks (
-          mbid, release_mbid, album_release_id, recording_mbid, recording_id,
+          mbid, release_mbid, album_edition_id, recording_mbid, recording_id,
           medium_position, position, title
         ) VALUES (?, ?, ?, ?, ?, 1, 1, ?)
       `).run(`trk-${key}`, `rel-${key}`, release.id, recording.mbid, recording.id, recording.title);
-      canonicalRelease = { album_release_id: release.id };
+      canonicalRelease = { album_edition_id: release.id };
     }
   }
-  if (canonicalRelease?.album_release_id) {
+  if (canonicalRelease?.album_edition_id) {
     db.prepare(`
       INSERT OR IGNORE INTO ProviderEditionMatches (
-        provider_edition_item_id, release_id, relation, match_state,
+        provider_edition_item_id, edition_id, relation, match_state,
         decision_source, confidence, method, matcher_version
       ) VALUES (?, ?, 'overlap', 'accepted', 'automatic', 1, 'test_fixture', 1)
-    `).run(releaseItem.id, canonicalRelease.album_release_id);
+    `).run(releaseItem.id, canonicalRelease.album_edition_id);
     const releaseMatch = db.prepare(`
       SELECT id FROM ProviderEditionMatches
-      WHERE provider_edition_item_id = ? AND release_id = ?
-    `).get(releaseItem.id, canonicalRelease.album_release_id) as { id: number };
+      WHERE provider_edition_item_id = ? AND edition_id = ?
+    `).get(releaseItem.id, canonicalRelease.album_edition_id) as { id: number };
     db.prepare(`
       INSERT OR IGNORE INTO ProviderTrackMatches (
         provider_edition_member_id, provider_edition_match_id, track_id, recording_id,
@@ -272,7 +272,7 @@ export function seedAcceptedProviderTrackMatch(
 ): AcceptedProviderTrackFixtureIds {
   const release = db.prepare(`
     SELECT release.id, release.release_group_id, release.title
-    FROM AlbumReleases release
+    FROM AlbumEditions release
     WHERE release.mbid = ?
   `).get(fixture.releaseMbid) as {
     id: number;
@@ -385,7 +385,7 @@ export function seedCanonicalAlbum(
     VALUES (?, ?, ?, 'album')
   `).run(fixture.releaseGroupMbid, artistMbid, title);
   db.prepare(`
-    INSERT OR IGNORE INTO AlbumReleases (
+    INSERT OR IGNORE INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title, track_count, media_count
     ) VALUES (?, ?, ?, ?, ?, 1)
   `).run(
@@ -421,7 +421,7 @@ export function seedCanonicalAlbum(
     );
   }
 
-  const release = db.prepare("SELECT id, release_group_id FROM AlbumReleases WHERE mbid = ?")
+  const release = db.prepare("SELECT id, release_group_id FROM AlbumEditions WHERE mbid = ?")
     .get(fixture.releaseMbid) as { id: number; release_group_id: number };
   return { releaseGroupId: release.release_group_id, releaseId: release.id };
 }

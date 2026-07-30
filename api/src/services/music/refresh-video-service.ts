@@ -226,8 +226,8 @@ function loadAudioRecordingCandidatesForProviderAlbum(
           CASE WHEN EXISTS (
             SELECT 1
             FROM Tracks t
-            JOIN AlbumReleases ar
-              ON ar.id = t.album_release_id
+            JOIN AlbumEditions ar
+              ON ar.id = t.album_edition_id
               OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
@@ -241,8 +241,8 @@ function loadAudioRecordingCandidatesForProviderAlbum(
           CASE WHEN EXISTS (
             SELECT 1
             FROM Tracks t
-            JOIN AlbumReleases ar
-              ON ar.id = t.album_release_id
+            JOIN AlbumEditions ar
+              ON ar.id = t.album_edition_id
               OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
@@ -381,8 +381,8 @@ function findAudioRecordingByArtistTitleDuration(
           CASE WHEN EXISTS (
             SELECT 1
             FROM Tracks t
-            JOIN AlbumReleases ar
-              ON ar.id = t.album_release_id
+            JOIN AlbumEditions ar
+              ON ar.id = t.album_edition_id
               OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
@@ -396,8 +396,8 @@ function findAudioRecordingByArtistTitleDuration(
           CASE WHEN EXISTS (
             SELECT 1
             FROM Tracks t
-            JOIN AlbumReleases ar
-              ON ar.id = t.album_release_id
+            JOIN AlbumEditions ar
+              ON ar.id = t.album_edition_id
               OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
@@ -411,8 +411,8 @@ function findAudioRecordingByArtistTitleDuration(
           CASE WHEN EXISTS (
             SELECT 1
             FROM Tracks t
-            JOIN AlbumReleases ar
-              ON ar.id = t.album_release_id
+            JOIN AlbumEditions ar
+              ON ar.id = t.album_edition_id
               OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
             JOIN Albums a ON a.mbid = ar.release_group_mbid
             WHERE (t.recording_id = rec.id OR (rec.mbid IS NOT NULL AND t.recording_mbid = rec.mbid))
@@ -1577,8 +1577,8 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
     const audioHasNonLiveAlbum = db.prepare(`
         SELECT 1 AS hit
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         JOIN Albums a ON a.mbid = ar.release_group_mbid
         WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
@@ -1593,8 +1593,8 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
     const audioHasStudioAlbum = db.prepare(`
         SELECT 1 AS hit
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         JOIN Albums a ON a.mbid = ar.release_group_mbid
         WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))
@@ -1610,8 +1610,8 @@ function repairProviderVideoAudioRelations(artistMbid: string): number {
     const audioHasLiveAlbum = db.prepare(`
         SELECT 1 AS hit
         FROM Tracks t
-        JOIN AlbumReleases ar
-          ON ar.id = t.album_release_id
+        JOIN AlbumEditions ar
+          ON ar.id = t.album_edition_id
           OR (t.release_mbid IS NOT NULL AND ar.mbid = t.release_mbid)
         JOIN Albums a ON a.mbid = ar.release_group_mbid
         WHERE (t.recording_id = ? OR (t.recording_mbid IS NOT NULL AND t.recording_mbid = ?))

@@ -30,7 +30,7 @@ function resetRows() {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();
@@ -61,7 +61,7 @@ function seedCanonicalArtistGraph() {
     "2024-01-01",
   ) as { id: number };
   const release = db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_id, release_group_mbid, artist_metadata_id,
       artist_mbid, title, track_count, media_count
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -88,7 +88,7 @@ function seedCanonicalArtistGraph() {
   `).get("recording-2", "Track Two", "artist-mbid", artistMetadata.id, 0) as { id: number };
   const track1 = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       title, medium_position, position
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING id
@@ -104,7 +104,7 @@ function seedCanonicalArtistGraph() {
   ) as { id: number };
   const track2 = db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       title, medium_position, position
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING id
@@ -129,7 +129,7 @@ function seedCanonicalArtistGraph() {
   `).run(stereoLibrary.id, releaseGroup.id);
   db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(stereoLibrary.id, release.id);
 
@@ -171,15 +171,15 @@ function insertTrackFile(
     SELECT
       track.id AS track_id,
       track.recording_id,
-      track.album_release_id,
+      track.album_edition_id,
       release.release_group_id
     FROM Tracks track
-    JOIN AlbumReleases release ON release.id = track.album_release_id
+    JOIN AlbumEditions release ON release.id = track.album_edition_id
     WHERE track.mbid = ?
   `).get(trackMbid) as {
     track_id: number;
     recording_id: number;
-    album_release_id: number;
+    album_edition_id: number;
     release_group_id: number;
   };
   const library = db.prepare(`
@@ -189,7 +189,7 @@ function insertTrackFile(
     INSERT INTO TrackFiles (
       artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
       canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id,
-      release_group_id, album_release_id, track_id, recording_id, library_slot, library_id,
+      release_group_id, album_edition_id, track_id, recording_id, library_slot, library_id,
       file_path, relative_path, library_root, filename, extension, file_type, file_class
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -203,7 +203,7 @@ function insertTrackFile(
     "track",
     providerId,
     track.release_group_id,
-    track.album_release_id,
+    track.album_edition_id,
     track.track_id,
     track.recording_id,
     libraryName === "Spatial" ? "spatial" : "stereo",
@@ -361,7 +361,7 @@ test("download completion follows enabled libraries and keeps their track identi
   `).run(spatialLibrary.id, graph.releaseGroupId);
   db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(spatialLibrary.id, graph.releaseId);
   insertTrackFile("track-1", "recording-1", "provider-track-1", "track-one.flac");
@@ -419,10 +419,10 @@ test("audio completion ignores video recordings embedded in the selected release
   seedCanonicalArtistGraph();
   db.prepare(`
     INSERT INTO Tracks (
-      mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       title, medium_position, position
     ) VALUES (
-      ?, (SELECT id FROM AlbumReleases WHERE mbid = ?), ?,
+      ?, (SELECT id FROM AlbumEditions WHERE mbid = ?), ?,
       (SELECT id FROM Recordings WHERE mbid = ?), ?, ?, ?, ?
     )
   `).run(
@@ -467,7 +467,7 @@ test("completion lookups use the library-and-track covering index", () => {
     SELECT track.id
     FROM Tracks track
     JOIN LibraryReleases library_release
-      ON library_release.release_id = track.album_release_id
+      ON library_release.edition_id = track.album_edition_id
     WHERE ${buildTrackFileCompletionExistsPredicate("track", "library_release.library_id", "plan_file")}
   `).all() as Array<{ detail: string }>;
   const details = plan.map((row) => row.detail).join("\n");

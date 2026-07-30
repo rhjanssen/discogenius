@@ -19,7 +19,7 @@ before(async () => {
 
 beforeEach(() => {
   dbModule.db.prepare("DELETE FROM TrackFiles").run();
-  dbModule.db.prepare("DELETE FROM AlbumReleases").run();
+  dbModule.db.prepare("DELETE FROM AlbumEditions").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM Artists").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
@@ -48,7 +48,7 @@ type ReleaseInput = {
 
 function insertRelease(mbid: string, trackCount: number, input: ReleaseInput = {}): void {
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, artist_mbid, title,
       status, country, date, barcode, media_count, track_count, media
     )
@@ -162,7 +162,7 @@ test("representative release prefers explicit over clean when other ranking sign
     barcode: "123",
     format: "Digital Media",
   });
-  dbModule.db.prepare("UPDATE AlbumReleases SET disambiguation = 'clean' WHERE mbid = 'clean-release'").run();
+  dbModule.db.prepare("UPDATE AlbumEditions SET disambiguation = 'clean' WHERE mbid = 'clean-release'").run();
 
   insertRelease("explicit-release", 12, {
     status: "Official",
@@ -171,7 +171,7 @@ test("representative release prefers explicit over clean when other ranking sign
     barcode: "456",
     format: "Digital Media",
   });
-  dbModule.db.prepare("UPDATE AlbumReleases SET disambiguation = 'explicit' WHERE mbid = 'explicit-release'").run();
+  dbModule.db.prepare("UPDATE AlbumEditions SET disambiguation = 'explicit' WHERE mbid = 'explicit-release'").run();
 
   const selected = selectionModule.MusicBrainzReleaseSelectionService
     .selectRepresentativeRelease("group-mbid");

@@ -24,7 +24,7 @@ before(async () => {
 beforeEach(() => {
     dbModule.db.prepare("DELETE FROM commands").run();
     dbModule.db.prepare("DELETE FROM history_events").run();
-    for (const table of ["ProviderItems", "Tracks", "Recordings", "AlbumReleases", "Albums", "ArtistMetadata", "Artists"]) {
+    for (const table of ["ProviderItems", "Tracks", "Recordings", "AlbumEditions", "Albums", "ArtistMetadata", "Artists"]) {
         dbModule.db.prepare(`DELETE FROM ${table}`).run();
     }
 });
@@ -198,7 +198,7 @@ test("activity descriptions resolve download jobs from canonical provider items 
         VALUES (?, ?, ?, ?)
     `).run("release-group-mbid", "artist-mbid", "Canonical Album", "album");
     dbModule.db.prepare(`
-        INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+        INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
         VALUES (?, ?, ?, ?, ?, ?)
     `).run("release-mbid", "release-group-mbid", "artist-mbid", "Canonical Album", 1, 1);
     dbModule.db.prepare(`

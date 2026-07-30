@@ -112,7 +112,7 @@ function xmlElement(name: string, value: unknown): string | null {
     return text ? `  <${name}>${escapeXml(text)}</${name}>` : null;
 }
 
-/** Parse Albums.genres / AlbumReleases.label / Recordings.isrcs JSON arrays. */
+/** Parse Albums.genres / AlbumEditions.label / Recordings.isrcs JSON arrays. */
 function parseJsonStringList(raw: string | null | undefined): string[] {
     if (!raw) return [];
     try {
@@ -202,7 +202,7 @@ function loadAlbumProviderItem(albumId: string, provider?: string | null): Album
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = pi.id
          AND release_match.match_state = 'accepted'
-        JOIN AlbumReleases release ON release.id = release_match.release_id
+        JOIN AlbumEditions release ON release.id = release_match.edition_id
         JOIN Albums rg ON rg.id = release.release_group_id
         LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.id = rg.artist_metadata_id
         LEFT JOIN Artists artist ON artist.mbid = artist_metadata.mbid
@@ -264,7 +264,7 @@ function loadVideoProviderItem(videoId: string): VideoProviderItemRow | null {
           ON relation.source_recording_id = recording.id
          AND relation.relation_type IN ('provider_video_for', 'music_video_for')
         LEFT JOIN Tracks related_track ON related_track.recording_id = relation.target_recording_id
-        LEFT JOIN AlbumReleases release ON release.id = related_track.album_release_id
+        LEFT JOIN AlbumEditions release ON release.id = related_track.album_edition_id
         LEFT JOIN Albums album ON album.id = release.release_group_id
         WHERE pi.entity_type = 'video'
           AND CAST(pi.provider_id AS TEXT) = CAST(? AS TEXT)
@@ -429,8 +429,8 @@ function resolveAlbumVideoCoverProvider(options?: AlbumVideoCoverDownloadOptions
             FROM AcquisitionPlans plan
             JOIN LibraryReleases library_release
               ON library_release.id = plan.library_release_id
-            JOIN AlbumReleases release
-              ON release.id = library_release.release_id
+            JOIN AlbumEditions release
+              ON release.id = library_release.edition_id
             JOIN Albums release_group
               ON release_group.id = release.release_group_id
             JOIN AcquisitionPlanSources plan_source
@@ -794,7 +794,7 @@ export async function saveAlbumNfoFile(
             WHERE mbid = ?
             UNION ALL
             SELECT release_group_mbid
-            FROM AlbumReleases
+            FROM AlbumEditions
             WHERE mbid = ?
             LIMIT 1
         `).get(albumId, albumId) as { release_group_mbid?: string | null } | undefined;
@@ -807,7 +807,7 @@ export async function saveAlbumNfoFile(
             JOIN ProviderEditionMatches release_match
               ON release_match.provider_edition_item_id = pi.id
              AND release_match.match_state = 'accepted'
-            JOIN AlbumReleases release ON release.id = release_match.release_id
+            JOIN AlbumEditions release ON release.id = release_match.edition_id
             JOIN Albums release_group ON release_group.id = release.release_group_id
             WHERE pi.provider = ?
               AND pi.entity_type = 'release'
@@ -841,8 +841,8 @@ export async function saveAlbumNfoFile(
           ON quality_profile.id = library.quality_profile_id
         JOIN LibraryReleases library_release
           ON library_release.library_id = library.id
-        JOIN AlbumReleases release
-          ON release.id = library_release.release_id
+        JOIN AlbumEditions release
+          ON release.id = library_release.edition_id
          AND release.release_group_id = release_group.id
         LEFT JOIN AcquisitionPlans plan
           ON plan.library_release_id = library_release.id
@@ -893,7 +893,7 @@ export async function saveAlbumNfoFile(
         selectedLibrary?.selected_release_mbid,
         (db.prepare(`
             SELECT mbid
-            FROM AlbumReleases
+            FROM AlbumEditions
             WHERE release_group_mbid = ?
             ORDER BY monitored DESC, CASE WHEN date IS NULL THEN 1 ELSE 0 END, date ASC, mbid ASC
             LIMIT 1
@@ -914,7 +914,7 @@ export async function saveAlbumNfoFile(
             release.label,
             COALESCE(NULLIF(TRIM(artist.name), ''), artist_metadata.name) AS artist_name
         FROM Albums release_group
-        LEFT JOIN AlbumReleases release
+        LEFT JOIN AlbumEditions release
           ON release.mbid = ?
          AND release.release_group_mbid = release_group.mbid
         LEFT JOIN ArtistMetadata artist_metadata ON artist_metadata.mbid = release_group.artist_mbid

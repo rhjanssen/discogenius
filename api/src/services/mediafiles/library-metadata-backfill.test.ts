@@ -138,7 +138,7 @@ beforeEach(() => {
         "ProviderItemAudioVariants",
         "ProviderItems",
         "Tracks",
-        "AlbumReleases",
+        "AlbumEditions",
         "Albums",
         "Recordings",
         "Artists",
@@ -184,7 +184,7 @@ function seedCanonicalLibraryFiles() {
         VALUES(?, ?, ?, ?, ?)
     `).run("release-group-mbid-200", "artist-mbid-100", "Canonical Album", "2024-02-03", "Album");
     dbModule.db.prepare(`
-        INSERT INTO AlbumReleases(mbid, release_group_mbid, artist_mbid, title, date, media_count, barcode)
+        INSERT INTO AlbumEditions(mbid, release_group_mbid, artist_mbid, title, date, media_count, barcode)
         VALUES(?, ?, ?, ?, ?, ?, ?)
     `).run("release-mbid-200", "release-group-mbid-200", "artist-mbid-100", "Canonical Album", "2024-02-03", 1, "123456789012");
     dbModule.db.prepare("INSERT INTO Recordings(mbid, artist_mbid, title, is_video, release_date) VALUES(?, ?, ?, ?, ?)")
@@ -200,7 +200,7 @@ function seedCanonicalLibraryFiles() {
         SELECT id FROM Albums WHERE mbid = 'release-group-mbid-200'
     `).get() as { id: number };
     const release = dbModule.db.prepare(`
-        SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid-200'
+        SELECT id FROM AlbumEditions WHERE mbid = 'release-mbid-200'
     `).get() as { id: number };
     const recording = dbModule.db.prepare(`
         SELECT id FROM Recordings WHERE mbid = 'recording-mbid-300'
@@ -212,12 +212,12 @@ function seedCanonicalLibraryFiles() {
         UPDATE Albums SET artist_metadata_id = ? WHERE id = ?
     `).run(artistMetadata.id, releaseGroup.id);
     dbModule.db.prepare(`
-        UPDATE AlbumReleases
+        UPDATE AlbumEditions
         SET release_group_id = ?, artist_metadata_id = ?
         WHERE id = ?
     `).run(releaseGroup.id, artistMetadata.id, release.id);
     dbModule.db.prepare(`
-        UPDATE Tracks SET album_release_id = ?, recording_id = ? WHERE id = ?
+        UPDATE Tracks SET album_edition_id = ?, recording_id = ? WHERE id = ?
     `).run(release.id, recording.id, canonicalTrack.id);
     dbModule.db.prepare(`
         INSERT OR IGNORE INTO MetadataProfiles (name, release_type_policy)
@@ -250,7 +250,7 @@ function seedCanonicalLibraryFiles() {
     `).run(library.id, releaseGroup.id);
     const libraryRelease = dbModule.db.prepare(`
         INSERT INTO LibraryReleases (
-          library_id, release_id, selection_mode, locked, reason, curation_version
+          library_id, edition_id, selection_mode, locked, reason, curation_version
         ) VALUES (?, ?, 'auto', 0, 'test', 1)
         RETURNING id
     `).get(library.id, release.id) as { id: number };
@@ -266,7 +266,7 @@ function seedCanonicalLibraryFiles() {
     `).get() as { id: number };
     const releaseMatch = dbModule.db.prepare(`
         INSERT INTO ProviderEditionMatches (
-          provider_edition_item_id, release_id, relation, match_state,
+          provider_edition_item_id, edition_id, relation, match_state,
           decision_source, confidence, method, matcher_version
         ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
         RETURNING id
@@ -309,7 +309,7 @@ function seedCanonicalLibraryFiles() {
         INSERT INTO TrackFiles (
           artist_id, canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
           canonical_track_mbid, canonical_recording_mbid,
-          release_group_id, album_release_id, track_id, recording_id, library_id,
+          release_group_id, album_edition_id, track_id, recording_id, library_id,
           provider, provider_entity_type, provider_id, library_slot,
           file_path, relative_path, library_root, filename, extension, file_type, quality
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

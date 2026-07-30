@@ -28,7 +28,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -81,7 +81,7 @@ function insertCanonicalTrackFixture() {
     VALUES ('rg-mbid', 'artist-mbid', 'Track Album', 'Album', '2024-01-01')
   `).run();
   dbModule.db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, country, date)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status, country, date)
     VALUES ('release-mbid', 'rg-mbid', 'artist-mbid', 'Track Album', 'Official', 'XW', '2024-01-01')
   `).run();
   dbModule.db.prepare(`
@@ -100,7 +100,7 @@ function insertLibrarySelection(): { libraryId: number; libraryReleaseId: number
     .get() as { id: number };
   const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-mbid'")
     .get() as { id: number };
-  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'release-mbid'")
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'release-mbid'")
     .get() as { id: number };
   db.prepare(`
     INSERT INTO LibraryReleaseGroups (
@@ -109,7 +109,7 @@ function insertLibrarySelection(): { libraryId: number; libraryReleaseId: number
   `).run(library.id, releaseGroup.id);
   const libraryRelease = db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'manual', 0, 'route_test', 1)
     RETURNING id
   `).get(library.id, release.id) as { id: number };
@@ -120,7 +120,7 @@ function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: n
   const { db } = dbModule;
   const selection = insertLibrarySelection();
   const release = db.prepare(`
-    SELECT id, release_group_id FROM AlbumReleases WHERE mbid = 'release-mbid'
+    SELECT id, release_group_id FROM AlbumEditions WHERE mbid = 'release-mbid'
   `).get() as { id: number; release_group_id: number };
   const track = db.prepare(`
     SELECT id, recording_id FROM Tracks WHERE mbid = 'track-mbid'
@@ -145,7 +145,7 @@ function insertTidalPlan(): { libraryId: number; trackId: number; recordingId: n
   `).get(providerRelease.id, providerTrack.id) as { id: number };
   const releaseMatch = db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -270,7 +270,7 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
     VALUES ('rg-mbid', 'artist-mbid', 'Track Album', 'Album', '2024-01-01')
   `).run();
   db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, country, date)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status, country, date)
     VALUES ('release-mbid', 'rg-mbid', 'artist-mbid', 'Track Album', 'Official', 'XW', '2024-01-01')
   `).run();
   const selection = insertLibrarySelection();
@@ -288,7 +288,7 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
   `).run();
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, release_group_id, album_release_id, track_id, recording_id,
+      artist_id, library_id, release_group_id, album_edition_id, track_id, recording_id,
       file_path, relative_path, library_root, filename, extension, file_type, file_class
     )
     SELECT
@@ -296,7 +296,7 @@ test("GET tracks sorts popularity by track evidence instead of artist popularity
       '/music/' || track.mbid || '.flac', track.mbid || '.flac', '/music',
       track.mbid || '.flac', '.flac', 'track', 'audio'
     FROM Tracks track
-    JOIN AlbumReleases release ON release.id = track.album_release_id
+    JOIN AlbumEditions release ON release.id = track.album_edition_id
     WHERE track.mbid IN ('track-low', 'track-high')
   `).run(selection.libraryId);
 
@@ -319,7 +319,7 @@ test("GET tracks filters selected offers and keeps remote quality separate from 
   const plan = insertTidalPlan();
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, release_group_id, album_release_id, track_id, recording_id,
+      artist_id, library_id, release_group_id, album_edition_id, track_id, recording_id,
       provider, provider_entity_type, provider_id, file_path,
       relative_path, library_root, filename, extension, file_type, quality
     ) VALUES (

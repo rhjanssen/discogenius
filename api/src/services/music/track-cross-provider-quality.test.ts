@@ -34,7 +34,7 @@ beforeEach(() => {
     "ProviderItems",
     "Tracks",
     "Recordings",
-    "AlbumReleases",
+    "AlbumEditions",
     "Albums",
     "Artists",
     "ArtistMetadata",
@@ -65,11 +65,11 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, ?, 'Album')`)
     .run("rg-1", "artist-1", "Album");
   db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
     VALUES (?, ?, ?, ?, 'Official', '2020-01-01', 1, 1)
   `).run("rel-stereo", "rg-1", "artist-1", "Stereo");
   db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
     VALUES (?, ?, ?, ?, 'Official', '2020-01-01', 1, 1)
   `).run("rel-atmos", "rg-1", "artist-1", "Atmos");
   db.prepare(`INSERT INTO Recordings (mbid, title) VALUES (?, ?)`).run("rec-1", "Song");
@@ -144,7 +144,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     qualityClass: "hires-lossless" | "spatial";
     quality: string;
   }) => {
-    const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = ?")
+    const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?")
       .get(options.releaseMbid) as { id: number };
     const track = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = ?")
       .get(options.trackMbid) as { id: number; recording_id: number };
@@ -168,7 +168,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     `).get(providerRelease.id, providerTrack.id) as { id: number };
     const releaseMatch = db.prepare(`
       INSERT INTO ProviderEditionMatches (
-        provider_edition_item_id, release_id, relation, match_state,
+        provider_edition_item_id, edition_id, relation, match_state,
         decision_source, confidence, method, matcher_version
       ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
       RETURNING id
@@ -196,7 +196,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     `).run(options.libraryId, releaseGroup.id);
     const libraryRelease = db.prepare(`
       INSERT INTO LibraryReleases (
-        library_id, release_id, selection_mode, locked, curation_version
+        library_id, edition_id, selection_mode, locked, curation_version
       ) VALUES (?, ?, 'auto', 0, 1)
       RETURNING id
     `).get(options.libraryId, release.id) as { id: number };
@@ -253,11 +253,11 @@ test("tracklist remoteOffers include stereo and spatial from different providers
     SELECT id, recording_id FROM Tracks WHERE mbid = 'track-1'
   `).get() as { id: number; recording_id: number };
   const stereoRelease = db.prepare(`
-    SELECT id, release_group_id FROM AlbumReleases WHERE mbid = 'rel-stereo'
+    SELECT id, release_group_id FROM AlbumEditions WHERE mbid = 'rel-stereo'
   `).get() as { id: number; release_group_id: number };
   db.prepare(`
     INSERT INTO TrackFiles (
-      artist_id, library_id, release_group_id, album_release_id, track_id,
+      artist_id, library_id, release_group_id, album_edition_id, track_id,
       recording_id, provider, provider_entity_type, provider_id,
       file_path, relative_path, library_root, filename, extension, file_type,
       file_class, quality, source_quality, imported_quality

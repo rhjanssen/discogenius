@@ -369,7 +369,7 @@ function resolveImportHistoryContext(
           ON pi.entity_type = 'release'
          AND release_match.provider_edition_item_id = pi.id
          AND release_match.match_state = 'accepted'
-        LEFT JOIN AlbumReleases direct_release ON direct_release.id = release_match.release_id
+        LEFT JOIN AlbumEditions direct_release ON direct_release.id = release_match.edition_id
         LEFT JOIN Albums direct_group ON direct_group.id = direct_release.release_group_id
         LEFT JOIN ProviderEditionMembers member
           ON pi.entity_type = 'track'
@@ -379,7 +379,7 @@ function resolveImportHistoryContext(
          AND track_match.match_state = 'accepted'
         LEFT JOIN Tracks track ON track.id = track_match.track_id
         LEFT JOIN Recordings track_recording ON track_recording.id = track_match.recording_id
-        LEFT JOIN AlbumReleases track_release ON track_release.id = track.album_release_id
+        LEFT JOIN AlbumEditions track_release ON track_release.id = track.album_edition_id
         LEFT JOIN Albums track_group ON track_group.id = track_release.release_group_id
         LEFT JOIN ProviderVideoMatches video_match
           ON pi.entity_type = 'video'
@@ -443,7 +443,7 @@ function resolveExpectedRecoveredTracks(
           ON release_match.provider_edition_item_id = provider_release.id
          AND release_match.match_state = 'accepted'
         JOIN Tracks track
-          ON track.album_release_id = release_match.release_id
+          ON track.album_edition_id = release_match.edition_id
         JOIN Recordings recording
           ON recording.id = track.recording_id
         WHERE provider_release.provider_id = ?
@@ -484,7 +484,7 @@ export function releaseGroupMbidFromJobContext(context: ImportReconcileContext):
     }
     const row = db.prepare(`
         SELECT release_group.mbid AS release_group_mbid
-        FROM AlbumReleases release
+        FROM AlbumEditions release
         JOIN Albums release_group ON release_group.id = release.release_group_id
         WHERE release.mbid = ?
         LIMIT 1
@@ -513,8 +513,8 @@ function agreedReleaseGroupMbidForProviderRelease(
         JOIN ProviderEditionMatches release_match
           ON release_match.provider_edition_item_id = provider_release.id
          AND release_match.match_state = 'accepted'
-        JOIN AlbumReleases release
-          ON release.id = release_match.release_id
+        JOIN AlbumEditions release
+          ON release.id = release_match.edition_id
         JOIN Albums release_group
           ON release_group.id = release.release_group_id
         WHERE provider_release.entity_type = 'release'
@@ -540,7 +540,7 @@ function agreedReleaseGroupMbidForProviderTrack(
           ON track_match.provider_edition_member_id = member.id
          AND track_match.match_state = 'accepted'
         JOIN Tracks track ON track.id = track_match.track_id
-        JOIN AlbumReleases release ON release.id = track.album_release_id
+        JOIN AlbumEditions release ON release.id = track.album_edition_id
         JOIN Albums release_group ON release_group.id = release.release_group_id
         WHERE CAST(provider_track.provider_id AS TEXT) = CAST(? AS TEXT)
           AND provider_track.entity_type = 'track'

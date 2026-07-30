@@ -41,7 +41,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM ArtistReleaseGroups").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
@@ -75,7 +75,7 @@ function seedCanonicalArtistPage() {
   `).run();
 
   db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       id, foreign_release_id, mbid, release_group_mbid, artist_mbid,
       title, status, country, date, media_count, track_count
     )
@@ -99,7 +99,7 @@ function seedCanonicalArtistPage() {
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, 201, 'manual', 1, 'test', 1)
   `).run(library.id);
 
@@ -153,7 +153,7 @@ function seedCanonicalArtistPage() {
   `).get(providerRelease.id, providerTrack.id) as { id: number };
   const releaseMatch = db.prepare(`
     INSERT INTO ProviderEditionMatches (
-      provider_edition_item_id, release_id, relation, match_state,
+      provider_edition_item_id, edition_id, relation, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, 201, 'exact', 'accepted', 'automatic', 1, 'test', 1)
     RETURNING id
@@ -174,7 +174,7 @@ function seedCanonicalArtistPage() {
     RETURNING id
   `).get(providerTrack.id) as { id: number };
   const libraryRelease = db.prepare(`
-    SELECT id FROM LibraryReleases WHERE library_id = ? AND release_id = 201
+    SELECT id FROM LibraryReleases WHERE library_id = ? AND edition_id = 201
   `).get(library.id) as { id: number };
   const plan = db.prepare(`
     INSERT INTO AcquisitionPlans (
@@ -309,7 +309,7 @@ test("artist page top tracks ignore unselected alternate editions", async () => 
   `).get() as { id: number };
 
   db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       id, foreign_release_id, mbid, release_group_mbid, artist_mbid,
       title, status, country, date, media_count, track_count
     )
@@ -460,12 +460,12 @@ test("artist top tracks prefer the default provider popularity and fall back to 
       `).get(provider, releaseProviderId) as { id: number };
     }
     let releaseMatch = db.prepare(
-      "SELECT id FROM ProviderEditionMatches WHERE provider_edition_item_id = ? AND release_id = ?",
+      "SELECT id FROM ProviderEditionMatches WHERE provider_edition_item_id = ? AND edition_id = ?",
     ).get(providerRelease.id, releaseId) as { id: number } | undefined;
     if (!releaseMatch) {
       releaseMatch = db.prepare(`
         INSERT INTO ProviderEditionMatches (
-          provider_edition_item_id, release_id, relation, match_state,
+          provider_edition_item_id, edition_id, relation, match_state,
           decision_source, confidence, method, matcher_version
         ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1) RETURNING id
       `).get(providerRelease.id, releaseId) as { id: number };

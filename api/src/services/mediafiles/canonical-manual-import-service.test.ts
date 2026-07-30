@@ -33,24 +33,24 @@ function fixture() {
   db.prepare("INSERT INTO Artists (id, name, mbid) VALUES ('artist', 'Artist', 'artist')").run();
   db.prepare("INSERT INTO Albums (id, mbid, artist_mbid, title) VALUES (1, 'group', 'artist', 'Group')").run();
   db.prepare(`
-    INSERT INTO AlbumReleases (id, mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    INSERT INTO AlbumEditions (id, mbid, release_group_id, release_group_mbid, artist_mbid, title)
     VALUES (10, 'release-a', 1, 'group', 'artist', 'Release A')
   `).run();
   db.prepare(`
-    INSERT INTO AlbumReleases (id, mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    INSERT INTO AlbumEditions (id, mbid, release_group_id, release_group_mbid, artist_mbid, title)
     VALUES (20, 'release-b', 1, 'group', 'artist', 'Release B')
   `).run();
   db.prepare("INSERT INTO Recordings (id, mbid, title) VALUES (100, 'recording-a', 'Track A')").run();
   db.prepare("INSERT INTO Recordings (id, mbid, title) VALUES (200, 'recording-b', 'Track B')").run();
   db.prepare(`
     INSERT INTO Tracks (
-      id, mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       medium_position, position, title
     ) VALUES (1000, 'track-a', 10, 'release-a', 100, 'recording-a', 1, 1, 'Track A')
   `).run();
   db.prepare(`
     INSERT INTO Tracks (
-      id, mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
       medium_position, position, title
     ) VALUES (2000, 'track-b', 20, 'release-b', 200, 'recording-b', 1, 1, 'Track B')
   `).run();
@@ -85,7 +85,7 @@ test("canonical manual import pins Library, Release, Track and Recording", async
       receivedRoot = options?.libraryRootPath || "";
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class,
           source_quality, imported_quality
         ) VALUES (
@@ -108,11 +108,11 @@ test("canonical manual import pins Library, Release, Track and Recording", async
     assert.equal(receivedRoot, "/library/stereo");
     assert.equal(summary.imported, 1);
     assert.deepEqual(db.prepare(`
-      SELECT library_id, album_release_id, track_id, recording_id, file_class, provider
+      SELECT library_id, album_edition_id, track_id, recording_id, file_class, provider
       FROM TrackFiles WHERE id = 1
     `).get(), {
       library_id: 1,
-      album_release_id: 10,
+      album_edition_id: 10,
       track_id: 1000,
       recording_id: 100,
       file_class: "audio",
@@ -128,7 +128,7 @@ test("canonical manual import pins Library, Release, Track and Recording", async
       FROM LibraryReleaseGroups release_group
       JOIN LibraryReleases release
         ON release.library_id = release_group.library_id
-       AND release.release_id = 10
+       AND release.edition_id = 10
       WHERE release_group.library_id = 1 AND release_group.release_group_id = 1
     `).get(), {
       monitored: 1,
@@ -178,7 +178,7 @@ test("manual import needs no acquisition plan and no provider item at all", asyn
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
           1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
@@ -198,11 +198,11 @@ test("manual import needs no acquisition plan and no provider item at all", asyn
 
     assert.equal(summary.imported, 1);
     assert.deepEqual(db.prepare(`
-      SELECT library_id, album_release_id, track_id, recording_id, provider_item_id
+      SELECT library_id, album_edition_id, track_id, recording_id, provider_item_id
       FROM TrackFiles WHERE id = 1
     `).get(), {
       library_id: 1,
-      album_release_id: 10,
+      album_edition_id: 10,
       track_id: 1000,
       recording_id: 100,
       provider_item_id: null,
@@ -226,7 +226,7 @@ test("optional provider provenance attaches without becoming canonical identity"
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           canonical_track_mbid,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
@@ -247,7 +247,7 @@ test("optional provider provenance attaches without becoming canonical identity"
     });
 
     const row = db.prepare(`
-      SELECT track_id, recording_id, album_release_id, provider, provider_entity_type, provider_id
+      SELECT track_id, recording_id, album_edition_id, provider, provider_entity_type, provider_id
       FROM TrackFiles WHERE id = 1
     `).get() as Record<string, unknown>;
     // Provenance is recorded as the provider identity triple, while canonical
@@ -258,7 +258,7 @@ test("optional provider provenance attaches without becoming canonical identity"
     assert.equal(row.provider_id, "tidal-track-1");
     assert.equal(row.track_id, 1000);
     assert.equal(row.recording_id, 100);
-    assert.equal(row.album_release_id, 10);
+    assert.equal(row.album_edition_id, 10);
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
@@ -271,7 +271,7 @@ test("a recording shared by two selected releases keeps the release-track the us
     // track 1000 — as its own release-track occurrence.
     db.prepare(`
       INSERT INTO Tracks (
-        id, mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+        id, mbid, album_edition_id, release_mbid, recording_id, recording_mbid,
         medium_position, position, title
       ) VALUES (2100, 'track-b-shared', 20, 'release-b', 100, 'recording-a', 1, 2, 'Track A')
     `).run();
@@ -284,7 +284,7 @@ test("a recording shared by two selected releases keeps the release-track the us
     for (const releaseId of [10, 20]) {
       db.prepare(`
         INSERT INTO LibraryReleases (
-          library_id, release_id, selection_mode, locked, reason, curation_version
+          library_id, edition_id, selection_mode, locked, reason, curation_version
         ) VALUES (1, ?, 'auto', 0, 'test', 1)
       `).run(releaseId);
     }
@@ -292,7 +292,7 @@ test("a recording shared by two selected releases keeps the release-track the us
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
           1, 'artist', '/library/stereo', 'track', 1, 20, 2100, 100,
@@ -312,12 +312,12 @@ test("a recording shared by two selected releases keeps the release-track the us
     });
 
     const row = db.prepare(`
-      SELECT album_release_id, track_id, recording_id FROM TrackFiles WHERE id = 1
+      SELECT album_edition_id, track_id, recording_id FROM TrackFiles WHERE id = 1
     `).get() as Record<string, number>;
     // The explicitly chosen release-track occurrence survives; it is NOT
     // re-anchored to Release A's sibling track just because both selected
     // releases share recording 100.
-    assert.equal(row.album_release_id, 20);
+    assert.equal(row.album_edition_id, 20);
     assert.equal(row.track_id, 2100);
     assert.equal(row.recording_id, 100);
   } finally {
@@ -336,7 +336,7 @@ test("only the newly imported row is updated when the same track exists in anoth
     `).run();
     db.prepare(`
       INSERT INTO TrackFiles (
-        id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
+        id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
         canonical_track_mbid, file_path, relative_path, filename, extension, file_class,
         verified_at
       ) VALUES (
@@ -350,7 +350,7 @@ test("only the newly imported row is updated when the same track exists in anoth
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           canonical_track_mbid, file_path, relative_path, filename, extension, file_class
         ) VALUES (
           1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
@@ -381,11 +381,11 @@ test("only the newly imported row is updated when the same track exists in anoth
 
     // ...and the other library's pre-existing copy was left completely alone.
     const other = db.prepare(`
-      SELECT library_id, file_path, album_release_id FROM TrackFiles WHERE id = 99
+      SELECT library_id, file_path, album_edition_id FROM TrackFiles WHERE id = 99
     `).get() as Record<string, unknown>;
     assert.equal(other.library_id, 2, "the other library's row must not be re-pointed");
     assert.equal(other.file_path, "/library/spatial/Artist/Release A/01 Track A.m4a");
-    assert.equal(other.album_release_id, 10);
+    assert.equal(other.album_edition_id, 10);
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
@@ -401,7 +401,7 @@ test("manual import monitors and custom-selects without silently locking", async
     const service = new CanonicalManualImportService(db, async (items) => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           canonical_track_mbid, file_path, relative_path, filename, extension, file_class
         ) VALUES (
           1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100, 'track-a',
@@ -463,7 +463,7 @@ test("a reported row outside the target library root fails closed", async () => 
       // The row exists but lives outside /library/stereo.
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
           7, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,

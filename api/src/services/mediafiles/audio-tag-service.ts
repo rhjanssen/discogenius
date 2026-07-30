@@ -416,7 +416,7 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-/** Parse Albums.genres / AlbumReleases.label JSON arrays into trimmed strings. */
+/** Parse Albums.genres / AlbumEditions.label JSON arrays into trimmed strings. */
 function parseJsonStringList(raw: string | null | undefined): string[] {
   if (!raw) return [];
   try {
@@ -477,7 +477,7 @@ function normalizeComparableValue(value: string | null): string | null {
   return normalized ? normalized : null;
 }
 
-/** Normalize AlbumReleases.country (plain code or JSON array string) for tags. */
+/** Normalize AlbumEditions.country (plain code or JSON array string) for tags. */
 function formatReleaseCountryTag(value: unknown): string | null {
   const raw = String(value || "").trim();
   if (!raw) return null;
@@ -943,7 +943,7 @@ export class AudioTagService {
             JOIN ProviderEditionMatches scope_match
               ON scope_match.provider_edition_item_id = scope_member.provider_edition_item_id
              AND scope_match.match_state = 'accepted'
-            JOIN AlbumReleases scope_release ON scope_release.id = scope_match.release_id
+            JOIN AlbumEditions scope_release ON scope_release.id = scope_match.edition_id
             JOIN Albums scope_group ON scope_group.id = scope_release.release_group_id
             WHERE scope_item.entity_type = 'track'
               AND (scope_group.mbid = ? OR scope_release.mbid = ?)
@@ -986,7 +986,7 @@ export class AudioTagService {
             JOIN ProviderEditionMatches scope_match
               ON scope_match.provider_edition_item_id = scope_member.provider_edition_item_id
              AND scope_match.match_state = 'accepted'
-            JOIN AlbumReleases scope_release ON scope_release.id = scope_match.release_id
+            JOIN AlbumEditions scope_release ON scope_release.id = scope_match.edition_id
             JOIN Albums scope_group ON scope_group.id = scope_release.release_group_id
             WHERE scope_item.entity_type = 'track'
               AND (scope_group.mbid = ? OR scope_release.mbid = ?)
@@ -1099,9 +1099,9 @@ export class AudioTagService {
       LEFT JOIN Tracks canonical_track
         ON canonical_track.id = lf.track_id
         OR (lf.track_id IS NULL AND canonical_track.mbid = lf.canonical_track_mbid)
-      LEFT JOIN AlbumReleases canonical_release
-        ON canonical_release.id = lf.album_release_id
-        OR (lf.album_release_id IS NULL AND canonical_release.mbid = lf.canonical_release_mbid)
+      LEFT JOIN AlbumEditions canonical_release
+        ON canonical_release.id = lf.album_edition_id
+        OR (lf.album_edition_id IS NULL AND canonical_release.mbid = lf.canonical_release_mbid)
       LEFT JOIN Albums canonical_group
         ON canonical_group.id = lf.release_group_id
         OR (lf.release_group_id IS NULL AND canonical_group.mbid = lf.canonical_release_group_mbid)
@@ -1171,13 +1171,13 @@ export class AudioTagService {
           WHERE candidate_release_match.provider_edition_item_id = provider_album.id
             AND candidate_release_match.match_state = 'accepted'
           ORDER BY
-            CASE WHEN candidate_release_match.release_id = canonical_release.id THEN 0 ELSE 1 END,
+            CASE WHEN candidate_release_match.edition_id = canonical_release.id THEN 0 ELSE 1 END,
             CASE candidate_release_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
             candidate_release_match.confidence DESC
           LIMIT 1
         )
-      LEFT JOIN AlbumReleases ar
-        ON ar.id = COALESCE(canonical_release.id, canonical_track.album_release_id, provider_release_match.release_id)
+      LEFT JOIN AlbumEditions ar
+        ON ar.id = COALESCE(canonical_release.id, canonical_track.album_edition_id, provider_release_match.edition_id)
       LEFT JOIN Albums alb
         ON alb.id = COALESCE(canonical_group.id, ar.release_group_id)
       LEFT JOIN ArtistMetadata am ON am.mbid = artist.mbid
@@ -2028,7 +2028,7 @@ export class AudioTagService {
         });
       }
 
-      // Picard/Kodi LABEL / publisher — first label from AlbumReleases.label JSON.
+      // Picard/Kodi LABEL / publisher — first label from AlbumEditions.label JSON.
       const albumLabels = parseJsonStringList(row.album_label);
       if (albumLabels.length > 0) {
         tags.push({

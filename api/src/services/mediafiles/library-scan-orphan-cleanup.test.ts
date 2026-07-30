@@ -19,7 +19,7 @@ function resetRows() {
   db.prepare("DELETE FROM ProviderItems").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
   db.prepare("DELETE FROM Artists").run();
@@ -39,7 +39,7 @@ function seedCanonicalArtistGraph() {
     VALUES (?, ?, ?, ?, ?)
   `).run("release-group-1", "artist-mbid", "Canonical Album", "album", "2024-01-01");
   db.prepare(`
-    INSERT INTO AlbumReleases (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run("release-1", "release-group-1", "artist-mbid", "Canonical Album", 2, 1);
   db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES (?, ?, ?, ?)")
@@ -71,11 +71,11 @@ function seedCanonicalArtistGraph() {
   `).run();
   db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     )
     SELECT library_group.library_id, release.id, 'manual', 0, 'orphan_cleanup_test', 1
     FROM LibraryReleaseGroups library_group
-    JOIN AlbumReleases release ON release.mbid = 'release-1'
+    JOIN AlbumEditions release ON release.mbid = 'release-1'
     WHERE library_group.release_group_id = release.release_group_id
   `).run();
 }

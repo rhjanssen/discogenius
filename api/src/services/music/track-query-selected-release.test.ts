@@ -30,7 +30,7 @@ beforeEach(() => {
   db.prepare("DELETE FROM LibraryReleaseGroups").run();
   db.prepare("DELETE FROM Tracks").run();
   db.prepare("DELETE FROM Recordings").run();
-  db.prepare("DELETE FROM AlbumReleases").run();
+  db.prepare("DELETE FROM AlbumEditions").run();
   db.prepare("DELETE FROM Albums").run();
   db.prepare("DELETE FROM Artists").run();
   db.prepare("DELETE FROM ArtistMetadata").run();
@@ -60,12 +60,12 @@ function seedSelectedReleaseWithoutPlanOrFiles(): { trackIds: number[] } {
   `).run(artistMeta.id);
   const releaseGroup = db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-bad-blood'").get() as { id: number };
   db.prepare(`
-    INSERT INTO AlbumReleases (
+    INSERT INTO AlbumEditions (
       mbid, release_group_mbid, release_group_id, artist_mbid, artist_metadata_id,
       title, status, date, media_count, track_count
     ) VALUES ('rel-bad-blood', 'rg-bad-blood', ?, 'bastille-mbid', ?, 'Bad Blood', 'Official', '2013-03-04', 1, 2)
   `).run(releaseGroup.id, artistMeta.id);
-  const release = db.prepare("SELECT id FROM AlbumReleases WHERE mbid = 'rel-bad-blood'").get() as { id: number };
+  const release = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-bad-blood'").get() as { id: number };
 
   const trackIds: number[] = [];
   [["rec-pompeii", "Pompeii"], ["rec-things", "Things We Lost in the Fire"]].forEach(([recMbid, title], index) => {
@@ -76,7 +76,7 @@ function seedSelectedReleaseWithoutPlanOrFiles(): { trackIds: number[] } {
     const recording = db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(recMbid) as { id: number };
     const track = db.prepare(`
       INSERT INTO Tracks (
-        mbid, release_mbid, album_release_id, recording_mbid, recording_id,
+        mbid, release_mbid, album_edition_id, recording_mbid, recording_id,
         medium_position, position, number, title, length_ms
       ) VALUES (?, 'rel-bad-blood', ?, ?, ?, 1, ?, ?, ?, 214000)
       RETURNING id
@@ -92,7 +92,7 @@ function seedSelectedReleaseWithoutPlanOrFiles(): { trackIds: number[] } {
   `).run(library.id, releaseGroup.id);
   db.prepare(`
     INSERT INTO LibraryReleases (
-      library_id, release_id, selection_mode, locked, reason, curation_version
+      library_id, edition_id, selection_mode, locked, reason, curation_version
     ) VALUES (?, ?, 'auto', 0, 'test', 1)
   `).run(library.id, release.id);
 

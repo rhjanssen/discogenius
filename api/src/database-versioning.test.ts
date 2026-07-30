@@ -36,7 +36,7 @@ test("fresh database initializes the current development baseline", () => {
   assert.equal(userVersion, CURRENT_SCHEMA_VERSION);
 
   const coreTables = [
-    "Artists", "ArtistMetadata", "Albums", "AlbumReleases",
+    "Artists", "ArtistMetadata", "Albums", "AlbumEditions",
     "AlbumArtists", "ArtistReleaseGroups", "ArtistReleaseGroupCuration",
     "Tracks", "Recordings", "ProviderItems",
     "ProviderEditionMembers", "ProviderItemCredits", "ProviderItemAudioVariants",
@@ -122,17 +122,17 @@ test("upgrade queue table is absent from the fresh schema", () => {
 test("catalog tables expose integer foreign-key links as the authoritative join path", () => {
   const expectedColumnsByTable = new Map<string, string[]>([
     ["Albums", ["id", "artist_metadata_id", "mbid", "artist_mbid", "content_hash", "links", "genres", "ratings", "old_foreign_ids"]],
-    ["AlbumReleases", ["id", "release_group_id", "artist_metadata_id", "mbid", "release_group_mbid", "artist_mbid", "label", "media", "old_foreign_ids"]],
+    ["AlbumEditions", ["id", "release_group_id", "artist_metadata_id", "mbid", "release_group_mbid", "artist_mbid", "label", "media", "old_foreign_ids"]],
     ["ArtistMetadata", ["id", "mbid", "content_hash", "links", "genres", "ratings", "aliases", "old_foreign_ids", "overview", "status"]],
     ["AlbumArtists", ["release_group_id", "artist_metadata_id", "release_group_mbid", "artist_mbid"]],
     ["ArtistReleaseGroups", ["artist_metadata_id", "release_group_id", "artist_mbid", "release_group_mbid"]],
     ["ArtistReleaseGroupCuration", ["source_artist_metadata_id", "release_group_id", "redundant_to_release_group_id", "source_artist_mbid", "release_group_mbid"]],
-    ["Tracks", ["id", "album_release_id", "recording_id", "release_mbid", "recording_mbid"]],
+    ["Tracks", ["id", "album_edition_id", "recording_id", "release_mbid", "recording_mbid"]],
     ["LibraryReleaseGroups", ["id", "library_id", "release_group_id", "monitored", "selection_mode", "locked", "reason", "curation_version", "updated_at"]],
-    ["LibraryReleases", ["id", "library_id", "release_id", "selection_mode", "locked", "reason", "curation_version", "selected_at", "updated_at"]],
+    ["LibraryReleases", ["id", "library_id", "edition_id", "selection_mode", "locked", "reason", "curation_version", "selected_at", "updated_at"]],
     ["AcquisitionPlans", ["id", "library_release_id", "provider", "composition", "download_mode", "state", "planner_version", "policy_hash", "computed_at", "updated_at"]],
     ["AcquisitionPlanTracks", ["id", "plan_id", "track_id", "source_id", "provider_track_match_id", "provider_audio_variant_id", "source_quality_snapshot", "created_at", "updated_at"]],
-    ["TrackFiles", ["release_group_id", "album_release_id", "track_id", "recording_id", "library_id", "source_audio_variant_id", "file_class", "source_quality", "imported_quality", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id", "codec", "video_codec", "width", "height"]],
+    ["TrackFiles", ["release_group_id", "album_edition_id", "track_id", "recording_id", "library_id", "source_audio_variant_id", "file_class", "source_quality", "imported_quality", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id", "codec", "video_codec", "width", "height"]],
     ["quality_profiles", ["allowed_source_formats", "preference_order", "continue_upgrades", "fallback_policy", "output_format", "transcode_policy"]],
     ["MetadataFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
     ["LyricFiles", ["track_file_id", "canonical_artist_mbid", "canonical_release_group_mbid", "canonical_release_mbid", "canonical_track_mbid", "canonical_recording_mbid", "provider", "provider_entity_type", "provider_id"]],
@@ -148,7 +148,7 @@ test("catalog tables expose integer foreign-key links as the authoritative join 
 });
 
 test("catalog tables do not retain raw metadata data blobs", () => {
-  for (const tableName of ["ArtistMetadata", "Albums", "AlbumReleases", "Recordings", "Tracks"]) {
+  for (const tableName of ["ArtistMetadata", "Albums", "AlbumEditions", "Recordings", "Tracks"]) {
     const columns = tableColumns(tableName);
     assert.equal(columns.includes("data"), false, `Expected ${tableName}.data to be absent`);
   }
@@ -165,7 +165,7 @@ test("canonical catalog tables do not store provider resource evidence", () => {
     "isrc",
   ];
 
-  for (const tableName of ["ArtistMetadata", "Albums", "AlbumReleases", "Recordings", "Tracks"]) {
+  for (const tableName of ["ArtistMetadata", "Albums", "AlbumEditions", "Recordings", "Tracks"]) {
     const columns = tableColumns(tableName);
     for (const columnName of providerEvidenceColumns) {
       assert.equal(
@@ -177,8 +177,8 @@ test("canonical catalog tables do not store provider resource evidence", () => {
   }
 
   assert.ok(
-    tableColumns("AlbumReleases").includes("barcode"),
-    "Expected AlbumReleases.barcode to remain available for canonical MusicBrainz release barcodes",
+    tableColumns("AlbumEditions").includes("barcode"),
+    "Expected AlbumEditions.barcode to remain available for canonical MusicBrainz release barcodes",
   );
 });
 
@@ -213,7 +213,7 @@ test("provider facts are normalized and match edges use typed integer foreign ke
 
   const typedMatches: Record<string, string[]> = {
     ProviderArtistMatches: ["provider_artist_item_id", "artist_id"],
-    ProviderEditionMatches: ["provider_edition_item_id", "release_id", "relation"],
+    ProviderEditionMatches: ["provider_edition_item_id", "edition_id", "relation"],
     ProviderTrackMatches: ["provider_edition_member_id", "track_id", "recording_id"],
     ProviderVideoMatches: ["provider_video_item_id", "recording_id"],
   };

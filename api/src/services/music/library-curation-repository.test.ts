@@ -23,7 +23,7 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
     db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-a', 'Artist A')").run();
     db.prepare("INSERT INTO ManagedArtists (id, artist_id) VALUES (1, 1)").run();
     db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group-a', 1, 'Group A')").run();
-    db.prepare("INSERT INTO AlbumReleases (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A')").run();
+    db.prepare("INSERT INTO AlbumEditions (id, mbid, release_group_id, title) VALUES (1, 'release-a', 1, 'Release A')").run();
     const libraryArtistId = repository.upsertLibraryArtist({
       libraryId: libraries.stereoId,
       managedArtistId: 1,
@@ -43,7 +43,7 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
     });
     db.prepare(`
       UPDATE LibraryReleases SET locked = 1, selection_mode = 'manual', reason = 'user'
-      WHERE library_id = ? AND release_id = 1
+      WHERE library_id = ? AND edition_id = 1
     `).run(libraries.stereoId);
     repository.replaceAutomaticCuration({
       libraryId: libraries.stereoId,
@@ -57,10 +57,10 @@ test("default Stereo and Spatial libraries are rows and curation preserves locks
       curationVersion: 2,
     });
     assert.deepEqual(db.prepare(`
-      SELECT release_id, selection_mode, locked, reason
+      SELECT edition_id, selection_mode, locked, reason
       FROM LibraryReleases WHERE library_id = ?
     `).all(libraries.stereoId), [{
-      release_id: 1,
+      edition_id: 1,
       selection_mode: "manual",
       locked: 1,
       reason: "user",

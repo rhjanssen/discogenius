@@ -213,7 +213,7 @@ export class UnmappedFilesService {
                 release.country,
                 release.media_count AS mediumCount,
                 COALESCE(release.track_count, (
-                    SELECT COUNT(*) FROM Tracks WHERE album_release_id = release.id
+                    SELECT COUNT(*) FROM Tracks WHERE album_edition_id = release.id
                 )) AS trackCount,
                 (
                     SELECT GROUP_CONCAT(DISTINCT COALESCE(
@@ -222,7 +222,7 @@ export class UnmappedFilesService {
                     ))
                     FROM json_each(release.media) medium
                 ) AS mediumFormat
-            FROM AlbumReleases release
+            FROM AlbumEditions release
             JOIN Albums release_group ON release_group.id = release.release_group_id
             WHERE release.mbid = ? OR release.id = ?
             LIMIT 1
@@ -253,7 +253,7 @@ export class UnmappedFilesService {
                 COALESCE(track.length_ms, recording.length_ms) AS durationMs
             FROM Tracks track
             JOIN Recordings recording ON recording.id = track.recording_id
-            WHERE track.album_release_id = ?
+            WHERE track.album_edition_id = ?
               AND recording.is_video = 0
             ORDER BY track.medium_position, track.position, track.id
         `).all(release.id) as Array<{
@@ -294,7 +294,7 @@ export class UnmappedFilesService {
                 a.mbid AS artist_mbid
             FROM Albums al
             JOIN Artists a ON a.mbid = al.artist_mbid
-            WHERE al.mbid = ? OR EXISTS (SELECT 1 FROM AlbumReleases rel WHERE rel.release_group_mbid = al.mbid AND rel.mbid = ?)
+            WHERE al.mbid = ? OR EXISTS (SELECT 1 FROM AlbumEditions rel WHERE rel.release_group_mbid = al.mbid AND rel.mbid = ?)
             LIMIT 1
         `).get(cleanMbid, cleanMbid) as any;
 
