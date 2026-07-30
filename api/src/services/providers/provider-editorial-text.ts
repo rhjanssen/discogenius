@@ -109,12 +109,19 @@ export async function firstProviderEditorialText(opts: {
 export function listReleaseGroupAlbumOfferCandidates(
   releaseGroupMbid: string,
 ): ProviderEditorialCandidate[] {
+  // There is no entity_type 'album' and no release_group_mbid shadow column:
+  // a provider edition reaches its album through its accepted typed match.
   const rows = db.prepare(`
-    SELECT provider, provider_id
-    FROM ProviderItems
-    WHERE entity_type = 'album'
-      AND release_group_mbid = ?
-      AND provider_id IS NOT NULL
+    SELECT DISTINCT item.provider, CAST(item.provider_id AS TEXT) AS provider_id
+    FROM ProviderItems item
+    JOIN ProviderEditionMatches edition_match
+      ON edition_match.provider_edition_item_id = item.id
+     AND edition_match.match_state = 'accepted'
+    JOIN AlbumEditions edition ON edition.id = edition_match.edition_id
+    JOIN Albums album ON album.id = edition.release_group_id
+    WHERE item.entity_type = 'release'
+      AND album.mbid = ?
+      AND item.provider_id IS NOT NULL
   `).all(releaseGroupMbid) as Array<{ provider?: string | null; provider_id?: string | number | null }>;
 
   return rows.map((row) => ({

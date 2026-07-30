@@ -120,10 +120,19 @@ export function buildRenameFilters(options: RenameScopeOptions = {}): { where: s
         lf.canonical_release_group_mbid = ?
         OR lf.canonical_release_mbid = ?
         OR (lf.provider_entity_type, CAST(lf.provider_id AS TEXT)) IN (
+          -- Provider tracks reach an album through their edition membership and
+          -- that edition's accepted typed match; there are no MBID shadow columns.
           SELECT scope_item.entity_type, CAST(scope_item.provider_id AS TEXT)
           FROM ProviderItems scope_item
+          JOIN ProviderEditionMembers scope_member
+            ON scope_member.member_item_id = scope_item.id
+          JOIN ProviderEditionMatches scope_match
+            ON scope_match.provider_edition_item_id = scope_member.provider_edition_item_id
+           AND scope_match.match_state = 'accepted'
+          JOIN AlbumEditions scope_edition ON scope_edition.id = scope_match.edition_id
+          JOIN Albums scope_album ON scope_album.id = scope_edition.release_group_id
           WHERE scope_item.entity_type IN ('track', 'video')
-            AND (scope_item.release_group_mbid = ? OR scope_item.release_mbid = ?)
+            AND (scope_album.mbid = ? OR scope_edition.mbid = ?)
         )
       )`);
     params.push(options.albumId, options.albumId, options.albumId, options.albumId);

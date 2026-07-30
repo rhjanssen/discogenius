@@ -31,13 +31,23 @@ export async function resolveProviderArtistId(
         return artistId;
     }
 
+    // ProviderItems carries no artist_mbid shadow column: the provider -> canonical
+    // artist link is the accepted ProviderArtistMatches edge.
     const cached = db.prepare(`
-        SELECT provider_id
-        FROM ProviderItems
-        WHERE provider = ?
-          AND entity_type = 'artist'
-          AND artist_mbid = ?
-        ORDER BY updated_at DESC
+        SELECT CAST(item.provider_id AS TEXT) AS provider_id
+        FROM ProviderItems item
+        JOIN ProviderArtistMatches artist_match
+          ON artist_match.provider_artist_item_id = item.id
+         AND artist_match.match_state = 'accepted'
+        JOIN ArtistMetadata canonical_artist
+          ON canonical_artist.id = artist_match.artist_id
+        WHERE item.provider = ?
+          AND item.entity_type = 'artist'
+          AND canonical_artist.mbid = ?
+        ORDER BY
+          CASE artist_match.decision_source WHEN 'manual' THEN 0 ELSE 1 END,
+          artist_match.confidence DESC,
+          item.updated_at DESC
         LIMIT 1
     `).get(provider.id, artistMbid) as { provider_id?: string | number | null } | undefined;
     if (cached?.provider_id != null) {
@@ -94,11 +104,16 @@ export async function resolveProviderArtistIds(
     }
 
     const linked = db.prepare(`
-        SELECT DISTINCT provider_id
-        FROM ProviderItems
-        WHERE provider = ?
-          AND entity_type = 'artist'
-          AND artist_mbid = ?
+        SELECT DISTINCT CAST(item.provider_id AS TEXT) AS provider_id
+        FROM ProviderItems item
+        JOIN ProviderArtistMatches artist_match
+          ON artist_match.provider_artist_item_id = item.id
+         AND artist_match.match_state = 'accepted'
+        JOIN ArtistMetadata canonical_artist
+          ON canonical_artist.id = artist_match.artist_id
+        WHERE item.provider = ?
+          AND item.entity_type = 'artist'
+          AND canonical_artist.mbid = ?
     `).all(provider.id, artistMbid) as Array<{ provider_id: string | number }>;
 
     const ids = new Set<string>();
