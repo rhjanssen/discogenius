@@ -1,39 +1,58 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import test from "node:test";
-import Database from "better-sqlite3";
-import { createDomainSchemaV41 } from "../../database/schema/domain-v41.js";
+import test, { after } from "node:test";
 import { CanonicalManualImportService } from "./canonical-manual-import-service.js";
+import {
+  closeActiveSchemaDb,
+  openActiveSchemaDb,
+  prepareActiveSchemaEnv,
+  resetActiveSchemaRows,
+} from "../../test-support/active-schema-fixture.js";
+
+/**
+ * This suite used to build its database from `domain-v41.ts`. That is the
+ * aspirational core schema (32 tables) — production never creates it — and the
+ * divergence hid a real bug: the boundary wrote TrackFiles.provider_item_id
+ * against an active schema that had no such column, and every test still passed.
+ *
+ * It now boots the ACTIVE schema, so these cases exercise the table production
+ * actually writes. The 55 `ALTER TABLE TrackFiles ADD COLUMN` statements the old
+ * fixture needed are gone: canonical_track_mbid, canonical_recording_mbid,
+ * provider, provider_entity_type, provider_id and quality all exist natively
+ * there.
+ */
+const { tempDir } = prepareActiveSchemaEnv("canonical-manual-import");
+const { db, dbModule } = await openActiveSchemaDb();
+
+after(() => closeActiveSchemaDb(dbModule, tempDir));
 
 function fixture() {
-  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-canonical-import-"));
-  const db = new Database(path.join(folder, "test.db"));
-  db.pragma("foreign_keys = ON");
-  createDomainSchemaV41(db);
-  db.exec(`
-    CREATE TABLE UnmappedFiles (
-      id INTEGER PRIMARY KEY,
-      file_path TEXT NOT NULL,
-      filename TEXT NOT NULL
-    );
-  `);
+  resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
+
   db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist', 'Artist')").run();
-  db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 'group', 1, 'Group')").run();
-  db.prepare("INSERT INTO AlbumReleases (id, mbid, release_group_id, title) VALUES (10, 'release-a', 1, 'Release A')").run();
-  db.prepare("INSERT INTO AlbumReleases (id, mbid, release_group_id, title) VALUES (20, 'release-b', 1, 'Release B')").run();
+  // TrackFiles.artist_id is NOT NULL with an FK to Artists in the ACTIVE schema.
+  db.prepare("INSERT INTO Artists (id, name, mbid) VALUES ('artist', 'Artist', 'artist')").run();
+  db.prepare("INSERT INTO Albums (id, mbid, artist_mbid, title) VALUES (1, 'group', 'artist', 'Group')").run();
+  db.prepare(`
+    INSERT INTO AlbumReleases (id, mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES (10, 'release-a', 1, 'group', 'artist', 'Release A')
+  `).run();
+  db.prepare(`
+    INSERT INTO AlbumReleases (id, mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES (20, 'release-b', 1, 'group', 'artist', 'Release B')
+  `).run();
   db.prepare("INSERT INTO Recordings (id, mbid, title) VALUES (100, 'recording-a', 'Track A')").run();
   db.prepare("INSERT INTO Recordings (id, mbid, title) VALUES (200, 'recording-b', 'Track B')").run();
   db.prepare(`
     INSERT INTO Tracks (
-      id, mbid, album_release_id, recording_id, medium_position, position, title
-    ) VALUES (1000, 'track-a', 10, 100, 1, 1, 'Track A')
+      id, mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      medium_position, position, title
+    ) VALUES (1000, 'track-a', 10, 'release-a', 100, 'recording-a', 1, 1, 'Track A')
   `).run();
   db.prepare(`
     INSERT INTO Tracks (
-      id, mbid, album_release_id, recording_id, medium_position, position, title
-    ) VALUES (2000, 'track-b', 20, 200, 1, 1, 'Track B')
+      id, mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+      medium_position, position, title
+    ) VALUES (2000, 'track-b', 20, 'release-b', 200, 'recording-b', 1, 1, 'Track B')
   `).run();
   db.prepare(`
     INSERT INTO MetadataProfiles (
@@ -51,33 +70,31 @@ function fixture() {
     INSERT INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id)
     VALUES (1, 'Stereo', '/library/stereo', 1, 1)
   `).run();
-  db.prepare("INSERT INTO UnmappedFiles (id, file_path, filename) VALUES (1, '/incoming/a.flac', 'a.flac')").run();
-  return { db, folder };
+  db.prepare(`
+    INSERT INTO UnmappedFiles (id, file_path, relative_path, library_root, filename, extension)
+    VALUES (1, '/incoming/a.flac', 'a.flac', '/incoming', 'a.flac', 'flac')
+  `).run();
+  return { db, folder: tempDir };
 }
 
 test("canonical manual import pins Library, Release, Track and Recording", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
     let receivedRoot = "";
     const service = new CanonicalManualImportService(db, async (items, options) => {
       receivedRoot = options?.libraryRootPath || "";
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class,
           source_quality, imported_quality
         ) VALUES (
-          1, 1, 10, 1000, 100,
+          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
           '/library/stereo/Artist/Release A/01 Track A.flac',
           'Artist/Release A/01 Track A.flac',
           '01 Track A.flac', 'flac', 'audio', 'lossless', 'lossless'
         )
       `).run();
-      db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-      db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-      db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-      db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-      db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
       db.prepare("UPDATE TrackFiles SET canonical_track_mbid = ? WHERE id = 1").run(items[0].providerId);
       return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
     });
@@ -124,13 +141,12 @@ test("canonical manual import pins Library, Release, Track and Recording", async
       release_locked: 0,
     });
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("changing release rejects stale track assignments before importing", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
     let called = false;
     const service = new CanonicalManualImportService(db, async () => {
@@ -147,20 +163,13 @@ test("changing release rejects stale track assignments before importing", async 
     );
     assert.equal(called, false);
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("manual import needs no acquisition plan and no provider item at all", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
     // The whole point of manual import: a user maps files onto canonical
     // Library/Release/Track identity with nothing provider-side in the database.
     assert.equal((db.prepare("SELECT COUNT(*) c FROM AcquisitionPlans").get() as { c: number }).c, 0);
@@ -169,10 +178,10 @@ test("manual import needs no acquisition plan and no provider item at all", asyn
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          1, 1, 10, 1000, 100,
+          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
           '/library/stereo/Artist/Release A/01 Track A.flac',
           'Artist/Release A/01 Track A.flac',
           '01 Track A.flac', 'flac', 'audio'
@@ -201,20 +210,13 @@ test("manual import needs no acquisition plan and no provider item at all", asyn
     // Still no acquisition plan was invented on the way through.
     assert.equal((db.prepare("SELECT COUNT(*) c FROM AcquisitionPlans").get() as { c: number }).c, 0);
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("optional provider provenance attaches without becoming canonical identity", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
     const providerItem = db.prepare(`
       INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
       VALUES ('tidal', 'track', 'tidal-track-1', 'Provider Track Title')
@@ -224,11 +226,11 @@ test("optional provider provenance attaches without becoming canonical identity"
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
           canonical_track_mbid,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          1, 1, 10, 1000, 100,
+          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
           'track-a',
           '/library/stereo/Artist/Release A/01 Track A.flac',
           'Artist/Release A/01 Track A.flac',
@@ -258,25 +260,20 @@ test("optional provider provenance attaches without becoming canonical identity"
     assert.equal(row.recording_id, 100);
     assert.equal(row.album_release_id, 10);
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("a recording shared by two selected releases keeps the release-track the user chose", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
     // Release B also carries recording 100 — the SAME recording as Release A's
     // track 1000 — as its own release-track occurrence.
     db.prepare(`
-      INSERT INTO Tracks (id, mbid, album_release_id, recording_id, medium_position, position, title)
-      VALUES (2100, 'track-b-shared', 20, 100, 1, 2, 'Track A')
+      INSERT INTO Tracks (
+        id, mbid, album_release_id, release_mbid, recording_id, recording_mbid,
+        medium_position, position, title
+      ) VALUES (2100, 'track-b-shared', 20, 'release-b', 100, 'recording-a', 1, 2, 'Track A')
     `).run();
     // Both releases are selected into the library.
     db.prepare(`
@@ -295,10 +292,10 @@ test("a recording shared by two selected releases keeps the release-track the us
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          1, 1, 20, 2100, 100,
+          1, 'artist', '/library/stereo', 'track', 1, 20, 2100, 100,
           '/library/stereo/Artist/Release B/02 Track A.flac',
           'Artist/Release B/02 Track A.flac',
           '02 Track A.flac', 'flac', 'audio'
@@ -324,20 +321,13 @@ test("a recording shared by two selected releases keeps the release-track the us
     assert.equal(row.track_id, 2100);
     assert.equal(row.recording_id, 100);
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("only the newly imported row is updated when the same track exists in another library", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
 
     // A SECOND library already holds the very same canonical track.
     db.prepare(`
@@ -346,11 +336,11 @@ test("only the newly imported row is updated when the same track exists in anoth
     `).run();
     db.prepare(`
       INSERT INTO TrackFiles (
-        id, library_id, album_release_id, track_id, recording_id,
+        id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
         canonical_track_mbid, file_path, relative_path, filename, extension, file_class,
         verified_at
       ) VALUES (
-        99, 2, 10, 1000, 100,
+        99, 'artist', '/library/stereo', 'track', 2, 10, 1000, 100,
         'track-a', '/library/spatial/Artist/Release A/01 Track A.m4a',
         'Artist/Release A/01 Track A.m4a', '01 Track A.m4a', 'm4a', 'audio',
         CURRENT_TIMESTAMP
@@ -360,10 +350,10 @@ test("only the newly imported row is updated when the same track exists in anoth
     const service = new CanonicalManualImportService(db, async () => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
           canonical_track_mbid, file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          1, 1, 10, 1000, 100,
+          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
           'track-a', '/library/stereo/Artist/Release A/01 Track A.flac',
           'Artist/Release A/01 Track A.flac', '01 Track A.flac', 'flac', 'audio'
         )
@@ -397,20 +387,13 @@ test("only the newly imported row is updated when the same track exists in anoth
     assert.equal(other.file_path, "/library/spatial/Artist/Release A/01 Track A.m4a");
     assert.equal(other.album_release_id, 10);
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("manual import monitors and custom-selects without silently locking", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_recording_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
 
     // Reports the row it created for the item it was actually given — this test
     // imports twice with different unmapped file ids, and the operation result
@@ -418,10 +401,10 @@ test("manual import monitors and custom-selects without silently locking", async
     const service = new CanonicalManualImportService(db, async (items) => {
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
           canonical_track_mbid, file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          1, 1, 10, 1000, 100, 'track-a',
+          1, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100, 'track-a',
           '/library/stereo/a.flac', 'a.flac', 'a.flac', 'flac', 'audio'
         )
       `).run();
@@ -453,7 +436,10 @@ test("manual import monitors and custom-selects without silently locking", async
     db.prepare("UPDATE LibraryReleaseGroups SET locked = 1 WHERE library_id = 1").run();
     db.prepare("UPDATE LibraryReleases SET locked = 1 WHERE library_id = 1").run();
     db.prepare("DELETE FROM TrackFiles WHERE id = 1").run();
-    db.prepare("INSERT INTO UnmappedFiles (id, file_path, filename) VALUES (2, '/incoming/b.flac', 'b.flac')").run();
+    db.prepare(`
+      INSERT INTO UnmappedFiles (id, file_path, relative_path, library_root, filename, extension)
+      VALUES (2, '/incoming/b.flac', 'b.flac', '/incoming', 'b.flac', 'flac')
+    `).run();
 
     await service.import({
       libraryId: 1,
@@ -465,28 +451,22 @@ test("manual import monitors and custom-selects without silently locking", async
       SELECT locked FROM LibraryReleaseGroups WHERE library_id = 1 AND release_group_id = 1
     `).get() as { locked: number }).locked, 1, "an existing lock survives a later import");
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("a reported row outside the target library root fails closed", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
 
     const service = new CanonicalManualImportService(db, async () => {
       // The row exists but lives outside /library/stereo.
       db.prepare(`
         INSERT INTO TrackFiles (
-          id, library_id, album_release_id, track_id, recording_id,
+          id, artist_id, library_root, file_type, library_id, album_release_id, track_id, recording_id,
           file_path, relative_path, filename, extension, file_class
         ) VALUES (
-          7, 1, 10, 1000, 100,
+          7, 'artist', '/library/stereo', 'track', 1, 10, 1000, 100,
           '/somewhere/else/01 Track A.flac', '01 Track A.flac',
           '01 Track A.flac', 'flac', 'audio'
         )
@@ -503,19 +483,13 @@ test("a reported row outside the target library root fails closed", async () => 
       /outside library root/,
     );
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("a reported row that does not exist fails closed", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
     const service = new CanonicalManualImportService(db, async () =>
       ({ requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 4242 } }));
 
@@ -528,19 +502,13 @@ test("a reported row that does not exist fails closed", async () => {
       /no such row exists/,
     );
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("an import claimed without operation identity fails closed", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
     // The importer says it imported a file but names no row for it. Silently
     // treating that as "skipped" would leave a real file on disk with no
     // canonical authority attached.
@@ -556,19 +524,13 @@ test("an import claimed without operation identity fails closed", async () => {
       /reported 0 imported file id\(s\) but claims 1/,
     );
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
 
 test("an operation identity for an unsubmitted mapping fails closed", async () => {
-  const { db, folder } = fixture();
+  fixture();
   try {
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN canonical_track_mbid TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_entity_type TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN provider_id TEXT");
-    db.exec("ALTER TABLE TrackFiles ADD COLUMN quality TEXT");
     // Item 99 was never part of this request — accepting it would let one
     // request's authority land on another operation's row.
     const service = new CanonicalManualImportService(db, async () =>
@@ -583,7 +545,6 @@ test("an operation identity for an unsubmitted mapping fails closed", async () =
       /reported unmapped file 99, which was not part of this import request/,
     );
   } finally {
-    db.close();
-    rmSync(folder, { recursive: true, force: true });
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
